@@ -1,7 +1,7 @@
 # CatalystPit
 
-Live market intelligence platform. Every catalyst. Before the bell.
-
+Live market intelligence platform. Every catalyst. Before the  bell.
+ 
 ## Setup
 
 1. Install dependencies:
