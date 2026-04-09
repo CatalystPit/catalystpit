@@ -47,8 +47,8 @@ const CARD_COLORS = [
 
 const claude = async (system, user) => {
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method:"POST",headers:{"Content-Type":"application/json"},
+const r = await fetch("/api/claude", {    
+  method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         model:"claude-sonnet-4-20250514",max_tokens:2000,
         system,messages:[{role:"user",content:user}],
