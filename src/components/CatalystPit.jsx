@@ -69,38 +69,15 @@ const parseJ=raw=>{
 };
 
 const fetchAll=()=>claude(
-  "Financial data API. Return ONLY raw valid JSON. No markdown.",
-  `Search web for today's live financial market data. Return this JSON:
-{
-  "tickers":[{"sym":"SPY","price":524.38,"chg":1.2},{"sym":"QQQ","price":441.90,"chg":0.8},{"sym":"NVDA","price":882.50,"chg":2.4},{"sym":"TSLA","price":174.20,"chg":-0.6},{"sym":"AAPL","price":192.10,"chg":0.3},{"sym":"BTC","price":68442,"chg":3.1}],
-  "news":[
-    {"headline":"Full bold compelling headline here","source":"Reuters","mins":3,"tag":"EARNINGS","sym":"NVDA","chg":8.4,"hot":true},
-    {"headline":"Full bold compelling headline here","source":"Bloomberg","mins":11,"tag":"FED","sym":"SPY","chg":1.2,"hot":false},
-    {"headline":"Full bold compelling headline here","source":"CNBC","mins":18,"tag":"MARKETS","sym":"TSLA","chg":-3.2,"hot":true},
-    {"headline":"Full bold compelling headline here","source":"WSJ","mins":26,"tag":"TECH","sym":"META","chg":4.1,"hot":false},
-    {"headline":"Full bold compelling headline here","source":"FT","mins":35,"tag":"MACRO","sym":"GLD","chg":0.5,"hot":false},
-    {"headline":"Full bold compelling headline here","source":"Reuters","mins":48,"tag":"CRYPTO","sym":"BTC","chg":3.1,"hot":false}
-  ],
-  "movers":[
-    {"sym":"NVDA","name":"Nvidia Corp","price":882.50,"chg":8.4,"why":"AI earnings beat"},
-    {"sym":"SMCI","name":"Super Micro","price":98.44,"chg":11.2,"why":"Server demand surge"},
-    {"sym":"TSLA","name":"Tesla Inc","price":174.20,"chg":-3.2,"why":"Deliveries miss"},
-    {"sym":"META","name":"Meta Platforms","price":503.10,"chg":4.1,"why":"AI ad revenue"},
-    {"sym":"AAPL","name":"Apple Inc","price":192.10,"chg":0.3,"why":"Steady buybacks"}
-  ],
-  "insiders":[
-    {"sym":"ORCL","name":"Larry Ellison","role":"CEO","type":"BUY","value":"$42.3M","filed":"1h ago"},
-    {"sym":"AMZN","name":"Andy Jassy","role":"CEO","type":"SELL","value":"$12.8M","filed":"2h ago"},
-    {"sym":"PLTR","name":"Peter Thiel","role":"Director","type":"BUY","value":"$8.1M","filed":"3h ago"}
-  ],
-  "politicians":[
-    {"name":"Nancy Pelosi","title":"Rep.","sym":"NVDA","action":"BUY","value":"$500K-$1M","filed":"2d ago"},
-    {"name":"Josh Hawley","title":"Sen.","sym":"AAPL","action":"BUY","value":"$15K-$50K","filed":"3d ago"}
-  ],
-  "chart_points":[420,418,422,425,421,428,432,430,435,438,442,439,445,448,446,450,455,452,458,462,460,465,468,470],
-  "spy_chg":1.2,"vix":18.3,"top_gainer":"NVDA","top_gainer_chg":8.4
-}
-Use real current data. Headlines should be bold and informative like Benzinga.`
+  "Financial data API. Return ONLY raw valid JSON. No markdown. No explanation.",
+  `Return current market data as JSON:
+{"tickers":[{"sym":"SPY","price":0,"chg":0},{"sym":"QQQ","price":0,"chg":0},{"sym":"NVDA","price":0,"chg":0},{"sym":"TSLA","price":0,"chg":0},{"sym":"AAPL","price":0,"chg":0},{"sym":"BTC","price":0,"chg":0}],
+"news":[{"headline":"string","source":"string","mins":0,"tag":"MARKETS","sym":"SPY","chg":0,"hot":false}],
+"movers":[{"sym":"string","name":"string","price":0,"chg":0,"why":"string"}],
+"insiders":[{"sym":"string","name":"string","role":"string","type":"BUY","value":"string","filed":"string"}],
+"politicians":[{"name":"string","title":"string","sym":"string","action":"BUY","value":"string","filed":"string"}],
+"chart_points":[0,0,0,0,0,0,0,0,0,0,0,0],"spy_chg":0,"vix":0}
+Use real live data. Return 6 news items, 5 movers, 3 insiders, 2 politicians.`
 );
 
 // ── Live Chart ────────────────────────────────────────────────────────────────
