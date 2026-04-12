@@ -193,21 +193,21 @@ export async function GET(request) {
     console.error('❌ Failed top_stories:', error.message);
   }
 
-  // ── 2. All other feeds (unchanged, Claude-generated) ─────────────────────
-  await Promise.allSettled(
-    DATA_FEEDS.map(async ({ key, prompt }) => {
-      try {
-        const data  = await fetchFromClaude(prompt);
-        const value = JSON.stringify(data);
-        await kvSet(key, value);
-        results.refreshed.push(key);
-        console.log(`✅ Refreshed ${key}`);
-      } catch (error) {
-        results.failed.push({ key, error: error.message });
-        console.error(`❌ Failed ${key}:`, error.message);
-      }
-    })
-  );
+  // ── 2. Other feeds — sequential with delay to avoid Claude 429s ─────────
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  for (const { key, prompt } of DATA_FEEDS) {
+    try {
+      await sleep(1500); // 1.5s gap between calls — prevents rate limiting
+      const data = await fetchFromClaude(prompt);
+      await kvSet(key, JSON.stringify(data));
+      results.refreshed.push(key);
+      console.log(`✅ Refreshed ${key}`);
+    } catch (error) {
+      results.failed.push({ key, error: error.message });
+      console.error(`❌ Failed ${key}:`, error.message);
+    }
+  }
 
   await kvSet('catalystpit:last_refresh', results.timestamp);
   return Response.json(results, { status: 200 });
