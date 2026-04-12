@@ -2,11 +2,7 @@
   "crons": [
     {
       "path": "/api/refresh",
-      "schedule": "*/15 6-20 * * 1-5"
-    },
-    {
-      "path": "/api/refresh",
-      "schedule": "*/30 * * * 0,6"
+      "schedule": "0 9 * * *"
     }
   ],
   "headers": [
