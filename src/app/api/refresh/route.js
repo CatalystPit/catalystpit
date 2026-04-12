@@ -1,8 +1,9 @@
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
-const CRON_SECRET = process.env.CRON_SECRET;
+const KV_TOKEN      = process.env.KV_REST_API_TOKEN;
+const CRON_SECRET   = process.env.CRON_SECRET;
+const NEWSAPI_KEY   = process.env.NEWSAPI_KEY;          // ← new env var
 
 async function kvSet(key, value) {
   const res = await fetch(`https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=1800`, {
@@ -17,11 +18,86 @@ async function kvSet(key, value) {
   console.log(`KV set ${key}: ${text.substring(0, 80)}`);
 }
 
+// ── NewsAPI: fetch real financial headlines with photos ────────────────────
+async function fetchNewsAPIStories() {
+  if (!NEWSAPI_KEY) {
+    console.warn('NEWSAPI_KEY not set — skipping real news fetch');
+    return null;
+  }
+
+  // Pull from two endpoints and merge for variety
+  const [bizRes, mkRes] = await Promise.all([
+    fetch(`https://newsapi.org/v2/top-headlines?category=business&language=en&pageSize=10&apiKey=${NEWSAPI_KEY}`),
+    fetch(`https://newsapi.org/v2/everything?q=(stock+OR+earnings+OR+fed+OR+crypto+OR+market)&language=en&sortBy=publishedAt&pageSize=10&apiKey=${NEWSAPI_KEY}`),
+  ]);
+
+  const [biz, mk] = await Promise.all([bizRes.json(), mkRes.json()]);
+
+  const all = [
+    ...(biz.articles  || []),
+    ...(mk.articles   || []),
+  ]
+    // Filter out articles without images or titles
+    .filter(a => a.urlToImage && a.title && a.title !== '[Removed]')
+    // Deduplicate by title
+    .filter((a, i, arr) => arr.findIndex(b => b.title === a.title) === i)
+    .slice(0, 12); // take top 12, Claude will pick the best 6
+
+  return all.map(a => ({
+    title:     a.title,
+    source:    a.source?.name || 'News',
+    url:       a.url,
+    image_url: a.urlToImage,
+    published: a.publishedAt,
+  }));
+}
+
+// ── Claude: enrich real headlines with ticker + category ──────────────────
+async function enrichStoriesWithClaude(rawStories) {
+  const storiesJson = JSON.stringify(rawStories);
+
+  const prompt = `You are a financial analyst. You will receive a list of real news articles.
+For each article, add:
+- "ticker": the most relevant stock ticker (e.g. "AAPL", "SPY", "BTC-USD"). Use "SPY" for broad market stories.
+- "category": one of "Earnings"|"Macro"|"Insider"|"Squeeze"|"Crypto"|"Options"|"Tech"|"Markets"|"FED"
+- "headline": rewrite the title to be punchy and finance-focused (max 12 words)
+- "summary": 1-sentence analyst take on why this matters to traders
+
+Keep all other fields (source, url, image_url, published) exactly as given.
+
+Return ONLY a valid JSON array of all articles enriched. No markdown.
+
+Articles:
+${storiesJson}`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 3000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Claude enrichment error ${response.status}: ${err.substring(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  const clean = text.replace(/```json\n?|```\n?/g, '').trim();
+  const match = clean.match(/(\[[\s\S]*\])/);
+  return JSON.parse(match ? match[0] : clean);
+}
+
 const DATA_FEEDS = [
-  {
-    key: 'catalystpit:top_stories',
-    prompt: `You are a financial news aggregator. Return ONLY a valid JSON array of exactly 6 top market-moving financial news stories from the last 4 hours. Each object: { "headline": string, "summary": string (2 sentences max), "ticker": string, "source": string, "url": string, "category": "Earnings"|"Macro"|"Insider"|"Squeeze"|"Crypto"|"Options" }. No markdown, just the JSON array.`,
-  },
+  // top_stories is handled separately below with NewsAPI
   {
     key: 'catalystpit:market_snapshot',
     prompt: `Return ONLY a valid JSON object with current prices for: { "SPY": { "price": number, "change": number, "changePct": number }, "QQQ": { "price": number, "change": number, "changePct": number }, "DIA": { "price": number, "change": number, "changePct": number }, "VIX": { "price": number, "change": number, "changePct": number }, "BTC": { "price": number, "change": number, "changePct": number }, "ETH": { "price": number, "change": number, "changePct": number }, "GLD": { "price": number, "change": number, "changePct": number }, "USO": { "price": number, "change": number, "changePct": number } }. No markdown, just the JSON object.`,
@@ -84,8 +160,8 @@ async function fetchFromClaude(prompt) {
 }
 
 export async function GET(request) {
-  const authHeader = request.headers.get('authorization');
-  const isVercelCron = request.headers.get('x-vercel-cron') === '1';
+  const authHeader    = request.headers.get('authorization');
+  const isVercelCron  = request.headers.get('x-vercel-cron') === '1';
 
   if (!isVercelCron && authHeader !== `Bearer ${CRON_SECRET}`) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
@@ -93,10 +169,35 @@ export async function GET(request) {
 
   const results = { refreshed: [], failed: [], timestamp: new Date().toISOString() };
 
+  // ── 1. Top Stories: NewsAPI → Claude enrichment ──────────────────────────
+  try {
+    const rawStories = await fetchNewsAPIStories();
+
+    let stories;
+    if (rawStories && rawStories.length > 0) {
+      // Real headlines — enrich with Claude (ticker, category, rewritten headline)
+      stories = await enrichStoriesWithClaude(rawStories);
+      console.log(`✅ top_stories: ${stories.length} real articles from NewsAPI`);
+    } else {
+      // Fallback: Claude invents stories (no API key or fetch failed)
+      stories = await fetchFromClaude(
+        `Return ONLY a valid JSON array of exactly 6 top market-moving financial news stories from today. Each: { "headline": string, "summary": string, "ticker": string, "source": string, "category": "Earnings"|"Macro"|"Insider"|"Squeeze"|"Crypto"|"Options"|"Tech"|"Markets"|"FED", "image_url": null }. No markdown.`
+      );
+      console.log('⚠️ top_stories: using Claude fallback (no NewsAPI key)');
+    }
+
+    await kvSet('catalystpit:top_stories', JSON.stringify(stories));
+    results.refreshed.push('catalystpit:top_stories');
+  } catch (error) {
+    results.failed.push({ key: 'catalystpit:top_stories', error: error.message });
+    console.error('❌ Failed top_stories:', error.message);
+  }
+
+  // ── 2. All other feeds (unchanged, Claude-generated) ─────────────────────
   await Promise.allSettled(
     DATA_FEEDS.map(async ({ key, prompt }) => {
       try {
-        const data = await fetchFromClaude(prompt);
+        const data  = await fetchFromClaude(prompt);
         const value = JSON.stringify(data);
         await kvSet(key, value);
         results.refreshed.push(key);
