@@ -1,11 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from "react";
 
-const fl = document.createElement("link");
-fl.rel = "stylesheet";
-fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
-document.head.appendChild(fl);
-
 const C = {
   bg:"#F5F6F3",white:"#FFFFFF",surface:"#F0F2EE",border:"#E0E2DC",border2:"#C4C8BE",
   ink:"#0C1410",text:"#1A2018",muted:"#5A6458",dim:"#8A9088",
@@ -55,6 +50,13 @@ export default function InsidersPage() {
   const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
 
   const loadData = useCallback(async () => {
+    // Load fonts client-side only
+    if (!document.querySelector('link[data-cpfonts]')) {
+      const fl = document.createElement("link");
+      fl.rel = "stylesheet"; fl.setAttribute('data-cpfonts','1');
+      fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
+      document.head.appendChild(fl);
+    }
     setLoading(true);
     const raw = await fetchKey("insider_trades");
     const arr = toArr(raw, 'trades','insider_trades','insiders','filings','data');
