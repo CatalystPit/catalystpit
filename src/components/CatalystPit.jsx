@@ -416,14 +416,15 @@ export default function CatalystPit() {
         <span style={{color:C.green,fontWeight:600}}>You're in.</span> First brief arrives at 6 AM.
       </div>
 
+      {/* TOP NAV */}
       <div style={{background:C.navBg,height:50,display:"flex",alignItems:"center",
         justifyContent:"space-between",padding:"0 24px",position:"sticky",top:0,zIndex:100,
         borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
         <Logo dark/>
         <div style={{display:"flex",gap:20,alignItems:"center",marginLeft:40,borderLeft:`1px solid rgba(255,255,255,0.2)`,paddingLeft:40}}>
           {["Markets","News","Screener","Insiders","Politicians","Charts","Crypto"].map(l=>(
-            <span key={l} className="nbtn" style={{fontSize:12,color:"rgba(255,255,255,0.75)",cursor:"pointer",
-              transition:"color 0.2s",fontWeight:400,letterSpacing:"0.02em"}}>{l}</span>
+            <a key={l} href={`/${l.toLowerCase()}`} className="nbtn" style={{fontSize:12,color:"rgba(255,255,255,0.75)",cursor:"pointer",
+              transition:"color 0.2s",fontWeight:400,letterSpacing:"0.02em",textDecoration:"none"}}>{l}</a>
           ))}
         </div>
         <div style={{display:"flex",gap:8}}>
@@ -444,6 +445,7 @@ export default function CatalystPit() {
         </div>
       </div>
 
+      {/* TICKER TAPE */}
       <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,
         overflow:"hidden",padding:"7px 0",position:"sticky",top:50,zIndex:99}}>
         <div style={{display:"flex",transform:`translateX(${tickPos%tickW}px)`,
@@ -463,6 +465,7 @@ export default function CatalystPit() {
         </div>
       </div>
 
+      {/* HERO STRIP */}
       <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,padding:"14px 24px"}}>
         <div style={{maxWidth:1380,margin:"0 auto",display:"flex",
           justifyContent:"space-between",alignItems:"center",gap:16,flexWrap:"wrap"}}>
@@ -495,11 +498,14 @@ export default function CatalystPit() {
         </div>
       </div>
 
+      {/* MAIN BODY */}
       <div style={{maxWidth:1380,margin:"0 auto",padding:"16px 24px",
         display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
 
+        {/* LEFT */}
         <div style={{display:"flex",flexDirection:"column",gap:16}}>
 
+          {/* TOP STORIES */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -561,6 +567,7 @@ export default function CatalystPit() {
             </div>
           </div>
 
+          {/* MARKETS PULSE */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",alignItems:"center",gap:7}}>
@@ -603,6 +610,7 @@ export default function CatalystPit() {
             </div>
           </div>
 
+          {/* WHY IS IT MOVING */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",alignItems:"center",gap:7}}>
@@ -647,6 +655,7 @@ export default function CatalystPit() {
             </div>
           </div>
 
+          {/* INSIDER TRADES */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -725,6 +734,7 @@ export default function CatalystPit() {
             </div>
           </div>
 
+          {/* POLITICIAN TRADES */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -805,6 +815,7 @@ export default function CatalystPit() {
 
         </div>
 
+        {/* RIGHT SIDEBAR */}
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
 
           <div style={{background:"#0C1410",borderRadius:8,padding:"18px",position:"relative",overflow:"hidden"}}>
@@ -912,6 +923,7 @@ export default function CatalystPit() {
         </div>
       </div>
 
+      {/* FOOTER */}
       <div style={{background:C.navBg,marginTop:20,padding:"24px",
         display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
         <Logo dark scale={0.85}/>
