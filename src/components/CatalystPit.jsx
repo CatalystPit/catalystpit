@@ -19,12 +19,9 @@ const C = {
 
 const chgC  = (v) => (+v)>0 ? C.green : C.red;
 const chgBg = (v) => (+v)>0 ? C.greenLight : C.redLight;
-
-// FIX: fmt2 and fmtP now guard against NaN
 const fmt2  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : x.toFixed(2); };
 const fmtP  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : `${x>0?"+":""}${x.toFixed(2)}%`; };
 const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
-
 const timeAgo = m => typeof m==="number"?(m<60?`${m}m ago`:`${Math.floor(m/60)}h ago`):m||"Just now";
 
 const TICKS = [
@@ -48,12 +45,7 @@ const CARD_COLORS = [
   ["#0C1A2A","#1A5A88"],["#2A0C0C","#882A1A"],["#0C2A2A","#1A7A7A"],
 ];
 
-// ── Story-relevant photo lookup ──────────────────────────────────────────────
-// Priority: (1) real imageUrl from KV, (2) ticker-matched photo, (3) tag fallback
-// All IDs are from Unsplash's permanent CDN — no API key needed.
-
 const TICKER_PHOTOS = {
-  // ── Mega-caps ──
   AAPL:  ["photo-1611532736597-de2d4265fba3","photo-1517336714731-489689fd1ca8","photo-1496181133206-80ce9b88a853"],
   MSFT:  ["photo-1633419461186-7d40a38105ec","photo-1568952433726-3896e3881c65","photo-1551288049-bebda4e38f71"],
   GOOGL: ["photo-1573804633927-bfcbcd909acd","photo-1498050108023-c5249f4df085","photo-1583508805133-8fd03b5a6b94"],
@@ -62,47 +54,38 @@ const TICKER_PHOTOS = {
   META:  ["photo-1611605698335-8b1569810432","photo-1432888498266-38ffec3eaf0a","photo-1579869847557-1f67382cc158"],
   NVDA:  ["photo-1518770660439-4636190af475","photo-1591488320449-011701bb6704","photo-1601132359864-c974e79890ac"],
   TSLA:  ["photo-1560958089-b8a1929cea89","photo-1593941707882-a5bba14938c7","photo-1617704548623-340376564e68"],
-  // ── Finance & Banks ──
   JPM:   ["photo-1486406146926-c627a92ad1ab","photo-1444653614773-995cb1ef9efa","photo-1604594849809-dfedbc827105"],
   BAC:   ["photo-1486406146926-c627a92ad1ab","photo-1604594849809-dfedbc827105","photo-1444653614773-995cb1ef9efa"],
   GS:    ["photo-1486406146926-c627a92ad1ab","photo-1542744173-8e7e53415bb0","photo-1507003211169-0a1dd7228f2d"],
   MS:    ["photo-1542744173-8e7e53415bb0","photo-1486406146926-c627a92ad1ab","photo-1444653614773-995cb1ef9efa"],
   WFC:   ["photo-1604594849809-dfedbc827105","photo-1486406146926-c627a92ad1ab","photo-1444653614773-995cb1ef9efa"],
-  // ── Indices & ETFs ──
   SPY:   ["photo-1611974789855-9c2a0a7236a3","photo-1590283603385-17ffb3a7f29f","photo-1535320903710-d993d3d77d29"],
   QQQ:   ["photo-1518770660439-4636190af475","photo-1611974789855-9c2a0a7236a3","photo-1590283603385-17ffb3a7f29f"],
   DJI:   ["photo-1611974789855-9c2a0a7236a3","photo-1518546305927-5a555bb7020d","photo-1460925895917-afdab827c52f"],
   VIX:   ["photo-1642790551116-18e4f4c38c86","photo-1590283603385-17ffb3a7f29f","photo-1563986768494-4dee2763ff3f"],
   GLD:   ["photo-1610375461246-83df859d849d","photo-1559526324-4b87b5e36e44","photo-1623227866882-f72b4e2c5e73"],
-  // ── Crypto ──
   BTC:       ["photo-1639762681057-408e52192e55","photo-1621504450181-5d356f61d307","photo-1622630998477-20aa696ecb05"],
   "BTC-USD": ["photo-1639762681057-408e52192e55","photo-1621504450181-5d356f61d307","photo-1622630998477-20aa696ecb05"],
   ETH:       ["photo-1622630998477-20aa696ecb05","photo-1639762681057-408e52192e55","photo-1634704784915-aacf363b021f"],
   "ETH-USD": ["photo-1622630998477-20aa696ecb05","photo-1639762681057-408e52192e55","photo-1634704784915-aacf363b021f"],
-  // ── More tech ──
   AMD:   ["photo-1518770660439-4636190af475","photo-1591488320449-011701bb6704","photo-1551288049-bebda4e38f71"],
   INTC:  ["photo-1518770660439-4636190af475","photo-1451187580459-43490279c0fa","photo-1591488320449-011701bb6704"],
   CRM:   ["photo-1460925895917-afdab827c52f","photo-1551288049-bebda4e38f71","photo-1498050108023-c5249f4df085"],
   ORCL:  ["photo-1460925895917-afdab827c52f","photo-1568952433726-3896e3881c65","photo-1451187580459-43490279c0fa"],
   NFLX:  ["photo-1522869635100-9f4c5e86aa37","photo-1611532736597-de2d4265fba3","photo-1585184394271-4c0a47dc59c9"],
   DIS:   ["photo-1534430480872-3498386e7856","photo-1609842947418-a7c26a7b5827","photo-1524985069026-dd778a71c7b4"],
-  // ── Energy & Commodities ──
   XOM:   ["photo-1611244419377-b0a760c19719","photo-1473341304170-971dccb5ac1e","photo-1466611653911-95081537e5b7"],
   CVX:   ["photo-1611244419377-b0a760c19719","photo-1473341304170-971dccb5ac1e","photo-1466611653911-95081537e5b7"],
   "CL=F":["photo-1611244419377-b0a760c19719","photo-1473341304170-971dccb5ac1e","photo-1466611653911-95081537e5b7"],
-  // ── EV & Auto ──
   RIVN:  ["photo-1593941707882-a5bba14938c7","photo-1560958089-b8a1929cea89","photo-1617704548623-340376564e68"],
   F:     ["photo-1552519507-da3b142c6e3d","photo-1492144534655-ae79c964c9d7","photo-1494976388531-d1058494cdd8"],
   GM:    ["photo-1552519507-da3b142c6e3d","photo-1494976388531-d1058494cdd8","photo-1492144534655-ae79c964c9d7"],
-  // ── Healthcare ──
   JNJ:   ["photo-1576091160550-2173dba999ef","photo-1584308666744-24d5c474f2ae","photo-1532187863486-abf9dbad1b69"],
   PFE:   ["photo-1559757175-0eb30cd8c063","photo-1576091160550-2173dba999ef","photo-1584308666744-24d5c474f2ae"],
-  // ── Meme / speculative ──
   GME:   ["photo-1612287230202-1ff1d85d1bdf","photo-1511512578047-dfb367046420","photo-1593305841991-05c297ba4575"],
   AMC:   ["photo-1489599849927-2ee91cede3ba","photo-1536440136628-849c177e76a1","photo-1524985069026-dd778a71c7b4"],
 };
 
-// Tag fallback pool (used when ticker not in TICKER_PHOTOS)
 const TAG_PHOTOS = {
   EARNINGS: ["photo-1611974789855-9c2a0a7236a3","photo-1590283603385-17ffb3a7f29f","photo-1460925895917-afdab827c52f","photo-1543286386-713bdd548da4"],
   MARKETS:  ["photo-1611974789855-9c2a0a7236a3","photo-1518546305927-5a555bb7020d","photo-1590283603385-17ffb3a7f29f","photo-1642790551116-18e4f4c38c86"],
@@ -118,15 +101,12 @@ const TAG_PHOTOS = {
 };
 
 const storyPhoto = (sym, tag, slot) => {
-  // 1. Ticker-specific pool
   const tickerPool = TICKER_PHOTOS[sym?.toUpperCase()];
   if (tickerPool) return `https://images.unsplash.com/${tickerPool[slot % tickerPool.length]}?w=900&h=560&fit=crop&q=85&auto=format`;
-  // 2. Tag fallback
   const tagPool = TAG_PHOTOS[tag] || TAG_PHOTOS.MARKETS;
   return `https://images.unsplash.com/${tagPool[slot % tagPool.length]}?w=900&h=560&fit=crop&q=85&auto=format`;
 };
 
-// ── Fetch from KV cache ────────────────────────────────────────────────────
 const fetchKey = async (key) => {
   try {
     const r = await fetch(`/api/claude?key=${key}`);
@@ -134,23 +114,18 @@ const fetchKey = async (key) => {
     const d = await r.json();
     if (!d || !d.data) return null;
     let val = d.data;
-    // Unwrap up to two layers of JSON stringification
     if (typeof val === 'string') { try { val = JSON.parse(val); } catch { return null; } }
     if (typeof val === 'string') { try { val = JSON.parse(val); } catch { return null; } }
     return val;
   } catch { return null; }
 };
 
-// ── FIX: helper to unwrap possibly-wrapped arrays ──────────────────────────
-// Claude sometimes returns { stories: [...] } instead of bare [...].
-// This tries the bare value, then common wrapper keys, then any array value found.
 const toArr = (val, ...wrapperKeys) => {
   if (Array.isArray(val)) return val;
   if (val && typeof val === 'object') {
     for (const k of wrapperKeys) {
       if (Array.isArray(val[k])) return val[k];
     }
-    // last resort: grab the first array-valued property
     for (const k of Object.keys(val)) {
       if (Array.isArray(val[k])) return val[k];
     }
@@ -158,7 +133,6 @@ const toArr = (val, ...wrapperKeys) => {
   return [];
 };
 
-// ── Map cache data to the shape the UI expects ─────────────────────────────
 const fetchAll = async () => {
   try {
     const [stories, snapshot, tape, insiderData, politicianData, movingData] = await Promise.all([
@@ -170,46 +144,37 @@ const fetchAll = async () => {
       fetchKey("why_moving"),
     ]);
 
-    // ── ticker_tape → {sym, price, chg} ──
     const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
     const tickers = tapeArr.length > 0
       ? tapeArr.map(t => ({
           sym: t.symbol || t.sym || t.ticker || '?',
-          // FIX: try every price field name Claude might use
           price: safeN(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice),
-          // FIX: try every change-pct field name
           chg: safeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
         }))
       : TICKS;
 
-    // ── top_stories → {headline, source, mins, tag, sym, chg, hot} ──
     const storiesArr = toArr(stories, 'stories', 'top_stories', 'articles', 'items', 'data');
     const news = storiesArr.map(s => ({
-      // FIX: try title before headline — Claude often uses 'title'
       headline: s.headline || s.title || s.summary || s.description || '',
       source: s.source || s.outlet || s.publisher || 'Market News',
       mins: Math.floor(Math.random() * 45) + 1,
-      // FIX: normalise tag to uppercase and validate against TAG dict
       tag: (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
-      sym: s.ticker || s.symbol || s.sym || 'SPY',
+      // FIX: don't default to SPY — leave null for non-financial stories
+      sym: (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || s.sym || null),
       chg: (Math.random() * 4 - 1).toFixed(2),
       hot: Math.random() > 0.7,
-      // Real photo URL from Claude's response, or null (card will use tagPhoto fallback)
       imageUrl: s.image_url || s.imageUrl || s.image || s.thumbnail || s.photo_url || null,
     }));
 
-    // ── why_moving → {sym, name, price, chg, why} ──
     const moversArr = toArr(movingData, 'movers', 'why_moving', 'stocks', 'moves', 'data');
     const movers = moversArr.map(m => ({
       sym:  m.ticker  || m.symbol || m.sym  || '?',
       name: m.company || m.name   || m.company_name || m.sym || m.ticker || '',
       price: safeN(m.price ?? m.last ?? m.current_price),
-      // FIX: same multi-field chg fallback as tickers
       chg: safeN(m.changePct ?? m.change_pct ?? m.pct_change ?? m.chg ?? m.changePercent ?? m.percentChange),
       why: m.reason || m.why || m.explanation || m.catalyst || m.summary || '',
     }));
 
-    // ── insider_trades → {sym, name, role, type, value, filed} ──
     const insidersArr = toArr(insiderData, 'trades', 'insider_trades', 'insiders', 'filings', 'data');
     const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
     const insiders = insidersArr.map(i => ({
@@ -217,35 +182,28 @@ const fetchAll = async () => {
       name: i.executive || i.name  || i.insider || i.filer || '',
       role: i.title    || i.role   || i.position || i.relationship || '',
       type: BUY_WORDS.has((i.action || i.transaction_type || '').toLowerCase()) ? 'BUY' : 'SELL',
-      // FIX: handle numeric value → formatted string, or pass through string
       value: typeof i.value === 'number'
         ? `$${(i.value / 1e6).toFixed(1)}M`
         : (i.value || i.amount || i.transaction_value || ''),
       filed: i.date || i.filed || i.filing_date || i.reported || '',
     }));
 
-    // ── politician_trades → {name, title, sym, action, value, filed} ──
     const polArr = toArr(politicianData, 'trades', 'politician_trades', 'politicians', 'disclosures', 'data');
     const politicians = polArr.map(p => {
       const party   = p.party   || p.affiliation || '';
       const chamber = p.chamber || p.title       || p.position || '';
       return {
-        // FIX: try every name field Claude might use
         name: p.politician || p.name || p.senator || p.representative || p.member || '',
-        // FIX: build title only from fields that actually exist
         title: [party, chamber].filter(Boolean).join(' · '),
         sym: p.ticker || p.symbol || p.sym || p.stock || '?',
-        // FIX: broader buy-word matching
         action: BUY_WORDS.has((p.action || p.transaction_type || p.type || '').toLowerCase()) ? 'BUY' : 'SELL',
         value: p.amount || p.value || p.range || p.transaction_amount || '',
         filed: p.date || p.filed || p.disclosure_date || p.reported || p.transaction_date || '',
       };
     });
 
-    // ── market snapshot scalars ──
     const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
-    const vix     = safeN(snapshot?.VIX?.price     ?? snapshot?.VIX?.last                               ?? 18.3);
-
+    const vix     = safeN(snapshot?.VIX?.price ?? snapshot?.VIX?.last ?? 18.3);
     const chart_points = [420,422,418,425,430,428,435,440,438,445,450,448,455,460,458,465,470,468,472,475];
 
     return { tickers, news, movers, insiders, politicians, chart_points, spy_chg, vix };
@@ -255,7 +213,6 @@ const fetchAll = async () => {
   }
 };
 
-// ── Live Chart ────────────────────────────────────────────────────────────────
 function MiniLineChart({points=[], color=C.green}) {
   const ref=useRef(null);
   useEffect(()=>{
@@ -282,7 +239,6 @@ function MiniLineChart({points=[], color=C.green}) {
   return <canvas ref={ref} width={280} height={80} style={{display:"block",width:"100%",height:80}}/>;
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
 const Skel=({w="100%",h=14,mb=6})=>(
   <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,
     background:"linear-gradient(90deg,#E8EAE5 25%,#F0F2EE 50%,#E8EAE5 75%)",
@@ -317,13 +273,14 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
   const primarySrc = !imgFailed && n.imageUrl ? n.imageUrl : null;
   const photoSrc   = storyPhoto(n.sym, n.tag, idx);
   const photoH     = hero ? 340 : stacked ? 110 : large ? 200 : 150;
+  // FIX: only show ticker badge when a real ticker exists
+  const hasValidTicker = n.sym && n.sym !== 'N/A' && n.sym !== 'null' && n.sym !== '?';
 
   return (
     <div className="card-hov" style={{background:C.white,border:`1px solid ${C.border}`,
       borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all 0.2s",
       height:"100%",display:"flex",flexDirection:"column"}}>
 
-      {/* ── Photo ── */}
       <div style={{height:photoH,position:"relative",overflow:"hidden",
         flexShrink:0,background:`linear-gradient(135deg,${bg1},${bg2})`}}>
         <img
@@ -336,29 +293,28 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
           style={{position:"absolute",inset:0,width:"100%",height:"100%",
             objectFit:"cover",objectPosition:"center top",display:"block"}}
         />
-        {/* Overlay */}
         <div style={{position:"absolute",inset:0,pointerEvents:"none",
           background:hero
             ?"linear-gradient(to bottom,rgba(0,0,0,0.1) 0%,rgba(0,0,0,0.02) 35%,rgba(0,0,0,0.78) 100%)"
             :"linear-gradient(to bottom,rgba(0,0,0,0.38) 0%,rgba(0,0,0,0.04) 45%,rgba(0,0,0,0.48) 100%)"}}/>
 
-        {/* Ticker badge — top left */}
-        <div style={{position:"absolute",top:9,left:9,display:"flex",gap:5,zIndex:2}}>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,color:"#fff",
-            background:"rgba(0,0,0,0.52)",backdropFilter:"blur(6px)",
-            padding:"2px 8px",borderRadius:4}}>{n.sym}</span>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,
-            color:isUp?"#5AE87A":"#FF8080",background:"rgba(0,0,0,0.52)",backdropFilter:"blur(6px)",
-            padding:"2px 8px",borderRadius:4}}>{fmtP(+n.chg)}</span>
-        </div>
+        {/* FIX: only render ticker badge when a real ticker is known */}
+        {hasValidTicker && (
+          <div style={{position:"absolute",top:9,left:9,display:"flex",gap:5,zIndex:2}}>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,color:"#fff",
+              background:"rgba(0,0,0,0.52)",backdropFilter:"blur(6px)",
+              padding:"2px 8px",borderRadius:4}}>{n.sym}</span>
+            <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,
+              color:isUp?"#5AE87A":"#FF8080",background:"rgba(0,0,0,0.52)",backdropFilter:"blur(6px)",
+              padding:"2px 8px",borderRadius:4}}>{fmtP(+n.chg)}</span>
+          </div>
+        )}
 
-        {/* Source — bottom right */}
         <div style={{position:"absolute",bottom:hero?72:8,right:10,zIndex:2}}>
           <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,
             color:"rgba(255,255,255,0.82)",textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{n.source}</span>
         </div>
 
-        {/* Hero: headline lives on the photo */}
         {hero&&(
           <div style={{position:"absolute",bottom:0,left:0,right:0,
             padding:"16px 16px 14px",zIndex:2}}>
@@ -376,7 +332,6 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
         )}
       </div>
 
-      {/* ── Text (non-hero) ── */}
       {!hero&&(
         <div style={{padding:stacked?"9px 12px 10px":"11px 13px 13px",flex:1}}>
           <div style={{display:"flex",gap:5,marginBottom:5,alignItems:"center"}}>
@@ -396,7 +351,6 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
   );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
 export default function CatalystPit() {
   const [data,setData]=useState(null);
   const [loading,setLoading]=useState(true);
@@ -454,7 +408,6 @@ export default function CatalystPit() {
         *{box-sizing:border-box}
       `}</style>
 
-      {/* TOAST */}
       <div style={{position:"fixed",bottom:24,left:"50%",
         transform:`translateX(-50%) translateY(${toasted?0:80}px)`,
         background:C.white,border:`1px solid ${C.greenBorder}`,padding:"13px 24px",
@@ -463,7 +416,6 @@ export default function CatalystPit() {
         <span style={{color:C.green,fontWeight:600}}>You're in.</span> First brief arrives at 6 AM.
       </div>
 
-      {/* ── TOP NAV ── */}
       <div style={{background:C.navBg,height:50,display:"flex",alignItems:"center",
         justifyContent:"space-between",padding:"0 24px",position:"sticky",top:0,zIndex:100,
         borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
@@ -492,7 +444,6 @@ export default function CatalystPit() {
         </div>
       </div>
 
-      {/* ── TICKER TAPE ── */}
       <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,
         overflow:"hidden",padding:"7px 0",position:"sticky",top:50,zIndex:99}}>
         <div style={{display:"flex",transform:`translateX(${tickPos%tickW}px)`,
@@ -500,10 +451,8 @@ export default function CatalystPit() {
           {[...tickers,...tickers,...tickers].map((t,i)=>(
             <div key={i} style={{display:"flex",alignItems:"center",gap:6,
               padding:"0 16px",borderRight:`1px solid ${C.border}`}}>
-              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,
-                color:C.muted,fontWeight:400}}>{t.sym}</span>
-              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,
-                color:C.ink,fontWeight:500}}>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.muted,fontWeight:400}}>{t.sym}</span>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.ink,fontWeight:500}}>
                 {t.sym==="BTC"||(t.price>1000)?(+t.price).toLocaleString():fmt2(+t.price)}</span>
               <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,
                 color:chgC(t.chg),background:chgBg(t.chg),
@@ -514,9 +463,7 @@ export default function CatalystPit() {
         </div>
       </div>
 
-      {/* ── HERO STRIP ── */}
-      <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,
-        padding:"14px 24px"}}>
+      <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,padding:"14px 24px"}}>
         <div style={{maxWidth:1380,margin:"0 auto",display:"flex",
           justifyContent:"space-between",alignItems:"center",gap:16,flexWrap:"wrap"}}>
           <div>
@@ -529,8 +476,7 @@ export default function CatalystPit() {
             </p>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <div style={{display:"flex",background:C.white,border:`1px solid ${C.border2}`,
-              borderRadius:7,overflow:"hidden"}}>
+            <div style={{display:"flex",background:C.white,border:`1px solid ${C.border2}`,borderRadius:7,overflow:"hidden"}}>
               <input value={email} onChange={e=>setEmail(e.target.value)}
                 onKeyDown={e=>e.key==="Enter"&&signup()}
                 placeholder="Email — free 6 AM brief"
@@ -549,14 +495,11 @@ export default function CatalystPit() {
         </div>
       </div>
 
-      {/* ── MAIN BODY ── */}
       <div style={{maxWidth:1380,margin:"0 auto",padding:"16px 24px",
         display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
 
-        {/* ── LEFT MAIN ── */}
         <div style={{display:"flex",flexDirection:"column",gap:16}}>
 
-          {/* ── TOP STORIES ── */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -585,13 +528,11 @@ export default function CatalystPit() {
                 </div>
               ) : (
                 <>
-                  {/* ── ROW 1: Single full-width hero ── */}
                   <div style={{marginBottom:12}}>
                     {news.slice(0,1).map((n,i)=>(
                       <NewsPhotoCard key={i} n={n} idx={0} hero/>
                     ))}
                   </div>
-                  {/* ── ROW 2: 4 equal cards ── */}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
                     {Array.from({length:4},(_,i)=>news[1+i]||news[i%Math.min(1,news.length)])
                       .filter(Boolean).map((n,i)=>(
@@ -620,7 +561,6 @@ export default function CatalystPit() {
             </div>
           </div>
 
-          {/* ── MARKETS PULSE ── */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",alignItems:"center",gap:7}}>
@@ -634,8 +574,7 @@ export default function CatalystPit() {
                     padding:"14px 14px",border:`1px solid ${C.border}`,cursor:"pointer",transition:"background 0.15s"}}>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.muted,marginBottom:5}}>{t.sym}</div>
                     {loading?<Skel h={26} mb={4}/>:<>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:600,
-                        color:C.ink,marginBottom:4}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:600,color:C.ink,marginBottom:4}}>
                         {t.sym==="BTC"||(+t.price>10000)?(+t.price).toLocaleString("en-US",{maximumFractionDigits:2}):fmt2(+t.price)}
                       </div>
                       <span style={{fontSize:11,fontFamily:"'DM Mono',monospace",fontWeight:600,
@@ -646,8 +585,7 @@ export default function CatalystPit() {
                   </div>
                 ))}
               </div>
-              <div style={{background:C.surface,borderRadius:8,padding:"16px",
-                border:`1px solid ${C.border}`}}>
+              <div style={{background:C.surface,borderRadius:8,padding:"16px",border:`1px solid ${C.border}`}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.muted,letterSpacing:"1px"}}>SPY · TODAY</span>
                   <div style={{display:"flex",gap:4}}>
@@ -665,7 +603,6 @@ export default function CatalystPit() {
             </div>
           </div>
 
-          {/* ── WHY IS IT MOVING ── */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",alignItems:"center",gap:7}}>
@@ -692,8 +629,7 @@ export default function CatalystPit() {
                         fontWeight:600,color:"rgba(255,255,255,0.9)"}}>{m.sym}</span>
                     </div>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:600,color:C.ink,marginBottom:3,
-                        fontFamily:"'DM Sans',sans-serif"}}>
+                      <div style={{fontSize:13,fontWeight:600,color:C.ink,marginBottom:3,fontFamily:"'DM Sans',sans-serif"}}>
                         Why Is {m.name} {isUp?"Surging":"Falling"} Today?
                       </div>
                       <div style={{fontSize:12,color:C.muted,fontWeight:300,
@@ -701,10 +637,9 @@ export default function CatalystPit() {
                     </div>
                     <div style={{textAlign:"right",flexShrink:0}}>
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,fontWeight:600,
-                        color:chgC(m.chg),background:chgBg(m.chg),padding:"3px 8px",
-                        borderRadius:4}}>{safeN(m.chg)>0?"▲":"▼"} {Math.abs(safeN(m.chg)).toFixed(1)}%</div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,
-                        color:C.dim,marginTop:3}}>{fmt2(m.price)}</div>
+                        color:chgC(m.chg),background:chgBg(m.chg),padding:"3px 8px",borderRadius:4}}>
+                        {safeN(m.chg)>0?"▲":"▼"} {Math.abs(safeN(m.chg)).toFixed(1)}%</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,marginTop:3}}>{fmt2(m.price)}</div>
                     </div>
                   </div>
                 );
@@ -712,7 +647,6 @@ export default function CatalystPit() {
             </div>
           </div>
 
-          {/* ── INSIDER TRADES ── */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -791,7 +725,6 @@ export default function CatalystPit() {
             </div>
           </div>
 
-          {/* ── POLITICIAN TRADES ── */}
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,
               background:C.surface,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -872,16 +805,12 @@ export default function CatalystPit() {
 
         </div>
 
-        {/* ── RIGHT SIDEBAR ── */}
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
 
-          <div style={{background:"#0C1410",borderRadius:8,padding:"18px",
-            position:"relative",overflow:"hidden"}}>
+          <div style={{background:"#0C1410",borderRadius:8,padding:"18px",position:"relative",overflow:"hidden"}}>
             <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:"#5AB87A"}}/>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#3A6A48",
-              letterSpacing:"1.5px",marginBottom:8}}>THE CATALYST BRIEF</div>
-            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,fontWeight:300,
-              color:"#FFFFFF",lineHeight:1.3,marginBottom:6}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#3A6A48",letterSpacing:"1.5px",marginBottom:8}}>THE CATALYST BRIEF</div>
+            <div style={{fontFamily:"'Cormorant Garamond',serif",fontSize:19,fontWeight:300,color:"#FFFFFF",lineHeight:1.3,marginBottom:6}}>
               Your morning edge.<br/><em style={{color:"#5AB87A"}}>Delivered at 6 AM.</em>
             </div>
             <p style={{fontSize:12,color:"#3A5A42",fontWeight:300,lineHeight:1.7,marginBottom:12}}>
@@ -915,8 +844,7 @@ export default function CatalystPit() {
                 alignItems:"center",padding:"9px 14px",
                 borderBottom:i<(data?.tickers||TICKS).length-1?`1px solid ${C.surface}`:"none",
                 transition:"background 0.15s",cursor:"pointer"}}>
-                <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,
-                  fontWeight:600,color:C.ink}}>{t.sym}</span>
+                <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:600,color:C.ink}}>{t.sym}</span>
                 <div style={{display:"flex",alignItems:"center",gap:7}}>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.text}}>
                     {t.sym==="BTC"||(safeN(t.price)>10000)
@@ -924,22 +852,18 @@ export default function CatalystPit() {
                       : fmt2(t.price)}
                   </span>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,
-                    color:chgC(t.chg),background:chgBg(t.chg),
-                    padding:"1px 5px",borderRadius:3}}>
+                    color:chgC(t.chg),background:chgBg(t.chg),padding:"1px 5px",borderRadius:3}}>
                     {safeN(t.chg)>0?"+":""}{fmt2(t.chg)}%</span>
                 </div>
               </div>
             ))}
           </div>
 
-          <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,
-            borderRadius:8,padding:"16px"}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.green,
-              letterSpacing:"1.5px",marginBottom:8}}>UNLOCK PRO — $29/MO</div>
+          <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"16px"}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:C.green,letterSpacing:"1.5px",marginBottom:8}}>UNLOCK PRO — $29/MO</div>
             <ul style={{listStyle:"none",display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
               {["Full real-time news feed","All insider filings · live","Every politician trade","Full screener · 12 filters","Live charts · all timeframes","Options flow & dark pool","Daily 6 AM catalyst brief"].map(f=>(
-                <li key={f} style={{fontSize:12,color:C.green,display:"flex",
-                  gap:7,alignItems:"center",fontWeight:400}}>
+                <li key={f} style={{fontSize:12,color:C.green,display:"flex",gap:7,alignItems:"center",fontWeight:400}}>
                   <span style={{fontWeight:700,fontSize:10,color:C.green}}>✓</span>{f}
                 </li>
               ))}
@@ -971,8 +895,7 @@ export default function CatalystPit() {
                 borderBottom:`1px solid ${C.surface}`,transition:"background 0.15s",cursor:"pointer"}}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,
-                      fontWeight:600,color:C.ink}}>{ins.sym}</span>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:600,color:C.ink}}>{ins.sym}</span>
                     <span style={{fontSize:9,padding:"2px 6px",borderRadius:3,
                       fontFamily:"'DM Mono',monospace",fontWeight:600,
                       background:ins.type==="BUY"?C.greenLight:C.redLight,
@@ -989,10 +912,8 @@ export default function CatalystPit() {
         </div>
       </div>
 
-      {/* ── FOOTER ── */}
       <div style={{background:C.navBg,marginTop:20,padding:"24px",
-        display:"flex",justifyContent:"space-between",alignItems:"center",
-        flexWrap:"wrap",gap:12}}>
+        display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
         <Logo dark scale={0.85}/>
         <div style={{display:"flex",gap:24}}>
           {["Features","Pricing","Privacy","Terms","Contact"].map(l=>(
