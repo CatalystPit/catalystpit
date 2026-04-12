@@ -79,7 +79,8 @@ export default function PoliticiansPage() {
 
   let filtered = trades;
   if (filter !== 'ALL') filtered = filtered.filter(t=>t.action===filter);
-  if (partyFilter !== 'ALL') filtered = filtered.filter(t=>t.party===partyFilter);
+  if (partyFilter !== "ALL") filtered = filtered.filter(t=>t.party===partyFilter);
+  filtered = filtered.slice(0,10);
 
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
   const buys  = trades.filter(t=>t.action==='BUY').length;
