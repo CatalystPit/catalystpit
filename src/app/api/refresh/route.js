@@ -1,10 +1,10 @@
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const KV_TOKEN        = process.env.KV_REST_API_TOKEN;
-const CRON_SECRET     = process.env.CRON_SECRET;
-const GNEWS_KEY       = process.env.GNEWS_KEY;
-const TWELVE_DATA_KEY = process.env.TWELVE_DATA_KEY; // twelvedata.com free — 800 req/day
+const KV_TOKEN      = process.env.KV_REST_API_TOKEN;
+const CRON_SECRET   = process.env.CRON_SECRET;
+const GNEWS_KEY     = process.env.GNEWS_KEY;
+const POLYGON_KEY   = process.env.POLYGON_KEY; // polygon.io — Starter $29/mo for real-time
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const today = () => new Date().toISOString().split('T')[0];
@@ -33,66 +33,76 @@ async function claude(prompt, maxTokens=2000) {
   return JSON.parse(match ? match[0] : clean);
 }
 
-// ── Twelve Data — works from Vercel, free 800 req/day ─────────────────────
-async function fetchTwelveDataPrices(symbols) {
-  if (!TWELVE_DATA_KEY) throw new Error('TWELVE_DATA_KEY not set');
+// ── Polygon.io ────────────────────────────────────────────────────────────
+const P = (path) => `https://api.polygon.io${path}${path.includes('?')?'&':'?'}apiKey=${POLYGON_KEY}`;
 
-  // Twelve Data supports batch requests — one call for all symbols
-  const stockSyms  = symbols.filter(s => !s.includes('-'));
-  const cryptoSyms = symbols.filter(s => s.includes('-'));
+async function polygonGet(path) {
+  const res = await fetch(P(path));
+  if (!res.ok) throw new Error(`Polygon ${res.status}: ${await res.text()}`);
+  return res.json();
+}
 
+async function fetchPolygonStockPrices(tickers) {
+  // Snapshot endpoint — returns latest price, change, changePct for all tickers at once
+  const syms = tickers.join(',');
+  const data = await polygonGet(`/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${syms}`);
   const results = {};
-
-  // Fetch stocks
-  if (stockSyms.length) {
-    const url = `https://api.twelvedata.com/quote?symbol=${stockSyms.join(',')}&apikey=${TWELVE_DATA_KEY}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Twelve Data ${res.status}`);
-    const data = await res.json();
-
-    // Single symbol returns object directly; multiple returns object keyed by symbol
-    const items = stockSyms.length === 1 ? { [stockSyms[0]]: data } : data;
-    for (const [sym, q] of Object.entries(items)) {
-      if (q.status === 'error') continue;
-      results[sym] = {
-        price:     +parseFloat(q.close || q.price || 0).toFixed(2),
-        change:    +parseFloat(q.change || 0).toFixed(2),
-        changePct: +parseFloat(q.percent_change || 0).toFixed(2),
-      };
-    }
+  for (const t of (data.tickers || [])) {
+    const day   = t.day   || {};
+    const prevD = t.prevDay || {};
+    const price = t.lastTrade?.p || day.c || 0;
+    const prev  = prevD.c || price;
+    const chg   = price - prev;
+    const pct   = prev ? (chg / prev) * 100 : 0;
+    results[t.ticker] = {
+      price:     +price.toFixed(2),
+      change:    +chg.toFixed(2),
+      changePct: +pct.toFixed(2),
+    };
   }
-
-  // Fetch crypto pairs (BTC-USD → BTC/USD format for Twelve Data)
-  for (const sym of cryptoSyms) {
-    try {
-      const tdSym = sym.replace('-','/');
-      const url   = `https://api.twelvedata.com/quote?symbol=${tdSym}&apikey=${TWELVE_DATA_KEY}`;
-      const res   = await fetch(url);
-      const q     = await res.json();
-      if (q.status !== 'error') {
-        results[sym] = {
-          price:     +parseFloat(q.close || q.price || 0).toFixed(2),
-          change:    +parseFloat(q.change || 0).toFixed(2),
-          changePct: +parseFloat(q.percent_change || 0).toFixed(2),
-        };
-      }
-    } catch {}
-    await sleep(200); // small delay between crypto calls
-  }
-
   return results;
 }
 
-// ── Yahoo Finance screener — for movers (this endpoint works from Vercel) ──
-async function fetchYFMovers() {
-  const YF = { 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Accept:'application/json', Referer:'https://finance.yahoo.com/' };
-  const [gRes, lRes] = await Promise.all([
-    fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_gainers&count=4', { headers:YF }),
-    fetch('https://query2.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_losers&count=2',  { headers:YF }),
+async function fetchPolygonCryptoPrices(pairs) {
+  // pairs like ['BTC-USD','ETH-USD'] → Polygon uses X:BTCUSD format
+  const polyPairs = pairs.map(p => `X:${p.replace('-','')}`).join(',');
+  const data = await polygonGet(`/v2/snapshot/locale/global/markets/crypto/tickers?tickers=${polyPairs}`);
+  const results = {};
+  for (const t of (data.tickers || [])) {
+    const day  = t.day   || {};
+    const prev = t.prevDay?.c || day.o || day.c || 0;
+    const price = day.c || t.lastTrade?.p || 0;
+    const chg  = price - prev;
+    const pct  = prev ? (chg / prev) * 100 : 0;
+    // Convert X:BTCUSD back to BTC-USD
+    const sym = t.ticker.replace('X:','').replace(/([A-Z]+)(USD)/, '$1-$2');
+    results[sym] = {
+      price:     +price.toFixed(2),
+      change:    +chg.toFixed(2),
+      changePct: +pct.toFixed(2),
+    };
+  }
+  return results;
+}
+
+async function fetchPolygonMovers() {
+  const [gainData, loseData] = await Promise.all([
+    polygonGet('/v2/snapshot/locale/us/markets/stocks/gainers'),
+    polygonGet('/v2/snapshot/locale/us/markets/stocks/losers'),
   ]);
-  const g = (await gRes.json())?.finance?.result?.[0]?.quotes || [];
-  const l = (await lRes.json())?.finance?.result?.[0]?.quotes || [];
-  return [...g,...l];
+  const gainers = (gainData.tickers || []).slice(0, 3).map(t => ({
+    ticker:    t.ticker,
+    company:   t.ticker,
+    price:     +(t.day?.c || 0).toFixed(2),
+    changePct: +(t.todaysChangePerc || 0).toFixed(2),
+  }));
+  const losers = (loseData.tickers || []).slice(0, 3).map(t => ({
+    ticker:    t.ticker,
+    company:   t.ticker,
+    price:     +(t.day?.c || 0).toFixed(2),
+    changePct: +(t.todaysChangePerc || 0).toFixed(2),
+  }));
+  return [...gainers, ...losers];
 }
 
 // ── SEC EDGAR Form 4 ──────────────────────────────────────────────────────
@@ -132,32 +142,34 @@ export async function GET(request) {
   const ok   = k     => { results.refreshed.push(k); console.log(`✅ ${k}`); };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
-  // ── 1. Real-time prices — Twelve Data ─────────────────────────────────
+  // ── 1. Real-time prices — Polygon.io ──────────────────────────────────
   try {
-    const TAPE = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','BTC-USD','ETH-USD'];
-    const SNAP = ['SPY','QQQ','DIA','VIX','BTC-USD','ETH-USD','GLD','USO','AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD'];
-    const qMap = await fetchTwelveDataPrices([...new Set([...TAPE,...SNAP])]);
+    const STOCK_SYMS  = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
+    const CRYPTO_SYMS = ['BTC-USD','ETH-USD'];
 
-    const tape = TAPE.map(s=>({ symbol:s, price:qMap[s]?.price||0, changePct:qMap[s]?.changePct||0 }));
+    const [stockPrices, cryptoPrices] = await Promise.all([
+      fetchPolygonStockPrices(STOCK_SYMS),
+      fetchPolygonCryptoPrices(CRYPTO_SYMS),
+    ]);
+
+    const prices = { ...stockPrices, ...cryptoPrices };
+
+    // Ticker tape — 12 core symbols
+    const TAPE_SYMS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','BTC-USD','ETH-USD'];
+    const tape = TAPE_SYMS.map(s => ({ symbol:s, ...(prices[s] || {price:0,change:0,changePct:0}) }));
     await kvSet('catalystpit:ticker_tape', JSON.stringify(tape)); ok('catalystpit:ticker_tape');
 
-    const snapshot = Object.fromEntries(SNAP.map(s=>[s, qMap[s]||{price:0,change:0,changePct:0}]));
+    // Market snapshot — full set
+    const SNAP_SYMS = ['SPY','QQQ','DIA','VIX','GLD','USO','BTC-USD','ETH-USD','AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD'];
+    const snapshot  = Object.fromEntries(SNAP_SYMS.map(s => [s, prices[s] || {price:0,change:0,changePct:0}]));
     await kvSet('catalystpit:market_snapshot', JSON.stringify(snapshot)); ok('catalystpit:market_snapshot');
-  } catch(e) {
-    fail('prices',e);
-    // Claude fallback for prices if Twelve Data not set up yet
-    try {
-      const t = await claude(`Today is ${today()}. Return ONLY a JSON array with TODAY's real market prices for: AAPL,MSFT,NVDA,TSLA,AMZN,META,GOOGL,AMD,SPY,QQQ,BTC-USD,ETH-USD. Each: {"symbol":string,"price":number,"changePct":number}. No markdown.`);
-      await kvSet('catalystpit:ticker_tape', JSON.stringify(t)); ok('ticker_tape (fallback)');
-    } catch(e2) { fail('catalystpit:ticker_tape',e2); }
-  }
+  } catch(e) { fail('prices',e); }
 
-  // ── 2. Movers — Yahoo screener (works from Vercel) + Claude reasons ───
+  // ── 2. Real movers — Polygon gainers/losers ───────────────────────────
+  await sleep(300);
   try {
-    const movers = await fetchYFMovers();
-    const base   = movers.map(q=>({ ticker:q.symbol, company:q.shortName||q.symbol, price:+(q.regularMarketPrice||0).toFixed(2), changePct:+(q.regularMarketChangePercent||0).toFixed(2) }));
-    await sleep(300);
-    const enriched = await claude(`Today is ${today()}. These stocks are moving right now: ${JSON.stringify(base)}. Add a "reason" explaining why each is moving today. Return ONLY the same JSON array with "reason" added. No markdown.`);
+    const base = await fetchPolygonMovers();
+    const enriched = await claude(`Today is ${today()}. These stocks are the top movers right now: ${JSON.stringify(base)}. Add a "reason" and "name" field to each (full company name, and brief reason why it's moving today). Return ONLY the same JSON array with "name" and "reason" added. No markdown.`);
     await kvSet('catalystpit:why_moving', JSON.stringify(enriched)); ok('catalystpit:why_moving');
   } catch(e) { fail('catalystpit:why_moving',e); }
 
@@ -165,14 +177,14 @@ export async function GET(request) {
   await sleep(500);
   try {
     const raw      = await fetchSECInsiders();
-    const enriched = await claude(`Today is ${today()}. These are real SEC Form 4 filings from last 24 hours: ${JSON.stringify(raw)}. Add executive name, title, Buy/Sell action, and transaction value for each. Return ONLY JSON array: [{"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}]. No markdown.`);
+    const enriched = await claude(`Today is ${today()}. These are real SEC Form 4 filings from the last 24 hours: ${JSON.stringify(raw)}. For each add: executive name, title, Buy or Sell action, and transaction value. Return ONLY JSON array: [{"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}]. No markdown.`);
     await kvSet('catalystpit:insider_trades', JSON.stringify(enriched)); ok('catalystpit:insider_trades');
   } catch(e) { fail('catalystpit:insider_trades',e); }
 
-  // ── 4. Politician trades — Claude (QuiverQuant upgrade path in Phase 2) ─
+  // ── 4. Politician trades — Claude (upgrade to QuiverQuant in Phase 2) ──
   await sleep(500);
   try {
-    const politicians = await claude(`Today is ${today()}. Return ONLY a JSON array of 5 real recent congressional stock trades from the last 30 days based on actual STOCK Act disclosures. Use real politician names. Each: {"politician":string,"party":"D"|"R","chamber":"House"|"Senate","ticker":string,"company":string,"action":"Purchase"|"Sale","amount":string,"date":string}. No markdown.`);
+    const politicians = await claude(`Today is ${today()}. Return ONLY a JSON array of 5 real recent congressional stock trades from the last 30 days based on actual STOCK Act disclosures. Use real politician names and real tickers. Each: {"politician":string,"party":"D"|"R","chamber":"House"|"Senate","ticker":string,"company":string,"action":"Purchase"|"Sale","amount":string,"date":string}. No markdown.`);
     await kvSet('catalystpit:politician_trades', JSON.stringify(politicians)); ok('catalystpit:politician_trades');
   } catch(e) { fail('catalystpit:politician_trades',e); }
 
@@ -181,8 +193,8 @@ export async function GET(request) {
   try {
     const raw    = await fetchGNews();
     const stories = raw?.length
-      ? await claude(`Enrich these real news articles with finance metadata. For each add: "ticker","category" (Earnings|Macro|Insider|Squeeze|Crypto|Options|Tech|Markets|FED),"headline" (punchy max 12 words),"summary" (1 analyst sentence). Keep source,url,image_url,published unchanged. Return ONLY valid JSON array. No markdown. Articles: ${JSON.stringify(raw)}`, 3000)
-      : await claude(`Today is ${today()}. Return ONLY a JSON array of 6 top financial news stories right now. Each: {"headline","summary","ticker","source","category","image_url":null}. No markdown.`);
+      ? await claude(`Enrich these real news articles with finance metadata. For each add: "ticker","category"(Earnings|Macro|Insider|Squeeze|Crypto|Options|Tech|Markets|FED),"headline"(punchy max 12 words),"summary"(1 analyst sentence). Keep source,url,image_url,published unchanged. Return ONLY valid JSON array. No markdown. Articles: ${JSON.stringify(raw)}`, 3000)
+      : await claude(`Today is ${today()}. Return ONLY a JSON array of 6 top financial news stories. Each: {"headline","summary","ticker","source","category","image_url":null}. No markdown.`);
     await kvSet('catalystpit:top_stories', JSON.stringify(stories)); ok('catalystpit:top_stories');
   } catch(e) { fail('catalystpit:top_stories',e); }
 
