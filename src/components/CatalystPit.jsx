@@ -585,24 +585,17 @@ export default function CatalystPit() {
                 </div>
               ) : (
                 <>
-                  {/* ── ROW 1: Big hero left + stacked secondary right ── */}
-                  <div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr",gap:12,marginBottom:12}}>
-                    {/* Hero card — tall with big photo */}
+                  {/* ── ROW 1: Single full-width hero ── */}
+                  <div style={{marginBottom:12}}>
                     {news.slice(0,1).map((n,i)=>(
-                      <NewsPhotoCard key={i} n={n} idx={0} large hero/>
+                      <NewsPhotoCard key={i} n={n} idx={0} hero/>
                     ))}
-                    {/* Right column: 2 stacked cards */}
-                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                      {news.slice(1,3).map((n,i)=>(
-                        <NewsPhotoCard key={i} n={n} idx={i+1} stacked/>
-                      ))}
-                    </div>
                   </div>
-                  {/* ── ROW 2: 4 equal cards — pad from front if < 7 stories ── */}
+                  {/* ── ROW 2: 4 equal cards ── */}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
-                    {Array.from({length:4},(_,i)=>news[3+i]||news[i%Math.min(3,news.length)])
+                    {Array.from({length:4},(_,i)=>news[1+i]||news[i%Math.min(1,news.length)])
                       .filter(Boolean).map((n,i)=>(
-                      <NewsPhotoCard key={i} n={n} idx={i+3}/>
+                      <NewsPhotoCard key={i} n={n} idx={i+1}/>
                     ))}
                   </div>
                 </>
@@ -1010,7 +1003,7 @@ export default function CatalystPit() {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,
           fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(255,255,255,0.5)"}}>
-          <Dot/>LIVE · © 2026 CATALYSTPIT · NOT FINANCIAL ADVICE
+          <Dot/>LIVE · 2026 CATALYSTPIT · NOT FINANCIAL ADVICE
         </div>
       </div>
     </div>
