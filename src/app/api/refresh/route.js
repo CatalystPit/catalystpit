@@ -1,9 +1,9 @@
 export const runtime = 'nodejs';
-export const maxDuration = 60; 
+export const maxDuration = 60;
 
-const KV_TOKEN      = process.env.KV_REST_API_TOKEN;
-const CRON_SECRET   = process.env.CRON_SECRET;
-const NEWSAPI_KEY   = process.env.NEWSAPI_KEY;          // ← new env var
+const KV_TOKEN    = process.env.KV_REST_API_TOKEN;
+const CRON_SECRET = process.env.CRON_SECRET;
+const GNEWS_KEY   = process.env.GNEWS_KEY;   // ← gnews.io free key, works server-side
 
 async function kvSet(key, value) {
   const res = await fetch(`https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=1800`, {
@@ -18,38 +18,42 @@ async function kvSet(key, value) {
   console.log(`KV set ${key}: ${text.substring(0, 80)}`);
 }
 
-// ── NewsAPI: fetch real financial headlines with photos ────────────────────
+// ── GNews: fetch real financial headlines with photos ─────────────────────
+// GNews works in server-side production environments (unlike NewsAPI free tier)
 async function fetchNewsAPIStories() {
-  if (!NEWSAPI_KEY) {
-    console.warn('NEWSAPI_KEY not set — skipping real news fetch');
+  if (!GNEWS_KEY) {
+    console.warn('GNEWS_KEY not set — skipping real news fetch');
     return null;
   }
 
-  // Pull from two endpoints and merge for variety
-  const [bizRes, mkRes] = await Promise.all([
-    fetch(`https://newsapi.org/v2/top-headlines?category=business&language=en&pageSize=10&apiKey=${NEWSAPI_KEY}`),
-    fetch(`https://newsapi.org/v2/everything?q=(stock+OR+earnings+OR+fed+OR+crypto+OR+market)&language=en&sortBy=publishedAt&pageSize=10&apiKey=${NEWSAPI_KEY}`),
-  ]);
+  try {
+    // Fetch business/finance news with images
+    const url = `https://gnews.io/api/v4/top-headlines?category=business&lang=en&max=10&apikey=${GNEWS_KEY}`;
+    const res = await fetch(url);
 
-  const [biz, mk] = await Promise.all([bizRes.json(), mkRes.json()]);
+    if (!res.ok) {
+      console.error(`GNews error: ${res.status} ${await res.text()}`);
+      return null;
+    }
 
-  const all = [
-    ...(biz.articles  || []),
-    ...(mk.articles   || []),
-  ]
-    // Filter out articles without images or titles
-    .filter(a => a.urlToImage && a.title && a.title !== '[Removed]')
-    // Deduplicate by title
-    .filter((a, i, arr) => arr.findIndex(b => b.title === a.title) === i)
-    .slice(0, 12); // take top 12, Claude will pick the best 6
+    const data = await res.json();
+    const articles = data.articles || [];
 
-  return all.map(a => ({
-    title:     a.title,
-    source:    a.source?.name || 'News',
-    url:       a.url,
-    image_url: a.urlToImage,
-    published: a.publishedAt,
-  }));
+    console.log(`GNews returned ${articles.length} articles`);
+
+    return articles
+      .filter(a => a.image && a.title)
+      .map(a => ({
+        title:     a.title,
+        source:    a.source?.name || 'News',
+        url:       a.url,
+        image_url: a.image,          // GNews uses "image" not "urlToImage"
+        published: a.publishedAt,
+      }));
+  } catch (err) {
+    console.error('GNews fetch failed:', err.message);
+    return null;
+  }
 }
 
 // ── Claude: enrich real headlines with ticker + category ──────────────────
