@@ -75,7 +75,7 @@ async function fetchSECInsiders() {
       return { company:m[1].trim(), ticker:m[2].toUpperCase(), date };
     })
     .filter(t => t && /^[A-Z]{1,5}$/.test(t.ticker))
-    .slice(0, 8);
+    .slice(0, 10);
 }
 
 // ── GNews ─────────────────────────────────────────────────────────────────
@@ -134,13 +134,13 @@ export async function GET(request) {
     // Insider trades
     sec.length > 0
       ? claude(`Today ${today()}. Real SEC Form 4 filings: ${JSON.stringify(sec)}. For each add executive name, title, Buy or Sell action, dollar value. Return ONLY JSON array: [{"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}]. No markdown.`)
-      : claude(`Today ${today()}. Return ONLY a JSON array of 6 realistic recent insider trades. Each: {"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}. No markdown.`),
+      : claude(`Today ${today()}. Return ONLY a JSON array of 10 realistic recent insider trades. Each: {"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}. No markdown.`),
 
     // Why moving
     claude(`Today ${today()}. Return ONLY a JSON array of 6 top-moving stocks right now with reasons. Each: {"ticker","company","price":number,"changePct":number,"reason":string}. No markdown.`),
 
     // Politician trades
-    claude(`Today ${today()}. Return ONLY a JSON array of 5 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
+    claude(`Today ${today()}. Return ONLY a JSON array of 10 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
 
     // News
     gnews?.length
