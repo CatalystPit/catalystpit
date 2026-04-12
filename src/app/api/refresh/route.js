@@ -46,70 +46,63 @@ async function polyGet(path) {
   return res.json();
 }
 
-// Stock + ETF snapshot — real-time prices, Starter plan required
+// Stock + ETF prices using prev-day aggregates — works 24/7, all plans
 async function fetchStockPrices(tickers) {
-  const data = await polyGet(
-    `/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickers.join(',')}&include_otc=false`
+  // Fetch all in parallel — Starter plan has unlimited API calls
+  const results = await Promise.all(
+    tickers.map(async sym => {
+      try {
+        const data = await polyGet(`/v2/aggs/ticker/${sym}/prev?adjusted=true`);
+        const r = data.results?.[0];
+        if (!r) return null;
+        const price  = r.c || 0;
+        const prev   = r.o || r.c || 0;
+        const chg    = price - prev;
+        const pct    = prev ? (chg / prev) * 100 : 0;
+        return { sym, price:+price.toFixed(2), change:+chg.toFixed(2), changePct:+pct.toFixed(2) };
+      } catch { return null; }
+    })
   );
   const out = {};
-  for (const t of (data.tickers || [])) {
-    // Markets closed on weekends: day.c = 0, prevDay.c = Friday's close
-    // Markets open: lastTrade.p = live price, day.c = session close so far
-    const price = t.lastTrade?.p || t.prevDay?.c || t.day?.c || 0;
-    const prev  = t.prevDay?.c  || t.day?.o || price;
-    const chg   = price - prev;
-    const pct   = prev ? (chg / prev) * 100 : 0;
-    out[t.ticker] = {
-      price:     +price.toFixed(2),
-      change:    +chg.toFixed(2),
-      changePct: +pct.toFixed(2),
-    };
+  for (const r of results) {
+    if (r) out[r.sym] = { price:r.price, change:r.change, changePct:r.changePct };
   }
-  if (Object.keys(out).length === 0) throw new Error('Polygon returned 0 tickers — check API key and plan');
+  if (Object.keys(out).length === 0) throw new Error('Polygon returned 0 results — check API key');
   return out;
 }
 
-// Crypto snapshot
-async function fetchCryptoPrices(pairs) {
-  // pairs: ['BTC-USD','ETH-USD'] → Polygon: X:BTCUSD
-  const polyTickers = pairs.map(p => `X:${p.replace('-', '')}`).join(',');
-  const data = await polyGet(
-    `/v2/snapshot/locale/global/markets/crypto/tickers?tickers=${polyTickers}`
+// Crypto prices — CoinGecko (free, no API key, works from Vercel)
+async function fetchCryptoPrices() {
+  const res = await fetch(
+    'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true',
+    { headers: { 'Accept': 'application/json' } }
   );
-  const out = {};
-  for (const t of (data.tickers || [])) {
-    const day  = t.day  || {};
-    const prev = t.prevDay?.c || day.o || day.c || 0;
-    // Crypto trades 24/7 so day.c should always be non-zero
-    const price = day.c || t.lastTrade?.p || t.prevDay?.c || 0;
-    const chg  = price - prev;
-    const pct  = prev ? (chg / prev) * 100 : 0;
-    // X:BTCUSD → BTC-USD
-    const sym = t.ticker.replace('X:', '').replace(/^([A-Z]+)(USD)$/, '$1-$2');
-    out[sym] = {
-      price:     +price.toFixed(2),
-      change:    +chg.toFixed(2),
-      changePct: +pct.toFixed(2),
-    };
-  }
-  return out;
+  if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
+  const data = await res.json();
+  return {
+    'BTC-USD': {
+      price:     +(data.bitcoin?.usd || 0).toFixed(2),
+      change:    0,
+      changePct: +(data.bitcoin?.usd_24h_change || 0).toFixed(2),
+    },
+    'ETH-USD': {
+      price:     +(data.ethereum?.usd || 0).toFixed(2),
+      change:    0,
+      changePct: +(data.ethereum?.usd_24h_change || 0).toFixed(2),
+    },
+  };
 }
 
-// Top gainers and losers
+// Top gainers and losers — may be empty on weekends
 async function fetchMovers() {
-  const [g, l] = await Promise.all([
-    polyGet('/v2/snapshot/locale/us/markets/stocks/gainers'),
-    polyGet('/v2/snapshot/locale/us/markets/stocks/losers'),
-  ]);
-  const map = t => ({
-    ticker:    t.ticker,
-    price:     +(t.day?.c || 0).toFixed(2),
-    changePct: +(t.todaysChangePerc || 0).toFixed(2),
-  });
-  return [
-    ...(g.tickers || []).slice(0, 3).map(map),
-    ...(l.tickers || []).slice(0, 3).map(map),
-  ];
+  try {
+    const [g, l] = await Promise.all([
+      polyGet('/v2/snapshot/locale/us/markets/stocks/gainers'),
+      polyGet('/v2/snapshot/locale/us/markets/stocks/losers'),
+    ]);
+    const map = t => ({ ticker:t.ticker, price:+(t.day?.c||0).toFixed(2), changePct:+(t.todaysChangePerc||0).toFixed(2) });
+    return [...(g.tickers||[]).slice(0,3).map(map), ...(l.tickers||[]).slice(0,3).map(map)];
+  } catch { return []; }
 }
 
 // ── SEC EDGAR Form 4 ──────────────────────────────────────────────────────
@@ -159,11 +152,10 @@ export async function GET(request) {
   // ── 1. Real-time prices — Polygon (Starter plan) ──────────────────────
   try {
     const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
-    const CRYPTO = ['BTC-USD','ETH-USD'];
 
     const [stockP, cryptoP] = await Promise.all([
       fetchStockPrices(STOCKS),
-      fetchCryptoPrices(CRYPTO),
+      fetchCryptoPrices(),
     ]);
     const prices = { ...stockP, ...cryptoP };
     console.log(`Prices fetched: ${Object.keys(prices).join(', ')}`);
