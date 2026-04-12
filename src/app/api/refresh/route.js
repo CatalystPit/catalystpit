@@ -12,7 +12,7 @@ async function kvSet(key, value) {
       Authorization: `Bearer ${KV_TOKEN}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ value, ex: 1800 }),
+    body: JSON.stringify([value, 'EX', 1800]),
   });
 }
 
