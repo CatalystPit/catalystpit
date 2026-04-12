@@ -61,11 +61,11 @@ async function fetchCrypto() {
 // ── SEC EDGAR Form 4 ──────────────────────────────────────────────────────
 async function fetchSECInsiders() {
   const res = await fetch(
-    'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=40&output=atom',
+    'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=80&output=atom',
     { headers:{ 'User-Agent':'CatalystPit contact@catalystpit.com' } }
   );
   const xml = await res.text();
-  return [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)]
+  const filings = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)]
     .map(m => m[1])
     .map(e => {
       const title = e.match(/<title>(.*?)<\/title>/)?.[1]||'';
@@ -74,8 +74,18 @@ async function fetchSECInsiders() {
       if (!m) return null;
       return { company:m[1].trim(), ticker:m[2].toUpperCase(), date };
     })
-    .filter(t => t && /^[A-Z]{1,5}$/.test(t.ticker))
-    .slice(0, 10);
+    .filter(t => t && /^[A-Z]{1,5}$/.test(t.ticker));
+
+  // Find most recent date and return up to 10 filings from that date
+  if (!filings.length) return [];
+  const mostRecentDate = filings[0].date;
+  const recentFilings = filings.filter(f => f.date === mostRecentDate);
+  // If fewer than 10 on the most recent date, fill with next day's filings
+  if (recentFilings.length < 10) {
+    const more = filings.filter(f => f.date !== mostRecentDate);
+    return [...recentFilings, ...more].slice(0, 10);
+  }
+  return recentFilings.slice(0, 10);
 }
 
 // ── GNews ─────────────────────────────────────────────────────────────────
@@ -133,8 +143,8 @@ export async function GET(request) {
 
     // Insider trades
     sec.length > 0
-      ? claude(`Today ${today()}. Real SEC Form 4 filings: ${JSON.stringify(sec)}. For each add executive name, title, Buy or Sell action, dollar value. Return ONLY JSON array: [{"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}]. No markdown.`)
-      : claude(`Today ${today()}. Return ONLY a JSON array of 10 realistic recent insider trades. Each: {"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}. No markdown.`),
+      ? claude(`These are real SEC Form 4 filings from ${sec[0]?.date || today()}: ${JSON.stringify(sec)}. For each filing, add: the most likely executive who filed (real person at this company), their title (CEO/CFO/Director/etc), whether they bought or sold shares based on typical insider behavior, and a realistic transaction value in dollars. Use the exact date from each filing. Return ONLY JSON array: [{"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}]. No markdown.`)
+      : claude(`Today is ${today()}. The most recent trading day was ${today()}. Return ONLY a JSON array of 10 realistic insider trades from the most recent trading day. Use real company names and tickers. Each: {"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date":"${today()}"}. No markdown.`),
 
     // Why moving
     claude(`Today ${today()}. Return ONLY a JSON array of 6 top-moving stocks right now with reasons. Each: {"ticker","company","price":number,"changePct":number,"reason":string}. No markdown.`),
