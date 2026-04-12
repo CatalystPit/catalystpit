@@ -6,21 +6,16 @@ const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function kvSet(key, value) {
-  const url = `${KV_URL}/pipeline`;
-  const body = JSON.stringify([
-    ['SET', key, value, 'EX', '1800']
-  ]);
-  const res = await fetch(url, {
-    method: 'POST',
+  const encodedKey = encodeURIComponent(key);
+  const encodedValue = encodeURIComponent(value);
+  const res = await fetch(`${KV_URL}/set/${encodedKey}/${encodedValue}?ex=1800`, {
+    method: 'GET',
     headers: {
       Authorization: `Bearer ${KV_TOKEN}`,
-      'Content-Type': 'application/json',
     },
-    body,
   });
-  const data = await res.json();
-  console.log(`KV set ${key}:`, JSON.stringify(data));
-  return data;
+  const data = await res.text();
+  console.log(`KV set ${key}: ${data}`);
 }
 
 const DATA_FEEDS = [
