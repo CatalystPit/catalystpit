@@ -1,5 +1,5 @@
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 60; 
 
 const KV_TOKEN      = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET   = process.env.CRON_SECRET;
