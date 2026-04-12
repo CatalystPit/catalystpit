@@ -77,7 +77,7 @@ export default function InsidersPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const filtered = filter==='ALL' ? insiders : insiders.filter(i=>i.type===filter);
+  const filtered = (filter==="ALL" ? insiders : insiders.filter(i=>i.type===filter)).slice(0,10);
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
   const buys = insiders.filter(i=>i.type==='BUY').length;
   const sells = insiders.filter(i=>i.type==='SELL').length;
