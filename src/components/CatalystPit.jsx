@@ -598,9 +598,10 @@ export default function CatalystPit() {
                       ))}
                     </div>
                   </div>
-                  {/* ── ROW 2: 4 equal cards ── */}
+                  {/* ── ROW 2: 4 equal cards — pad from front if < 7 stories ── */}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
-                    {news.slice(3,7).map((n,i)=>(
+                    {Array.from({length:4},(_,i)=>news[3+i]||news[i%Math.min(3,news.length)])
+                      .filter(Boolean).map((n,i)=>(
                       <NewsPhotoCard key={i} n={n} idx={i+3}/>
                     ))}
                   </div>
