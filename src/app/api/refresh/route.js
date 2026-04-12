@@ -53,8 +53,10 @@ async function fetchStockPrices(tickers) {
   );
   const out = {};
   for (const t of (data.tickers || [])) {
-    const price = t.lastTrade?.p || t.day?.c || 0;
-    const prev  = t.prevDay?.c  || price;
+    // Markets closed on weekends: day.c = 0, prevDay.c = Friday's close
+    // Markets open: lastTrade.p = live price, day.c = session close so far
+    const price = t.lastTrade?.p || t.prevDay?.c || t.day?.c || 0;
+    const prev  = t.prevDay?.c  || t.day?.o || price;
     const chg   = price - prev;
     const pct   = prev ? (chg / prev) * 100 : 0;
     out[t.ticker] = {
@@ -63,6 +65,7 @@ async function fetchStockPrices(tickers) {
       changePct: +pct.toFixed(2),
     };
   }
+  if (Object.keys(out).length === 0) throw new Error('Polygon returned 0 tickers — check API key and plan');
   return out;
 }
 
@@ -77,7 +80,8 @@ async function fetchCryptoPrices(pairs) {
   for (const t of (data.tickers || [])) {
     const day  = t.day  || {};
     const prev = t.prevDay?.c || day.o || day.c || 0;
-    const price = day.c || 0;
+    // Crypto trades 24/7 so day.c should always be non-zero
+    const price = day.c || t.lastTrade?.p || t.prevDay?.c || 0;
     const chg  = price - prev;
     const pct  = prev ? (chg / prev) * 100 : 0;
     // X:BTCUSD → BTC-USD
