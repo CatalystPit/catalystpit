@@ -6,14 +6,21 @@ const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function kvSet(key, value) {
-  await fetch(`${KV_URL}/set/${encodeURIComponent(key)}`, {
+  const url = `${KV_URL}/pipeline`;
+  const body = JSON.stringify([
+    ['SET', key, value, 'EX', '1800']
+  ]);
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${KV_TOKEN}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify([value, 'EX', 1800]),
+    body,
   });
+  const data = await res.json();
+  console.log(`KV set ${key}:`, JSON.stringify(data));
+  return data;
 }
 
 const DATA_FEEDS = [
@@ -23,7 +30,7 @@ const DATA_FEEDS = [
   },
   {
     key: 'catalystpit:market_snapshot',
-    prompt: `Return ONLY a valid JSON object with current prices for: { "SPY": { "price": number, "change": number, "changePct": number }, "QQQ": {...}, "DIA": {...}, "VIX": {...}, "BTC": {...}, "ETH": {...}, "GLD": {...}, "USO": {...} }. No markdown, just the JSON object.`,
+    prompt: `Return ONLY a valid JSON object with current prices for: { "SPY": { "price": number, "change": number, "changePct": number }, "QQQ": { "price": number, "change": number, "changePct": number }, "DIA": { "price": number, "change": number, "changePct": number }, "VIX": { "price": number, "change": number, "changePct": number }, "BTC": { "price": number, "change": number, "changePct": number }, "ETH": { "price": number, "change": number, "changePct": number }, "GLD": { "price": number, "change": number, "changePct": number }, "USO": { "price": number, "change": number, "changePct": number } }. No markdown, just the JSON object.`,
   },
   {
     key: 'catalystpit:ticker_tape',
@@ -43,11 +50,11 @@ const DATA_FEEDS = [
   },
   {
     key: 'catalystpit:short_squeeze',
-    prompt: `Return ONLY a valid JSON array of 8 stocks with high short squeeze potential. Each: { "ticker": string, "company": string, "price": number, "shortFloat": number, "daysToCover": number, "borrowRate": number, "squeezeScore": number (1-100), "catalyst": string }. Sort by squeezeScore descending. No markdown, just the JSON array.`,
+    prompt: `Return ONLY a valid JSON array of 8 stocks with high short squeeze potential. Each: { "ticker": string, "company": string, "price": number, "shortFloat": number, "daysToCover": number, "borrowRate": number, "squeezeScore": number, "catalyst": string }. No markdown, just the JSON array.`,
   },
   {
     key: 'catalystpit:earnings_intelligence',
-    prompt: `Return ONLY a valid JSON object with: "upcoming": array of 5 companies reporting in next 5 days, each { "ticker": string, "company": string, "reportDate": string, "timing": "BMO"|"AMC", "epsEstimate": number, "revenueEstimate": string, "whisperNumber": number, "impliedMove": string }. "recent": array of 3 companies that just reported, each { "ticker": string, "company": string, "epsActual": number, "epsEstimate": number, "beat": boolean, "revenueActual": string, "reaction": number }. No markdown, just the JSON object.`,
+    prompt: `Return ONLY a valid JSON object with "upcoming": array of 5 companies reporting in next 5 days each { "ticker": string, "company": string, "reportDate": string, "timing": "BMO"|"AMC", "epsEstimate": number, "revenueEstimate": string, "whisperNumber": number, "impliedMove": string } and "recent": array of 3 companies that just reported each { "ticker": string, "company": string, "epsActual": number, "epsEstimate": number, "beat": boolean, "revenueActual": string, "reaction": number }. No markdown, just the JSON object.`,
   },
   {
     key: 'catalystpit:institutional_moves',
@@ -94,10 +101,13 @@ export async function GET(request) {
     DATA_FEEDS.map(async ({ key, prompt }) => {
       try {
         const data = await fetchFromClaude(prompt);
-        await kvSet(key, JSON.stringify(data));
+        const value = JSON.stringify(data);
+        await kvSet(key, value);
         results.refreshed.push(key);
+        console.log(`✅ Refreshed ${key}`);
       } catch (error) {
         results.failed.push({ key, error: error.message });
+        console.error(`❌ Failed ${key}:`, error.message);
       }
     })
   );
