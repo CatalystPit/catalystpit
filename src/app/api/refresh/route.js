@@ -9,9 +9,9 @@ async function kvSet(key, value) {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${KV_TOKEN}`,
-      'Content-Type': 'application/json',
+      'Content-Type': 'text/plain',
     },
-    body: JSON.stringify(value),
+    body: value,
   });
   const text = await res.text();
   console.log(`KV set ${key}: ${text.substring(0, 80)}`);
