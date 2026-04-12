@@ -48,25 +48,82 @@ const CARD_COLORS = [
   ["#0C1A2A","#1A5A88"],["#2A0C0C","#882A1A"],["#0C2A2A","#1A7A7A"],
 ];
 
-// Maps each news tag → keywords for loremflickr.com photo lookup
-// loremflickr is free, no API key, and topic-relevant
-const TAG_PHOTO_KW = {
-  EARNINGS: "stock,market,earnings,profit",
-  FED:      "federal,reserve,economy,washington",
-  MARKETS:  "stock,market,trading,nyse",
-  TECH:     "technology,silicon,computer,startup",
-  CRYPTO:   "cryptocurrency,bitcoin,blockchain",
-  "M&A":    "business,merger,corporate,deal",
-  MACRO:    "economy,global,inflation,finance",
-  SEC:      "finance,regulation,law,compliance",
-  OPTIONS:  "trading,options,finance,chart",
-  SQUEEZE:  "trading,market,volatility",
-  INSIDER:  "business,executive,corporate",
+// ── Story-relevant photo lookup ──────────────────────────────────────────────
+// Priority: (1) real imageUrl from KV, (2) ticker-matched photo, (3) tag fallback
+// All IDs are from Unsplash's permanent CDN — no API key needed.
+
+const TICKER_PHOTOS = {
+  // ── Mega-caps ──
+  AAPL:  ["photo-1611532736597-de2d4265fba3","photo-1517336714731-489689fd1ca8","photo-1496181133206-80ce9b88a853"],
+  MSFT:  ["photo-1633419461186-7d40a38105ec","photo-1568952433726-3896e3881c65","photo-1551288049-bebda4e38f71"],
+  GOOGL: ["photo-1573804633927-bfcbcd909acd","photo-1498050108023-c5249f4df085","photo-1583508805133-8fd03b5a6b94"],
+  GOOG:  ["photo-1573804633927-bfcbcd909acd","photo-1498050108023-c5249f4df085","photo-1583508805133-8fd03b5a6b94"],
+  AMZN:  ["photo-1523474253046-8cd2748b5fd2","photo-1586528116311-ad8dd3c8310d","photo-1607082348824-0a96f2a4b9da"],
+  META:  ["photo-1611605698335-8b1569810432","photo-1432888498266-38ffec3eaf0a","photo-1579869847557-1f67382cc158"],
+  NVDA:  ["photo-1518770660439-4636190af475","photo-1591488320449-011701bb6704","photo-1601132359864-c974e79890ac"],
+  TSLA:  ["photo-1560958089-b8a1929cea89","photo-1593941707882-a5bba14938c7","photo-1617704548623-340376564e68"],
+  // ── Finance & Banks ──
+  JPM:   ["photo-1486406146926-c627a92ad1ab","photo-1444653614773-995cb1ef9efa","photo-1604594849809-dfedbc827105"],
+  BAC:   ["photo-1486406146926-c627a92ad1ab","photo-1604594849809-dfedbc827105","photo-1444653614773-995cb1ef9efa"],
+  GS:    ["photo-1486406146926-c627a92ad1ab","photo-1542744173-8e7e53415bb0","photo-1507003211169-0a1dd7228f2d"],
+  MS:    ["photo-1542744173-8e7e53415bb0","photo-1486406146926-c627a92ad1ab","photo-1444653614773-995cb1ef9efa"],
+  WFC:   ["photo-1604594849809-dfedbc827105","photo-1486406146926-c627a92ad1ab","photo-1444653614773-995cb1ef9efa"],
+  // ── Indices & ETFs ──
+  SPY:   ["photo-1611974789855-9c2a0a7236a3","photo-1590283603385-17ffb3a7f29f","photo-1535320903710-d993d3d77d29"],
+  QQQ:   ["photo-1518770660439-4636190af475","photo-1611974789855-9c2a0a7236a3","photo-1590283603385-17ffb3a7f29f"],
+  DJI:   ["photo-1611974789855-9c2a0a7236a3","photo-1518546305927-5a555bb7020d","photo-1460925895917-afdab827c52f"],
+  VIX:   ["photo-1642790551116-18e4f4c38c86","photo-1590283603385-17ffb3a7f29f","photo-1563986768494-4dee2763ff3f"],
+  GLD:   ["photo-1610375461246-83df859d849d","photo-1559526324-4b87b5e36e44","photo-1623227866882-f72b4e2c5e73"],
+  // ── Crypto ──
+  BTC:       ["photo-1639762681057-408e52192e55","photo-1621504450181-5d356f61d307","photo-1622630998477-20aa696ecb05"],
+  "BTC-USD": ["photo-1639762681057-408e52192e55","photo-1621504450181-5d356f61d307","photo-1622630998477-20aa696ecb05"],
+  ETH:       ["photo-1622630998477-20aa696ecb05","photo-1639762681057-408e52192e55","photo-1634704784915-aacf363b021f"],
+  "ETH-USD": ["photo-1622630998477-20aa696ecb05","photo-1639762681057-408e52192e55","photo-1634704784915-aacf363b021f"],
+  // ── More tech ──
+  AMD:   ["photo-1518770660439-4636190af475","photo-1591488320449-011701bb6704","photo-1551288049-bebda4e38f71"],
+  INTC:  ["photo-1518770660439-4636190af475","photo-1451187580459-43490279c0fa","photo-1591488320449-011701bb6704"],
+  CRM:   ["photo-1460925895917-afdab827c52f","photo-1551288049-bebda4e38f71","photo-1498050108023-c5249f4df085"],
+  ORCL:  ["photo-1460925895917-afdab827c52f","photo-1568952433726-3896e3881c65","photo-1451187580459-43490279c0fa"],
+  NFLX:  ["photo-1522869635100-9f4c5e86aa37","photo-1611532736597-de2d4265fba3","photo-1585184394271-4c0a47dc59c9"],
+  DIS:   ["photo-1534430480872-3498386e7856","photo-1609842947418-a7c26a7b5827","photo-1524985069026-dd778a71c7b4"],
+  // ── Energy & Commodities ──
+  XOM:   ["photo-1611244419377-b0a760c19719","photo-1473341304170-971dccb5ac1e","photo-1466611653911-95081537e5b7"],
+  CVX:   ["photo-1611244419377-b0a760c19719","photo-1473341304170-971dccb5ac1e","photo-1466611653911-95081537e5b7"],
+  "CL=F":["photo-1611244419377-b0a760c19719","photo-1473341304170-971dccb5ac1e","photo-1466611653911-95081537e5b7"],
+  // ── EV & Auto ──
+  RIVN:  ["photo-1593941707882-a5bba14938c7","photo-1560958089-b8a1929cea89","photo-1617704548623-340376564e68"],
+  F:     ["photo-1552519507-da3b142c6e3d","photo-1492144534655-ae79c964c9d7","photo-1494976388531-d1058494cdd8"],
+  GM:    ["photo-1552519507-da3b142c6e3d","photo-1494976388531-d1058494cdd8","photo-1492144534655-ae79c964c9d7"],
+  // ── Healthcare ──
+  JNJ:   ["photo-1576091160550-2173dba999ef","photo-1584308666744-24d5c474f2ae","photo-1532187863486-abf9dbad1b69"],
+  PFE:   ["photo-1559757175-0eb30cd8c063","photo-1576091160550-2173dba999ef","photo-1584308666744-24d5c474f2ae"],
+  // ── Meme / speculative ──
+  GME:   ["photo-1612287230202-1ff1d85d1bdf","photo-1511512578047-dfb367046420","photo-1593305841991-05c297ba4575"],
+  AMC:   ["photo-1489599849927-2ee91cede3ba","photo-1536440136628-849c177e76a1","photo-1524985069026-dd778a71c7b4"],
 };
-const tagPhoto = (tag, lock) => {
-  const kw = TAG_PHOTO_KW[tag] || "finance,market,business";
-  // lock param makes the same tag+idx always return the same image
-  return `https://loremflickr.com/640/360/${encodeURIComponent(kw)}?lock=${lock}`;
+
+// Tag fallback pool (used when ticker not in TICKER_PHOTOS)
+const TAG_PHOTOS = {
+  EARNINGS: ["photo-1611974789855-9c2a0a7236a3","photo-1590283603385-17ffb3a7f29f","photo-1460925895917-afdab827c52f","photo-1543286386-713bdd548da4"],
+  MARKETS:  ["photo-1611974789855-9c2a0a7236a3","photo-1518546305927-5a555bb7020d","photo-1590283603385-17ffb3a7f29f","photo-1642790551116-18e4f4c38c86"],
+  FED:      ["photo-1554774853-aae0a22c8aa4","photo-1542744173-8e7e53415bb0","photo-1604594849809-dfedbc827105","photo-1526304640581-d334cdbbf45e"],
+  TECH:     ["photo-1518770660439-4636190af475","photo-1451187580459-43490279c0fa","photo-1498050108023-c5249f4df085","photo-1550751827-4bd374c3f58b"],
+  CRYPTO:   ["photo-1639762681057-408e52192e55","photo-1621504450181-5d356f61d307","photo-1622630998477-20aa696ecb05","photo-1634704784915-aacf363b021f"],
+  "M&A":    ["photo-1521791136064-7986c2920216","photo-1560472354-b33ff0c44a43","photo-1454165804606-c3d57bc86b40","photo-1600880292203-757bb62b4baf"],
+  MACRO:    ["photo-1526304640581-d334cdbbf45e","photo-1554774853-aae0a22c8aa4","photo-1543286386-713bdd548da4","photo-1460925895917-afdab827c52f"],
+  SEC:      ["photo-1589829545856-d10d557cf95f","photo-1542744173-8e7e53415bb0","photo-1450101499163-c8848c66ca85","photo-1507003211169-0a1dd7228f2d"],
+  OPTIONS:  ["photo-1590283603385-17ffb3a7f29f","photo-1642790551116-18e4f4c38c86","photo-1535320903710-d993d3d77d29","photo-1460925895917-afdab827c52f"],
+  SQUEEZE:  ["photo-1611974789855-9c2a0a7236a3","photo-1642790551116-18e4f4c38c86","photo-1590283603385-17ffb3a7f29f","photo-1563986768494-4dee2763ff3f"],
+  INSIDER:  ["photo-1560250097-0b93528c311a","photo-1573496359142-b8d87734a5a2","photo-1573167243872-43c6433b9d40","photo-1507003211169-0a1dd7228f2d"],
+};
+
+const storyPhoto = (sym, tag, slot) => {
+  // 1. Ticker-specific pool
+  const tickerPool = TICKER_PHOTOS[sym?.toUpperCase()];
+  if (tickerPool) return `https://images.unsplash.com/${tickerPool[slot % tickerPool.length]}?w=900&h=560&fit=crop&q=85&auto=format`;
+  // 2. Tag fallback
+  const tagPool = TAG_PHOTOS[tag] || TAG_PHOTOS.MARKETS;
+  return `https://images.unsplash.com/${tagPool[slot % tagPool.length]}?w=900&h=560&fit=crop&q=85&auto=format`;
 };
 
 // ── Fetch from KV cache ────────────────────────────────────────────────────
@@ -253,82 +310,88 @@ const TagBadge=({tag,size="sm"})=>{
     fontFamily:"'DM Mono',monospace",fontWeight:500,whiteSpace:"nowrap"}}>{tag}</span>;
 };
 
-function NewsPhotoCard({n, idx, large=false}) {
+function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
   const [bg1,bg2]=CARD_COLORS[idx%CARD_COLORS.length];
   const isUp=(+n.chg)>=0;
-  // Track whether the primary photo failed so we can fallback gracefully
   const [imgFailed,setImgFailed]=useState(false);
-
-  // Priority: real URL from KV data → loremflickr by tag → gradient fallback
   const primarySrc = !imgFailed && n.imageUrl ? n.imageUrl : null;
-  const flickrSrc  = tagPhoto(n.tag, idx * 31 + 7); // stable per card slot
+  const photoSrc   = storyPhoto(n.sym, n.tag, idx);
+  const photoH     = hero ? 340 : stacked ? 110 : large ? 200 : 150;
 
   return (
     <div className="card-hov" style={{background:C.white,border:`1px solid ${C.border}`,
-      borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all 0.2s",height:"100%"}}>
+      borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all 0.2s",
+      height:"100%",display:"flex",flexDirection:"column"}}>
 
-      {/* ── Photo area ── */}
-      <div style={{height:large?180:130,position:"relative",overflow:"hidden",
+      {/* ── Photo ── */}
+      <div style={{height:photoH,position:"relative",overflow:"hidden",
         flexShrink:0,background:`linear-gradient(135deg,${bg1},${bg2})`}}>
-
-        {/* Real photo — loremflickr (with KV URL taking priority if present) */}
         <img
-          src={primarySrc || flickrSrc}
+          src={primarySrc || photoSrc}
           alt=""
           onError={e=>{
-            if(primarySrc){
-              // KV URL failed → try loremflickr
-              setImgFailed(true);
-              e.currentTarget.src=flickrSrc;
-            } else {
-              // loremflickr also failed → hide img, show gradient
-              e.currentTarget.style.display="none";
-            }
+            if(primarySrc){setImgFailed(true);e.currentTarget.src=photoSrc;}
+            else e.currentTarget.style.display="none";
           }}
-          style={{
-            position:"absolute",inset:0,
-            width:"100%",height:"100%",
-            objectFit:"cover",objectPosition:"center",
-            display:"block",
-          }}
+          style={{position:"absolute",inset:0,width:"100%",height:"100%",
+            objectFit:"cover",objectPosition:"center top",display:"block"}}
         />
+        {/* Overlay */}
+        <div style={{position:"absolute",inset:0,pointerEvents:"none",
+          background:hero
+            ?"linear-gradient(to bottom,rgba(0,0,0,0.1) 0%,rgba(0,0,0,0.02) 35%,rgba(0,0,0,0.78) 100%)"
+            :"linear-gradient(to bottom,rgba(0,0,0,0.38) 0%,rgba(0,0,0,0.04) 45%,rgba(0,0,0,0.48) 100%)"}}/>
 
-        {/* Gradient overlay — dark at top for badges, darker at bottom for source */}
-        <div style={{position:"absolute",inset:0,
-          background:"linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.55) 100%)",
-          pointerEvents:"none"}}/>
-
-        {/* Ticker + change badge — top left */}
-        <div style={{position:"absolute",top:10,left:10,
-          display:"flex",alignItems:"center",gap:6,zIndex:2}}>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,
-            color:"#FFFFFF",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(4px)",
-            padding:"3px 9px",borderRadius:4,letterSpacing:"0.3px"}}>{n.sym}</span>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,
-            color:isUp?"#5AE87A":"#FF8080",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(4px)",
-            padding:"3px 9px",borderRadius:4}}>{fmtP(+n.chg)}</span>
+        {/* Ticker badge — top left */}
+        <div style={{position:"absolute",top:9,left:9,display:"flex",gap:5,zIndex:2}}>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,color:"#fff",
+            background:"rgba(0,0,0,0.52)",backdropFilter:"blur(6px)",
+            padding:"2px 8px",borderRadius:4}}>{n.sym}</span>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,
+            color:isUp?"#5AE87A":"#FF8080",background:"rgba(0,0,0,0.52)",backdropFilter:"blur(6px)",
+            padding:"2px 8px",borderRadius:4}}>{fmtP(+n.chg)}</span>
         </div>
 
         {/* Source — bottom right */}
-        <div style={{position:"absolute",bottom:8,right:10,zIndex:2}}>
+        <div style={{position:"absolute",bottom:hero?72:8,right:10,zIndex:2}}>
           <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,
-            color:"rgba(255,255,255,0.8)",letterSpacing:"0.6px",
-            textShadow:"0 1px 3px rgba(0,0,0,0.6)"}}>{n.source}</span>
+            color:"rgba(255,255,255,0.82)",textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{n.source}</span>
         </div>
+
+        {/* Hero: headline lives on the photo */}
+        {hero&&(
+          <div style={{position:"absolute",bottom:0,left:0,right:0,
+            padding:"16px 16px 14px",zIndex:2}}>
+            <div style={{display:"flex",gap:5,marginBottom:7,alignItems:"center"}}>
+              <TagBadge tag={n.tag}/>
+              {n.hot&&<span style={{fontSize:9,background:"rgba(168,48,48,0.9)",color:"#fff",
+                padding:"2px 6px",borderRadius:3,fontFamily:"'DM Mono',monospace",fontWeight:500}}>HOT</span>}
+              <span style={{fontSize:10,color:"rgba(255,255,255,0.65)",marginLeft:"auto",
+                fontFamily:"'DM Mono',monospace"}}>{timeAgo(n.mins)}</span>
+            </div>
+            <div style={{fontSize:19,color:"#fff",lineHeight:1.35,fontWeight:700,
+              fontFamily:"'DM Sans',sans-serif",textShadow:"0 2px 10px rgba(0,0,0,0.55)",
+              letterSpacing:"-0.3px"}}>{n.headline}</div>
+          </div>
+        )}
       </div>
 
-      {/* ── Text area ── */}
-      <div style={{padding:"12px 14px 14px"}}>
-        <div style={{display:"flex",gap:6,marginBottom:7,alignItems:"center"}}>
-          <TagBadge tag={n.tag}/>
-          {n.hot&&<span style={{fontSize:9,background:"#FFF0EE",color:C.red,
-            padding:"2px 6px",borderRadius:3,fontFamily:"'DM Mono',monospace",fontWeight:500}}>HOT</span>}
-          <span style={{fontSize:10,color:C.dim,marginLeft:"auto",
-            fontFamily:"'DM Mono',monospace"}}>{timeAgo(n.mins)}</span>
+      {/* ── Text (non-hero) ── */}
+      {!hero&&(
+        <div style={{padding:stacked?"9px 12px 10px":"11px 13px 13px",flex:1}}>
+          <div style={{display:"flex",gap:5,marginBottom:5,alignItems:"center"}}>
+            <TagBadge tag={n.tag}/>
+            {n.hot&&<span style={{fontSize:9,background:"#FFF0EE",color:C.red,
+              padding:"2px 6px",borderRadius:3,fontFamily:"'DM Mono',monospace",fontWeight:500}}>HOT</span>}
+            <span style={{fontSize:10,color:C.dim,marginLeft:"auto",
+              fontFamily:"'DM Mono',monospace"}}>{timeAgo(n.mins)}</span>
+          </div>
+          <div style={{fontSize:stacked?12:large?15:13,color:C.ink,lineHeight:1.42,
+            fontWeight:600,fontFamily:"'DM Sans',sans-serif",
+            display:"-webkit-box",WebkitLineClamp:stacked?2:3,
+            WebkitBoxOrient:"vertical",overflow:"hidden"}}>{n.headline}</div>
         </div>
-        <div style={{fontSize:large?15:13,color:C.ink,lineHeight:1.5,
-          fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>{n.headline}</div>
-      </div>
+      )}
     </div>
   );
 }
@@ -512,23 +575,32 @@ export default function CatalystPit() {
             </div>
             <div style={{padding:14}}>
               {loading ? (
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
-                  {Array(3).fill(0).map((_,i)=>(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
+                  {Array(4).fill(0).map((_,i)=>(
                     <div key={i} style={{background:C.surface,borderRadius:8,overflow:"hidden"}}>
-                      <Skel h={120} mb={0}/>
-                      <div style={{padding:12}}><Skel w={60} h={9} mb={6}/><Skel h={14} mb={4}/><Skel w="80%" h={14} mb={0}/></div>
+                      <Skel h={110} mb={0}/>
+                      <div style={{padding:10}}><Skel w={60} h={9} mb={5}/><Skel h={13} mb={3}/><Skel w="75%" h={13} mb={0}/></div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <>
-                  <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr",gap:12,marginBottom:12}}>
-                    {news.slice(0,3).map((n,i)=>(
-                      <NewsPhotoCard key={i} n={n} idx={i} large={i===0}/>
+                  {/* ── ROW 1: Big hero left + stacked secondary right ── */}
+                  <div style={{display:"grid",gridTemplateColumns:"1.6fr 1fr",gap:12,marginBottom:12}}>
+                    {/* Hero card — tall with big photo */}
+                    {news.slice(0,1).map((n,i)=>(
+                      <NewsPhotoCard key={i} n={n} idx={0} large hero/>
                     ))}
+                    {/* Right column: 2 stacked cards */}
+                    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                      {news.slice(1,3).map((n,i)=>(
+                        <NewsPhotoCard key={i} n={n} idx={i+1} stacked/>
+                      ))}
+                    </div>
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
-                    {news.slice(3,6).map((n,i)=>(
+                  {/* ── ROW 2: 4 equal cards ── */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+                    {news.slice(3,7).map((n,i)=>(
                       <NewsPhotoCard key={i} n={n} idx={i+3}/>
                     ))}
                   </div>
@@ -937,7 +1009,7 @@ export default function CatalystPit() {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,
           fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(255,255,255,0.5)"}}>
-          <Dot/>LIVE · AI POWERED · © 2025 CATALYSTPIT · NOT FINANCIAL ADVICE
+          <Dot/>LIVE · © 2026 CATALYSTPIT · NOT FINANCIAL ADVICE
         </div>
       </div>
     </div>
