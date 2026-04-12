@@ -74,58 +74,53 @@ const fetchAll = async () => {
     ]);
 
     // Map ticker_tape → {sym, price, chg}
-    const tickers = Array.isArray(tape)
-      ? tape.map(t => ({ sym: t.symbol, price: t.price, chg: t.changePct }))
-      : TICKS;
+const tickers = Array.isArray(tape)
+  ? tape.map(t => ({ sym: t.symbol || t.sym, price: t.price, chg: t.changePct ?? t.chg }))
+  : TICKS;
 
-    // Map top_stories → {headline, source, mins, tag, sym, chg, hot}
-    const news = Array.isArray(stories)
-      ? stories.map(s => ({
-          headline: s.headline,
-          source: s.source,
-          mins: Math.floor(Math.random() * 45) + 1,
-          tag: s.category || "MARKETS",
-          sym: s.ticker || "SPY",
-          chg: (Math.random() * 4 - 1).toFixed(2),
-          hot: Math.random() > 0.7,
-        }))
-      : [];
+const news = Array.isArray(stories)
+  ? stories.map(s => ({
+      headline: s.headline,
+      source: s.source,
+      mins: Math.floor(Math.random() * 45) + 1,
+      tag: s.category || 'MARKETS',
+      sym: s.ticker || 'SPY',
+      chg: (Math.random() * 4 - 1).toFixed(2),
+      hot: Math.random() > 0.7,
+    }))
+  : [];
 
-    // Map why_moving → {sym, name, price, chg, why}
-    const movers = Array.isArray(movingData)
-      ? movingData.map(m => ({
-          sym: m.ticker,
-          name: m.company,
-          price: m.price,
-          chg: m.changePct,
-          why: m.reason,
-        }))
-      : [];
+const movers = Array.isArray(movingData)
+  ? movingData.map(m => ({
+      sym: m.ticker || m.sym,
+      name: m.company || m.name,
+      price: m.price,
+      chg: m.changePct ?? m.chg,
+      why: m.reason || m.why,
+    }))
+  : [];
 
-    // Map insider_trades → {sym, name, role, type, value, filed}
-    const insiders = Array.isArray(insiderData)
-      ? insiderData.map(i => ({
-          sym: i.ticker,
-          name: i.executive,
-          role: i.title,
-          type: i.action === "Buy" ? "BUY" : "SELL",
-          value: `$${(i.value / 1e6).toFixed(1)}M`,
-          filed: i.date,
-        }))
-      : [];
+const insiders = Array.isArray(insiderData)
+  ? insiderData.map(i => ({
+      sym: i.ticker || i.sym,
+      name: i.executive || i.name,
+      role: i.title || i.role,
+      type: (i.action === 'Buy' || i.action === 'BUY') ? 'BUY' : 'SELL',
+      value: typeof i.value === 'number' ? `$${(i.value / 1e6).toFixed(1)}M` : i.value,
+      filed: i.date || i.filed,
+    }))
+  : [];
 
-    // Map politician_trades → {name, title, sym, action, value, filed}
-    const politicians = Array.isArray(politicianData)
-      ? politicianData.map(p => ({
-          name: p.politician,
-          title: `${p.party} · ${p.chamber}`,
-          sym: p.ticker,
-          action: p.action === "Purchase" ? "BUY" : "SELL",
-          value: p.amount,
-          filed: p.date,
-        }))
-      : [];
-
+const politicians = Array.isArray(politicianData)
+  ? politicianData.map(p => ({
+      name: p.politician || p.name,
+      title: `${p.party || ''} · ${p.chamber || p.title || ''}`,
+      sym: p.ticker || p.sym,
+      action: (p.action === 'Purchase' || p.action === 'BUY') ? 'BUY' : 'SELL',
+      value: p.amount || p.value,
+      filed: p.date || p.filed,
+    }))
+  : [];
     // Market snapshot for spy_chg and vix
     const spy_chg = snapshot?.SPY?.changePct ?? 1.2;
     const vix = snapshot?.VIX?.price ?? 18.3;
