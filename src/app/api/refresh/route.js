@@ -5,13 +5,13 @@ const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function kvSet(key, value) {
-  const res = await fetch(`https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}`, {
+  const res = await fetch(`https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=1800`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${KV_TOKEN}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify([value, 'EX', 1800]),
+    body: JSON.stringify(value),
   });
   const text = await res.text();
   console.log(`KV set ${key}: ${text.substring(0, 80)}`);
