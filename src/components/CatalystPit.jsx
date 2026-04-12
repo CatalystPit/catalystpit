@@ -51,8 +51,14 @@ const fetchKey = async (key) => {
     if (!r.ok) return null;
     const d = await r.json();
     if (!d || !d.data) return null;
-    const val = d.data;
-    return typeof val === 'string' ? JSON.parse(val) : val;
+    let val = d.data;
+    if (typeof val === 'string') {
+      try { val = JSON.parse(val); } catch { return null; }
+    }
+    if (typeof val === 'string') {
+      try { val = JSON.parse(val); } catch { return null; }
+    }
+    return val;
   } catch { return null; }
 };
 // ── Map cache data to the shape the UI expects ─────────────────────────────
