@@ -48,11 +48,13 @@ const CARD_COLORS = [
 const fetchKey = async (key) => {
   try {
     const r = await fetch(`/api/claude?key=${key}`);
+    if (!r.ok) return null;
     const d = await r.json();
-    return d.data || null;
+    if (!d || !d.data) return null;
+    const val = d.data;
+    return typeof val === 'string' ? JSON.parse(val) : val;
   } catch { return null; }
 };
-
 // ── Map cache data to the shape the UI expects ─────────────────────────────
 const fetchAll = async () => {
   try {
