@@ -19,8 +19,12 @@ const C = {
 
 const chgC  = (v) => (+v)>0 ? C.green : C.red;
 const chgBg = (v) => (+v)>0 ? C.greenLight : C.redLight;
-const fmt2  = n => typeof n==="number"?n.toFixed(2):String(n??"-");
-const fmtP  = n => typeof n==="number"?`${n>0?"+":""}${n.toFixed(2)}%`:"-";
+
+// FIX: fmt2 and fmtP now guard against NaN
+const fmt2  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : x.toFixed(2); };
+const fmtP  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : `${x>0?"+":""}${x.toFixed(2)}%`; };
+const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
+
 const timeAgo = m => typeof m==="number"?(m<60?`${m}m ago`:`${Math.floor(m/60)}h ago`):m||"Just now";
 
 const TICKS = [
@@ -44,6 +48,27 @@ const CARD_COLORS = [
   ["#0C1A2A","#1A5A88"],["#2A0C0C","#882A1A"],["#0C2A2A","#1A7A7A"],
 ];
 
+// Maps each news tag → keywords for loremflickr.com photo lookup
+// loremflickr is free, no API key, and topic-relevant
+const TAG_PHOTO_KW = {
+  EARNINGS: "stock,market,earnings,profit",
+  FED:      "federal,reserve,economy,washington",
+  MARKETS:  "stock,market,trading,nyse",
+  TECH:     "technology,silicon,computer,startup",
+  CRYPTO:   "cryptocurrency,bitcoin,blockchain",
+  "M&A":    "business,merger,corporate,deal",
+  MACRO:    "economy,global,inflation,finance",
+  SEC:      "finance,regulation,law,compliance",
+  OPTIONS:  "trading,options,finance,chart",
+  SQUEEZE:  "trading,market,volatility",
+  INSIDER:  "business,executive,corporate",
+};
+const tagPhoto = (tag, lock) => {
+  const kw = TAG_PHOTO_KW[tag] || "finance,market,business";
+  // lock param makes the same tag+idx always return the same image
+  return `https://loremflickr.com/640/360/${encodeURIComponent(kw)}?lock=${lock}`;
+};
+
 // ── Fetch from KV cache ────────────────────────────────────────────────────
 const fetchKey = async (key) => {
   try {
@@ -52,15 +77,30 @@ const fetchKey = async (key) => {
     const d = await r.json();
     if (!d || !d.data) return null;
     let val = d.data;
-    if (typeof val === 'string') {
-      try { val = JSON.parse(val); } catch { return null; }
-    }
-    if (typeof val === 'string') {
-      try { val = JSON.parse(val); } catch { return null; }
-    }
+    // Unwrap up to two layers of JSON stringification
+    if (typeof val === 'string') { try { val = JSON.parse(val); } catch { return null; } }
+    if (typeof val === 'string') { try { val = JSON.parse(val); } catch { return null; } }
     return val;
   } catch { return null; }
 };
+
+// ── FIX: helper to unwrap possibly-wrapped arrays ──────────────────────────
+// Claude sometimes returns { stories: [...] } instead of bare [...].
+// This tries the bare value, then common wrapper keys, then any array value found.
+const toArr = (val, ...wrapperKeys) => {
+  if (Array.isArray(val)) return val;
+  if (val && typeof val === 'object') {
+    for (const k of wrapperKeys) {
+      if (Array.isArray(val[k])) return val[k];
+    }
+    // last resort: grab the first array-valued property
+    for (const k of Object.keys(val)) {
+      if (Array.isArray(val[k])) return val[k];
+    }
+  }
+  return [];
+};
+
 // ── Map cache data to the shape the UI expects ─────────────────────────────
 const fetchAll = async () => {
   try {
@@ -73,62 +113,87 @@ const fetchAll = async () => {
       fetchKey("why_moving"),
     ]);
 
-    // Map ticker_tape → {sym, price, chg}
-const tickers = Array.isArray(tape)
-  ? tape.map(t => ({ sym: t.symbol || t.sym, price: t.price, chg: t.changePct ?? t.chg }))
-  : TICKS;
+    // ── ticker_tape → {sym, price, chg} ──
+    const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
+    const tickers = tapeArr.length > 0
+      ? tapeArr.map(t => ({
+          sym: t.symbol || t.sym || t.ticker || '?',
+          // FIX: try every price field name Claude might use
+          price: safeN(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice),
+          // FIX: try every change-pct field name
+          chg: safeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
+        }))
+      : TICKS;
 
-const news = Array.isArray(stories)
-  ? stories.map(s => ({
-      headline: s.headline,
-      source: s.source,
+    // ── top_stories → {headline, source, mins, tag, sym, chg, hot} ──
+    const storiesArr = toArr(stories, 'stories', 'top_stories', 'articles', 'items', 'data');
+    const news = storiesArr.map(s => ({
+      // FIX: try title before headline — Claude often uses 'title'
+      headline: s.headline || s.title || s.summary || s.description || '',
+      source: s.source || s.outlet || s.publisher || 'Market News',
       mins: Math.floor(Math.random() * 45) + 1,
-      tag: s.category || 'MARKETS',
-      sym: s.ticker || 'SPY',
+      // FIX: normalise tag to uppercase and validate against TAG dict
+      tag: (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
+      sym: s.ticker || s.symbol || s.sym || 'SPY',
       chg: (Math.random() * 4 - 1).toFixed(2),
       hot: Math.random() > 0.7,
-    }))
-  : [];
+      // Real photo URL from Claude's response, or null (card will use tagPhoto fallback)
+      imageUrl: s.image_url || s.imageUrl || s.image || s.thumbnail || s.photo_url || null,
+    }));
 
-const movers = Array.isArray(movingData)
-  ? movingData.map(m => ({
-      sym: m.ticker || m.sym,
-      name: m.company || m.name,
-      price: m.price,
-      chg: m.changePct ?? m.chg,
-      why: m.reason || m.why,
-    }))
-  : [];
+    // ── why_moving → {sym, name, price, chg, why} ──
+    const moversArr = toArr(movingData, 'movers', 'why_moving', 'stocks', 'moves', 'data');
+    const movers = moversArr.map(m => ({
+      sym:  m.ticker  || m.symbol || m.sym  || '?',
+      name: m.company || m.name   || m.company_name || m.sym || m.ticker || '',
+      price: safeN(m.price ?? m.last ?? m.current_price),
+      // FIX: same multi-field chg fallback as tickers
+      chg: safeN(m.changePct ?? m.change_pct ?? m.pct_change ?? m.chg ?? m.changePercent ?? m.percentChange),
+      why: m.reason || m.why || m.explanation || m.catalyst || m.summary || '',
+    }));
 
-const insiders = Array.isArray(insiderData)
-  ? insiderData.map(i => ({
-      sym: i.ticker || i.sym,
-      name: i.executive || i.name,
-      role: i.title || i.role,
-      type: (i.action === 'Buy' || i.action === 'BUY') ? 'BUY' : 'SELL',
-      value: typeof i.value === 'number' ? `$${(i.value / 1e6).toFixed(1)}M` : i.value,
-      filed: i.date || i.filed,
-    }))
-  : [];
+    // ── insider_trades → {sym, name, role, type, value, filed} ──
+    const insidersArr = toArr(insiderData, 'trades', 'insider_trades', 'insiders', 'filings', 'data');
+    const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
+    const insiders = insidersArr.map(i => ({
+      sym:  i.ticker   || i.symbol || i.sym  || '?',
+      name: i.executive || i.name  || i.insider || i.filer || '',
+      role: i.title    || i.role   || i.position || i.relationship || '',
+      type: BUY_WORDS.has((i.action || i.transaction_type || '').toLowerCase()) ? 'BUY' : 'SELL',
+      // FIX: handle numeric value → formatted string, or pass through string
+      value: typeof i.value === 'number'
+        ? `$${(i.value / 1e6).toFixed(1)}M`
+        : (i.value || i.amount || i.transaction_value || ''),
+      filed: i.date || i.filed || i.filing_date || i.reported || '',
+    }));
 
-const politicians = Array.isArray(politicianData)
-  ? politicianData.map(p => ({
-      name: p.politician || p.name,
-      title: `${p.party || ''} · ${p.chamber || p.title || ''}`,
-      sym: p.ticker || p.sym,
-      action: (p.action === 'Purchase' || p.action === 'BUY') ? 'BUY' : 'SELL',
-      value: p.amount || p.value,
-      filed: p.date || p.filed,
-    }))
-  : [];
-    // Market snapshot for spy_chg and vix
-    const spy_chg = snapshot?.SPY?.changePct ?? 1.2;
-    const vix = snapshot?.VIX?.price ?? 18.3;
+    // ── politician_trades → {name, title, sym, action, value, filed} ──
+    const polArr = toArr(politicianData, 'trades', 'politician_trades', 'politicians', 'disclosures', 'data');
+    const politicians = polArr.map(p => {
+      const party   = p.party   || p.affiliation || '';
+      const chamber = p.chamber || p.title       || p.position || '';
+      return {
+        // FIX: try every name field Claude might use
+        name: p.politician || p.name || p.senator || p.representative || p.member || '',
+        // FIX: build title only from fields that actually exist
+        title: [party, chamber].filter(Boolean).join(' · '),
+        sym: p.ticker || p.symbol || p.sym || p.stock || '?',
+        // FIX: broader buy-word matching
+        action: BUY_WORDS.has((p.action || p.transaction_type || p.type || '').toLowerCase()) ? 'BUY' : 'SELL',
+        value: p.amount || p.value || p.range || p.transaction_amount || '',
+        filed: p.date || p.filed || p.disclosure_date || p.reported || p.transaction_date || '',
+      };
+    });
+
+    // ── market snapshot scalars ──
+    const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
+    const vix     = safeN(snapshot?.VIX?.price     ?? snapshot?.VIX?.last                               ?? 18.3);
 
     const chart_points = [420,422,418,425,430,428,435,440,438,445,450,448,455,460,458,465,470,468,472,475];
 
     return { tickers, news, movers, insiders, politicians, chart_points, spy_chg, vix };
-  } catch {
+  } catch (e) {
+    console.error('[CatalystPit] fetchAll error:', e);
     return null;
   }
 };
@@ -191,30 +256,68 @@ const TagBadge=({tag,size="sm"})=>{
 function NewsPhotoCard({n, idx, large=false}) {
   const [bg1,bg2]=CARD_COLORS[idx%CARD_COLORS.length];
   const isUp=(+n.chg)>=0;
+  // Track whether the primary photo failed so we can fallback gracefully
+  const [imgFailed,setImgFailed]=useState(false);
+
+  // Priority: real URL from KV data → loremflickr by tag → gradient fallback
+  const primarySrc = !imgFailed && n.imageUrl ? n.imageUrl : null;
+  const flickrSrc  = tagPhoto(n.tag, idx * 31 + 7); // stable per card slot
+
   return (
     <div className="card-hov" style={{background:C.white,border:`1px solid ${C.border}`,
       borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all 0.2s",height:"100%"}}>
-      <div style={{height:large?160:120,background:`linear-gradient(135deg,${bg1},${bg2})`,
-        position:"relative",overflow:"hidden",flexShrink:0}}>
-        <svg width="100%" height="100%" style={{position:"absolute",inset:0,opacity:0.3}}>
-          <polyline points="0,80 30,60 60,70 90,40 120,50 150,30 180,35 210,20 240,25 280,10"
-            fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5"/>
-          <polyline points="0,100 40,90 80,95 120,75 160,80 200,65 240,70 280,55"
-            fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1"/>
-        </svg>
-        <div style={{position:"absolute",top:10,left:10,display:"flex",alignItems:"center",gap:6}}>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,
-            color:"rgba(255,255,255,0.9)",background:"rgba(0,0,0,0.3)",
-            padding:"3px 8px",borderRadius:4}}>{n.sym}</span>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:500,
-            color:isUp?"#5AD87A":"#E87A7A",background:"rgba(0,0,0,0.3)",
-            padding:"3px 8px",borderRadius:4}}>{fmtP(+n.chg)}</span>
+
+      {/* ── Photo area ── */}
+      <div style={{height:large?180:130,position:"relative",overflow:"hidden",
+        flexShrink:0,background:`linear-gradient(135deg,${bg1},${bg2})`}}>
+
+        {/* Real photo — loremflickr (with KV URL taking priority if present) */}
+        <img
+          src={primarySrc || flickrSrc}
+          alt=""
+          onError={e=>{
+            if(primarySrc){
+              // KV URL failed → try loremflickr
+              setImgFailed(true);
+              e.currentTarget.src=flickrSrc;
+            } else {
+              // loremflickr also failed → hide img, show gradient
+              e.currentTarget.style.display="none";
+            }
+          }}
+          style={{
+            position:"absolute",inset:0,
+            width:"100%",height:"100%",
+            objectFit:"cover",objectPosition:"center",
+            display:"block",
+          }}
+        />
+
+        {/* Gradient overlay — dark at top for badges, darker at bottom for source */}
+        <div style={{position:"absolute",inset:0,
+          background:"linear-gradient(to bottom, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.55) 100%)",
+          pointerEvents:"none"}}/>
+
+        {/* Ticker + change badge — top left */}
+        <div style={{position:"absolute",top:10,left:10,
+          display:"flex",alignItems:"center",gap:6,zIndex:2}}>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,
+            color:"#FFFFFF",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(4px)",
+            padding:"3px 9px",borderRadius:4,letterSpacing:"0.3px"}}>{n.sym}</span>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600,
+            color:isUp?"#5AE87A":"#FF8080",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(4px)",
+            padding:"3px 9px",borderRadius:4}}>{fmtP(+n.chg)}</span>
         </div>
-        <div style={{position:"absolute",bottom:10,right:10}}>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"rgba(255,255,255,0.6)",
-            letterSpacing:"0.5px"}}>{n.source}</span>
+
+        {/* Source — bottom right */}
+        <div style={{position:"absolute",bottom:8,right:10,zIndex:2}}>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:9,
+            color:"rgba(255,255,255,0.8)",letterSpacing:"0.6px",
+            textShadow:"0 1px 3px rgba(0,0,0,0.6)"}}>{n.source}</span>
         </div>
       </div>
+
+      {/* ── Text area ── */}
       <div style={{padding:"12px 14px 14px"}}>
         <div style={{display:"flex",gap:6,marginBottom:7,alignItems:"center"}}>
           <TagBadge tag={n.tag}/>
@@ -471,7 +574,7 @@ export default function CatalystPit() {
                       </div>
                       <span style={{fontSize:11,fontFamily:"'DM Mono',monospace",fontWeight:600,
                         color:chgC(t.chg),background:chgBg(t.chg),padding:"2px 7px",borderRadius:3}}>
-                        {t.chg>0?"▲":"▼"} {Math.abs(t.chg).toFixed(2)}%
+                        {t.chg>0?"▲":"▼"} {Math.abs(safeN(t.chg)).toFixed(2)}%
                       </span>
                     </>}
                   </div>
@@ -510,7 +613,7 @@ export default function CatalystPit() {
                   <Skel w={40} h={32} mb={0}/><div style={{flex:1}}><Skel h={14} mb={4}/><Skel w="60%" h={12} mb={0}/></div>
                 </div>
               )):(movers).map((m,i)=>{
-                const isUp=(+m.chg)>=0;
+                const isUp=safeN(m.chg)>=0;
                 const [bg1,bg2]=CARD_COLORS[i%CARD_COLORS.length];
                 return(
                   <div key={i} className="hov" style={{padding:"12px 16px",
@@ -533,9 +636,9 @@ export default function CatalystPit() {
                     <div style={{textAlign:"right",flexShrink:0}}>
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,fontWeight:600,
                         color:chgC(m.chg),background:chgBg(m.chg),padding:"3px 8px",
-                        borderRadius:4}}>{m.chg>0?"▲":"▼"} {Math.abs(+m.chg).toFixed(1)}%</div>
+                        borderRadius:4}}>{safeN(m.chg)>0?"▲":"▼"} {Math.abs(safeN(m.chg)).toFixed(1)}%</div>
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,
-                        color:C.dim,marginTop:3}}>{fmt2(+m.price)}</div>
+                        color:C.dim,marginTop:3}}>{fmt2(m.price)}</div>
                     </div>
                   </div>
                 );
@@ -750,11 +853,14 @@ export default function CatalystPit() {
                   fontWeight:600,color:C.ink}}>{t.sym}</span>
                 <div style={{display:"flex",alignItems:"center",gap:7}}>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.text}}>
-                    {t.sym==="BTC"||(+t.price>10000)?(+t.price).toLocaleString("en-US",{maximumFractionDigits:0}):fmt2(+t.price)}</span>
+                    {t.sym==="BTC"||(safeN(t.price)>10000)
+                      ? safeN(t.price).toLocaleString("en-US",{maximumFractionDigits:0})
+                      : fmt2(t.price)}
+                  </span>
                   <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,
                     color:chgC(t.chg),background:chgBg(t.chg),
                     padding:"1px 5px",borderRadius:3}}>
-                    {t.chg>0?"+":""}{fmt2(t.chg)}%</span>
+                    {safeN(t.chg)>0?"+":""}{fmt2(t.chg)}%</span>
                 </div>
               </div>
             ))}
