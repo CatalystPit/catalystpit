@@ -832,4 +832,3 @@ export default function CatalystPit() {
     </div>
   );
 }
-test
