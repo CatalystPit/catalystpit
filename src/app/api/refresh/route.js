@@ -24,7 +24,10 @@ async function claude(prompt, maxTokens=1500) {
     headers:{ 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
     body:JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:maxTokens, messages:[{ role:'user', content:prompt }] }),
   });
-  if (!res.ok) throw new Error(`Claude ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Claude ${res.status}: ${errBody.slice(0, 300)}`);
+  }
   const data  = await res.json();
   const text  = data.content.filter(b=>b.type==='text').map(b=>b.text).join('');
   const clean = text.replace(/```json\n?|```\n?/g,'').trim();
