@@ -37,17 +37,20 @@ async function fetchStockPrices(tickers) {
   const results = await Promise.all(
     tickers.map(async sym => {
       try {
-        const res = await fetch(`https://api.polygon.io/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${POLYGON_KEY}`);
+        const res = await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${sym}?apiKey=${POLYGON_KEY}`);
         const data = await res.json();
-        const r = data.results?.[0];
-        if (!r) return null;
-        return { sym, price:+r.c.toFixed(2), change:+(r.c-r.o).toFixed(2), changePct:+(((r.c-r.o)/r.o)*100).toFixed(2) };
+        const t = data.ticker;
+        if (!t) return null;
+        const price = t.lastTrade?.p ?? t.min?.c ?? t.day?.c;
+        if (!price) return null;
+        const change = +(t.todaysChange ?? 0).toFixed(2);
+        const changePct = +(t.todaysChangePerc ?? 0).toFixed(2);
+        return { sym, price: +price.toFixed(2), change, changePct };
       } catch { return null; }
     })
   );
   return Object.fromEntries(results.filter(Boolean).map(r => [r.sym, { price:r.price, change:r.change, changePct:r.changePct }]));
 }
-
 // ── CoinGecko crypto ──────────────────────────────────────────────────────
 async function fetchCrypto() {
   const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true');
@@ -161,8 +164,7 @@ export async function GET(request) {
     claude(`Today ${today()}. Return ONLY a JSON array of 6 short squeeze candidates. Each: {"ticker","company","price":number,"shortFloat":number,"daysToCover":number,"squeezeScore":number,"catalyst":string}. No markdown.`),
 
     // Earnings
-    claude(`Today ${today()}. Return ONLY JSON: {"upcoming":[4 companies reporting in next 5 days, each {"ticker","company","reportDate","timing":"BMO"|"AMC","epsEstimate":number,"impliedMove":string}],"recent":[2 that just reported, each {"ticker","company","epsActual":number,"epsEstimate":number,"beat":bool,"reaction":number}]}. No markdown.`),
-  ]);
+   claude(`Today is ${today()}. Return ONLY a JSON object with two arrays. The "upcoming" array has 4 companies reporting earnings in the next 5 days. The "recent" array has 2 companies that just reported. Use this exact structure: {"upcoming":[{"ticker":"AAPL","company":"Apple Inc","reportDate":"2026-05-08","timing":"AMC","epsEstimate":1.50,"impliedMove":"3.2%"}],"recent":[{"ticker":"NVDA","company":"NVIDIA","epsActual":5.16,"epsEstimate":4.59,"beat":true,"reaction":2.4}]}. Return only the JSON object, no markdown, no commentary.`, 2000),
 
   // ── PHASE 4: Store all results ────────────────────────────────────────
   const storeIfOk = async (res, key) => {
