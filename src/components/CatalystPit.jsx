@@ -159,7 +159,6 @@ const fetchAll = async () => {
       source: s.source || s.outlet || s.publisher || 'Market News',
       mins: Math.floor(Math.random() * 45) + 1,
       tag: (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
-      // FIX: don't default to SPY — leave null for non-financial stories
       sym: (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || s.sym || null),
       chg: (Math.random() * 4 - 1).toFixed(2),
       hot: Math.random() > 0.7,
@@ -273,7 +272,6 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
   const primarySrc = !imgFailed && n.imageUrl ? n.imageUrl : null;
   const photoSrc   = storyPhoto(n.sym, n.tag, idx);
   const photoH     = hero ? 340 : stacked ? 110 : large ? 200 : 150;
-  // FIX: only show ticker badge when a real ticker exists
   const hasValidTicker = n.sym && n.sym !== 'N/A' && n.sym !== 'null' && n.sym !== '?';
 
   return (
@@ -298,7 +296,6 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
             ?"linear-gradient(to bottom,rgba(0,0,0,0.1) 0%,rgba(0,0,0,0.02) 35%,rgba(0,0,0,0.78) 100%)"
             :"linear-gradient(to bottom,rgba(0,0,0,0.38) 0%,rgba(0,0,0,0.04) 45%,rgba(0,0,0,0.48) 100%)"}}/>
 
-        {/* FIX: only render ticker badge when a real ticker is known */}
         {hasValidTicker && (
           <div style={{position:"absolute",top:9,left:9,display:"flex",gap:5,zIndex:2}}>
             <span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:600,color:"#fff",
@@ -428,20 +425,20 @@ export default function CatalystPit() {
           ))}
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button style={{background:"transparent",border:"1px solid rgba(255,255,255,0.4)",color:"rgba(255,255,255,0.9)",
-            padding:"6px 14px",borderRadius:5,fontSize:12,cursor:"pointer",
+          <a href="/sign-in" style={{background:"transparent",border:"1px solid rgba(255,255,255,0.4)",color:"rgba(255,255,255,0.9)",
+            padding:"6px 14px",borderRadius:5,fontSize:12,cursor:"pointer",textDecoration:"none",display:"inline-block",
             fontFamily:"'DM Sans',sans-serif",fontWeight:300}}
             onMouseEnter={e=>{e.currentTarget.style.color="#FFFFFF";}}
             onMouseLeave={e=>{e.currentTarget.style.color="rgba(255,255,255,0.75)";}}>
             Log In
-          </button>
-          <button style={{background:C.green,border:"none",color:"#fff",
-            padding:"7px 18px",borderRadius:5,fontSize:12,fontWeight:500,
+          </a>
+          <a href="/sign-up" style={{background:C.green,border:"none",color:"#fff",
+            padding:"7px 18px",borderRadius:5,fontSize:12,fontWeight:500,textDecoration:"none",display:"inline-block",
             cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}
             onMouseEnter={e=>e.currentTarget.style.background=C.greenMid}
             onMouseLeave={e=>e.currentTarget.style.background=C.green}>
             Start Free
-          </button>
+          </a>
         </div>
       </div>
 
