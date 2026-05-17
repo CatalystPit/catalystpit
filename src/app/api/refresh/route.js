@@ -8,7 +8,8 @@ const GNEWS_KEY    = process.env.GNEWS_KEY;
 const NEWSAPI_KEY  = process.env.NEWSAPI_KEY;
 const FINNHUB_KEY  = process.env.FINNHUB_KEY;
 
-// ── KV ────────────────────────────────────────────────────────────────────
+const NEWS_TICKERS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','NFLX','GOOG','JPM','BAC','XOM','WMT','COIN','PLTR','BA','DIS','UBER','SHOP'];
+
 async function kvSet(key, value) {
   await fetch(
     `https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=3600`,
@@ -17,7 +18,6 @@ async function kvSet(key, value) {
   console.log(`✅ ${key}`);
 }
 
-// ── Polygon prev-day aggregates ───────────────────────────────────────────
 async function fetchStockPrices(tickers) {
   const results = await Promise.all(
     tickers.map(async sym => {
@@ -28,16 +28,12 @@ async function fetchStockPrices(tickers) {
         const r = data.results?.[0];
         if (!r) return null;
         return { sym, price: +r.c.toFixed(2), change: +(r.c-r.o).toFixed(2), changePct: +(((r.c-r.o)/r.o)*100).toFixed(2) };
-      } catch (e) {
-        console.log(`❌ Polygon ${sym}: ${e.message}`);
-        return null;
-      }
+      } catch { return null; }
     })
   );
   return Object.fromEntries(results.filter(Boolean).map(r => [r.sym, { price:r.price, change:r.change, changePct:r.changePct }]));
 }
 
-// ── CoinGecko crypto ──────────────────────────────────────────────────────
 async function fetchCrypto() {
   const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true');
   const data = await res.json();
@@ -47,7 +43,6 @@ async function fetchCrypto() {
   };
 }
 
-// ── SEC EDGAR Form 4 ──────────────────────────────────────────────────────
 async function fetchSECInsiders() {
   const res = await fetch(
     'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=80&output=atom',
@@ -75,8 +70,45 @@ async function fetchSECInsiders() {
   return recentFilings.slice(0, 10);
 }
 
-// ── Finnhub ─────────────────────────────────────────────────────────────
-async function fetchFinnhub() {
+// ── Finnhub PER-TICKER news (the right way) ──────────────────────────────
+async function fetchFinnhubPerTicker() {
+  if (!FINNHUB_KEY) return [];
+  // Date range: last 3 days
+  const to = new Date();
+  const from = new Date(to.getTime() - 3 * 24 * 60 * 60 * 1000);
+  const fmt = d => d.toISOString().split('T')[0];
+
+  try {
+    const results = await Promise.all(
+      NEWS_TICKERS.map(async ticker => {
+        try {
+          const res = await fetch(
+            `https://finnhub.io/api/v1/company-news?symbol=${ticker}&from=${fmt(from)}&to=${fmt(to)}&token=${FINNHUB_KEY}`
+          );
+          if (!res.ok) return [];
+          const data = await res.json();
+          return (data || []).slice(0, 3).map(a => ({
+            title: a.headline,
+            source: a.source || 'Finnhub',
+            url: a.url,
+            image_url: a.image || null,
+            published: new Date(a.datetime * 1000).toISOString(),
+            ticker, // we KNOW the ticker because we asked for it
+            _provider: 'finnhub-ticker',
+            _rank: 1,
+          })).filter(a => a.title && a.url);
+        } catch { return []; }
+      })
+    );
+    return results.flat();
+  } catch (e) {
+    console.log(`❌ Finnhub per-ticker: ${e.message}`);
+    return [];
+  }
+}
+
+// ── Finnhub general market news (Fed, macro, broad) ──────────────────────
+async function fetchFinnhubMarket() {
   if (!FINNHUB_KEY) return [];
   try {
     const res = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`);
@@ -91,11 +123,12 @@ async function fetchFinnhub() {
         url: a.url,
         image_url: a.image || null,
         published: new Date(a.datetime * 1000).toISOString(),
-        _provider: 'finnhub',
-        _rank: 1,
+        ticker: null,
+        _provider: 'finnhub-market',
+        _rank: 2,
       }));
   } catch (e) {
-    console.log(`❌ Finnhub: ${e.message}`);
+    console.log(`❌ Finnhub market: ${e.message}`);
     return [];
   }
 }
@@ -115,13 +148,11 @@ async function fetchGNews() {
         url: a.url,
         image_url: a.image || null,
         published: a.publishedAt,
+        ticker: null,
         _provider: 'gnews',
-        _rank: 3,
+        _rank: 4,
       }));
-  } catch (e) {
-    console.log(`❌ GNews: ${e.message}`);
-    return [];
-  }
+  } catch { return []; }
 }
 
 // ── NewsAPI business ─────────────────────────────────────────────────────
@@ -139,51 +170,72 @@ async function fetchNewsAPI() {
         url: a.url,
         image_url: a.urlToImage || null,
         published: a.publishedAt,
+        ticker: null,
         _provider: 'newsapi',
-        _rank: 2,
+        _rank: 3,
       }));
-  } catch (e) {
-    console.log(`❌ NewsAPI: ${e.message}`);
-    return [];
-  }
+  } catch { return []; }
 }
 
-// ── Finance keyword filter ───────────────────────────────────────────────
-const FINANCE_KEYWORDS = [
-  'stock','stocks','shares','equity','equities','bond','bonds','treasury','treasuries',
-  'etf','mutual fund','hedge fund','option','options','futures','commodity','commodities',
-  'crypto','bitcoin','ethereum','dogecoin','token',
-  'rally','rallies','plunge','plunges','surge','surges','soar','soars','tumble','tumbles',
-  'jumps','slides','falls','climbs','rises','drops','gains','losses','crash',
-  'bull','bear','bullish','bearish',
-  'earnings','eps','revenue','profit','loss','guidance','forecast','outlook',
-  'beat','miss','misses','beats','reports','quarterly','q1','q2','q3','q4',
-  'nyse','nasdaq','dow','s&p','sp500','russell','wall street','sec','fdic','sec filing',
-  'billion','million','trillion','valuation','market cap','ipo','merger','acquisition','acquires',
-  'fed','federal reserve','powell','rate hike','rate cut','interest rate','inflation','cpi','ppi',
-  'gdp','jobs report','unemployment','recession','yield','yields',
-  'oil','energy','gold','silver','crude','opec','natural gas',
-  'buyback','dividend','split','spinoff','restructuring','bankruptcy','lawsuit','fine',
-  'apple','tesla','nvidia','microsoft','amazon','google','meta','alphabet',
-  'walmart','goldman','jpmorgan','morgan stanley','berkshire','blackrock',
+// ── HARD BLOCKLIST — these die regardless of source ──────────────────────
+const HARD_BLOCK = [
+  // Sports
+  'ufc','mma','nfl','nba','nhl','mlb','wnba','ncaa','espn','fight night',
+  'super bowl','world cup','olympic','olympics','playoff','playoffs','draft pick',
+  'football','basketball','baseball','soccer','tennis','golf tournament','pga','formula 1','f1 race',
+  'mcgregor','ngannou','khabib','jon jones',
+  // Entertainment & celebrities
+  'taylor swift','travis kelce','kardashian','kanye','beyonce','drake',
+  'oscar','grammy','emmy','cannes','met gala','red carpet',
+  'movie review','box office','netflix series','tv show','reality tv',
+  // Lifestyle / non-finance
+  'recipe','restaurant review','travel destination','vacation','lounge review',
+  'horoscope','astrology','dating',
+  // Local US politics that isn't markets-related
+  'gubernatorial','school board','mayor election','city council',
 ];
 
-const FINANCE_SOURCES_TRUSTED = [
-  'reuters','bloomberg','cnbc','wsj','wall street journal','financial times','ft',
+function hasBlockedTerm(article) {
+  const t = (article.title || '').toLowerCase();
+  return HARD_BLOCK.some(b => t.includes(b));
+}
+
+// Strict finance whitelist for non-Finnhub sources
+const FINANCE_KEYWORDS = [
+  'stock','stocks','shares','equity','bond','treasury','etf','futures','option','options',
+  'crypto','bitcoin','ethereum',
+  'earnings','revenue','eps','guidance','quarterly','beats','misses','q1','q2','q3','q4',
+  'nyse','nasdaq','dow','s&p','wall street','sec','fdic','ipo',
+  'merger','acquisition','buyback','dividend','spinoff','bankruptcy',
+  'fed','federal reserve','powell','rate hike','rate cut','interest rate','inflation','cpi','ppi','gdp',
+  'recession','yield','jobs report','unemployment',
+  'rally','plunge','surge','soar','tumble','crash','jumps','slides','climbs',
+  'bull','bear','bullish','bearish',
+  'billion','trillion','market cap','valuation',
+];
+
+const TRUSTED_SOURCES = [
+  'reuters','bloomberg','cnbc','wsj','wall street journal','financial times','ft.com',
   'marketwatch','yahoo finance','investing.com','seeking alpha','barron',
-  'forbes','fortune','businessinsider','business insider','thestreet',
-  'finnhub','benzinga','zacks','morningstar','fool','motley fool',
-  'investorplace','fxstreet','kitco','coindesk','cointelegraph',
+  'forbes','fortune','business insider','thestreet',
+  'benzinga','zacks','morningstar','motley fool','investorplace',
+  'kitco','coindesk','cointelegraph','finnhub',
 ];
 
 function isFinanceRelevant(article) {
-  if (article._provider === 'finnhub') return true;
+  // Hard block always wins
+  if (hasBlockedTerm(article)) return false;
+  // Finnhub per-ticker is always relevant (we asked about a specific ticker)
+  if (article._provider === 'finnhub-ticker') return true;
+  // For all other sources, require BOTH a trusted source OR a finance keyword in the title
   const title = (article.title || '').toLowerCase();
   const source = (article.source || '').toLowerCase();
-  if (FINANCE_SOURCES_TRUSTED.some(s => source.includes(s))) return true;
-  if (FINANCE_KEYWORDS.some(k => title.includes(k))) return true;
-  if (/\$[A-Z]{1,5}\b/.test(article.title || '') || /\([A-Z]{2,5}:[A-Z]+\)/.test(article.title || '')) return true;
-  return false;
+  const trustedSource = TRUSTED_SOURCES.some(s => source.includes(s));
+  const financeKw = FINANCE_KEYWORDS.some(k => title.includes(k));
+  // For Finnhub general market, require finance keyword (their general feed has noise)
+  if (article._provider === 'finnhub-market') return financeKw;
+  // For NewsAPI/GNews business category, require trusted source AND finance keyword (strictest)
+  return trustedSource && financeKw;
 }
 
 function mergeNews(...sources) {
@@ -210,7 +262,7 @@ function mergeNews(...sources) {
     });
 }
 
-// ── MAIN — prices, snapshot, raw news, raw SEC. NO Claude. ───────────────
+// ── MAIN ──────────────────────────────────────────────────────────────────
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
@@ -220,11 +272,12 @@ export async function GET(request) {
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
   const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
-  const [stockPrices, crypto, secRaw, finnhubRaw, gnewsRaw, newsapiRaw] = await Promise.allSettled([
+  const [stockPrices, crypto, secRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
     fetchSECInsiders(),
-    fetchFinnhub(),
+    fetchFinnhubPerTicker(),
+    fetchFinnhubMarket(),
     fetchGNews(),
     fetchNewsAPI(),
   ]);
@@ -245,17 +298,18 @@ export async function GET(request) {
     results.refreshed.push('catalystpit:market_snapshot');
   } catch(e) { fail('prices', e); }
 
-  // Store raw news + raw SEC for refresh-content to pick up
   try {
     const sec = secRaw.status === 'fulfilled' ? secRaw.value : [];
     await kvSet('catalystpit:_raw_sec', JSON.stringify(sec));
     results.refreshed.push('catalystpit:_raw_sec');
 
-    const finnhub = finnhubRaw.status === 'fulfilled' ? finnhubRaw.value : [];
+    const finnhubTicker = finnhubTickerRaw.status === 'fulfilled' ? finnhubTickerRaw.value : [];
+    const finnhubMarket = finnhubMarketRaw.status === 'fulfilled' ? finnhubMarketRaw.value : [];
     const gnews   = gnewsRaw.status   === 'fulfilled' ? gnewsRaw.value   : [];
     const newsapi = newsapiRaw.status === 'fulfilled' ? newsapiRaw.value : [];
-    const mergedNews = mergeNews(finnhub, newsapi, gnews).slice(0, 20);
-    console.log(`📰 News: ${finnhub.length} Finnhub + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged & filtered`);
+
+    const mergedNews = mergeNews(finnhubTicker, finnhubMarket, newsapi, gnews).slice(0, 20);
+    console.log(`📰 News raw: ${finnhubTicker.length} Finnhub-ticker + ${finnhubMarket.length} Finnhub-market + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged after filter`);
     await kvSet('catalystpit:_raw_news', JSON.stringify(mergedNews));
     results.refreshed.push('catalystpit:_raw_news');
   } catch(e) { fail('raw_news_sec', e); }
