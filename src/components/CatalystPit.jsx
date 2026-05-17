@@ -936,11 +936,28 @@ export default function CatalystPit() {
       <div style={{background:C.navBg,marginTop:20,padding:"24px",
         display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
         <Logo dark scale={0.85}/>
-        <div style={{display:"flex",gap:24}}>
-          {["Features","Pricing","Privacy","Terms","Contact"].map(l=>(
-            <span key={l} style={{fontSize:12,color:"rgba(255,255,255,0.6)",cursor:"pointer",fontWeight:300}}
-              onMouseEnter={e=>e.target.style.color="#FFFFFF"}
-              onMouseLeave={e=>e.target.style.color="rgba(255,255,255,0.5)"}>{l}</span>
+       <div style={{display:"flex",gap:24,flexWrap:"wrap"}}>
+          {[
+            {label:"Features",href:null},
+            {label:"Pricing",href:null},
+            {label:"Privacy",href:"/privacy"},
+            {label:"Terms",href:"/terms"},
+            {label:"Disclaimer",href:"/disclaimer"},
+            {label:"Contact",href:"mailto:hello@catalystpit.com"},
+          ].map(l=>(
+            l.href ? (
+              <a key={l.label} href={l.href} style={{fontSize:12,color:"rgba(255,255,255,0.6)",cursor:"pointer",fontWeight:300,textDecoration:"none"}}
+                onMouseEnter={e=>e.currentTarget.style.color="#FFFFFF"}
+                onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.6)"}>
+                {l.label}
+              </a>
+            ) : (
+              <span key={l.label} style={{fontSize:12,color:"rgba(255,255,255,0.6)",cursor:"pointer",fontWeight:300}}
+                onMouseEnter={e=>e.currentTarget.style.color="#FFFFFF"}
+                onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.6)"}>
+                {l.label}
+              </span>
+            )
           ))}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,
