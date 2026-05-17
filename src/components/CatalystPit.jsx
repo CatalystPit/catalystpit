@@ -162,7 +162,8 @@ const fetchAll = async () => {
       sym: (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || s.sym || null),
       chg: (Math.random() * 4 - 1).toFixed(2),
       hot: Math.random() > 0.7,
-      imageUrl: s.image_url || s.imageUrl || s.image || s.thumbnail || s.photo_url || null,
+     imageUrl: s.image_url || s.imageUrl || s.image || s.thumbnail || s.photo_url || null,
+      url: s.url || null,
     }));
 
     const moversArr = toArr(movingData, 'movers', 'why_moving', 'stocks', 'moves', 'data');
@@ -274,7 +275,7 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
   const photoH     = hero ? 340 : stacked ? 110 : large ? 200 : 150;
   const hasValidTicker = n.sym && n.sym !== 'N/A' && n.sym !== 'null' && n.sym !== '?';
 
-  return (
+  const cardInner = (
     <div className="card-hov" style={{background:C.white,border:`1px solid ${C.border}`,
       borderRadius:8,overflow:"hidden",cursor:"pointer",transition:"all 0.2s",
       height:"100%",display:"flex",flexDirection:"column"}}>
@@ -346,6 +347,17 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
       )}
     </div>
   );
+
+  // If we have a URL, wrap in an anchor that opens in new tab
+  if (n.url) {
+    return (
+      <a href={n.url} target="_blank" rel="noopener noreferrer"
+        style={{textDecoration:"none",color:"inherit",display:"block",height:"100%"}}>
+        {cardInner}
+      </a>
+    );
+  }
+  return cardInner;
 }
 
 export default function CatalystPit() {
