@@ -4,6 +4,7 @@ export const maxDuration = 60;
 const KV_TOKEN    = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
 const GNEWS_KEY   = process.env.GNEWS_KEY;
+const NEWSAPI_KEY = process.env.NEWSAPI_KEY;
 const POLYGON_KEY = process.env.POLYGON_KEY;
 
 const today = () => new Date().toISOString().split('T')[0];
@@ -101,14 +102,78 @@ async function fetchSECInsiders() {
 
 // ── GNews ─────────────────────────────────────────────────────────────────
 async function fetchGNews() {
-  if (!GNEWS_KEY) return null;
+  if (!GNEWS_KEY) return [];
   try {
-    const res = await fetch(`https://gnews.io/api/v4/top-headlines?category=business&lang=en&max=8&apikey=${GNEWS_KEY}`);
+    const res = await fetch(`https://gnews.io/api/v4/top-headlines?category=business&lang=en&max=20&apikey=${GNEWS_KEY}`);
+    if (!res.ok) {
+      console.log(`⚠️ GNews: HTTP ${res.status}`);
+      return [];
+    }
     const data = await res.json();
-    return data.articles?.filter(a=>a.image&&a.title).map(a=>({
-      title:a.title, source:a.source?.name||'News', url:a.url, image_url:a.image, published:a.publishedAt
-    })) || null;
-  } catch { return null; }
+    return (data.articles || [])
+      .filter(a => a.title && a.url)
+      .map(a => ({
+        title: a.title,
+        source: a.source?.name || 'News',
+        url: a.url,
+        image_url: a.image || null,
+        published: a.publishedAt,
+        _provider: 'gnews',
+      }));
+  } catch (e) {
+    console.log(`❌ GNews: ${e.message}`);
+    return [];
+  }
+}
+
+// ── NewsAPI ───────────────────────────────────────────────────────────────
+async function fetchNewsAPI() {
+  if (!NEWSAPI_KEY) return [];
+  try {
+    const res = await fetch(`https://newsapi.org/v2/top-headlines?category=business&language=en&country=us&pageSize=20&apiKey=${NEWSAPI_KEY}`);
+    if (!res.ok) {
+      console.log(`⚠️ NewsAPI: HTTP ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    return (data.articles || [])
+      .filter(a => a.title && a.url && a.title !== '[Removed]')
+      .map(a => ({
+        title: a.title,
+        source: a.source?.name || 'News',
+        url: a.url,
+        image_url: a.urlToImage || null,
+        published: a.publishedAt,
+        _provider: 'newsapi',
+      }));
+  } catch (e) {
+    console.log(`❌ NewsAPI: ${e.message}`);
+    return [];
+  }
+}
+
+// ── Merge + dedupe news from multiple providers ──────────────────────────
+function mergeNews(...sources) {
+  const all = sources.flat();
+  const seen = new Map();
+  for (const story of all) {
+    if (!story.title) continue;
+    // dedupe key: normalized first 50 chars of title (catches near-dupes)
+    const key = story.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+    if (!seen.has(key)) {
+      seen.set(key, story);
+    } else {
+      // if the new one has an image and the existing doesn't, prefer the new
+      const existing = seen.get(key);
+      if (!existing.image_url && story.image_url) seen.set(key, story);
+    }
+  }
+  // sort by published date desc, prefer stories with images at the top
+  return Array.from(seen.values())
+    .sort((a, b) => {
+      if (!!a.image_url !== !!b.image_url) return a.image_url ? -1 : 1;
+      return new Date(b.published || 0) - new Date(a.published || 0);
+    });
 }
 
 // ── MAIN ──────────────────────────────────────────────────────────────────
@@ -121,11 +186,12 @@ export async function GET(request) {
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
   const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
-  const [stockPrices, crypto, secRaw, gnewsRaw] = await Promise.allSettled([
+  const [stockPrices, crypto, secRaw, gnewsRaw, newsapiRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
     fetchSECInsiders(),
     fetchGNews(),
+    fetchNewsAPI(),
   ]);
 
   try {
@@ -144,8 +210,13 @@ export async function GET(request) {
     results.refreshed.push('catalystpit:market_snapshot');
   } catch(e) { fail('prices', e); }
 
-  const sec    = secRaw.status==='fulfilled'   ? secRaw.value   : [];
-  const gnews  = gnewsRaw.status==='fulfilled' ? gnewsRaw.value : null;
+  const sec      = secRaw.status==='fulfilled'      ? secRaw.value      : [];
+  const gnews    = gnewsRaw.status==='fulfilled'    ? gnewsRaw.value    : [];
+  const newsapi  = newsapiRaw.status==='fulfilled'  ? newsapiRaw.value  : [];
+
+  // Merge providers, dedupe, cap at 30 for Claude enrichment
+  const mergedNews = mergeNews(gnews, newsapi).slice(0, 30);
+  console.log(`📰 News: ${gnews.length} GNews + ${newsapi.length} NewsAPI → ${mergedNews.length} merged`);
 
   const [insiderRes, movingRes, polRes, newsRes, squeezeRes, earningsRes] = await Promise.allSettled([
     sec.length > 0
@@ -153,9 +224,9 @@ export async function GET(request) {
       : claude(`Today is ${today()}. The most recent trading day was ${today()}. Return ONLY a JSON array of 10 realistic insider trades from the most recent trading day. Use real company names and tickers. Each: {"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date":"${today()}"}. No markdown.`),
     claude(`Today ${today()}. Return ONLY a JSON array of 6 top-moving stocks right now with reasons. Each: {"ticker","company","price":number,"changePct":number,"reason":string}. No markdown.`),
     claude(`Today ${today()}. Return ONLY a JSON array of 10 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
-    gnews?.length
-      ? claude(`Enrich these news articles: ${JSON.stringify(gnews.slice(0,6))}. For each add "ticker","category"(Earnings|Macro|Crypto|Tech|Markets|FED),"headline"(max 10 words),"summary"(1 sentence). Keep source,url,image_url,published. Return ONLY JSON array. No markdown.`, 2000)
-      : claude(`Today ${today()}. Return ONLY 6 top financial news stories as JSON array. Each: {"headline","summary","ticker","source","category","image_url":null}. No markdown.`),
+    mergedNews.length > 0
+      ? claude(`Enrich these ${mergedNews.length} news articles. For each, add these fields and keep all original fields (title, source, url, image_url, published): "ticker"(stock symbol if relevant, or null), "category"(one of: Earnings|Macro|Crypto|Tech|Markets|FED|M&A|IPO|SEC|Geopolitics), "headline"(rewrite the title to max 12 words punchy and clear), "summary"(1 concise sentence explaining what happened and why it matters). Articles: ${JSON.stringify(mergedNews)}. Return ONLY a JSON array of all ${mergedNews.length} enriched articles. No markdown, no commentary.`, 4000)
+      : claude(`Today ${today()}. Return ONLY 10 top financial news stories as JSON array. Each: {"headline","summary","ticker","source","category","image_url":null,"published":"${new Date().toISOString()}"}. No markdown.`, 2000),
     claude(`Today ${today()}. Return ONLY a JSON array of 6 short squeeze candidates. Each: {"ticker","company","price":number,"shortFloat":number,"daysToCover":number,"squeezeScore":number,"catalyst":string}. No markdown.`),
     claude(`Today is ${today()}. Return ONLY a JSON object with two arrays. The "upcoming" array has 4 companies reporting earnings in the next 5 days. The "recent" array has 2 companies that just reported. Use this exact structure: {"upcoming":[{"ticker":"AAPL","company":"Apple Inc","reportDate":"2026-05-08","timing":"AMC","epsEstimate":1.50,"impliedMove":"3.2%"}],"recent":[{"ticker":"NVDA","company":"NVIDIA","epsActual":5.16,"epsEstimate":4.59,"beat":true,"reaction":2.4}]}. Return only the JSON object, no markdown, no commentary.`, 2000),
   ]);
