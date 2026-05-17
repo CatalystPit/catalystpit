@@ -1,0 +1,102 @@
+'use client';
+
+import { UserProfile } from '@clerk/nextjs';
+import { useEffect } from 'react';
+
+const C = {
+  bg: "#F5F6F3",
+  white: "#FFFFFF",
+  surface: "#F0F2EE",
+  border: "#E0E2DC",
+  ink: "#0C1410",
+  text: "#1A2018",
+  muted: "#5A6458",
+  green: "#1E5C38",
+  greenMid: "#2A7848",
+  navBg: "#1E5C38",
+};
+
+export default function AccountPage() {
+  useEffect(() => {
+    const fl = document.createElement("link");
+    fl.rel = "stylesheet";
+    fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
+    document.head.appendChild(fl);
+  }, []);
+
+  return (
+    <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, minHeight: "100vh" }}>
+      {/* NAV */}
+      <div style={{
+        background: C.navBg, height: 50, display: "flex", alignItems: "center",
+        justifyContent: "space-between", padding: "0 24px", position: "sticky", top: 0, zIndex: 100,
+        borderBottom: "1px solid rgba(255,255,255,0.15)"
+      }}>
+        <a href="/" style={{ textDecoration: "none", lineHeight: 1.05, cursor: "pointer" }}>
+          <span style={{
+            fontFamily: "'Cormorant Garamond',serif", fontSize: 20,
+            fontWeight: 300, color: "#FFFFFF", letterSpacing: "0.04em"
+          }}>Catalyst</span>
+          <span style={{
+            fontFamily: "'Cormorant Garamond',serif", fontSize: 20,
+            fontWeight: 600, fontStyle: "italic", color: "#5AB87A", letterSpacing: "0.02em"
+          }}>Pit</span>
+        </a>
+        <a href="/" style={{
+          fontSize: 12, color: "rgba(255,255,255,0.75)",
+          textDecoration: "none", fontWeight: 300
+        }}>← Back to homepage</a>
+      </div>
+
+      {/* PAGE HEADER */}
+      <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 24px 16px" }}>
+        <h1 style={{
+          fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700,
+          color: C.ink, margin: "0 0 6px", letterSpacing: "-0.3px"
+        }}>
+          Account Settings
+        </h1>
+        <p style={{ fontSize: 14, color: C.muted, margin: 0, fontWeight: 300 }}>
+          Manage your profile, security, and sessions.
+        </p>
+      </div>
+
+      {/* CLERK USER PROFILE */}
+      <div style={{ maxWidth: 880, margin: "0 auto", padding: "16px 24px 48px" }}>
+        <UserProfile
+          appearance={{
+            elements: {
+              rootBox: { width: "100%" },
+              card: {
+                background: C.white,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                boxShadow: "none",
+              },
+              navbar: { background: C.surface },
+              headerTitle: {
+                fontFamily: "'DM Sans',sans-serif",
+                color: C.ink,
+              },
+              profileSectionPrimaryButton: {
+                background: C.green,
+                '&:hover': { background: C.greenMid },
+              },
+              formButtonPrimary: {
+                background: C.green,
+                '&:hover': { background: C.greenMid },
+                textTransform: "none",
+                fontFamily: "'DM Sans',sans-serif",
+                fontWeight: 500,
+              },
+            },
+            variables: {
+              colorPrimary: C.green,
+              fontFamily: "'DM Sans',sans-serif",
+            },
+          }}
+        />
+      </div>
+    </div>
+  );
+}
