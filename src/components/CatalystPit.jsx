@@ -155,7 +155,7 @@ const fetchAll = async () => {
 
     const storiesArr = toArr(stories, 'stories', 'top_stories', 'articles', 'items', 'data');
     const news = storiesArr.map(s => ({
-      headline: s.headline || s.title || s.summary || s.description || '',
+      headline: s.title || s.headline || s.summary || s.description || '',
       source: s.source || s.outlet || s.publisher || 'Market News',
       mins: Math.floor(Math.random() * 45) + 1,
       tag: (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
@@ -271,7 +271,7 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
   const isUp=(+n.chg)>=0;
   const [imgFailed,setImgFailed]=useState(false);
   const primarySrc = !imgFailed && n.imageUrl ? n.imageUrl : null;
-  const photoSrc   = storyPhoto(n.sym, n.tag, idx);
+  const photoSrc   = null; // No Unsplash fallback — use brand gradient if no real image
   const photoH     = hero ? 340 : stacked ? 110 : large ? 200 : 150;
   const hasValidTicker = n.sym && n.sym !== 'N/A' && n.sym !== 'null' && n.sym !== '?';
 
