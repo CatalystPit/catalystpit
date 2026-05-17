@@ -1,11 +1,12 @@
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const KV_TOKEN    = process.env.KV_REST_API_TOKEN;
-const CRON_SECRET = process.env.CRON_SECRET;
-const GNEWS_KEY   = process.env.GNEWS_KEY;
-const NEWSAPI_KEY = process.env.NEWSAPI_KEY;
-const POLYGON_KEY = process.env.POLYGON_KEY;
+const KV_TOKEN     = process.env.KV_REST_API_TOKEN;
+const CRON_SECRET  = process.env.CRON_SECRET;
+const GNEWS_KEY    = process.env.GNEWS_KEY;
+const NEWSAPI_KEY  = process.env.NEWSAPI_KEY;
+const FINNHUB_KEY  = process.env.FINNHUB_KEY;
+const POLYGON_KEY  = process.env.POLYGON_KEY;
 
 const today = () => new Date().toISOString().split('T')[0];
 
@@ -106,17 +107,45 @@ async function fetchSECInsiders() {
   return recentFilings.slice(0, 10);
 }
 
-// ── GNews: BROADER coverage, pull from multiple buckets ──────────────────
+// ── Finnhub: pre-filtered US market news (highest quality source) ─────────
+async function fetchFinnhub() {
+  if (!FINNHUB_KEY) return [];
+  try {
+    const res = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`);
+    if (!res.ok) {
+      console.log(`⚠️ Finnhub: HTTP ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    return (data || [])
+      .filter(a => a.headline && a.url)
+      .slice(0, 30)
+      .map(a => ({
+        title: a.headline,
+        source: a.source || 'Finnhub',
+        url: a.url,
+        image_url: a.image || null,
+        published: new Date(a.datetime * 1000).toISOString(),
+        _provider: 'finnhub',
+        _rank: 1, // highest priority
+      }));
+  } catch (e) {
+    console.log(`❌ Finnhub: ${e.message}`);
+    return [];
+  }
+}
+
+// ── GNews business only ──────────────────────────────────────────────────
 async function fetchGNews() {
   if (!GNEWS_KEY) return [];
   try {
-    // Pull from 'general' (Trump, geopolitics, big tech drama) AND 'business' (markets, earnings)
-    const [general, business] = await Promise.all([
-      fetch(`https://gnews.io/api/v4/top-headlines?category=general&lang=en&country=us&max=15&apikey=${GNEWS_KEY}`).then(r => r.ok ? r.json() : null),
-      fetch(`https://gnews.io/api/v4/top-headlines?category=business&lang=en&country=us&max=15&apikey=${GNEWS_KEY}`).then(r => r.ok ? r.json() : null),
-    ]);
-    const articles = [...(general?.articles || []), ...(business?.articles || [])];
-    return articles
+    const res = await fetch(`https://gnews.io/api/v4/top-headlines?category=business&lang=en&country=us&max=20&apikey=${GNEWS_KEY}`);
+    if (!res.ok) {
+      console.log(`⚠️ GNews: HTTP ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    return (data.articles || [])
       .filter(a => a.title && a.url && a.title !== '[Removed]')
       .map(a => ({
         title: a.title,
@@ -125,6 +154,7 @@ async function fetchGNews() {
         image_url: a.image || null,
         published: a.publishedAt,
         _provider: 'gnews',
+        _rank: 3,
       }));
   } catch (e) {
     console.log(`❌ GNews: ${e.message}`);
@@ -132,17 +162,17 @@ async function fetchGNews() {
   }
 }
 
-// ── NewsAPI: pull broader business + tech + politics ─────────────────────
+// ── NewsAPI business only ────────────────────────────────────────────────
 async function fetchNewsAPI() {
   if (!NEWSAPI_KEY) return [];
   try {
-    const [business, technology, general] = await Promise.all([
-      fetch(`https://newsapi.org/v2/top-headlines?category=business&language=en&country=us&pageSize=15&apiKey=${NEWSAPI_KEY}`).then(r => r.ok ? r.json() : null),
-      fetch(`https://newsapi.org/v2/top-headlines?category=technology&language=en&country=us&pageSize=10&apiKey=${NEWSAPI_KEY}`).then(r => r.ok ? r.json() : null),
-      fetch(`https://newsapi.org/v2/top-headlines?category=general&language=en&country=us&pageSize=10&apiKey=${NEWSAPI_KEY}`).then(r => r.ok ? r.json() : null),
-    ]);
-    const articles = [...(business?.articles || []), ...(technology?.articles || []), ...(general?.articles || [])];
-    return articles
+    const res = await fetch(`https://newsapi.org/v2/top-headlines?category=business&language=en&country=us&pageSize=20&apiKey=${NEWSAPI_KEY}`);
+    if (!res.ok) {
+      console.log(`⚠️ NewsAPI: HTTP ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    return (data.articles || [])
       .filter(a => a.title && a.url && a.title !== '[Removed]')
       .map(a => ({
         title: a.title,
@@ -151,6 +181,7 @@ async function fetchNewsAPI() {
         image_url: a.urlToImage || null,
         published: a.publishedAt,
         _provider: 'newsapi',
+        _rank: 2,
       }));
   } catch (e) {
     console.log(`❌ NewsAPI: ${e.message}`);
@@ -158,23 +189,85 @@ async function fetchNewsAPI() {
   }
 }
 
-// ── Merge + dedupe news, prioritize image-having stories ─────────────────
+// ── Finance keyword filter ───────────────────────────────────────────────
+// Drop articles unless they pass our finance relevance check.
+const FINANCE_KEYWORDS = [
+  // Markets & instruments
+  'stock', 'stocks', 'shares', 'equity', 'equities', 'bond', 'bonds', 'treasury', 'treasuries',
+  'etf', 'mutual fund', 'hedge fund', 'option', 'options', 'futures', 'commodity', 'commodities',
+  'crypto', 'bitcoin', 'ethereum', 'dogecoin', 'token',
+  // Movement language
+  'rally', 'rallies', 'plunge', 'plunges', 'surge', 'surges', 'soar', 'soars', 'tumble', 'tumbles',
+  'jumps', 'slides', 'falls', 'climbs', 'rises', 'drops', 'gains', 'losses', 'crash',
+  'bull', 'bear', 'bullish', 'bearish',
+  // Reporting
+  'earnings', 'eps', 'revenue', 'profit', 'loss', 'guidance', 'forecast', 'outlook',
+  'beat', 'miss', 'misses', 'beats', 'reports', 'quarterly', 'q1', 'q2', 'q3', 'q4',
+  // Exchanges & indices
+  'nyse', 'nasdaq', 'dow', 's&p', 'sp500', 'russell', 'wall street', 'sec', 'fdic', 'sec filing',
+  // Money
+  'billion', 'million', 'trillion', 'valuation', 'market cap', 'ipo', 'merger', 'acquisition', 'acquires',
+  // Fed & macro
+  'fed', 'federal reserve', 'powell', 'rate hike', 'rate cut', 'interest rate', 'inflation', 'cpi', 'ppi',
+  'gdp', 'jobs report', 'unemployment', 'recession', 'yield', 'yields',
+  // Sectors that often anchor finance stories
+  'oil', 'energy', 'gold', 'silver', 'crude', 'opec', 'natural gas',
+  // Corporate actions
+  'buyback', 'dividend', 'split', 'spinoff', 'restructuring', 'bankruptcy', 'lawsuit', 'fine',
+  // Big company tags
+  'apple', 'tesla', 'nvidia', 'microsoft', 'amazon', 'google', 'meta', 'alphabet',
+  'walmart', 'goldman', 'jpmorgan', 'morgan stanley', 'berkshire', 'blackrock',
+];
+
+const FINANCE_SOURCES_TRUSTED = [
+  'reuters', 'bloomberg', 'cnbc', 'wsj', 'wall street journal', 'financial times', 'ft',
+  'marketwatch', 'yahoo finance', 'investing.com', 'seeking alpha', 'barron',
+  'forbes', 'fortune', 'businessinsider', 'business insider', 'thestreet',
+  'finnhub', 'benzinga', 'zacks', 'morningstar', 'fool', 'motley fool',
+  'investorplace', 'fxstreet', 'kitco', 'coindesk', 'cointelegraph',
+];
+
+function isFinanceRelevant(article) {
+  // Finnhub is pre-filtered, always pass
+  if (article._provider === 'finnhub') return true;
+
+  const title = (article.title || '').toLowerCase();
+  const source = (article.source || '').toLowerCase();
+
+  // Trusted finance publication? Pass.
+  if (FINANCE_SOURCES_TRUSTED.some(s => source.includes(s))) return true;
+
+  // Title contains finance keyword? Pass.
+  if (FINANCE_KEYWORDS.some(k => title.includes(k))) return true;
+
+  // Contains a ticker-shaped string ($AAPL, (TSLA), etc.)
+  if (/\$[A-Z]{1,5}\b/.test(article.title || '') || /\([A-Z]{2,5}:[A-Z]+\)/.test(article.title || '')) return true;
+
+  return false;
+}
+
+// ── Merge + dedupe + rank ────────────────────────────────────────────────
 function mergeNews(...sources) {
   const all = sources.flat();
   const seen = new Map();
   for (const story of all) {
     if (!story.title) continue;
+    if (!isFinanceRelevant(story)) continue;
     const key = story.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
     if (!seen.has(key)) {
       seen.set(key, story);
     } else {
       const existing = seen.get(key);
-      if (!existing.image_url && story.image_url) seen.set(key, story);
+      // Prefer the better-ranked source, then prefer with-image over without
+      if (story._rank < existing._rank || (!existing.image_url && story.image_url)) {
+        seen.set(key, story);
+      }
     }
   }
-  // Sort: stories WITH images first, then by recency
+  // Sort: by _rank (lower = better), then images first, then recency
   return Array.from(seen.values())
     .sort((a, b) => {
+      if (a._rank !== b._rank) return a._rank - b._rank;
       if (!!a.image_url !== !!b.image_url) return a.image_url ? -1 : 1;
       return new Date(b.published || 0) - new Date(a.published || 0);
     });
@@ -190,10 +283,11 @@ export async function GET(request) {
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
   const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
-  const [stockPrices, crypto, secRaw, gnewsRaw, newsapiRaw] = await Promise.allSettled([
+  const [stockPrices, crypto, secRaw, finnhubRaw, gnewsRaw, newsapiRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
     fetchSECInsiders(),
+    fetchFinnhub(),
     fetchGNews(),
     fetchNewsAPI(),
   ]);
@@ -215,11 +309,12 @@ export async function GET(request) {
   } catch(e) { fail('prices', e); }
 
   const sec      = secRaw.status==='fulfilled'      ? secRaw.value      : [];
+  const finnhub  = finnhubRaw.status==='fulfilled'  ? finnhubRaw.value  : [];
   const gnews    = gnewsRaw.status==='fulfilled'    ? gnewsRaw.value    : [];
   const newsapi  = newsapiRaw.status==='fulfilled'  ? newsapiRaw.value  : [];
 
-  const mergedNews = mergeNews(gnews, newsapi).slice(0, 20);
-  console.log(`📰 News: ${gnews.length} GNews + ${newsapi.length} NewsAPI → ${mergedNews.length} merged`);
+  const mergedNews = mergeNews(finnhub, newsapi, gnews).slice(0, 20);
+  console.log(`📰 News: ${finnhub.length} Finnhub + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged & filtered`);
 
   const [insiderRes, movingRes, polRes, newsRes, squeezeRes, earningsRes] = await Promise.allSettled([
     sec.length > 0
