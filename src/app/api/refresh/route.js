@@ -74,7 +74,9 @@ async function fetchSECInsiders() {
 function isPlaceholderImage(url) {
   if (!url || typeof url !== 'string') return true;
   const u = url.toLowerCase();
-  // Yahoo's generic finance placeholder pattern
+  // Yahoo Finance generic placeholders (exact + pattern)
+  if (u.includes('yahoo_finance_en-us_h_p_finance')) return true;
+  if (u.includes('s.yimg.com/rz/stage/')) return true;
   if (u.includes('s.yimg.com/cv/apiv2/default')) return true;
   if (u.includes('s.yimg.com/os/creatr-uploaded-images/finance')) return true;
   if (u.match(/s\.yimg\.com.*\/api\/res\/.*\/finance/)) return true;
@@ -82,6 +84,8 @@ function isPlaceholderImage(url) {
   if (u.includes('default-share-image')) return true;
   if (u.includes('logo-placeholder')) return true;
   if (u.includes('default_thumbnail')) return true;
+  if (u.includes('default-image')) return true;
+  if (u.includes('og-default')) return true;
   // Tiny images (often placeholders / icons)
   if (u.match(/\b(1x1|pixel|spacer|blank)\.(gif|png|jpg)\b/)) return true;
   return false;
