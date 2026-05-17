@@ -223,7 +223,7 @@ export async function GET(request) {
   const newsapi  = newsapiRaw.status==='fulfilled'  ? newsapiRaw.value  : [];
 
   // Merge providers, dedupe, cap at 30 for Claude enrichment
-  const mergedNews = mergeNews(gnews, newsapi).slice(0, 30);
+  const mergedNews = mergeNews(gnews, newsapi).slice(0, 20);
   console.log(`📰 News: ${gnews.length} GNews + ${newsapi.length} NewsAPI → ${mergedNews.length} merged`);
 
   const [insiderRes, movingRes, polRes, newsRes, squeezeRes, earningsRes] = await Promise.allSettled([
