@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from "react";
-
+import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
 const fl = document.createElement("link");
 fl.rel = "stylesheet";
 fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
@@ -424,21 +424,33 @@ export default function CatalystPit() {
               transition:"color 0.2s",fontWeight:400,letterSpacing:"0.02em",textDecoration:"none"}}>{l}</a>
           ))}
         </div>
-        <div style={{display:"flex",gap:8}}>
-          <a href="/sign-in" style={{background:"transparent",border:"1px solid rgba(255,255,255,0.4)",color:"rgba(255,255,255,0.9)",
-            padding:"6px 14px",borderRadius:5,fontSize:12,cursor:"pointer",textDecoration:"none",display:"inline-block",
-            fontFamily:"'DM Sans',sans-serif",fontWeight:300}}
-            onMouseEnter={e=>{e.currentTarget.style.color="#FFFFFF";}}
-            onMouseLeave={e=>{e.currentTarget.style.color="rgba(255,255,255,0.75)";}}>
-            Log In
-          </a>
-          <a href="/sign-up" style={{background:C.green,border:"none",color:"#fff",
-            padding:"7px 18px",borderRadius:5,fontSize:12,fontWeight:500,textDecoration:"none",display:"inline-block",
-            cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}
-            onMouseEnter={e=>e.currentTarget.style.background=C.greenMid}
-            onMouseLeave={e=>e.currentTarget.style.background=C.green}>
-            Start Free
-          </a>
+       <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <SignedOut>
+            <a href="/sign-in" style={{background:"transparent",border:"1px solid rgba(255,255,255,0.4)",color:"rgba(255,255,255,0.9)",
+              padding:"6px 14px",borderRadius:5,fontSize:12,cursor:"pointer",textDecoration:"none",display:"inline-block",
+              fontFamily:"'DM Sans',sans-serif",fontWeight:300}}
+              onMouseEnter={e=>{e.currentTarget.style.color="#FFFFFF";}}
+              onMouseLeave={e=>{e.currentTarget.style.color="rgba(255,255,255,0.75)";}}>
+              Log In
+            </a>
+            <a href="/sign-up" style={{background:C.green,border:"none",color:"#fff",
+              padding:"7px 18px",borderRadius:5,fontSize:12,fontWeight:500,textDecoration:"none",display:"inline-block",
+              cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.greenMid}
+              onMouseLeave={e=>e.currentTarget.style.background=C.green}>
+              Start Free
+            </a>
+          </SignedOut>
+          <SignedIn>
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: { width: 32, height: 32 }
+                }
+              }}
+            />
+          </SignedIn>
         </div>
       </div>
 
