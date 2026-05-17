@@ -70,14 +70,28 @@ async function fetchSECInsiders() {
   return recentFilings.slice(0, 10);
 }
 
-// ── Finnhub PER-TICKER news (the right way) ──────────────────────────────
+// ── Detect generic placeholder images (Yahoo's purple "fi" thing, etc.) ──
+function isPlaceholderImage(url) {
+  if (!url || typeof url !== 'string') return true;
+  const u = url.toLowerCase();
+  // Yahoo's generic finance placeholder pattern
+  if (u.includes('s.yimg.com/cv/apiv2/default')) return true;
+  if (u.includes('s.yimg.com/os/creatr-uploaded-images/finance')) return true;
+  if (u.match(/s\.yimg\.com.*\/api\/res\/.*\/finance/)) return true;
+  // Generic share-images known to be placeholders
+  if (u.includes('default-share-image')) return true;
+  if (u.includes('logo-placeholder')) return true;
+  if (u.includes('default_thumbnail')) return true;
+  // Tiny images (often placeholders / icons)
+  if (u.match(/\b(1x1|pixel|spacer|blank)\.(gif|png|jpg)\b/)) return true;
+  return false;
+}
+
 async function fetchFinnhubPerTicker() {
   if (!FINNHUB_KEY) return [];
-  // Date range: last 3 days
   const to = new Date();
   const from = new Date(to.getTime() - 3 * 24 * 60 * 60 * 1000);
   const fmt = d => d.toISOString().split('T')[0];
-
   try {
     const results = await Promise.all(
       NEWS_TICKERS.map(async ticker => {
@@ -91,9 +105,9 @@ async function fetchFinnhubPerTicker() {
             title: a.headline,
             source: a.source || 'Finnhub',
             url: a.url,
-            image_url: a.image || null,
+            image_url: isPlaceholderImage(a.image) ? null : a.image,
             published: new Date(a.datetime * 1000).toISOString(),
-            ticker, // we KNOW the ticker because we asked for it
+            ticker,
             _provider: 'finnhub-ticker',
             _rank: 1,
           })).filter(a => a.title && a.url);
@@ -107,7 +121,6 @@ async function fetchFinnhubPerTicker() {
   }
 }
 
-// ── Finnhub general market news (Fed, macro, broad) ──────────────────────
 async function fetchFinnhubMarket() {
   if (!FINNHUB_KEY) return [];
   try {
@@ -121,7 +134,7 @@ async function fetchFinnhubMarket() {
         title: a.headline,
         source: a.source || 'Finnhub',
         url: a.url,
-        image_url: a.image || null,
+        image_url: isPlaceholderImage(a.image) ? null : a.image,
         published: new Date(a.datetime * 1000).toISOString(),
         ticker: null,
         _provider: 'finnhub-market',
@@ -133,7 +146,6 @@ async function fetchFinnhubMarket() {
   }
 }
 
-// ── GNews business ───────────────────────────────────────────────────────
 async function fetchGNews() {
   if (!GNEWS_KEY) return [];
   try {
@@ -146,7 +158,7 @@ async function fetchGNews() {
         title: a.title,
         source: a.source?.name || 'News',
         url: a.url,
-        image_url: a.image || null,
+        image_url: isPlaceholderImage(a.image) ? null : a.image,
         published: a.publishedAt,
         ticker: null,
         _provider: 'gnews',
@@ -155,7 +167,6 @@ async function fetchGNews() {
   } catch { return []; }
 }
 
-// ── NewsAPI business ─────────────────────────────────────────────────────
 async function fetchNewsAPI() {
   if (!NEWSAPI_KEY) return [];
   try {
@@ -168,7 +179,7 @@ async function fetchNewsAPI() {
         title: a.title,
         source: a.source?.name || 'News',
         url: a.url,
-        image_url: a.urlToImage || null,
+        image_url: isPlaceholderImage(a.urlToImage) ? null : a.urlToImage,
         published: a.publishedAt,
         ticker: null,
         _provider: 'newsapi',
@@ -177,21 +188,16 @@ async function fetchNewsAPI() {
   } catch { return []; }
 }
 
-// ── HARD BLOCKLIST — these die regardless of source ──────────────────────
 const HARD_BLOCK = [
-  // Sports
   'ufc','mma','nfl','nba','nhl','mlb','wnba','ncaa','espn','fight night',
   'super bowl','world cup','olympic','olympics','playoff','playoffs','draft pick',
   'football','basketball','baseball','soccer','tennis','golf tournament','pga','formula 1','f1 race',
   'mcgregor','ngannou','khabib','jon jones',
-  // Entertainment & celebrities
   'taylor swift','travis kelce','kardashian','kanye','beyonce','drake',
   'oscar','grammy','emmy','cannes','met gala','red carpet',
   'movie review','box office','netflix series','tv show','reality tv',
-  // Lifestyle / non-finance
   'recipe','restaurant review','travel destination','vacation','lounge review',
   'horoscope','astrology','dating',
-  // Local US politics that isn't markets-related
   'gubernatorial','school board','mayor election','city council',
 ];
 
@@ -200,7 +206,6 @@ function hasBlockedTerm(article) {
   return HARD_BLOCK.some(b => t.includes(b));
 }
 
-// Strict finance whitelist for non-Finnhub sources
 const FINANCE_KEYWORDS = [
   'stock','stocks','shares','equity','bond','treasury','etf','futures','option','options',
   'crypto','bitcoin','ethereum',
@@ -222,19 +227,23 @@ const TRUSTED_SOURCES = [
   'kitco','coindesk','cointelegraph','finnhub',
 ];
 
+// Sources known to give great article images
+const SOURCES_WITH_GOOD_IMAGES = [
+  'reuters','bloomberg','cnbc','wsj','financial times','ft.com','marketwatch','barron',
+  'forbes','fortune','business insider','thestreet','benzinga','seeking alpha',
+];
+
+// Sources known for generic placeholder images
+const SOURCES_WITH_BAD_IMAGES = ['yahoo','yahoo finance','aol','msn'];
+
 function isFinanceRelevant(article) {
-  // Hard block always wins
   if (hasBlockedTerm(article)) return false;
-  // Finnhub per-ticker is always relevant (we asked about a specific ticker)
   if (article._provider === 'finnhub-ticker') return true;
-  // For all other sources, require BOTH a trusted source OR a finance keyword in the title
   const title = (article.title || '').toLowerCase();
   const source = (article.source || '').toLowerCase();
   const trustedSource = TRUSTED_SOURCES.some(s => source.includes(s));
   const financeKw = FINANCE_KEYWORDS.some(k => title.includes(k));
-  // For Finnhub general market, require finance keyword (their general feed has noise)
   if (article._provider === 'finnhub-market') return financeKw;
-  // For NewsAPI/GNews business category, require trusted source AND finance keyword (strictest)
   return trustedSource && financeKw;
 }
 
@@ -249,20 +258,32 @@ function mergeNews(...sources) {
       seen.set(key, story);
     } else {
       const existing = seen.get(key);
+      // Prefer better rank, then with-image over without
       if (story._rank < existing._rank || (!existing.image_url && story.image_url)) {
         seen.set(key, story);
       }
     }
   }
+  // Computed image quality score for sorting
+  const imgScore = (a) => {
+    if (!a.image_url) return 0;
+    const src = (a.source || '').toLowerCase();
+    if (SOURCES_WITH_GOOD_IMAGES.some(s => src.includes(s))) return 2;
+    if (SOURCES_WITH_BAD_IMAGES.some(s => src.includes(s))) return 0; // treat as no image
+    return 1;
+  };
   return Array.from(seen.values())
     .sort((a, b) => {
+      // First by image quality (real images first)
+      const ia = imgScore(a), ib = imgScore(b);
+      if (ia !== ib) return ib - ia;
+      // Then by rank (lower is better)
       if (a._rank !== b._rank) return a._rank - b._rank;
-      if (!!a.image_url !== !!b.image_url) return a.image_url ? -1 : 1;
+      // Then by recency
       return new Date(b.published || 0) - new Date(a.published || 0);
     });
 }
 
-// ── MAIN ──────────────────────────────────────────────────────────────────
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
@@ -309,7 +330,8 @@ export async function GET(request) {
     const newsapi = newsapiRaw.status === 'fulfilled' ? newsapiRaw.value : [];
 
     const mergedNews = mergeNews(finnhubTicker, finnhubMarket, newsapi, gnews).slice(0, 20);
-    console.log(`📰 News raw: ${finnhubTicker.length} Finnhub-ticker + ${finnhubMarket.length} Finnhub-market + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged after filter`);
+    const withImages = mergedNews.filter(a => a.image_url).length;
+    console.log(`📰 News: ${finnhubTicker.length} F-tkr + ${finnhubMarket.length} F-mkt + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged (${withImages} with real images)`);
     await kvSet('catalystpit:_raw_news', JSON.stringify(mergedNews));
     results.refreshed.push('catalystpit:_raw_news');
   } catch(e) { fail('raw_news_sec', e); }
