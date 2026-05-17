@@ -7,6 +7,14 @@
     {
       "path": "/api/refresh",
       "schedule": "0 */6 * * 0,6"
+    },
+    {
+      "path": "/api/refresh-content",
+      "schedule": "5 6,8,10,12,14,16,18,20 * * 1-5"
+    },
+    {
+      "path": "/api/refresh-content",
+      "schedule": "5 */6 * * 0,6"
     }
   ],
   "headers": [
@@ -32,6 +40,9 @@
   ],
   "functions": {
     "src/app/api/refresh/route.js": {
+      "maxDuration": 30
+    },
+    "src/app/api/refresh-content/route.js": {
       "maxDuration": 60
     },
     "src/app/api/claude/route.js": {
