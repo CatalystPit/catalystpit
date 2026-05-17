@@ -282,11 +282,11 @@ function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false}) {
 
       <div style={{height:photoH,position:"relative",overflow:"hidden",
         flexShrink:0,background:`linear-gradient(135deg,${bg1},${bg2})`}}>
-        <img
+       <img
           src={primarySrc || photoSrc}
           alt=""
           onError={e=>{
-            if(primarySrc){setImgFailed(true);e.currentTarget.src=photoSrc;}
+            if(primarySrc && photoSrc){setImgFailed(true);e.currentTarget.src=photoSrc;}
             else e.currentTarget.style.display="none";
           }}
           style={{position:"absolute",inset:0,width:"100%",height:"100%",
