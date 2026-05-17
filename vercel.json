@@ -1,12 +1,12 @@
 {
-  "crons": [
+ "crons": [
     {
       "path": "/api/refresh",
-      "schedule": "*/15 6-20 * * 1-5"
+      "schedule": "0 6,8,10,12,14,16,18,20 * * 1-5"
     },
     {
       "path": "/api/refresh",
-      "schedule": "*/30 * * * 0,6"
+      "schedule": "0 */6 * * 0,6"
     }
   ],
   "headers": [
