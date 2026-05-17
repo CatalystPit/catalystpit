@@ -33,7 +33,15 @@ async function claude(prompt, maxTokens=1500) {
   const text  = data.content.filter(b=>b.type==='text').map(b=>b.text).join('');
   const clean = text.replace(/```json\n?|```\n?/g,'').trim();
   const match = clean.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-  return JSON.parse(match ? match[0] : clean);
+  let candidate = match ? match[0] : clean;
+  // Try parsing as-is first
+  try { return JSON.parse(candidate); } catch {}
+  // If that fails, try trimming after the last balanced bracket
+  const lastBracket = Math.max(candidate.lastIndexOf(']'), candidate.lastIndexOf('}'));
+  if (lastBracket > 0) {
+    try { return JSON.parse(candidate.slice(0, lastBracket + 1)); } catch {}
+  }
+  throw new Error(`Failed to parse Claude response: ${clean.slice(0, 200)}`);
 }
 
 // ── Polygon prev-day aggregates ───────────────────────────────────────────
@@ -225,7 +233,7 @@ export async function GET(request) {
     claude(`Today ${today()}. Return ONLY a JSON array of 6 top-moving stocks right now with reasons. Each: {"ticker","company","price":number,"changePct":number,"reason":string}. No markdown.`),
     claude(`Today ${today()}. Return ONLY a JSON array of 10 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
     mergedNews.length > 0
-      ? claude(`Enrich these ${mergedNews.length} news articles. For each, add these fields and keep all original fields (title, source, url, image_url, published): "ticker"(stock symbol if relevant, or null), "category"(one of: Earnings|Macro|Crypto|Tech|Markets|FED|M&A|IPO|SEC|Geopolitics), "headline"(rewrite the title to max 12 words punchy and clear), "summary"(1 concise sentence explaining what happened and why it matters). Articles: ${JSON.stringify(mergedNews)}. Return ONLY a JSON array of all ${mergedNews.length} enriched articles. No markdown, no commentary.`, 4000)
+      ? claude(`Enrich these ${mergedNews.length} news articles. For each, add these fields and keep all original fields (title, source, url, image_url, published): "ticker"(stock symbol if relevant, or null), "category"(one of: Earnings|Macro|Crypto|Tech|Markets|FED|M&A|IPO|SEC|Geopolitics), "headline"(rewrite the title to max 12 words punchy and clear), "summary"(1 concise sentence explaining what happened and why it matters). Articles: ${JSON.stringify(mergedNews)}. Return ONLY a JSON array of all ${mergedNews.length} enriched articles. No markdown, no commentary.`, 8000)
       : claude(`Today ${today()}. Return ONLY 10 top financial news stories as JSON array. Each: {"headline","summary","ticker","source","category","image_url":null,"published":"${new Date().toISOString()}"}. No markdown.`, 2000),
     claude(`Today ${today()}. Return ONLY a JSON array of 6 short squeeze candidates. Each: {"ticker","company","price":number,"shortFloat":number,"daysToCover":number,"squeezeScore":number,"catalyst":string}. No markdown.`),
     claude(`Today is ${today()}. Return ONLY a JSON object with two arrays. The "upcoming" array has 4 companies reporting earnings in the next 5 days. The "recent" array has 2 companies that just reported. Use this exact structure: {"upcoming":[{"ticker":"AAPL","company":"Apple Inc","reportDate":"2026-05-08","timing":"AMC","epsEstimate":1.50,"impliedMove":"3.2%"}],"recent":[{"ticker":"NVDA","company":"NVIDIA","epsActual":5.16,"epsEstimate":4.59,"beat":true,"reaction":2.4}]}. Return only the JSON object, no markdown, no commentary.`, 2000),
