@@ -1,8 +1,6 @@
 'use client';
-
 import { UserProfile } from '@clerk/nextjs';
 import { useEffect } from 'react';
-
 const C = {
   bg: "#F5F6F3",
   white: "#FFFFFF",
@@ -15,7 +13,6 @@ const C = {
   greenMid: "#2A7848",
   navBg: "#1E5C38",
 };
-
 export default function AccountPage() {
   useEffect(() => {
     const fl = document.createElement("link");
@@ -23,7 +20,6 @@ export default function AccountPage() {
     fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
     document.head.appendChild(fl);
   }, []);
-
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, minHeight: "100vh" }}>
       {/* NAV */}
@@ -47,7 +43,6 @@ export default function AccountPage() {
           textDecoration: "none", fontWeight: 300
         }}>← Back to homepage</a>
       </div>
-
       {/* PAGE HEADER */}
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "32px 24px 16px" }}>
         <h1 style={{
@@ -60,7 +55,6 @@ export default function AccountPage() {
           Manage your profile, security, and sessions.
         </p>
       </div>
-
       {/* CLERK USER PROFILE */}
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "16px 24px 48px" }}>
         <UserProfile
@@ -80,10 +74,12 @@ export default function AccountPage() {
               },
               profileSectionPrimaryButton: {
                 background: C.green,
+                color: "#FFFFFF",
                 '&:hover': { background: C.greenMid },
               },
               formButtonPrimary: {
                 background: C.green,
+                color: "#FFFFFF",
                 '&:hover': { background: C.greenMid },
                 textTransform: "none",
                 fontFamily: "'DM Sans',sans-serif",
