@@ -943,7 +943,7 @@ export default function CatalystPit() {
             {label:"Privacy",href:"/privacy"},
             {label:"Terms",href:"/terms"},
             {label:"Disclaimer",href:"/disclaimer"},
-            {label:"Contact",href:"mailto:hello@catalystpit.com"},
+            {label:"Contact",href:"/contact"},
           ].map(l=>(
             l.href ? (
               <a key={l.label} href={l.href} style={{fontSize:12,color:"rgba(255,255,255,0.6)",cursor:"pointer",fontWeight:300,textDecoration:"none"}}
