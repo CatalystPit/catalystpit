@@ -52,6 +52,44 @@ async function claude(prompt, maxTokens=1500) {
   throw new Error(`Failed to parse Claude response: ${clean.slice(0, 200)}`);
 }
 
+// ── Split news enrichment into 2 parallel batches (avoids 60s timeout) ──
+async function enrichNewsInBatches(articles) {
+  const half = Math.ceil(articles.length / 2);
+  const batch1 = articles.slice(0, half);
+  const batch2 = articles.slice(half);
+
+  const buildPrompt = (batch) => `You are enriching news articles for a financial intelligence dashboard. For each of these ${batch.length} articles, classify and tag it but DO NOT rewrite the headline. Keep the original title exactly as-is.
+
+For each article, output an object with these fields:
+- "title": EXACTLY the original title, character-for-character. Do not edit, shorten, or improve it.
+- "source": original source
+- "url": original url
+- "image_url": original image_url
+- "published": original published
+- "ticker": stock ticker if the article is clearly about a specific public company (e.g. "AAPL", "TSLA", "NVDA"). Use null if no specific ticker. Don't force a ticker if one isn't clearly central to the story.
+- "category": ONE of: Earnings | Markets | Tech | Crypto | Politics | Geopolitics | M&A | IPO | SEC | FED | Macro | Energy | AI | Auto | Pharma | Retail
+- "summary": ONE short sentence (max 20 words) on what happened and why traders should care. Punchy. Active voice.
+
+Articles to enrich: ${JSON.stringify(batch)}
+
+Return ONLY a JSON array of all ${batch.length} enriched articles. No markdown, no commentary, no preamble.`;
+
+  const [r1, r2] = await Promise.allSettled([
+    claude(buildPrompt(batch1), 4000),
+    batch2.length > 0 ? claude(buildPrompt(batch2), 4000) : Promise.resolve([]),
+  ]);
+
+  const enriched1 = r1.status === 'fulfilled' ? r1.value : [];
+  const enriched2 = r2.status === 'fulfilled' ? r2.value : [];
+
+  if (r1.status === 'rejected' && r2.status === 'rejected') {
+    throw new Error(`Both news batches failed: ${r1.reason?.message} | ${r2.reason?.message}`);
+  }
+
+  console.log(`📰 Enriched batches: ${enriched1.length} + ${enriched2.length} = ${enriched1.length + enriched2.length}`);
+  return [...enriched1, ...enriched2];
+}
+
 // ── MAIN — Claude enrichments only. Reads raw data from KV. ──────────────
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
@@ -79,21 +117,7 @@ export async function GET(request) {
     claude(`Generate 6 realistic-sounding scenarios of stocks that could be moving today for an educational financial dashboard template. These are illustrative examples, not real-time data. Use plausible tickers, companies, and reasons. Return ONLY a JSON array. Each: {"ticker","company","price":number,"changePct":number,"reason":string}. No markdown, no preamble.`),
     claude(`Today ${today()}. Return ONLY a JSON array of 10 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
     newsArr.length > 0
-      ? claude(`You are enriching news articles for a financial intelligence dashboard. For each of these ${newsArr.length} articles, classify and tag it but DO NOT rewrite the headline. Keep the original title exactly as-is.
-
-For each article, output an object with these fields:
-- "title": EXACTLY the original title, character-for-character. Do not edit, shorten, or improve it.
-- "source": original source
-- "url": original url
-- "image_url": original image_url
-- "published": original published
-- "ticker": stock ticker if the article is clearly about a specific public company (e.g. "AAPL", "TSLA", "NVDA"). Use null if no specific ticker. Don't force a ticker if one isn't clearly central to the story.
-- "category": ONE of: Earnings | Markets | Tech | Crypto | Politics | Geopolitics | M&A | IPO | SEC | FED | Macro | Energy | AI | Auto | Pharma | Retail
-- "summary": ONE short sentence (max 20 words) on what happened and why traders should care. Punchy. Active voice.
-
-Articles to enrich: ${JSON.stringify(newsArr)}
-
-Return ONLY a JSON array of all ${newsArr.length} enriched articles. No markdown, no commentary, no preamble.`, 8000)
+      ? enrichNewsInBatches(newsArr)
       : claude(`Today ${today()}. Return ONLY 10 top financial news stories as JSON array. Each: {"title","summary","ticker","source","category","image_url":null,"published":"${new Date().toISOString()}"}. No markdown.`, 2000),
     claude(`Today ${today()}. Return ONLY a JSON array of 6 short squeeze candidates. Each: {"ticker","company","price":number,"shortFloat":number,"daysToCover":number,"squeezeScore":number,"catalyst":string}. No markdown.`),
     claude(`Today is ${today()}. Return ONLY a JSON object with two arrays. The "upcoming" array has 4 companies reporting earnings in the next 5 days. The "recent" array has 2 companies that just reported. Use this exact structure: {"upcoming":[{"ticker":"AAPL","company":"Apple Inc","reportDate":"2026-05-08","timing":"AMC","epsEstimate":1.50,"impliedMove":"3.2%"}],"recent":[{"ticker":"NVDA","company":"NVIDIA","epsActual":5.16,"epsEstimate":4.59,"beat":true,"reaction":2.4}]}. Return only the JSON object, no markdown, no commentary.`, 2000),
