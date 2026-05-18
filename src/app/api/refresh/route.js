@@ -12,7 +12,7 @@ const NEWS_TICKERS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','N
 
 async function kvSet(key, value) {
   await fetch(
-    `https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=3600`,
+    `https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=14400`,
     { method:'POST', headers:{ Authorization:`Bearer ${KV_TOKEN}`, 'Content-Type':'text/plain' }, body:value }
   );
   console.log(`✅ ${key}`);
