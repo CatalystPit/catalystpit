@@ -6,7 +6,6 @@ const CRON_SECRET = process.env.CRON_SECRET;
 
 const today = () => new Date().toISOString().split('T')[0];
 
-// ── KV ────────────────────────────────────────────────────────────────────
 async function kvSet(key, value) {
   await fetch(
     `https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=14400`,
@@ -28,7 +27,6 @@ async function kvGet(key) {
   } catch { return null; }
 }
 
-// ── Claude ────────────────────────────────────────────────────────────────
 async function claude(prompt, maxTokens=1500) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
@@ -52,7 +50,6 @@ async function claude(prompt, maxTokens=1500) {
   throw new Error(`Failed to parse Claude response: ${clean.slice(0, 200)}`);
 }
 
-// ── Split news enrichment into 2 parallel batches (avoids 60s timeout) ──
 async function enrichNewsInBatches(articles) {
   const half = Math.ceil(articles.length / 2);
   const batch1 = articles.slice(0, half);
@@ -66,7 +63,7 @@ For each article, output an object with these fields:
 - "url": original url
 - "image_url": original image_url
 - "published": original published
-- "ticker": stock ticker if the article is clearly about a specific public company (e.g. "AAPL", "TSLA", "NVDA"). Use null if no specific ticker. Don't force a ticker if one isn't clearly central to the story.
+- "ticker": stock ticker if the article is clearly about a specific public company (e.g. "AAPL", "TSLA", "NVDA"). Use null if no specific ticker.
 - "category": ONE of: Earnings | Markets | Tech | Crypto | Politics | Geopolitics | M&A | IPO | SEC | FED | Macro | Energy | AI | Auto | Pharma | Retail
 - "summary": ONE short sentence (max 20 words) on what happened and why traders should care. Punchy. Active voice.
 
@@ -90,7 +87,6 @@ Return ONLY a JSON array of all ${batch.length} enriched articles. No markdown, 
   return [...enriched1, ...enriched2];
 }
 
-// ── MAIN — Claude enrichments only. Reads raw data from KV. ──────────────
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
@@ -99,7 +95,6 @@ export async function GET(request) {
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
-  // Pull raw data fetched by /api/refresh
   const [sec, mergedNews] = await Promise.all([
     kvGet('catalystpit:_raw_sec'),
     kvGet('catalystpit:_raw_news'),
@@ -118,7 +113,7 @@ export async function GET(request) {
     claude(`Today ${today()}. Return ONLY a JSON array of 10 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
     newsArr.length > 0
       ? enrichNewsInBatches(newsArr)
-      : claude(`Today ${today()}. Return ONLY 10 top financial news stories as JSON array. Each: {"title","summary","ticker","source","category","image_url":null,"published":"${new Date().toISOString()}"}. No markdown.`, 2000),
+      : Promise.reject(new Error('No raw news in cache — run /api/refresh first')),
     claude(`Today ${today()}. Return ONLY a JSON array of 6 short squeeze candidates. Each: {"ticker","company","price":number,"shortFloat":number,"daysToCover":number,"squeezeScore":number,"catalyst":string}. No markdown.`),
     claude(`Today is ${today()}. Return ONLY a JSON object with two arrays. The "upcoming" array has 4 companies reporting earnings in the next 5 days. The "recent" array has 2 companies that just reported. Use this exact structure: {"upcoming":[{"ticker":"AAPL","company":"Apple Inc","reportDate":"2026-05-08","timing":"AMC","epsEstimate":1.50,"impliedMove":"3.2%"}],"recent":[{"ticker":"NVDA","company":"NVIDIA","epsActual":5.16,"epsEstimate":4.59,"beat":true,"reaction":2.4}]}. Return only the JSON object, no markdown, no commentary.`, 2000),
   ]);
