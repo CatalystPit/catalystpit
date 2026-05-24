@@ -266,7 +266,7 @@ export default function PoliticiansPage() {
 
       {/* FOOTER */}
       <div style={{background:C.navBg,padding:"24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-        <Logo dark size={0.85}/>
+        <Logo dark size={0.9}/>
         <div style={{display:"flex",gap:24}}>
           {["Features","Pricing","Privacy","Terms","Contact"].map(l=>(
             <span key={l} style={{fontSize:12,color:"rgba(255,255,255,0.6)",cursor:"pointer",fontWeight:300}}>{l}</span>

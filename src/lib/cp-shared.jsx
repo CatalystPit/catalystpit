@@ -523,7 +523,7 @@ export function Footer() {
     <div style={{background:C.navBg, marginTop:20, padding:"24px",
       display:"flex", justifyContent:"space-between", alignItems:"center",
       flexWrap:"wrap", gap:12}}>
-      <Logo dark size={0.85}/>
+      <Logo dark size={0.9}/>
       <div style={{display:"flex", gap:24, flexWrap:"wrap"}}>
         {links.map(l => l.href ? (
           <a key={l.label} href={l.href} style={{fontSize:12, color:"rgba(255,255,255,0.6)",
