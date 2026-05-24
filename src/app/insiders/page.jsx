@@ -135,6 +135,12 @@ export default function InsidersPage() {
     nonZero.sort((a, b) =>
       sortDir === 'asc' ? a.valueNum - b.valueNum : b.valueNum - a.valueNum);
     filtered = [...nonZero, ...zero];
+  } else if (sortBy === 'SHARES') {
+    const nonZero = filtered.filter(r => r.shares > 0);
+    const zero    = filtered.filter(r => !(r.shares > 0));
+    nonZero.sort((a, b) =>
+      sortDir === 'asc' ? a.shares - b.shares : b.shares - a.shares);
+    filtered = [...nonZero, ...zero];
   }
 
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
@@ -270,6 +276,7 @@ export default function InsidersPage() {
                   {label:"Role",      sortKey:null},
                   {label:"Action",    sortKey:null},
                   {label:"Value",     sortKey:"VALUE", align:"right"},
+                  {label:"Shares",    sortKey:"SHARES", align:"right"},
                   {label:"Filed",     sortKey:"FILED"},
                 ].map(h => {
                   const active = h.sortKey && sortBy === h.sortKey;
@@ -318,6 +325,7 @@ export default function InsidersPage() {
                     </td>
                     <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",
                       fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
+                    <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares > 0 ? ins.shares.toLocaleString('en-US') : '—'}</td>
                     <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
                   </tr>
                 ))
