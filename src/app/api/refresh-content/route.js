@@ -95,20 +95,12 @@ export async function GET(request) {
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
-  const [sec, mergedNews] = await Promise.all([
-    kvGet('catalystpit:_raw_sec'),
-    kvGet('catalystpit:_raw_news'),
-  ]);
-
-  const secArr  = Array.isArray(sec)        ? sec        : [];
+  const mergedNews = await kvGet('catalystpit:_raw_news');
   const newsArr = Array.isArray(mergedNews) ? mergedNews : [];
 
-  console.log(`🤖 Enriching: ${secArr.length} SEC filings, ${newsArr.length} news articles`);
+  console.log(`🤖 Enriching: ${newsArr.length} news articles (insider_trades now written directly by /api/refresh from Form 4 XML)`);
 
-  const [insiderRes, movingRes, polRes, newsRes, squeezeRes, earningsRes] = await Promise.allSettled([
-    secArr.length > 0
-      ? claude(`These are real SEC Form 4 filings from ${secArr[0]?.date || today()}: ${JSON.stringify(secArr)}. For each filing, add: the most likely executive who filed (real person at this company), their title (CEO/CFO/Director/etc), whether they bought or sold shares based on typical insider behavior, and a realistic transaction value in dollars. Use the exact date from each filing. Return ONLY JSON array: [{"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date"}]. No markdown.`)
-      : claude(`Today is ${today()}. The most recent trading day was ${today()}. Return ONLY a JSON array of 10 realistic insider trades from the most recent trading day. Use real company names and tickers. Each: {"ticker","company","executive","title","action":"Buy"|"Sell","value":number,"date":"${today()}"}. No markdown.`),
+  const [movingRes, polRes, newsRes, squeezeRes, earningsRes] = await Promise.allSettled([
     claude(`Generate 6 realistic-sounding scenarios of stocks that could be moving today for an educational financial dashboard template. These are illustrative examples, not real-time data. Use plausible tickers, companies, and reasons. Return ONLY a JSON array. Each: {"ticker","company","price":number,"changePct":number,"reason":string}. No markdown, no preamble.`),
     claude(`Today ${today()}. Return ONLY a JSON array of 10 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
     newsArr.length > 0
@@ -128,7 +120,6 @@ export async function GET(request) {
   };
 
   await Promise.all([
-    storeIfOk(insiderRes,  'catalystpit:insider_trades'),
     storeIfOk(movingRes,   'catalystpit:why_moving'),
     storeIfOk(polRes,      'catalystpit:politician_trades'),
     storeIfOk(newsRes,     'catalystpit:top_stories'),

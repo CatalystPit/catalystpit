@@ -1,5 +1,7 @@
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com' };
 
 const KV_TOKEN     = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET  = process.env.CRON_SECRET;
@@ -43,31 +45,144 @@ async function fetchCrypto() {
   };
 }
 
-async function fetchSECInsiders() {
-  const res = await fetch(
-    'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=80&output=atom',
-    { headers:{ 'User-Agent':'CatalystPit contact@catalystpit.com' } }
-  );
-  const xml = await res.text();
-  const filings = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)]
-    .map(m => m[1])
-    .map(e => {
-      const title = e.match(/<title>(.*?)<\/title>/)?.[1]||'';
-      const date  = (e.match(/<updated>(.*?)<\/updated>/)?.[1]||'').split('T')[0];
-      const m     = title.match(/4\s*-\s*(.+?)\s*\(([A-Z]{1,5})\)/);
-      if (!m) return null;
-      return { company:m[1].trim(), ticker:m[2].toUpperCase(), date };
-    })
-    .filter(t => t && /^[A-Z]{1,5}$/.test(t.ticker));
+// ─── Form 4 helpers ─────────────────────────────────────────────────────────
+const extractFormValue = (xml, tag) =>
+  xml.match(new RegExp(`<${tag}>\\s*<value>([\\s\\S]*?)</value>`))?.[1]?.trim();
 
-  if (!filings.length) return [];
-  const mostRecentDate = filings[0].date;
-  const recentFilings = filings.filter(f => f.date === mostRecentDate);
-  if (recentFilings.length < 10) {
-    const more = filings.filter(f => f.date !== mostRecentDate);
-    return [...recentFilings, ...more].slice(0, 10);
+const extractFormText = (xml, tag) =>
+  xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim();
+
+async function throttledBatch(items, concurrency, gapMs, worker) {
+  const out = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const results = await Promise.all(batch.map(worker));
+    out.push(...results);
+    if (i + concurrency < items.length) await new Promise(r => setTimeout(r, gapMs));
   }
-  return recentFilings.slice(0, 10);
+  return out;
+}
+
+function parseForm4(xml, filing) {
+  if (extractFormText(xml, 'documentType') !== '4') return [];
+
+  const ticker  = extractFormText(xml, 'issuerTradingSymbol')?.toUpperCase();
+  const company = extractFormText(xml, 'issuerName');
+  if (!ticker) return [];
+
+  const executive = extractFormText(xml, 'rptOwnerName') || '';
+  const isDirector   = ['true','1'].includes(extractFormText(xml, 'isDirector'));
+  const isOfficer    = ['true','1'].includes(extractFormText(xml, 'isOfficer'));
+  const isTenPercent = ['true','1'].includes(extractFormText(xml, 'isTenPercentOwner'));
+  const officerTitle = extractFormText(xml, 'officerTitle') || '';
+  let title;
+  if (isOfficer && officerTitle) title = officerTitle;
+  else if (isOfficer)            title = 'Officer';
+  else if (isDirector)           title = 'Director';
+  else if (isTenPercent)         title = '10% Owner';
+  else                           title = 'Other';
+
+  // Only parse <nonDerivativeTable> — derivatives belong to /options-flow, not /insiders
+  const ndtMatch = xml.match(/<nonDerivativeTable>([\s\S]*?)<\/nonDerivativeTable>/);
+  if (!ndtMatch) return [];
+  const txns = [...ndtMatch[1].matchAll(/<nonDerivativeTransaction>([\s\S]*?)<\/nonDerivativeTransaction>/g)]
+    .map(m => m[1]);
+
+  return txns.map(txn => {
+    const transactionCode = extractFormText(txn, 'transactionCode') || '';
+    const transactionDate = extractFormValue(txn, 'transactionDate') || '';
+    const shares          = parseFloat(extractFormValue(txn, 'transactionShares'))        || 0;
+    const pricePerShare   = parseFloat(extractFormValue(txn, 'transactionPricePerShare')) || 0;
+    const securityTitle   = extractFormValue(txn, 'securityTitle') || '';
+
+    let action;
+    if      (transactionCode === 'P') action = 'BUY';
+    else if (transactionCode === 'S') action = 'SELL';
+    else                              action = 'OTHER';
+
+    return {
+      ticker, company, executive, title,
+      transactionCode, action,
+      shares, pricePerShare,
+      totalValue: shares * pricePerShare,
+      securityTitle,
+      transactionDate,
+      filingDate: filing.filingDate,
+      accession:  filing.accession,
+      filingUrl:  filing.indexUrl,
+    };
+  });
+}
+
+async function fetchForm4Trades() {
+  try {
+    const atomRes = await fetch(
+      'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=100&output=atom',
+      { headers: SEC_HEADERS }
+    );
+    if (!atomRes.ok) {
+      console.log(`❌ SEC atom feed: HTTP ${atomRes.status}`);
+      return [];
+    }
+    const atomXml = await atomRes.text();
+
+    // Each filing appears twice in the atom feed (Issuer + Reporting Owner views).
+    // De-dupe by accession#, keep only Issuer entries for clean ticker source.
+    const entries = [...atomXml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(m => m[1]);
+    const filings = new Map();
+    for (const entry of entries) {
+      const title = entry.match(/<title>(.*?)<\/title>/)?.[1] || '';
+      if (!title.includes('(Issuer)')) continue;
+      const link = entry.match(/<link[^>]+href="([^"]+)"/)?.[1] || '';
+      const lm = link.match(/\/data\/(\d+)\/(\d+)\/([\d-]+)-index\.htm/);
+      if (!lm) continue;
+      const [, cik, accessionNoDashes, accessionWithDashes] = lm;
+      const filingDate = entry.match(/<updated>(.*?)<\/updated>/)?.[1]?.split('T')[0] || '';
+      filings.set(accessionWithDashes, {
+        accession: accessionWithDashes,
+        cik, accessionNoDashes,
+        indexUrl: link,
+        filingDate,
+      });
+    }
+
+    console.log(`📋 SEC: ${entries.length} atom entries → ${filings.size} unique Form 4 filings`);
+
+    // Two requests per filing (index.json + ownership xml) throttled to stay under SEC's 10 req/sec.
+    const results = await throttledBatch(Array.from(filings.values()), 5, 600, async (f) => {
+      try {
+        const idxRes = await fetch(
+          `https://www.sec.gov/Archives/edgar/data/${f.cik}/${f.accessionNoDashes}/index.json`,
+          { headers: SEC_HEADERS }
+        );
+        if (!idxRes.ok) return [];
+        const idx = await idxRes.json();
+        const xmlFile = idx.directory?.item?.find(i => i.name.endsWith('.xml'));
+        if (!xmlFile) return [];
+
+        const xmlRes = await fetch(
+          `https://www.sec.gov/Archives/edgar/data/${f.cik}/${f.accessionNoDashes}/${xmlFile.name}`,
+          { headers: SEC_HEADERS }
+        );
+        if (!xmlRes.ok) return [];
+        return parseForm4(await xmlRes.text(), f);
+      } catch (e) {
+        console.log(`⚠️ Filing ${f.accession}: ${e.message}`);
+        return [];
+      }
+    });
+
+    const flat = results.flat();
+    const codeCounts = flat.reduce((acc, t) => {
+      acc[t.transactionCode || '?'] = (acc[t.transactionCode || '?'] || 0) + 1;
+      return acc;
+    }, {});
+    console.log(`📊 Form 4 transactions: ${flat.length} total · codes=${JSON.stringify(codeCounts)}`);
+    return flat;
+  } catch (e) {
+    console.log(`❌ fetchForm4Trades: ${e.message}`);
+    return [];
+  }
 }
 
 // ── Detect generic placeholder images (Yahoo's purple "fi" thing, etc.) ──
@@ -377,10 +492,10 @@ export async function GET(request) {
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
   const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
-  const [stockPrices, crypto, secRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw, rssWSJRaw, rssMWRaw, rssBBRaw] = await Promise.allSettled([
+  const [stockPrices, crypto, insiderRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw, rssWSJRaw, rssMWRaw, rssBBRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
-    fetchSECInsiders(),
+    fetchForm4Trades(),
     fetchFinnhubPerTicker(),
     fetchFinnhubMarket(),
     fetchGNews(),
@@ -407,9 +522,9 @@ export async function GET(request) {
   } catch(e) { fail('prices', e); }
 
   try {
-    const sec = secRaw.status === 'fulfilled' ? secRaw.value : [];
-    await kvSet('catalystpit:_raw_sec', JSON.stringify(sec));
-    results.refreshed.push('catalystpit:_raw_sec');
+    const insiderTrades = insiderRaw.status === 'fulfilled' ? insiderRaw.value : [];
+    await kvSet('catalystpit:insider_trades', JSON.stringify(insiderTrades));
+    results.refreshed.push('catalystpit:insider_trades');
 
     const finnhubTicker = finnhubTickerRaw.status === 'fulfilled' ? finnhubTickerRaw.value : [];
     const finnhubMarket = finnhubMarketRaw.status === 'fulfilled' ? finnhubMarketRaw.value : [];
