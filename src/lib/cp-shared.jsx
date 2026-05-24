@@ -252,7 +252,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
   const cardInner = (
     <div className="card-hov" style={{background:C.white, border:`1px solid ${C.border}`,
       borderRadius:8, overflow:"hidden", cursor:"pointer", transition:"all 0.2s",
-      height:"100%", display:"flex", flexDirection:"column"}}>
+      height: hero ? "auto" : "100%", display:"flex", flexDirection:"column"}}>
 
       <div style={{height:photoH, position:"relative", overflow:"hidden",
         flexShrink:0, background:`linear-gradient(135deg,${bg1},${bg2})`}}>
@@ -334,7 +334,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
   if (n.url) {
     return (
       <a href={n.url} target="_blank" rel="noopener noreferrer"
-        style={{textDecoration:"none", color:"inherit", display:"block", height:"100%"}}>
+        style={{textDecoration:"none", color:"inherit", display:"block", height: hero ? "auto" : "100%"}}>
         {cardInner}
       </a>
     );
