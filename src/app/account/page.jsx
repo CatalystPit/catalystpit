@@ -1,6 +1,6 @@
 'use client';
 import { UserProfile } from '@clerk/nextjs';
-import { useEffect } from 'react';
+import { Logo, Footer } from '../../lib/cp-shared';
 const C = {
   bg: "#F5F6F3",
   white: "#FFFFFF",
@@ -14,12 +14,6 @@ const C = {
   navBg: "#1E5C38",
 };
 export default function AccountPage() {
-  useEffect(() => {
-    const fl = document.createElement("link");
-    fl.rel = "stylesheet";
-    fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
-    document.head.appendChild(fl);
-  }, []);
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, minHeight: "100vh" }}>
       {/* NAV */}
@@ -28,16 +22,7 @@ export default function AccountPage() {
         justifyContent: "space-between", padding: "0 24px", position: "sticky", top: 0, zIndex: 100,
         borderBottom: "1px solid rgba(255,255,255,0.15)"
       }}>
-        <a href="/" style={{ textDecoration: "none", lineHeight: 1.05, cursor: "pointer" }}>
-          <span style={{
-            fontFamily: "'Cormorant Garamond',serif", fontSize: 30,
-            fontWeight: 500, color: "#FFFFFF", letterSpacing: "-0.02em"
-          }}>Catalyst</span>
-          <span style={{
-            fontFamily: "'Cormorant Garamond',serif", fontSize: 30,
-            fontWeight: 700, fontStyle: "italic", color: "#5AB87A", letterSpacing: "-0.02em"
-          }}>Pit</span>
-        </a>
+        <a href="/" style={{ textDecoration: "none" }}><Logo dark/></a>
         <a href="/" style={{
           fontSize: 12, color: "rgba(255,255,255,0.75)",
           textDecoration: "none", fontWeight: 300
@@ -93,6 +78,7 @@ export default function AccountPage() {
           }}
         />
       </div>
+      <Footer/>
     </div>
   );
 }
