@@ -52,6 +52,19 @@ const extractFormValue = (xml, tag) =>
 const extractFormText = (xml, tag) =>
   xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim();
 
+const decodeEntities = (s) => {
+  if (typeof s !== 'string') return s;
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+};
+
 async function throttledBatch(items, concurrency, gapMs, worker) {
   const out = [];
   for (let i = 0; i < items.length; i += concurrency) {
@@ -67,14 +80,14 @@ function parseForm4(xml, filing) {
   if (extractFormText(xml, 'documentType') !== '4') return [];
 
   const ticker  = extractFormText(xml, 'issuerTradingSymbol')?.toUpperCase();
-  const company = extractFormText(xml, 'issuerName');
+  const company = decodeEntities(extractFormText(xml, 'issuerName'));
   if (!ticker) return [];
 
-  const executive = extractFormText(xml, 'rptOwnerName') || '';
+  const executive = decodeEntities(extractFormText(xml, 'rptOwnerName') || '');
   const isDirector   = ['true','1'].includes(extractFormText(xml, 'isDirector'));
   const isOfficer    = ['true','1'].includes(extractFormText(xml, 'isOfficer'));
   const isTenPercent = ['true','1'].includes(extractFormText(xml, 'isTenPercentOwner'));
-  const officerTitle = extractFormText(xml, 'officerTitle') || '';
+  const officerTitle = decodeEntities(extractFormText(xml, 'officerTitle') || '');
   let title;
   if (isOfficer && officerTitle) title = officerTitle;
   else if (isOfficer)            title = 'Officer';
@@ -93,7 +106,7 @@ function parseForm4(xml, filing) {
     const transactionDate = extractFormValue(txn, 'transactionDate') || '';
     const shares          = parseFloat(extractFormValue(txn, 'transactionShares'))        || 0;
     const pricePerShare   = parseFloat(extractFormValue(txn, 'transactionPricePerShare')) || 0;
-    const securityTitle   = extractFormValue(txn, 'securityTitle') || '';
+    const securityTitle   = decodeEntities(extractFormValue(txn, 'securityTitle') || '');
 
     let action;
     if      (transactionCode === 'P') action = 'BUY';
