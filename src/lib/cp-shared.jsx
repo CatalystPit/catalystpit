@@ -295,7 +295,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
             <div style={{display:"flex", gap:5, marginBottom:7, alignItems:"center"}}>
               <TagBadge tag={n.tag}/>
               {n.mins != null && (
-                <span style={{fontSize:10, color:"rgba(255,255,255,0.65)", marginLeft:"auto",
+                <span className="cp-num" style={{fontSize:10, color:"rgba(255,255,255,0.65)", marginLeft:"auto",
                   fontFamily:"'DM Mono',monospace"}}>{timeAgo(n.mins)}</span>
               )}
             </div>
@@ -318,7 +318,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
           <div style={{display:"flex", gap:5, marginBottom:5, alignItems:"center"}}>
             <TagBadge tag={n.tag}/>
             {n.mins != null && (
-              <span style={{fontSize:10, color:C.dim, marginLeft:"auto",
+              <span className="cp-num" style={{fontSize:10, color:C.dim, marginLeft:"auto",
                 fontFamily:"'DM Mono',monospace"}}>{timeAgo(n.mins)}</span>
             )}
           </div>
@@ -405,10 +405,10 @@ export function TickerTape({tickers}) {
           <div key={i} style={{display:"flex", alignItems:"center", gap:6,
             padding:"0 16px", borderRight:`1px solid ${C.border}`}}>
             <span style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
-            <span style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.ink, fontWeight:500}}>
+            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.ink, fontWeight:500}}>
               {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
             </span>
-            <span style={{fontFamily:"'DM Mono',monospace", fontSize:10,
+            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10,
               color:chgC(t.chg), background:chgBg(t.chg),
               padding:"1px 5px", borderRadius:3, fontWeight:600}}>
               {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
@@ -441,12 +441,12 @@ export function MarketSnapshotCard({tickers, loading=false}) {
           transition:"background 0.15s", cursor:"pointer"}}>
           <span style={{fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
           <div style={{display:"flex", alignItems:"center", gap:7}}>
-            <span style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.text}}>
+            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.text}}>
               {t.sym === "BTC" || (safeN(t.price) > 10000)
                 ? safeN(t.price).toLocaleString("en-US", {maximumFractionDigits:0})
                 : fmt2(t.price)}
             </span>
-            <span style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
               color:chgC(t.chg), background:chgBg(t.chg), padding:"1px 5px", borderRadius:3}}>
               {safeN(t.chg) > 0 ? "+" : ""}{fmt2(t.chg)}%
             </span>

@@ -145,19 +145,19 @@ export default function PoliticiansPage() {
             </div>
             <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
               <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"10px 16px",textAlign:"center"}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
                 <div style={{fontSize:11,color:C.green,fontWeight:500}}>PURCHASES</div>
               </div>
               <div style={{background:C.redLight,border:"1px solid #E0AAAA",borderRadius:8,padding:"10px 16px",textAlign:"center"}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':sells}</div>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':sells}</div>
                 <div style={{fontSize:11,color:C.red,fontWeight:500}}>SALES</div>
               </div>
               <div style={{background:C.blueLight,border:"1px solid #AABCE0",borderRadius:8,padding:"10px 16px",textAlign:"center"}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.blue}}>{loading?'—':dems}</div>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.blue}}>{loading?'—':dems}</div>
                 <div style={{fontSize:11,color:C.blue,fontWeight:500}}>DEMS</div>
               </div>
               <div style={{background:C.redLight,border:"1px solid #E0AAAA",borderRadius:8,padding:"10px 16px",textAlign:"center"}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':reps}</div>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':reps}</div>
                 <div style={{fontSize:11,color:C.red,fontWeight:500}}>REPS</div>
               </div>
             </div>
@@ -188,7 +188,7 @@ export default function PoliticiansPage() {
             </button>
           ))}
         </div>
-        <span style={{fontSize:12,color:C.dim,fontFamily:"'DM Mono',monospace",marginLeft:"auto"}}>
+        <span className="cp-num" style={{fontSize:12,color:C.dim,fontFamily:"'DM Mono',monospace",marginLeft:"auto"}}>
           {loading?'Loading…':`${filtered.length} trades · Updated ${timeStr}`}
           <button onClick={loadData} style={{background:"transparent",border:"none",color:C.green,cursor:"pointer",fontSize:12,marginLeft:8}}>↻</button>
         </span>
@@ -239,8 +239,8 @@ export default function PoliticiansPage() {
                           background:t.action==="BUY"?C.greenLight:C.redLight,
                           color:t.action==="BUY"?C.green:C.red}}>{t.action}</span>
                       </td>
-                      <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontFamily:"'DM Mono',monospace"}}>{t.amount}</td>
-                      <td style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{t.filed}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",fontSize:13,color:C.text,fontFamily:"'DM Mono',monospace"}}>{t.amount}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{t.filed}</td>
                     </tr>
                   );
                 })

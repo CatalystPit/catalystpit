@@ -70,7 +70,8 @@ function NewsRowCard({n, idx}) {
           )}
           <span style={{marginLeft:"auto", fontFamily:"'DM Mono',monospace",
             fontSize:10, color:C.dim, whiteSpace:"nowrap"}}>
-            {n.source}{n.mins != null ? ` · ${timeAgo(n.mins)}` : ''}
+            {n.source}
+            {n.mins != null && <span className="cp-num"> · {timeAgo(n.mins)}</span>}
           </span>
         </div>
         <div style={{fontSize:14, fontWeight:600, color:C.ink, lineHeight:1.35,
@@ -224,13 +225,13 @@ export default function NewsFeed() {
             color:C.ink, margin:0, letterSpacing:"-0.3px", lineHeight:1.2}}>
             News
           </h1>
-          <span style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted}}>
+          <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted}}>
             {loading ? '— loading —' : `${filtered.length} ${filtered.length === 1 ? 'story' : 'stories'}`}
             {filtered.length !== articles.length && articles.length > 0 && (
               <span style={{color:C.dim}}> of {articles.length}</span>
             )}
           </span>
-          <div style={{display:"flex", alignItems:"center", gap:8, marginLeft:"auto",
+          <div className="cp-num" style={{display:"flex", alignItems:"center", gap:8, marginLeft:"auto",
             fontFamily:"'DM Mono',monospace", fontSize:10, color:C.dim}}>
             <Dot/>AI LIVE · {timeStr}
             <button onClick={loadData} style={{background:"transparent", border:`1px solid ${C.border}`,

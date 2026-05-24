@@ -263,13 +263,13 @@ export default function CatalystPit() {
                     transition:"background 0.15s"}}>
                     <div style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
                     {loading ? <Skel h={26} mb={4}/> : <>
-                      <div style={{fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:600,
+                      <div className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:600,
                         color:C.ink, marginBottom:4}}>
                         {t.sym === "BTC" || (+t.price > 10000)
                           ? (+t.price).toLocaleString("en-US", {maximumFractionDigits:2})
                           : fmt2(+t.price)}
                       </div>
-                      <span style={{fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:600,
+                      <span className="cp-num" style={{fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:600,
                         color:chgC(t.chg), background:chgBg(t.chg),
                         padding:"2px 7px", borderRadius:3}}>
                         {t.chg > 0 ? "▲" : "▼"} {Math.abs(safeN(t.chg)).toFixed(2)}%
@@ -332,11 +332,11 @@ export default function CatalystPit() {
                         overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{m.why}</div>
                     </div>
                     <div style={{textAlign:"right", flexShrink:0}}>
-                      <div style={{fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600,
+                      <div className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600,
                         color:chgC(m.chg), background:chgBg(m.chg), padding:"3px 8px", borderRadius:4}}>
                         {safeN(m.chg) > 0 ? "▲" : "▼"} {Math.abs(safeN(m.chg)).toFixed(1)}%
                       </div>
-                      <div style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim, marginTop:3}}>{fmt2(m.price)}</div>
+                      <div className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim, marginTop:3}}>{fmt2(m.price)}</div>
                     </div>
                   </div>
                 );
@@ -382,9 +382,9 @@ export default function CatalystPit() {
                         background:ins.type === "BUY" ? C.greenLight : C.redLight,
                         color:ins.type === "BUY" ? C.green : C.red}}>{ins.type}</span>
                     </td>
-                    <td style={{padding:"11px 16px", textAlign:"right", fontFamily:"'DM Mono',monospace",
+                    <td className="cp-num" style={{padding:"11px 16px", textAlign:"right", fontFamily:"'DM Mono',monospace",
                       fontSize:14, fontWeight:700, color:ins.type === "BUY" ? C.green : C.red}}>{ins.value}</td>
-                    <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim}}>{ins.filed}</td>
+                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim}}>{ins.filed}</td>
                   </tr>
                 ))}
               </tbody>
@@ -461,10 +461,11 @@ export default function CatalystPit() {
                     </div>
                     <div style={{fontSize:12, color:C.muted, fontWeight:300}}>
                       <span style={{fontFamily:"'DM Mono',monospace", color:C.green,
-                        fontWeight:600, marginRight:8}}>{p.sym}</span>{p.value}
+                        fontWeight:600, marginRight:8}}>{p.sym}</span>
+                      <span className="cp-num">{p.value}</span>
                     </div>
                   </div>
-                  <span style={{fontFamily:"'DM Mono',monospace", fontSize:11,
+                  <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11,
                     color:C.dim, whiteSpace:"nowrap"}}>{p.filed}</span>
                 </div>
               ))}

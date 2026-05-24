@@ -139,14 +139,14 @@ export default function InsidersPage() {
             <div style={{display:"flex",gap:12,alignItems:"center"}}>
               {/* Stats */}
               <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"10px 18px",textAlign:"center"}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
                 <div style={{fontSize:11,color:C.green,fontWeight:500}}>BUYS</div>
               </div>
               <div style={{background:C.redLight,border:`1px solid #E0AAAA`,borderRadius:8,padding:"10px 18px",textAlign:"center"}}>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':sells}</div>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':sells}</div>
                 <div style={{fontSize:11,color:C.red,fontWeight:500}}>SELLS</div>
               </div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.dim}}>
+              <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.dim}}>
                 Updated {timeStr}
                 <button onClick={loadData} style={{background:"transparent",border:"none",color:C.green,
                   cursor:"pointer",fontSize:12,marginLeft:8,fontFamily:"'DM Mono',monospace"}}>↻</button>
@@ -214,9 +214,9 @@ export default function InsidersPage() {
                         background:ins.type==="BUY"?C.greenLight:C.redLight,
                         color:ins.type==="BUY"?C.green:C.red}}>{ins.type}</span>
                     </td>
-                    <td style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",
+                    <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",
                       fontSize:14,fontWeight:700,color:ins.type==="BUY"?C.green:C.red}}>{ins.value}</td>
-                    <td style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
+                    <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
                   </tr>
                 ))
               )}

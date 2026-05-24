@@ -26,6 +26,16 @@ export default function RootLayout({ children }) {
         <head>
           <meta name="viewport" content="width=device-width, initial-scale=1" />
           <link rel="icon" href="/favicon.ico" />
+          <link rel="preconnect" href="https://fonts.googleapis.com" />
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+          <style>{`
+            .cp-num {
+              font-family: 'Inter', sans-serif !important;
+              font-weight: 600 !important;
+              font-variant-numeric: tabular-nums !important;
+            }
+          `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
           {children}
