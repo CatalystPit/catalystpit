@@ -1,4 +1,5 @@
 import { SignIn } from '@clerk/nextjs';
+import { Logo } from '../../../lib/cp-shared';
 
 export const metadata = {
   title: 'Sign In — CatalystPit',
@@ -16,35 +17,13 @@ export default function SignInPage() {
       padding: '40px 20px',
       fontFamily: "'DM Sans', sans-serif",
     }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
-      `}</style>
-
       {/* Branded header */}
       <div style={{
         textAlign: 'center',
         marginBottom: 32,
       }}>
-        <a href="/" style={{
-          textDecoration: 'none',
-          lineHeight: 1.05,
-          display: 'inline-block',
-        }}>
-          <span style={{
-            fontFamily: "'Cormorant Garamond', serif",
-            fontSize: 44,
-            fontWeight: 500,
-            color: '#0C1410',
-            letterSpacing: '-0.02em',
-          }}>Catalyst</span>
-          <span style={{
-            fontFamily: "'Cormorant Garamond', serif",
-            fontSize: 44,
-            fontWeight: 700,
-            fontStyle: 'italic',
-            color: '#1E5C38',
-            letterSpacing: '-0.02em',
-          }}>Pit</span>
+        <a href="/" style={{ textDecoration: 'none', display: 'inline-block' }}>
+          <Logo size={44/30}/>
         </a>
         <div style={{
           marginTop: 8,
