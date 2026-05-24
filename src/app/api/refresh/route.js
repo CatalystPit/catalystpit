@@ -88,7 +88,87 @@ function isPlaceholderImage(url) {
   if (u.includes('og-default')) return true;
   // Tiny images (often placeholders / icons)
   if (u.match(/\b(1x1|pixel|spacer|blank)\.(gif|png|jpg)\b/)) return true;
+  // Stock photo agencies — common in API-republished wire stories
+  if (u.includes('gettyimages')) return true;
+  if (u.includes('istockphoto')) return true;
+  if (u.includes('shutterstock')) return true;
+  if (u.includes('dreamstime')) return true;
+  if (u.includes('123rf')) return true;
+  if (u.includes('alamy')) return true;
+  if (u.includes('depositphotos')) return true;
+  // SeekingAlpha CDN — images uniformly low quality
+  if (u.includes('seekingalpha')) return true;
   return false;
+}
+
+// ─── RSS helpers (no XML parser dep; mirrors fetchSECInsiders' regex approach) ─
+function extractTag(itemXml, tagName) {
+  const re = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`);
+  const m = itemXml.match(re);
+  if (!m) return null;
+  let content = m[1].trim();
+  const cdata = content.match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/);
+  if (cdata) content = cdata[1].trim();
+  return content
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'")
+    .replace(/&#x27;/g, "'").replace(/&#x2014;/g, '—').replace(/&#x2019;/g, "'");
+}
+
+function extractAttr(itemXml, tagName, attrName) {
+  const re = new RegExp(`<${tagName}[^>]*\\b${attrName}="([^"]*)"`);
+  const m = itemXml.match(re);
+  return m ? m[1] : null;
+}
+
+async function fetchRSS(url, sourceName, rank, opts = {}) {
+  const { cap = null } = opts;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CatalystPit/1.0; +contact@catalystpit.com)' },
+    });
+    if (!res.ok) {
+      console.log(`❌ RSS ${sourceName}: HTTP ${res.status}`);
+      return [];
+    }
+    const xml = await res.text();
+    const items = [...xml.matchAll(/<item[\s>][\s\S]*?<\/item>/g)].map(m => m[0]);
+
+    const articles = items.map(item => {
+      const title = extractTag(item, 'title');
+      const link  = extractTag(item, 'link');
+      if (!title || !link) return null;
+
+      const image_url =
+        extractAttr(item, 'media:content',   'url') ||
+        extractAttr(item, 'media:thumbnail', 'url') ||
+        extractAttr(item, 'enclosure',       'url') ||
+        null;
+
+      let published = null;
+      const pubDate = extractTag(item, 'pubDate');
+      if (pubDate) {
+        const d = new Date(pubDate);
+        if (!isNaN(d.getTime())) published = d.toISOString();
+      }
+
+      return {
+        title,
+        source: sourceName,
+        url: link,
+        image_url, // RSS sources skip isPlaceholderImage — publisher CDNs are trusted
+        published,
+        ticker: null,
+        _provider: `rss-${sourceName.toLowerCase().replace(/\s+/g, '-')}`,
+        _rank: rank,
+      };
+    }).filter(Boolean);
+
+    return cap ? articles.slice(0, cap) : articles;
+  } catch (e) {
+    console.log(`❌ RSS ${sourceName}: ${e.message}`);
+    return [];
+  }
 }
 
 async function fetchFinnhubPerTicker() {
@@ -297,7 +377,7 @@ export async function GET(request) {
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
   const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
-  const [stockPrices, crypto, secRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw] = await Promise.allSettled([
+  const [stockPrices, crypto, secRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw, rssWSJRaw, rssMWRaw, rssBBRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
     fetchSECInsiders(),
@@ -305,6 +385,9 @@ export async function GET(request) {
     fetchFinnhubMarket(),
     fetchGNews(),
     fetchNewsAPI(),
+    fetchRSS('https://feeds.content.dowjones.io/public/rss/RSSMarketsMain', 'WSJ',         0, { cap: 30 }),
+    fetchRSS('https://feeds.content.dowjones.io/public/rss/mw_topstories',  'MarketWatch', 0),
+    fetchRSS('https://feeds.bloomberg.com/markets/news.rss',                'Bloomberg',   0),
   ]);
 
   try {
@@ -332,10 +415,13 @@ export async function GET(request) {
     const finnhubMarket = finnhubMarketRaw.status === 'fulfilled' ? finnhubMarketRaw.value : [];
     const gnews   = gnewsRaw.status   === 'fulfilled' ? gnewsRaw.value   : [];
     const newsapi = newsapiRaw.status === 'fulfilled' ? newsapiRaw.value : [];
+    const rssWSJ  = rssWSJRaw.status  === 'fulfilled' ? rssWSJRaw.value  : [];
+    const rssMW   = rssMWRaw.status   === 'fulfilled' ? rssMWRaw.value   : [];
+    const rssBB   = rssBBRaw.status   === 'fulfilled' ? rssBBRaw.value   : [];
 
-    const mergedNews = mergeNews(finnhubTicker, finnhubMarket, newsapi, gnews).slice(0, 20);
+    const mergedNews = mergeNews(rssWSJ, rssMW, rssBB, finnhubTicker, finnhubMarket, newsapi, gnews).slice(0, 20);
     const withImages = mergedNews.filter(a => a.image_url).length;
-    console.log(`📰 News: ${finnhubTicker.length} F-tkr + ${finnhubMarket.length} F-mkt + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged (${withImages} with real images)`);
+    console.log(`📰 News: ${rssWSJ.length} WSJ + ${rssMW.length} MW + ${rssBB.length} BB + ${finnhubTicker.length} F-tkr + ${finnhubMarket.length} F-mkt + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged (${withImages} with real images)`);
     await kvSet('catalystpit:_raw_news', JSON.stringify(mergedNews));
     results.refreshed.push('catalystpit:_raw_news');
   } catch(e) { fail('raw_news_sec', e); }
