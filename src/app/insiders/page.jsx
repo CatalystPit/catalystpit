@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from "react";
+import { Logo, Footer } from '../../lib/cp-shared';
 
 const C = {
   bg:"#F5F6F3",white:"#FFFFFF",surface:"#F0F2EE",border:"#E0E2DC",border2:"#C4C8BE",
@@ -11,13 +12,6 @@ const C = {
 const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
 const Skel = ({w="100%",h=14,mb=6}) => <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,background:"linear-gradient(90deg,#E8EAE5 25%,#F0F2EE 50%,#E8EAE5 75%)",backgroundSize:"200% 100%",animation:"cp-shimmer 1.4s infinite"}}/>;
-
-const Logo = ({dark=false, size=1}) => (
-  <a href="/" style={{lineHeight:1.05,cursor:"pointer",textDecoration:"none"}}>
-    <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30*size,fontWeight:500,color:dark?"#FFFFFF":C.ink,letterSpacing:"-0.02em"}}>Catalyst</span>
-    <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30*size,fontWeight:700,fontStyle:"italic",color:dark?"#5AB87A":C.green,letterSpacing:"-0.02em"}}>Pit</span>
-  </a>
-);
 
 const fetchKey = async (key) => {
   try {
@@ -50,13 +44,6 @@ export default function InsidersPage() {
   const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
 
   const loadData = useCallback(async () => {
-    // Load fonts client-side only
-    if (!document.querySelector('link[data-cpfonts]')) {
-      const fl = document.createElement("link");
-      fl.rel = "stylesheet"; fl.setAttribute('data-cpfonts','1');
-      fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
-      document.head.appendChild(fl);
-    }
     setLoading(true);
     const raw = await fetchKey("insider_trades");
     const arr = toArr(raw, 'trades','insider_trades','insiders','filings','data');
@@ -98,7 +85,7 @@ export default function InsidersPage() {
       <div style={{background:C.navBg,height:50,display:"flex",alignItems:"center",
         justifyContent:"space-between",padding:"0 24px",position:"sticky",top:0,zIndex:100,
         borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
-        <Logo dark/>
+        <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
         <div style={{display:"flex",gap:20,alignItems:"center",marginLeft:40,borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:40}}>
           {NAV.map(l=>(
             <a key={l} href={`/${l.toLowerCase()}`} className="nbtn" style={{fontSize:12,
@@ -239,18 +226,7 @@ export default function InsidersPage() {
         </div>
       </div>
 
-      {/* FOOTER */}
-      <div style={{background:C.navBg,padding:"24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-        <Logo dark size={0.9}/>
-        <div style={{display:"flex",gap:24}}>
-          {["Features","Pricing","Privacy","Terms","Contact"].map(l=>(
-            <span key={l} style={{fontSize:12,color:"rgba(255,255,255,0.6)",cursor:"pointer",fontWeight:300}}>{l}</span>
-          ))}
-        </div>
-        <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"rgba(255,255,255,0.5)",display:"flex",gap:6,alignItems:"center"}}>
-          <Dot/>LIVE · 2026 CATALYSTPIT · NOT FINANCIAL ADVICE
-        </div>
-      </div>
+      <Footer/>
     </div>
   );
 }

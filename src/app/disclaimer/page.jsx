@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import { Logo, Footer } from '../../lib/cp-shared';
 
 const C = {
   bg: "#F5F6F3",
@@ -17,13 +17,6 @@ const C = {
 };
 
 export default function DisclaimerPage() {
-  useEffect(() => {
-    const fl = document.createElement("link");
-    fl.rel = "stylesheet";
-    fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
-    document.head.appendChild(fl);
-  }, []);
-
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, minHeight: "100vh", color: C.text }}>
       {/* NAV */}
@@ -32,10 +25,7 @@ export default function DisclaimerPage() {
         justifyContent: "space-between", padding: "0 24px", position: "sticky", top: 0, zIndex: 100,
         borderBottom: "1px solid rgba(255,255,255,0.15)"
       }}>
-        <a href="/" style={{ textDecoration: "none", lineHeight: 1.05, cursor: "pointer" }}>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 500, color: "#FFFFFF", letterSpacing: "-0.02em" }}>Catalyst</span>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 700, fontStyle: "italic", color: "#5AB87A", letterSpacing: "-0.02em" }}>Pit</span>
-        </a>
+        <a href="/" style={{ textDecoration: "none" }}><Logo dark/></a>
         <a href="/" style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", textDecoration: "none", fontWeight: 300 }}>← Back to homepage</a>
       </div>
 
@@ -143,25 +133,13 @@ export default function DisclaimerPage() {
         </Section>
       </div>
 
-      <div style={{ background: C.navBg, padding: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-        <a href="/" style={{ textDecoration: "none", lineHeight: 1.05 }}>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 500, color: "#FFFFFF", letterSpacing: "-0.02em" }}>Catalyst</span>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 700, fontStyle: "italic", color: "#5AB87A", letterSpacing: "-0.02em" }}>Pit</span>
-        </a>
-        <div style={{ display: "flex", gap: 24 }}>
-          <a href="/privacy" style={footerLink}>Privacy</a>
-          <a href="/terms" style={footerLink}>Terms</a>
-          <a href="/disclaimer" style={footerLink}>Disclaimer</a>
-        </div>
-        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "rgba(255,255,255,0.5)" }}>2026 CATALYSTPIT · NOT FINANCIAL ADVICE</span>
-      </div>
+      <Footer/>
     </div>
   );
 }
 
 const list = { margin: "12px 0", paddingLeft: 24, fontSize: 14, lineHeight: 1.7, color: C.text };
 const linkStyle = { color: C.green, textDecoration: "none", fontWeight: 500 };
-const footerLink = { fontSize: 12, color: "rgba(255,255,255,0.6)", textDecoration: "none", fontWeight: 300 };
 
 function Section({ title, children }) {
   return (

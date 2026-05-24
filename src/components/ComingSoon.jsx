@@ -1,20 +1,13 @@
 'use client'
 
+import { Logo, Footer } from '../lib/cp-shared';
+
 const C = {
   bg:"#F5F6F3", white:"#FFFFFF", surface:"#F0F2EE", border:"#E0E2DC",
   ink:"#0C1410", text:"#1A2018", muted:"#5A6458", dim:"#8A9088",
   green:"#1E5C38", greenMid:"#2A7848", greenLight:"#E8F5EE", greenBorder:"#A8CEB8",
   navBg:"#1E5C38",
 };
-
-const Logo = ({dark=false, size=1}) => (
-  <a href="/" style={{lineHeight:1.05, cursor:"pointer", textDecoration:"none"}}>
-    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:30*size,
-      fontWeight:500, color:dark?"#FFFFFF":C.ink, letterSpacing:"-0.02em"}}>Catalyst</span>
-    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:30*size,
-      fontWeight:700, fontStyle:"italic", color:dark?"#5AB87A":C.green, letterSpacing:"-0.02em"}}>Pit</span>
-  </a>
-);
 
 const Dot = () => (
   <span style={{display:"inline-block", width:6, height:6, borderRadius:"50%",
@@ -25,7 +18,6 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
         @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}
         .nbtn:hover{color:#FFFFFF!important}
         .cta-btn:hover{background:${C.greenMid}!important;transform:translateY(-1px)}
@@ -36,7 +28,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
       <div style={{background:C.navBg, height:50, display:"flex", alignItems:"center",
         justifyContent:"space-between", padding:"0 24px", position:"sticky", top:0, zIndex:100,
         borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
-        <Logo dark/>
+        <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
         <div style={{display:"flex", gap:20, alignItems:"center", marginLeft:40,
           borderLeft:`1px solid rgba(255,255,255,0.2)`, paddingLeft:40}}>
           {["Markets","News","Screener","Insiders","Politicians","Charts","Crypto"].map(l=>(
@@ -140,21 +132,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
         </a>
       </div>
 
-      {/* FOOTER */}
-      <div style={{background:C.navBg, padding:"24px",
-        display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12}}>
-        <Logo dark size={0.9}/>
-        <div style={{display:"flex", gap:24}}>
-          {["Features","Pricing","Privacy","Terms","Contact"].map(l=>(
-            <span key={l} style={{fontSize:12, color:"rgba(255,255,255,0.6)",
-              cursor:"pointer", fontWeight:300}}>{l}</span>
-          ))}
-        </div>
-        <div style={{display:"flex", alignItems:"center", gap:6,
-          fontFamily:"'DM Mono',monospace", fontSize:10, color:"rgba(255,255,255,0.5)"}}>
-          <Dot/>LIVE · 2026 CATALYSTPIT · NOT FINANCIAL ADVICE
-        </div>
-      </div>
+      <Footer/>
     </div>
   );
 }
