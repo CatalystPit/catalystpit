@@ -27,6 +27,19 @@ const actionStyles = (type) => {
   return                      { fg: C.dim,   bg: C.surface };
 };
 
+const decodeEntities = (s) => {
+  if (typeof s !== 'string') return s;
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+};
+
 const fetchKey = async (key) => {
   try {
     const r = await fetch(`/api/claude?key=${key}`);
@@ -53,6 +66,9 @@ export default function InsidersPage() {
   const [insiders, setInsiders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('ALL');
+  const [search,  setSearch]  = useState('');
+  const [sortBy,  setSortBy]  = useState(null);   // 'TICKER' | 'VALUE' | 'FILED' | null
+  const [sortDir, setSortDir] = useState('asc');  // 'asc' | 'desc'
   const [lastUp, setLastUp] = useState(null);
   const NAV = ["Markets","News","Screener","Insiders","Politicians","Charts","Crypto"];
   const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
@@ -63,8 +79,8 @@ export default function InsidersPage() {
     const arr = toArr(raw, 'trades','insider_trades','insiders','filings','data');
     const mapped = arr.map(i => ({
       sym:   i.ticker   || i.symbol || i.sym  || '?',
-      name:  i.executive || i.name  || i.insider || i.filer || '',
-      role:  i.title    || i.role   || i.position || '',
+      name:  decodeEntities(i.executive || i.name || i.insider || i.filer || ''),
+      role:  decodeEntities(i.title || i.role || i.position || ''),
       type:  (() => {
         const a = (i.action || '').toUpperCase();
         if (a === 'BUY')  return 'BUY';
@@ -74,7 +90,7 @@ export default function InsidersPage() {
       })(),
       value:    fmtMoney(typeof i.totalValue === 'number' ? i.totalValue : (typeof i.value === 'number' ? i.value : 0)),
       valueNum: typeof i.totalValue === 'number' ? i.totalValue : (typeof i.value === 'number' ? i.value : 0),
-      company: i.company || i.name || '',
+      company: decodeEntities(i.company || i.name || ''),
       filed:    i.filingDate || i.date || i.filed || i.filing_date || '',
     }));
     setInsiders(mapped);
@@ -84,7 +100,40 @@ export default function InsidersPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const filtered = filter==="ALL" ? insiders : insiders.filter(i=>i.type===filter);
+  const handleSort = (col) => {
+    if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(col); setSortDir('asc'); }
+  };
+
+  // Filter (search → pill) then sort
+  let filtered = insiders;
+  const q = search.trim().toLowerCase();
+  if (q) {
+    filtered = filtered.filter(r =>
+      (r.sym  || '').toLowerCase().includes(q) ||
+      (r.name || '').toLowerCase().includes(q)
+    );
+  }
+  if (filter !== 'ALL') filtered = filtered.filter(r => r.type === filter);
+
+  if (sortBy === 'TICKER') {
+    filtered = [...filtered].sort((a, b) => {
+      const cmp = (a.sym || '').localeCompare(b.sym || '');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  } else if (sortBy === 'FILED') {
+    filtered = [...filtered].sort((a, b) => {
+      const cmp = (a.filed || '').localeCompare(b.filed || '');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  } else if (sortBy === 'VALUE') {
+    const nonZero = filtered.filter(r => r.valueNum > 0);
+    const zero    = filtered.filter(r => !(r.valueNum > 0));
+    nonZero.sort((a, b) =>
+      sortDir === 'asc' ? a.valueNum - b.valueNum : b.valueNum - a.valueNum);
+    filtered = [...nonZero, ...zero];
+  }
+
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
   const buys = insiders.filter(i=>i.type==='BUY').length;
   const sells = insiders.filter(i=>i.type==='SELL').length;
@@ -164,19 +213,37 @@ export default function InsidersPage() {
       </div>
 
       {/* FILTERS */}
-      <div style={{maxWidth:1380,margin:"0 auto",padding:"16px 24px 0"}}>
+      <div style={{maxWidth:1380,margin:"0 auto",padding:"16px 24px 0",
+        display:"flex",flexDirection:"column",gap:12}}>
+        {/* Search */}
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search ticker or executive"
+          style={{
+            width:"100%", maxWidth:320,
+            background:C.white, border:`1px solid ${C.border}`,
+            color:C.text, padding:"8px 12px", borderRadius:5,
+            fontSize:12, fontFamily:"'DM Sans',sans-serif", fontWeight:400,
+            outline:"none",
+          }}
+        />
+        {/* Pills + count */}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          {['ALL','BUY','SELL'].map(f=>(
-            <button key={f} onClick={()=>setFilter(f)} style={{
-              background:filter===f?C.green:"transparent",
-              border:`1px solid ${filter===f?C.green:C.border}`,
-              color:filter===f?"#fff":C.muted,
-              padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",
-              fontFamily:"'DM Mono',monospace",fontWeight:filter===f?500:400,
-              transition:"all 0.15s"}}>
-              {f}
-            </button>
-          ))}
+          {['ALL','BUY','SELL','OTHER'].map(f=>{
+            const accent = f === 'OTHER' ? C.dim : C.green;
+            return (
+              <button key={f} onClick={()=>setFilter(f)} style={{
+                background: filter===f ? accent : "transparent",
+                border:`1px solid ${filter===f ? accent : C.border}`,
+                color: filter===f ? "#fff" : C.muted,
+                padding:"6px 16px",borderRadius:5,fontSize:12,cursor:"pointer",
+                fontFamily:"'DM Mono',monospace",fontWeight:filter===f?500:400,
+                transition:"all 0.15s"}}>
+                {f}
+              </button>
+            );
+          })}
           <span style={{fontSize:12,color:C.dim,fontFamily:"'DM Mono',monospace",marginLeft:8}}>
             {loading?'Loading…':`${filtered.length} filings`}
           </span>
@@ -189,11 +256,32 @@ export default function InsidersPage() {
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead>
               <tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
-                {["Ticker","Company","Executive","Role","Action","Value","Filed"].map(h=>(
-                  <th key={h} style={{padding:"10px 16px",textAlign:h==="Value"?"right":"left",
-                    fontFamily:"'DM Mono',monospace",fontSize:9,color:C.dim,
-                    letterSpacing:"0.8px",fontWeight:400}}>{h.toUpperCase()}</th>
-                ))}
+                {[
+                  {label:"Ticker",    sortKey:"TICKER"},
+                  {label:"Company",   sortKey:null},
+                  {label:"Executive", sortKey:null},
+                  {label:"Role",      sortKey:null},
+                  {label:"Action",    sortKey:null},
+                  {label:"Value",     sortKey:"VALUE", align:"right"},
+                  {label:"Filed",     sortKey:"FILED"},
+                ].map(h => {
+                  const active = h.sortKey && sortBy === h.sortKey;
+                  const arrow  = active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+                  return (
+                    <th key={h.label}
+                      onClick={h.sortKey ? () => handleSort(h.sortKey) : undefined}
+                      style={{
+                        padding:"10px 16px", textAlign:h.align||"left",
+                        fontFamily:"'DM Mono',monospace", fontSize:9,
+                        color: active ? C.green : C.dim,
+                        letterSpacing:"0.8px", fontWeight:400,
+                        cursor: h.sortKey ? "pointer" : "default",
+                        userSelect:"none",
+                      }}>
+                      {h.label.toUpperCase()}{arrow}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
