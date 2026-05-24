@@ -134,11 +134,11 @@ export default function PoliticiansPage() {
             <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
               <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"10px 16px",textAlign:"center"}}>
                 <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
-                <div style={{fontSize:11,color:C.green,fontWeight:500}}>PURCHASES</div>
+                <div style={{fontSize:11,color:C.green,fontWeight:500}}>BUYS</div>
               </div>
               <div style={{background:C.redLight,border:"1px solid #E0AAAA",borderRadius:8,padding:"10px 16px",textAlign:"center"}}>
                 <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':sells}</div>
-                <div style={{fontSize:11,color:C.red,fontWeight:500}}>SALES</div>
+                <div style={{fontSize:11,color:C.red,fontWeight:500}}>SELLS</div>
               </div>
               <div style={{background:C.blueLight,border:"1px solid #AABCE0",borderRadius:8,padding:"10px 16px",textAlign:"center"}}>
                 <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.blue}}>{loading?'—':dems}</div>
