@@ -153,15 +153,6 @@ export const toArr = (val, ...wrapperKeys) => {
 
 // ─── GLOBAL STYLES + FONTS ──────────────────────────────────────────────────
 export function BrandStyles() {
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    if (document.querySelector('link[data-cp-fonts]')) return;
-    const fl = document.createElement('link');
-    fl.rel = 'stylesheet';
-    fl.href = 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap';
-    fl.setAttribute('data-cp-fonts', '1');
-    document.head.appendChild(fl);
-  }, []);
   return (
     <style>{`
       @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}
