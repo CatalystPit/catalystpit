@@ -13,6 +13,20 @@ const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
 const Skel = ({w="100%",h=14,mb=6}) => <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,background:"linear-gradient(90deg,#E8EAE5 25%,#F0F2EE 50%,#E8EAE5 75%)",backgroundSize:"200% 100%",animation:"cp-shimmer 1.4s infinite"}}/>;
 
+const fmtMoney = (n) => {
+  if (!n || isNaN(Number(n))) return '—';
+  const v = Number(n);
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 1_000)     return `$${(v / 1_000).toFixed(1)}K`;
+  return `$${v.toLocaleString('en-US')}`;
+};
+
+const actionStyles = (type) => {
+  if (type === 'BUY')  return { fg: C.green, bg: C.greenLight };
+  if (type === 'SELL') return { fg: C.red,   bg: C.redLight };
+  return                      { fg: C.dim,   bg: C.surface };
+};
+
 const fetchKey = async (key) => {
   try {
     const r = await fetch(`/api/claude?key=${key}`);
@@ -51,11 +65,17 @@ export default function InsidersPage() {
       sym:   i.ticker   || i.symbol || i.sym  || '?',
       name:  i.executive || i.name  || i.insider || i.filer || '',
       role:  i.title    || i.role   || i.position || '',
-      type:  BUY_WORDS.has((i.action||i.transaction_type||'').toLowerCase()) ? 'BUY' : 'SELL',
-      value: typeof i.value==='number' ? `$${(i.value/1e6).toFixed(2)}M` : (i.value||i.amount||''),
-      valueNum: typeof i.value==='number' ? i.value : 0,
+      type:  (() => {
+        const a = (i.action || '').toUpperCase();
+        if (a === 'BUY')  return 'BUY';
+        if (a === 'SELL') return 'SELL';
+        if (BUY_WORDS.has(a.toLowerCase())) return 'BUY';   // legacy Claude-data fallback
+        return 'OTHER';
+      })(),
+      value:    fmtMoney(typeof i.totalValue === 'number' ? i.totalValue : (typeof i.value === 'number' ? i.value : 0)),
+      valueNum: typeof i.totalValue === 'number' ? i.totalValue : (typeof i.value === 'number' ? i.value : 0),
       company: i.company || i.name || '',
-      filed: i.date||i.filed||i.filing_date||'',
+      filed:    i.filingDate || i.date || i.filed || i.filing_date || '',
     }));
     setInsiders(mapped);
     setLastUp(new Date());
@@ -64,7 +84,7 @@ export default function InsidersPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const filtered = (filter==="ALL" ? insiders : insiders.filter(i=>i.type===filter)).slice(0,10);
+  const filtered = filter==="ALL" ? insiders : insiders.filter(i=>i.type===filter);
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
   const buys = insiders.filter(i=>i.type==='BUY').length;
   const sells = insiders.filter(i=>i.type==='SELL').length;
@@ -190,7 +210,7 @@ export default function InsidersPage() {
                   <tr key={i} className="row-hov" style={{
                     borderBottom:i<filtered.length-1?`1px solid ${C.surface}`:"none",
                     transition:"background 0.15s",
-                    borderLeft:`3px solid ${ins.type==="BUY"?C.green:C.red}`}}>
+                    borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                     <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green}}>{ins.sym}</td>
                     <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company||ins.name}</td>
                     <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400}}>{ins.name}</td>
@@ -198,11 +218,11 @@ export default function InsidersPage() {
                     <td style={{padding:"13px 16px"}}>
                       <span style={{fontSize:11,padding:"4px 10px",borderRadius:4,
                         fontFamily:"'DM Mono',monospace",fontWeight:600,letterSpacing:"0.5px",
-                        background:ins.type==="BUY"?C.greenLight:C.redLight,
-                        color:ins.type==="BUY"?C.green:C.red}}>{ins.type}</span>
+                        background:actionStyles(ins.type).bg,
+                        color:actionStyles(ins.type).fg}}>{ins.type}</span>
                     </td>
                     <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",
-                      fontSize:14,fontWeight:700,color:ins.type==="BUY"?C.green:C.red}}>{ins.value}</td>
+                      fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
                     <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
                   </tr>
                 ))
