@@ -204,7 +204,7 @@ export default function InsidersPage() {
                     borderBottom:i<filtered.length-1?`1px solid ${C.surface}`:"none",
                     transition:"background 0.15s",
                     borderLeft:`3px solid ${ins.type==="BUY"?C.green:C.red}`}}>
-                    <td style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green}}>{ins.sym}</td>
+                    <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green}}>{ins.sym}</td>
                     <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company||ins.name}</td>
                     <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400}}>{ins.name}</td>
                     <td style={{padding:"13px 16px",fontSize:12,color:C.muted,fontWeight:300}}>{ins.role}</td>

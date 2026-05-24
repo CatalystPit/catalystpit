@@ -63,7 +63,7 @@ function NewsRowCard({n, idx}) {
         <div style={{display:"flex", alignItems:"center", gap:7, flexWrap:"wrap"}}>
           <TagBadge tag={n.tag}/>
           {hasValidTicker && (
-            <span style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+            <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
               color:C.green, background:C.greenLight, padding:"2px 7px", borderRadius:3}}>
               {n.sym}
             </span>
@@ -112,6 +112,7 @@ function TickerSearchCard({query, onQueryChange, trending}) {
         value={query}
         onChange={e => onQueryChange(e.target.value.toUpperCase())}
         placeholder="Filter by ticker — e.g. NVDA"
+        className="cp-tkr"
         style={{width:"100%", background:C.white, border:`1px solid ${C.border2}`,
           color:C.text, padding:"9px 12px", borderRadius:6, fontSize:12,
           fontFamily:"'DM Mono',monospace", outline:"none", fontWeight:500,
@@ -125,7 +126,7 @@ function TickerSearchCard({query, onQueryChange, trending}) {
               const active = query === sym;
               return (
                 <button key={sym} onClick={() => onQueryChange(active ? '' : sym)}
-                  className="chip-hov"
+                  className="chip-hov cp-tkr"
                   style={{fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600,
                     color: active ? "#fff" : C.green,
                     background: active ? C.green : C.greenLight,

@@ -273,11 +273,11 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
 
         {hasValidTicker && (
           <div style={{position:"absolute", top:9, left:9, display:"flex", gap:5, zIndex:2}}>
-            <span style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color:"#fff",
+            <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color:"#fff",
               background:"rgba(0,0,0,0.52)", backdropFilter:"blur(6px)",
               padding:"2px 8px", borderRadius:4}}>{n.sym}</span>
             {hasChg && (
-              <span style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+              <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
                 color:isUp?"#5AE87A":"#FF8080", background:"rgba(0,0,0,0.52)", backdropFilter:"blur(6px)",
                 padding:"2px 8px", borderRadius:4}}>{fmtP(chgNum)}</span>
             )}
@@ -404,7 +404,7 @@ export function TickerTape({tickers}) {
         {[...data, ...data, ...data].map((t, i) => (
           <div key={i} style={{display:"flex", alignItems:"center", gap:6,
             padding:"0 16px", borderRight:`1px solid ${C.border}`}}>
-            <span style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
+            <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
             <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.ink, fontWeight:500}}>
               {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
             </span>
@@ -439,7 +439,7 @@ export function MarketSnapshotCard({tickers, loading=false}) {
           alignItems:"center", padding:"9px 14px",
           borderBottom:i < data.length - 1 ? `1px solid ${C.surface}` : "none",
           transition:"background 0.15s", cursor:"pointer"}}>
-          <span style={{fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
+          <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
           <div style={{display:"flex", alignItems:"center", gap:7}}>
             <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.text}}>
               {t.sym === "BTC" || (safeN(t.price) > 10000)

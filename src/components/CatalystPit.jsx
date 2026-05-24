@@ -261,7 +261,7 @@ export default function CatalystPit() {
                   <div key={i} className="hov" style={{background:C.surface, borderRadius:7,
                     padding:"14px 14px", border:`1px solid ${C.border}`, cursor:"pointer",
                     transition:"background 0.15s"}}>
-                    <div style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
+                    <div className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
                     {loading ? <Skel h={26} mb={4}/> : <>
                       <div className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:600,
                         color:C.ink, marginBottom:4}}>
@@ -320,7 +320,7 @@ export default function CatalystPit() {
                     <div style={{width:44, height:44, borderRadius:8, flexShrink:0,
                       background:`linear-gradient(135deg,${bg1},${bg2})`,
                       display:"flex", alignItems:"center", justifyContent:"center"}}>
-                      <span style={{fontFamily:"'DM Mono',monospace", fontSize:11,
+                      <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11,
                         fontWeight:600, color:"rgba(255,255,255,0.9)"}}>{m.sym}</span>
                     </div>
                     <div style={{flex:1, minWidth:0}}>
@@ -373,7 +373,7 @@ export default function CatalystPit() {
                     transition:"background 0.15s", cursor:"pointer",
                     borderLeft:`3px solid ${ins.type === "BUY" ? C.green : C.red}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
-                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk">{ins.sym}</td>
+                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr">{ins.sym}</td>
                     <td style={{padding:"11px 16px", fontSize:13, color:C.text, fontWeight:400}}>{ins.name}</td>
                     <td style={{padding:"11px 16px", fontSize:12, color:C.muted, fontWeight:300}}>{ins.role}</td>
                     <td style={{padding:"11px 16px"}}>
@@ -460,7 +460,7 @@ export default function CatalystPit() {
                         color:p.action === "BUY" ? C.green : C.red}}>{p.action}</span>
                     </div>
                     <div style={{fontSize:12, color:C.muted, fontWeight:300}}>
-                      <span style={{fontFamily:"'DM Mono',monospace", color:C.green,
+                      <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", color:C.green,
                         fontWeight:600, marginRight:8}}>{p.sym}</span>
                       <span className="cp-num">{p.value}</span>
                     </div>
@@ -563,7 +563,7 @@ export default function CatalystPit() {
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>
-                    <span style={{fontFamily:"'DM Mono',monospace", fontSize:12,
+                    <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:12,
                       fontWeight:600, color:C.ink}}>{ins.sym}</span>
                     <span style={{fontSize:9, padding:"2px 6px", borderRadius:3,
                       fontFamily:"'DM Mono',monospace", fontWeight:600,

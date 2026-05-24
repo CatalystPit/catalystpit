@@ -231,7 +231,7 @@ export default function PoliticiansPage() {
                         </span>
                       </td>
                       <td style={{padding:"13px 16px",fontSize:12,color:C.muted,fontWeight:300}}>{t.chamber}</td>
-                      <td style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green}}>{t.sym}</td>
+                      <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green}}>{t.sym}</td>
                       <td style={{padding:"13px 16px",fontSize:12,color:C.text,fontWeight:300,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.company}</td>
                       <td style={{padding:"13px 16px"}}>
                         <span style={{fontSize:11,padding:"4px 10px",borderRadius:4,

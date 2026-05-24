@@ -35,6 +35,11 @@ export default function RootLayout({ children }) {
               font-weight: 600 !important;
               font-variant-numeric: tabular-nums !important;
             }
+            .cp-tkr {
+              font-family: 'Inter', sans-serif !important;
+              font-weight: 700 !important;
+              letter-spacing: 0.02em !important;
+            }
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
