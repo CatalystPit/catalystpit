@@ -18,7 +18,7 @@ export default function PrivacyPage() {
   useEffect(() => {
     const fl = document.createElement("link");
     fl.rel = "stylesheet";
-    fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
+    fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
     document.head.appendChild(fl);
   }, []);
 
@@ -31,8 +31,8 @@ export default function PrivacyPage() {
         borderBottom: "1px solid rgba(255,255,255,0.15)"
       }}>
         <a href="/" style={{ textDecoration: "none", lineHeight: 1.05, cursor: "pointer" }}>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 20, fontWeight: 300, color: "#FFFFFF", letterSpacing: "0.04em" }}>Catalyst</span>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 20, fontWeight: 600, fontStyle: "italic", color: "#5AB87A", letterSpacing: "0.02em" }}>Pit</span>
+          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 500, color: "#FFFFFF", letterSpacing: "-0.02em" }}>Catalyst</span>
+          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 700, fontStyle: "italic", color: "#5AB87A", letterSpacing: "-0.02em" }}>Pit</span>
         </a>
         <a href="/" style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", textDecoration: "none", fontWeight: 300 }}>← Back to homepage</a>
       </div>
@@ -158,8 +158,8 @@ export default function PrivacyPage() {
       {/* FOOTER */}
       <div style={{ background: C.navBg, padding: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
         <a href="/" style={{ textDecoration: "none", lineHeight: 1.05 }}>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 17, fontWeight: 300, color: "#FFFFFF", letterSpacing: "0.04em" }}>Catalyst</span>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 17, fontWeight: 600, fontStyle: "italic", color: "#5AB87A" }}>Pit</span>
+          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 500, color: "#FFFFFF", letterSpacing: "-0.02em" }}>Catalyst</span>
+          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 700, fontStyle: "italic", color: "#5AB87A", letterSpacing: "-0.02em" }}>Pit</span>
         </a>
         <div style={{ display: "flex", gap: 24 }}>
           <a href="/privacy" style={footerLink}>Privacy</a>

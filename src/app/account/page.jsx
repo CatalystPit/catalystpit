@@ -17,7 +17,7 @@ export default function AccountPage() {
   useEffect(() => {
     const fl = document.createElement("link");
     fl.rel = "stylesheet";
-    fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
+    fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
     document.head.appendChild(fl);
   }, []);
   return (
@@ -30,12 +30,12 @@ export default function AccountPage() {
       }}>
         <a href="/" style={{ textDecoration: "none", lineHeight: 1.05, cursor: "pointer" }}>
           <span style={{
-            fontFamily: "'Cormorant Garamond',serif", fontSize: 20,
-            fontWeight: 300, color: "#FFFFFF", letterSpacing: "0.04em"
+            fontFamily: "'Cormorant Garamond',serif", fontSize: 30,
+            fontWeight: 500, color: "#FFFFFF", letterSpacing: "-0.02em"
           }}>Catalyst</span>
           <span style={{
-            fontFamily: "'Cormorant Garamond',serif", fontSize: 20,
-            fontWeight: 600, fontStyle: "italic", color: "#5AB87A", letterSpacing: "0.02em"
+            fontFamily: "'Cormorant Garamond',serif", fontSize: 30,
+            fontWeight: 700, fontStyle: "italic", color: "#5AB87A", letterSpacing: "-0.02em"
           }}>Pit</span>
         </a>
         <a href="/" style={{

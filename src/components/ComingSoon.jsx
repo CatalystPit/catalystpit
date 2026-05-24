@@ -9,10 +9,10 @@ const C = {
 
 const Logo = ({dark=false, size=1}) => (
   <a href="/" style={{lineHeight:1.05, cursor:"pointer", textDecoration:"none"}}>
-    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:20*size,
-      fontWeight:300, color:dark?"#FFFFFF":C.ink, letterSpacing:"0.04em"}}>Catalyst</span>
-    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:20*size,
-      fontWeight:600, fontStyle:"italic", color:dark?"#5AB87A":C.green, letterSpacing:"0.02em"}}>Pit</span>
+    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:30*size,
+      fontWeight:500, color:dark?"#FFFFFF":C.ink, letterSpacing:"-0.02em"}}>Catalyst</span>
+    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:30*size,
+      fontWeight:700, fontStyle:"italic", color:dark?"#5AB87A":C.green, letterSpacing:"-0.02em"}}>Pit</span>
   </a>
 );
 
@@ -25,7 +25,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
         @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}
         .nbtn:hover{color:#FFFFFF!important}
         .cta-btn:hover{background:${C.greenMid}!important;transform:translateY(-1px)}
@@ -143,7 +143,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
       {/* FOOTER */}
       <div style={{background:C.navBg, padding:"24px",
         display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12}}>
-        <Logo dark size={0.85}/>
+        <Logo dark size={0.9}/>
         <div style={{display:"flex", gap:24}}>
           {["Features","Pricing","Privacy","Terms","Contact"].map(l=>(
             <span key={l} style={{fontSize:12, color:"rgba(255,255,255,0.6)",
