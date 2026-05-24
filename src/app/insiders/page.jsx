@@ -21,8 +21,6 @@ const fmtMoney = (n) => {
   return `$${v.toLocaleString('en-US')}`;
 };
 
-const fmtTotal = (n) => (n > 0 ? fmtMoney(n) : '$0');
-
 const actionStyles = (type) => {
   if (type === 'BUY')  return { fg: C.green, bg: C.greenLight };
   if (type === 'SELL') return { fg: C.red,   bg: C.redLight };
@@ -144,10 +142,8 @@ export default function InsidersPage() {
   }
 
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
-  const boughtValue  = insiders.filter(i => i.type === 'BUY').reduce((s, i) => s + (i.valueNum || 0), 0);
-  const boughtShares = insiders.filter(i => i.type === 'BUY').reduce((s, i) => s + (i.shares   || 0), 0);
-  const soldValue    = insiders.filter(i => i.type === 'SELL').reduce((s, i) => s + (i.valueNum || 0), 0);
-  const soldShares   = insiders.filter(i => i.type === 'SELL').reduce((s, i) => s + (i.shares   || 0), 0);
+  const buys = insiders.filter(i=>i.type==='BUY').length;
+  const sells = insiders.filter(i=>i.type==='SELL').length;
 
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
@@ -205,15 +201,13 @@ export default function InsidersPage() {
             </div>
             <div style={{display:"flex",gap:12,alignItems:"center"}}>
               {/* Stats */}
-              <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"12px 18px",textAlign:"center"}}>
-                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':fmtTotal(boughtValue)}</div>
-                <div style={{fontSize:11,color:C.green,fontWeight:500}}>BOUGHT</div>
-                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.muted,marginTop:3}}>{loading?'—':`${boughtShares.toLocaleString('en-US')} sh`}</div>
+              <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"10px 18px",textAlign:"center"}}>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
+                <div style={{fontSize:11,color:C.green,fontWeight:500}}>BUYS</div>
               </div>
-              <div style={{background:C.redLight,border:`1px solid #E0AAAA`,borderRadius:8,padding:"12px 18px",textAlign:"center"}}>
-                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':fmtTotal(soldValue)}</div>
-                <div style={{fontSize:11,color:C.red,fontWeight:500}}>SOLD</div>
-                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.muted,marginTop:3}}>{loading?'—':`${soldShares.toLocaleString('en-US')} sh`}</div>
+              <div style={{background:C.redLight,border:`1px solid #E0AAAA`,borderRadius:8,padding:"10px 18px",textAlign:"center"}}>
+                <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':sells}</div>
+                <div style={{fontSize:11,color:C.red,fontWeight:500}}>SELLS</div>
               </div>
               <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.dim}}>
                 Updated {timeStr}
