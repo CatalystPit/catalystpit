@@ -12,10 +12,10 @@ const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
 const Skel = ({w="100%",h=14,mb=6}) => <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,background:"linear-gradient(90deg,#E8EAE5 25%,#F0F2EE 50%,#E8EAE5 75%)",backgroundSize:"200% 100%",animation:"cp-shimmer 1.4s infinite"}}/>;
 
-const Logo = ({dark=false}) => (
+const Logo = ({dark=false, size=1}) => (
   <a href="/" style={{lineHeight:1.05,cursor:"pointer",textDecoration:"none"}}>
-    <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:300,color:dark?"#FFFFFF":C.ink,letterSpacing:"0.04em"}}>Catalyst</span>
-    <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:20,fontWeight:600,fontStyle:"italic",color:dark?"#5AB87A":C.green,letterSpacing:"0.02em"}}>Pit</span>
+    <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30*size,fontWeight:500,color:dark?"#FFFFFF":C.ink,letterSpacing:"-0.02em"}}>Catalyst</span>
+    <span style={{fontFamily:"'Cormorant Garamond',serif",fontSize:30*size,fontWeight:700,fontStyle:"italic",color:dark?"#5AB87A":C.green,letterSpacing:"-0.02em"}}>Pit</span>
   </a>
 );
 
@@ -54,7 +54,7 @@ export default function InsidersPage() {
     if (!document.querySelector('link[data-cpfonts]')) {
       const fl = document.createElement("link");
       fl.rel = "stylesheet"; fl.setAttribute('data-cpfonts','1');
-      fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
+      fl.href = "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap";
       document.head.appendChild(fl);
     }
     setLoading(true);
@@ -241,7 +241,7 @@ export default function InsidersPage() {
 
       {/* FOOTER */}
       <div style={{background:C.navBg,padding:"24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-        <Logo dark/>
+        <Logo dark size={0.85}/>
         <div style={{display:"flex",gap:24}}>
           {["Features","Pricing","Privacy","Terms","Contact"].map(l=>(
             <span key={l} style={{fontSize:12,color:"rgba(255,255,255,0.6)",cursor:"pointer",fontWeight:300}}>{l}</span>

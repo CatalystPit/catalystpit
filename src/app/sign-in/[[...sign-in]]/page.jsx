@@ -17,7 +17,7 @@ export default function SignInPage() {
       fontFamily: "'DM Sans', sans-serif",
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap');
       `}</style>
 
       {/* Branded header */}
@@ -33,17 +33,17 @@ export default function SignInPage() {
           <span style={{
             fontFamily: "'Cormorant Garamond', serif",
             fontSize: 44,
-            fontWeight: 300,
+            fontWeight: 500,
             color: '#0C1410',
-            letterSpacing: '0.02em',
+            letterSpacing: '-0.02em',
           }}>Catalyst</span>
           <span style={{
             fontFamily: "'Cormorant Garamond', serif",
             fontSize: 44,
-            fontWeight: 600,
+            fontWeight: 700,
             fontStyle: 'italic',
             color: '#1E5C38',
-            letterSpacing: '0.01em',
+            letterSpacing: '-0.02em',
           }}>Pit</span>
         </a>
         <div style={{

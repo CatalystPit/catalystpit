@@ -158,7 +158,7 @@ export function BrandStyles() {
     if (document.querySelector('link[data-cp-fonts]')) return;
     const fl = document.createElement('link');
     fl.rel = 'stylesheet';
-    fl.href = 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,600;1,600&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap';
+    fl.href = 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap';
     fl.setAttribute('data-cp-fonts', '1');
     document.head.appendChild(fl);
   }, []);
@@ -195,10 +195,10 @@ export const Dot = () => (
 
 export const Logo = ({dark=false, size=1}) => (
   <div style={{lineHeight:1.05, cursor:"pointer"}}>
-    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:20*size,
-      fontWeight:300, color:dark?"#FFFFFF":C.ink, letterSpacing:"0.04em"}}>Catalyst</span>
-    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:20*size,
-      fontWeight:600, fontStyle:"italic", color:dark?"#5AB87A":C.green, letterSpacing:"0.02em"}}>Pit</span>
+    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:30*size,
+      fontWeight:500, color:dark?"#FFFFFF":C.ink, letterSpacing:"-0.02em"}}>Catalyst</span>
+    <span style={{fontFamily:"'Cormorant Garamond',serif", fontSize:30*size,
+      fontWeight:700, fontStyle:"italic", color:dark?"#5AB87A":C.green, letterSpacing:"-0.02em"}}>Pit</span>
   </div>
 );
 
@@ -523,7 +523,7 @@ export function Footer() {
     <div style={{background:C.navBg, marginTop:20, padding:"24px",
       display:"flex", justifyContent:"space-between", alignItems:"center",
       flexWrap:"wrap", gap:12}}>
-      <Logo dark/>
+      <Logo dark size={0.85}/>
       <div style={{display:"flex", gap:24, flexWrap:"wrap"}}>
         {links.map(l => l.href ? (
           <a key={l.label} href={l.href} style={{fontSize:12, color:"rgba(255,255,255,0.6)",
