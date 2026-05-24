@@ -255,6 +255,10 @@ export default function InsidersPage() {
             {loading?'Loading…':`${filtered.length} filings`}
           </span>
         </div>
+        {/* Legend */}
+        <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:C.muted,lineHeight:1.6}}>
+          BUY = open-market purchase · SELL = open-market sale · OTHER = grants, gifts, option exercises, tax withholdings
+        </div>
       </div>
 
       {/* MAIN TABLE */}
