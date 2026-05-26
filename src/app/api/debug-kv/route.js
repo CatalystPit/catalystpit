@@ -14,6 +14,11 @@ async function kvGet(key) {
 }
 
 export async function GET(request) {
+  console.log('[debug-kv] env CRON_SECRET length:', process.env.CRON_SECRET?.length ?? 'undefined');
+  console.log('[debug-kv] env CRON_SECRET first/last:', process.env.CRON_SECRET ? `${process.env.CRON_SECRET.substring(0,4)}...${process.env.CRON_SECRET.slice(-4)}` : 'undefined');
+  console.log('[debug-kv] auth header:', request.headers.get('authorization'));
+  console.log('[debug-kv] expected:', `Bearer ${process.env.CRON_SECRET?.substring(0,4)}...`);
+
   // Auth: Bearer CRON_SECRET only (no Vercel cron bypass — this is a debug tool, not a scheduled job)
   if (request.headers.get('authorization') !== `Bearer ${CRON_SECRET}`) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
