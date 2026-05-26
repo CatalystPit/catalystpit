@@ -4,8 +4,6 @@ export const maxDuration = 60;
 const KV_TOKEN    = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
 
-const today = () => new Date().toISOString().split('T')[0];
-
 async function kvSet(key, value) {
   await fetch(
     `https://powerful-grouper-86116.upstash.io/set/${encodeURIComponent(key)}?ex=14400`,
@@ -93,39 +91,25 @@ export async function GET(request) {
     return Response.json({ error:'Unauthorized' }, { status:401 });
 
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
-  const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
   const mergedNews = await kvGet('catalystpit:_raw_news');
   const newsArr = Array.isArray(mergedNews) ? mergedNews : [];
 
-  console.log(`🤖 Enriching: ${newsArr.length} news articles (insider_trades now written directly by /api/refresh from Form 4 XML)`);
+  console.log(`🤖 Enriching: ${newsArr.length} news articles`);
 
-  const [movingRes, polRes, newsRes, squeezeRes, earningsRes] = await Promise.allSettled([
-    claude(`Generate 6 realistic-sounding scenarios of stocks that could be moving today for an educational financial dashboard template. These are illustrative examples, not real-time data. Use plausible tickers, companies, and reasons. Return ONLY a JSON array. Each: {"ticker","company","price":number,"changePct":number,"reason":string}. No markdown, no preamble.`),
-    claude(`Today ${today()}. Return ONLY a JSON array of 10 real recent congressional stock trades. Each: {"politician","party":"D"|"R","chamber":"House"|"Senate","ticker","company","action":"Purchase"|"Sale","amount","date"}. No markdown.`),
-    newsArr.length > 0
-      ? enrichNewsInBatches(newsArr)
-      : Promise.reject(new Error('No raw news in cache — run /api/refresh first')),
-    claude(`Today ${today()}. Return ONLY a JSON array of 6 short squeeze candidates. Each: {"ticker","company","price":number,"shortFloat":number,"daysToCover":number,"squeezeScore":number,"catalyst":string}. No markdown.`),
-    claude(`Today is ${today()}. Return ONLY a JSON object with two arrays. The "upcoming" array has 4 companies reporting earnings in the next 5 days. The "recent" array has 2 companies that just reported. Use this exact structure: {"upcoming":[{"ticker":"AAPL","company":"Apple Inc","reportDate":"2026-05-08","timing":"AMC","epsEstimate":1.50,"impliedMove":"3.2%"}],"recent":[{"ticker":"NVDA","company":"NVIDIA","epsActual":5.16,"epsEstimate":4.59,"beat":true,"reaction":2.4}]}. Return only the JSON object, no markdown, no commentary.`, 2000),
-  ]);
-
-  const storeIfOk = async (res, key) => {
-    if (res.status==='fulfilled') {
-      await kvSet(key, JSON.stringify(res.value));
-      results.refreshed.push(key);
-    } else {
-      fail(key, res.reason);
+  if (newsArr.length === 0) {
+    results.failed.push({ key:'catalystpit:top_stories', error:'No raw news in cache — run /api/refresh first' });
+    console.error('❌ catalystpit:top_stories: No raw news in cache');
+  } else {
+    try {
+      const enriched = await enrichNewsInBatches(newsArr);
+      await kvSet('catalystpit:top_stories', JSON.stringify(enriched));
+      results.refreshed.push('catalystpit:top_stories');
+    } catch (e) {
+      results.failed.push({ key:'catalystpit:top_stories', error:e.message });
+      console.error(`❌ catalystpit:top_stories:`, e.message);
     }
-  };
-
-  await Promise.all([
-    storeIfOk(movingRes,   'catalystpit:why_moving'),
-    storeIfOk(polRes,      'catalystpit:politician_trades'),
-    storeIfOk(newsRes,     'catalystpit:top_stories'),
-    storeIfOk(squeezeRes,  'catalystpit:short_squeeze'),
-    storeIfOk(earningsRes, 'catalystpit:earnings_intelligence'),
-  ]);
+  }
 
   await kvSet('catalystpit:last_enrich', results.timestamp);
   return Response.json(results, { status:200 });

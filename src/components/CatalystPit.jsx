@@ -11,13 +11,11 @@ import {
 
 const fetchAll = async () => {
   try {
-    const [stories, snapshot, tape, insiderData, politicianData, movingData] = await Promise.all([
+    const [stories, snapshot, tape, insiderData] = await Promise.all([
       fetchKey("top_stories"),
       fetchKey("market_snapshot"),
       fetchKey("ticker_tape"),
       fetchKey("insider_trades"),
-      fetchKey("politician_trades"),
-      fetchKey("why_moving"),
     ]);
 
     const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
@@ -41,15 +39,6 @@ const fetchAll = async () => {
       url:      s.url || null,
     }));
 
-    const moversArr = toArr(movingData, 'movers', 'why_moving', 'stocks', 'moves', 'data');
-    const movers = moversArr.map(m => ({
-      sym:  m.ticker  || m.symbol || m.sym  || '?',
-      name: m.company || m.name   || m.company_name || m.sym || m.ticker || '',
-      price: safeN(m.price ?? m.last ?? m.current_price),
-      chg: safeN(m.changePct ?? m.change_pct ?? m.pct_change ?? m.chg ?? m.changePercent ?? m.percentChange),
-      why: m.reason || m.why || m.explanation || m.catalyst || m.summary || '',
-    }));
-
     const insidersArr = toArr(insiderData, 'trades', 'insider_trades', 'insiders', 'filings', 'data');
     const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
     const insiders = insidersArr.map(i => ({
@@ -63,25 +52,11 @@ const fetchAll = async () => {
       filed: i.date || i.filed || i.filing_date || i.reported || '',
     }));
 
-    const polArr = toArr(politicianData, 'trades', 'politician_trades', 'politicians', 'disclosures', 'data');
-    const politicians = polArr.map(p => {
-      const party   = p.party   || p.affiliation || '';
-      const chamber = p.chamber || p.title       || p.position || '';
-      return {
-        name: p.politician || p.name || p.senator || p.representative || p.member || '',
-        title: [party, chamber].filter(Boolean).join(' · '),
-        sym: p.ticker || p.symbol || p.sym || p.stock || '?',
-        action: BUY_WORDS.has((p.action || p.transaction_type || p.type || '').toLowerCase()) ? 'BUY' : 'SELL',
-        value: p.amount || p.value || p.range || p.transaction_amount || '',
-        filed: p.date || p.filed || p.disclosure_date || p.reported || p.transaction_date || '',
-      };
-    });
-
     const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
     const vix     = safeN(snapshot?.VIX?.price ?? snapshot?.VIX?.last ?? 18.3);
     const chart_points = [420,422,418,425,430,428,435,440,438,445,450,448,455,460,458,465,470,468,472,475];
 
-    return { tickers, news, movers, insiders, politicians, chart_points, spy_chg, vix };
+    return { tickers, news, insiders, chart_points, spy_chg, vix };
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -114,9 +89,7 @@ export default function CatalystPit() {
   };
 
   const news = data?.news || [];
-  const movers = data?.movers || [];
   const insiders = data?.insiders || [];
-  const politicians = data?.politicians || [];
   const chartPts = data?.chart_points || [420,422,418,425,430,428,435,440,438,445,450,448,455,460];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
 
@@ -296,54 +269,6 @@ export default function CatalystPit() {
             </div>
           </div>
 
-          {/* WHY IS IT MOVING */}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
-            <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.border}`,
-              background:C.surface, display:"flex", alignItems:"center", gap:7}}>
-              <Dot/>
-              <span style={{fontSize:13, fontWeight:600, color:C.ink}}>WHY IS IT MOVING?</span>
-            </div>
-            <div>
-              {loading ? Array(4).fill(0).map((_, i) => (
-                <div key={i} style={{padding:"13px 16px", borderBottom:`1px solid ${C.surface}`,
-                  display:"flex", gap:14, alignItems:"center"}}>
-                  <Skel w={40} h={32} mb={0}/>
-                  <div style={{flex:1}}><Skel h={14} mb={4}/><Skel w="60%" h={12} mb={0}/></div>
-                </div>
-              )) : movers.map((m, i) => {
-                const isUp = safeN(m.chg) >= 0;
-                const [bg1, bg2] = CARD_COLORS[i % CARD_COLORS.length];
-                return (
-                  <div key={i} className="hov" style={{padding:"12px 16px",
-                    borderBottom:i < movers.length - 1 ? `1px solid ${C.surface}` : "none",
-                    display:"flex", gap:14, alignItems:"center", transition:"background 0.15s", cursor:"pointer"}}>
-                    <div style={{width:44, height:44, borderRadius:8, flexShrink:0,
-                      background:`linear-gradient(135deg,${bg1},${bg2})`,
-                      display:"flex", alignItems:"center", justifyContent:"center"}}>
-                      <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11,
-                        fontWeight:600, color:"rgba(255,255,255,0.9)"}}>{m.sym}</span>
-                    </div>
-                    <div style={{flex:1, minWidth:0}}>
-                      <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:3,
-                        fontFamily:"'DM Sans',sans-serif"}}>
-                        Why Is {m.name} {isUp ? "Surging" : "Falling"} Today?
-                      </div>
-                      <div style={{fontSize:12, color:C.muted, fontWeight:300,
-                        overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{m.why}</div>
-                    </div>
-                    <div style={{textAlign:"right", flexShrink:0}}>
-                      <div className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600,
-                        color:chgC(m.chg), background:chgBg(m.chg), padding:"3px 8px", borderRadius:4}}>
-                        {safeN(m.chg) > 0 ? "▲" : "▼"} {Math.abs(safeN(m.chg)).toFixed(1)}%
-                      </div>
-                      <div className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim, marginTop:3}}>{fmt2(m.price)}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
           {/* INSIDER TRADES */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
             <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.border}`,
@@ -422,88 +347,6 @@ export default function CatalystPit() {
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
                     onMouseLeave={e => e.currentTarget.style.background = C.green}>
                     Get Access
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* POLITICIAN TRADES */}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
-            <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.border}`,
-              background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <div style={{display:"flex", alignItems:"center", gap:7}}>
-                <Dot/>
-                <span style={{fontSize:13, fontWeight:600, color:C.ink}}>POLITICIAN TRADES</span>
-                <span style={{fontSize:9, background:"#E8F0FF", color:"#1A3A78",
-                  padding:"2px 7px", borderRadius:3, fontFamily:"'DM Mono',monospace", fontWeight:500}}>STOCK ACT · LIVE</span>
-              </div>
-            </div>
-            <div>
-              {loading ? Array(2).fill(0).map((_, i) => (
-                <div key={i} style={{padding:"13px 16px", borderBottom:`1px solid ${C.surface}`}}>
-                  <Skel h={14} mb={5}/><Skel w="50%" h={12} mb={0}/>
-                </div>
-              )) : politicians.map((p, i) => (
-                <div key={i} className="hov" style={{padding:"13px 16px",
-                  borderBottom:i < politicians.length - 1 ? `1px solid ${C.surface}` : "none",
-                  display:"flex", justifyContent:"space-between", alignItems:"center",
-                  transition:"background 0.15s", cursor:"pointer",
-                  borderLeft:`3px solid ${p.action === "BUY" ? C.green : C.red}`}}>
-                  <div>
-                    <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:4}}>
-                      <span style={{fontSize:14, fontWeight:600, color:C.ink}}>{p.name}</span>
-                      <span style={{fontSize:11, color:C.muted, fontWeight:300}}>{p.title}</span>
-                      <span style={{fontSize:10, padding:"2px 8px", borderRadius:3,
-                        fontFamily:"'DM Mono',monospace", fontWeight:600,
-                        background:p.action === "BUY" ? C.greenLight : C.redLight,
-                        color:p.action === "BUY" ? C.green : C.red}}>{p.action}</span>
-                    </div>
-                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>
-                      <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", color:C.green,
-                        fontWeight:600, marginRight:8}}>{p.sym}</span>
-                      <span className="cp-num">{p.value}</span>
-                    </div>
-                  </div>
-                  <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11,
-                    color:C.dim, whiteSpace:"nowrap"}}>{p.filed}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{position:"relative", overflow:"hidden"}}>
-              {[1,2].map(i => (
-                <div key={i} style={{padding:"13px 16px", borderTop:`1px solid ${C.surface}`,
-                  display:"flex", justifyContent:"space-between",
-                  filter:"blur(4px)", userSelect:"none", pointerEvents:"none", opacity:0.6}}>
-                  <div>
-                    <div style={{display:"flex", gap:8, marginBottom:4}}>
-                      <span style={{fontSize:14, fontWeight:600}}>████████ ██████</span>
-                      <span style={{fontSize:11, color:C.muted}}>Sen.</span>
-                      <span style={{background:C.greenLight, padding:"2px 8px", borderRadius:3,
-                        fontSize:10, color:C.green, fontWeight:600,
-                        fontFamily:"'DM Mono',monospace"}}>BUY</span>
-                    </div>
-                    <div style={{fontSize:12, color:C.muted}}>████ · $██K-$███K</div>
-                  </div>
-                  <span style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim}}>█d ago</span>
-                </div>
-              ))}
-              <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center",
-                justifyContent:"center", background:"rgba(248,250,247,0.7)"}}>
-                <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
-                  borderRadius:8, padding:"12px 20px", display:"flex", alignItems:"center", gap:12,
-                  boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
-                  <span style={{fontSize:16}}>🏛</span>
-                  <div>
-                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Track Every Politician Trade</div>
-                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>The edge they don't want you to have</div>
-                  </div>
-                  <button style={{background:C.green, border:"none", color:"#fff",
-                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500,
-                    cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-                    onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-                    onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Unlock Pro
                   </button>
                 </div>
               </div>
