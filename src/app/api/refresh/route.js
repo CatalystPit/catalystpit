@@ -504,7 +504,16 @@ export async function GET(request) {
 
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
-    return Response.json({ error:'Unauthorized' }, { status:401 });
+    return Response.json({
+      error: 'Unauthorized',
+      debug: {
+        env_first: process.env.CRON_SECRET?.substring(0, 4),
+        env_last: process.env.CRON_SECRET?.slice(-4),
+        env_len: process.env.CRON_SECRET?.length,
+        header_first: request.headers.get('authorization')?.substring(0, 11),
+        header_len: request.headers.get('authorization')?.length
+      }
+    }, { status: 401 });
 
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
