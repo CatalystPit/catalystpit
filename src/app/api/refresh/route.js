@@ -499,6 +499,9 @@ function mergeNews(...sources) {
 }
 
 export async function GET(request) {
+  console.log('[refresh] env CRON_SECRET first/last:', process.env.CRON_SECRET ? `${process.env.CRON_SECRET.substring(0,4)}...${process.env.CRON_SECRET.slice(-4)} (len ${process.env.CRON_SECRET.length})` : 'undefined');
+  console.log('[refresh] auth header:', request.headers.get('authorization')?.substring(0, 11) + '...');
+
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
     return Response.json({ error:'Unauthorized' }, { status:401 });
