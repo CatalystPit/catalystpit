@@ -39,15 +39,6 @@ export const CARD_COLORS = [
   ["#0C1A2A","#1A5A88"], ["#2A0C0C","#882A1A"], ["#0C2A2A","#1A7A7A"],
 ];
 
-export const TICKS = [
-  {sym:"SPY",price:524.38,chg:1.2}, {sym:"QQQ",price:441.90,chg:0.8},
-  {sym:"NVDA",price:882.50,chg:2.4}, {sym:"TSLA",price:174.20,chg:-0.6},
-  {sym:"AAPL",price:192.10,chg:0.3}, {sym:"META",price:503.10,chg:1.1},
-  {sym:"BTC",price:68442,chg:3.1}, {sym:"GLD",price:215.40,chg:0.5},
-  {sym:"ES=F",price:5241.25,chg:0.9}, {sym:"CL=F",price:83.20,chg:-0.4},
-  {sym:"DJI",price:38547,chg:0.6}, {sym:"VIX",price:18.30,chg:4.1},
-];
-
 // ─── PHOTO POOLS ────────────────────────────────────────────────────────────
 export const TICKER_PHOTOS = {
   AAPL:["photo-1611532736597-de2d4265fba3","photo-1517336714731-489689fd1ca8","photo-1496181133206-80ce9b88a853"],
@@ -380,55 +371,68 @@ export function TopNav() {
 
 // ─── TICKER TAPE (sticky, animated) ─────────────────────────────────────────
 export function TickerTape({tickers}) {
-  const data = tickers && tickers.length ? tickers : TICKS;
+  const hasData = tickers && tickers.length > 0;
   const [pos, setPos] = useState(0);
-  const w = data.length * 158;
+  const w = hasData ? tickers.length * 158 : 0;
   useEffect(() => {
+    if (!hasData) return;
     const id = setInterval(() => setPos(p => p - 1), 26);
     return () => clearInterval(id);
-  }, []);
+  }, [hasData]);
   return (
     <div style={{background:C.white, borderBottom:`1px solid ${C.border}`,
       overflow:"hidden", padding:"7px 0", position:"sticky", top:50, zIndex:99}}>
-      <div style={{display:"flex", transform:`translateX(${pos%w}px)`,
-        whiteSpace:"nowrap", willChange:"transform"}}>
-        {[...data, ...data, ...data].map((t, i) => (
-          <div key={i} style={{display:"flex", alignItems:"center", gap:6,
-            padding:"0 16px", borderRight:`1px solid ${C.border}`}}>
-            <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
-            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.ink, fontWeight:500}}>
-              {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
-            </span>
-            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10,
-              color:chgC(t.chg), background:chgBg(t.chg),
-              padding:"1px 5px", borderRadius:3, fontWeight:600}}>
-              {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
-            </span>
-          </div>
-        ))}
-      </div>
+      {hasData ? (
+        <div style={{display:"flex", transform:`translateX(${pos%w}px)`,
+          whiteSpace:"nowrap", willChange:"transform"}}>
+          {[...tickers, ...tickers, ...tickers].map((t, i) => (
+            <div key={i} style={{display:"flex", alignItems:"center", gap:6,
+              padding:"0 16px", borderRight:`1px solid ${C.border}`}}>
+              <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
+              <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.ink, fontWeight:500}}>
+                {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
+              </span>
+              <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10,
+                color:chgC(t.chg), background:chgBg(t.chg),
+                padding:"1px 5px", borderRadius:3, fontWeight:600}}>
+                {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{padding:"0 16px", fontFamily:"'DM Mono',monospace",
+          fontSize:11, color:C.dim, letterSpacing:"0.5px"}}>Loading market data…</div>
+      )}
+      <div style={{position:"absolute", right:0, top:0, bottom:0, display:"flex",
+        alignItems:"center", padding:"0 12px 0 32px",
+        background:"linear-gradient(to right, rgba(255,255,255,0) 0%, #FFFFFF 35%)",
+        fontFamily:"'DM Mono',monospace", fontSize:9, color:C.dim,
+        letterSpacing:"0.8px", pointerEvents:"none"}}>15-MIN DELAYED</div>
     </div>
   );
 }
 
 // ─── MARKET SNAPSHOT SIDEBAR CARD ───────────────────────────────────────────
 export function MarketSnapshotCard({tickers, loading=false}) {
-  const data = tickers && tickers.length ? tickers : TICKS;
+  const hasData = tickers && tickers.length > 0;
   return (
     <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
       <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface,
         display:"flex", alignItems:"center", gap:6}}>
         <Dot/>
         <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET SNAPSHOT</span>
+        <span style={{marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9,
+          color:C.dim, letterSpacing:"0.8px"}}>15-MIN DELAYED</span>
       </div>
-      {loading ? Array(6).fill(0).map((_, i) => (
+      {loading || !hasData ? Array(6).fill(0).map((_, i) => (
         <div key={i} style={{padding:"9px 14px", borderBottom:`1px solid ${C.surface}`}}>
           <Skel h={12} mb={0}/>
         </div>
-      )) : data.map((t, i) => (
+      )) : tickers.map((t, i) => (
         <div key={i} className="hov" style={{display:"flex", justifyContent:"space-between",
           alignItems:"center", padding:"9px 14px",
-          borderBottom:i < data.length - 1 ? `1px solid ${C.surface}` : "none",
+          borderBottom:i < tickers.length - 1 ? `1px solid ${C.surface}` : "none",
           transition:"background 0.15s", cursor:"pointer"}}>
           <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
           <div style={{display:"flex", alignItems:"center", gap:7}}>

@@ -21,19 +21,21 @@ async function kvSet(key, value) {
 }
 
 async function fetchStockPrices(tickers) {
-  const results = await Promise.all(
-    tickers.map(async sym => {
-      try {
-        const res = await fetch(`https://api.polygon.io/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${POLYGON_KEY}`);
-        if (!res.ok) return null;
-        const data = await res.json();
-        const r = data.results?.[0];
-        if (!r) return null;
-        return { sym, price: +r.c.toFixed(2), change: +(r.c-r.o).toFixed(2), changePct: +(((r.c-r.o)/r.o)*100).toFixed(2) };
-      } catch { return null; }
-    })
-  );
-  return Object.fromEntries(results.filter(Boolean).map(r => [r.sym, { price:r.price, change:r.change, changePct:r.changePct }]));
+  const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickers.join(',')}&apiKey=${POLYGON_KEY}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return {};
+    const data = await res.json();
+    const arr = data.tickers || [];
+    return Object.fromEntries(
+      arr.map(t => {
+        const price = +(t.lastTrade?.p ?? t.min?.c ?? 0).toFixed(2);
+        const change = +(t.todaysChange ?? 0).toFixed(2);
+        const changePct = +(t.todaysChangePerc ?? 0).toFixed(2);
+        return [t.ticker, { price, change, changePct }];
+      }).filter(([, v]) => v.price > 0)
+    );
+  } catch { return {}; }
 }
 
 async function fetchCrypto() {
@@ -504,7 +506,7 @@ export async function GET(request) {
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
-  const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','VIX','GLD','USO'];
+  const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','GLD','USO'];
   const [stockPrices, crypto, insiderRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw, rssWSJRaw, rssMWRaw, rssBBRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
@@ -524,14 +526,26 @@ export async function GET(request) {
     const prices = { ...stocks, ...btc };
 
     const TAPE = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','BTC-USD','ETH-USD'];
-    const tape = TAPE.map(s => ({ symbol:s, ...(prices[s]||{price:0,change:0,changePct:0}) }));
-    await kvSet('catalystpit:ticker_tape', JSON.stringify(tape));
-    results.refreshed.push('catalystpit:ticker_tape');
+    const tape = TAPE
+      .filter(s => prices[s]?.price > 0)
+      .map(s => ({ symbol:s, ...prices[s] }));
+    if (tape.length > 0) {
+      await kvSet('catalystpit:ticker_tape', JSON.stringify(tape));
+      results.refreshed.push('catalystpit:ticker_tape');
+    } else {
+      console.log('⚠ ticker_tape: no price data, skipping write to preserve last good value');
+    }
 
-    const SNAP = ['SPY','QQQ','DIA','VIX','GLD','USO','BTC-USD','ETH-USD','AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD'];
-    const snap = Object.fromEntries(SNAP.map(s=>[s, prices[s]||{price:0,change:0,changePct:0}]));
-    await kvSet('catalystpit:market_snapshot', JSON.stringify(snap));
-    results.refreshed.push('catalystpit:market_snapshot');
+    const SNAP = ['SPY','QQQ','DIA','GLD','USO','BTC-USD','ETH-USD','AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD'];
+    const snap = Object.fromEntries(
+      SNAP.filter(s => prices[s]?.price > 0).map(s => [s, prices[s]])
+    );
+    if (Object.keys(snap).length > 0) {
+      await kvSet('catalystpit:market_snapshot', JSON.stringify(snap));
+      results.refreshed.push('catalystpit:market_snapshot');
+    } else {
+      console.log('⚠ market_snapshot: no price data, skipping write to preserve last good value');
+    }
   } catch(e) { fail('prices', e); }
 
   try {

@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  C, CARD_COLORS, TICKS,
+  C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
   fetchKey, toArr,
-  BrandStyles, Skel, Dot, MiniLineChart, NewsPhotoCard,
+  BrandStyles, Skel, Dot, NewsPhotoCard,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard,
 } from "../lib/cp-shared";
 
@@ -19,13 +19,11 @@ const fetchAll = async () => {
     ]);
 
     const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
-    const tickers = tapeArr.length > 0
-      ? tapeArr.map(t => ({
-          sym: t.symbol || t.sym || t.ticker || '?',
-          price: safeN(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice),
-          chg: safeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
-        }))
-      : TICKS;
+    const tickers = tapeArr.map(t => ({
+      sym: t.symbol || t.sym || t.ticker || '?',
+      price: safeN(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice),
+      chg: safeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
+    }));
 
     const storiesArr = toArr(stories, 'stories', 'top_stories', 'articles', 'items', 'data');
     const news = storiesArr.map(s => ({
@@ -54,9 +52,8 @@ const fetchAll = async () => {
 
     const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
     const vix     = safeN(snapshot?.VIX?.price ?? snapshot?.VIX?.last ?? 18.3);
-    const chart_points = [420,422,418,425,430,428,435,440,438,445,450,448,455,460,458,465,470,468,472,475];
 
-    return { tickers, news, insiders, chart_points, spy_chg, vix };
+    return { tickers, news, insiders, spy_chg, vix };
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -90,7 +87,6 @@ export default function CatalystPit() {
 
   const news = data?.news || [];
   const insiders = data?.insiders || [];
-  const chartPts = data?.chart_points || [420,422,418,425,430,428,435,440,438,445,450,448,455,460];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
 
   return (
@@ -119,7 +115,7 @@ export default function CatalystPit() {
               Every catalyst. <span style={{color:C.green}}>Before the bell.</span>
             </h1>
             <p style={{fontSize:13, color:C.muted, margin:0, fontWeight:300}}>
-              Live intelligence — insider trades, politician buys, breaking news, real-time charts.
+              Insider trades, market data, and breaking news — every catalyst, before the bell.
             </p>
           </div>
           <div style={{display:"flex", gap:8, alignItems:"center"}}>
@@ -227,15 +223,26 @@ export default function CatalystPit() {
               background:C.surface, display:"flex", alignItems:"center", gap:7}}>
               <Dot/>
               <span style={{fontSize:13, fontWeight:600, color:C.ink}}>MARKETS PULSE</span>
+              <span style={{marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9,
+                color:C.dim, letterSpacing:"0.8px"}}>15-MIN DELAYED</span>
             </div>
             <div style={{padding:16}}>
-              <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:16}}>
-                {(data?.tickers || TICKS).slice(0, 4).map((t, i) => (
-                  <div key={i} className="hov" style={{background:C.surface, borderRadius:7,
-                    padding:"14px 14px", border:`1px solid ${C.border}`, cursor:"pointer",
-                    transition:"background 0.15s"}}>
-                    <div className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
-                    {loading ? <Skel h={26} mb={4}/> : <>
+              <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
+                {loading || !data?.tickers?.length ? (
+                  Array(4).fill(0).map((_, i) => (
+                    <div key={i} style={{background:C.surface, borderRadius:7,
+                      padding:"14px 14px", border:`1px solid ${C.border}`}}>
+                      <Skel w="50%" h={11} mb={6}/>
+                      <Skel h={22} mb={5}/>
+                      <Skel w="40%" h={11} mb={0}/>
+                    </div>
+                  ))
+                ) : (
+                  data.tickers.slice(0, 4).map((t, i) => (
+                    <div key={i} className="hov" style={{background:C.surface, borderRadius:7,
+                      padding:"14px 14px", border:`1px solid ${C.border}`, cursor:"pointer",
+                      transition:"background 0.15s"}}>
+                      <div className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
                       <div className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:600,
                         color:C.ink, marginBottom:4}}>
                         {t.sym === "BTC" || (+t.price > 10000)
@@ -247,24 +254,9 @@ export default function CatalystPit() {
                         padding:"2px 7px", borderRadius:3}}>
                         {t.chg > 0 ? "▲" : "▼"} {Math.abs(safeN(t.chg)).toFixed(2)}%
                       </span>
-                    </>}
-                  </div>
-                ))}
-              </div>
-              <div style={{background:C.surface, borderRadius:8, padding:"16px", border:`1px solid ${C.border}`}}>
-                <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10}}>
-                  <span style={{fontFamily:"'DM Mono',monospace", fontSize:10, color:C.muted, letterSpacing:"1px"}}>SPY · TODAY</span>
-                  <div style={{display:"flex", gap:4}}>
-                    {["Day","Week","Month","Year"].map(t => (
-                      <button key={t} style={{background:t === "Day" ? C.green : "transparent",
-                        border:`1px solid ${t === "Day" ? C.green : C.border}`,
-                        color:t === "Day" ? "#fff" : C.muted, padding:"4px 10px", borderRadius:4,
-                        fontSize:11, cursor:"pointer", fontFamily:"'DM Sans',sans-serif",
-                        fontWeight:t === "Day" ? 500 : 300, transition:"all 0.15s"}}>{t}</button>
-                    ))}
-                  </div>
-                </div>
-                <MiniLineChart points={chartPts} color={C.green}/>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -368,7 +360,7 @@ export default function CatalystPit() {
             <div style={{fontFamily:"'DM Mono',monospace", fontSize:9, color:C.green,
               letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO — $29/MO</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
-              {["Full real-time news feed","All insider filings · live","Every politician trade",
+              {["Full real-time news feed","All insider filings · live",
                 "Full screener · 12 filters","Live charts · all timeframes","Options flow & dark pool",
                 "Daily 6 AM catalyst brief"].map(f => (
                 <li key={f} style={{fontSize:12, color:C.green, display:"flex", gap:7,
