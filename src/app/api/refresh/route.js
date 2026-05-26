@@ -39,11 +39,10 @@ async function fetchStockPrices(tickers) {
 }
 
 async function fetchCrypto() {
-  const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true');
+  const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true');
   const data = await res.json();
   return {
     'BTC-USD': { price:+(data.bitcoin?.usd||0).toFixed(2), change:0, changePct:+(data.bitcoin?.usd_24h_change||0).toFixed(2) },
-    'ETH-USD': { price:+(data.ethereum?.usd||0).toFixed(2), change:0, changePct:+(data.ethereum?.usd_24h_change||0).toFixed(2) },
   };
 }
 
@@ -518,7 +517,7 @@ export async function GET(request) {
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
-  const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','GLD','USO'];
+  const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','GLD','USO','UVXY'];
   const [stockPrices, crypto, insiderRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw, rssWSJRaw, rssMWRaw, rssBBRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
@@ -537,7 +536,7 @@ export async function GET(request) {
     const btc    = crypto.status==='fulfilled'      ? crypto.value      : {};
     const prices = { ...stocks, ...btc };
 
-    const TAPE = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','BTC-USD','ETH-USD'];
+    const TAPE = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','UVXY','BTC-USD'];
     const tape = TAPE
       .filter(s => prices[s]?.price > 0)
       .map(s => ({ symbol:s, ...prices[s] }));
@@ -548,7 +547,7 @@ export async function GET(request) {
       console.log('⚠ ticker_tape: no price data, skipping write to preserve last good value');
     }
 
-    const SNAP = ['SPY','QQQ','DIA','GLD','USO','BTC-USD','ETH-USD','AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD'];
+    const SNAP = ['SPY','QQQ','DIA','GLD','USO','UVXY','BTC-USD','AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD'];
     const snap = Object.fromEntries(
       SNAP.filter(s => prices[s]?.price > 0).map(s => [s, prices[s]])
     );
