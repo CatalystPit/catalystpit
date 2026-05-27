@@ -408,7 +408,7 @@ export function TickerTape({tickers}) {
         alignItems:"center", padding:"0 12px 0 32px",
         background:"linear-gradient(to right, rgba(255,255,255,0) 0%, #FFFFFF 35%)",
         fontFamily:"'DM Mono',monospace", fontSize:9, color:C.dim,
-        letterSpacing:"0.8px", pointerEvents:"none"}}>PREV CLOSE</div>
+        letterSpacing:"0.8px", pointerEvents:"none"}}>LIVE</div>
     </div>
   );
 }
@@ -423,7 +423,7 @@ export function MarketSnapshotCard({tickers, loading=false}) {
         <Dot/>
         <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET SNAPSHOT</span>
         <span style={{marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9,
-          color:C.dim, letterSpacing:"0.8px"}}>PREV CLOSE</span>
+          color:C.dim, letterSpacing:"0.8px"}}>LIVE</span>
       </div>
       {loading || !hasData ? Array(6).fill(0).map((_, i) => (
         <div key={i} style={{padding:"9px 14px", borderBottom:`1px solid ${C.surface}`}}>

@@ -24,16 +24,14 @@ async function fetchStockPrices(tickers) {
   const results = await throttledBatch(tickers, 5, 200, async (sym) => {
     try {
       const res = await fetch(
-        `https://api.polygon.io/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${POLYGON_KEY}`
+        `https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`
       );
       if (!res.ok) return [sym, null];
       const data = await res.json();
-      const r = data.results?.[0];
-      if (!r || !r.c || !r.o) return [sym, null];
-      const price = +r.c.toFixed(2);
-      const delta = r.c - r.o;
-      const change = +delta.toFixed(2);
-      const changePct = +((delta / r.o) * 100).toFixed(2);
+      if (!data || !data.c) return [sym, null];
+      const price = +data.c.toFixed(2);
+      const change = +(data.d ?? 0).toFixed(2);
+      const changePct = +(data.dp ?? 0).toFixed(2);
       return [sym, { price, change, changePct }];
     } catch { return [sym, null]; }
   });

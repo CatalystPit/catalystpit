@@ -224,7 +224,7 @@ export default function CatalystPit() {
               <Dot/>
               <span style={{fontSize:13, fontWeight:600, color:C.ink}}>MARKETS PULSE</span>
               <span style={{marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9,
-                color:C.dim, letterSpacing:"0.8px"}}>PREV CLOSE</span>
+                color:C.dim, letterSpacing:"0.8px"}}>LIVE</span>
             </div>
             <div style={{padding:16}}>
               <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
