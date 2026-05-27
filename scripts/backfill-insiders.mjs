@@ -20,7 +20,6 @@
 
 import { drizzle } from 'drizzle-orm/neon-http';
 import { neon }    from '@neondatabase/serverless';
-import { max, min } from 'drizzle-orm';
 import {
   pgTable, serial, text, doublePrecision, date, timestamp,
 } from 'drizzle-orm/pg-core';
@@ -221,21 +220,13 @@ async function main() {
   const today    = new Date();
   const todayIso = today.toISOString().slice(0, 10);
 
-  // Resumability: only short-circuit if we already have full 90-day coverage.
-  // Checking MAX alone breaks when the cron has populated recent rows but no
-  // historical exists — MAX = today and the backfill skips itself entirely.
-  const earliestNeeded    = new Date(today.getTime() - LOOKBACK_DAYS * 86400_000);
-  const earliestNeededIso = earliestNeeded.toISOString().slice(0, 10);
-  const [coverage] = await db.select({
-    maxDate: max(insiderTrades.filingDate),
-    minDate: min(insiderTrades.filingDate),
-  }).from(insiderTrades);
-  const dbMax = coverage?.maxDate;
-  const dbMin = coverage?.minDate;
-  const haveFullCoverage = !!(dbMin && dbMin <= earliestNeededIso);
-  const startDate = haveFullCoverage ? new Date(dbMax) : earliestNeeded;
+  // Always backfill the full 90-day window. ON CONFLICT handles dupes cheaply.
+  // Both MAX-only and MIN-based resumability heuristics had edge-case bugs
+  // (see git log); always-full is reliable and the re-fetch cost is acceptable
+  // for a manual operation. Add an explicit --since= flag later if needed.
+  const startDate = new Date(today.getTime() - LOOKBACK_DAYS * 86400_000);
   const startIso  = startDate.toISOString().slice(0, 10);
-  console.log(`[backfill] window ${startIso} → ${todayIso}  (dbMin=${dbMin ?? 'none'}, dbMax=${dbMax ?? 'none'}, fullCoverage=${haveFullCoverage})`);
+  console.log(`[backfill] window ${startIso} → ${todayIso}  (always full ${LOOKBACK_DAYS}d)`);
 
   // Walk quarters covering the window
   const quarters = quartersBetween(startDate, today);
