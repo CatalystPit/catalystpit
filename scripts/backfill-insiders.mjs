@@ -275,7 +275,8 @@ async function main() {
       totalInserted += inserted.length;
       totalDupes    += (batch.length - inserted.length);
     } catch (e) {
-      console.error(`[backfill] batch insert failed (size ${batch.length}): ${e.message}`);
+      const detail = e.cause?.message ?? e.detail ?? e.code ?? e.message ?? '(no detail)';
+      console.error(`[backfill] batch insert failed (size ${batch.length}) · code=${e.code ?? '?'} · ${detail}`);
       totalFailed += batch.length;
     }
     batch = [];
