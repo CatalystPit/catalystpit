@@ -21,11 +21,13 @@ async function kvSet(key, value) {
 }
 
 async function fetchStockPrices(tickers) {
+  console.log('[fetchStockPrices] starting with tickers:', tickers, 'POLYGON_KEY present:', !!process.env.POLYGON_KEY);
   const results = await throttledBatch(tickers, 5, 200, async (sym) => {
     try {
       const res = await fetch(
         `https://api.polygon.io/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${POLYGON_KEY}`
       );
+      console.log(`[fetchStockPrices] ${sym} status:`, res.status);
       if (!res.ok) return [sym, null];
       const data = await res.json();
       const r = data.results?.[0];
@@ -37,7 +39,9 @@ async function fetchStockPrices(tickers) {
       return [sym, { price, change, changePct }];
     } catch { return [sym, null]; }
   });
-  return Object.fromEntries(results.filter(([, v]) => v && v.price > 0));
+  const result = Object.fromEntries(results.filter(([, v]) => v && v.price > 0));
+  console.log('[fetchStockPrices] returning entries:', Object.keys(result).length);
+  return result;
 }
 
 async function fetchCrypto() {
