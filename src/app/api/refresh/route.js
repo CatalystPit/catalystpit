@@ -1,3 +1,6 @@
+import { db } from '../../../lib/db';
+import { insiderTrades as insiderTradesTable } from '../../../lib/schema';
+
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
@@ -108,6 +111,8 @@ function parseForm4(xml, filing) {
     const shares          = parseFloat(extractFormValue(txn, 'transactionShares'))        || 0;
     const pricePerShare   = parseFloat(extractFormValue(txn, 'transactionPricePerShare')) || 0;
     const securityTitle   = decodeEntities(extractFormValue(txn, 'securityTitle') || '');
+    const rawSOA          = extractFormValue(txn, 'sharesOwnedFollowingTransaction');
+    const sharesOwnedAfter = rawSOA ? parseFloat(rawSOA) : null;
 
     let action;
     if      (transactionCode === 'P') action = 'BUY';
@@ -119,6 +124,7 @@ function parseForm4(xml, filing) {
       transactionCode, action,
       shares, pricePerShare,
       totalValue: shares * pricePerShare,
+      sharesOwnedAfter,
       securityTitle,
       transactionDate,
       filingDate: filing.filingDate,
@@ -551,6 +557,38 @@ export async function GET(request) {
     const insiderTrades = insiderRaw.status === 'fulfilled' ? insiderRaw.value : [];
     await kvSet('catalystpit:insider_trades', JSON.stringify(insiderTrades));
     results.refreshed.push('catalystpit:insider_trades');
+
+    // Dual-write to Postgres. KV remains the safety net during cutover.
+    if (insiderTrades.length > 0) {
+      try {
+        const rows = insiderTrades
+          .filter(r => r.filingDate)
+          .map(r => ({
+            ...r,
+            transactionCode: r.transactionCode || null,
+            transactionDate: r.transactionDate || null,
+          }));
+        const skipped = insiderTrades.length - rows.length;
+        const inserted = await db.insert(insiderTradesTable)
+          .values(rows)
+          .onConflictDoNothing({
+            target: [
+              insiderTradesTable.accession,
+              insiderTradesTable.transactionDate,
+              insiderTradesTable.transactionCode,
+              insiderTradesTable.securityTitle,
+              insiderTradesTable.shares,
+              insiderTradesTable.pricePerShare,
+              insiderTradesTable.sharesOwnedAfter,
+            ],
+          })
+          .returning({ id: insiderTradesTable.id });
+        console.log(`[insider_pg] ${inserted.length} new · ${rows.length - inserted.length} dupes${skipped ? ` · ${skipped} skipped (missing filingDate)` : ''}`);
+        results.refreshed.push('catalystpit:postgres:insider_trades');
+      } catch (e) {
+        console.log(`[insider_pg] insert failed: ${e.message}`);
+      }
+    }
 
     const finnhubTicker = finnhubTickerRaw.status === 'fulfilled' ? finnhubTickerRaw.value : [];
     const finnhubMarket = finnhubMarketRaw.status === 'fulfilled' ? finnhubMarketRaw.value : [];

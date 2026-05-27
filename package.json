@@ -9,11 +9,17 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.3",
+    "@neondatabase/serverless": "^1.1.0",
+    "drizzle-orm": "^0.45.2",
     "next": "15.3.8",
     "react": "^19.1.4",
     "react-dom": "^19.1.4"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10",
+    "postgres": "^3.4.9"
   }
 }
