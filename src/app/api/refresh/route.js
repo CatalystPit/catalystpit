@@ -21,21 +21,23 @@ async function kvSet(key, value) {
 }
 
 async function fetchStockPrices(tickers) {
-  const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${tickers.join(',')}&apiKey=${POLYGON_KEY}`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return {};
-    const data = await res.json();
-    const arr = data.tickers || [];
-    return Object.fromEntries(
-      arr.map(t => {
-        const price = +(t.lastTrade?.p ?? t.min?.c ?? 0).toFixed(2);
-        const change = +(t.todaysChange ?? 0).toFixed(2);
-        const changePct = +(t.todaysChangePerc ?? 0).toFixed(2);
-        return [t.ticker, { price, change, changePct }];
-      }).filter(([, v]) => v.price > 0)
-    );
-  } catch { return {}; }
+  const results = await throttledBatch(tickers, 5, 200, async (sym) => {
+    try {
+      const res = await fetch(
+        `https://api.polygon.io/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${POLYGON_KEY}`
+      );
+      if (!res.ok) return [sym, null];
+      const data = await res.json();
+      const r = data.results?.[0];
+      if (!r || !r.c || !r.o) return [sym, null];
+      const price = +r.c.toFixed(2);
+      const delta = r.c - r.o;
+      const change = +delta.toFixed(2);
+      const changePct = +((delta / r.o) * 100).toFixed(2);
+      return [sym, { price, change, changePct }];
+    } catch { return [sym, null]; }
+  });
+  return Object.fromEntries(results.filter(([, v]) => v && v.price > 0));
 }
 
 async function fetchCrypto() {
