@@ -21,13 +21,11 @@ async function kvSet(key, value) {
 }
 
 async function fetchStockPrices(tickers) {
-  console.log('[fetchStockPrices] starting with tickers:', tickers, 'POLYGON_KEY present:', !!process.env.POLYGON_KEY);
   const results = await throttledBatch(tickers, 5, 200, async (sym) => {
     try {
       const res = await fetch(
         `https://api.polygon.io/v2/aggs/ticker/${sym}/prev?adjusted=true&apiKey=${POLYGON_KEY}`
       );
-      console.log(`[fetchStockPrices] ${sym} status:`, res.status);
       if (!res.ok) return [sym, null];
       const data = await res.json();
       const r = data.results?.[0];
@@ -39,9 +37,7 @@ async function fetchStockPrices(tickers) {
       return [sym, { price, change, changePct }];
     } catch { return [sym, null]; }
   });
-  const result = Object.fromEntries(results.filter(([, v]) => v && v.price > 0));
-  console.log('[fetchStockPrices] returning entries:', Object.keys(result).length);
-  return result;
+  return Object.fromEntries(results.filter(([, v]) => v && v.price > 0));
 }
 
 async function fetchCrypto() {
@@ -504,21 +500,9 @@ function mergeNews(...sources) {
 }
 
 export async function GET(request) {
-  console.log('[refresh] env CRON_SECRET first/last:', process.env.CRON_SECRET ? `${process.env.CRON_SECRET.substring(0,4)}...${process.env.CRON_SECRET.slice(-4)} (len ${process.env.CRON_SECRET.length})` : 'undefined');
-  console.log('[refresh] auth header:', request.headers.get('authorization')?.substring(0, 11) + '...');
-
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
-    return Response.json({
-      error: 'Unauthorized',
-      debug: {
-        env_first: process.env.CRON_SECRET?.substring(0, 4),
-        env_last: process.env.CRON_SECRET?.slice(-4),
-        env_len: process.env.CRON_SECRET?.length,
-        header_first: request.headers.get('authorization')?.substring(0, 11),
-        header_len: request.headers.get('authorization')?.length
-      }
-    }, { status: 401 });
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
