@@ -296,7 +296,7 @@ async function main() {
     }
     processed++;
     if (processed % 100 === 0) {
-      console.log(`[backfill] processed ${processed}/${allEntries.length} · inserted ${totalInserted} · dupes ${totalDupes} · failed ${totalFailed}`);
+      console.log(`[backfill] processed ${processed}/${allEntries.length} · txns ${totalTxns} · batch ${batch.length} · inserted ${totalInserted} · dupes ${totalDupes} · failed ${totalFailed}`);
     }
   }
   await flushBatch();
