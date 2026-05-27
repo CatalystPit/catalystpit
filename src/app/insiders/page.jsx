@@ -9,7 +9,6 @@ const C = {
   red:"#A83030",redLight:"#FAEAEA",navBg:"#1E5C38",
 };
 
-const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
 const Skel = ({w="100%",h=14,mb=6}) => <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,background:"linear-gradient(90deg,#E8EAE5 25%,#F0F2EE 50%,#E8EAE5 75%)",backgroundSize:"200% 100%",animation:"cp-shimmer 1.4s infinite"}}/>;
 
@@ -19,6 +18,11 @@ const fmtMoney = (n) => {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
   if (v >= 1_000)     return `$${(v / 1_000).toFixed(1)}K`;
   return `$${v.toLocaleString('en-US')}`;
+};
+
+const fmtPrice = (n) => {
+  if (!n || isNaN(Number(n))) return '—';
+  return `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
 const actionStyles = (type) => {
@@ -40,81 +44,71 @@ const decodeEntities = (s) => {
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 };
 
-const fetchKey = async (key) => {
-  try {
-    const r = await fetch(`/api/claude?key=${key}`);
-    if (!r.ok) return null;
-    const d = await r.json();
-    if (!d?.data) return null;
-    let val = d.data;
-    if (typeof val==='string') { try { val=JSON.parse(val); } catch { return null; } }
-    if (typeof val==='string') { try { val=JSON.parse(val); } catch { return null; } }
-    return val;
-  } catch { return null; }
-};
-
-const toArr = (val, ...keys) => {
-  if (Array.isArray(val)) return val;
-  if (val && typeof val==='object') {
-    for (const k of keys) if (Array.isArray(val[k])) return val[k];
-    for (const k of Object.keys(val)) if (Array.isArray(val[k])) return val[k];
-  }
-  return [];
-};
+const mapRow = (r) => ({
+  sym:      r.ticker || '?',
+  name:     decodeEntities(r.executive || ''),
+  role:     decodeEntities(r.title || ''),
+  type:     r.action === 'BUY' ? 'BUY' : r.action === 'SELL' ? 'SELL' : 'OTHER',
+  value:    fmtMoney(r.totalValue),
+  valueNum: typeof r.totalValue === 'number' ? r.totalValue : 0,
+  shares:   typeof r.shares === 'number' ? r.shares : 0,
+  avgPrice: typeof r.pricePerShare === 'number' ? r.pricePerShare : 0,
+  company:  decodeEntities(r.company || ''),
+  filed:    r.filingDate || '',
+});
 
 export default function InsidersPage() {
   const [insiders, setInsiders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [filter, setFilter] = useState('ALL');
-  const [search,  setSearch]  = useState('');
-  const [sortBy,  setSortBy]  = useState(null);   // 'TICKER' | 'VALUE' | 'FILED' | null
-  const [sortDir, setSortDir] = useState('asc');  // 'asc' | 'desc'
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [sortBy,  setSortBy]  = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
   const [lastUp, setLastUp] = useState(null);
   const NAV = ["Markets","News","Screener","Insiders","Politicians","Charts","Crypto"];
-  const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (ticker) => {
     setLoading(true);
-    const raw = await fetchKey("insider_trades");
-    const arr = toArr(raw, 'trades','insider_trades','insiders','filings','data');
-    const mapped = arr.map(i => ({
-      sym:   i.ticker   || i.symbol || i.sym  || '?',
-      name:  decodeEntities(i.executive || i.name || i.insider || i.filer || ''),
-      role:  decodeEntities(i.title || i.role || i.position || ''),
-      type:  (() => {
-        const a = (i.action || '').toUpperCase();
-        if (a === 'BUY')  return 'BUY';
-        if (a === 'SELL') return 'SELL';
-        if (BUY_WORDS.has(a.toLowerCase())) return 'BUY';   // legacy Claude-data fallback
-        return 'OTHER';
-      })(),
-      value:    fmtMoney(typeof i.totalValue === 'number' ? i.totalValue : (typeof i.value === 'number' ? i.value : 0)),
-      valueNum: typeof i.totalValue === 'number' ? i.totalValue : (typeof i.value === 'number' ? i.value : 0),
-      shares:   typeof i.shares === 'number' ? i.shares : 0,
-      company: decodeEntities(i.company || i.name || ''),
-      filed:    i.filingDate || i.date || i.filed || i.filing_date || '',
-    }));
-    setInsiders(mapped);
-    setLastUp(new Date());
-    setLoading(false);
+    setError(null);
+    try {
+      const url = ticker
+        ? `/api/insiders?ticker=${encodeURIComponent(ticker)}&limit=200`
+        : `/api/insiders?limit=200`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setInsiders((data.trades || []).map(mapRow));
+      setLastUp(new Date());
+    } catch (e) {
+      setError(e.message);
+      setInsiders([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim().toUpperCase()), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    loadData(debouncedSearch || undefined);
+  }, [debouncedSearch, loadData]);
+
+  const onSearchKeyDown = (e) => {
+    if (e.key === 'Enter') setDebouncedSearch(search.trim().toUpperCase());
+  };
 
   const handleSort = (col) => {
     if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortBy(col); setSortDir('asc'); }
   };
 
-  // Filter (search → pill) then sort
   let filtered = insiders;
-  const q = search.trim().toLowerCase();
-  if (q) {
-    filtered = filtered.filter(r =>
-      (r.sym  || '').toLowerCase().includes(q) ||
-      (r.name || '').toLowerCase().includes(q)
-    );
-  }
   if (filter !== 'ALL') filtered = filtered.filter(r => r.type === filter);
 
   if (sortBy === 'TICKER') {
@@ -122,7 +116,7 @@ export default function InsidersPage() {
       const cmp = (a.sym || '').localeCompare(b.sym || '');
       return sortDir === 'asc' ? cmp : -cmp;
     });
-  } else if (sortBy === 'FILED') {
+  } else if (sortBy === 'DATE') {
     filtered = [...filtered].sort((a, b) => {
       const cmp = (a.filed || '').localeCompare(b.filed || '');
       return sortDir === 'asc' ? cmp : -cmp;
@@ -130,19 +124,17 @@ export default function InsidersPage() {
   } else if (sortBy === 'VALUE') {
     const nonZero = filtered.filter(r => r.valueNum > 0);
     const zero    = filtered.filter(r => !(r.valueNum > 0));
-    nonZero.sort((a, b) =>
-      sortDir === 'asc' ? a.valueNum - b.valueNum : b.valueNum - a.valueNum);
+    nonZero.sort((a, b) => sortDir === 'asc' ? a.valueNum - b.valueNum : b.valueNum - a.valueNum);
     filtered = [...nonZero, ...zero];
   } else if (sortBy === 'SHARES') {
     const nonZero = filtered.filter(r => r.shares > 0);
     const zero    = filtered.filter(r => !(r.shares > 0));
-    nonZero.sort((a, b) =>
-      sortDir === 'asc' ? a.shares - b.shares : b.shares - a.shares);
+    nonZero.sort((a, b) => sortDir === 'asc' ? a.shares - b.shares : b.shares - a.shares);
     filtered = [...nonZero, ...zero];
   }
 
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
-  const buys = insiders.filter(i=>i.type==='BUY').length;
+  const buys  = insiders.filter(i=>i.type==='BUY').length;
   const sells = insiders.filter(i=>i.type==='SELL').length;
 
   return (
@@ -200,7 +192,6 @@ export default function InsidersPage() {
               </p>
             </div>
             <div style={{display:"flex",gap:12,alignItems:"center"}}>
-              {/* Stats */}
               <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"10px 18px",textAlign:"center"}}>
                 <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
                 <div style={{fontSize:11,color:C.green,fontWeight:500}}>BUYS</div>
@@ -211,7 +202,7 @@ export default function InsidersPage() {
               </div>
               <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.dim}}>
                 Updated {timeStr}
-                <button onClick={loadData} style={{background:"transparent",border:"none",color:C.green,
+                <button onClick={() => loadData(debouncedSearch || undefined)} style={{background:"transparent",border:"none",color:C.green,
                   cursor:"pointer",fontSize:12,marginLeft:8,fontFamily:"'DM Mono',monospace"}}>↻</button>
               </div>
             </div>
@@ -222,11 +213,11 @@ export default function InsidersPage() {
       {/* FILTERS */}
       <div style={{maxWidth:1380,margin:"0 auto",padding:"16px 24px 0",
         display:"flex",flexDirection:"column",gap:12}}>
-        {/* Search */}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search ticker or executive"
+          onKeyDown={onSearchKeyDown}
+          placeholder="Search ticker (e.g., AAPL)"
           style={{
             width:"100%", maxWidth:320,
             background:C.white, border:`1px solid ${C.border}`,
@@ -235,7 +226,6 @@ export default function InsidersPage() {
             outline:"none",
           }}
         />
-        {/* Pills + count */}
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           {['ALL','BUY','SELL','OTHER'].map(f=>{
             const accent = f === 'OTHER' ? C.dim : C.green;
@@ -252,10 +242,13 @@ export default function InsidersPage() {
             );
           })}
           <span style={{fontSize:12,color:C.dim,fontFamily:"'DM Mono',monospace",marginLeft:8}}>
-            {loading?'Loading…':`${filtered.length} filings`}
+            {loading
+              ? 'Loading…'
+              : error
+                ? `Error: ${error}`
+                : `${filtered.length} filings${debouncedSearch ? ` for ${debouncedSearch}` : ''}`}
           </span>
         </div>
-        {/* Legend */}
         <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:C.muted,lineHeight:1.6}}>
           BUY = open-market purchase · SELL = open-market sale · OTHER = grants, gifts, option exercises, tax withholdings
         </div>
@@ -268,14 +261,14 @@ export default function InsidersPage() {
             <thead>
               <tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
                 {[
+                  {label:"Date",      sortKey:"DATE"},
                   {label:"Ticker",    sortKey:"TICKER"},
                   {label:"Company",   sortKey:null},
-                  {label:"Executive", sortKey:null},
-                  {label:"Role",      sortKey:null},
-                  {label:"Action",    sortKey:null},
-                  {label:"Value",     sortKey:"VALUE", align:"right"},
+                  {label:"Insider",   sortKey:null},
+                  {label:"Type",      sortKey:null},
                   {label:"Shares",    sortKey:"SHARES", align:"right"},
-                  {label:"Filed",     sortKey:"FILED"},
+                  {label:"Avg Price", sortKey:null,     align:"right"},
+                  {label:"Value",     sortKey:"VALUE",  align:"right"},
                 ].map(h => {
                   const active = h.sortKey && sortBy === h.sortKey;
                   const arrow  = active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
@@ -299,11 +292,17 @@ export default function InsidersPage() {
             <tbody>
               {loading ? (
                 Array(8).fill(0).map((_,i)=>(
-                  <tr key={i}><td colSpan={7} style={{padding:"12px 16px"}}><Skel h={16} mb={0}/></td></tr>
+                  <tr key={i}><td colSpan={8} style={{padding:"12px 16px"}}><Skel h={16} mb={0}/></td></tr>
                 ))
+              ) : error ? (
+                <tr><td colSpan={8} style={{padding:"40px 16px",textAlign:"center",color:C.red,fontSize:13}}>
+                  Failed to load: {error}
+                </td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>
-                  No insider trades found. The cron may still be running — check back in a minute.
+                <tr><td colSpan={8} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>
+                  {debouncedSearch
+                    ? `No insider trades found for ${debouncedSearch}.`
+                    : 'No insider trades yet. The cron may still be ingesting — check back in a minute.'}
                 </td></tr>
               ) : (
                 filtered.map((ins,i)=>(
@@ -311,20 +310,23 @@ export default function InsidersPage() {
                     borderBottom:i<filtered.length-1?`1px solid ${C.surface}`:"none",
                     transition:"background 0.15s",
                     borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
+                    <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
                     <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green}}>{ins.sym}</td>
-                    <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company||ins.name}</td>
-                    <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400}}>{ins.name}</td>
-                    <td style={{padding:"13px 16px",fontSize:12,color:C.muted,fontWeight:300}}>{ins.role}</td>
+                    <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
+                    <td style={{padding:"13px 16px",fontSize:13,color:C.text,fontWeight:400}}>
+                      <div>{ins.name}</div>
+                      {ins.role && <div style={{fontSize:11,color:C.muted,fontWeight:300,marginTop:2}}>{ins.role}</div>}
+                    </td>
                     <td style={{padding:"13px 16px"}}>
                       <span style={{fontSize:11,padding:"4px 10px",borderRadius:4,
                         fontFamily:"'DM Mono',monospace",fontWeight:600,letterSpacing:"0.5px",
                         background:actionStyles(ins.type).bg,
                         color:actionStyles(ins.type).fg}}>{ins.type}</span>
                     </td>
+                    <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares > 0 ? ins.shares.toLocaleString('en-US') : '—'}</td>
+                    <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap"}}>{fmtPrice(ins.avgPrice)}</td>
                     <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",
                       fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
-                    <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares > 0 ? ins.shares.toLocaleString('en-US') : '—'}</td>
-                    <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Mono',monospace",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
                   </tr>
                 ))
               )}
@@ -339,7 +341,7 @@ export default function InsidersPage() {
           <div>
             <div style={{fontSize:13,fontWeight:600,color:C.ink,marginBottom:4}}>About Insider Trading Disclosures</div>
             <div style={{fontSize:12,color:C.muted,fontWeight:300,lineHeight:1.6}}>
-              Corporate insiders (executives, directors, 10%+ shareholders) must report stock trades to the SEC within 2 business days via Form 4. 
+              Corporate insiders (executives, directors, 10%+ shareholders) must report stock trades to the SEC within 2 business days via Form 4.
               This data is sourced directly from SEC EDGAR. Insider buying can signal management confidence; large sells may indicate distribution.
               This is not financial advice.
             </div>
