@@ -171,37 +171,48 @@ async function fetchQuarterForm4Entries(year, q, startIso) {
   const text = await res.text();
 
   const entries = [];
+  // Match: <formType> <company> <CIK> <YYYY-MM-DD> <edgar/...> — regex is robust
+  // to column-width drift in form.idx (which has bitten this script before).
+  const rowRe = /^(\S+)\s+(.+?)\s+(\d+)\s+(\d{4}-\d{2}-\d{2})\s+(edgar\/\S+)/;
   for (const line of text.split('\n')) {
-    if (line.length < 98) continue;
-    const formType = line.substring(0, 12).trim();
-    if (formType !== '4') continue;  // exclude 4/A amendments for v1
-    const dateFiled = line.substring(86, 98).trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFiled)) continue;
+    const m = line.match(rowRe);
+    if (!m) continue;
+    if (m[1] !== '4') continue;  // exclude 4/A amendments for v1
+    const dateFiled = m[4];
     if (dateFiled < startIso) continue;
-    const filename = line.substring(98).trim();
-    entries.push({ dateFiled, filename });
+    entries.push({ dateFiled, filename: m[5] });
   }
   return entries;
 }
 
+function parseFilenameForFiling(filename) {
+  // filename: edgar/data/{CIK}/{accession-with-dashes}.txt
+  const m = filename.match(/^edgar\/data\/(\d+)\/([\d-]+)\.txt$/);
+  if (!m) return null;
+  const [, cik, accession] = m;
+  const accNoDashes = accession.replace(/-/g, '');
+  return { cik, accession, dir: `edgar/data/${cik}/${accNoDashes}/` };
+}
+
 async function fetchFilingXml(filename) {
-  // filename: edgar/data/{cik}/{accNoDash}/{acc-with-dash}-index.htm
-  const dir = filename.replace(/[^/]+$/, '');
-  const idxRes = await secFetch(`https://www.sec.gov/Archives/${dir}index.json`);
+  const parsed = parseFilenameForFiling(filename);
+  if (!parsed) return null;
+  const idxRes = await secFetch(`https://www.sec.gov/Archives/${parsed.dir}index.json`);
   const idx = await idxRes.json();
   const xmlFile = idx.directory?.item?.find(i => i.name.endsWith('.xml'));
   if (!xmlFile) return null;
-  const xmlRes = await secFetch(`https://www.sec.gov/Archives/${dir}${xmlFile.name}`);
+  const xmlRes = await secFetch(`https://www.sec.gov/Archives/${parsed.dir}${xmlFile.name}`);
   return xmlRes.text();
 }
 
 function buildFilingMeta(entry) {
-  const m = entry.filename.match(/\/([\d-]+)-index\.htm$/);
-  const accession = m?.[1] ?? entry.filename;
+  const parsed = parseFilenameForFiling(entry.filename);
   return {
     filingDate: entry.dateFiled,
-    accession,
-    indexUrl: `https://www.sec.gov/Archives/${entry.filename}`,
+    accession: parsed?.accession ?? entry.filename,
+    indexUrl: parsed
+      ? `https://www.sec.gov/Archives/${parsed.dir}${parsed.accession}-index.htm`
+      : `https://www.sec.gov/Archives/${entry.filename}`,
   };
 }
 
