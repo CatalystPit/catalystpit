@@ -215,6 +215,12 @@ function buildFilingMeta(entry) {
   };
 }
 
+function normalizeDate(d) {
+  if (!d) return null;
+  const m = d.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────
 async function main() {
   const today    = new Date();
@@ -277,7 +283,12 @@ async function main() {
     try {
       const xml = await fetchFilingXml(entry.filename);
       if (xml) {
-        const rows = parseForm4(xml, buildFilingMeta(entry)).filter(r => r.filingDate);
+        const rows = parseForm4(xml, buildFilingMeta(entry)).map(r => ({
+          ...r,
+          filingDate:      normalizeDate(r.filingDate),
+          transactionDate: normalizeDate(r.transactionDate),
+          transactionCode: r.transactionCode || null,
+        })).filter(r => r.filingDate);
         totalTxns += rows.length;
         batch.push(...rows);
         if (batch.length >= BATCH_SIZE) await flushBatch();
