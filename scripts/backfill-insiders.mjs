@@ -20,7 +20,7 @@
 
 import { drizzle } from 'drizzle-orm/neon-http';
 import { neon }    from '@neondatabase/serverless';
-import { max }     from 'drizzle-orm';
+import { max, min } from 'drizzle-orm';
 import {
   pgTable, serial, text, doublePrecision, date, timestamp,
 } from 'drizzle-orm/pg-core';
@@ -210,13 +210,21 @@ async function main() {
   const today    = new Date();
   const todayIso = today.toISOString().slice(0, 10);
 
-  // Resumability: start from MAX(filing_date) if present, else look back 90 days.
-  const maxRows = await db.select({ maxDate: max(insiderTrades.filingDate) }).from(insiderTrades);
-  const dbMax = maxRows[0]?.maxDate;
-  const defaultStart = new Date(today.getTime() - LOOKBACK_DAYS * 86400_000);
-  const startDate = dbMax ? new Date(dbMax) : defaultStart;
-  const startIso = startDate.toISOString().slice(0, 10);
-  console.log(`[backfill] window ${startIso} → ${todayIso}  (dbMax=${dbMax ?? 'none'}, lookback=${LOOKBACK_DAYS}d)`);
+  // Resumability: only short-circuit if we already have full 90-day coverage.
+  // Checking MAX alone breaks when the cron has populated recent rows but no
+  // historical exists — MAX = today and the backfill skips itself entirely.
+  const earliestNeeded    = new Date(today.getTime() - LOOKBACK_DAYS * 86400_000);
+  const earliestNeededIso = earliestNeeded.toISOString().slice(0, 10);
+  const [coverage] = await db.select({
+    maxDate: max(insiderTrades.filingDate),
+    minDate: min(insiderTrades.filingDate),
+  }).from(insiderTrades);
+  const dbMax = coverage?.maxDate;
+  const dbMin = coverage?.minDate;
+  const haveFullCoverage = !!(dbMin && dbMin <= earliestNeededIso);
+  const startDate = haveFullCoverage ? new Date(dbMax) : earliestNeeded;
+  const startIso  = startDate.toISOString().slice(0, 10);
+  console.log(`[backfill] window ${startIso} → ${todayIso}  (dbMin=${dbMin ?? 'none'}, dbMax=${dbMax ?? 'none'}, fullCoverage=${haveFullCoverage})`);
 
   // Walk quarters covering the window
   const quarters = quartersBetween(startDate, today);
