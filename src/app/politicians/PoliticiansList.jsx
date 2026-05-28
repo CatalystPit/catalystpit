@@ -1,38 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
-
-// ─── formatters ──────────────────────────────────────────────────────────────
-const fmtMoney = (n) => {
-  const v = Number(n);
-  if (!v || isNaN(v)) return '—';
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000)     return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v.toLocaleString('en-US')}`;
-};
-const fmtDate = (s) => {
-  if (!s) return '—';
-  const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
-  if (isNaN(d.getTime())) return String(s);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-};
-const initials = (name) => {
-  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '?';
-  const f = parts[0][0] || '';
-  const l = parts.length > 1 ? parts[parts.length - 1][0] : '';
-  return (f + l).toUpperCase();
-};
-
-// Democrat → blue, Republican → red, else neutral.
-const partyStyle = (party) => {
-  const p = (party || '').toLowerCase();
-  if (p.startsWith('democrat'))   return { bg: C.blueLight, fg: C.blue,  abbr: 'DEM' };
-  if (p.startsWith('republican')) return { bg: C.redLight,  fg: C.red,   abbr: 'REP' };
-  if (!party)                     return { bg: C.surface,   fg: C.dim,   abbr: '—'   };
-  return { bg: C.surface, fg: C.muted, abbr: 'IND' };
-};
-const chamberLabel = (c) => (c === 'senate' ? 'Senate' : c === 'house' ? 'House' : c || '—');
+import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat } from './ui';
 
 // ─── filter definitions ──────────────────────────────────────────────────────
 const SORTS = [
@@ -76,31 +45,6 @@ function PillGroup({ label, options, value, onChange }) {
   );
 }
 
-function Avatar({ photoUrl, name, ps }) {
-  const [failed, setFailed] = useState(false);
-  if (photoUrl && !failed) {
-    return (
-      <img src={photoUrl} alt="" onError={() => setFailed(true)}
-        style={{ width: 52, height: 52, borderRadius: '50%', objectFit: 'cover',
-          objectPosition: 'center top', flexShrink: 0, border: `2px solid ${ps.bg}`, background: C.surface }} />
-    );
-  }
-  return (
-    <div style={{ width: 52, height: 52, borderRadius: '50%', flexShrink: 0,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: ps.bg, color: ps.fg, fontFamily: "'DM Mono',monospace", fontWeight: 700, fontSize: 16 }}>
-      {initials(name)}
-    </div>
-  );
-}
-
-function Chip({ children, bg, fg }) {
-  return (
-    <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 600, letterSpacing: '0.4px',
-      background: bg, color: fg, padding: '2px 7px', borderRadius: 4, whiteSpace: 'nowrap' }}>{children}</span>
-  );
-}
-
 function MemberCard({ m }) {
   const ps = partyStyle(m.party);
   const total = (m.buys || 0) + (m.sells || 0);
@@ -140,16 +84,6 @@ function MemberCard({ m }) {
         </div>
       </div>
     </a>
-  );
-}
-
-function Stat({ label, value, small }) {
-  return (
-    <div style={{ textAlign: 'left' }}>
-      <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontWeight: 600,
-        fontSize: small ? 12 : 16, color: C.ink }}>{value}</div>
-      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginTop: 2 }}>{label}</div>
-    </div>
   );
 }
 
