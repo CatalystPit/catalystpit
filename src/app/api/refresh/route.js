@@ -56,6 +56,14 @@ const extractFormValue = (xml, tag) =>
 const extractFormText = (xml, tag) =>
   xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]?.trim();
 
+// SEC dates sometimes carry a timezone tail (e.g. "2026-03-02-05:00") that
+// Postgres rejects as type date. Keep only the leading YYYY-MM-DD, else null.
+const normalizeDate = (d) => {
+  if (!d) return null;
+  const m = d.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;
+};
+
 const decodeEntities = (s) => {
   if (typeof s !== 'string') return s;
   return s
@@ -562,12 +570,13 @@ export async function GET(request) {
     if (insiderTrades.length > 0) {
       try {
         const rows = insiderTrades
-          .filter(r => r.filingDate)
           .map(r => ({
             ...r,
             transactionCode: r.transactionCode || null,
-            transactionDate: r.transactionDate || null,
-          }));
+            transactionDate: normalizeDate(r.transactionDate),
+            filingDate:      normalizeDate(r.filingDate),
+          }))
+          .filter(r => r.filingDate);
         const skipped = insiderTrades.length - rows.length;
         const inserted = await db.insert(insiderTradesTable)
           .values(rows)
