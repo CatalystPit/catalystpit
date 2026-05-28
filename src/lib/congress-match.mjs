@@ -1,11 +1,14 @@
-// scripts/congress-match.mjs
+// src/lib/congress-match.mjs
 //
 // Matches FMP congressional-trade names → roster entries to attach
 // party / state / chamber / bioguide. FMP gives no party and no clean state,
 // so this join is the only way to populate those card fields.
 //
-// Shared by build-congress-roster.mjs (key precompute), the seed script, and
-// (mirrored into) the refresh-congress cron route.
+// Shared runtime code: imported by the refresh-congress cron route AND by the
+// node scripts (build-congress-roster, validate-congress-match, seed-congress).
+// Kept as .mjs (pure ESM, no node-only deps beyond what both targets have) so
+// both Next and `node` can import it without the CJS/ESM friction that forces
+// backfill-insiders.mjs to duplicate the schema.
 //
 // Design: NO fuzzy/edit-distance matching — on a ~535-person set it produces
 // confident-but-wrong matches. Instead: normalize hard, use a political
@@ -44,7 +47,7 @@ const NICK_GROUPS = [
   ['walter','walt'], ['russell','russ'], ['douglas','doug'], ['cynthia','cindy'],
   ['patricia','patty','trish'], ['rebecca','becca','becky'], ['jacqueline','jackie'],
   ['kimberly','kim'], ['theresa','terry'], ['terrence','terry'], ['gabriel','gabe'],
-  ['eleanor','ellie'], ['gilbert','gil'], ['earl','rick'],
+  ['eleanor','ellie'], ['gilbert','gil'],
 ];
 const NICK_OF = new Map();
 NICK_GROUPS.forEach((grp, i) => grp.forEach(n => {

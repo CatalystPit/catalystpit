@@ -13,7 +13,7 @@
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { norm, firstToken } from './congress-match.mjs';
+import { norm, firstToken } from '../src/lib/congress-match.mjs';
 
 const CURRENT    = 'https://unitedstates.github.io/congress-legislators/legislators-current.json';
 const HISTORICAL = 'https://unitedstates.github.io/congress-legislators/legislators-historical.json';

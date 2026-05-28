@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { buildIndex, matchMember } from './congress-match.mjs';
+import { buildIndex, matchMember } from '../src/lib/congress-match.mjs';
 
 const K = process.env.FMP_API_KEY;
 if (!K) { console.error('FMP_API_KEY not set (run with --env-file=.env.local)'); process.exit(1); }
