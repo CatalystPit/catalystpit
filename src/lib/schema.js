@@ -27,4 +27,5 @@ export const insiderTrades = pgTable('insider_trades', {
   idxFilingDate:       index('idx_insider_filing_date').on(t.filingDate),
   idxTickerFilingDate: index('idx_insider_ticker_filing').on(t.ticker, t.filingDate),
   idxTransactionDate:  index('idx_insider_transaction_date').on(t.transactionDate),
+  idxActionFiling:     index('idx_insider_action_filing').on(t.action, t.filingDate),
 }));
