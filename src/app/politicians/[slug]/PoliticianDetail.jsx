@@ -104,7 +104,7 @@ export default function PoliticianDetail({ slug }) {
                       const late = t.filingLagDays != null && t.filingLagDays > 45;
                       return (
                         <tr key={t.id || i} style={{ borderBottom: i < trades.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
-                          <td style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>{t.ticker || '—'}</td>
+                          <td className="cp-tkr" style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>{t.ticker || '—'}</td>
                           <td style={{ padding: '12px 14px', fontSize: 13, color: C.text, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.assetDescription || '—'}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.disclosureDate)}</td>
@@ -112,7 +112,7 @@ export default function PoliticianDetail({ slug }) {
                           <td style={{ padding: '12px 14px' }}>
                             <span style={{ fontSize: 11, padding: '3px 9px', borderRadius: 4, fontFamily: "'DM Mono',monospace", fontWeight: 600, background: as.bg, color: as.fg }}>{t.action}</span>
                           </td>
-                          <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{t.amountRange || '—'}</td>
+                          <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{t.amountRange || '—'}</td>
                           <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: returnColor(t.returnPct), whiteSpace: 'nowrap' }}>{fmtReturn(t.returnPct)}</td>
                         </tr>
                       );
