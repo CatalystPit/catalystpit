@@ -9,8 +9,6 @@ const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com' };
 const KV_TOKEN     = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET  = process.env.CRON_SECRET;
 const POLYGON_KEY  = process.env.POLYGON_KEY;
-const GNEWS_KEY    = process.env.GNEWS_KEY;
-const NEWSAPI_KEY  = process.env.NEWSAPI_KEY;
 const FINNHUB_KEY  = process.env.FINNHUB_KEY;
 
 const NEWS_TICKERS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','NFLX','GOOG','JPM','BAC','XOM','WMT','COIN','PLTR','BA','DIS','UBER','SHOP'];
@@ -373,48 +371,6 @@ async function fetchFinnhubMarket() {
   }
 }
 
-async function fetchGNews() {
-  if (!GNEWS_KEY) return [];
-  try {
-    const res = await fetch(`https://gnews.io/api/v4/top-headlines?category=business&lang=en&country=us&max=20&apikey=${GNEWS_KEY}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.articles || [])
-      .filter(a => a.title && a.url && a.title !== '[Removed]')
-      .map(a => ({
-        title: a.title,
-        source: a.source?.name || 'News',
-        url: a.url,
-        image_url: isPlaceholderImage(a.image) ? null : a.image,
-        published: a.publishedAt,
-        ticker: null,
-        _provider: 'gnews',
-        _rank: 4,
-      }));
-  } catch { return []; }
-}
-
-async function fetchNewsAPI() {
-  if (!NEWSAPI_KEY) return [];
-  try {
-    const res = await fetch(`https://newsapi.org/v2/top-headlines?category=business&language=en&country=us&pageSize=20&apiKey=${NEWSAPI_KEY}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.articles || [])
-      .filter(a => a.title && a.url && a.title !== '[Removed]')
-      .map(a => ({
-        title: a.title,
-        source: a.source?.name || 'News',
-        url: a.url,
-        image_url: isPlaceholderImage(a.urlToImage) ? null : a.urlToImage,
-        published: a.publishedAt,
-        ticker: null,
-        _provider: 'newsapi',
-        _rank: 3,
-      }));
-  } catch { return []; }
-}
-
 const HARD_BLOCK = [
   'ufc','mma','nfl','nba','nhl','mlb','wnba','ncaa','espn','fight night',
   'super bowl','world cup','olympic','olympics','playoff','playoffs','draft pick',
@@ -520,14 +476,12 @@ export async function GET(request) {
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };
 
   const STOCKS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','SPY','QQQ','DIA','GLD','USO','UVXY'];
-  const [stockPrices, crypto, insiderRaw, finnhubTickerRaw, finnhubMarketRaw, gnewsRaw, newsapiRaw, rssWSJRaw, rssMWRaw, rssBBRaw] = await Promise.allSettled([
+  const [stockPrices, crypto, insiderRaw, finnhubTickerRaw, finnhubMarketRaw, rssWSJRaw, rssMWRaw, rssBBRaw] = await Promise.allSettled([
     fetchStockPrices(STOCKS),
     fetchCrypto(),
     fetchForm4Trades(),
     fetchFinnhubPerTicker(),
     fetchFinnhubMarket(),
-    fetchGNews(),
-    fetchNewsAPI(),
     fetchRSS('https://feeds.content.dowjones.io/public/rss/RSSMarketsMain', 'WSJ',         0, { cap: 30 }),
     fetchRSS('https://feeds.content.dowjones.io/public/rss/mw_topstories',  'MarketWatch', 0),
     fetchRSS('https://feeds.bloomberg.com/markets/news.rss',                'Bloomberg',   0),
@@ -599,15 +553,13 @@ export async function GET(request) {
 
     const finnhubTicker = finnhubTickerRaw.status === 'fulfilled' ? finnhubTickerRaw.value : [];
     const finnhubMarket = finnhubMarketRaw.status === 'fulfilled' ? finnhubMarketRaw.value : [];
-    const gnews   = gnewsRaw.status   === 'fulfilled' ? gnewsRaw.value   : [];
-    const newsapi = newsapiRaw.status === 'fulfilled' ? newsapiRaw.value : [];
     const rssWSJ  = rssWSJRaw.status  === 'fulfilled' ? rssWSJRaw.value  : [];
     const rssMW   = rssMWRaw.status   === 'fulfilled' ? rssMWRaw.value   : [];
     const rssBB   = rssBBRaw.status   === 'fulfilled' ? rssBBRaw.value   : [];
 
-    const mergedNews = mergeNews(rssWSJ, rssMW, rssBB, finnhubTicker, finnhubMarket, newsapi, gnews).slice(0, 20);
+    const mergedNews = mergeNews(rssWSJ, rssMW, rssBB, finnhubTicker, finnhubMarket).slice(0, 20);
     const withImages = mergedNews.filter(a => a.image_url).length;
-    console.log(`📰 News: ${rssWSJ.length} WSJ + ${rssMW.length} MW + ${rssBB.length} BB + ${finnhubTicker.length} F-tkr + ${finnhubMarket.length} F-mkt + ${newsapi.length} NewsAPI + ${gnews.length} GNews → ${mergedNews.length} merged (${withImages} with real images)`);
+    console.log(`📰 News: ${rssWSJ.length} WSJ + ${rssMW.length} MW + ${rssBB.length} BB + ${finnhubTicker.length} F-tkr + ${finnhubMarket.length} F-mkt → ${mergedNews.length} merged (${withImages} with real images)`);
     await kvSet('catalystpit:_raw_news', JSON.stringify(mergedNews));
     results.refreshed.push('catalystpit:_raw_news');
   } catch(e) { fail('raw_news_sec', e); }
