@@ -508,7 +508,7 @@ export default function CatalystPit() {
               <div key={i} style={{padding:"10px 14px", borderBottom:`1px solid ${C.surface}`}}>
                 <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
               </div>
-            )) : insiders.map((ins, i) => (
+            )) : insidersShown.map((ins, i) => (
               <div key={i} className="hov" style={{padding:"10px 14px",
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
