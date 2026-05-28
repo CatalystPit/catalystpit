@@ -8,7 +8,6 @@ const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com' };
 
 const KV_TOKEN     = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET  = process.env.CRON_SECRET;
-const POLYGON_KEY  = process.env.POLYGON_KEY;
 const FINNHUB_KEY  = process.env.FINNHUB_KEY;
 
 const NEWS_TICKERS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','NFLX','GOOG','JPM','BAC','XOM','WMT','COIN','PLTR','BA','DIS','UBER','SHOP'];
