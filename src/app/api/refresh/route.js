@@ -563,10 +563,8 @@ export async function GET(request) {
 
   try {
     const insiderTrades = insiderRaw.status === 'fulfilled' ? insiderRaw.value : [];
-    await kvSet('catalystpit:insider_trades', JSON.stringify(insiderTrades));
-    results.refreshed.push('catalystpit:insider_trades');
 
-    // Dual-write to Postgres. KV remains the safety net during cutover.
+    // Postgres is the source of truth for insider trades.
     if (insiderTrades.length > 0) {
       try {
         const rows = insiderTrades

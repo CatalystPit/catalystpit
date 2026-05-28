@@ -9,13 +9,36 @@ import {
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard,
 } from "../lib/cp-shared";
 
+// Insider trades come from Postgres via /api/insiders (not KV). Homepage shows
+// only real BUY/SELL transactions (view=transactions), excluding OTHER grants.
+const fetchInsiders = async () => {
+  try {
+    const r = await fetch('/api/insiders?view=transactions&limit=25');
+    if (!r.ok) return null;
+    return await r.json();            // { view, count, trades:[...] }
+  } catch { return null; }
+};
+
+const fmtInsiderValue = (n) => {
+  const v = Number(n);
+  if (!v || isNaN(v)) return '—';
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
+  return `$${v.toLocaleString('en-US')}`;
+};
+
+const insStyle = (type) =>
+  type === 'BUY'  ? { fg: C.green, bg: C.greenLight } :
+  type === 'SELL' ? { fg: C.red,   bg: C.redLight }  :
+                    { fg: C.dim,   bg: C.surface };
+
 const fetchAll = async () => {
   try {
     const [stories, snapshot, tape, insiderData] = await Promise.all([
       fetchKey("top_stories"),
       fetchKey("market_snapshot"),
       fetchKey("ticker_tape"),
-      fetchKey("insider_trades"),
+      fetchInsiders(),
     ]);
 
     const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
@@ -37,17 +60,14 @@ const fetchAll = async () => {
       url:      s.url || null,
     }));
 
-    const insidersArr = toArr(insiderData, 'trades', 'insider_trades', 'insiders', 'filings', 'data');
-    const BUY_WORDS = new Set(['buy','buys','bought','purchase','purchased','acquisition','acquire']);
+    const insidersArr = toArr(insiderData, 'trades');
     const insiders = insidersArr.map(i => ({
-      sym:  i.ticker   || i.symbol || i.sym  || '?',
-      name: i.executive || i.name  || i.insider || i.filer || '',
-      role: i.title    || i.role   || i.position || i.relationship || '',
-      type: BUY_WORDS.has((i.action || i.transaction_type || '').toLowerCase()) ? 'BUY' : 'SELL',
-      value: typeof i.value === 'number'
-        ? `$${(i.value / 1e6).toFixed(1)}M`
-        : (i.value || i.amount || i.transaction_value || ''),
-      filed: i.date || i.filed || i.filing_date || i.reported || '',
+      sym:   i.ticker || '?',
+      name:  i.executive || '',
+      role:  i.title || '',
+      type:  i.action === 'BUY' ? 'BUY' : i.action === 'SELL' ? 'SELL' : 'OTHER',
+      value: fmtInsiderValue(i.totalValue),
+      filed: i.filingDate || '',
     }));
 
     const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
@@ -288,7 +308,7 @@ export default function CatalystPit() {
                 )) : insiders.map((ins, i) => (
                   <tr key={i} className="hov" style={{borderBottom:i < insiders.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:"pointer",
-                    borderLeft:`3px solid ${ins.type === "BUY" ? C.green : C.red}`}}>
+                    borderLeft:`3px solid ${insStyle(ins.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
                       fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr">{ins.sym}</td>
                     <td style={{padding:"11px 16px", fontSize:13, color:C.text, fontWeight:400}}>{ins.name}</td>
@@ -296,11 +316,11 @@ export default function CatalystPit() {
                     <td style={{padding:"11px 16px"}}>
                       <span style={{fontSize:10, padding:"3px 9px", borderRadius:3,
                         fontFamily:"'DM Mono',monospace", fontWeight:600,
-                        background:ins.type === "BUY" ? C.greenLight : C.redLight,
-                        color:ins.type === "BUY" ? C.green : C.red}}>{ins.type}</span>
+                        background:insStyle(ins.type).bg,
+                        color:insStyle(ins.type).fg}}>{ins.type}</span>
                     </td>
                     <td className="cp-num" style={{padding:"11px 16px", textAlign:"right", fontFamily:"'DM Mono',monospace",
-                      fontSize:14, fontWeight:700, color:ins.type === "BUY" ? C.green : C.red}}>{ins.value}</td>
+                      fontSize:14, fontWeight:700, color:insStyle(ins.type).fg}}>{ins.value}</td>
                     <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim}}>{ins.filed}</td>
                   </tr>
                 ))}
@@ -402,11 +422,11 @@ export default function CatalystPit() {
                       fontWeight:600, color:C.ink}}>{ins.sym}</span>
                     <span style={{fontSize:9, padding:"2px 6px", borderRadius:3,
                       fontFamily:"'DM Mono',monospace", fontWeight:600,
-                      background:ins.type === "BUY" ? C.greenLight : C.redLight,
-                      color:ins.type === "BUY" ? C.green : C.red}}>{ins.type}</span>
+                      background:insStyle(ins.type).bg,
+                      color:insStyle(ins.type).fg}}>{ins.type}</span>
                   </div>
                   <span style={{fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
-                    color:ins.type === "BUY" ? C.green : C.red}}>{ins.value}</span>
+                    color:insStyle(ins.type).fg}}>{ins.value}</span>
                 </div>
                 <div style={{fontSize:11, color:C.muted, fontWeight:300}}>{ins.name} · {ins.filed}</div>
               </div>
