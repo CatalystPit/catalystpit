@@ -1,4 +1,4 @@
-import { pgTable, serial, text, doublePrecision, date, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, integer, boolean, doublePrecision, date, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 
 export const insiderTrades = pgTable('insider_trades', {
   id:               serial('id').primaryKey(),
@@ -29,3 +29,59 @@ export const insiderTrades = pgTable('insider_trades', {
   idxTransactionDate:  index('idx_insider_transaction_date').on(t.transactionDate),
   idxActionFiling:     index('idx_insider_action_filing').on(t.action, t.filingDate),
 }));
+
+export const congressTrades = pgTable('congress_trades', {
+  id:               serial('id').primaryKey(),
+  txHash:           text('tx_hash').notNull(),            // sha256 synthetic dedup key
+
+  chamber:          text('chamber').notNull(),            // 'senate' | 'house'
+
+  // member identity — raw from FMP feed
+  firstName:        text('first_name'),
+  lastName:         text('last_name'),
+  representative:   text('representative'),                // full display name
+  // member identity — resolved from roster (denormalized, not per-request)
+  memberSlug:       text('member_slug'),                  // bioguide id, else name-slug; null if unmatched
+  party:            text('party'),
+  state:            text('state'),                         // 2-letter
+  district:         text('district'),                      // raw "NJ07" / ""
+
+  // asset + transaction
+  ticker:           text('ticker'),                        // null when blank / non-equity
+  assetDescription: text('asset_description'),
+  assetType:        text('asset_type'),
+  owner:            text('owner'),                          // Self | Spouse | Joint | ''
+  type:             text('type'),                           // raw "Sale" | "Purchase" | ...
+  action:           text('action').notNull(),               // normalized BUY | SELL | EXCHANGE | OTHER
+  amountRange:      text('amount_range'),                   // raw "$1,001 - $15,000"
+  amountMin:        doublePrecision('amount_min'),
+  amountMax:        doublePrecision('amount_max'),           // null if open-ended
+  amountMid:        doublePrecision('amount_mid'),           // midpoint → volume/sort
+
+  transactionDate:  date('transaction_date', { mode: 'string' }),
+  disclosureDate:   date('disclosure_date',  { mode: 'string' }).notNull(),
+  filingLagDays:    integer('filing_lag_days'),             // disclosure - transaction
+  capGainsOver200:  boolean('cap_gains_over_200'),           // house only
+  comment:          text('comment'),
+  link:             text('link'),                            // source filing URL
+
+  // enrichment — return-since-trade
+  priceAtTrade:     doublePrecision('price_at_trade'),       // Tiingo EOD raw close on/near txn date (immutable once set)
+  priceAtTradeDate: date('price_at_trade_date', { mode: 'string' }),  // actual trading day used
+  enrichedAt:       timestamp('enriched_at', { withTimezone: true }),
+
+  insertedAt:       timestamp('inserted_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uqTx:        uniqueIndex('uq_congress_tx').on(t.txHash),
+  idxMember:   index('idx_congress_member').on(t.memberSlug),
+  idxDisclose: index('idx_congress_disclosure').on(t.disclosureDate),
+  idxTicker:   index('idx_congress_ticker').on(t.ticker),
+  idxTxnDate:  index('idx_congress_txn_date').on(t.transactionDate),
+}));
+
+export const congressTickerPrices = pgTable('congress_ticker_prices', {
+  ticker:       text('ticker').primaryKey(),
+  currentPrice: doublePrecision('current_price'),           // Finnhub /quote latest
+  asOfDate:     date('as_of_date', { mode: 'string' }),
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

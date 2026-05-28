@@ -15,6 +15,13 @@
       "when": 1779968414813,
       "tag": "0001_action_filing_index",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779981845138,
+      "tag": "0002_congress_trades",
+      "breakpoints": true
     }
   ]
 }
