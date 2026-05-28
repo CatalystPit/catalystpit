@@ -79,7 +79,7 @@ export default function DisclaimerPage() {
         </Section>
 
         <Section title="4. Data Accuracy and Sources">
-          <p>CatalystPit aggregates data from third-party sources including Polygon.io, GNews, the U.S. Securities and Exchange Commission (SEC EDGAR), CoinGecko, and others. While we make reasonable efforts to present accurate and timely information, we do not guarantee that any data is accurate, complete, current, or free from errors or omissions.</p>
+          <p>CatalystPit aggregates data from third-party sources including Finnhub, the U.S. Securities and Exchange Commission (SEC EDGAR), CoinGecko, news feeds from The Wall Street Journal, MarketWatch and Bloomberg, and others. While we make reasonable efforts to present accurate and timely information, we do not guarantee that any data is accurate, complete, current, or free from errors or omissions.</p>
           <ul style={list}>
             <li><strong>Delayed data:</strong> Market prices may be delayed by up to 15 minutes or more depending on the data feed and tier in use.</li>
             <li><strong>Third-party errors:</strong> Errors in third-party data are outside our control.</li>

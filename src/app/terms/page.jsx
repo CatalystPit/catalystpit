@@ -68,7 +68,7 @@ export default function TermsPage() {
         <Section title="4. The Service">
           <p>CatalystPit provides financial intelligence content including market data, news aggregation, AI-enriched summaries, insider trading filings, congressional trading disclosures, and related information. The Service is offered in free and paid subscription tiers.</p>
           <p><strong>The Service is for informational and educational purposes only.</strong> It is not investment advice, financial advice, tax advice, or a recommendation to buy, sell, or hold any security. See our <a href="/disclaimer" style={linkStyle}>Financial Disclaimer</a> for full details.</p>
-          <p>We strive for accuracy but do not warrant that information is complete, current, or error-free. Data is sourced from third parties (Polygon.io, GNews, SEC EDGAR, CoinGecko, and others) and may be delayed, inaccurate, or incomplete. Some content is generated or enriched with AI and may contain errors.</p>
+          <p>We strive for accuracy but do not warrant that information is complete, current, or error-free. Data is sourced from third parties (Finnhub, SEC EDGAR, CoinGecko, news feeds from The Wall Street Journal, MarketWatch and Bloomberg, and others) and may be delayed, inaccurate, or incomplete. Some content is generated or enriched with AI and may contain errors.</p>
         </Section>
 
         <Section title="5. Subscriptions and Payments">
