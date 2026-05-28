@@ -33,6 +33,10 @@ const ROW_VIEWS = {
     where: gte(insiderTrades.totalValue, 1000000),
     orderBy: [desc(insiderTrades.filingDate), desc(insiderTrades.totalValue)],
   },
+  transactions: {
+    where: inArray(insiderTrades.action, ['BUY', 'SELL']),
+    orderBy: [desc(insiderTrades.filingDate), desc(insiderTrades.totalValue)],
+  },
 };
 
 async function clusterBuys() {

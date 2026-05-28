@@ -12,8 +12,7 @@ async function kvGet(key) {
 }
 
 const VALID_KEYS = new Set([
-  'top_stories','market_snapshot','ticker_tape','insider_trades',
-  'politician_trades','why_moving','short_squeeze','earnings_intelligence','institutional_moves',
+  'top_stories','market_snapshot','ticker_tape',
 ]);
 
 export async function GET(request) {
