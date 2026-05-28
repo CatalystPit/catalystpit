@@ -230,7 +230,7 @@ export default function InsidersPage() {
           )}
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:10}}>
           {CATEGORIES.map(cat => {
             const active = !searching && activeView === cat.key;
             return (
@@ -284,6 +284,7 @@ export default function InsidersPage() {
         ) : isCluster ? (
           /* ── CLUSTER BUYS ── */
           <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+            <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
               <thead><tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
                 {["Ticker","Company","Buyers","Trades","Total $","Window"].map((h,i)=>(
@@ -305,6 +306,7 @@ export default function InsidersPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         ) : (
           /* ── TRADE ROWS (row views + ticker drill-down) ── */
@@ -313,6 +315,7 @@ export default function InsidersPage() {
               {searching ? `${rows.length} filings for ${debouncedSearch}` : `${VIEW_LABEL[activeView]} · ${rows.length} filings`}
             </div>
             <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+              <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
                   {[
@@ -346,6 +349,7 @@ export default function InsidersPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           </>
         )}

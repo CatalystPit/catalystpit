@@ -277,11 +277,10 @@ export default function NewsFeed() {
       </div>
 
       {/* MAIN BODY */}
-      <div style={{maxWidth:1380, margin:"0 auto", padding:"16px 24px",
-        display:"grid", gridTemplateColumns:"1fr 300px", gap:16}}>
+      <div className="cp-body-grid">
 
         {/* LEFT — FEED */}
-        <div style={{display:"flex", flexDirection:"column", gap:14}}>
+        <div style={{display:"flex", flexDirection:"column", gap:14, minWidth:0}}>
           {loading ? (
             <>
               <div style={{background:C.surface, borderRadius:8, overflow:"hidden"}}>
@@ -366,7 +365,7 @@ export default function NewsFeed() {
         </div>
 
         {/* RIGHT SIDEBAR */}
-        <div style={{display:"flex", flexDirection:"column", gap:14}}>
+        <div style={{display:"flex", flexDirection:"column", gap:14, minWidth:0}}>
           <TickerSearchCard
             query={tickerQuery}
             onQueryChange={setTickerQuery}

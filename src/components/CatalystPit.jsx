@@ -138,15 +138,15 @@ export default function CatalystPit() {
               Insider trades, market data, and breaking news — every catalyst, before the bell.
             </p>
           </div>
-          <div style={{display:"flex", gap:8, alignItems:"center"}}>
+          <div style={{display:"flex", gap:8, alignItems:"center", maxWidth:"100%", minWidth:0}}>
             <div style={{display:"flex", background:C.white, border:`1px solid ${C.border2}`,
-              borderRadius:7, overflow:"hidden"}}>
+              borderRadius:7, overflow:"hidden", maxWidth:"100%"}}>
               <input value={email} onChange={e => setEmail(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && signup()}
                 placeholder="Email — free 6 AM brief"
                 style={{background:"transparent", border:"none", color:C.text,
                   padding:"9px 14px", fontSize:13, fontFamily:"'DM Sans',sans-serif",
-                  outline:"none", fontWeight:300, width:220}}/>
+                  outline:"none", fontWeight:300, flex:"1 1 200px", minWidth:0}}/>
               <button onClick={signup} style={{background:C.green, border:"none", color:"#fff",
                 padding:"9px 16px", fontSize:12, fontWeight:500,
                 fontFamily:"'DM Sans',sans-serif", cursor:"pointer", whiteSpace:"nowrap"}}
@@ -160,11 +160,10 @@ export default function CatalystPit() {
       </div>
 
       {/* MAIN BODY */}
-      <div style={{maxWidth:1380, margin:"0 auto", padding:"16px 24px",
-        display:"grid", gridTemplateColumns:"1fr 300px", gap:16}}>
+      <div className="cp-body-grid">
 
         {/* LEFT */}
-        <div style={{display:"flex", flexDirection:"column", gap:16}}>
+        <div style={{display:"flex", flexDirection:"column", gap:16, minWidth:0}}>
 
           {/* TOP STORIES */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
@@ -186,7 +185,7 @@ export default function CatalystPit() {
             </div>
             <div style={{padding:14}}>
               {loading ? (
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10}}>
+                <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:10}}>
                   {Array(4).fill(0).map((_, i) => (
                     <div key={i} style={{background:C.surface, borderRadius:8, overflow:"hidden"}}>
                       <Skel h={110} mb={0}/>
@@ -205,7 +204,7 @@ export default function CatalystPit() {
                       <NewsPhotoCard key={i} n={n} idx={0} hero/>
                     ))}
                   </div>
-                  <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
+                  <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:12}}>
                     {Array.from({length:4}, (_, i) => news[1 + i] || news[i % Math.min(1, news.length)])
                       .filter(Boolean).map((n, i) => (
                       <NewsPhotoCard key={i} n={n} idx={i + 1}/>
@@ -247,7 +246,7 @@ export default function CatalystPit() {
                 color:C.dim, letterSpacing:"0.8px"}}>LIVE</span>
             </div>
             <div style={{padding:16}}>
-              <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12}}>
+              <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:12}}>
                 {loading || !data?.tickers?.length ? (
                   Array(4).fill(0).map((_, i) => (
                     <div key={i} style={{background:C.surface, borderRadius:7,
@@ -292,6 +291,7 @@ export default function CatalystPit() {
                   padding:"2px 7px", borderRadius:3, fontFamily:"'DM Mono',monospace", fontWeight:500}}>FORM 4 · SEC</span>
               </div>
             </div>
+            <div style={{overflowX:"auto"}}>
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{background:C.surface, borderBottom:`1px solid ${C.border}`}}>
@@ -326,6 +326,7 @@ export default function CatalystPit() {
                 ))}
               </tbody>
             </table>
+            </div>
             <div style={{position:"relative", overflow:"hidden"}}>
               {[1,2,3].map(i => (
                 <div key={i} style={{padding:"11px 16px", borderTop:`1px solid ${C.surface}`,
@@ -368,7 +369,7 @@ export default function CatalystPit() {
         </div>
 
         {/* RIGHT SIDEBAR */}
-        <div style={{display:"flex", flexDirection:"column", gap:14}}>
+        <div style={{display:"flex", flexDirection:"column", gap:14, minWidth:0}}>
 
           <CatalystBriefCard/>
 
