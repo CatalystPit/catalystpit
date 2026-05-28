@@ -7,6 +7,10 @@
     {
       "path": "/api/refresh-content",
       "schedule": "*/15 13-21 * * 1-5"
+    },
+    {
+      "path": "/api/refresh-congress",
+      "schedule": "0 9 * * *"
     }
   ],
   "headers": [
@@ -35,6 +39,9 @@
       "maxDuration": 30
     },
     "src/app/api/refresh-content/route.js": {
+      "maxDuration": 60
+    },
+    "src/app/api/refresh-congress/route.js": {
       "maxDuration": 60
     },
     "src/app/api/claude/route.js": {
