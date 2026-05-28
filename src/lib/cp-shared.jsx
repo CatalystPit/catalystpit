@@ -325,23 +325,29 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
 }
 
 // ─── TOP NAV (sticky) ───────────────────────────────────────────────────────
-export function TopNav() {
+export function TopNav({ active }) {
   const links = ["Markets", "News", "Screener", "Insiders", "Politicians", "Charts", "Crypto"];
+  const [menuOpen, setMenuOpen] = useState(false);
+  const linkColor = (l) => active === l ? "#FFFFFF" : "rgba(255,255,255,0.75)";
   return (
     <div style={{background:C.navBg, height:50, display:"flex", alignItems:"center",
       justifyContent:"space-between", padding:"0 24px", position:"sticky", top:0, zIndex:100,
       borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
       <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
-      <div style={{display:"flex", gap:20, alignItems:"center", marginLeft:40,
+
+      {/* Desktop links — hidden ≤860px via .cp-nav-links */}
+      <div className="cp-nav-links" style={{gap:20, alignItems:"center", marginLeft:40,
         borderLeft:`1px solid rgba(255,255,255,0.2)`, paddingLeft:40}}>
         {links.map(l => (
           <a key={l} href={`/${l.toLowerCase()}`} className="nbtn"
-            style={{fontSize:12, color:"rgba(255,255,255,0.75)", cursor:"pointer",
-              transition:"color 0.2s", fontWeight:400, letterSpacing:"0.02em", textDecoration:"none"}}>
+            style={{fontSize:12, color:linkColor(l), cursor:"pointer", transition:"color 0.2s",
+              fontWeight: active === l ? 600 : 400, letterSpacing:"0.02em", textDecoration:"none",
+              borderBottom: active === l ? "2px solid #5AB87A" : "none", paddingBottom: active === l ? 2 : 0}}>
             {l}
           </a>
         ))}
       </div>
+
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
         <SignedOut>
           <a href="/sign-in" style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)",
@@ -364,7 +370,31 @@ export function TopNav() {
         <SignedIn>
           <UserButton afterSignOutUrl="/" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
         </SignedIn>
+
+        {/* Hamburger — shown ≤860px via .cp-nav-burger */}
+        <button className="cp-nav-burger" onClick={() => setMenuOpen(o => !o)} aria-label="Menu"
+          style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)", color:"#fff",
+            borderRadius:5, width:36, height:30, alignItems:"center", justifyContent:"center",
+            fontSize:16, cursor:"pointer", padding:0}}>
+          {menuOpen ? "✕" : "☰"}
+        </button>
       </div>
+
+      {/* Mobile dropdown — overlays below the bar, shown ≤860px when open */}
+      {menuOpen && (
+        <div className="cp-nav-menu" style={{position:"absolute", top:50, left:0, right:0,
+          flexDirection:"column", background:C.navBg, borderBottom:"1px solid rgba(255,255,255,0.15)",
+          boxShadow:"0 8px 16px rgba(0,0,0,0.25)"}}>
+          {links.map(l => (
+            <a key={l} href={`/${l.toLowerCase()}`} onClick={() => setMenuOpen(false)}
+              style={{fontSize:14, color:linkColor(l), fontWeight: active === l ? 600 : 400,
+                textDecoration:"none", padding:"11px 24px",
+                borderLeft: active === l ? "3px solid #5AB87A" : "3px solid transparent"}}>
+              {l}
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from "react";
-import { Logo, Footer } from '../../lib/cp-shared';
+import { Footer, TopNav } from '../../lib/cp-shared';
 
 const C = {
   bg:"#F5F6F3",white:"#FFFFFF",surface:"#F0F2EE",border:"#E0E2DC",border2:"#C4C8BE",
@@ -96,7 +96,6 @@ export default function InsidersPage() {
   const [sortBy,  setSortBy]  = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [lastUp, setLastUp] = useState(null);
-  const NAV = ["Markets","News","Screener","Insiders","Politicians","Charts","Crypto"];
 
   const loadData = useCallback(async ({ view, ticker }) => {
     setLoading(true);
@@ -171,18 +170,7 @@ export default function InsidersPage() {
       `}</style>
 
       {/* NAV */}
-      <div style={{background:C.navBg,height:50,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 24px",position:"sticky",top:0,zIndex:100,borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
-        <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
-        <div style={{display:"flex",gap:20,alignItems:"center",marginLeft:40,borderLeft:"1px solid rgba(255,255,255,0.2)",paddingLeft:40}}>
-          {NAV.map(l=>(
-            <a key={l} href={`/${l.toLowerCase()}`} className="nbtn" style={{fontSize:12,color:l==="Insiders"?"#FFFFFF":"rgba(255,255,255,0.75)",fontWeight:l==="Insiders"?600:400,letterSpacing:"0.02em",borderBottom:l==="Insiders"?"2px solid #5AB87A":"none",paddingBottom:l==="Insiders"?2:0,transition:"color 0.2s"}}>{l}</a>
-          ))}
-        </div>
-        <div style={{display:"flex",gap:8}}>
-          <button style={{background:"transparent",border:"1px solid rgba(255,255,255,0.4)",color:"rgba(255,255,255,0.9)",padding:"6px 14px",borderRadius:5,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:300}}>Log In</button>
-          <button style={{background:C.green,border:"none",color:"#fff",padding:"7px 18px",borderRadius:5,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>Start Free</button>
-        </div>
-      </div>
+      <TopNav active="Insiders"/>
 
       {/* PAGE HEADER */}
       <div style={{background:C.white,borderBottom:`1px solid ${C.border}`,padding:"20px 24px"}}>

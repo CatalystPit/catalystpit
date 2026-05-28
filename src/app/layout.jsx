@@ -55,6 +55,14 @@ export default function RootLayout({ children }) {
             @media (max-width: 860px) {
               .cp-body-grid { grid-template-columns: minmax(0, 1fr); }
             }
+            .cp-nav-links  { display: flex; }
+            .cp-nav-burger { display: none; }
+            .cp-nav-menu   { display: none; }
+            @media (max-width: 860px) {
+              .cp-nav-links  { display: none; }
+              .cp-nav-burger { display: inline-flex; }
+              .cp-nav-menu   { display: flex; }
+            }
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
