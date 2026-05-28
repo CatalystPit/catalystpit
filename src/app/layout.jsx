@@ -40,6 +40,17 @@ export default function RootLayout({ children }) {
               font-weight: 700 !important;
               letter-spacing: 0.02em !important;
             }
+            .cp-body-grid {
+              max-width: 1380px;
+              margin: 0 auto;
+              padding: 16px 24px;
+              display: grid;
+              grid-template-columns: minmax(0, 1fr) 300px;
+              gap: 16px;
+            }
+            @media (max-width: 860px) {
+              .cp-body-grid { grid-template-columns: minmax(0, 1fr); }
+            }
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
