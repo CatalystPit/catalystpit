@@ -1,0 +1,1 @@
+CREATE INDEX "idx_insider_action_filing" ON "insider_trades" USING btree ("action","filing_date");
