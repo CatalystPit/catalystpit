@@ -19,6 +19,16 @@ const fetchInsiders = async () => {
   } catch { return null; }
 };
 
+// Politician trades: flat recent-trades feed from Postgres (view=feed), parallel
+// to fetchInsiders. Not the grouped per-member list view.
+const fetchPoliticians = async () => {
+  try {
+    const r = await fetch('/api/politicians?view=feed&limit=10');
+    if (!r.ok) return null;
+    return await r.json();            // { view:'feed', count, trades:[...] }
+  } catch { return null; }
+};
+
 const fmtInsiderValue = (n) => {
   const v = Number(n);
   if (!v || isNaN(v)) return '—';
@@ -32,13 +42,24 @@ const insStyle = (type) =>
   type === 'SELL' ? { fg: C.red,   bg: C.redLight }  :
                     { fg: C.dim,   bg: C.surface };
 
+// Local party styling (mirrors the politicians-app helper; kept local to avoid
+// cross-importing app code into the homepage component).
+const partyStyle = (party) => {
+  const p = (party || '').toLowerCase();
+  if (p.startsWith('democrat'))   return { fg: C.blue,  bg: C.blueLight, abbr: 'DEM' };
+  if (p.startsWith('republican')) return { fg: C.red,   bg: C.redLight,  abbr: 'REP' };
+  if (!party)                     return { fg: C.dim,   bg: C.surface,   abbr: '—'   };
+  return { fg: C.muted, bg: C.surface, abbr: 'IND' };
+};
+
 const fetchAll = async () => {
   try {
-    const [stories, snapshot, tape, insiderData] = await Promise.all([
+    const [stories, snapshot, tape, insiderData, politicianData] = await Promise.all([
       fetchKey("top_stories"),
       fetchKey("market_snapshot"),
       fetchKey("ticker_tape"),
       fetchInsiders(),
+      fetchPoliticians(),
     ]);
 
     const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
@@ -70,10 +91,22 @@ const fetchAll = async () => {
       filed: i.filingDate || '',
     }));
 
+    const politiciansArr = toArr(politicianData, 'trades');
+    const politicians = politiciansArr.map(p => ({
+      sym:    p.ticker || '?',
+      name:   p.representative || '',
+      party:  p.party || '',
+      state:  p.state || '',
+      slug:   p.memberSlug || '',
+      type:   p.action === 'BUY' ? 'BUY' : p.action === 'SELL' ? 'SELL' : 'OTHER',
+      amount: p.amountRange || '—',
+      traded: p.transactionDate || '',
+    }));
+
     const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
     const vix     = safeN(snapshot?.VIX?.price ?? snapshot?.VIX?.last ?? 18.3);
 
-    return { tickers, news, insiders, spy_chg, vix };
+    return { tickers, news, insiders, politicians, spy_chg, vix };
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -83,8 +116,6 @@ const fetchAll = async () => {
 export default function CatalystPit() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState("");
-  const [toasted, setToasted] = useState(false);
   const [lastUp, setLastUp] = useState(null);
 
   const loadData = useCallback(async () => {
@@ -100,27 +131,15 @@ export default function CatalystPit() {
     return () => clearInterval(id);
   }, [loadData]);
 
-  const signup = () => {
-    if (!email || !email.includes("@")) return;
-    setEmail(""); setToasted(true); setTimeout(() => setToasted(false), 4000);
-  };
-
   const news = data?.news || [];
   const insiders = data?.insiders || [];
+  const insidersShown = insiders.slice(0, 12);
+  const politicians = data?.politicians || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
 
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
       <BrandStyles/>
-
-      {/* Hero signup toast */}
-      <div style={{position:"fixed", bottom:24, left:"50%",
-        transform:`translateX(-50%) translateY(${toasted?0:80}px)`,
-        background:C.white, border:`1px solid ${C.greenBorder}`, padding:"13px 24px",
-        borderRadius:10, fontSize:13, zIndex:999, transition:"transform 0.4s ease",
-        boxShadow:"0 8px 40px rgba(0,0,0,0.12)", whiteSpace:"nowrap"}}>
-        <span style={{color:C.green, fontWeight:600}}>You're in.</span> First brief arrives at 6 AM.
-      </div>
 
       <TopNav/>
       <TickerTape tickers={data?.tickers}/>
@@ -137,24 +156,6 @@ export default function CatalystPit() {
             <p style={{fontSize:13, color:C.muted, margin:0, fontWeight:300}}>
               Insider trades, market data, and breaking news — every catalyst, before the bell.
             </p>
-          </div>
-          <div style={{display:"flex", gap:8, alignItems:"center", maxWidth:"100%", minWidth:0}}>
-            <div style={{display:"flex", background:C.white, border:`1px solid ${C.border2}`,
-              borderRadius:7, overflow:"hidden", maxWidth:"100%"}}>
-              <input value={email} onChange={e => setEmail(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && signup()}
-                placeholder="Email — free 6 AM brief"
-                style={{background:"transparent", border:"none", color:C.text,
-                  padding:"9px 14px", fontSize:13, fontFamily:"'DM Sans',sans-serif",
-                  outline:"none", fontWeight:300, flex:"1 1 200px", minWidth:0}}/>
-              <button onClick={signup} style={{background:C.green, border:"none", color:"#fff",
-                padding:"9px 16px", fontSize:12, fontWeight:500,
-                fontFamily:"'DM Sans',sans-serif", cursor:"pointer", whiteSpace:"nowrap"}}
-                onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-                onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                Get Free Access →
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -305,8 +306,8 @@ export default function CatalystPit() {
               <tbody>
                 {loading ? Array(3).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
-                )) : insiders.map((ins, i) => (
-                  <tr key={i} className="hov" style={{borderBottom:i < insiders.length - 1 ? `1px solid ${C.surface}` : "none",
+                )) : insidersShown.map((ins, i) => (
+                  <tr key={i} className="hov" style={{borderBottom:i < insidersShown.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:"pointer",
                     borderLeft:`3px solid ${insStyle(ins.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
@@ -353,6 +354,99 @@ export default function CatalystPit() {
                   <div>
                     <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Unlock All Insider Trades</div>
                     <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Real-time Form 4 filings · Pro $29/mo</div>
+                  </div>
+                  <button style={{background:C.green, border:"none", color:"#fff",
+                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500,
+                    cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
+                    onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
+                    onMouseLeave={e => e.currentTarget.style.background = C.green}>
+                    Get Access
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* POLITICIAN TRADES */}
+          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+            <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.border}`,
+              background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <div style={{display:"flex", alignItems:"center", gap:7}}>
+                <Dot/>
+                <span style={{fontSize:13, fontWeight:600, color:C.ink}}>POLITICIAN TRADES</span>
+                <span style={{fontSize:9, background:"#EEF2FA", color:"#2A4A70",
+                  padding:"2px 7px", borderRadius:3, fontFamily:"'DM Mono',monospace", fontWeight:500}}>STOCK ACT · CONGRESS</span>
+              </div>
+            </div>
+            <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%", borderCollapse:"collapse"}}>
+              <thead>
+                <tr style={{background:C.surface, borderBottom:`1px solid ${C.border}`}}>
+                  {["Ticker","Politician","Party","Action","Amount","Traded"].map(h => (
+                    <th key={h} style={{padding:"8px 16px", textAlign:h === "Amount" ? "right" : "left",
+                      fontFamily:"'DM Mono',monospace", fontSize:9, color:C.dim,
+                      letterSpacing:"0.8px", fontWeight:400}}>{h.toUpperCase()}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? Array(3).fill(0).map((_, i) => (
+                  <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
+                )) : politicians.slice(0, 10).map((p, i, arr) => (
+                  <tr key={i} className="hov" style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
+                    transition:"background 0.15s", cursor:"pointer",
+                    borderLeft:`3px solid ${insStyle(p.type).fg}`}}>
+                    <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
+                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr">{p.sym}</td>
+                    <td style={{padding:"11px 16px", fontSize:13, color:C.text, fontWeight:400}}>{p.name}</td>
+                    <td style={{padding:"11px 16px"}}>
+                      <span style={{fontSize:10, padding:"3px 9px", borderRadius:3,
+                        fontFamily:"'DM Mono',monospace", fontWeight:600,
+                        background:partyStyle(p.party).bg, color:partyStyle(p.party).fg}}>
+                        {partyStyle(p.party).abbr}{p.state ? ` · ${p.state}` : ""}</span>
+                    </td>
+                    <td style={{padding:"11px 16px"}}>
+                      <span style={{fontSize:10, padding:"3px 9px", borderRadius:3,
+                        fontFamily:"'DM Mono',monospace", fontWeight:600,
+                        background:insStyle(p.type).bg, color:insStyle(p.type).fg}}>{p.type}</span>
+                    </td>
+                    <td className="cp-num" style={{padding:"11px 16px", textAlign:"right", fontFamily:"'DM Mono',monospace",
+                      fontSize:14, fontWeight:700, color:insStyle(p.type).fg, whiteSpace:"nowrap"}}>{p.amount}</td>
+                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim, whiteSpace:"nowrap"}}>{p.traded}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+            <div style={{position:"relative", overflow:"hidden"}}>
+              {[1,2,3].map(i => (
+                <div key={i} style={{padding:"11px 16px", borderTop:`1px solid ${C.surface}`,
+                  display:"flex", gap:16, filter:"blur(4px)", userSelect:"none",
+                  pointerEvents:"none", opacity:0.6}}>
+                  <div style={{fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, color:C.green, width:60}}>████</div>
+                  <div style={{fontSize:13, color:C.text, flex:1}}>████████ ██████</div>
+                  <div style={{width:74}}>
+                    <span style={{background:C.blueLight, padding:"3px 9px", borderRadius:3,
+                      fontSize:10, color:C.blue, fontFamily:"'DM Mono',monospace", fontWeight:600}}>DEM · ██</span>
+                  </div>
+                  <div style={{width:50}}>
+                    <span style={{background:C.greenLight, padding:"3px 9px", borderRadius:3,
+                      fontSize:10, color:C.green, fontFamily:"'DM Mono',monospace", fontWeight:600}}>BUY</span>
+                  </div>
+                  <div style={{fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:700,
+                    color:C.green, width:110, textAlign:"right"}}>$██K - $███K</div>
+                  <div style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.dim, width:64}}>██████</div>
+                </div>
+              ))}
+              <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center",
+                justifyContent:"center", background:"rgba(248,250,247,0.7)"}}>
+                <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
+                  borderRadius:8, padding:"12px 20px", display:"flex", alignItems:"center", gap:12,
+                  boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
+                  <span style={{fontSize:16}}>🔒</span>
+                  <div>
+                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Unlock All Politician Trades</div>
+                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Congressional disclosures · Pro $29/mo</div>
                   </div>
                   <button style={{background:C.green, border:"none", color:"#fff",
                     padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500,
@@ -414,7 +508,7 @@ export default function CatalystPit() {
               <div key={i} style={{padding:"10px 14px", borderBottom:`1px solid ${C.surface}`}}>
                 <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
               </div>
-            )) : insiders.map((ins, i) => (
+            )) : insidersShown.map((ins, i) => (
               <div key={i} className="hov" style={{padding:"10px 14px",
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
@@ -430,6 +524,37 @@ export default function CatalystPit() {
                     color:insStyle(ins.type).fg}}>{ins.value}</span>
                 </div>
                 <div style={{fontSize:11, color:C.muted, fontWeight:300}}>{ins.name} · {ins.filed}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* POLITICIAN ACTIVITY (compact) */}
+          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+            <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`,
+              background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <span style={{fontSize:12, fontWeight:600, color:C.ink}}>POLITICIAN ACTIVITY</span>
+              <a href="/politicians" style={{fontSize:11, color:C.green, cursor:"pointer",
+                fontWeight:400, textDecoration:"none"}}>View All →</a>
+            </div>
+            {loading ? Array(3).fill(0).map((_, i) => (
+              <div key={i} style={{padding:"10px 14px", borderBottom:`1px solid ${C.surface}`}}>
+                <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
+              </div>
+            )) : politicians.slice(0, 8).map((p, i) => (
+              <div key={i} className="hov" style={{padding:"10px 14px",
+                borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
+                <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
+                  <div style={{display:"flex", alignItems:"center", gap:6}}>
+                    <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:12,
+                      fontWeight:600, color:C.ink}}>{p.sym}</span>
+                    <span style={{fontSize:9, padding:"2px 6px", borderRadius:3,
+                      fontFamily:"'DM Mono',monospace", fontWeight:600,
+                      background:insStyle(p.type).bg, color:insStyle(p.type).fg}}>{p.type}</span>
+                  </div>
+                  <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:700,
+                    color:insStyle(p.type).fg, whiteSpace:"nowrap"}}>{p.amount}</span>
+                </div>
+                <div style={{fontSize:11, color:C.muted, fontWeight:300}}>{p.name} · {p.traded}</div>
               </div>
             ))}
           </div>
