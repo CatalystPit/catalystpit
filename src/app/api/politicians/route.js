@@ -115,6 +115,26 @@ async function tickerView(ticker) {
   return { view: 'ticker', ticker, count: rows.length, trades: rows.map(shapeTrade) };
 }
 
+// FEED: flat most-recent individual trades (NOT grouped by member). For homepage
+// teasers — no price join, no returnPct (homepage shows who-traded-what only).
+async function feedView(limit) {
+  const trades = await db.select({
+    id:              congressTrades.id,
+    ticker:          congressTrades.ticker,
+    representative:  congressTrades.representative,
+    party:           congressTrades.party,
+    state:           congressTrades.state,
+    memberSlug:      congressTrades.memberSlug,
+    action:          congressTrades.action,
+    amountRange:     congressTrades.amountRange,
+    transactionDate: congressTrades.transactionDate,
+  })
+    .from(congressTrades)
+    .orderBy(sql`${congressTrades.transactionDate} desc nulls last`, desc(congressTrades.id))
+    .limit(limit);
+  return { view: 'feed', count: trades.length, trades };
+}
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -123,6 +143,7 @@ export async function GET(request) {
     const view    = searchParams.get('view') || 'most_active';
     const chamber = searchParams.get('chamber') || null;
     const party   = searchParams.get('party') || null;
+    const limit   = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '10', 10) || 10, 1), 50);
 
     if (slug) {
       const payload = await detailView(slug);
@@ -132,6 +153,11 @@ export async function GET(request) {
     if (ticker) {
       const payload = await tickerView(ticker);
       console.log(`[politicians_api] ticker=${ticker} trades=${payload.count}`);
+      return Response.json(payload);
+    }
+    if (view === 'feed') {
+      const payload = await feedView(limit);
+      console.log(`[politicians_api] feed trades=${payload.count}`);
       return Response.json(payload);
     }
     const members = await listView({ view, chamber, party });
