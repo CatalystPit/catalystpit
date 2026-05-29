@@ -411,14 +411,16 @@ function OverviewTab({ data, insider, gov, onTab }) {
   return (
     <>
       <Section title="Key statistics">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', columnGap: 32 }}>
+        <div className="tk-keystats">
           {stats.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
         </div>
       </Section>
 
       <Section title="About">
-        {about.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
-        <DefRow label="Website" value={data.weburl ? cleanUrl(data.weburl) : '—'} link={data.weburl || null} />
+        <div style={{ maxWidth: 640 }}>
+          {about.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
+          <DefRow label="Website" value={data.weburl ? cleanUrl(data.weburl) : '—'} link={data.weburl || null} />
+        </div>
       </Section>
 
       <Section title="News" action={<ViewAll label="View all news" onClick={() => onTab('news')} />}>
@@ -563,7 +565,7 @@ export default function TickerPage({ symbol }) {
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
       <BrandStyles />
       <TopNav />
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 24px 40px' }}>
+      <div style={{ maxWidth: 1440, margin: '0 auto', padding: '24px 24px 40px' }}>
         <Suspense fallback={<LoadingShell />}>
           <TickerBody symbol={symbol} />
         </Suspense>

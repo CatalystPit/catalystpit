@@ -66,6 +66,9 @@ export default function RootLayout({ children }) {
               .cp-nav-burger { display: inline-flex; }
               .cp-nav-menu   { display: flex; }
             }
+            .tk-keystats { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 32px; }
+            @media (max-width: 899px) { .tk-keystats { grid-template-columns: repeat(2, 1fr); } }
+            @media (max-width: 599px) { .tk-keystats { grid-template-columns: 1fr; } }
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
