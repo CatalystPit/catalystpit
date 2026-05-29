@@ -15,6 +15,14 @@
     {
       "path": "/api/prewarm",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/prewarm-tickers",
+      "schedule": "*/15 13-20 * * 1-5"
+    },
+    {
+      "path": "/api/cron/prewarm-tickers",
+      "schedule": "0 */4 * * *"
     }
   ],
   "headers": [
@@ -50,6 +58,9 @@
     },
     "src/app/api/prewarm/route.js": {
       "maxDuration": 60
+    },
+    "src/app/api/cron/prewarm-tickers/route.js": {
+      "maxDuration": 300
     },
     "src/app/api/claude/route.js": {
       "maxDuration": 10
