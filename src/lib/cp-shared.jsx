@@ -331,6 +331,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
 export function SymbolSearch({ mobile = false, onNavigate }) {
   const router = useRouter();
   const [v, setV] = useState('');
+  const [focused, setFocused] = useState(false);
   const submit = (e) => {
     if (e) e.preventDefault();
     const s = v.trim().toUpperCase();
@@ -340,18 +341,21 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
     router.push(`/ticker/${encodeURIComponent(s)}`);
   };
   return (
-    <form onSubmit={submit} style={{ display: "flex", alignItems: "center",
-      background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)",
-      borderRadius: 6, padding: "0 6px", width: mobile ? "100%" : 132 }}>
-      <button type="submit" aria-label="Search ticker symbol"
-        style={{ background: "transparent", border: "none", color: "rgba(255,255,255,0.7)",
-          cursor: "pointer", padding: "0 4px 0 0", fontSize: 12, lineHeight: 1, display: "flex", alignItems: "center" }}>🔍</button>
+    <form onSubmit={submit} style={{ position: "relative", display: "flex", alignItems: "center",
+      height: 32, width: mobile ? "100%" : 260,
+      background: "rgba(255,255,255,0.08)", borderRadius: 999,
+      border: `1px solid ${focused ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)"}` }}>
+      <button type="submit" aria-label="Search ticker symbol" tabIndex={-1}
+        style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
+          background: "transparent", border: "none", padding: 0, margin: 0, cursor: "pointer",
+          color: "rgba(255,255,255,0.5)", fontSize: 15, lineHeight: 1, display: "flex", alignItems: "center" }}>🔍</button>
       <input type="text" value={v} onChange={e => setV(e.target.value.toUpperCase())}
-        aria-label="Search ticker symbol" placeholder="Search ticker..."
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        aria-label="Search ticker symbol" placeholder="Search ticker, company..."
         className="cp-nav-search-input"
-        style={{ background: "transparent", border: "none", outline: "none", color: "#fff",
-          fontFamily: "'DM Mono',monospace", fontSize: 12, letterSpacing: "0.5px",
-          padding: "7px 4px", width: "100%", minWidth: 0 }} />
+        style={{ width: "100%", height: "100%", background: "transparent", border: "none", outline: "none",
+          color: "#fff", fontFamily: "'DM Mono',monospace", fontSize: 14, letterSpacing: "0.5px",
+          padding: "0 14px 0 36px", borderRadius: 999, minWidth: 0 }} />
     </form>
   );
 }
@@ -482,6 +486,7 @@ export function TickerTape({tickers}) {
 // ─── MARKET SNAPSHOT SIDEBAR CARD ───────────────────────────────────────────
 export function MarketSnapshotCard({tickers, loading=false}) {
   const hasData = tickers && tickers.length > 0;
+  const router = useRouter();
   return (
     <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
       <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface,
@@ -496,7 +501,8 @@ export function MarketSnapshotCard({tickers, loading=false}) {
           <Skel h={12} mb={0}/>
         </div>
       )) : tickers.map((t, i) => (
-        <div key={i} className="hov" style={{display:"flex", justifyContent:"space-between",
+        <div key={i} className="hov" onClick={() => { if (t.sym && t.sym !== "?") router.push(`/ticker/${encodeURIComponent(t.sym)}`); }}
+          style={{display:"flex", justifyContent:"space-between",
           alignItems:"center", padding:"9px 14px",
           borderBottom:i < tickers.length - 1 ? `1px solid ${C.surface}` : "none",
           transition:"background 0.15s", cursor:"pointer"}}>

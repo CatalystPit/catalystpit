@@ -264,7 +264,7 @@ export default function CatalystPit() {
                   ))
                 ) : (
                   data.tickers.slice(0, 4).map((t, i) => (
-                    <div key={i} className="hov" style={{background:C.surface, borderRadius:7,
+                    <div key={i} className="hov" onClick={() => goTicker(t.sym)} style={{background:C.surface, borderRadius:7,
                       padding:"14px 14px", border:`1px solid ${C.border}`, cursor:"pointer",
                       transition:"background 0.15s"}}>
                       <div className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
