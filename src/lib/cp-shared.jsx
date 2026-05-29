@@ -157,6 +157,7 @@ export function BrandStyles() {
       .nbtn:hover{color:#FFFFFF!important}
       .chip-hov:hover{background:${C.surface2}!important;cursor:pointer}
       input:focus{outline:none;border-color:${C.green}!important;box-shadow:0 0 0 3px ${C.greenLight}!important}
+      .cp-brief-email::placeholder{color:rgba(255,255,255,0.55)}
       ::-webkit-scrollbar{width:4px;height:4px}
       ::-webkit-scrollbar-track{background:${C.surface}}
       ::-webkit-scrollbar-thumb{background:${C.border2};border-radius:2px}
@@ -557,6 +558,7 @@ export function CatalystBriefCard() {
         <input value={email} onChange={e => setEmail(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()}
           placeholder="Your email address"
+          className="cp-brief-email"
           style={{width:"100%", background:"#1A2820", border:"1px solid #2A3A2E",
             color:"#FFFFFF", padding:"9px 12px", borderRadius:6, fontSize:12,
             fontFamily:"'DM Sans',sans-serif", outline:"none", fontWeight:300, marginBottom:6}}/>
