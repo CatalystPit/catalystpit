@@ -56,13 +56,19 @@ export default function RootLayout({ children }) {
               .cp-body-grid { grid-template-columns: minmax(0, 1fr); }
             }
             .cp-nav-links  { display: flex; }
+            .cp-nav-search { display: flex; }
             .cp-nav-burger { display: none; }
             .cp-nav-menu   { display: none; }
+            .cp-nav-search-input::placeholder { color: #6B7280; }
             @media (max-width: 860px) {
               .cp-nav-links  { display: none; }
+              .cp-nav-search { display: none; }
               .cp-nav-burger { display: inline-flex; }
               .cp-nav-menu   { display: flex; }
             }
+            .tk-keystats { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 32px; }
+            @media (max-width: 899px) { .tk-keystats { grid-template-columns: repeat(2, 1fr); } }
+            @media (max-width: 599px) { .tk-keystats { grid-template-columns: 1fr; } }
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>

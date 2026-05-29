@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
@@ -137,6 +138,10 @@ export default function CatalystPit() {
   const politicians = data?.politicians || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
 
+  const router = useRouter();
+  const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
+  const goPolitician = (slug) => { if (slug) router.push(`/politicians/${encodeURIComponent(slug)}`); };
+
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
       <BrandStyles/>
@@ -259,7 +264,7 @@ export default function CatalystPit() {
                   ))
                 ) : (
                   data.tickers.slice(0, 4).map((t, i) => (
-                    <div key={i} className="hov" style={{background:C.surface, borderRadius:7,
+                    <div key={i} className="hov" onClick={() => goTicker(t.sym)} style={{background:C.surface, borderRadius:7,
                       padding:"14px 14px", border:`1px solid ${C.border}`, cursor:"pointer",
                       transition:"background 0.15s"}}>
                       <div className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
@@ -307,7 +312,7 @@ export default function CatalystPit() {
                 {loading ? Array(3).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
                 )) : insidersShown.map((ins, i) => (
-                  <tr key={i} className="hov" style={{borderBottom:i < insidersShown.length - 1 ? `1px solid ${C.surface}` : "none",
+                  <tr key={i} className="hov" onClick={() => goTicker(ins.sym)} style={{borderBottom:i < insidersShown.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:"pointer",
                     borderLeft:`3px solid ${insStyle(ins.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
@@ -393,8 +398,9 @@ export default function CatalystPit() {
                 {loading ? Array(3).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
                 )) : politicians.slice(0, 10).map((p, i, arr) => (
-                  <tr key={i} className="hov" style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
-                    transition:"background 0.15s", cursor:"pointer",
+                  <tr key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
+                    style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
+                    transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
                     borderLeft:`3px solid ${insStyle(p.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
                       fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr">{p.sym}</td>
@@ -509,7 +515,7 @@ export default function CatalystPit() {
                 <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
               </div>
             )) : insidersShown.map((ins, i) => (
-              <div key={i} className="hov" style={{padding:"10px 14px",
+              <div key={i} className="hov" onClick={() => goTicker(ins.sym)} style={{padding:"10px 14px",
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>
@@ -541,8 +547,9 @@ export default function CatalystPit() {
                 <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
               </div>
             )) : politicians.slice(0, 8).map((p, i) => (
-              <div key={i} className="hov" style={{padding:"10px 14px",
-                borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
+              <div key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
+                style={{padding:"10px 14px",
+                borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:p.slug ? "pointer" : "default"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>
                     <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:12,

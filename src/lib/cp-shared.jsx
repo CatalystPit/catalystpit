@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
 
 // ─── PALETTE ────────────────────────────────────────────────────────────────
@@ -324,6 +325,46 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
   return cardInner;
 }
 
+// ─── SYMBOL SEARCH (nav) ─────────────────────────────────────────────────────
+// Submits to /ticker/{SYMBOL}; the ticker page's own validation cascade handles
+// junk via its not-found UX (no client-side validation / autocomplete in v1).
+export function SymbolSearch({ mobile = false, onNavigate }) {
+  const router = useRouter();
+  const [v, setV] = useState('');
+  const [focused, setFocused] = useState(false);
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    const s = v.trim().toUpperCase();
+    if (!s) return;                  // empty submit = no-op
+    setV('');                        // clear for the next search
+    if (onNavigate) onNavigate();    // close the mobile drawer
+    router.push(`/ticker/${encodeURIComponent(s)}`);
+  };
+  return (
+    <form onSubmit={submit} style={{ position: "relative", display: "flex", alignItems: "center",
+      height: 32, width: mobile ? "100%" : 280,
+      background: "#FFFFFF", borderRadius: 999,
+      border: `1px solid ${focused ? "#1E5C38" : "rgba(0,0,0,0.08)"}` }}>
+      <button type="submit" aria-label="Search ticker symbol" tabIndex={-1}
+        style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
+          background: "transparent", border: "none", padding: 0, margin: 0, cursor: "pointer",
+          display: "flex", alignItems: "center" }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E5C38"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      </button>
+      <input type="text" value={v} onChange={e => setV(e.target.value.toUpperCase())}
+        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+        aria-label="Search ticker symbol" placeholder="Search ticker, company..."
+        className="cp-nav-search-input"
+        style={{ width: "100%", height: "100%", background: "transparent", border: "none", outline: "none",
+          color: "#1A1A1A", fontFamily: "'DM Mono',monospace", fontSize: 14, letterSpacing: "0.5px",
+          padding: "0 14px 0 36px", borderRadius: 999, minWidth: 0 }} />
+    </form>
+  );
+}
+
 // ─── TOP NAV (sticky) ───────────────────────────────────────────────────────
 export function TopNav({ active }) {
   const links = ["Markets", "News", "Screener", "Insiders", "Politicians", "Charts", "Crypto"];
@@ -349,6 +390,7 @@ export function TopNav({ active }) {
       </div>
 
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
+        <span className="cp-nav-search"><SymbolSearch /></span>
         <SignedOut>
           <a href="/sign-in" style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)",
             color:"rgba(255,255,255,0.9)", padding:"6px 14px", borderRadius:5, fontSize:12,
@@ -385,6 +427,9 @@ export function TopNav({ active }) {
         <div className="cp-nav-menu" style={{position:"absolute", top:50, left:0, right:0,
           flexDirection:"column", background:C.navBg, borderBottom:"1px solid rgba(255,255,255,0.15)",
           boxShadow:"0 8px 16px rgba(0,0,0,0.25)"}}>
+          <div style={{padding:"11px 24px", borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+            <SymbolSearch mobile onNavigate={() => setMenuOpen(false)} />
+          </div>
           {links.map(l => (
             <a key={l} href={`/${l.toLowerCase()}`} onClick={() => setMenuOpen(false)}
               style={{fontSize:14, color:linkColor(l), fontWeight: active === l ? 600 : 400,
@@ -446,6 +491,7 @@ export function TickerTape({tickers}) {
 // ─── MARKET SNAPSHOT SIDEBAR CARD ───────────────────────────────────────────
 export function MarketSnapshotCard({tickers, loading=false}) {
   const hasData = tickers && tickers.length > 0;
+  const router = useRouter();
   return (
     <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
       <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface,
@@ -460,7 +506,8 @@ export function MarketSnapshotCard({tickers, loading=false}) {
           <Skel h={12} mb={0}/>
         </div>
       )) : tickers.map((t, i) => (
-        <div key={i} className="hov" style={{display:"flex", justifyContent:"space-between",
+        <div key={i} className="hov" onClick={() => { if (t.sym && t.sym !== "?") router.push(`/ticker/${encodeURIComponent(t.sym)}`); }}
+          style={{display:"flex", justifyContent:"space-between",
           alignItems:"center", padding:"9px 14px",
           borderBottom:i < tickers.length - 1 ? `1px solid ${C.surface}` : "none",
           transition:"background 0.15s", cursor:"pointer"}}>
