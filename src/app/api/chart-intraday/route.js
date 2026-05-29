@@ -92,7 +92,8 @@ export async function GET(request) {
     const from   = etInfo(now - (range === '5D' ? 9 : 5) * DAY).ymd;
     const to     = etInfo(now).ymd;
 
-    const { ok, results } = await fetchPolygonMinuteAggs(ticker, mult, from, to, process.env.POLYGON_API_KEY);
+    // Accept either env-var name: POLYGON_API_KEY (local .env.local) or POLYGON_KEY (Vercel).
+    const { ok, results } = await fetchPolygonMinuteAggs(ticker, mult, from, to, process.env.POLYGON_API_KEY || process.env.POLYGON_KEY);
 
     if (!ok) {
       // Polygon failed → better stale than empty: serve the long-lived last-good copy if present.
