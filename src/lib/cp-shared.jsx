@@ -342,19 +342,24 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
   };
   return (
     <form onSubmit={submit} style={{ position: "relative", display: "flex", alignItems: "center",
-      height: 32, width: mobile ? "100%" : 260,
-      background: "rgba(255,255,255,0.08)", borderRadius: 999,
-      border: `1px solid ${focused ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.15)"}` }}>
+      height: 32, width: mobile ? "100%" : 280,
+      background: "#FFFFFF", borderRadius: 999,
+      border: `1px solid ${focused ? "#1E5C38" : "rgba(0,0,0,0.08)"}` }}>
       <button type="submit" aria-label="Search ticker symbol" tabIndex={-1}
         style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
           background: "transparent", border: "none", padding: 0, margin: 0, cursor: "pointer",
-          color: "rgba(255,255,255,0.5)", fontSize: 15, lineHeight: 1, display: "flex", alignItems: "center" }}>🔍</button>
+          display: "flex", alignItems: "center" }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E5C38"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      </button>
       <input type="text" value={v} onChange={e => setV(e.target.value.toUpperCase())}
         onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
         aria-label="Search ticker symbol" placeholder="Search ticker, company..."
         className="cp-nav-search-input"
         style={{ width: "100%", height: "100%", background: "transparent", border: "none", outline: "none",
-          color: "#fff", fontFamily: "'DM Mono',monospace", fontSize: 14, letterSpacing: "0.5px",
+          color: "#1A1A1A", fontFamily: "'DM Mono',monospace", fontSize: 14, letterSpacing: "0.5px",
           padding: "0 14px 0 36px", borderRadius: 999, minWidth: 0 }} />
     </form>
   );
