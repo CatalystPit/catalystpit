@@ -181,7 +181,7 @@ export default function CatalystPit() {
               </div>
               <div style={{display:"flex", alignItems:"center", gap:6,
                 fontFamily:"'DM Mono',monospace", fontSize:10, color:C.dim}}>
-                <Dot/>AI LIVE · {timeStr}
+                {timeStr}
                 <button onClick={loadData} style={{background:"transparent", border:"none",
                   color:C.muted, cursor:"pointer", fontSize:11, padding:"2px 6px",
                   borderRadius:4, fontFamily:"'DM Mono',monospace"}}

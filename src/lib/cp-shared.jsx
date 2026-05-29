@@ -378,10 +378,10 @@ export function TopNav({ active }) {
 
       {/* Desktop links — hidden ≤860px via .cp-nav-links */}
       <div className="cp-nav-links" style={{gap:20, alignItems:"center", marginLeft:40,
-        borderLeft:`1px solid rgba(255,255,255,0.2)`, paddingLeft:40}}>
+        paddingLeft:40}}>
         {links.map(l => (
           <a key={l} href={`/${l.toLowerCase()}`} className="nbtn"
-            style={{fontSize:12, color:linkColor(l), cursor:"pointer", transition:"color 0.2s",
+            style={{fontSize:15, color:linkColor(l), cursor:"pointer", transition:"color 0.2s",
               fontWeight: active === l ? 600 : 400, letterSpacing:"0.02em", textDecoration:"none",
               borderBottom: active === l ? "2px solid #5AB87A" : "none", paddingBottom: active === l ? 2 : 0}}>
             {l}
@@ -393,19 +393,19 @@ export function TopNav({ active }) {
         <span className="cp-nav-search"><SymbolSearch /></span>
         <SignedOut>
           <a href="/sign-in" style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)",
-            color:"rgba(255,255,255,0.9)", padding:"6px 14px", borderRadius:5, fontSize:12,
-            cursor:"pointer", textDecoration:"none", display:"inline-block",
+            color:"rgba(255,255,255,0.9)", height:32, padding:"0 16px", borderRadius:5, fontSize:13,
+            cursor:"pointer", textDecoration:"none", display:"inline-flex", alignItems:"center",
             fontFamily:"'DM Sans',sans-serif", fontWeight:300}}
             onMouseEnter={e => { e.currentTarget.style.color = "#FFFFFF"; }}
             onMouseLeave={e => { e.currentTarget.style.color = "rgba(255,255,255,0.75)"; }}>
             Log In
           </a>
-          <a href="/sign-up" style={{background:C.green, border:"none", color:"#fff",
-            padding:"7px 18px", borderRadius:5, fontSize:12, fontWeight:500,
-            textDecoration:"none", display:"inline-block", cursor:"pointer",
+          <a href="/sign-up" style={{background:"#FFFFFF", border:"none", color:"#1E5C38",
+            height:32, padding:"0 18px", borderRadius:5, fontSize:13, fontWeight:600,
+            textDecoration:"none", display:"inline-flex", alignItems:"center", cursor:"pointer",
             fontFamily:"'DM Sans',sans-serif"}}
-            onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-            onMouseLeave={e => e.currentTarget.style.background = C.green}>
+            onMouseEnter={e => e.currentTarget.style.background = "#F5F6F3"}
+            onMouseLeave={e => e.currentTarget.style.background = "#FFFFFF"}>
             Start Free
           </a>
         </SignedOut>
@@ -548,7 +548,7 @@ export function CatalystBriefCard() {
           letterSpacing:"1.5px", marginBottom:8}}>THE CATALYST BRIEF</div>
         <div style={{fontFamily:"'Cormorant Garamond',serif", fontSize:19, fontWeight:300,
           color:"#FFFFFF", lineHeight:1.3, marginBottom:6}}>
-          Your morning edge.<br/><em style={{color:"#5AB87A"}}>Delivered at 6 AM.</em>
+          Your morning edge.<br/><em style={{color:"#1E5C38", fontWeight:600, fontSize:22}}>Delivered at 6 AM.</em>
         </div>
         <p style={{fontSize:12, color:"#3A5A42", fontWeight:300, lineHeight:1.7, marginBottom:12}}>
           Top movers, insider trades, politician buys, and one high-conviction idea.
