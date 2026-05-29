@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, boolean, doublePrecision, date, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, integer, boolean, doublePrecision, date, timestamp, uniqueIndex, index, primaryKey } from 'drizzle-orm/pg-core';
 
 export const insiderTrades = pgTable('insider_trades', {
   id:               serial('id').primaryKey(),
@@ -85,3 +85,21 @@ export const congressTickerPrices = pgTable('congress_ticker_prices', {
   asOfDate:     date('as_of_date', { mode: 'string' }),
   updatedAt:    timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Permanent cache of daily EOD candles for the ticker price chart (1M+ timeframes).
+// Stores SPLIT/DIVIDEND-ADJUSTED OHLCV (mapped from Tiingo adj* fields on insert) so
+// historical charts have no split-induced discontinuities. Past dates are immutable —
+// once stored, never re-fetched; only today's row is refreshed post-close. The composite
+// PK (ticker, date) btree serves the sole query: range scan per ticker ordered by date.
+export const tickerDailyCandles = pgTable('ticker_daily_candles', {
+  ticker:  text('ticker').notNull(),
+  date:    date('date', { mode: 'string' }).notNull(),
+  open:    doublePrecision('open').notNull(),               // = Tiingo adjOpen
+  high:    doublePrecision('high').notNull(),               // = Tiingo adjHigh
+  low:     doublePrecision('low').notNull(),                // = Tiingo adjLow
+  close:   doublePrecision('close').notNull(),              // = Tiingo adjClose
+  volume:  doublePrecision('volume').notNull().default(0),  // = Tiingo adjVolume (fractional after splits)
+  source:  text('source').notNull().default('tiingo'),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.ticker, t.date] }),
+}));
