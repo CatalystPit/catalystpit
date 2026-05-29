@@ -11,6 +11,10 @@
     {
       "path": "/api/refresh-congress",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/prewarm",
+      "schedule": "*/5 * * * *"
     }
   ],
   "headers": [
@@ -42,6 +46,9 @@
       "maxDuration": 60
     },
     "src/app/api/refresh-congress/route.js": {
+      "maxDuration": 60
+    },
+    "src/app/api/prewarm/route.js": {
       "maxDuration": 60
     },
     "src/app/api/claude/route.js": {
