@@ -51,6 +51,8 @@ const fmtVal = (v) => {
 };
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const pad2 = (n) => String(n).padStart(2, '0');
+const partyAbbr = (p) => { const s = (p || '').toLowerCase(); return s.startsWith('democrat') ? 'DEM' : s.startsWith('republican') ? 'REP' : p ? 'IND' : '—'; };
+const chamberLabel = (c) => c === 'senate' ? 'Senate' : c === 'house' ? 'House' : '';
 
 // Stable keys so a crosshair/click param.time can look up the markers placed at that time.
 // Daily marker time = 'YYYY-MM-DD' string; param.time = BusinessDay obj. Intraday = number.
@@ -59,13 +61,21 @@ const keyOfParamTime = (t) =>
   (typeof t === 'number') ? `t${t}`
   : (t && typeof t === 'object') ? `d${t.year}-${pad2(t.month)}-${pad2(t.day)}`
   : `d${t}`;
+const timeLt = (a, b) => (typeof a === 'number' ? a - b : String(a).localeCompare(String(b)));
 
-// Build insider markers from the trade list + the loaded candle rows.
-//  - BUY → green arrowUp belowBar; SELL → red arrowDown aboveBar; OTHER skipped.
-//  - anchored on transactionDate, snapped to the nearest candle on/after that date.
-//  - filtered to the visible range; same-day same-action trades aggregate into one marker.
-// Returns { markers (sorted asc), map: timeKey → trades[] } for the hover/click tooltip.
-function buildInsiderMarkers(rows, intraday, trades) {
+// Vertical convention: BUYS at bottom (belowBar), SELLS at top (aboveBar); color green=buy/red=sell.
+// SHAPE differentiates source: insider = arrows, congress = circles.
+const INSIDER_STYLE = (action) => action === 'BUY'
+  ? { position: 'belowBar', color: GREEN, shape: 'arrowUp' }
+  : { position: 'aboveBar', color: RED, shape: 'arrowDown' };
+const CONGRESS_STYLE = (action) => action === 'BUY'
+  ? { position: 'belowBar', color: GREEN, shape: 'circle' }
+  : { position: 'aboveBar', color: RED, shape: 'circle' };
+
+// Build markers from a trade list + loaded candle rows. BUY/SELL only (drops OTHER/EXCHANGE);
+// anchored on transactionDate snapped to nearest candle on/after; filtered to visible range;
+// same-day same-action aggregated to one marker. Returns { markers (sorted), map: timeKey→trades[] }.
+function buildMarkers(rows, intraday, trades, styleFor) {
   if (!rows?.length || !trades?.length) return { markers: [], map: new Map() };
   let snap, inRange;
   if (!intraday) {
@@ -92,35 +102,47 @@ function buildInsiderMarkers(rows, intraday, trades) {
     if (!map.has(tk)) map.set(tk, []);
     map.get(tk).push(t);
   }
-  const markers = [...groups.values()].map((g) => ({
-    time: g.time,
-    position: g.action === 'BUY' ? 'belowBar' : 'aboveBar',
-    color: g.action === 'BUY' ? GREEN : RED,
-    shape: g.action === 'BUY' ? 'arrowUp' : 'arrowDown',
-    text: '',
-  }));
-  markers.sort((a, b) => (typeof a.time === 'number' ? a.time - b.time : String(a.time).localeCompare(String(b.time))));
+  const markers = [...groups.values()].map((g) => ({ time: g.time, ...styleFor(g.action), text: '' }));
+  markers.sort((a, b) => timeLt(a.time, b.time));
   return { markers, map };
 }
 
-function markerTooltipHTML(trades) {
+// ── tooltip sections (labeled only when both insider + congress share a date) ──
+function insiderSection(trades, labeled) {
+  const head = labeled ? `<div style="font-size:8px;letter-spacing:0.8px;color:${C.dim};font-family:'DM Mono',monospace;margin-bottom:2px">INSIDER</div>` : '';
   if (trades.length === 1) {
-    const t = trades[0];
-    const col = t.action === 'BUY' ? GREEN : RED;
-    return `<div style="font-weight:600;color:${C.ink};font-size:12px">${esc(t.executive)}</div>`
+    const t = trades[0], col = t.action === 'BUY' ? GREEN : RED;
+    return head
+      + `<div style="font-weight:600;color:${C.ink};font-size:12px">${esc(t.executive)}</div>`
       + `<div style="color:${C.dim};font-size:10px;margin-top:1px">${esc(t.title || '—')}</div>`
       + `<div style="margin-top:4px;font-size:11px"><span style="color:${col};font-weight:600">${t.action}</span> · ${fmtVal(t.totalValue)}</div>`;
   }
-  const top = trades.slice(0, 6).map((t) => {
+  const rows = trades.slice(0, 6).map((t) => {
     const col = t.action === 'BUY' ? GREEN : RED;
     return `<div style="font-size:10px;margin-top:2px"><span style="color:${col};font-weight:600">${t.action}</span> ${esc(t.executive)} · ${fmtVal(t.totalValue)}</div>`;
   }).join('');
   const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more — click for all</div>` : '';
-  return `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} insider trades</div>${top}${more}`;
+  return head + `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} insider trades</div>${rows}${more}`;
+}
+function congressSection(trades, labeled) {
+  const head = labeled ? `<div style="font-size:8px;letter-spacing:0.8px;color:${C.dim};font-family:'DM Mono',monospace;margin-bottom:2px">CONGRESS</div>` : '';
+  if (trades.length === 1) {
+    const t = trades[0], col = t.action === 'BUY' ? GREEN : RED;
+    const sub = [partyAbbr(t.party), t.state, chamberLabel(t.chamber)].filter(Boolean).join(' · ');
+    return head
+      + `<div style="font-weight:600;color:${C.ink};font-size:12px">${esc(t.representative)}</div>`
+      + `<div style="color:${C.dim};font-size:10px;margin-top:1px">${esc(sub)}</div>`
+      + `<div style="margin-top:4px;font-size:11px"><span style="color:${col};font-weight:600">${t.action}</span> · ${esc(t.amountRange || fmtVal(t.amountMid))}</div>`;
+  }
+  const rows = trades.slice(0, 6).map((t) => {
+    const col = t.action === 'BUY' ? GREEN : RED;
+    return `<div style="font-size:10px;margin-top:2px"><span style="color:${col};font-weight:600">${t.action}</span> ${esc(t.representative)} (${partyAbbr(t.party)} ${esc(t.state || '')}) · ${fmtVal(t.amountMid)}</div>`;
+  }).join('');
+  const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more — click for all</div>` : '';
+  return head + `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} congress trades</div>${rows}${more}`;
 }
 
 export default function TickerChart({ ticker, initialRange = '1D', insiderTrades = [], congressTrades = [] }) {
-  // congressTrades accepted for stable wiring; congress markers land in Step 9.
   const [range, setRange] = useState(initialRange);
   const [chartType, setChartType] = useState('Line');   // 'Line' | 'Candles' — session-only, not in URL
   const [loading, setLoading] = useState(true);
@@ -136,24 +158,30 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
   const seriesTypeRef = useRef('Line');
   const lastRowsRef = useRef(null);    // { rows, intraday } — raw OHLC, source for either series shape
   const markersApiRef = useRef(null);  // ISeriesMarkersPluginApi (per series instance)
-  const markerMapRef = useRef(new Map());  // timeKey → trades[], for hover/click
+  const insiderMapRef = useRef(new Map());   // timeKey → insider trades[]
+  const congressMapRef = useRef(new Map());  // timeKey → congress trades[]
   const insiderRef = useRef(insiderTrades);
+  const congressRef = useRef(congressTrades);
   const rangeRef = useRef(range);
   const chartTypeRef = useRef(chartType);
   const routerRef = useRef(router);
   insiderRef.current = insiderTrades;
+  congressRef.current = congressTrades;
   rangeRef.current = range;
   chartTypeRef.current = chartType;
   routerRef.current = router;
 
-  // (Re)compute + place insider markers on the current series.
+  // (Re)compute + place both insider (arrows) and congress (circles) markers in one call.
   const applyMarkers = useCallback(() => {
     const lwc = lwcRef.current, s = seriesRef.current, lr = lastRowsRef.current;
     if (!lwc || !s) return;
-    const { markers, map } = lr ? buildInsiderMarkers(lr.rows, lr.intraday, insiderRef.current) : { markers: [], map: new Map() };
-    markerMapRef.current = map;
-    if (markersApiRef.current) markersApiRef.current.setMarkers(markers);
-    else markersApiRef.current = lwc.createSeriesMarkers(s, markers);
+    const ins = lr ? buildMarkers(lr.rows, lr.intraday, insiderRef.current, INSIDER_STYLE) : { markers: [], map: new Map() };
+    const con = lr ? buildMarkers(lr.rows, lr.intraday, congressRef.current, CONGRESS_STYLE) : { markers: [], map: new Map() };
+    insiderMapRef.current = ins.map;
+    congressMapRef.current = con.map;
+    const combined = [...ins.markers, ...con.markers].sort((a, b) => timeLt(a.time, b.time));
+    if (markersApiRef.current) markersApiRef.current.setMarkers(combined);
+    else markersApiRef.current = lwc.createSeriesMarkers(s, combined);
   }, []);
 
   // Build the series data shape for the active chart type from the cached raw rows.
@@ -208,16 +236,21 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
       });
       chartRef.current = chart;
 
-      // crosshair → floating tooltip. Over a marker → insider card; else price. Reads refs so it survives swaps.
+      // crosshair → floating tooltip. Over a marker date → insider/congress card(s); else price.
       chart.subscribeCrosshairMove((param) => {
         const tip = tipRef.current;
         if (!tip) return;
         const offscreen = !param.point || param.point.x < 0 || param.point.y < 0;
         if (!param.time || offscreen) { tip.style.display = 'none'; return; }
-        const mtrades = markerMapRef.current.get(keyOfParamTime(param.time));
+        const key = keyOfParamTime(param.time);
+        const ins = insiderMapRef.current.get(key);
+        const con = congressMapRef.current.get(key);
         let html = null;
-        if (mtrades && mtrades.length) {
-          html = markerTooltipHTML(mtrades);
+        if ((ins && ins.length) || (con && con.length)) {
+          const both = (ins && ins.length) && (con && con.length);
+          html = [ins?.length ? insiderSection(ins, both) : '', con?.length ? congressSection(con, both) : '']
+            .filter(Boolean)
+            .join(`<div style="border-top:1px solid ${C.border};margin:6px 0"></div>`);
         } else {
           const v = param.seriesData?.get(seriesRef.current);
           const price = v ? (v.value ?? v.close) : null;
@@ -235,11 +268,19 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
         tip.style.top = `${Math.max(8, param.point.y - 36)}px`;
       });
 
-      // click a marker's candle → jump to the Insider Trades tab (same page)
+      // click a marker's candle → congress takes priority (single → /politicians/{slug} or
+      // ?tab=government when slug is null; aggregated → ?tab=government); else insider → ?tab=insider.
       chart.subscribeClick((param) => {
         if (!param.time) return;
-        const mtrades = markerMapRef.current.get(keyOfParamTime(param.time));
-        if (mtrades && mtrades.length) routerRef.current.push(`/ticker/${encodeURIComponent(ticker)}?tab=insider`);
+        const key = keyOfParamTime(param.time);
+        const con = congressMapRef.current.get(key);
+        const ins = insiderMapRef.current.get(key);
+        if (con && con.length) {
+          if (con.length === 1 && con[0].slug) routerRef.current.push(`/politicians/${encodeURIComponent(con[0].slug)}`);
+          else routerRef.current.push(`/ticker/${encodeURIComponent(ticker)}?tab=government`);
+        } else if (ins && ins.length) {
+          routerRef.current.push(`/ticker/${encodeURIComponent(ticker)}?tab=insider`);
+        }
       });
 
       buildSeries(chartTypeRef.current);
@@ -279,8 +320,8 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
     if (chartRef.current && lwcRef.current) { buildSeries(chartType); applyData(); }
   }, [chartType, buildSeries, applyData]);
 
-  // ── re-apply markers when insider data resolves (chart isn't blocked on the insider fetch) ──
-  useEffect(() => { applyMarkers(); }, [insiderTrades, applyMarkers]);
+  // ── re-apply markers when insider/congress data resolves (chart isn't blocked on those fetches) ──
+  useEffect(() => { applyMarkers(); }, [insiderTrades, congressTrades, applyMarkers]);
 
   const showDelayedPrefix = isIntraday(range) && delayed;
 
