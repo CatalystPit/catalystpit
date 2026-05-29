@@ -59,12 +59,13 @@ const fetchProfile = async (sym) => {
   const p = await fh(`/stock/profile2?symbol=${encodeURIComponent(sym)}`);
   if (p == null) return null;
   return { name: p.name || null, exchange: p.exchange || null, ticker: p.ticker || sym,
-           industry: p.finnhubIndustry || null, logo: p.logo || null };
+           industry: p.finnhubIndustry || null, logo: p.logo || null,
+           country: p.country || null, ipo: p.ipo || null, weburl: p.weburl || null };
 };
 const fetchQuote = async (sym) => {
   const q = await fh(`/quote?symbol=${encodeURIComponent(sym)}`);
   if (q == null) return null;
-  return { c: q.c ?? null, d: q.d ?? null, dp: q.dp ?? null, h: q.h ?? null, l: q.l ?? null, pc: q.pc ?? null };
+  return { c: q.c ?? null, d: q.d ?? null, dp: q.dp ?? null, h: q.h ?? null, l: q.l ?? null, o: q.o ?? null, pc: q.pc ?? null };
 };
 const fetchMetric = async (sym) => {
   const r = await fh(`/stock/metric?symbol=${encodeURIComponent(sym)}&metric=all`);
@@ -143,6 +144,7 @@ export async function GET(request) {
     return Response.json({
       symbol: sym, valid: true,
       name: v.name, exchange: prof.value?.exchange ?? null, industry: prof.value?.industry ?? null, logo: prof.value?.logo ?? null,
+      country: prof.value?.country ?? null, ipo: prof.value?.ipo ?? null, weburl: prof.value?.weburl ?? null,
       quote: quote.value, metric: metric.value, news: news.value,
       meta,
     });
