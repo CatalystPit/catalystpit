@@ -140,6 +140,7 @@ export default function CatalystPit() {
 
   const router = useRouter();
   const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
+  const goPolitician = (slug) => { if (slug) router.push(`/politicians/${encodeURIComponent(slug)}`); };
 
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
@@ -397,8 +398,9 @@ export default function CatalystPit() {
                 {loading ? Array(3).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
                 )) : politicians.slice(0, 10).map((p, i, arr) => (
-                  <tr key={i} className="hov" style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
-                    transition:"background 0.15s", cursor:"pointer",
+                  <tr key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
+                    style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
+                    transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
                     borderLeft:`3px solid ${insStyle(p.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
                       fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr">{p.sym}</td>
@@ -545,8 +547,9 @@ export default function CatalystPit() {
                 <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
               </div>
             )) : politicians.slice(0, 8).map((p, i) => (
-              <div key={i} className="hov" style={{padding:"10px 14px",
-                borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
+              <div key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
+                style={{padding:"10px 14px",
+                borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:p.slug ? "pointer" : "default"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>
                     <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:12,
