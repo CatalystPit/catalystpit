@@ -15,6 +15,18 @@ const fmtMktCap = (m) => {                 // Finnhub marketCapitalization is in
   if (m >= 1e3) return `$${(m / 1e3).toFixed(2)}B`;
   return `$${Number(m).toFixed(0)}M`;
 };
+// Earnings formatters — fmtBig takes raw dollars (revenue), EPS keeps 2 decimals, YoY 1 decimal.
+const fmtBig = (n) => {
+  if (n == null || isNaN(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (a >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`;
+  if (a >= 1e6)  return `$${(n / 1e6).toFixed(2)}M`;
+  if (a >= 1e3)  return `$${(n / 1e3).toFixed(2)}K`;
+  return `$${Number(n).toFixed(0)}`;
+};
+const fmtEps = (n) => (n == null || isNaN(n)) ? '—' : (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
+const fmtYoy = (v) => (v == null || isNaN(v)) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
 
 // ── trade helpers (mirror /insiders) ──
 const actionStyle = (t) => t === 'BUY' ? { fg: C.green, bg: C.greenLight }
@@ -63,7 +75,6 @@ const TABS = [
   { id: 'financials', label: 'Financials' },
 ];
 const PLACEHOLDERS = {
-  earnings:   'Quarterly EPS estimates, actuals, surprise percentage, and earnings history.',
   options:    'Unusual options activity — large call and put buys, premium volume, and bullish/bearish flow signals.',
   guidance:   'Company-issued forward guidance, revenue and EPS forecasts, and guidance revisions.',
   dividends:  'Dividend history, payout schedule, ex-dividend dates, and yield trends.',
@@ -368,6 +379,64 @@ function GovernmentTab({ symbol, gov }) {
   );
 }
 
+// Earnings table — SEC EDGAR quarterly history (mirrors the insider/gov table markup).
+function EarningsTable({ rows }) {
+  const headers = [['Quarter', 'left'], ['Report date', 'left'], ['Revenue', 'right'], ['Rev YoY', 'right'],
+    ['EPS (basic)', 'right'], ['EPS YoY', 'right'], ['Filing', 'right']];
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+        <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+          {headers.map(([h, al]) => (
+            <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+          ))}
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none' }}>
+              <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 400, color: C.ink, whiteSpace: 'nowrap' }}>
+                {r.quarter}{r.derived && <sup title="Q4 derived from the annual 10-K (full year minus Q1–Q3)" style={{ color: C.dim, fontWeight: 400, marginLeft: 2, cursor: 'help' }}>↑</sup>}
+              </td>
+              <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.report_date || '—'}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtBig(r.revenue)}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600, color: retColor(r.revenue_yoy_pct), whiteSpace: 'nowrap' }}>{fmtYoy(r.revenue_yoy_pct)}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtEps(r.eps_basic)}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600, color: retColor(r.eps_yoy_pct), whiteSpace: 'nowrap' }}>{fmtYoy(r.eps_yoy_pct)}</td>
+              <td style={{ padding: '11px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                {r.filing_url
+                  ? <a href={r.filing_url} target="_blank" rel="noopener noreferrer" className="sym-lnk" style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.green, textDecoration: 'none' }}>{r.form} ↗</a>
+                  : <span style={{ color: C.dim }}>—</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Earnings tab — /api/earnings?ticker= (SEC EDGAR XBRL). Reported figures only; estimates = Pro.
+function EarningsTab({ symbol, earnings }) {
+  const loading = earnings == null;
+  const rows = earnings?.earnings || [];
+  const hasDerived = rows.some((r) => r.derived);
+  return (
+    <Section title="Earnings history">
+      {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
+        : rows.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No earnings filings on file for {symbol}.</div>
+        : (
+          <>
+            <EarningsTable rows={rows} />
+            <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
+              Reported figures from SEC filings. Analyst estimates and consensus available with Pro.
+              {hasDerived && <><br />↑ Q4 derived from the annual 10-K (full year minus Q1–Q3).</>}
+            </div>
+          </>
+        )}
+    </Section>
+  );
+}
+
 const fmtIpo = (s) => {
   if (!s) return '—';
   const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
@@ -449,9 +518,10 @@ function OverviewTab({ data, insider, gov, onTab }) {
   );
 }
 
-function TabContent({ tab, data, insider, gov, onTab }) {
+function TabContent({ tab, data, insider, gov, earnings, onTab }) {
   if (tab === 'overview') return <OverviewTab data={data} insider={insider} gov={gov} onTab={onTab} />;
   if (tab === 'news') return <NewsTab data={data} />;
+  if (tab === 'earnings') return <EarningsTab symbol={data.symbol} earnings={earnings} />;
   if (tab === 'insider') return <InsiderTab symbol={data.symbol} insider={insider} />;
   if (tab === 'government') return <GovernmentTab symbol={data.symbol} gov={gov} />;
   if (PLACEHOLDERS[tab]) {
@@ -462,12 +532,12 @@ function TabContent({ tab, data, insider, gov, onTab }) {
   return <BuildingStub label={t.label} />;
 }
 
-function ValidView({ data, tab, onTab, insider, gov }) {
+function ValidView({ data, tab, onTab, insider, gov, earnings }) {
   return (
     <>
       <Hero data={data} insider={insider} gov={gov} />
       <TabBar active={tab} onSelect={onTab} />
-      <TabContent tab={tab} data={data} insider={insider} gov={gov} onTab={onTab} />
+      <TabContent tab={tab} data={data} insider={insider} gov={gov} earnings={earnings} onTab={onTab} />
     </>
   );
 }
@@ -524,6 +594,7 @@ function TickerBody({ symbol }) {
   const [error, setError] = useState(null);
   const [insider, setInsider] = useState(null);   // null = loading; { trades } = loaded
   const [gov, setGov] = useState(null);            // null = loading; { trades } = loaded
+  const [earnings, setEarnings] = useState(null);  // null = loading; { earnings:[] } = loaded
 
   useEffect(() => {
     let alive = true;
@@ -546,23 +617,24 @@ function TickerBody({ symbol }) {
   // Insider + government trades from Postgres (also feed the Overview previews in step 5).
   useEffect(() => {
     let alive = true;
-    setInsider(null); setGov(null);
-    const grab = async (url, set) => {
+    setInsider(null); setGov(null); setEarnings(null);
+    const grab = async (url, set, fallback = { trades: [] }) => {
       try {
         const r = await fetch(url);
         const j = r.ok ? await r.json() : null;
-        if (alive) set(j && !j.error ? j : { trades: [] });
-      } catch { if (alive) set({ trades: [] }); }
+        if (alive) set(j && !j.error ? j : fallback);
+      } catch { if (alive) set(fallback); }
     };
     grab(`/api/insiders?ticker=${encodeURIComponent(symbol)}`, setInsider);
     grab(`/api/politicians?ticker=${encodeURIComponent(symbol)}`, setGov);
+    grab(`/api/earnings?ticker=${encodeURIComponent(symbol)}`, setEarnings, { earnings: [] });
     return () => { alive = false; };
   }, [symbol]);
 
   if (loading) return <LoadingShell />;
   if (error) return <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '40px 16px', textAlign: 'center', color: C.red, fontSize: 13 }}>Failed to load {symbol}: {error}</div>;
   if (!data?.valid) return <NotFound symbol={data?.symbol || symbol} />;
-  return <ValidView data={data} tab={tab} onTab={onTab} insider={insider} gov={gov} />;
+  return <ValidView data={data} tab={tab} onTab={onTab} insider={insider} gov={gov} earnings={earnings} />;
 }
 
 export default function TickerPage({ symbol }) {
