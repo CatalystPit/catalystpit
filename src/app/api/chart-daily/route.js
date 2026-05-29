@@ -20,9 +20,10 @@ const isoDate = (ms) => new Date(ms).toISOString().slice(0, 10);          // UTC
 const nextDay = (d) => isoDate(Date.parse(d) + DAY);
 const daysBetween = (a, b) => (Date.parse(b) - Date.parse(a)) / DAY;
 
-// Earliest boundary for "all" — Tiingo only returns from the ticker's actual
-// inception anyway, so this floor is just a safe lower bound (no IPO lookup needed).
-const ALL_FLOOR = '1990-01-01';
+// Earliest boundary for "all" — set well before any Tiingo equity coverage (~1960s) so
+// "all" returns the ticker's true full history (e.g. AAPL from its 1980 inception). Tiingo
+// clamps to actual inception anyway, so a low floor is safe (no IPO lookup needed).
+const ALL_FLOOR = '1960-01-01';
 
 // Boundary tolerance (calendar days): a cache whose earliest stored row is within
 // this many days of the requested start is treated as already covering the head —
@@ -100,12 +101,15 @@ export async function GET(request) {
             source: 'tiingo',
           }))
           .filter((r) => r.date && [r.open, r.high, r.low, r.close].every(Number.isFinite));
-        if (rows.length) {
+        // Chunk inserts: 8 columns/row vs Postgres' 65535 bind-param cap ⇒ ≤8191 rows/statement.
+        // 1000 keeps a wide margin and handles full histories (e.g. AAPL 'all' ≈ 11k rows).
+        const CHUNK = 1000;
+        for (let i = 0; i < rows.length; i += CHUNK) {
           const ins = await db.insert(tickerDailyCandles)
-            .values(rows)
+            .values(rows.slice(i, i + CHUNK))
             .onConflictDoNothing({ target: [tickerDailyCandles.ticker, tickerDailyCandles.date] })
             .returning({ date: tickerDailyCandles.date });
-          fetched = ins.length;
+          fetched += ins.length;
         }
       }
     }
