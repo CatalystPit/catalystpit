@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { C, Dot } from '../lib/cp-shared';
 
 // Timeframe buttons, left→right. Intraday (Polygon) vs daily (Tiingo) split by route.
@@ -17,6 +18,7 @@ const RED = '#C0392B';        // matches the SELL color in insider/government ta
 // date-only display (no tz ambiguity), so the ET formatters no-op for them.
 const ET_HHMM = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const ET_DATETIME = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const ET_YMD = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }); // 'YYYY-MM-DD'
 const businessDayToDate = (t) =>            // BusinessDay {year,month,day} | 'YYYY-MM-DD' → Date(UTC)
   (t && typeof t === 'object') ? new Date(Date.UTC(t.year, t.month - 1, t.day))
   : (typeof t === 'string') ? new Date(Date.UTC(...t.split('-').map((n, i) => i === 1 ? +n - 1 : +n)))
@@ -40,25 +42,119 @@ function fmtTooltipTime(time, intraday) {
   return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : '';
 }
 
+const fmtVal = (v) => {
+  const n = Number(v);
+  if (!n || isNaN(n)) return '—';
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}k`;
+  return `$${n.toFixed(0)}`;
+};
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// Stable keys so a crosshair/click param.time can look up the markers placed at that time.
+// Daily marker time = 'YYYY-MM-DD' string; param.time = BusinessDay obj. Intraday = number.
+const keyOfMarkerTime = (t) => (typeof t === 'number') ? `t${t}` : `d${t}`;
+const keyOfParamTime = (t) =>
+  (typeof t === 'number') ? `t${t}`
+  : (t && typeof t === 'object') ? `d${t.year}-${pad2(t.month)}-${pad2(t.day)}`
+  : `d${t}`;
+
+// Build insider markers from the trade list + the loaded candle rows.
+//  - BUY → green arrowUp belowBar; SELL → red arrowDown aboveBar; OTHER skipped.
+//  - anchored on transactionDate, snapped to the nearest candle on/after that date.
+//  - filtered to the visible range; same-day same-action trades aggregate into one marker.
+// Returns { markers (sorted asc), map: timeKey → trades[] } for the hover/click tooltip.
+function buildInsiderMarkers(rows, intraday, trades) {
+  if (!rows?.length || !trades?.length) return { markers: [], map: new Map() };
+  let snap, inRange;
+  if (!intraday) {
+    const dates = rows.map((r) => r.date);          // ascending
+    const first = dates[0], last = dates[dates.length - 1];
+    inRange = (d) => d >= first && d <= last;
+    snap = (d) => { for (let i = 0; i < dates.length; i++) if (dates[i] >= d) return dates[i]; return null; };
+  } else {
+    const openByDate = new Map();                    // session date → first (open) bar time
+    for (const b of rows) { const ds = ET_YMD.format(new Date(b.time * 1000)); if (!openByDate.has(ds)) openByDate.set(ds, b.time); }
+    inRange = (d) => openByDate.has(d);              // intraday: only exact session-date matches
+    snap = (d) => openByDate.get(d) ?? null;
+  }
+  const groups = new Map();   // `${timeKey}|${action}` → { time, action }
+  const map = new Map();      // timeKey → trades[]
+  for (const t of trades) {
+    if (t.action !== 'BUY' && t.action !== 'SELL') continue;
+    const d = (t.transactionDate || '').slice(0, 10);
+    if (!d || !inRange(d)) continue;
+    const time = snap(d);
+    if (time == null) continue;
+    const tk = keyOfMarkerTime(time);
+    groups.set(`${tk}|${t.action}`, { time, action: t.action });
+    if (!map.has(tk)) map.set(tk, []);
+    map.get(tk).push(t);
+  }
+  const markers = [...groups.values()].map((g) => ({
+    time: g.time,
+    position: g.action === 'BUY' ? 'belowBar' : 'aboveBar',
+    color: g.action === 'BUY' ? GREEN : RED,
+    shape: g.action === 'BUY' ? 'arrowUp' : 'arrowDown',
+    text: '',
+  }));
+  markers.sort((a, b) => (typeof a.time === 'number' ? a.time - b.time : String(a.time).localeCompare(String(b.time))));
+  return { markers, map };
+}
+
+function markerTooltipHTML(trades) {
+  if (trades.length === 1) {
+    const t = trades[0];
+    const col = t.action === 'BUY' ? GREEN : RED;
+    return `<div style="font-weight:600;color:${C.ink};font-size:12px">${esc(t.executive)}</div>`
+      + `<div style="color:${C.dim};font-size:10px;margin-top:1px">${esc(t.title || '—')}</div>`
+      + `<div style="margin-top:4px;font-size:11px"><span style="color:${col};font-weight:600">${t.action}</span> · ${fmtVal(t.totalValue)}</div>`;
+  }
+  const top = trades.slice(0, 6).map((t) => {
+    const col = t.action === 'BUY' ? GREEN : RED;
+    return `<div style="font-size:10px;margin-top:2px"><span style="color:${col};font-weight:600">${t.action}</span> ${esc(t.executive)} · ${fmtVal(t.totalValue)}</div>`;
+  }).join('');
+  const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more — click for all</div>` : '';
+  return `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} insider trades</div>${top}${more}`;
+}
+
 export default function TickerChart({ ticker, initialRange = '1D', insiderTrades = [], congressTrades = [] }) {
-  // insiderTrades / congressTrades are accepted now for stable wiring; markers land in Steps 8–9.
+  // congressTrades accepted for stable wiring; congress markers land in Step 9.
   const [range, setRange] = useState(initialRange);
   const [chartType, setChartType] = useState('Line');   // 'Line' | 'Candles' — session-only, not in URL
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [delayed, setDelayed] = useState(false);
 
+  const router = useRouter();
   const wrapRef = useRef(null);        // chart container div
   const tipRef = useRef(null);         // floating tooltip div
-  const lwcRef = useRef(null);         // the imported lightweight-charts module
+  const lwcRef = useRef(null);         // imported lightweight-charts module
   const chartRef = useRef(null);       // IChartApi
   const seriesRef = useRef(null);      // current ISeriesApi (area or candlestick)
   const seriesTypeRef = useRef('Line');
   const lastRowsRef = useRef(null);    // { rows, intraday } — raw OHLC, source for either series shape
-  const rangeRef = useRef(range);      // for the crosshair handler (intraday vs daily)
+  const markersApiRef = useRef(null);  // ISeriesMarkersPluginApi (per series instance)
+  const markerMapRef = useRef(new Map());  // timeKey → trades[], for hover/click
+  const insiderRef = useRef(insiderTrades);
+  const rangeRef = useRef(range);
   const chartTypeRef = useRef(chartType);
+  const routerRef = useRef(router);
+  insiderRef.current = insiderTrades;
   rangeRef.current = range;
   chartTypeRef.current = chartType;
+  routerRef.current = router;
+
+  // (Re)compute + place insider markers on the current series.
+  const applyMarkers = useCallback(() => {
+    const lwc = lwcRef.current, s = seriesRef.current, lr = lastRowsRef.current;
+    if (!lwc || !s) return;
+    const { markers, map } = lr ? buildInsiderMarkers(lr.rows, lr.intraday, insiderRef.current) : { markers: [], map: new Map() };
+    markerMapRef.current = map;
+    if (markersApiRef.current) markersApiRef.current.setMarkers(markers);
+    else markersApiRef.current = lwc.createSeriesMarkers(s, markers);
+  }, []);
 
   // Build the series data shape for the active chart type from the cached raw rows.
   const applyData = useCallback(() => {
@@ -71,13 +167,15 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
       : rows.map((r) => ({ time: t(r), value: r.close }));
     s.setData(data);
     chart.timeScale().fitContent();
-  }, []);
+    applyMarkers();
+  }, [applyMarkers]);
 
-  // Mount (or swap) the series of a given type. Removes the old series first.
+  // Mount (or swap) the series of a given type. Removes the old series + its markers first.
   const buildSeries = useCallback((type) => {
     const chart = chartRef.current, lwc = lwcRef.current;
     if (!chart || !lwc) return;
     if (seriesRef.current) { chart.removeSeries(seriesRef.current); seriesRef.current = null; }
+    markersApiRef.current = null;        // old markers plugin died with the old series
     seriesRef.current = type === 'Candles'
       ? chart.addSeries(lwc.CandlestickSeries, {
           upColor: GREEN, downColor: RED, borderUpColor: GREEN, borderDownColor: RED,
@@ -110,30 +208,45 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
       });
       chartRef.current = chart;
 
-      // built-in crosshair → floating tooltip; reads seriesRef.current so it survives series swaps
+      // crosshair → floating tooltip. Over a marker → insider card; else price. Reads refs so it survives swaps.
       chart.subscribeCrosshairMove((param) => {
         const tip = tipRef.current;
         if (!tip) return;
-        const v = param.seriesData?.get(seriesRef.current);
-        const price = v ? (v.value ?? v.close) : null;
-        if (!param.time || !param.point || price == null || param.point.x < 0 || param.point.y < 0) {
-          tip.style.display = 'none';
-          return;
+        const offscreen = !param.point || param.point.x < 0 || param.point.y < 0;
+        if (!param.time || offscreen) { tip.style.display = 'none'; return; }
+        const mtrades = markerMapRef.current.get(keyOfParamTime(param.time));
+        let html = null;
+        if (mtrades && mtrades.length) {
+          html = markerTooltipHTML(mtrades);
+        } else {
+          const v = param.seriesData?.get(seriesRef.current);
+          const price = v ? (v.value ?? v.close) : null;
+          if (price != null) {
+            html = `<span style="color:${C.dim}">${fmtTooltipTime(param.time, isIntraday(rangeRef.current))}</span>` +
+              `&nbsp;&nbsp;<strong style="color:${C.ink}">$${Number(price).toFixed(2)}</strong>`;
+          }
         }
+        if (!html) { tip.style.display = 'none'; return; }
+        tip.innerHTML = html;
         tip.style.display = 'block';
-        tip.innerHTML = `<span style="color:${C.dim}">${fmtTooltipTime(param.time, isIntraday(rangeRef.current))}</span>` +
-          `&nbsp;&nbsp;<strong style="color:${C.ink}">$${Number(price).toFixed(2)}</strong>`;
         const w = wrapRef.current.clientWidth;
-        const left = Math.min(param.point.x + 14, w - 130);
+        const left = Math.min(param.point.x + 14, w - 170);
         tip.style.left = `${Math.max(8, left)}px`;
         tip.style.top = `${Math.max(8, param.point.y - 36)}px`;
+      });
+
+      // click a marker's candle → jump to the Insider Trades tab (same page)
+      chart.subscribeClick((param) => {
+        if (!param.time) return;
+        const mtrades = markerMapRef.current.get(keyOfParamTime(param.time));
+        if (mtrades && mtrades.length) routerRef.current.push(`/ticker/${encodeURIComponent(ticker)}?tab=insider`);
       });
 
       buildSeries(chartTypeRef.current);
       if (lastRowsRef.current) applyData();
     })();
-    return () => { disposed = true; if (chart) chart.remove(); chartRef.current = null; seriesRef.current = null; lwcRef.current = null; };
-  }, [buildSeries, applyData]);
+    return () => { disposed = true; if (chart) chart.remove(); chartRef.current = null; seriesRef.current = null; markersApiRef.current = null; lwcRef.current = null; };
+  }, [buildSeries, applyData, ticker]);
 
   // ── fetch + render whenever ticker or range changes (chart type preserved) ──
   const load = useCallback(async () => {
@@ -165,6 +278,9 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
   useEffect(() => {
     if (chartRef.current && lwcRef.current) { buildSeries(chartType); applyData(); }
   }, [chartType, buildSeries, applyData]);
+
+  // ── re-apply markers when insider data resolves (chart isn't blocked on the insider fetch) ──
+  useEffect(() => { applyMarkers(); }, [insiderTrades, applyMarkers]);
 
   const showDelayedPrefix = isIntraday(range) && delayed;
 
@@ -208,10 +324,10 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
           )}
 
           {/* floating tooltip — positioned by the crosshair handler */}
-          <div ref={tipRef} style={{ position: 'absolute', display: 'none', pointerEvents: 'none', zIndex: 5,
-            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, padding: '5px 9px',
-            fontFamily: "'DM Mono',monospace", fontSize: 11, whiteSpace: 'nowrap',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }} />
+          <div ref={tipRef} style={{ position: 'absolute', display: 'none', pointerEvents: 'none', zIndex: 5, maxWidth: 280,
+            background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, padding: '6px 10px',
+            fontFamily: "'DM Sans',sans-serif", fontSize: 11, lineHeight: 1.35,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.14)' }} />
         </div>
 
         {/* attribution (Apache-2.0 requirement) + dynamic delayed prefix */}
