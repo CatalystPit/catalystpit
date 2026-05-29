@@ -112,11 +112,15 @@ const newsTime = (iso) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
+// Yahoo-via-Finnhub always returns this one generic placeholder (no real Yahoo thumbnails
+// exist in our feed) → treat it as "no image" so we fall back to the gradient, not a y!fi wall.
+const isYfiPlaceholder = (url) => /\/yahoo_finance_[a-z-]+_h_p_finance/i.test(url || '');
+
 // Mirrors /news NewsRowCard (thumb + source·time + 2-line headline), minus tag/ticker chips.
 function NewsRow({ n, idx }) {
   const [bg1, bg2] = CARD_COLORS[idx % CARD_COLORS.length];
   const [imgFailed, setImgFailed] = useState(false);
-  const showImg = n.image && !imgFailed;
+  const showImg = n.image && !imgFailed && !isYfiPlaceholder(n.image);
   const inner = (
     <div className="card-hov" style={{ display: 'flex', gap: 14, padding: 12, background: C.white,
       border: `1px solid ${C.border}`, borderRadius: 6, transition: 'all 0.2s', cursor: 'pointer' }}>

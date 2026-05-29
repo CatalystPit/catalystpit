@@ -1,8 +1,9 @@
 export const runtime = 'nodejs';
 
-const FINNHUB_KEY = process.env.FINNHUB_KEY;
-const KV_URL      = process.env.KV_REST_API_URL;
-const KV_TOKEN    = process.env.KV_REST_API_TOKEN;
+const FINNHUB_KEY    = process.env.FINNHUB_KEY;
+const POLYGON_API_KEY = process.env.POLYGON_API_KEY || process.env.POLYGON_KEY;  // Vercel uses POLYGON_KEY, local .env.local uses POLYGON_API_KEY
+const KV_URL         = process.env.KV_REST_API_URL;
+const KV_TOKEN       = process.env.KV_REST_API_TOKEN;
 
 const PFX = 'catalystpit:ticker:';
 // Per-section TTLs (seconds): profile rarely changes; quote/news are live;
@@ -80,15 +81,16 @@ const fetchMetric = async (sym) => {
     avgVol10d: m['10DayAverageTradingVolume'] ?? null,   // millions
   };
 };
-const fetchNews = async (sym) => {
+// Normalized news item: { headline, source, url, datetime (ISO string | null), image }.
+// Each source-fetcher returns null on fetch failure (don't cache; retry next request),
+// or an array (possibly empty) on success.
+const fetchFinnhubNews = async (sym) => {
   const to = new Date(), from = new Date(to.getTime() - 14 * 86_400_000);
   const fmt = (d) => d.toISOString().slice(0, 10);
   const arr = await fh(`/company-news?symbol=${encodeURIComponent(sym)}&from=${fmt(from)}&to=${fmt(to)}`);
-  if (!Array.isArray(arr)) return null;                  // fetch failed → null (don't cache); genuine no-news → []
+  if (!Array.isArray(arr)) return null;                  // fetch failed → null; genuine no-news → []
   return arr
     .filter(a => a.headline && a.url)
-    .sort((a, b) => (b.datetime || 0) - (a.datetime || 0))
-    .slice(0, 10)
     .map(a => ({
       headline: a.headline,
       source:   a.source || 'Finnhub',
@@ -96,6 +98,47 @@ const fetchNews = async (sym) => {
       datetime: a.datetime ? new Date(a.datetime * 1000).toISOString() : null,
       image:    a.image || null,
     }));
+};
+// Polygon /v2/reference/news — per-ticker, diverse publishers (Motley Fool, Benzinga,
+// GlobeNewswire, …), every item carries an image_url. published_utc is already ISO.
+const fetchPolygonNews = async (sym) => {
+  if (!POLYGON_API_KEY) return null;
+  try {
+    const r = await fetch(`https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(sym)}&limit=15&apiKey=${POLYGON_API_KEY}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!Array.isArray(j.results)) return null;
+    return j.results
+      .filter(a => a.title && a.article_url)
+      .map(a => ({
+        headline: a.title,
+        source:   a.publisher?.name || 'Polygon',
+        url:      a.article_url,
+        datetime: a.published_utc || null,
+        image:    a.image_url || null,
+      }));
+  } catch { return null; }
+};
+
+const NEWS_CAP = 15;
+const POLYGON_ENOUGH = 6;   // Polygon-primary: only fall back to Finnhub (Yahoo-heavy) when Polygon is this thin
+const newsTs = (n) => (n.datetime ? (Date.parse(n.datetime) || 0) : 0);
+
+// Polygon-primary, Finnhub fallback. Both fetched in parallel; Finnhub results are only
+// merged in when Polygon returns too few (keeps Yahoo out of the common case). null only
+// when BOTH sources fail (so the cache won't persist a transient double-failure).
+const fetchNews = async (sym) => {
+  const [poly, fin] = await Promise.all([fetchPolygonNews(sym), fetchFinnhubNews(sym)]);
+  if (poly == null && fin == null) return null;
+  const polyArr = poly || [], finArr = fin || [];
+  let items;
+  if (polyArr.length >= POLYGON_ENOUGH) {
+    items = polyArr;                                     // enough diverse coverage — Polygon only
+  } else {
+    const seen = new Set(polyArr.map(a => a.url));       // fallback: top up with Finnhub, dedupe by URL
+    items = [...polyArr, ...finArr.filter(a => !seen.has(a.url))];
+  }
+  return items.sort((a, b) => newsTs(b) - newsTs(a)).slice(0, NEWS_CAP);
 };
 
 // validity cascade: profile2 (name) → /search exact → /quote c>0. Content-based,
