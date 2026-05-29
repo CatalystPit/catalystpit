@@ -32,7 +32,10 @@ export async function GET(request) {
         { status: 200, headers: { 'Cache-Control': 'public, s-maxage=900' } }
       );
     }
-    return Response.json({ error: 'Data not cached yet. Try again in 30 seconds.' }, { status: 503 });
+    // Cache miss → empty payload + 200 (not 503) so consumers render their empty
+    // state instead of breaking. top_stories' 4h TTL expires nightly/weekends
+    // between refresh-content cron runs; "no data right now" is a 200 with [].
+    return Response.json({ data: [], source: 'empty' }, { status: 200 });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
@@ -52,7 +55,7 @@ export async function POST(request) {
         { status: 200 }
       );
     }
-    return Response.json({ error: 'Data not cached yet.' }, { status: 503 });
+    return Response.json({ data: [], source: 'empty' }, { status: 200 });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
