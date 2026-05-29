@@ -156,15 +156,15 @@ async function cachedNews(sym) {
   return { value: items, source: 'live' };
 }
 
-// validity cascade: profile2 (name) → /search exact → /quote c>0. Content-based,
-// since Finnhub 200s everything. Only runs the fallbacks when profile is empty.
-async function resolveValidity(sym, profile) {
+// validity cascade: profile2 (name) → prefetched /quote c>0 → /search exact. Content-based,
+// since Finnhub 200s everything. The quote is fetched in parallel by the caller, so the happy
+// path costs no extra call; /search only fires for the rare profile-less + no-quote ticker.
+async function resolveValidity(sym, profile, quote) {
   if (profile.name) return { valid: true, name: profile.name };
+  if (quote && quote.c > 0) return { valid: true, name: sym };
   const se = await fh(`/search?q=${encodeURIComponent(sym)}`);
   const exact = (se?.result || []).find(r => (r.symbol || '').toUpperCase() === sym);
   if (exact) return { valid: true, name: exact.description || sym };
-  const q = await fh(`/quote?symbol=${encodeURIComponent(sym)}`);
-  if (q && q.c > 0) return { valid: true, name: sym };
   return { valid: false, name: null };
 }
 
@@ -182,20 +182,24 @@ export async function GET(request) {
       return Response.json({ symbol: sym, valid: false, reason: 'not_found', meta: { cache: { notfound: 'cache' } } });
     }
 
-    const prof = await cached(`${PFX}${sym}:profile`, TTL.profile, () => fetchProfile(sym));
-    const v = await resolveValidity(sym, prof.value || {});
+    // Fire profile + quote + metric + news together — none depend on profile, and validity
+    // resolves from the already-fetched profile/quote. Cuts ~a Finnhub round-trip off cold loads.
+    // (Trade-off: a format-valid-but-nonexistent symbol costs a few extra calls once, then it's
+    //  negative-cached — junk is rare and the format gate + notfound cache absorb the common case.)
+    const [prof, quote, metric, news] = await Promise.all([
+      cached(`${PFX}${sym}:profile`, TTL.profile, () => fetchProfile(sym)),
+      cached(`${PFX}${sym}:quote`,   TTL.quote,   () => fetchQuote(sym)),
+      cached(`${PFX}${sym}:metric`,  TTL.metric,  () => fetchMetric(sym)),
+      cachedNews(sym),
+    ]);
+
+    const v = await resolveValidity(sym, prof.value || {}, quote.value);
     if (!v.valid) {
-      // only negative-cache a *confirmed* not-found (we reached Finnhub), never a transient blip
-      if (prof.value != null) await kvSet(`${PFX}${sym}:notfound`, '1', TTL.notfound);
+      // only negative-cache a *confirmed* not-found (we actually reached Finnhub), never a transient blip
+      if (prof.value != null || quote.value != null) await kvSet(`${PFX}${sym}:notfound`, '1', TTL.notfound);
       console.log(`[ticker_api] ${sym} not found${prof.value == null ? ' (uncached: profile fetch failed)' : ''}`);
       return Response.json({ symbol: sym, valid: false, reason: 'not_found' });
     }
-
-    const [quote, metric, news] = await Promise.all([
-      cached(`${PFX}${sym}:quote`,  TTL.quote,  () => fetchQuote(sym)),
-      cached(`${PFX}${sym}:metric`, TTL.metric, () => fetchMetric(sym)),
-      cachedNews(sym),
-    ]);
 
     const meta = { cache: { profile: prof.source, quote: quote.source, metric: metric.source, news: news.source } };
     console.log(`[ticker_api] ${sym} ok · cache=${JSON.stringify(meta.cache)}`);
