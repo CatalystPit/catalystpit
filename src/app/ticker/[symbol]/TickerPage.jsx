@@ -2,6 +2,7 @@
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles } from '../../../lib/cp-shared';
+import TickerChart from '../../../components/TickerChart';
 
 // ── formatters (null/NaN → "—", per the null-rather-than-guess rule) ──
 const usd      = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -143,8 +144,8 @@ function NewsRow({ n, idx }) {
     : inner;
 }
 
-// ── HERO (always visible, above tabs): header + price/5-stat + chart placeholder ──
-function Hero({ data }) {
+// ── HERO (always visible, above tabs): header + price/5-stat + price chart ──
+function Hero({ data, insider, gov }) {
   const q = data.quote || {};
   const m = data.metric || {};
   const up = (q.dp ?? 0) >= 0;
@@ -185,12 +186,12 @@ function Hero({ data }) {
         </div>
       </div>
 
-      {/* chart placeholder (real chart = Session 2) */}
-      <Section title="Price chart">
-        <div style={{ padding: '36px 24px', textAlign: 'center', color: C.muted, fontSize: 14, fontStyle: 'italic', fontWeight: 300 }}>
-          Interactive chart with insider and congress trade markers — launching this week.
-        </div>
-      </Section>
+      {/* price chart (Session 2) — markers wired in Steps 8–9 */}
+      <TickerChart
+        ticker={data.symbol}
+        insiderTrades={insider?.trades || []}
+        congressTrades={gov?.trades || []}
+      />
     </>
   );
 }
@@ -460,7 +461,7 @@ function TabContent({ tab, data, insider, gov, onTab }) {
 function ValidView({ data, tab, onTab, insider, gov }) {
   return (
     <>
-      <Hero data={data} />
+      <Hero data={data} insider={insider} gov={gov} />
       <TabBar active={tab} onSelect={onTab} />
       <TabContent tab={tab} data={data} insider={insider} gov={gov} onTab={onTab} />
     </>

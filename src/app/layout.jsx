@@ -69,6 +69,8 @@ export default function RootLayout({ children }) {
             .tk-keystats { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 32px; }
             @media (max-width: 899px) { .tk-keystats { grid-template-columns: repeat(2, 1fr); } }
             @media (max-width: 599px) { .tk-keystats { grid-template-columns: 1fr; } }
+            .tk-chart { height: 400px; }
+            @media (max-width: 599px) { .tk-chart { height: 280px; } }
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
