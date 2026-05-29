@@ -9,7 +9,9 @@ const PFX = 'catalystpit:ticker:';
 // Per-section TTLs (seconds): profile rarely changes; quote/news are live;
 // metric drifts slowly; notfound is a short negative cache so junk symbols
 // don't re-hit Finnhub on every keystroke-typo lookup.
-const TTL = { profile: 86400, quote: 300, metric: 1800, news: 300, notfound: 600 };
+const TTL = { profile: 86400, quote: 300, metric: 1800, news: 300, newsFallback: 60, notfound: 600 };
+// news: 5min on the Polygon-primary path; 60s when Polygon FAILED and we served the Finnhub
+// (Yahoo-heavy) fallback — so a transient Polygon hiccup self-corrects in ~1min, not ~5.
 
 // ─── Upstash KV (REST) — mirrors src/app/api/refresh/route.js ────────────────
 async function kvGet(key) {
@@ -127,9 +129,12 @@ const newsTs = (n) => (n.datetime ? (Date.parse(n.datetime) || 0) : 0);
 // Polygon-primary, Finnhub fallback. Both fetched in parallel; Finnhub results are only
 // merged in when Polygon returns too few (keeps Yahoo out of the common case). null only
 // when BOTH sources fail (so the cache won't persist a transient double-failure).
+// Returns { items, degraded }. degraded = Polygon fetch FAILED (poly == null) so we leaned on
+// the Finnhub/Yahoo fallback — the caller caches that briefly so it self-heals. items == null
+// only when BOTH sources fail (caller won't persist a transient double-failure).
 const fetchNews = async (sym) => {
   const [poly, fin] = await Promise.all([fetchPolygonNews(sym), fetchFinnhubNews(sym)]);
-  if (poly == null && fin == null) return null;
+  if (poly == null && fin == null) return { items: null, degraded: false };
   const polyArr = poly || [], finArr = fin || [];
   let items;
   if (polyArr.length >= POLYGON_ENOUGH) {
@@ -138,18 +143,28 @@ const fetchNews = async (sym) => {
     const seen = new Set(polyArr.map(a => a.url));       // fallback: top up with Finnhub, dedupe by URL
     items = [...polyArr, ...finArr.filter(a => !seen.has(a.url))];
   }
-  return items.sort((a, b) => newsTs(b) - newsTs(a)).slice(0, NEWS_CAP);
+  return { items: items.sort((a, b) => newsTs(b) - newsTs(a)).slice(0, NEWS_CAP), degraded: poly == null };
 };
 
-// validity cascade: profile2 (name) → /search exact → /quote c>0. Content-based,
-// since Finnhub 200s everything. Only runs the fallbacks when profile is empty.
-async function resolveValidity(sym, profile) {
+// News cache with dynamic TTL (Polygon-fail fallback caches briefly). Mirrors cached()'s shape.
+async function cachedNews(sym) {
+  const key = `${PFX}${sym}:news`;
+  const hit = await kvGet(key);
+  if (hit != null) { try { return { value: JSON.parse(hit), source: 'cache' }; } catch { /* refetch */ } }
+  const { items, degraded } = await fetchNews(sym);
+  if (items != null) await kvSet(key, JSON.stringify(items), degraded ? TTL.newsFallback : TTL.news);
+  return { value: items, source: 'live' };
+}
+
+// validity cascade: profile2 (name) → prefetched /quote c>0 → /search exact. Content-based,
+// since Finnhub 200s everything. The quote is fetched in parallel by the caller, so the happy
+// path costs no extra call; /search only fires for the rare profile-less + no-quote ticker.
+async function resolveValidity(sym, profile, quote) {
   if (profile.name) return { valid: true, name: profile.name };
+  if (quote && quote.c > 0) return { valid: true, name: sym };
   const se = await fh(`/search?q=${encodeURIComponent(sym)}`);
   const exact = (se?.result || []).find(r => (r.symbol || '').toUpperCase() === sym);
   if (exact) return { valid: true, name: exact.description || sym };
-  const q = await fh(`/quote?symbol=${encodeURIComponent(sym)}`);
-  if (q && q.c > 0) return { valid: true, name: sym };
   return { valid: false, name: null };
 }
 
@@ -167,20 +182,24 @@ export async function GET(request) {
       return Response.json({ symbol: sym, valid: false, reason: 'not_found', meta: { cache: { notfound: 'cache' } } });
     }
 
-    const prof = await cached(`${PFX}${sym}:profile`, TTL.profile, () => fetchProfile(sym));
-    const v = await resolveValidity(sym, prof.value || {});
+    // Fire profile + quote + metric + news together — none depend on profile, and validity
+    // resolves from the already-fetched profile/quote. Cuts ~a Finnhub round-trip off cold loads.
+    // (Trade-off: a format-valid-but-nonexistent symbol costs a few extra calls once, then it's
+    //  negative-cached — junk is rare and the format gate + notfound cache absorb the common case.)
+    const [prof, quote, metric, news] = await Promise.all([
+      cached(`${PFX}${sym}:profile`, TTL.profile, () => fetchProfile(sym)),
+      cached(`${PFX}${sym}:quote`,   TTL.quote,   () => fetchQuote(sym)),
+      cached(`${PFX}${sym}:metric`,  TTL.metric,  () => fetchMetric(sym)),
+      cachedNews(sym),
+    ]);
+
+    const v = await resolveValidity(sym, prof.value || {}, quote.value);
     if (!v.valid) {
-      // only negative-cache a *confirmed* not-found (we reached Finnhub), never a transient blip
-      if (prof.value != null) await kvSet(`${PFX}${sym}:notfound`, '1', TTL.notfound);
+      // only negative-cache a *confirmed* not-found (we actually reached Finnhub), never a transient blip
+      if (prof.value != null || quote.value != null) await kvSet(`${PFX}${sym}:notfound`, '1', TTL.notfound);
       console.log(`[ticker_api] ${sym} not found${prof.value == null ? ' (uncached: profile fetch failed)' : ''}`);
       return Response.json({ symbol: sym, valid: false, reason: 'not_found' });
     }
-
-    const [quote, metric, news] = await Promise.all([
-      cached(`${PFX}${sym}:quote`,  TTL.quote,  () => fetchQuote(sym)),
-      cached(`${PFX}${sym}:metric`, TTL.metric, () => fetchMetric(sym)),
-      cached(`${PFX}${sym}:news`,   TTL.news,   () => fetchNews(sym)),
-    ]);
 
     const meta = { cache: { profile: prof.source, quote: quote.source, metric: metric.source, news: news.source } };
     console.log(`[ticker_api] ${sym} ok · cache=${JSON.stringify(meta.cache)}`);
