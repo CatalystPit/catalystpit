@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
@@ -136,6 +137,9 @@ export default function CatalystPit() {
   const insidersShown = insiders.slice(0, 12);
   const politicians = data?.politicians || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
+
+  const router = useRouter();
+  const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
 
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
@@ -307,7 +311,7 @@ export default function CatalystPit() {
                 {loading ? Array(3).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
                 )) : insidersShown.map((ins, i) => (
-                  <tr key={i} className="hov" style={{borderBottom:i < insidersShown.length - 1 ? `1px solid ${C.surface}` : "none",
+                  <tr key={i} className="hov" onClick={() => goTicker(ins.sym)} style={{borderBottom:i < insidersShown.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:"pointer",
                     borderLeft:`3px solid ${insStyle(ins.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Mono',monospace",
@@ -509,7 +513,7 @@ export default function CatalystPit() {
                 <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
               </div>
             )) : insidersShown.map((ins, i) => (
-              <div key={i} className="hov" style={{padding:"10px 14px",
+              <div key={i} className="hov" onClick={() => goTicker(ins.sym)} style={{padding:"10px 14px",
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>

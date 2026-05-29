@@ -56,10 +56,13 @@ export default function RootLayout({ children }) {
               .cp-body-grid { grid-template-columns: minmax(0, 1fr); }
             }
             .cp-nav-links  { display: flex; }
+            .cp-nav-search { display: flex; }
             .cp-nav-burger { display: none; }
             .cp-nav-menu   { display: none; }
+            .cp-nav-search-input::placeholder { color: rgba(255,255,255,0.45); }
             @media (max-width: 860px) {
               .cp-nav-links  { display: none; }
+              .cp-nav-search { display: none; }
               .cp-nav-burger { display: inline-flex; }
               .cp-nav-menu   { display: flex; }
             }

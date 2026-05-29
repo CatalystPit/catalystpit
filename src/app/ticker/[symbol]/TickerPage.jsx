@@ -399,7 +399,6 @@ function OverviewTab({ data, insider, gov, onTab }) {
     ['Exchange', data.exchange || '—'],
   ];
   const about = [
-    ['Sector', data.industry || '—'],
     ['Industry', data.industry || '—'],
     ['Exchange', data.exchange || '—'],
     ['Country', data.country || '—'],
