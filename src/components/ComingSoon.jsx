@@ -1,6 +1,7 @@
 'use client'
 
-import { Logo, Footer } from '../lib/cp-shared';
+import { Footer, TopNav, BrandStyles } from '../lib/cp-shared';
+import { usePathname } from 'next/navigation';
 
 const C = {
   bg:"#F5F6F3", white:"#FFFFFF", surface:"#F0F2EE", border:"#E0E2DC",
@@ -15,39 +16,20 @@ const Dot = () => (
 );
 
 export default function ComingSoon({title, tagline, description, features=[]}) {
+  // Highlight the matching nav link from the route — title is unreliable (e.g. /charts = "Live Charts").
+  const seg = (usePathname() || '').split('/')[1] || '';
+  const active = seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : undefined;
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
+      <BrandStyles/>
       <style>{`
         @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}
-        .nbtn:hover{color:#FFFFFF!important}
         .cta-btn:hover{background:${C.greenMid}!important;transform:translateY(-1px)}
         *{box-sizing:border-box}
       `}</style>
 
-      {/* TOP NAV — matches homepage */}
-      <div style={{background:C.navBg, height:50, display:"flex", alignItems:"center",
-        justifyContent:"space-between", padding:"0 24px", position:"sticky", top:0, zIndex:100,
-        borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
-        <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
-        <div style={{display:"flex", gap:20, alignItems:"center", marginLeft:40,
-          borderLeft:`1px solid rgba(255,255,255,0.2)`, paddingLeft:40}}>
-          {["Markets","News","Screener","Insiders","Politicians","Charts","Crypto"].map(l=>(
-            <a key={l} href={`/${l.toLowerCase()}`} className="nbtn"
-              style={{fontSize:12, color:"rgba(255,255,255,0.75)", cursor:"pointer",
-                transition:"color 0.2s", fontWeight:400, letterSpacing:"0.02em", textDecoration:"none"}}>{l}</a>
-          ))}
-        </div>
-        <div style={{display:"flex", gap:8}}>
-          <a href="https://newsletter.catalystpit.com" target="_blank" rel="noopener noreferrer"
-            style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)", color:"rgba(255,255,255,0.9)",
-              padding:"6px 14px", borderRadius:5, fontSize:12, cursor:"pointer", textDecoration:"none",
-              fontFamily:"'DM Sans',sans-serif", fontWeight:300}}>Log In</a>
-          <a href="https://newsletter.catalystpit.com" target="_blank" rel="noopener noreferrer"
-            style={{background:C.green, border:"none", color:"#fff", padding:"7px 18px",
-              borderRadius:5, fontSize:12, fontWeight:500, cursor:"pointer", textDecoration:"none",
-              fontFamily:"'DM Sans',sans-serif"}}>Start Free</a>
-        </div>
-      </div>
+      {/* Shared polished nav (was a stale inline copy that missed the nav-polish updates) */}
+      <TopNav active={active}/>
 
       {/* MAIN CONTENT */}
       <div style={{maxWidth:880, margin:"0 auto", padding:"80px 24px 100px",
