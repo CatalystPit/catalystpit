@@ -29,6 +29,20 @@
       "when": 1780059150271,
       "tag": "0003_ticker_daily_candles",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780152178181,
+      "tag": "0004_short_interest",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780155635684,
+      "tag": "0005_ticker_float",
+      "breakpoints": true
     }
   ]
 }

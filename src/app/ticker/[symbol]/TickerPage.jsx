@@ -27,6 +27,12 @@ const fmtBig = (n) => {
 };
 const fmtEps = (n) => (n == null || isNaN(n)) ? '—' : (n < 0 ? `-$${Math.abs(n).toFixed(2)}` : `$${n.toFixed(2)}`);
 const fmtYoy = (v) => (v == null || isNaN(v)) ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
+// 'YYYY-MM-DD' → "Apr 27, 2026" (UTC-pinned so the date never drifts a day by timezone).
+const fmtDateLong = (s) => {
+  if (!s) return '—';
+  const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
 
 // ── trade helpers (mirror /insiders) ──
 const actionStyle = (t) => t === 'BUY' ? { fg: C.green, bg: C.greenLight }
@@ -79,7 +85,6 @@ const PLACEHOLDERS = {
   guidance:   'Company-issued forward guidance, revenue and EPS forecasts, and guidance revisions.',
   dividends:  'Dividend history, payout schedule, ex-dividend dates, and yield trends.',
   analyst:    'Wall Street analyst ratings, price targets, upgrades, downgrades, and consensus forecasts.',
-  short:      'Short interest, days to cover, short interest ratio, and shorting trends over time.',
   financials: 'Quarterly and annual revenue, earnings, cash flows, valuation metrics, and company debt.',
 };
 
@@ -415,6 +420,98 @@ function EarningsTable({ rows }) {
   );
 }
 
+// Compact share count: 138782718 → "138.8M". Null/NaN → "—".
+const fmtShares = (n) => {
+  if (n == null || isNaN(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return `${Math.round(n)}`;
+};
+// % of float = short shares / free-float shares (FMP, raw share count — true float,
+// excludes restricted/insider). null when float is missing/0 (e.g. ETFs) → "—",
+// never a misleading 0%.
+const pctFloat = (shortShares, floatShares) => {
+  if (shortShares == null || floatShares == null || !(floatShares > 0)) return null;
+  return (shortShares / floatShares) * 100;
+};
+
+// Short Interest tab — /api/short-interest?ticker= (FINRA bi-monthly). Summary card + 12-period history.
+// % of float uses FMP free-float shares (payload.float); "—" when float is missing/0 (e.g. ETFs).
+function ShortInterestTab({ symbol, short }) {
+  const loading = short == null;
+  const history = short?.history || [];
+  const latest = short?.latest || null;
+  const floatShares = short?.float?.float_shares ?? null;   // FMP free float (raw shares); null/0 → "—"
+  const headers = [['Settlement', 'left'], ['Short Interest', 'right'], ['Avg Daily Volume', 'right'],
+    ['Days to Cover', 'right'], ['% of Float', 'right'], ['Change', 'right']];
+
+  return (
+    <Section title="Short interest">
+      {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
+        : history.length === 0 ? (
+          <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
+            No short interest data on file for {symbol}.
+          </div>
+        ) : (
+          <>
+            {/* SUMMARY CARD — latest settlement period */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 28, padding: '4px 2px 16px', borderBottom: `1px solid ${C.surface}` }}>
+              <div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 3 }}>SETTLEMENT DATE</div>
+                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 600, color: C.ink }}>{fmtDateLong(latest.settlement_date)}</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 3 }}>SHORT INTEREST</div>
+                <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 600, color: C.ink }}>{fmtShares(latest.short_int_shares)}</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 3 }}>DAYS TO COVER</div>
+                <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 600, color: C.ink }}>{fmtNum(latest.days_to_cover)}</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 3 }}>% OF FLOAT</div>
+                <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 600, color: C.ink }}>{fmtPct(pctFloat(latest.short_int_shares, floatShares))}</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 3 }}>CHANGE</div>
+                <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 700, color: retColor(latest.change_percent) }}>{fmtYoy(latest.change_percent)}</div>
+              </div>
+            </div>
+
+            {/* HISTORY TABLE — last 12 settlement periods */}
+            <div style={{ overflowX: 'auto', marginTop: 4 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+                <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+                  {headers.map(([h, al]) => (
+                    <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {history.map((r, i) => (
+                    <tr key={r.settlement_date || i} style={{ borderBottom: i < history.length - 1 ? `1px solid ${C.surface}` : 'none' }}>
+                      <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtDateLong(r.settlement_date)}</td>
+                      <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtShares(r.short_int_shares)}</td>
+                      <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtShares(r.avg_daily_volume)}</td>
+                      <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtNum(r.days_to_cover)}</td>
+                      <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtPct(pctFloat(r.short_int_shares, floatShares))}</td>
+                      <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600, color: retColor(r.change_percent), whiteSpace: 'nowrap' }}>{fmtYoy(r.change_percent)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
+              Reported bi-monthly by FINRA. Latest data has a ~2 week reporting lag.
+            </div>
+          </>
+        )}
+    </Section>
+  );
+}
+
 // Earnings tab — /api/earnings?ticker= (SEC EDGAR XBRL). Reported figures only; estimates = Pro.
 function EarningsTab({ symbol, earnings }) {
   const loading = earnings == null;
@@ -518,12 +615,13 @@ function OverviewTab({ data, insider, gov, onTab }) {
   );
 }
 
-function TabContent({ tab, data, insider, gov, earnings, onTab }) {
+function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
   if (tab === 'overview') return <OverviewTab data={data} insider={insider} gov={gov} onTab={onTab} />;
   if (tab === 'news') return <NewsTab data={data} />;
   if (tab === 'earnings') return <EarningsTab symbol={data.symbol} earnings={earnings} />;
   if (tab === 'insider') return <InsiderTab symbol={data.symbol} insider={insider} />;
   if (tab === 'government') return <GovernmentTab symbol={data.symbol} gov={gov} />;
+  if (tab === 'short') return <ShortInterestTab symbol={data.symbol} short={short} />;
   if (PLACEHOLDERS[tab]) {
     const t = TABS.find((x) => x.id === tab);
     return <TabPlaceholder label={t.label} copy={PLACEHOLDERS[tab]} />;
@@ -532,12 +630,12 @@ function TabContent({ tab, data, insider, gov, earnings, onTab }) {
   return <BuildingStub label={t.label} />;
 }
 
-function ValidView({ data, tab, onTab, insider, gov, earnings }) {
+function ValidView({ data, tab, onTab, insider, gov, earnings, short }) {
   return (
     <>
       <Hero data={data} insider={insider} gov={gov} />
       <TabBar active={tab} onSelect={onTab} />
-      <TabContent tab={tab} data={data} insider={insider} gov={gov} earnings={earnings} onTab={onTab} />
+      <TabContent tab={tab} data={data} insider={insider} gov={gov} earnings={earnings} short={short} onTab={onTab} />
     </>
   );
 }
@@ -595,6 +693,7 @@ function TickerBody({ symbol }) {
   const [insider, setInsider] = useState(null);   // null = loading; { trades } = loaded
   const [gov, setGov] = useState(null);            // null = loading; { trades } = loaded
   const [earnings, setEarnings] = useState(null);  // null = loading; { earnings:[] } = loaded
+  const [short, setShort] = useState(null);        // null = loading; { latest, history } = loaded
 
   useEffect(() => {
     let alive = true;
@@ -617,7 +716,7 @@ function TickerBody({ symbol }) {
   // Insider + government trades from Postgres (also feed the Overview previews in step 5).
   useEffect(() => {
     let alive = true;
-    setInsider(null); setGov(null); setEarnings(null);
+    setInsider(null); setGov(null); setEarnings(null); setShort(null);
     const grab = async (url, set, fallback = { trades: [] }) => {
       try {
         const r = await fetch(url);
@@ -628,13 +727,14 @@ function TickerBody({ symbol }) {
     grab(`/api/insiders?ticker=${encodeURIComponent(symbol)}`, setInsider);
     grab(`/api/politicians?ticker=${encodeURIComponent(symbol)}`, setGov);
     grab(`/api/earnings?ticker=${encodeURIComponent(symbol)}`, setEarnings, { earnings: [] });
+    grab(`/api/short-interest?ticker=${encodeURIComponent(symbol)}`, setShort, { latest: null, history: [] });
     return () => { alive = false; };
   }, [symbol]);
 
   if (loading) return <LoadingShell />;
   if (error) return <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '40px 16px', textAlign: 'center', color: C.red, fontSize: 13 }}>Failed to load {symbol}: {error}</div>;
   if (!data?.valid) return <NotFound symbol={data?.symbol || symbol} />;
-  return <ValidView data={data} tab={tab} onTab={onTab} insider={insider} gov={gov} earnings={earnings} />;
+  return <ValidView data={data} tab={tab} onTab={onTab} insider={insider} gov={gov} earnings={earnings} short={short} />;
 }
 
 export default function TickerPage({ symbol }) {
