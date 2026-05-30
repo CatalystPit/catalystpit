@@ -224,9 +224,11 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
       const lwc = await import('lightweight-charts');
       if (disposed || !wrapRef.current) return;
       lwcRef.current = lwc;
+      // Canvas can't read CSS vars — resolve --font-dm-mono to its hashed family name at runtime.
+      const monoFamily = getComputedStyle(document.documentElement).getPropertyValue('--font-dm-mono').trim() || 'monospace';
       chart = lwc.createChart(wrapRef.current, {
         autoSize: true,
-        layout: { background: { type: lwc.ColorType.Solid, color: 'transparent' }, textColor: C.muted, fontFamily: "'DM Mono', monospace", fontSize: 11 },
+        layout: { background: { type: lwc.ColorType.Solid, color: 'transparent' }, textColor: C.muted, fontFamily: `${monoFamily}, monospace`, fontSize: 11 },
         localization: { timeFormatter: etCrosshairTimeFormatter },
         grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(0,0,0,0.04)' } },
         rightPriceScale: { borderVisible: false },
