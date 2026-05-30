@@ -124,3 +124,16 @@ export const shortInterest = pgTable('short_interest', {
   idxTicker:    index('idx_short_interest_ticker').on(t.ticker),
   idxSettlement: index('idx_short_interest_settlement').on(t.settlementDate),
 }));
+
+// Free-float share counts (FMP /stable/shares-float, SEC-sourced). Lazily filled
+// by /api/short-interest on first view of a ticker, refreshed when stale (~30d).
+// floatShares is the correct denominator for "% of float" (excludes restricted/insider
+// shares); 0/null when FMP has no float (e.g. ETFs) → UI renders "—".
+export const tickerFloat = pgTable('ticker_float', {
+  ticker:            text('ticker').primaryKey(),
+  floatShares:       doublePrecision('float_shares'),
+  outstandingShares: doublePrecision('outstanding_shares'),
+  freeFloatPct:      doublePrecision('free_float_pct'),
+  source:            text('source').notNull().default('fmp'),
+  updatedAt:         timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

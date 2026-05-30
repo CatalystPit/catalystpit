@@ -429,19 +429,21 @@ const fmtShares = (n) => {
   if (a >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return `${Math.round(n)}`;
 };
-// % of float = short shares / shares-outstanding. Finnhub shareOutstanding is in MILLIONS.
-// null when shareOutstanding is missing/0 (→ "—"), never a misleading 0%.
-const pctFloat = (shortShares, shareOutMillions) => {
-  if (shortShares == null || shareOutMillions == null || !(shareOutMillions > 0)) return null;
-  return (shortShares / (shareOutMillions * 1e6)) * 100;
+// % of float = short shares / free-float shares (FMP, raw share count — true float,
+// excludes restricted/insider). null when float is missing/0 (e.g. ETFs) → "—",
+// never a misleading 0%.
+const pctFloat = (shortShares, floatShares) => {
+  if (shortShares == null || floatShares == null || !(floatShares > 0)) return null;
+  return (shortShares / floatShares) * 100;
 };
 
 // Short Interest tab — /api/short-interest?ticker= (FINRA bi-monthly). Summary card + 12-period history.
-// shareOut (Finnhub, millions) powers % of float; "—" everywhere if it's unavailable.
-function ShortInterestTab({ symbol, short, shareOut }) {
+// % of float uses FMP free-float shares (payload.float); "—" when float is missing/0 (e.g. ETFs).
+function ShortInterestTab({ symbol, short }) {
   const loading = short == null;
   const history = short?.history || [];
   const latest = short?.latest || null;
+  const floatShares = short?.float?.float_shares ?? null;   // FMP free float (raw shares); null/0 → "—"
   const headers = [['Settlement', 'left'], ['Short Interest', 'right'], ['Avg Daily Volume', 'right'],
     ['Days to Cover', 'right'], ['% of Float', 'right'], ['Change', 'right']];
 
@@ -470,7 +472,7 @@ function ShortInterestTab({ symbol, short, shareOut }) {
               </div>
               <div>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 3 }}>% OF FLOAT</div>
-                <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 600, color: C.ink }}>{fmtPct(pctFloat(latest.short_int_shares, shareOut))}</div>
+                <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 600, color: C.ink }}>{fmtPct(pctFloat(latest.short_int_shares, floatShares))}</div>
               </div>
               <div>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 3 }}>CHANGE</div>
@@ -493,7 +495,7 @@ function ShortInterestTab({ symbol, short, shareOut }) {
                       <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtShares(r.short_int_shares)}</td>
                       <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtShares(r.avg_daily_volume)}</td>
                       <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtNum(r.days_to_cover)}</td>
-                      <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtPct(pctFloat(r.short_int_shares, shareOut))}</td>
+                      <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtPct(pctFloat(r.short_int_shares, floatShares))}</td>
                       <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600, color: retColor(r.change_percent), whiteSpace: 'nowrap' }}>{fmtYoy(r.change_percent)}</td>
                     </tr>
                   ))}
@@ -619,7 +621,7 @@ function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
   if (tab === 'earnings') return <EarningsTab symbol={data.symbol} earnings={earnings} />;
   if (tab === 'insider') return <InsiderTab symbol={data.symbol} insider={insider} />;
   if (tab === 'government') return <GovernmentTab symbol={data.symbol} gov={gov} />;
-  if (tab === 'short') return <ShortInterestTab symbol={data.symbol} short={short} shareOut={data.metric?.shareOutstanding} />;
+  if (tab === 'short') return <ShortInterestTab symbol={data.symbol} short={short} />;
   if (PLACEHOLDERS[tab]) {
     const t = TABS.find((x) => x.id === tab);
     return <TabPlaceholder label={t.label} copy={PLACEHOLDERS[tab]} />;

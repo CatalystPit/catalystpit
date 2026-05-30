@@ -93,3 +93,25 @@ export const chunk = (arr, n) => {
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
   return out;
 };
+
+// FMP /stable/shares-float — SEC-sourced free float. floatShares is the correct
+// denominator for "% of float" (excludes restricted/insider shares). Returns null
+// on fetch failure; { floatShares:0 } for instruments FMP doesn't float (e.g. ETFs).
+export async function fetchFloat(ticker, fmpKey) {
+  if (!fmpKey) return null;
+  try {
+    const r = await fetch(
+      `https://financialmodelingprep.com/stable/shares-float?symbol=${encodeURIComponent(ticker)}&apikey=${fmpKey}`,
+      { signal: AbortSignal.timeout(12000) },
+    );
+    if (!r.ok) return null;
+    const arr = await r.json();
+    const row = Array.isArray(arr) ? arr[0] : arr;
+    if (!row || row['Error Message'] || row.floatShares == null) return null;
+    return {
+      floatShares:       numOrNull(row.floatShares),
+      outstandingShares: numOrNull(row.outstandingShares),
+      freeFloatPct:      numOrNull(row.freeFloat),
+    };
+  } catch { return null; }
+}

@@ -36,6 +36,13 @@
       "when": 1780152178181,
       "tag": "0004_short_interest",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780155635684,
+      "tag": "0005_ticker_float",
+      "breakpoints": true
     }
   ]
 }
