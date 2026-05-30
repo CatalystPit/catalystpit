@@ -54,7 +54,7 @@ export default function SignUpPage() {
       {/* Bottom tagline */}
       <div style={{
         marginTop: 40,
-        fontFamily: "'DM Mono', monospace",
+        fontFamily: "var(--font-dm-mono), monospace",
         fontSize: 10,
         color: '#8A9088',
         letterSpacing: '1.5px',
