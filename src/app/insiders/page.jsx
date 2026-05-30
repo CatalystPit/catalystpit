@@ -257,10 +257,10 @@ export default function InsidersPage() {
               {(data.trending||[]).map((t,i)=>(
                 <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderBottom:i<data.trending.length-1?`1px solid ${C.surface}`:"none"}}>
                   <div style={{display:"flex",gap:12,alignItems:"baseline"}}>
-                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green,minWidth:64}}>{t.ticker}</span>
+                    <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:700,color:C.green,minWidth:64}}>{t.ticker}</span>
                     <span style={{fontSize:12,color:C.muted,maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{decodeEntities(t.company||'')}</span>
                   </div>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:12}}>
+                  <div className="cp-num" style={{fontFamily:"'DM Mono',monospace",fontSize:12}}>
                     <span style={{color:C.text}}>{t.trades} filings</span>
                     <span style={{color:C.green,marginLeft:10}}>{t.buys}B</span>
                     <span style={{color:C.red,marginLeft:6}}>{t.sells}S</span>
