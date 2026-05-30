@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { C, Skel, TopNav, Footer, BrandStyles } from '../../../lib/cp-shared';
 import {
   fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, actionStyle, fmtReturn, returnColor,
@@ -14,6 +15,9 @@ export default function PoliticianDetail({ slug }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const router = useRouter();
+  // Inert unless there's a real ticker — some FMP asset types have no symbol (renders "—").
+  const goTicker = (sym) => { if (sym && sym !== '—') router.push(`/ticker/${encodeURIComponent(sym)}`); };
 
   useEffect(() => {
     let alive = true;
@@ -103,7 +107,7 @@ export default function PoliticianDetail({ slug }) {
                       const as = actionStyle(t.action);
                       const late = t.filingLagDays != null && t.filingLagDays > 45;
                       return (
-                        <tr key={t.id || i} style={{ borderBottom: i < trades.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
+                        <tr key={t.id || i} className={t.ticker ? 'hov' : undefined} onClick={t.ticker ? () => goTicker(t.ticker) : undefined} style={{ borderBottom: i < trades.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
                           <td className="cp-tkr" style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>{t.ticker || '—'}</td>
                           <td style={{ padding: '12px 14px', fontSize: 13, color: C.text, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.assetDescription || '—'}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
