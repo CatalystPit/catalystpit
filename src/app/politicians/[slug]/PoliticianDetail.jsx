@@ -85,7 +85,7 @@ export default function PoliticianDetail({ slug }) {
             </div>
 
             {/* TRADE HISTORY TABLE */}
-            <div style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Mono',monospace", margin: '18px 0 10px' }}>{trades.length} trades</div>
+            <div style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Sans',sans-serif", margin: '18px 0 10px' }}>{trades.length} trades</div>
             <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
@@ -106,9 +106,9 @@ export default function PoliticianDetail({ slug }) {
                         <tr key={t.id || i} style={{ borderBottom: i < trades.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
                           <td className="cp-tkr" style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>{t.ticker || '—'}</td>
                           <td style={{ padding: '12px 14px', fontSize: 13, color: C.text, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.assetDescription || '—'}</td>
-                          <td style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
-                          <td style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.disclosureDate)}</td>
-                          <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: late ? C.red : C.muted, whiteSpace: 'nowrap' }}>{t.filingLagDays != null ? `${t.filingLagDays}d` : '—'}</td>
+                          <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
+                          <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.disclosureDate)}</td>
+                          <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: late ? C.red : C.muted, whiteSpace: 'nowrap' }}>{t.filingLagDays != null ? `${t.filingLagDays}d` : '—'}</td>
                           <td style={{ padding: '12px 14px' }}>
                             <span style={{ fontSize: 11, padding: '3px 9px', borderRadius: 4, fontFamily: "'DM Mono',monospace", fontWeight: 600, background: as.bg, color: as.fg }}>{t.action}</span>
                           </td>
