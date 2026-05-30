@@ -183,7 +183,7 @@ export default function InsidersPage() {
               <Dot/><span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:C.muted,letterSpacing:"1px"}}>FORM 4 · SEC EDGAR · LIVE</span>
             </div>
             <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:600,color:C.ink,margin:"0 0 4px",letterSpacing:"-0.5px"}}>Insider Trades</h1>
-            <p style={{fontSize:13,color:C.muted,margin:0,fontWeight:300}}>Real-time Form 4 filings — when executives buy or sell their own company stock.</p>
+            <p style={{fontSize:13,color:C.muted,margin:0,fontWeight:300}}>Real-time Form 4 filings. See when executives buy or sell their own company stock.</p>
           </div>
           <div style={{display:"flex",gap:12,alignItems:"center"}}>
             {isTradeView && (
