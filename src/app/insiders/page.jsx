@@ -225,7 +225,7 @@ export default function InsidersPage() {
               <button key={cat.key} className="cat" onClick={()=>selectView(cat.key)}
                 style={{textAlign:"left",background:active?C.green:C.white,border:`1px solid ${active?C.green:C.border}`,borderRadius:8,padding:"12px 14px",cursor:"pointer",transition:"all 0.15s"}}>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:600,letterSpacing:"0.5px",color:active?"#fff":C.ink}}>{cat.label}</div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,marginTop:3,color:active?"rgba(255,255,255,0.8)":C.dim}}>{cat.sub}</div>
+                <div style={{fontFamily:"'DM Sans',sans-serif",fontSize:10,marginTop:3,color:active?"rgba(255,255,255,0.8)":C.dim}}>{cat.sub}</div>
               </button>
             );
           })}
@@ -299,7 +299,7 @@ export default function InsidersPage() {
         ) : (
           /* ── TRADE ROWS (row views + ticker drill-down) ── */
           <>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,fontSize:12,color:C.dim,fontFamily:"'DM Mono',monospace"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,fontSize:12,color:C.dim,fontFamily:"'DM Sans',sans-serif"}}>
               {searching ? `${rows.length} filings for ${debouncedSearch}` : `${VIEW_LABEL[activeView]} · ${rows.length} filings`}
             </div>
             <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
