@@ -196,13 +196,26 @@ function Hero({ data, insider, gov }) {
         <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, marginTop: 6 }}>
           Day {usd(q.l)} – {usd(q.h)} · Prev close {usd(q.pc)}
         </div>
-        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.surface}`,
-          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 16 }}>
-          <StatCell label="52-WEEK RANGE" value={(m.low52 != null && m.high52 != null) ? `${usd(m.low52)} – ${usd(m.high52)}` : '—'} />
-          <StatCell label="MARKET CAP"    value={fmtMktCap(m.marketCap)} />
-          <StatCell label="P/E (TTM)"     value={fmtNum(m.peTTM)} />
-          <StatCell label="DIV YIELD"     value={fmtPct(m.divYield)} />
-          <StatCell label="AVG VOL (10D)" value={fmtVolM(m.avgVol10d)} />
+        <div className="tk-hero-grid" style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.surface}` }}>
+          {/* Row 1 */}
+          <StatCell label="OPEN"           value={usd(q.o)} />
+          <StatCell label="PREVIOUS CLOSE" value={usd(q.pc)} />
+          <StatCell label="DAY RANGE"      value={(q.l != null && q.h != null) ? `${usd(q.l)} – ${usd(q.h)}` : '—'} />
+          <StatCell label="52-WEEK RANGE"  value={(m.low52 != null && m.high52 != null) ? `${usd(m.low52)} – ${usd(m.high52)}` : '—'} />
+          {/* Row 2 */}
+          <StatCell label="MARKET CAP"     value={fmtMktCap(m.marketCap)} />
+          <StatCell label="P/E (TTM)"      value={fmtNum(m.peTTM)} />
+          <StatCell label="EPS (TTM)"      value={fmtEps(m.epsTTM)} />
+          <StatCell label="DIVIDEND YIELD" value={fmtPct(m.divYield)} />
+          {/* Row 3 */}
+          <StatCell label="AVG VOLUME (10D)" value={fmtVolM(m.avgVol10d)} />
+          <StatCell label="50-DAY MA"      value={usd(data.fiftyDayMA)} />
+          <StatCell label="BETA"           value={fmtNum(m.beta)} />
+          <StatCell label="INDUSTRY"       value={data.industry || '—'} />
+          {/* Row 4 (Sector dropped → 15 fields) */}
+          <StatCell label="SHORT INTEREST" value={fmtShares(data.shortInterest?.shortIntShares)} />
+          <StatCell label="SHORT % FLOAT"  value={fmtPct(data.shortInterest?.pctFloat)} />
+          <StatCell label="DAYS TO COVER"  value={fmtNum(data.shortInterest?.daysToCover)} />
         </div>
       </div>
 
@@ -553,22 +566,8 @@ function DefRow({ label, value, link }) {
   );
 }
 
-// Overview tab — expanded Key Statistics (9; Volume returns in Session 2) + About + 3-row previews.
+// Overview tab — About + 3-row previews. (Key statistics now live in the always-visible hero.)
 function OverviewTab({ data, insider, gov, onTab }) {
-  const q = data.quote || {};
-  const m = data.metric || {};
-  // Volume returns in Session 2 once Tiingo candle cache exists (Finnhub /quote has no volume).
-  const stats = [
-    ['Open', usd(q.o)],
-    ['Previous Close', usd(q.pc)],
-    ['Day Range', (q.l != null && q.h != null) ? `${usd(q.l)} – ${usd(q.h)}` : '—'],
-    ['52-Week Range', (m.low52 != null && m.high52 != null) ? `${usd(m.low52)} – ${usd(m.high52)}` : '—'],
-    ['Avg Volume (10D)', fmtVolM(m.avgVol10d)],
-    ['Market Cap', fmtMktCap(m.marketCap)],
-    ['P/E Ratio (TTM)', fmtNum(m.peTTM)],
-    ['Dividend Yield', fmtPct(m.divYield)],
-    ['Exchange', data.exchange || '—'],
-  ];
   const about = [
     ['Industry', data.industry || '—'],
     ['Exchange', data.exchange || '—'],
@@ -581,12 +580,6 @@ function OverviewTab({ data, insider, gov, onTab }) {
 
   return (
     <>
-      <Section title="Key statistics">
-        <div className="tk-keystats">
-          {stats.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
-        </div>
-      </Section>
-
       <Section title="About">
         <div style={{ maxWidth: 640 }}>
           {about.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
