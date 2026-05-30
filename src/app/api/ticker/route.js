@@ -1,7 +1,8 @@
 import { db } from '../../../lib/db';
-import { tickerDailyCandles, shortInterest, tickerFloat } from '../../../lib/schema';
+import { tickerDailyCandles, shortInterest } from '../../../lib/schema';
 import { eq, desc } from 'drizzle-orm';
 import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
+import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
 
 export const runtime = 'nodejs';
 
@@ -122,9 +123,10 @@ async function computeFiftyDayMA(sym) {
   return +(closes.reduce((a, b) => a + b, 0) / 50).toFixed(2);
 }
 
-// Latest FINRA short-interest row + cached float for % of float. Postgres-only — does NOT
-// trigger an FMP float fetch (float fills lazily via the Short Interest tab); so pctFloat is
-// null until that ticker's float has been cached once. Returns null if no FINRA data.
+// Latest FINRA short-interest row + % of float. Float comes from the SHARED resolveFloat
+// (lib/finra-short-interest.mjs) — the exact same path the Short Interest tab uses — so the
+// hero and the tab always agree. resolveFloat lazily fetches+caches FMP float on first view
+// (cached 30d); pre-warm cron means popular tickers are usually already populated.
 async function fetchHeroShortInterest(sym) {
   const [si] = await db.select({
     settlementDate: shortInterest.settlementDate, shortIntShares: shortInterest.shortIntShares,
@@ -132,10 +134,10 @@ async function fetchHeroShortInterest(sym) {
   }).from(shortInterest).where(eq(shortInterest.ticker, sym))
     .orderBy(desc(shortInterest.settlementDate)).limit(1);
   if (!si) return null;
-  const [fl] = await db.select({ floatShares: tickerFloat.floatShares })
-    .from(tickerFloat).where(eq(tickerFloat.ticker, sym)).limit(1);
-  const pctFloat = (si.shortIntShares != null && fl?.floatShares > 0)
-    ? +((si.shortIntShares / fl.floatShares) * 100).toFixed(2) : null;
+  const fl = await resolveFloat(sym);
+  const floatShares = fl?.float_shares ?? null;
+  const pctFloat = (si.shortIntShares != null && floatShares > 0)
+    ? +((si.shortIntShares / floatShares) * 100).toFixed(2) : null;
   return { settlementDate: si.settlementDate, shortIntShares: si.shortIntShares,
     daysToCover: si.daysToCover, changePercent: si.changePercent, pctFloat };
 }
