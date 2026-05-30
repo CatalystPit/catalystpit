@@ -109,7 +109,7 @@ function buildMarkers(rows, intraday, trades, styleFor) {
 
 // ── tooltip sections (labeled only when both insider + congress share a date) ──
 function insiderSection(trades, labeled) {
-  const head = labeled ? `<div style="font-size:8px;letter-spacing:0.8px;color:${C.dim};font-family:'DM Mono',monospace;margin-bottom:2px">INSIDER</div>` : '';
+  const head = labeled ? `<div style="font-size:8px;letter-spacing:0.8px;color:${C.dim};font-family:var(--font-dm-mono),monospace;margin-bottom:2px">INSIDER</div>` : '';
   if (trades.length === 1) {
     const t = trades[0], col = t.action === 'BUY' ? GREEN : RED;
     return head
@@ -125,7 +125,7 @@ function insiderSection(trades, labeled) {
   return head + `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} insider trades</div>${rows}${more}`;
 }
 function congressSection(trades, labeled) {
-  const head = labeled ? `<div style="font-size:8px;letter-spacing:0.8px;color:${C.dim};font-family:'DM Mono',monospace;margin-bottom:2px">CONGRESS</div>` : '';
+  const head = labeled ? `<div style="font-size:8px;letter-spacing:0.8px;color:${C.dim};font-family:var(--font-dm-mono),monospace;margin-bottom:2px">CONGRESS</div>` : '';
   if (trades.length === 1) {
     const t = trades[0], col = t.action === 'BUY' ? GREEN : RED;
     const sub = [partyAbbr(t.party), t.state, chamberLabel(t.chamber)].filter(Boolean).join(' · ');
@@ -328,7 +328,7 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
   const btn = (label, active, onClick) => (
     <button key={label} className="hov" onClick={onClick}
       style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px 10px', borderRadius: 4,
-        fontFamily: "'DM Mono',monospace", fontSize: 12, color: active ? C.ink : C.muted, fontWeight: active ? 700 : 400,
+        fontFamily: "var(--font-dm-mono),monospace", fontSize: 12, color: active ? C.ink : C.muted, fontWeight: active ? 700 : 400,
         borderBottom: active ? `2px solid ${GREEN}` : '2px solid transparent', flexShrink: 0, whiteSpace: 'nowrap' }}>
       {label}
     </button>
@@ -372,7 +372,7 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
         </div>
 
         {/* attribution (Apache-2.0 requirement) + dynamic delayed prefix */}
-        <div style={{ marginTop: 8, fontFamily: "'DM Mono',monospace", fontSize: 10, color: C.dim, letterSpacing: '0.3px' }}>
+        <div style={{ marginTop: 8, fontFamily: "var(--font-dm-mono),monospace", fontSize: 10, color: C.dim, letterSpacing: '0.3px' }}>
           {showDelayedPrefix ? '15-min delayed · ' : ''}Charts by TradingView
         </div>
       </div>

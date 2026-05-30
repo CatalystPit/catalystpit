@@ -63,12 +63,12 @@ function NewsRowCard({n, idx}) {
         <div style={{display:"flex", alignItems:"center", gap:7, flexWrap:"wrap"}}>
           <TagBadge tag={n.tag}/>
           {hasValidTicker && (
-            <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+            <span className="cp-tkr" style={{fontFamily:"var(--font-dm-mono),monospace", fontSize:10, fontWeight:600,
               color:C.green, background:C.greenLight, padding:"2px 7px", borderRadius:3}}>
               {n.sym}
             </span>
           )}
-          <span style={{marginLeft:"auto", fontFamily:"'DM Mono',monospace",
+          <span style={{marginLeft:"auto", fontFamily:"var(--font-dm-mono),monospace",
             fontSize:10, color:C.dim, whiteSpace:"nowrap"}}>
             {n.source}
             {n.mins != null && <span className="cp-num"> · {timeAgo(n.mins)}</span>}
@@ -115,11 +115,11 @@ function TickerSearchCard({query, onQueryChange, trending}) {
         className="cp-tkr"
         style={{width:"100%", background:C.white, border:`1px solid ${C.border2}`,
           color:C.text, padding:"9px 12px", borderRadius:6, fontSize:12,
-          fontFamily:"'DM Mono',monospace", outline:"none", fontWeight:500,
+          fontFamily:"var(--font-dm-mono),monospace", outline:"none", fontWeight:500,
           letterSpacing:"0.5px", marginBottom:12}}/>
       {trending.length > 0 && (
         <>
-          <div style={{fontFamily:"'DM Mono',monospace", fontSize:9, color:C.dim,
+          <div style={{fontFamily:"var(--font-dm-mono),monospace", fontSize:9, color:C.dim,
             letterSpacing:"1px", marginBottom:6}}>TRENDING</div>
           <div style={{display:"flex", gap:5, flexWrap:"wrap"}}>
             {trending.map(sym => {
@@ -127,7 +127,7 @@ function TickerSearchCard({query, onQueryChange, trending}) {
               return (
                 <button key={sym} onClick={() => onQueryChange(active ? '' : sym)}
                   className="chip-hov cp-tkr"
-                  style={{fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600,
+                  style={{fontFamily:"var(--font-dm-mono),monospace", fontSize:11, fontWeight:600,
                     color: active ? "#fff" : C.green,
                     background: active ? C.green : C.greenLight,
                     border:"none", padding:"4px 9px", borderRadius:4, cursor:"pointer",
@@ -226,18 +226,18 @@ export default function NewsFeed() {
             color:C.ink, margin:0, letterSpacing:"-0.3px", lineHeight:1.2}}>
             News
           </h1>
-          <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted}}>
+          <span className="cp-num" style={{fontFamily:"var(--font-dm-mono),monospace", fontSize:11, color:C.muted}}>
             {loading ? '— loading —' : `${filtered.length} ${filtered.length === 1 ? 'story' : 'stories'}`}
             {filtered.length !== articles.length && articles.length > 0 && (
               <span style={{color:C.dim}}> of {articles.length}</span>
             )}
           </span>
           <div className="cp-num" style={{display:"flex", alignItems:"center", gap:8, marginLeft:"auto",
-            fontFamily:"'DM Mono',monospace", fontSize:10, color:C.dim}}>
+            fontFamily:"var(--font-dm-mono),monospace", fontSize:10, color:C.dim}}>
             <Dot/>AI LIVE · {timeStr}
             <button onClick={loadData} style={{background:"transparent", border:`1px solid ${C.border}`,
               color:C.muted, cursor:"pointer", fontSize:12, padding:"4px 10px",
-              borderRadius:5, fontFamily:"'DM Mono',monospace"}}
+              borderRadius:5, fontFamily:"var(--font-dm-mono),monospace"}}
               onMouseEnter={e => { e.currentTarget.style.color = C.green; e.currentTarget.style.borderColor = C.greenBorder; }}
               onMouseLeave={e => { e.currentTarget.style.color = C.muted; e.currentTarget.style.borderColor = C.border; }}>
               ↻ Refresh
@@ -254,7 +254,7 @@ export default function NewsFeed() {
             const tc = TAG[cat] || {bg:C.surface, c:C.muted};
             return (
               <button key={cat} onClick={() => setActiveCategory(cat)}
-                style={{fontSize:11, fontFamily:"'DM Mono',monospace", fontWeight:600,
+                style={{fontSize:11, fontFamily:"var(--font-dm-mono),monospace", fontWeight:600,
                   letterSpacing:"0.5px", padding:"6px 12px", borderRadius:14,
                   border: active ? `1px solid ${C.ink}` : `1px solid ${C.border}`,
                   background: active ? C.ink : (cat === 'ALL' ? C.white : tc.bg),

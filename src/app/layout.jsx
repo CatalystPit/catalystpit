@@ -1,4 +1,15 @@
 import { ClerkProvider } from '@clerk/nextjs';
+import { DM_Mono } from 'next/font/google';
+
+// Self-hosted DM Mono (was an external <link>, which raced/failed to resolve on
+// some routes — fell back to a slashed-zero system monospace). DM Mono ships
+// 300/400/500 only; 600/700 in the app faux-bold from these and keep dotted zeros.
+const dmMono = DM_Mono({
+  subsets: ['latin'],
+  weight: ['300', '400', '500'],
+  variable: '--font-dm-mono',
+  display: 'swap',
+});
 
 export const metadata = {
   title: 'CatalystPit — Live Market Intelligence',
@@ -27,12 +38,12 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <ClerkProvider>
-      <html lang="en">
+      <html lang="en" className={dmMono.variable}>
         <head>
           <link rel="icon" href="/favicon.ico" />
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Mono:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
+          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
           <style>{`
             .cp-num {
               font-family: 'Inter', sans-serif !important;

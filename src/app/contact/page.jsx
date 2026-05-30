@@ -29,7 +29,7 @@ export default function ContactPage() {
 
       {/* HEADER */}
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px 16px" }}>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.muted, letterSpacing: "1.5px", marginBottom: 12 }}>
+        <div style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 11, color: C.muted, letterSpacing: "1.5px", marginBottom: 12 }}>
           GET IN TOUCH
         </div>
         <h1 style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 34, fontWeight: 700, color: C.ink, margin: "0 0 8px", letterSpacing: "-0.5px", lineHeight: 1.15 }}>

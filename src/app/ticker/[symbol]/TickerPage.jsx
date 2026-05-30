@@ -87,8 +87,8 @@ const PLACEHOLDERS = {
 function StatCell({ label, value }) {
   return (
     <div>
-      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginBottom: 3 }}>{label}</div>
-      <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 600, color: C.ink }}>{value}</div>
+      <div style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginBottom: 3 }}>{label}</div>
+      <div className="cp-num" style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 14, fontWeight: 600, color: C.ink }}>{value}</div>
     </div>
   );
 }
@@ -99,7 +99,7 @@ function Section({ title, badge, action, children }) {
     <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
       <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7 }}>
         <Dot /><span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>{title}</span>
-        {badge && <span style={{ fontSize: 9, background: '#FFF6E8', color: '#7A5018', padding: '2px 7px', borderRadius: 3, fontFamily: "'DM Mono',monospace", fontWeight: 500 }}>{badge}</span>}
+        {badge && <span style={{ fontSize: 9, background: '#FFF6E8', color: '#7A5018', padding: '2px 7px', borderRadius: 3, fontFamily: "var(--font-dm-mono),monospace", fontWeight: 500 }}>{badge}</span>}
         {action && <span style={{ marginLeft: 'auto' }}>{action}</span>}
       </div>
       <div style={{ padding: 14 }}>{children}</div>
@@ -144,8 +144,8 @@ function NewsRow({ n, idx }) {
       </div>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5, justifyContent: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: C.dim, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.source}</span>
-          {n.datetime && <span className="cp-num" style={{ marginLeft: 'auto', fontFamily: "'DM Mono',monospace", fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>{newsTime(n.datetime)}</span>}
+          <span style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 10, color: C.dim, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.source}</span>
+          {n.datetime && <span className="cp-num" style={{ marginLeft: 'auto', fontFamily: "var(--font-dm-mono),monospace", fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>{newsTime(n.datetime)}</span>}
         </div>
         <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, lineHeight: 1.35, fontFamily: "'DM Sans',sans-serif",
           display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -169,10 +169,10 @@ function Hero({ data, insider, gov }) {
       {/* identity */}
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <span className="cp-tkr" style={{ fontFamily: "'DM Mono',monospace", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
+          <span className="cp-tkr" style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
           <span style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{data.name}</span>
         </div>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: '0.5px' }}>
+        <div style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: '0.5px' }}>
           {data.exchange || '—'}{data.industry ? ` · ${data.industry}` : ''}
         </div>
       </div>
@@ -180,15 +180,15 @@ function Hero({ data, insider, gov }) {
       {/* price + 5-stat */}
       <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-          <span className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 34, fontWeight: 700, color: C.ink }}>{usd(q.c)}</span>
+          <span className="cp-num" style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 34, fontWeight: 700, color: C.ink }}>{usd(q.c)}</span>
           {q.c != null && q.dp != null && (
-            <span className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 15, fontWeight: 700,
+            <span className="cp-num" style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 15, fontWeight: 700,
               color: up ? C.green : C.red, background: up ? C.greenLight : C.redLight, padding: '3px 10px', borderRadius: 5 }}>
               {up ? '▲' : '▼'} {q.d >= 0 ? '+' : ''}{fmtNum(q.d)} ({q.dp >= 0 ? '+' : ''}{fmtNum(q.dp)}%)
             </span>
           )}
         </div>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, marginTop: 6 }}>
+        <div style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 11, color: C.dim, marginTop: 6 }}>
           Day {usd(q.l)} – {usd(q.h)} · Prev close {usd(q.pc)}
         </div>
         <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.surface}`,
@@ -274,7 +274,7 @@ function InsiderTable({ rows }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
         <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
           {headers.map(([h, al]) => (
-            <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+            <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "var(--font-dm-mono),monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
           ))}
         </tr></thead>
         <tbody>
@@ -282,19 +282,19 @@ function InsiderTable({ rows }) {
             const as = actionStyle(r.action);
             return (
               <tr key={r.id || i} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
-                <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.filingDate || '—'}</td>
-                <td className="cp-tkr" style={{ padding: '11px 16px', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: C.green }}>{r.ticker || '—'}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "var(--font-dm-mono),monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.filingDate || '—'}</td>
+                <td className="cp-tkr" style={{ padding: '11px 16px', fontFamily: "var(--font-dm-mono),monospace", fontSize: 13, fontWeight: 700, color: C.green }}>{r.ticker || '—'}</td>
                 <td style={{ padding: '11px 16px', fontSize: 13, color: C.text, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeEntities(r.company || '')}</td>
                 <td style={{ padding: '11px 16px', fontSize: 13, color: C.text }}>
                   <div>{decodeEntities(r.executive || '')}</div>
                   {r.title && <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginTop: 2 }}>{decodeEntities(r.title)}</div>}
                 </td>
                 <td style={{ padding: '11px 16px' }}>
-                  <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 3, fontFamily: "'DM Mono',monospace", fontWeight: 600, background: as.bg, color: as.fg }}>{r.action}</span>
+                  <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 3, fontFamily: "var(--font-dm-mono),monospace", fontWeight: 600, background: as.bg, color: as.fg }}>{r.action}</span>
                 </td>
-                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 500, color: C.text, whiteSpace: 'nowrap' }}>{r.shares > 0 ? Number(r.shares).toLocaleString('en-US') : '—'}</td>
-                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 500, color: C.muted, whiteSpace: 'nowrap' }}>{usd(r.pricePerShare)}</td>
-                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 14, fontWeight: 700, color: as.fg, whiteSpace: 'nowrap' }}>{fmtMoney(r.totalValue)}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 13, fontWeight: 500, color: C.text, whiteSpace: 'nowrap' }}>{r.shares > 0 ? Number(r.shares).toLocaleString('en-US') : '—'}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 13, fontWeight: 500, color: C.muted, whiteSpace: 'nowrap' }}>{usd(r.pricePerShare)}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 14, fontWeight: 700, color: as.fg, whiteSpace: 'nowrap' }}>{fmtMoney(r.totalValue)}</td>
               </tr>
             );
           })}
@@ -327,7 +327,7 @@ function GovTable({ rows }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
         <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
           {headers.map(([h, al]) => (
-            <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+            <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "var(--font-dm-mono),monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
           ))}
         </tr></thead>
         <tbody>
@@ -338,7 +338,7 @@ function GovTable({ rows }) {
             const ret = govReturn(r.priceAtTrade, r.currentPrice);
             return (
               <tr key={r.id || i} className={matched ? 'hov' : undefined} onClick={matched ? () => router.push(`/politicians/${encodeURIComponent(r.slug)}`) : undefined} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
-                <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.transactionDate || '—'}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "var(--font-dm-mono),monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.transactionDate || '—'}</td>
                 <td style={{ padding: '11px 16px', fontSize: 13, color: C.text, minWidth: 160 }}>
                   <div>
                     {matched
@@ -346,18 +346,18 @@ function GovTable({ rows }) {
                       : <span style={{ fontWeight: 500 }}>{r.representative || '—'}</span>}
                   </div>
                   <div style={{ display: 'flex', gap: 5, marginTop: 4 }}>
-                    <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 600, background: ps.bg, color: ps.fg, padding: '2px 6px', borderRadius: 3 }}>{ps.abbr}</span>
-                    {r.state && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 600, background: C.surface, color: C.muted, padding: '2px 6px', borderRadius: 3 }}>{r.state}</span>}
+                    <span style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 9, fontWeight: 600, background: ps.bg, color: ps.fg, padding: '2px 6px', borderRadius: 3 }}>{ps.abbr}</span>
+                    {r.state && <span style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 9, fontWeight: 600, background: C.surface, color: C.muted, padding: '2px 6px', borderRadius: 3 }}>{r.state}</span>}
                   </div>
                 </td>
                 <td style={{ padding: '11px 16px', fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{chamberLabel(r.chamber)}</td>
                 <td style={{ padding: '11px 16px' }}>
-                  <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 3, fontFamily: "'DM Mono',monospace", fontWeight: 600, background: as.bg, color: as.fg }}>{r.action}</span>
+                  <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 3, fontFamily: "var(--font-dm-mono),monospace", fontWeight: 600, background: as.bg, color: as.fg }}>{r.action}</span>
                 </td>
-                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{r.amountRange || '—'}</td>
-                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{usd(r.priceAtTrade)}</td>
-                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{usd(r.currentPrice)}</td>
-                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: retColor(ret), whiteSpace: 'nowrap' }}>{fmtRet(ret)}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{r.amountRange || '—'}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{usd(r.priceAtTrade)}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{usd(r.currentPrice)}</td>
+                <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 13, fontWeight: 700, color: retColor(ret), whiteSpace: 'nowrap' }}>{fmtRet(ret)}</td>
               </tr>
             );
           })}
@@ -389,7 +389,7 @@ function EarningsTable({ rows }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
         <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
           {headers.map(([h, al]) => (
-            <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+            <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "var(--font-dm-mono),monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
           ))}
         </tr></thead>
         <tbody>
@@ -398,14 +398,14 @@ function EarningsTable({ rows }) {
               <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 400, color: C.ink, whiteSpace: 'nowrap' }}>
                 {r.quarter}{r.derived && <sup title="Q4 derived from the annual 10-K (full year minus Q1–Q3)" style={{ color: C.dim, fontWeight: 400, marginLeft: 2, cursor: 'help' }}>↑</sup>}
               </td>
-              <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.report_date || '—'}</td>
-              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtBig(r.revenue)}</td>
-              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600, color: retColor(r.revenue_yoy_pct), whiteSpace: 'nowrap' }}>{fmtYoy(r.revenue_yoy_pct)}</td>
-              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtEps(r.eps_basic)}</td>
-              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600, color: retColor(r.eps_yoy_pct), whiteSpace: 'nowrap' }}>{fmtYoy(r.eps_yoy_pct)}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "var(--font-dm-mono),monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.report_date || '—'}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtBig(r.revenue)}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 12, fontWeight: 600, color: retColor(r.revenue_yoy_pct), whiteSpace: 'nowrap' }}>{fmtYoy(r.revenue_yoy_pct)}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtEps(r.eps_basic)}</td>
+              <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "var(--font-dm-mono),monospace", fontSize: 12, fontWeight: 600, color: retColor(r.eps_yoy_pct), whiteSpace: 'nowrap' }}>{fmtYoy(r.eps_yoy_pct)}</td>
               <td style={{ padding: '11px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                 {r.filing_url
-                  ? <a href={r.filing_url} target="_blank" rel="noopener noreferrer" className="sym-lnk" style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.green, textDecoration: 'none' }}>{r.form} ↗</a>
+                  ? <a href={r.filing_url} target="_blank" rel="noopener noreferrer" className="sym-lnk" style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 11, color: C.green, textDecoration: 'none' }}>{r.form} ↗</a>
                   : <span style={{ color: C.dim }}>—</span>}
               </td>
             </tr>
@@ -452,7 +452,7 @@ function DefRow({ label, value, link }) {
       <span style={{ fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{label}</span>
       {link
         ? <a href={link} target="_blank" rel="noopener noreferrer" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.green, textDecoration: 'none', textAlign: 'right', wordBreak: 'break-all' }}>{value}</a>
-        : <span className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 600, color: C.ink, textAlign: 'right' }}>{value}</span>}
+        : <span className="cp-num" style={{ fontFamily: "var(--font-dm-mono),monospace", fontSize: 13, fontWeight: 600, color: C.ink, textAlign: 'right' }}>{value}</span>}
     </div>
   );
 }
@@ -576,7 +576,7 @@ function NotFound({ symbol }) {
       <div style={{ fontSize: 40, marginBottom: 8 }}>🔍</div>
       <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Ticker not found</div>
       <div style={{ fontSize: 14, color: C.muted, fontWeight: 300 }}>
-        We couldn&apos;t find a ticker matching <span style={{ fontFamily: "'DM Mono',monospace", color: C.ink, fontWeight: 600 }}>{symbol}</span>.
+        We couldn&apos;t find a ticker matching <span style={{ fontFamily: "var(--font-dm-mono),monospace", color: C.ink, fontWeight: 600 }}>{symbol}</span>.
       </div>
       <RetrySearch />
     </div>
