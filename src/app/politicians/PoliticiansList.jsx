@@ -78,7 +78,7 @@ function MemberCard({ m }) {
           <div style={{ width: `${buyPct}%`, background: C.greenMid }} />
           <div style={{ width: `${100 - buyPct}%`, background: C.red }} />
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: "'DM Mono',monospace", fontSize: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: "'DM Sans',sans-serif", fontSize: 10 }}>
           <span style={{ color: C.green }}>{m.buys || 0} buys</span>
           <span style={{ color: C.red }}>{m.sells || 0} sells</span>
         </div>
@@ -127,7 +127,7 @@ export default function PoliticiansList() {
             <Dot /><span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: C.muted, letterSpacing: '1px' }}>STOCK ACT · HOUSE + SENATE · LIVE</span>
           </div>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 32, fontWeight: 600, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.5px' }}>Politicians</h1>
-          <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>Congressional stock trades disclosed under the STOCK Act — and how each trade has performed since.</p>
+          <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>Congressional stock trades disclosed under the STOCK Act. See how each trade has performed since.</p>
         </div>
       </div>
 
