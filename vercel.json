@@ -23,6 +23,10 @@
     {
       "path": "/api/cron/prewarm-tickers",
       "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/sync-short-interest",
+      "schedule": "0 13 * * 1"
     }
   ],
   "headers": [
@@ -60,6 +64,9 @@
       "maxDuration": 60
     },
     "src/app/api/cron/prewarm-tickers/route.js": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/sync-short-interest/route.js": {
       "maxDuration": 300
     },
     "src/app/api/claude/route.js": {

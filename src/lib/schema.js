@@ -103,3 +103,24 @@ export const tickerDailyCandles = pgTable('ticker_daily_candles', {
 }, (t) => ({
   pk: primaryKey({ columns: [t.ticker, t.date] }),
 }));
+
+// FINRA bi-monthly consolidated short interest (consolidatedShortInterest API).
+// One row per (settlement_date, ticker). changePercent + prevShortIntShares come
+// straight from the feed, so the tab's "change from prior period" needs no compute.
+// ETFs ARE included in this dataset (SPY/QQQ confirmed) — not an empty-state case.
+export const shortInterest = pgTable('short_interest', {
+  settlementDate:    date('settlement_date', { mode: 'string' }).notNull(),
+  ticker:            text('ticker').notNull(),
+  shortIntShares:    doublePrecision('short_int_shares'),       // currentShortPositionQuantity
+  prevShortIntShares: doublePrecision('prev_short_int_shares'), // previousShortPositionQuantity
+  avgDailyVolume:    doublePrecision('avg_daily_volume'),       // averageDailyVolumeQuantity
+  daysToCover:       doublePrecision('days_to_cover'),          // daysToCoverQuantity
+  changePercent:     doublePrecision('change_percent'),         // changePercent (feed-provided)
+  marketCenter:      text('market_center'),                     // marketClassCode
+  issueName:         text('issue_name'),
+  source:            text('source').notNull().default('finra'),
+}, (t) => ({
+  pk:           primaryKey({ columns: [t.settlementDate, t.ticker] }),
+  idxTicker:    index('idx_short_interest_ticker').on(t.ticker),
+  idxSettlement: index('idx_short_interest_settlement').on(t.settlementDate),
+}));

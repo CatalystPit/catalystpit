@@ -63,7 +63,8 @@ const fetchProfile = async (sym) => {
   if (p == null) return null;
   return { name: p.name || null, exchange: p.exchange || null, ticker: p.ticker || sym,
            industry: p.finnhubIndustry || null, logo: p.logo || null,
-           country: p.country || null, ipo: p.ipo || null, weburl: p.weburl || null };
+           country: p.country || null, ipo: p.ipo || null, weburl: p.weburl || null,
+           shareOutstanding: p.shareOutstanding ?? null };   // millions — powers short-interest % of float
 };
 const fetchQuote = async (sym) => {
   const q = await fh(`/quote?symbol=${encodeURIComponent(sym)}`);
@@ -207,7 +208,11 @@ export async function GET(request) {
       symbol: sym, valid: true,
       name: v.name, exchange: prof.value?.exchange ?? null, industry: prof.value?.industry ?? null, logo: prof.value?.logo ?? null,
       country: prof.value?.country ?? null, ipo: prof.value?.ipo ?? null, weburl: prof.value?.weburl ?? null,
-      quote: quote.value, metric: metric.value, news: news.value,
+      quote: quote.value,
+      // shareOutstanding lives on profile2 (not metric); merge it into metric so the UI
+      // reads one place. Spread-guarded so a null metric fetch still surfaces it.
+      metric: { ...(metric.value || {}), shareOutstanding: prof.value?.shareOutstanding ?? null },
+      news: news.value,
       meta,
     });
   } catch (e) {
