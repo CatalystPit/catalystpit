@@ -1,7 +1,14 @@
+import { db } from '../../../lib/db';
+import { tickerDailyCandles, shortInterest } from '../../../lib/schema';
+import { eq, desc } from 'drizzle-orm';
+import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
+import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
+
 export const runtime = 'nodejs';
 
 const FINNHUB_KEY    = process.env.FINNHUB_KEY;
 const POLYGON_API_KEY = process.env.POLYGON_API_KEY || process.env.POLYGON_KEY;  // Vercel uses POLYGON_KEY, local .env.local uses POLYGON_API_KEY
+const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
 const KV_URL         = process.env.KV_REST_API_URL;
 const KV_TOKEN       = process.env.KV_REST_API_TOKEN;
 
@@ -9,7 +16,7 @@ const PFX = 'catalystpit:ticker:';
 // Per-section TTLs (seconds): profile rarely changes; quote/news are live;
 // metric drifts slowly; notfound is a short negative cache so junk symbols
 // don't re-hit Finnhub on every keystroke-typo lookup.
-const TTL = { profile: 86400, quote: 300, metric: 1800, news: 300, newsFallback: 60, notfound: 600 };
+const TTL = { profile: 86400, quote: 300, metric: 1800, news: 300, newsFallback: 60, notfound: 600, ma50: 86400, shortint: 21600 };
 // news: 5min on the Polygon-primary path; 60s when Polygon FAILED and we served the Finnhub
 // (Yahoo-heavy) fallback — so a transient Polygon hiccup self-corrects in ~1min, not ~5.
 
@@ -80,10 +87,60 @@ const fetchMetric = async (sym) => {
     low52:     m['52WeekLow'] ?? null,
     marketCap: m.marketCapitalization ?? null,           // millions USD
     peTTM:     m.peTTM ?? null,
+    epsTTM:    m.epsTTM ?? null,                          // free rider on this call → inherits metric TTL
+    beta:      m.beta ?? null,
     divYield:  m.dividendYieldIndicatedAnnual ?? null,   // can be absent → null → "—"
     avgVol10d: m['10DayAverageTradingVolume'] ?? null,   // millions
   };
 };
+
+// 50-day SMA of adjusted closes from ticker_daily_candles. Lazy: if <50 candles stored,
+// fetch ~90d of Tiingo daily and upsert first (mirrors /api/chart-daily). null if still <50.
+async function computeFiftyDayMA(sym) {
+  const last50 = () => db.select({ close: tickerDailyCandles.close })
+    .from(tickerDailyCandles).where(eq(tickerDailyCandles.ticker, sym))
+    .orderBy(desc(tickerDailyCandles.date)).limit(50);
+  let rows = await last50();
+  if (rows.length < 50 && TIINGO_API_KEY) {
+    const to = new Date(), from = new Date(to.getTime() - 90 * 86400000);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const { ok, data } = await fetchTiingoDaily(sym, fmt(from), fmt(to), TIINGO_API_KEY);
+    if (ok && Array.isArray(data) && data.length) {
+      const vals = data
+        .filter(d => d.date && Number.isFinite(d.adjClose))
+        .map(d => ({ ticker: sym, date: d.date.slice(0, 10),
+          open: d.adjOpen, high: d.adjHigh, low: d.adjLow, close: d.adjClose,
+          volume: d.adjVolume ?? 0, source: 'tiingo' }));
+      if (vals.length) {
+        await db.insert(tickerDailyCandles).values(vals)
+          .onConflictDoNothing({ target: [tickerDailyCandles.ticker, tickerDailyCandles.date] });
+        rows = await last50();
+      }
+    }
+  }
+  const closes = rows.map(r => Number(r.close)).filter(n => !isNaN(n));
+  if (closes.length < 50) return null;
+  return +(closes.reduce((a, b) => a + b, 0) / 50).toFixed(2);
+}
+
+// Latest FINRA short-interest row + % of float. Float comes from the SHARED resolveFloat
+// (lib/finra-short-interest.mjs) — the exact same path the Short Interest tab uses — so the
+// hero and the tab always agree. resolveFloat lazily fetches+caches FMP float on first view
+// (cached 30d); pre-warm cron means popular tickers are usually already populated.
+async function fetchHeroShortInterest(sym) {
+  const [si] = await db.select({
+    settlementDate: shortInterest.settlementDate, shortIntShares: shortInterest.shortIntShares,
+    daysToCover: shortInterest.daysToCover, changePercent: shortInterest.changePercent,
+  }).from(shortInterest).where(eq(shortInterest.ticker, sym))
+    .orderBy(desc(shortInterest.settlementDate)).limit(1);
+  if (!si) return null;
+  const fl = await resolveFloat(sym);
+  const floatShares = fl?.float_shares ?? null;
+  const pctFloat = (si.shortIntShares != null && floatShares > 0)
+    ? +((si.shortIntShares / floatShares) * 100).toFixed(2) : null;
+  return { settlementDate: si.settlementDate, shortIntShares: si.shortIntShares,
+    daysToCover: si.daysToCover, changePercent: si.changePercent, pctFloat };
+}
 // Normalized news item: { headline, source, url, datetime (ISO string | null), image }.
 // Each source-fetcher returns null on fetch failure (don't cache; retry next request),
 // or an array (possibly empty) on success.
@@ -187,11 +244,13 @@ export async function GET(request) {
     // resolves from the already-fetched profile/quote. Cuts ~a Finnhub round-trip off cold loads.
     // (Trade-off: a format-valid-but-nonexistent symbol costs a few extra calls once, then it's
     //  negative-cached — junk is rare and the format gate + notfound cache absorb the common case.)
-    const [prof, quote, metric, news] = await Promise.all([
+    const [prof, quote, metric, news, ma50, shortInt] = await Promise.all([
       cached(`${PFX}${sym}:profile`, TTL.profile, () => fetchProfile(sym)),
       cached(`${PFX}${sym}:quote`,   TTL.quote,   () => fetchQuote(sym)),
       cached(`${PFX}${sym}:metric`,  TTL.metric,  () => fetchMetric(sym)),
       cachedNews(sym),
+      cached(`${PFX}${sym}:ma50`,    TTL.ma50,     () => computeFiftyDayMA(sym)),
+      cached(`${PFX}${sym}:shortint`, TTL.shortint, () => fetchHeroShortInterest(sym)),
     ]);
 
     const v = await resolveValidity(sym, prof.value || {}, quote.value);
@@ -202,7 +261,7 @@ export async function GET(request) {
       return Response.json({ symbol: sym, valid: false, reason: 'not_found' });
     }
 
-    const meta = { cache: { profile: prof.source, quote: quote.source, metric: metric.source, news: news.source } };
+    const meta = { cache: { profile: prof.source, quote: quote.source, metric: metric.source, news: news.source, ma50: ma50.source, shortInterest: shortInt.source } };
     console.log(`[ticker_api] ${sym} ok · cache=${JSON.stringify(meta.cache)}`);
     return Response.json({
       symbol: sym, valid: true,
@@ -212,6 +271,8 @@ export async function GET(request) {
       // shareOutstanding lives on profile2 (not metric); merge it into metric so the UI
       // reads one place. Spread-guarded so a null metric fetch still surfaces it.
       metric: { ...(metric.value || {}), shareOutstanding: prof.value?.shareOutstanding ?? null },
+      fiftyDayMA: ma50.value,          // number | null (null when <50 candles even after lazy fetch)
+      shortInterest: shortInt.value,   // { settlementDate, shortIntShares, daysToCover, changePercent, pctFloat } | null
       news: news.value,
       meta,
     });
