@@ -319,6 +319,7 @@ function InsiderTab({ symbol, insider }) {
 
 // Government table (shared by the full tab + the Overview preview) — return-since-trade column.
 function GovTable({ rows }) {
+  const router = useRouter();
   const headers = [['Date', 'left'], ['Politician', 'left'], ['Chamber', 'left'], ['Type', 'left'],
     ['Amount', 'right'], ['Price at trade', 'right'], ['Current price', 'right'], ['Return since', 'right']];
   return (
@@ -336,12 +337,12 @@ function GovTable({ rows }) {
             const matched = isBioguide(r.slug);
             const ret = govReturn(r.priceAtTrade, r.currentPrice);
             return (
-              <tr key={r.id || i} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
+              <tr key={r.id || i} className={matched ? 'hov' : undefined} onClick={matched ? () => router.push(`/politicians/${encodeURIComponent(r.slug)}`) : undefined} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
                 <td className="cp-num" style={{ padding: '11px 16px', fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.transactionDate || '—'}</td>
                 <td style={{ padding: '11px 16px', fontSize: 13, color: C.text, minWidth: 160 }}>
                   <div>
                     {matched
-                      ? <a href={`/politicians/${r.slug}`} className="sym-lnk" style={{ color: C.text, textDecoration: 'none', fontWeight: 500 }}>{r.representative || '—'}</a>
+                      ? <a href={`/politicians/${r.slug}`} className="sym-lnk" onClick={(e) => e.stopPropagation()} style={{ color: C.text, textDecoration: 'none', fontWeight: 500 }}>{r.representative || '—'}</a>
                       : <span style={{ fontWeight: 500 }}>{r.representative || '—'}</span>}
                   </div>
                   <div style={{ display: 'flex', gap: 5, marginTop: 4 }}>

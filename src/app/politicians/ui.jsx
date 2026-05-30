@@ -78,7 +78,7 @@ export function Stat({ label, value, small }) {
     <div>
       <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontWeight: 600,
         fontSize: small ? 12 : 16, color: C.ink }}>{value}</div>
-      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginTop: 2 }}>{label}</div>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginTop: 2 }}>{label}</div>
     </div>
   );
 }

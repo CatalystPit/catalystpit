@@ -142,7 +142,7 @@ export default function PoliticiansList() {
 
       {/* GRID */}
       <div style={{ maxWidth: 1380, margin: '16px auto', padding: '0 24px 40px' }}>
-        <div style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Mono',monospace", marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Mono',monospace", letterSpacing: '0.8px', marginBottom: 12 }}>
           {loading ? 'Loading…' : error ? '' : `${members?.length || 0} members`}
         </div>
 
