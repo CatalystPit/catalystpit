@@ -181,7 +181,11 @@ function buildUserMessage(c) {
   L.push('=== SHORT INTEREST (source: FINRA) ===');
   if (c.finraShortInterest) {
     const s = c.finraShortInterest;
-    L.push(`- As of ${s.settlementDate || 'n/a'}: % of float ${s.pctOfFloat != null ? s.pctOfFloat + '%' : 'n/a'}, days to cover ${s.daysToCover ?? 'n/a'}, change vs prior ${s.changeVsPrior != null ? s.changeVsPrior + '%' : 'n/a'}`);
+    const dir = s.ppChangeVsPrior == null ? '' : s.ppChangeVsPrior > 0 ? 'up' : s.ppChangeVsPrior < 0 ? 'down' : 'flat';
+    const changeStr = s.ppChangeVsPrior != null
+      ? ` (prior period ${s.prevPctOfFloat}% of float — ${dir} ${Math.abs(s.ppChangeVsPrior)} percentage points)` : '';
+    L.push(`- As of ${s.settlementDate || 'n/a'}: short interest is ${s.pctOfFloat != null ? s.pctOfFloat + '% of float' : 'n/a'}${changeStr}; days to cover ${s.daysToCover ?? 'n/a'}.`);
+    L.push('  NOTE: short interest is ONE data point. Do not present a bull claim and a bear claim that imply different short-interest magnitudes; the % of float and its percentage-point change above are the only valid short-interest figures.');
   } else L.push('- (no short interest data available)');
   L.push('');
   L.push('=== RECENT NEWS HEADLINES (last 14 days, source: News) ===');

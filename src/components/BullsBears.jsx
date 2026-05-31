@@ -128,7 +128,7 @@ export default function BullsBears({ ticker }) {
       )}
 
       {data.summary_line && (
-        <div style={{ fontFamily: "'Cormorant Garamond',serif", fontStyle: 'italic', fontSize: 19, lineHeight: 1.4,
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontStyle: 'italic', fontSize: 16, lineHeight: 1.45,
           color: C.ink, margin: '0 0 18px', paddingBottom: 16, borderBottom: `1px solid ${C.surface}` }}>
           {data.summary_line}
         </div>
