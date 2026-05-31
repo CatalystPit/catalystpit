@@ -278,6 +278,24 @@ function nameClaims(text) {
   return out;
 }
 
+// Role/title words a bullet prepends to a name ("Director Arthur Levinson", "CFO Luca Maestri")
+// or generic descriptors — NOT part of the name, so excluded before token matching.
+const NAME_NOISE = new Set([
+  'the', 'this', 'these', 'that', 'a', 'an', 'its', 'their', 'our',
+  'director', 'ceo', 'cfo', 'coo', 'cto', 'president', 'chief', 'executive', 'officer',
+  'svp', 'evp', 'vp', 'senior', 'vice', 'general', 'counsel', 'chairman', 'chairwoman',
+  'chair', 'founder', 'cofounder', 'treasurer', 'secretary', 'representative', 'senator',
+  'congressman', 'congresswoman', 'analyst', 'inc', 'corp', 'co', 'ltd', 'plc',
+]);
+
+// Significant tokens of a name: lowercased, role/article words removed, initials (<3 chars)
+// dropped. "Director Arthur D. Levinson" → ['arthur','levinson'] so order/format/middle-initial
+// differences vs the source feed ("LEVINSON ARTHUR D") don't cause false drops.
+function nameTokens(name) {
+  return String(name).toLowerCase().replace(/[.'']/g, '').split(/\s+/)
+    .filter((w) => w.length >= 3 && !NAME_NOISE.has(w));
+}
+
 // Validate one bullet. Returns { ok, reason }: reason ∈ 'number' | 'name' | 'source' when dropped.
 function validateBullet(b, companyName, hayValues, hayLower, allowedSources) {
   const text = String(b?.text || '');
