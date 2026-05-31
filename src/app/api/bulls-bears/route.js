@@ -212,6 +212,7 @@ function buildUserMessage(c) {
   L.push('{ "summary_line": "one sentence capturing the bull-bear tension", "bulls": [ { "text": "...", "source": "10-Q", "date": "YYYY-MM-DD" } ], "bears": [ { "text": "...", "source": "Form 4", "date": "YYYY-MM-DD" } ], "generated_at": "<ISO timestamp>" }');
   L.push('Up to 5 bulls and 5 bears. Every bullet\'s source AND date MUST correspond to a real item in the data above. Fewer bullets is correct if the data is thin — do NOT pad to 5.');
   L.push('RULES: (1) Every bullet must contain a concrete fact — a specific number, a named event, or a dated filing. Drop a data item rather than writing a vague or hedging bullet (e.g. do NOT write "emerging AI potential as a possible tailwind"). (2) Use ALL relevant data above: if a side has real signal, surface it — do not under-fill the bull or bear side, and do not pad either. (3) Write summary_line LAST, derived ONLY from the bullets you generated; it must not assert any direction or claim that no bullet supports.');
+  L.push('FORMATTING: (a) Dollar figures must be clean currency — abbreviate large amounts ($5.56M, $111.7M, $4.58T) and write smaller amounts as whole dollars with commas ($369,500). NEVER raw floats or fractional cents (write $5.56M, never $5,564,884.625). (b) When citing multiple transactions/filings, dedupe dates — list each DISTINCT date once (e.g. "across May 6 and May 27"), never repeat a date. (c) All dates in bullet text must read in short form ("May 27", not "2026-05-27"), matching the source pills.');
   return L.join('\n');
 }
 
