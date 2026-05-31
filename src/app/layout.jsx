@@ -74,6 +74,8 @@ export default function RootLayout({ children }) {
             @media (max-width: 599px) { .tk-hero-grid { grid-template-columns: repeat(2, 1fr); } }
             .tk-chart { height: 400px; }
             @media (max-width: 599px) { .tk-chart { height: 280px; } }
+            .bb-cols { display: flex; gap: 28px; }
+            @media (max-width: 860px) { .bb-cols { flex-direction: column; gap: 20px; } }
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
