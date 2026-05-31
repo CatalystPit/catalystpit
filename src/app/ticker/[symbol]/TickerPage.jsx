@@ -3,6 +3,7 @@ import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles } from '../../../lib/cp-shared';
 import TickerChart from '../../../components/TickerChart';
+import BullsBears from '../../../components/BullsBears';
 
 // ── formatters (null/NaN → "—", per the null-rather-than-guess rule) ──
 const usd      = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -580,6 +581,9 @@ function OverviewTab({ data, insider, gov, onTab }) {
 
   return (
     <>
+      {/* Bull & Bear synthesis — first Overview section (hero + chart sit above the tab bar). */}
+      <BullsBears ticker={data.symbol} />
+
       <Section title="About">
         <div style={{ maxWidth: 640 }}>
           {about.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}

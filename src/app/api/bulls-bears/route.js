@@ -288,13 +288,19 @@ function validateBullet(b, companyName, hayValues, hayLower, allowedSources) {
   for (const c of claimNumbers(text)) {
     if (!traced(c.value, hayValues)) return { ok: false, reason: 'number', detail: c.raw };
   }
-  // 3) fabricated NAME: a multi-word proper noun absent from the sources (and not generic/company)
-  const company = (companyName || '').toLowerCase();
+  // 3) fabricated NAME: a multi-word proper noun whose significant tokens are not ALL present
+  // as whole words in the sources. Token-subset (not substring) so "Director Arthur Levinson"
+  // traces to source "LEVINSON ARTHUR D" (order/format/initial differences ignored), while a
+  // fabricated surname still fails because its token is absent from the source word set.
+  const companyTokens = new Set(nameTokens(companyName || ''));
+  const hayWords = new Set(hayLower.match(/[a-z]{3,}/g) || []);
   for (const nm of nameClaims(text)) {
-    const low = nm.toLowerCase();
-    if (GENERIC_CAPS.has(low)) continue;
-    if (company.includes(low) || low.includes(company.split(/\s+/)[0] || ' ')) continue;
-    if (!hayLower.includes(low)) return { ok: false, reason: 'name', detail: nm };
+    if (GENERIC_CAPS.has(nm.toLowerCase())) continue;
+    const toks = nameTokens(nm);
+    if (!toks.length) continue;
+    if (toks.every((t) => companyTokens.has(t))) continue;
+    if (toks.every((t) => hayWords.has(t))) continue;
+    return { ok: false, reason: 'name', detail: nm };
   }
   return { ok: true };
 }
