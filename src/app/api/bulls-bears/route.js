@@ -17,7 +17,7 @@ const TTL_OK = 6 * 60 * 60;          // 6h for a good synthesis
 const TTL_EMPTY = 15 * 60;           // 15m negative-cache for junk/dead/failed tickers
 const TTL_LASTREFRESH = 30 * 60;     // 30m per-ticker manual-refresh throttle
 
-const SYSTEM = 'You are a balanced financial analyst writing for retail traders. You synthesize bull and bear cases from REAL provided data. You NEVER invent numbers, never speculate beyond what the data supports, and you cite the source of every claim. If data is insufficient for either side, you provide fewer bullets rather than padding.';
+const SYSTEM = 'You are a balanced financial analyst writing for retail traders. You synthesize bull and bear cases from REAL provided data. You NEVER invent numbers, never speculate beyond what the data supports, and you cite the source of every claim. If data is insufficient for either side, you provide fewer bullets rather than padding. Every bullet must rest on a concrete fact — a number, a named/dated event, or a dated filing — never a vague or hedging statement. Write the summary_line LAST, AFTER the bullets, and derive it ONLY from the bullets you actually generated: it must never assert a direction or claim (e.g. "insider confidence") that no bullet supports.';
 
 // ── KV (REST), mirrors the other routes ──
 async function kvGet(key) {
@@ -211,6 +211,7 @@ function buildUserMessage(c) {
   L.push('Synthesize the bull and bear case from ONLY the data above. Return ONLY valid JSON — no preamble, no markdown code fences — in EXACTLY this shape:');
   L.push('{ "summary_line": "one sentence capturing the bull-bear tension", "bulls": [ { "text": "...", "source": "10-Q", "date": "YYYY-MM-DD" } ], "bears": [ { "text": "...", "source": "Form 4", "date": "YYYY-MM-DD" } ], "generated_at": "<ISO timestamp>" }');
   L.push('Up to 5 bulls and 5 bears. Every bullet\'s source AND date MUST correspond to a real item in the data above. Fewer bullets is correct if the data is thin — do NOT pad to 5.');
+  L.push('RULES: (1) Every bullet must contain a concrete fact — a specific number, a named event, or a dated filing. Drop a data item rather than writing a vague or hedging bullet (e.g. do NOT write "emerging AI potential as a possible tailwind"). (2) Use ALL relevant data above: if a side has real signal, surface it — do not under-fill the bull or bear side, and do not pad either. (3) Write summary_line LAST, derived ONLY from the bullets you generated; it must not assert any direction or claim that no bullet supports.');
   return L.join('\n');
 }
 

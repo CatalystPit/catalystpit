@@ -7,7 +7,7 @@ import { C, Skel, timeAgo, minsSince } from '../lib/cp-shared';
 // Fonts are plain DOM (DM Mono / Cormorant / DM Sans) — CSP already allows fonts.gstatic.com,
 // so no canvas-style font race here (that was a Lightweight-Charts-only problem).
 
-const SOURCE_PILL = { fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: '0.4px', color: C.dim };
+const SOURCE_PILL = { fontFamily: "'DM Sans',sans-serif", fontSize: 10, letterSpacing: '0.3px', color: C.dim };
 
 // "Updated Xm ago" from an ISO timestamp.
 const updatedAgo = (iso) => {
@@ -120,7 +120,7 @@ export default function BullsBears({ ticker }) {
   return card(<>{header}
     <div style={{ padding: 16 }}>
       {ago && (
-        <div style={{ textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 10, color: C.dim, marginBottom: 8 }}>
+        <div style={{ textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, marginBottom: 8 }}>
           {refreshNote
             ? <span style={{ color: C.gold }}>{refreshNote}</span>
             : ago}
