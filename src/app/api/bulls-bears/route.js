@@ -17,7 +17,7 @@ const TTL_OK = 6 * 60 * 60;          // 6h for a good synthesis
 const TTL_EMPTY = 15 * 60;           // 15m negative-cache for junk/dead/failed tickers
 const TTL_LASTREFRESH = 30 * 60;     // 30m per-ticker manual-refresh throttle
 
-const SYSTEM = 'You are a balanced financial analyst writing for retail traders. You synthesize bull and bear cases from REAL provided data. You NEVER invent numbers, never speculate beyond what the data supports, and you cite the source of every claim. If data is insufficient for either side, you provide fewer bullets rather than padding.';
+const SYSTEM = 'You are a balanced financial analyst writing for retail traders. You synthesize bull and bear cases from REAL provided data. You NEVER invent numbers, never speculate beyond what the data supports, and you cite the source of every claim. If data is insufficient for either side, you provide fewer bullets rather than padding. Every bullet must rest on a concrete fact — a number, a named/dated event, or a dated filing — never a vague or hedging statement. Write the summary_line LAST, AFTER the bullets, and derive it ONLY from the bullets you actually generated: it must never assert a direction or claim (e.g. "insider confidence") that no bullet supports.';
 
 // ── KV (REST), mirrors the other routes ──
 async function kvGet(key) {
@@ -96,15 +96,22 @@ async function assembleContext(origin, ticker) {
     execs: f4.slice(0, 8).map((t) => ({ name: t.executive, role: t.title || null, action: t.action, date: t.transactionDate || t.filingDate || null })),
   };
 
-  // FINRA short interest (latest settlement).
+  // FINRA short interest (latest settlement). Change is expressed in PERCENTAGE POINTS of
+  // float (current float% minus prior float%), computed from our own current/prev short-share
+  // counts — NOT FINRA's raw change_percent (a %-change-in-shares that read ambiguously as
+  // "percentage points of float" and produced contradictory claims, e.g. META 1.47% float
+  // bull vs "+10.93pp" bear). pp-of-float delta is internally consistent (META: +0.15pp).
   const L = si?.latest || null;
+  const floatSh = num(si?.float?.float_shares);
+  const asFloatPct = (sh) => (num(sh) != null && floatSh > 0) ? +((sh / floatSh) * 100).toFixed(2) : null;
+  const siPctOfFloat = L ? asFloatPct(L.short_int_shares) : null;
+  const siPrevPctOfFloat = L ? asFloatPct(L.prev_short_int_shares) : null;
   const finraShortInterest = L ? {
-    pct: num(si.float?.free_float_pct) != null ? null : null,   // % of shares short not in payload; use days/float below
-    pctOfFloat: (L.short_int_shares != null && si.float?.float_shares > 0)
-      ? +((L.short_int_shares / si.float.float_shares) * 100).toFixed(2) : null,
-    daysToCover: num(L.days_to_cover),
-    changeVsPrior: num(L.change_percent),
     settlementDate: L.settlement_date || null,
+    pctOfFloat: siPctOfFloat,
+    prevPctOfFloat: siPrevPctOfFloat,
+    ppChangeVsPrior: (siPctOfFloat != null && siPrevPctOfFloat != null) ? +(siPctOfFloat - siPrevPctOfFloat).toFixed(2) : null,
+    daysToCover: num(L.days_to_cover),
   } : null;
 
   // News: top ~10 by publisher diversity, last 14 days. tk.news items are {headline, source, datetime}.
@@ -181,7 +188,11 @@ function buildUserMessage(c) {
   L.push('=== SHORT INTEREST (source: FINRA) ===');
   if (c.finraShortInterest) {
     const s = c.finraShortInterest;
-    L.push(`- As of ${s.settlementDate || 'n/a'}: % of float ${s.pctOfFloat != null ? s.pctOfFloat + '%' : 'n/a'}, days to cover ${s.daysToCover ?? 'n/a'}, change vs prior ${s.changeVsPrior != null ? s.changeVsPrior + '%' : 'n/a'}`);
+    const dir = s.ppChangeVsPrior == null ? '' : s.ppChangeVsPrior > 0 ? 'up' : s.ppChangeVsPrior < 0 ? 'down' : 'flat';
+    const changeStr = s.ppChangeVsPrior != null
+      ? ` (prior period ${s.prevPctOfFloat}% of float — ${dir} ${Math.abs(s.ppChangeVsPrior)} percentage points)` : '';
+    L.push(`- As of ${s.settlementDate || 'n/a'}: short interest is ${s.pctOfFloat != null ? s.pctOfFloat + '% of float' : 'n/a'}${changeStr}; days to cover ${s.daysToCover ?? 'n/a'}.`);
+    L.push('  NOTE: short interest is ONE data point. Do not present a bull claim and a bear claim that imply different short-interest magnitudes; the % of float and its percentage-point change above are the only valid short-interest figures.');
   } else L.push('- (no short interest data available)');
   L.push('');
   L.push('=== RECENT NEWS HEADLINES (last 14 days, source: News) ===');
@@ -200,6 +211,8 @@ function buildUserMessage(c) {
   L.push('Synthesize the bull and bear case from ONLY the data above. Return ONLY valid JSON — no preamble, no markdown code fences — in EXACTLY this shape:');
   L.push('{ "summary_line": "one sentence capturing the bull-bear tension", "bulls": [ { "text": "...", "source": "10-Q", "date": "YYYY-MM-DD" } ], "bears": [ { "text": "...", "source": "Form 4", "date": "YYYY-MM-DD" } ], "generated_at": "<ISO timestamp>" }');
   L.push('Up to 5 bulls and 5 bears. Every bullet\'s source AND date MUST correspond to a real item in the data above. Fewer bullets is correct if the data is thin — do NOT pad to 5.');
+  L.push('RULES: (1) Every bullet must contain a concrete fact — a specific number, a named event, or a dated filing. Drop a data item rather than writing a vague or hedging bullet (e.g. do NOT write "emerging AI potential as a possible tailwind"). (2) Use ALL relevant data above: if a side has real signal, surface it — do not under-fill the bull or bear side, and do not pad either. (3) Write summary_line LAST, derived ONLY from the bullets you generated; it must not assert any direction or claim that no bullet supports.');
+  L.push('FORMATTING: (a) Dollar figures must be clean currency — abbreviate large amounts ($5.56M, $111.7M, $4.58T) and write smaller amounts as whole dollars with commas ($369,500). NEVER raw floats or fractional cents (write $5.56M, never $5,564,884.625). (b) When citing multiple transactions/filings, dedupe dates — list each DISTINCT date once (e.g. "across May 6 and May 27"), never repeat a date. (c) All dates in bullet text must read in short form ("May 27", not "2026-05-27"), matching the source pills.');
   return L.join('\n');
 }
 
@@ -278,6 +291,24 @@ function nameClaims(text) {
   return out;
 }
 
+// Role/title words a bullet prepends to a name ("Director Arthur Levinson", "CFO Luca Maestri")
+// or generic descriptors — NOT part of the name, so excluded before token matching.
+const NAME_NOISE = new Set([
+  'the', 'this', 'these', 'that', 'a', 'an', 'its', 'their', 'our',
+  'director', 'ceo', 'cfo', 'coo', 'cto', 'president', 'chief', 'executive', 'officer',
+  'svp', 'evp', 'vp', 'senior', 'vice', 'general', 'counsel', 'chairman', 'chairwoman',
+  'chair', 'founder', 'cofounder', 'treasurer', 'secretary', 'representative', 'senator',
+  'congressman', 'congresswoman', 'analyst', 'inc', 'corp', 'co', 'ltd', 'plc',
+]);
+
+// Significant tokens of a name: lowercased, role/article words removed, initials (<3 chars)
+// dropped. "Director Arthur D. Levinson" → ['arthur','levinson'] so order/format/middle-initial
+// differences vs the source feed ("LEVINSON ARTHUR D") don't cause false drops.
+function nameTokens(name) {
+  return String(name).toLowerCase().replace(/[.'']/g, '').split(/\s+/)
+    .filter((w) => w.length >= 3 && !NAME_NOISE.has(w));
+}
+
 // Validate one bullet. Returns { ok, reason }: reason ∈ 'number' | 'name' | 'source' when dropped.
 function validateBullet(b, companyName, hayValues, hayLower, allowedSources) {
   const text = String(b?.text || '');
@@ -288,13 +319,19 @@ function validateBullet(b, companyName, hayValues, hayLower, allowedSources) {
   for (const c of claimNumbers(text)) {
     if (!traced(c.value, hayValues)) return { ok: false, reason: 'number', detail: c.raw };
   }
-  // 3) fabricated NAME: a multi-word proper noun absent from the sources (and not generic/company)
-  const company = (companyName || '').toLowerCase();
+  // 3) fabricated NAME: a multi-word proper noun whose significant tokens are not ALL present
+  // as whole words in the sources. Token-subset (not substring) so "Director Arthur Levinson"
+  // traces to source "LEVINSON ARTHUR D" (order/format/initial differences ignored), while a
+  // fabricated surname still fails because its token is absent from the source word set.
+  const companyTokens = new Set(nameTokens(companyName || ''));
+  const hayWords = new Set(hayLower.match(/[a-z]{3,}/g) || []);
   for (const nm of nameClaims(text)) {
-    const low = nm.toLowerCase();
-    if (GENERIC_CAPS.has(low)) continue;
-    if (company.includes(low) || low.includes(company.split(/\s+/)[0] || ' ')) continue;
-    if (!hayLower.includes(low)) return { ok: false, reason: 'name', detail: nm };
+    if (GENERIC_CAPS.has(nm.toLowerCase())) continue;
+    const toks = nameTokens(nm);
+    if (!toks.length) continue;
+    if (toks.every((t) => companyTokens.has(t))) continue;
+    if (toks.every((t) => hayWords.has(t))) continue;
+    return { ok: false, reason: 'name', detail: nm };
   }
   return { ok: true };
 }
