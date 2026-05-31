@@ -24,7 +24,7 @@ const PARTIES = [
 function PillGroup({ label, options, value, onChange }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: C.dim, letterSpacing: '0.8px' }}>{label}</span>
+      <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, letterSpacing: '0.8px' }}>{label}</span>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {options.map((o) => {
           const active = value === o.key;
@@ -124,7 +124,7 @@ export default function PoliticiansList() {
       <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '20px 24px' }}>
         <div style={{ maxWidth: 1380, margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <Dot /><span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: C.muted, letterSpacing: '1px' }}>STOCK ACT · HOUSE + SENATE · LIVE</span>
+            <Dot /><span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.muted, letterSpacing: '1px' }}>STOCK ACT · HOUSE + SENATE · LIVE</span>
           </div>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 32, fontWeight: 600, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.5px' }}>Politicians</h1>
           <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>Congressional stock trades disclosed under the STOCK Act. See how each trade has performed since.</p>
@@ -142,7 +142,7 @@ export default function PoliticiansList() {
 
       {/* GRID */}
       <div style={{ maxWidth: 1380, margin: '16px auto', padding: '0 24px 40px' }}>
-        <div style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Mono',monospace", marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Sans',sans-serif", marginBottom: 12 }}>
           {loading ? 'Loading…' : error ? '' : `${members?.length || 0} members`}
         </div>
 

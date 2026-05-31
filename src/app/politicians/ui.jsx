@@ -50,7 +50,7 @@ export const returnColor = (r) => (r == null ? C.dim : r > 0 ? C.green : r < 0 ?
 
 export function Chip({ children, bg, fg }) {
   return (
-    <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 600, letterSpacing: '0.4px',
+    <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 600, letterSpacing: '0.4px',
       background: bg, color: fg, padding: '2px 7px', borderRadius: 4, whiteSpace: 'nowrap' }}>{children}</span>
   );
 }
@@ -67,7 +67,7 @@ export function Avatar({ photoUrl, name, ps, size = 52 }) {
   return (
     <div style={{ width: size, height: size, borderRadius: '50%', flexShrink: 0, display: 'flex',
       alignItems: 'center', justifyContent: 'center', background: ps.bg, color: ps.fg,
-      fontFamily: "'DM Mono',monospace", fontWeight: 700, fontSize: Math.round(size * 0.3) }}>
+      fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: Math.round(size * 0.3) }}>
       {initials(name)}
     </div>
   );
@@ -76,9 +76,9 @@ export function Avatar({ photoUrl, name, ps, size = 52 }) {
 export function Stat({ label, value, small }) {
   return (
     <div>
-      <div className="cp-num" style={{ fontFamily: "'DM Mono',monospace", fontWeight: 600,
+      <div className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontWeight: 600,
         fontSize: small ? 12 : 16, color: C.ink }}>{value}</div>
-      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginTop: 2 }}>{label}</div>
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginTop: 2 }}>{label}</div>
     </div>
   );
 }

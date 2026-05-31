@@ -192,7 +192,7 @@ export const TagBadge = ({tag, size="sm"}) => {
   return (
     <span style={{fontSize:size==="sm"?9:10, background:tc.bg, color:tc.c,
       padding:"2px 7px", borderRadius:3, letterSpacing:"0.5px",
-      fontFamily:"'DM Mono',monospace", fontWeight:500, whiteSpace:"nowrap"}}>{tag}</span>
+      fontFamily:"'DM Sans',sans-serif", fontWeight:500, whiteSpace:"nowrap"}}>{tag}</span>
   );
 };
 
@@ -258,11 +258,11 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
 
         {hasValidTicker && (
           <div style={{position:"absolute", top:9, left:9, display:"flex", gap:5, zIndex:2}}>
-            <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color:"#fff",
+            <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600, color:"#fff",
               background:"rgba(0,0,0,0.52)", backdropFilter:"blur(6px)",
               padding:"2px 8px", borderRadius:4}}>{n.sym}</span>
             {hasChg && (
-              <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
                 color:isUp?"#5AE87A":"#FF8080", background:"rgba(0,0,0,0.52)", backdropFilter:"blur(6px)",
                 padding:"2px 8px", borderRadius:4}}>{fmtP(chgNum)}</span>
             )}
@@ -270,7 +270,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
         )}
 
         <div style={{position:"absolute", bottom:hero?72:8, right:10, zIndex:2}}>
-          <span style={{fontFamily:"'DM Mono',monospace", fontSize:9,
+          <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:9,
             color:"rgba(255,255,255,0.82)", textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{n.source}</span>
         </div>
 
@@ -281,7 +281,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
               <TagBadge tag={n.tag}/>
               {n.mins != null && (
                 <span className="cp-num" style={{fontSize:10, color:"rgba(255,255,255,0.65)", marginLeft:"auto",
-                  fontFamily:"'DM Mono',monospace"}}>{timeAgo(n.mins)}</span>
+                  fontFamily:"'DM Sans',sans-serif"}}>{timeAgo(n.mins)}</span>
               )}
             </div>
             <div style={{fontSize:19, color:"#fff", lineHeight:1.35, fontWeight:700,
@@ -304,7 +304,7 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
             <TagBadge tag={n.tag}/>
             {n.mins != null && (
               <span className="cp-num" style={{fontSize:10, color:C.dim, marginLeft:"auto",
-                fontFamily:"'DM Mono',monospace"}}>{timeAgo(n.mins)}</span>
+                fontFamily:"'DM Sans',sans-serif"}}>{timeAgo(n.mins)}</span>
             )}
           </div>
           <div style={{fontSize:stacked?12:large?15:13, color:C.ink, lineHeight:1.42,
@@ -361,7 +361,7 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
         aria-label="Search ticker symbol" placeholder="Search ticker, company..."
         className="cp-nav-search-input"
         style={{ width: "100%", height: "100%", background: "transparent", border: "none", outline: "none",
-          color: "#1A1A1A", fontFamily: "'DM Mono',monospace", fontSize: 14, letterSpacing: "0.5px",
+          color: "#1A1A1A", fontFamily: "'DM Sans',sans-serif", fontSize: 14, letterSpacing: "0.5px",
           padding: "0 14px 0 36px", borderRadius: 999, minWidth: 0 }} />
     </form>
   );
@@ -465,11 +465,11 @@ export function TickerTape({tickers}) {
           {[...tickers, ...tickers, ...tickers].map((t, i) => (
             <div key={i} style={{display:"flex", alignItems:"center", gap:6,
               padding:"0 16px", borderRight:`1px solid ${C.border}`}}>
-              <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
-              <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.ink, fontWeight:500}}>
+              <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
+              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.ink, fontWeight:500}}>
                 {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
               </span>
-              <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10,
+              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
                 color:chgC(t.chg), background:chgBg(t.chg),
                 padding:"1px 5px", borderRadius:3, fontWeight:600}}>
                 {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
@@ -478,13 +478,13 @@ export function TickerTape({tickers}) {
           ))}
         </div>
       ) : (
-        <div style={{padding:"0 16px", fontFamily:"'DM Mono',monospace",
+        <div style={{padding:"0 16px", fontFamily:"'DM Sans',sans-serif",
           fontSize:11, color:C.dim, letterSpacing:"0.5px"}}>Loading market data…</div>
       )}
       <div style={{position:"absolute", right:0, top:0, bottom:0, display:"flex",
         alignItems:"center", padding:"0 12px 0 32px",
         background:"linear-gradient(to right, rgba(255,255,255,0) 0%, #FFFFFF 35%)",
-        fontFamily:"'DM Mono',monospace", fontSize:9, color:C.dim,
+        fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim,
         letterSpacing:"0.8px", pointerEvents:"none"}}>LIVE</div>
     </div>
   );
@@ -500,7 +500,7 @@ export function MarketSnapshotCard({tickers, loading=false}) {
         display:"flex", alignItems:"center", gap:6}}>
         <Dot/>
         <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET SNAPSHOT</span>
-        <span style={{marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9,
+        <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9,
           color:C.dim, letterSpacing:"0.8px"}}>LIVE</span>
       </div>
       {loading || !hasData ? Array(6).fill(0).map((_, i) => (
@@ -513,14 +513,14 @@ export function MarketSnapshotCard({tickers, loading=false}) {
           alignItems:"center", padding:"9px 14px",
           borderBottom:i < tickers.length - 1 ? `1px solid ${C.surface}` : "none",
           transition:"background 0.15s", cursor:"pointer"}}>
-          <span className="cp-tkr" style={{fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
+          <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
           <div style={{display:"flex", alignItems:"center", gap:7}}>
-            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.text}}>
+            <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, color:C.text}}>
               {t.sym === "BTC" || (safeN(t.price) > 10000)
                 ? safeN(t.price).toLocaleString("en-US", {maximumFractionDigits:0})
                 : fmt2(t.price)}
             </span>
-            <span className="cp-num" style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+            <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
               color:chgC(t.chg), background:chgBg(t.chg), padding:"1px 5px", borderRadius:3}}>
               {safeN(t.chg) > 0 ? "+" : ""}{fmt2(t.chg)}%
             </span>
@@ -546,7 +546,7 @@ export function CatalystBriefCard() {
       <div style={{background:"#0C1410", borderRadius:8, padding:"18px",
         position:"relative", overflow:"hidden"}}>
         <div style={{position:"absolute", top:0, left:0, right:0, height:3, background:"#5AB87A"}}/>
-        <div style={{fontFamily:"'DM Mono',monospace", fontSize:9, color:"#3A6A48",
+        <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:"#3A6A48",
           fontWeight:600, letterSpacing:"1.5px", marginBottom:8}}>THE CATALYST BRIEF</div>
         <div style={{fontFamily:"'Cormorant Garamond',serif", fontSize:19, fontWeight:300,
           color:"#FFFFFF", lineHeight:1.3, marginBottom:6}}>
@@ -570,7 +570,7 @@ export function CatalystBriefCard() {
           Get Free Access →
         </button>
         <p style={{fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:6,
-          fontFamily:"'DM Mono',monospace", textAlign:"center"}}>Free forever · No credit card</p>
+          fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>Free forever · No credit card</p>
       </div>
 
       <div style={{position:"fixed", bottom:24, left:"50%",
@@ -617,7 +617,7 @@ export function Footer() {
         ))}
       </div>
       <div style={{display:"flex", alignItems:"center", gap:6,
-        fontFamily:"'DM Mono',monospace", fontSize:10, color:"rgba(255,255,255,0.5)"}}>
+        fontFamily:"'DM Sans',sans-serif", fontSize:10, color:"rgba(255,255,255,0.5)"}}>
         <Dot/>LIVE · 2026 CATALYSTPIT · NOT FINANCIAL ADVICE
       </div>
     </div>
