@@ -96,15 +96,22 @@ async function assembleContext(origin, ticker) {
     execs: f4.slice(0, 8).map((t) => ({ name: t.executive, role: t.title || null, action: t.action, date: t.transactionDate || t.filingDate || null })),
   };
 
-  // FINRA short interest (latest settlement).
+  // FINRA short interest (latest settlement). Change is expressed in PERCENTAGE POINTS of
+  // float (current float% minus prior float%), computed from our own current/prev short-share
+  // counts — NOT FINRA's raw change_percent (a %-change-in-shares that read ambiguously as
+  // "percentage points of float" and produced contradictory claims, e.g. META 1.47% float
+  // bull vs "+10.93pp" bear). pp-of-float delta is internally consistent (META: +0.15pp).
   const L = si?.latest || null;
+  const floatSh = num(si?.float?.float_shares);
+  const asFloatPct = (sh) => (num(sh) != null && floatSh > 0) ? +((sh / floatSh) * 100).toFixed(2) : null;
+  const siPctOfFloat = L ? asFloatPct(L.short_int_shares) : null;
+  const siPrevPctOfFloat = L ? asFloatPct(L.prev_short_int_shares) : null;
   const finraShortInterest = L ? {
-    pct: num(si.float?.free_float_pct) != null ? null : null,   // % of shares short not in payload; use days/float below
-    pctOfFloat: (L.short_int_shares != null && si.float?.float_shares > 0)
-      ? +((L.short_int_shares / si.float.float_shares) * 100).toFixed(2) : null,
-    daysToCover: num(L.days_to_cover),
-    changeVsPrior: num(L.change_percent),
     settlementDate: L.settlement_date || null,
+    pctOfFloat: siPctOfFloat,
+    prevPctOfFloat: siPrevPctOfFloat,
+    ppChangeVsPrior: (siPctOfFloat != null && siPrevPctOfFloat != null) ? +(siPctOfFloat - siPrevPctOfFloat).toFixed(2) : null,
+    daysToCover: num(L.days_to_cover),
   } : null;
 
   // News: top ~10 by publisher diversity, last 14 days. tk.news items are {headline, source, datetime}.
