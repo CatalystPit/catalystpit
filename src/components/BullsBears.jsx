@@ -4,7 +4,7 @@ import { C, Skel, timeAgo, minsSince } from '../lib/cp-shared';
 
 // Bull & Bear synthesis panel — fetches /api/bulls-bears?ticker=, renders the AI synthesis.
 // Self-contained (Step 3): NOT wired into the Overview tab yet. No Pro/Free gating yet (Step 6).
-// Fonts are plain DOM (DM Mono / Cormorant / DM Sans) — CSP already allows fonts.gstatic.com,
+// Fonts are plain DOM (DM Sans / Cormorant) — CSP already allows fonts.gstatic.com,
 // so no canvas-style font race here (that was a Lightweight-Charts-only problem).
 
 const SOURCE_PILL = { fontFamily: "'DM Sans',sans-serif", fontSize: 10, letterSpacing: '0.3px', color: C.dim };
@@ -38,7 +38,7 @@ function Bullet({ b, accent }) {
 function Column({ title, color, bullets }) {
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700, letterSpacing: '0.8px',
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: '0.8px',
         color, marginBottom: 12, textTransform: 'uppercase' }}>{title}</div>
       {bullets.length === 0
         ? <div style={{ fontSize: 12, color: C.dim, fontStyle: 'italic' }}>No clear signals from current data.</div>
@@ -81,7 +81,7 @@ export default function BullsBears({ ticker }) {
     <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface,
       display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
       <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>Bull &amp; Bear Case</span>
-      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 600, letterSpacing: '0.8px',
+      <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, fontWeight: 600, letterSpacing: '0.8px',
         textTransform: 'uppercase', color: C.green, background: C.greenLight, border: `1px solid ${C.greenBorder}`,
         padding: '2px 7px', borderRadius: 4 }}>AI Synthesis</span>
       <button onClick={() => load(true)} disabled={refreshing} aria-label="Refresh synthesis"

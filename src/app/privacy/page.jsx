@@ -29,7 +29,7 @@ export default function PrivacyPage() {
 
       {/* CONTENT */}
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px 64px" }}>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.muted, letterSpacing: "1.5px", marginBottom: 12 }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, letterSpacing: "1.5px", marginBottom: 12 }}>
           LEGAL
         </div>
         <h1 style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 34, fontWeight: 700, color: C.ink, margin: "0 0 8px", letterSpacing: "-0.5px", lineHeight: 1.15 }}>
@@ -135,10 +135,10 @@ export default function PrivacyPage() {
 
         <Section title="11. Contact">
           <p>Questions about this Privacy Policy or our data practices? Contact us at:</p>
-          <p style={{ margin: "12px 0", fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+          <p style={{ margin: "12px 0", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
             Email: <a href="mailto:privacy@catalystpit.com" style={linkStyle}>privacy@catalystpit.com</a>
           </p>
-          <p style={{ margin: "12px 0", fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+          <p style={{ margin: "12px 0", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
             CatalystPit<br/>
             Florida, United States
           </p>

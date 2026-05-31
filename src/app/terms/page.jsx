@@ -28,7 +28,7 @@ export default function TermsPage() {
       </div>
 
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px 64px" }}>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: C.muted, letterSpacing: "1.5px", marginBottom: 12 }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, letterSpacing: "1.5px", marginBottom: 12 }}>
           LEGAL
         </div>
         <h1 style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 34, fontWeight: 700, color: C.ink, margin: "0 0 8px", letterSpacing: "-0.5px", lineHeight: 1.15 }}>
@@ -162,10 +162,10 @@ export default function TermsPage() {
         </Section>
 
         <Section title="18. Contact">
-          <p style={{ margin: "12px 0", fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+          <p style={{ margin: "12px 0", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
             Email: <a href="mailto:legal@catalystpit.com" style={linkStyle}>legal@catalystpit.com</a>
           </p>
-          <p style={{ margin: "12px 0", fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+          <p style={{ margin: "12px 0", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
             CatalystPit<br/>
             Florida, United States
           </p>

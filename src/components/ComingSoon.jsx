@@ -40,7 +40,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
           background:C.greenLight, border:`1px solid ${C.greenBorder}`,
           padding:"6px 14px", borderRadius:20, marginBottom:24}}>
           <Dot/>
-          <span style={{fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+          <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
             color:C.green, letterSpacing:"1.5px"}}>COMING SOON</span>
         </div>
 
@@ -62,7 +62,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
         {features.length > 0 && (
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8,
             padding:"24px 32px", marginBottom:48, width:"100%", maxWidth:520}}>
-            <div style={{fontFamily:"'DM Mono',monospace", fontSize:9, color:C.muted,
+            <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.muted,
               letterSpacing:"1.5px", marginBottom:16, textAlign:"left"}}>WHAT'S COMING</div>
             <ul style={{listStyle:"none", padding:0, margin:0, display:"flex",
               flexDirection:"column", gap:10, textAlign:"left"}}>
@@ -82,7 +82,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
           width:"100%", maxWidth:580, position:"relative", overflow:"hidden"}}>
           <div style={{position:"absolute", top:0, left:0, right:0, height:3,
             background:"linear-gradient(90deg, #5AB87A, #1E5C38)"}}/>
-          <div style={{fontFamily:"'DM Mono',monospace", fontSize:10, color:"#5AB87A",
+          <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, color:"#5AB87A",
             letterSpacing:"1.5px", marginBottom:10}}>THE CATALYST BRIEF</div>
           <div style={{fontFamily:"'Cormorant Garamond',serif", fontSize:28, fontWeight:300,
             color:"#FFFFFF", lineHeight:1.3, marginBottom:8}}>
@@ -102,7 +102,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
             Subscribe to The Catalyst Brief →
           </a>
           <p style={{fontSize:11, color:"rgba(255,255,255,0.4)", marginTop:14,
-            fontFamily:"'DM Mono',monospace", letterSpacing:"0.5px"}}>
+            fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.5px"}}>
             FREE FOREVER · NO CREDIT CARD
           </p>
         </div>

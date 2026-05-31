@@ -48,7 +48,7 @@ export default function PoliticianDetail({ slug }) {
       <TopNav active="Politicians" />
 
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 24px 40px' }}>
-        <a href="/politicians" style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.green, textDecoration: 'none' }}>← All politicians</a>
+        <a href="/politicians" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.green, textDecoration: 'none' }}>← All politicians</a>
 
         {error ? (
           <div style={{ marginTop: 16, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '40px 16px', textAlign: 'center', color: C.red, fontSize: 13 }}>Failed to load: {error}</div>
@@ -96,7 +96,7 @@ export default function PoliticianDetail({ slug }) {
                   <thead>
                     <tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
                       {COLS.map(([h, al]) => (
-                        <th key={h} style={{ padding: '10px 14px', textAlign: al, fontFamily: "'DM Mono',monospace", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+                        <th key={h} style={{ padding: '10px 14px', textAlign: al, fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
                       ))}
                     </tr>
                   </thead>
@@ -108,16 +108,16 @@ export default function PoliticianDetail({ slug }) {
                       const late = t.filingLagDays != null && t.filingLagDays > 45;
                       return (
                         <tr key={t.id || i} className={t.ticker ? 'hov' : undefined} onClick={t.ticker ? () => goTicker(t.ticker) : undefined} style={{ borderBottom: i < trades.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
-                          <td className="cp-tkr" style={{ padding: '12px 14px', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>{t.ticker || '—'}</td>
+                          <td className="cp-tkr" style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>{t.ticker || '—'}</td>
                           <td style={{ padding: '12px 14px', fontSize: 13, color: C.text, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.assetDescription || '—'}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.disclosureDate)}</td>
                           <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: late ? C.red : C.muted, whiteSpace: 'nowrap' }}>{t.filingLagDays != null ? `${t.filingLagDays}d` : '—'}</td>
                           <td style={{ padding: '12px 14px' }}>
-                            <span style={{ fontSize: 11, padding: '3px 9px', borderRadius: 4, fontFamily: "'DM Mono',monospace", fontWeight: 600, background: as.bg, color: as.fg }}>{t.action}</span>
+                            <span style={{ fontSize: 11, padding: '3px 9px', borderRadius: 4, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, background: as.bg, color: as.fg }}>{t.action}</span>
                           </td>
-                          <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{t.amountRange || '—'}</td>
-                          <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Mono',monospace", fontSize: 13, fontWeight: 700, color: returnColor(t.returnPct), whiteSpace: 'nowrap' }}>{fmtReturn(t.returnPct)}</td>
+                          <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{t.amountRange || '—'}</td>
+                          <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: returnColor(t.returnPct), whiteSpace: 'nowrap' }}>{fmtReturn(t.returnPct)}</td>
                         </tr>
                       );
                     })}
@@ -126,7 +126,7 @@ export default function PoliticianDetail({ slug }) {
               </div>
             </div>
 
-            <div style={{ marginTop: 16, fontSize: 11, color: C.dim, fontFamily: "'DM Mono',monospace", lineHeight: 1.6 }}>
+            <div style={{ marginTop: 16, fontSize: 11, color: C.dim, fontFamily: "'DM Sans',sans-serif", lineHeight: 1.6 }}>
               <strong style={{ color: C.muted }}>Return Since</strong> = change from the trade date&apos;s closing price to the latest price. &quot;—&quot; means price unavailable (not yet enriched, or a delisted/unlisted ticker) — never a substitute for a real 0%. Filing lag turns red when &gt; 45 days (STOCK Act deadline). Not financial advice.
             </div>
           </>
