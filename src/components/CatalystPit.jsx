@@ -504,8 +504,9 @@ export default function CatalystPit() {
             </p>
           </div>
 
-          {/* INSIDER ACTIVITY (compact) */}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+          {/* INSIDER ACTIVITY (compact) — desktop rail only; the full INSIDER
+              TRADES table covers this on mobile when the grid is single-column. */}
+          <div className="cp-rail-only" style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
             <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`,
               background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <span style={{fontSize:12, fontWeight:600, color:C.ink}}>INSIDER ACTIVITY</span>
@@ -536,8 +537,9 @@ export default function CatalystPit() {
             ))}
           </div>
 
-          {/* POLITICIAN ACTIVITY (compact) */}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+          {/* POLITICIAN ACTIVITY (compact) — desktop rail only; the full
+              POLITICIAN TRADES table covers this on mobile (single-column). */}
+          <div className="cp-rail-only" style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
             <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`,
               background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <span style={{fontSize:12, fontWeight:600, color:C.ink}}>POLITICIAN ACTIVITY</span>

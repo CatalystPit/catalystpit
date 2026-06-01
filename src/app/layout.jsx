@@ -55,6 +55,13 @@ export default function RootLayout({ children }) {
             @media (max-width: 860px) {
               .cp-body-grid { grid-template-columns: minmax(0, 1fr); }
             }
+            /* Desktop-rail-only: shown beside the main column, hidden once the
+               grid collapses to one column (≤860px) so sidebar widgets that
+               duplicate main-column content don't stack as a second copy. */
+            .cp-rail-only { display: block; }
+            @media (max-width: 860px) {
+              .cp-rail-only { display: none; }
+            }
             .cp-nav-links  { display: flex; }
             .cp-nav-search { display: flex; }
             .cp-nav-burger { display: none; }
