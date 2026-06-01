@@ -71,6 +71,7 @@ const retColor = (r) => r == null ? C.dim : r > 0 ? C.green : r < 0 ? C.red : C.
 const TABS = [
   { id: 'overview',   label: 'Overview' },
   { id: 'news',       label: 'News' },
+  { id: 'press',      label: 'Press Releases' },
   { id: 'earnings',   label: 'Earnings' },
   { id: 'options',    label: 'Options Flow' },
   { id: 'guidance',   label: 'Guidance' },
@@ -526,6 +527,90 @@ function ShortInterestTab({ symbol, short }) {
   );
 }
 
+// ── Press Releases tab — /api/press-releases?ticker= (SEC EDGAR 8-K Exhibit 99.1) ──
+// PR-only feed: only 8-Ks that attach a 99.1. Self-fetches on mount (lazy — the ~15 SEC
+// index fetches fire only when this tab is opened, not on every ticker page load).
+const ITEM_LABELS = {
+  '1.01': 'Material agreement', '1.02': 'Agreement termination', '2.01': 'Acquisition / disposition',
+  '2.02': 'Results of operations', '2.03': 'Direct financial obligation', '3.02': 'Unregistered equity sale',
+  '5.02': 'Officer / director change', '5.03': 'Bylaw amendment', '5.07': 'Shareholder vote',
+  '7.01': 'Reg FD disclosure', '8.01': 'Other events', '9.01': 'Financial statements & exhibits',
+};
+const itemLabel = (code) => ITEM_LABELS[code] || `Item ${code}`;
+
+function PressReleaseCard({ pr }) {
+  const [open, setOpen] = useState(false);
+  const paras = (pr.bodyText || '').split('\n').map((p) => p.trim()).filter(Boolean);
+  const long = paras.length > 3 || (pr.bodyText || '').length > 420;
+  const shown = open ? paras : paras.slice(0, 3);
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '14px 16px', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+        <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{fmtDateLong(pr.filingDate)}</span>
+        {(pr.items || []).map((code) => (
+          <span key={code} style={{ fontSize: 9, background: C.surface, color: C.muted, padding: '2px 7px', borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 500, whiteSpace: 'nowrap' }}>{itemLabel(code)}</span>
+        ))}
+        <span style={{ marginLeft: 'auto', fontSize: 9, background: '#FFF6E8', color: '#7A5018', padding: '2px 7px', borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 500 }}>8-K · EX-99.1</span>
+      </div>
+      <a href={pr.filingUrl} target="_blank" rel="noopener noreferrer"
+        style={{ fontSize: 15, fontWeight: 700, color: C.ink, lineHeight: 1.35, textDecoration: 'none', display: 'block' }}>
+        {pr.headline}
+      </a>
+      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {shown.map((p, i) => (
+          <p key={i} style={{ margin: 0, fontSize: 13, color: C.text, lineHeight: 1.6, fontWeight: 300 }}>{p}</p>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 10 }}>
+        {long && (
+          <button onClick={() => setOpen((o) => !o)}
+            style={{ background: 'transparent', border: 'none', color: C.green, cursor: 'pointer', fontSize: 12, fontFamily: "'DM Sans',sans-serif", fontWeight: 500, padding: 0 }}>
+            {open ? 'Show less' : 'Read full release'}
+          </button>
+        )}
+        <a href={pr.filingUrl} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 11, color: C.dim, textDecoration: 'none', marginLeft: long ? 0 : 'auto' }}>
+          View on SEC EDGAR →
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function PressReleasesTab({ symbol }) {
+  const [state, setState] = useState({ loading: true, error: false, list: [] });
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true, error: false, list: [] });
+    (async () => {
+      try {
+        const r = await fetch(`/api/press-releases?ticker=${encodeURIComponent(symbol)}`);
+        const j = r.ok ? await r.json() : null;
+        if (!alive) return;
+        if (!j || j.error) setState({ loading: false, error: true, list: [] });
+        else setState({ loading: false, error: false, list: j.pressReleases || [] });
+      } catch { if (alive) setState({ loading: false, error: true, list: [] }); }
+    })();
+    return () => { alive = false; };
+  }, [symbol]);
+
+  return (
+    <Section title="Press releases" badge="SEC 8-K">
+      {state.loading ? <div>{Array(3).fill(0).map((_, i) => <Skel key={i} h={64} mb={12} />)}</div>
+        : state.error ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>Couldn&apos;t load press releases right now.</div>
+        : state.list.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No recent press releases for {symbol}.</div>
+        : (
+          <>
+            {state.list.map((pr, i) => <PressReleaseCard key={i} pr={pr} />)}
+            <div style={{ marginTop: 4, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
+              Full press-release text from SEC 8-K Exhibit 99.1 filings (most recent {state.list.length}). Source: SEC EDGAR.
+            </div>
+          </>
+        )}
+    </Section>
+  );
+}
+
 // Earnings tab — /api/earnings?ticker= (SEC EDGAR XBRL). Reported figures only; estimates = Pro.
 function EarningsTab({ symbol, earnings }) {
   const loading = earnings == null;
@@ -615,6 +700,7 @@ function OverviewTab({ data, insider, gov, onTab }) {
 function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
   if (tab === 'overview') return <OverviewTab data={data} insider={insider} gov={gov} onTab={onTab} />;
   if (tab === 'news') return <NewsTab data={data} />;
+  if (tab === 'press') return <PressReleasesTab symbol={data.symbol} />;
   if (tab === 'earnings') return <EarningsTab symbol={data.symbol} earnings={earnings} />;
   if (tab === 'insider') return <InsiderTab symbol={data.symbol} insider={insider} />;
   if (tab === 'government') return <GovernmentTab symbol={data.symbol} gov={gov} />;
