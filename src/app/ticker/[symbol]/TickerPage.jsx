@@ -85,7 +85,6 @@ const TABS = [
 const PLACEHOLDERS = {
   options:    'Unusual options activity — large call and put buys, premium volume, and bullish/bearish flow signals.',
   guidance:   'Company-issued forward guidance, revenue and EPS forecasts, and guidance revisions.',
-  dividends:  'Dividend history, payout schedule, ex-dividend dates, and yield trends.',
   analyst:    'Wall Street analyst ratings, price targets, upgrades, downgrades, and consensus forecasts.',
   financials: 'Quarterly and annual revenue, earnings, cash flows, valuation metrics, and company debt.',
 };
@@ -527,6 +526,92 @@ function ShortInterestTab({ symbol, short }) {
   );
 }
 
+// ── Dividends tab — /api/dividends?ticker= (Tiingo EOD divCash). Ex-date + amount only. ──
+// Yield is recomputed against the live hero price when available (route's currentPrice = the
+// latest Tiingo EOD close is the fallback). Self-fetches on mount.
+const fmtDiv = (n) => (n == null || isNaN(n)) ? '—' : `$${(+n).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
+
+function DividendStat({ label, value, accent }) {
+  return (
+    <div>
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginBottom: 3 }}>{label}</div>
+      <div className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 18, fontWeight: 700, color: accent || C.ink }}>{value}</div>
+    </div>
+  );
+}
+
+function DividendsTab({ symbol, price }) {
+  const [state, setState] = useState({ loading: true, error: false, data: null });
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true, error: false, data: null });
+    (async () => {
+      try {
+        const r = await fetch(`/api/dividends?ticker=${encodeURIComponent(symbol)}`);
+        const j = r.ok ? await r.json() : null;
+        if (!alive) return;
+        if (!j || j.error === true) setState({ loading: false, error: true, data: null });
+        else setState({ loading: false, error: false, data: j });
+      } catch { if (alive) setState({ loading: false, error: true, data: null }); }
+    })();
+    return () => { alive = false; };
+  }, [symbol]);
+
+  const { loading, error, data } = state;
+  if (loading) return <Section title="Dividends"><div>{Array(4).fill(0).map((_, i) => <Skel key={i} h={18} mb={10} />)}</div></Section>;
+  if (error) return <Section title="Dividends"><div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>Couldn&apos;t load dividend data right now.</div></Section>;
+  if (!data || !data.payer || !data.events?.length) {
+    return (
+      <Section title="Dividends">
+        <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+          <div style={{ fontSize: 14, color: C.ink, fontWeight: 600, marginBottom: 4 }}>{symbol} does not currently pay a dividend</div>
+          <div style={{ fontSize: 12, color: C.muted, fontWeight: 300 }}>No dividend distributions found in the last {3} years.</div>
+        </div>
+      </Section>
+    );
+  }
+
+  // recompute yield against the live hero price when we have it; else fall back to route's value
+  const annual = data.ttmDividend;
+  const liveYield = (price && price > 0 && annual > 0) ? (annual / price) * 100 : null;
+  const shownYield = liveYield != null ? liveYield : data.ttmYield;
+
+  return (
+    <Section title="Dividends" badge="Tiingo EOD">
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 16,
+        paddingBottom: 14, borderBottom: `1px solid ${C.surface}` }}>
+        <DividendStat label="TTM YIELD" value={shownYield != null ? `${shownYield.toFixed(2)}%` : '—'} accent={C.green} />
+        <DividendStat label="ANNUAL DIVIDEND (TTM)" value={fmtDiv(annual)} />
+        <DividendStat label="FREQUENCY" value={data.frequency || '—'} />
+        <DividendStat label="MOST RECENT EX-DATE" value={data.mostRecent ? fmtDateLong(data.mostRecent.exDate) : '—'} />
+        <DividendStat label="MOST RECENT AMOUNT" value={data.mostRecent ? fmtDiv(data.mostRecent.amount) : '—'} />
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              <th style={{ padding: '8px 4px', textAlign: 'left', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400 }}>EX-DATE</th>
+              <th style={{ padding: '8px 4px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400 }}>AMOUNT</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.events.slice(0, 12).map((e, i) => (
+              <tr key={i} style={{ borderBottom: i < Math.min(data.events.length, 12) - 1 ? `1px solid ${C.surface}` : 'none' }}>
+                <td className="cp-num" style={{ padding: '10px 4px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtDateLong(e.exDate)}</td>
+                <td className="cp-num" style={{ padding: '10px 4px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap' }}>{fmtDiv(e.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
+          Ex-date + amount from Tiingo EOD. Pay/record dates not shown. Yield computed from trailing-12-month dividends ÷ current price.
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 // ── Press Releases tab — /api/press-releases?ticker= (SEC EDGAR 8-K Exhibit 99.1) ──
 // PR-only feed: only 8-Ks that attach a 99.1. Self-fetches on mount (lazy — the ~15 SEC
 // index fetches fire only when this tab is opened, not on every ticker page load).
@@ -701,6 +786,7 @@ function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
   if (tab === 'overview') return <OverviewTab data={data} insider={insider} gov={gov} onTab={onTab} />;
   if (tab === 'news') return <NewsTab data={data} />;
   if (tab === 'press') return <PressReleasesTab symbol={data.symbol} />;
+  if (tab === 'dividends') return <DividendsTab symbol={data.symbol} price={data.quote?.c ?? null} />;
   if (tab === 'earnings') return <EarningsTab symbol={data.symbol} earnings={earnings} />;
   if (tab === 'insider') return <InsiderTab symbol={data.symbol} insider={insider} />;
   if (tab === 'government') return <GovernmentTab symbol={data.symbol} gov={gov} />;
