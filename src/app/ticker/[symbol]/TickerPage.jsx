@@ -86,7 +86,6 @@ const PLACEHOLDERS = {
   options:    'Unusual options activity — large call and put buys, premium volume, and bullish/bearish flow signals.',
   guidance:   'Company-issued forward guidance, revenue and EPS forecasts, and guidance revisions.',
   analyst:    'Wall Street analyst ratings, price targets, upgrades, downgrades, and consensus forecasts.',
-  financials: 'Quarterly and annual revenue, earnings, cash flows, valuation metrics, and company debt.',
 };
 
 // ── primitives ──
@@ -526,6 +525,106 @@ function ShortInterestTab({ symbol, short }) {
   );
 }
 
+// ── Financials tab — /api/financials?ticker= (SEC EDGAR XBRL companyfacts) ──
+// Universal-core + conditional rows: the route omits any line item whose tag doesn't resolve for
+// the filer, so a bank renders without broken empty rows. Self-fetches on mount. Annual/Quarterly toggle.
+function FinancialValue({ v, perShare }) {
+  if (v == null || isNaN(v)) return <span style={{ color: C.hint }}>—</span>;
+  const neg = v < 0;
+  const text = perShare ? fmtEps(v) : fmtBig(v);
+  return <span style={{ color: neg ? C.red : C.ink }}>{text}</span>;
+}
+
+function FinancialSection({ title, data }) {
+  if (!data || !data.rows?.length) return null;
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, letterSpacing: '0.3px', marginBottom: 8 }}>{title}</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              <th style={{ padding: '8px 10px 8px 4px', textAlign: 'left', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.6px', fontWeight: 400, whiteSpace: 'nowrap' }}>LINE ITEM</th>
+              {data.columns.map((c, i) => (
+                <th key={i} className="cp-num" style={{ padding: '8px 4px 8px 10px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.6px', fontWeight: 400, whiteSpace: 'nowrap' }}>{c.toUpperCase()}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {data.rows.map((r, ri) => (
+              <tr key={ri} style={{ borderBottom: ri < data.rows.length - 1 ? `1px solid ${C.surface}` : 'none' }}>
+                <td style={{ padding: '10px 10px 10px 4px', fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{r.label}</td>
+                {r.values.map((v, vi) => (
+                  <td key={vi} className="cp-num" style={{ padding: '10px 4px 10px 10px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    <FinancialValue v={v} perShare={r.perShare} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FinancialsTab({ symbol }) {
+  const [state, setState] = useState({ loading: true, error: false, data: null });
+  const [mode, setMode] = useState('annual');
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true, error: false, data: null });
+    (async () => {
+      try {
+        const r = await fetch(`/api/financials?ticker=${encodeURIComponent(symbol)}`);
+        const j = r.ok ? await r.json() : null;
+        if (!alive) return;
+        if (!j || j.error === true) setState({ loading: false, error: true, data: null });
+        else setState({ loading: false, error: false, data: j });
+      } catch { if (alive) setState({ loading: false, error: true, data: null }); }
+    })();
+    return () => { alive = false; };
+  }, [symbol]);
+
+  const { loading, error, data } = state;
+  if (loading) return <Section title="Financials"><div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={18} mb={10} />)}</div></Section>;
+  if (error) return <Section title="Financials"><div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>Couldn&apos;t load financials right now.</div></Section>;
+  if (!data || !data.available) {
+    return (
+      <Section title="Financials">
+        <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+          <div style={{ fontSize: 14, color: C.ink, fontWeight: 600, marginBottom: 4 }}>Financial statements not available</div>
+          <div style={{ fontSize: 12, color: C.muted, fontWeight: 300 }}>No SEC XBRL filings on file for {symbol}.</div>
+        </div>
+      </Section>
+    );
+  }
+
+  const periods = data[mode] || {};
+  const Toggle = (
+    <div style={{ display: 'flex', gap: 0, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden' }}>
+      {['annual', 'quarterly'].map((m) => (
+        <button key={m} onClick={() => setMode(m)}
+          style={{ background: mode === m ? C.green : C.white, color: mode === m ? '#fff' : C.muted, border: 'none',
+            padding: '5px 12px', fontSize: 11, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>
+          {m}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <Section title="Financials" badge="SEC EDGAR" action={Toggle}>
+      <FinancialSection title="Income Statement" data={periods.income} />
+      <FinancialSection title="Balance Sheet" data={periods.balance} />
+      <FinancialSection title="Cash Flow" data={periods.cashflow} />
+      <div style={{ marginTop: 16, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
+        Reported figures from SEC EDGAR XBRL filings (10-K / 10-Q). Line items vary by filer; rows a company doesn&apos;t report are omitted. Quarterly cash flow derived from year-to-date filings.
+      </div>
+    </Section>
+  );
+}
+
 // ── Dividends tab — /api/dividends?ticker= (Tiingo EOD divCash). Ex-date + amount only. ──
 // Yield is recomputed against the live hero price when available (route's currentPrice = the
 // latest Tiingo EOD close is the fallback). Self-fetches on mount.
@@ -791,6 +890,7 @@ function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
   if (tab === 'insider') return <InsiderTab symbol={data.symbol} insider={insider} />;
   if (tab === 'government') return <GovernmentTab symbol={data.symbol} gov={gov} />;
   if (tab === 'short') return <ShortInterestTab symbol={data.symbol} short={short} />;
+  if (tab === 'financials') return <FinancialsTab symbol={data.symbol} />;
   if (PLACEHOLDERS[tab]) {
     const t = TABS.find((x) => x.id === tab);
     return <TabPlaceholder label={t.label} copy={PLACEHOLDERS[tab]} />;
