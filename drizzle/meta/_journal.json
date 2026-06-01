@@ -43,6 +43,13 @@
       "when": 1780155635684,
       "tag": "0005_ticker_float",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780328423257,
+      "tag": "0006_watchlist",
+      "breakpoints": true
     }
   ]
 }

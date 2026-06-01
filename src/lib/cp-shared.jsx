@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs';
+import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 
 // ─── PALETTE ────────────────────────────────────────────────────────────────
 export const C = {
@@ -389,6 +389,15 @@ export function TopNav({ active }) {
             {l}
           </a>
         ))}
+        {/* Watchlist — personal feature, only for signed-in users */}
+        <SignedIn>
+          <a href="/watchlist" className="nbtn"
+            style={{fontSize:15, color:linkColor("Watchlist"), cursor:"pointer", transition:"color 0.2s",
+              fontWeight: active === "Watchlist" ? 600 : 400, letterSpacing:"0.02em", textDecoration:"none",
+              borderBottom: active === "Watchlist" ? "2px solid #5AB87A" : "none", paddingBottom: active === "Watchlist" ? 2 : 0}}>
+            Watchlist
+          </a>
+        </SignedIn>
       </div>
 
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
@@ -412,7 +421,7 @@ export function TopNav({ active }) {
           </a>
         </SignedOut>
         <SignedIn>
-          <UserButton afterSignOutUrl="/" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
+          <UserButton afterSignOutUrl="/" userProfileMode="navigation" userProfileUrl="/account" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
         </SignedIn>
 
         {/* Hamburger — shown ≤860px via .cp-nav-burger */}
@@ -440,6 +449,14 @@ export function TopNav({ active }) {
               {l}
             </a>
           ))}
+          <SignedIn>
+            <a href="/watchlist" onClick={() => setMenuOpen(false)}
+              style={{fontSize:14, color:linkColor("Watchlist"), fontWeight: active === "Watchlist" ? 600 : 400,
+                textDecoration:"none", padding:"11px 24px",
+                borderLeft: active === "Watchlist" ? "3px solid #5AB87A" : "3px solid transparent"}}>
+              Watchlist
+            </a>
+          </SignedIn>
         </div>
       )}
     </div>
@@ -527,6 +544,209 @@ export function MarketSnapshotCard({tickers, loading=false}) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── WATCHLIST HOMEPAGE CARD ────────────────────────────────────────────────
+// Homepage-sized presentation of the user's watchlist — same card chrome as
+// MarketSnapshotCard. Three states: signed-out (conversion prompt), signed-in
+// with tickers (capped rows + "View all →"), signed-in empty (instructive).
+// Signed-in users also get an inline "Add ticker" control that POSTs to
+// /api/watchlist without leaving the homepage. Reuses GET /api/watchlist?prices=1
+// (and POST) — static cached prices, no live polling, no new endpoints.
+const WL_HOME_CAP = 6;
+const wlPrice = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
+
+export function WatchlistHomeCard() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const router = useRouter();
+  const [list, setList] = useState(null);   // null = loading; [] = empty; [...] = has tickers
+  const [adding, setAdding] = useState(false);
+  const [entry, setEntry] = useState('');
+  const [err, setErr] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Load the priced list. Used on mount and after a successful add.
+  async function refresh() {
+    try {
+      const r = await fetch('/api/watchlist?prices=1');
+      const j = r.ok ? await r.json() : [];
+      setList(Array.isArray(j) ? j : []);
+    } catch { setList(prev => prev ?? []); }
+  }
+
+  // Two-phase load: bare list first (fast — symbols render immediately with the
+  // price column in a loading state), then ?prices=1 to resolve each price. A
+  // row's price is `undefined` while pending, then number | null once resolved,
+  // so cold-cache latency reads as "loading prices" instead of a blank slot.
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+    let alive = true;
+    (async () => {
+      let proceed = false;
+      try {
+        const r = await fetch('/api/watchlist');           // phase 1: bare {ticker, added_at}
+        const bare = r.ok ? await r.json() : [];
+        if (alive) { setList(Array.isArray(bare) ? bare : []); proceed = Array.isArray(bare) && bare.length > 0; }
+      } catch { if (alive) setList([]); }
+      if (!alive || !proceed) return;
+      try {
+        const r2 = await fetch('/api/watchlist?prices=1');  // phase 2: resolve prices
+        const priced = r2.ok ? await r2.json() : null;
+        if (alive && Array.isArray(priced)) setList(priced);
+        else if (alive) setList(prev => (prev || []).map(x => x.price === undefined ? { ...x, price: null } : x));
+      } catch {
+        // Phase-2 failure → resolve pending rows to "—" so they don't shimmer forever.
+        if (alive) setList(prev => (prev || []).map(x => x.price === undefined ? { ...x, price: null } : x));
+      }
+    })();
+    return () => { alive = false; };
+  }, [isLoaded, isSignedIn]);
+
+  async function submitAdd(e) {
+    if (e) e.preventDefault();
+    const t = entry.trim().toUpperCase();
+    if (!t || submitting) return;
+    setSubmitting(true); setErr(null);
+    try {
+      const r = await fetch('/api/watchlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: t }),
+      });
+      if (r.ok) {
+        const updated = await r.json();   // bare {ticker, added_at}[] — most-recent-first
+        setEntry('');
+        // Show immediately (new ticker price "—"), preserving known prices…
+        if (Array.isArray(updated)) {
+          setList(prev => {
+            const priceBy = new Map((prev || []).map(x => [x.ticker, x]));
+            return updated.map(u => priceBy.get(u.ticker) ?? u);
+          });
+        }
+        refresh();   // …then fill the new ticker's cached price.
+      } else {
+        const j = await r.json().catch(() => ({}));
+        setErr(j.error === 'invalid ticker' ? 'Not a valid symbol' : (j.error || 'Could not add ticker'));
+      }
+    } catch {
+      setErr('Could not add ticker');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function toggleAdd() {
+    setErr(null); setEntry('');
+    setAdding(a => !a);
+  }
+
+  const shown = Array.isArray(list) ? list.slice(0, WL_HOME_CAP) : [];
+  const hasMore = Array.isArray(list) && list.length > WL_HOME_CAP;
+
+  let body;
+  if (!isLoaded || (isSignedIn && list === null)) {
+    // Auth resolving, or signed-in list still loading → skeleton rows.
+    body = Array(4).fill(0).map((_, i) => (
+      <div key={i} style={{padding:"9px 14px", borderBottom:`1px solid ${C.surface}`}}>
+        <Skel h={12} mb={0}/>
+      </div>
+    ));
+  } else if (!isSignedIn) {
+    // Conversion hook — inviting, not naggy.
+    body = (
+      <div style={{padding:"22px 16px", textAlign:"center", fontFamily:"'DM Sans',sans-serif"}}>
+        <div style={{fontSize:20, marginBottom:8, color:C.dim}}>☆</div>
+        <div style={{fontSize:13, color:C.ink, fontWeight:600, marginBottom:10}}>Sign in to track your watchlist</div>
+        <a href="/sign-in" style={{display:"inline-block", background:C.green, color:"#fff",
+          padding:"8px 18px", borderRadius:6, fontSize:13, fontWeight:600, textDecoration:"none",
+          fontFamily:"'DM Sans',sans-serif"}}
+          onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
+          onMouseLeave={e => e.currentTarget.style.background = C.green}>
+          Sign in
+        </a>
+      </div>
+    );
+  } else if (list.length === 0) {
+    // Signed-in, empty — instructive with a clear next action.
+    body = (
+      <div style={{padding:"22px 16px", textAlign:"center", fontFamily:"'DM Sans',sans-serif"}}>
+        <div style={{fontSize:20, marginBottom:8, color:C.dim}}>☆</div>
+        <div style={{fontSize:13, color:C.ink, fontWeight:600, marginBottom:4}}>No tickers yet</div>
+        <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Add one above, or use the ☆ on any ticker page.</div>
+      </div>
+    );
+  } else {
+    body = shown.map((t, i) => (
+      <div key={t.ticker} className="hov" onClick={() => router.push(`/ticker/${encodeURIComponent(t.ticker)}`)}
+        style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 14px",
+          borderBottom: i < shown.length - 1 ? `1px solid ${C.surface}` : "none",
+          transition:"background 0.15s", cursor:"pointer"}}>
+        <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600, color:C.ink}}>{t.ticker}</span>
+        <div style={{display:"flex", alignItems:"center", gap:7}}>
+          {t.price === undefined ? (
+            <Skel w={54} h={12} mb={0}/>     /* price still loading */
+          ) : (
+            <>
+              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, color:C.text}}>{wlPrice(t.price)}</span>
+              {t.changePct != null && (
+                <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
+                  color:chgC(t.changePct), background:chgBg(t.changePct), padding:"1px 5px", borderRadius:3}}>
+                  {safeN(t.changePct) > 0 ? "+" : ""}{fmt2(t.changePct)}%
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    ));
+  }
+
+  return (
+    <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+      <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`, background:C.surface,
+        display:"flex", alignItems:"center", gap:6}}>
+        <Dot/>
+        <span style={{fontSize:12, fontWeight:600, color:C.ink}}>WATCHLIST</span>
+        {isSignedIn && (
+          <div style={{marginLeft:"auto", display:"flex", alignItems:"center", gap:12}}>
+            {hasMore && (
+              <a href="/watchlist" style={{fontFamily:"'DM Sans',sans-serif",
+                fontSize:11, color:C.green, textDecoration:"none", fontWeight:400}}>View all →</a>
+            )}
+            <button onClick={toggleAdd}
+              style={{background:"transparent", border:"none", padding:0, cursor:"pointer",
+                fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.green, fontWeight:400}}>
+              {adding ? 'Cancel' : '+ Add ticker'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Inline add — type a symbol, hit enter; API validates + rejects junk. */}
+      {isSignedIn && adding && (
+        <form onSubmit={submitAdd} style={{padding:"10px 14px", borderBottom:`1px solid ${C.surface}`}}>
+          <input
+            autoFocus
+            value={entry}
+            onChange={e => { setEntry(e.target.value.toUpperCase()); if (err) setErr(null); }}
+            onKeyDown={e => { if (e.key === 'Escape') toggleAdd(); }}
+            disabled={submitting}
+            placeholder="Add symbol — e.g. AAPL"
+            aria-label="Add a ticker to your watchlist"
+            maxLength={10}
+            style={{width:"100%", boxSizing:"border-box", height:32, background:C.white,
+              border:`1px solid ${C.border}`, borderRadius:5, padding:"0 10px",
+              fontFamily:"'DM Sans',sans-serif", fontSize:12, color:C.text, outline:"none"}}
+            onFocus={e => e.currentTarget.style.borderColor = C.green}
+            onBlur={e => e.currentTarget.style.borderColor = C.border}
+          />
+          {err && <div style={{marginTop:6, fontSize:11, color:C.red, fontFamily:"'DM Sans',sans-serif"}}>{err}</div>}
+        </form>
+      )}
+
+      {body}
     </div>
   );
 }

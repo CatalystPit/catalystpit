@@ -137,3 +137,18 @@ export const tickerFloat = pgTable('ticker_float', {
   source:            text('source').notNull().default('fmp'),
   updatedAt:         timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+// Per-user watchlist: association of Clerk user → ticker → when added.
+// Static membership only (v1) — no price/notes/ordering columns; prices are
+// fetched live by the workspace (M5), not stored here. The unique (user_id,
+// ticker) index is BOTH the idempotency guard (a user can't add the same
+// symbol twice — INSERT ... ON CONFLICT DO NOTHING) AND the user-lookup index:
+// its leading user_id column backs the hot query "all tickers for this user".
+export const watchlist = pgTable('watchlist', {
+  id:       serial('id').primaryKey(),
+  userId:   text('user_id').notNull(),       // Clerk user ID — row owner
+  ticker:   text('ticker').notNull(),        // uppercase symbol (enforced in API)
+  addedAt:  timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uqUserTicker: uniqueIndex('uq_watchlist_user_ticker').on(t.userId, t.ticker),
+}));

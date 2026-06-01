@@ -7,7 +7,7 @@ import {
   chgC, chgBg, fmt2, safeN, minsSince,
   fetchKey, toArr,
   BrandStyles, Skel, Dot, NewsPhotoCard,
-  TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard,
+  TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
 } from "../lib/cp-shared";
 
 // Insider trades come from Postgres via /api/insiders (not KV). Homepage shows
@@ -474,6 +474,8 @@ export default function CatalystPit() {
           <CatalystBriefCard/>
 
           <MarketSnapshotCard tickers={data?.tickers} loading={loading}/>
+
+          <WatchlistHomeCard/>
 
           {/* PRO UPSELL */}
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,

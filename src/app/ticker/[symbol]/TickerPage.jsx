@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles } from '../../../lib/cp-shared';
 import TickerChart from '../../../components/TickerChart';
 import BullsBears from '../../../components/BullsBears';
+import WatchlistStar from '../../../components/WatchlistStar';
 
 // ── formatters (null/NaN → "—", per the null-rather-than-guess rule) ──
 const usd      = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -176,6 +177,7 @@ function Hero({ data, insider, gov }) {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
           <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
           <span style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{data.name}</span>
+          <span style={{ marginLeft: 'auto', alignSelf: 'center' }}><WatchlistStar symbol={data.symbol} /></span>
         </div>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: '0.5px' }}>
           {data.exchange || '—'}{data.industry ? ` · ${data.industry}` : ''}
