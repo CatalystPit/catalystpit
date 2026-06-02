@@ -8,11 +8,15 @@ import {
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
 } from "../lib/cp-shared";
 
-const FREE_ROW_COUNT = 5; // hero (1) + 5 rows = 6 free items total
+const LOCKED_PREVIEW_ROWS = 3; // how many faint placeholder rows to tease (CTA shows the true count)
 
 const fetchNews = async () => {
-  const [stories, tape] = await Promise.all([
-    fetchKey("top_stories"),
+  // Articles now come from the dedicated, AUTH-gated /api/news (server truncates
+  // for signed-OUT visitors and sends lockedCount). ticker_tape stays on the public
+  // /api/claude passthrough — it isn't gated. Article shape is identical; signed-out
+  // visitors simply receive fewer elements, and locked stories never ship.
+  const [newsRes, tape] = await Promise.all([
+    fetch('/api/news').then(r => (r.ok ? r.json() : null)).catch(() => null),
     fetchKey("ticker_tape"),
   ]);
 
@@ -25,7 +29,7 @@ const fetchNews = async () => {
       }))
     : null;
 
-  const storiesArr = toArr(stories, 'stories', 'top_stories', 'articles', 'items', 'data');
+  const storiesArr = toArr(newsRes?.data, 'stories', 'top_stories', 'articles', 'items', 'data');
   const articles = storiesArr.map(s => ({
     headline: s.title || s.headline || s.summary || s.description || '',
     source:   s.source || s.outlet || s.publisher || 'Market News',
@@ -37,7 +41,7 @@ const fetchNews = async () => {
     url:      s.url || null,
   })).filter(a => a.headline);
 
-  return { articles, tickers };
+  return { articles, tickers, lockedCount: newsRes?.lockedCount || 0 };
 };
 
 function NewsRowCard({n, idx}) {
@@ -99,6 +103,26 @@ function NewsRowCard({n, idx}) {
     );
   }
   return inner;
+}
+
+// Locked placeholder row — the server sent NO data for locked stories (free tier),
+// so there is nothing to blur; this represents absence. Faint muted bars matching
+// NewsRowCard's footprint + a lock glyph. Zero real article content in the data path.
+function LockedNewsRow() {
+  return (
+    <div aria-hidden="true" style={{display:"flex", gap:14, padding:12, background:C.white,
+      border:`1px solid ${C.border}`, borderRadius:6}}>
+      <div style={{width:120, height:80, borderRadius:5, flexShrink:0, background:C.surface2,
+        display:"flex", alignItems:"center", justifyContent:"center"}}>
+        <span style={{fontSize:18, color:C.hint}}>🔒</span>
+      </div>
+      <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:9, justifyContent:"center"}}>
+        <div style={{height:9, width:"38%", borderRadius:4, background:C.surface2}}/>
+        <div style={{height:13, width:"88%", borderRadius:4, background:C.surface2}}/>
+        <div style={{height:13, width:"55%", borderRadius:4, background:C.surface2}}/>
+      </div>
+    </div>
+  );
 }
 
 function TickerSearchCard({query, onQueryChange, trending}) {
@@ -177,6 +201,9 @@ export default function NewsFeed() {
   }, [loadData]);
 
   const articles = data?.articles || [];
+  // Server is the single source of truth for the gate: free → N>0 (locked stories
+  // were never sent), pro/elite → 0/absent. Defensive: undefined → 0.
+  const lockedCount = data?.lockedCount || 0;
 
   // Categories present in the unfiltered data
   const availableCategories = useMemo(() => {
@@ -204,9 +231,7 @@ export default function NewsFeed() {
   }, [articles]);
 
   const hero = filtered[0];
-  const restRows = filtered.slice(1);
-  const freeRows = restRows.slice(0, FREE_ROW_COUNT);
-  const lockedRows = restRows.slice(FREE_ROW_COUNT);
+  const restRows = filtered.slice(1);   // all rows the server sent (already gated); render as-is
 
   const timeStr = lastUp
     ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"})
@@ -319,46 +344,29 @@ export default function NewsFeed() {
               {/* HERO CARD */}
               {hero && <NewsPhotoCard n={hero} idx={0} hero showSummary/>}
 
-              {/* FREE ROWS */}
-              {freeRows.map((n, i) => (
-                <NewsRowCard key={`free-${i}`} n={n} idx={i + 1}/>
+              {/* ROWS RECEIVED — free: hero + up to 5; pro/elite: all. Already gated server-side. */}
+              {restRows.map((n, i) => (
+                <NewsRowCard key={`row-${i}`} n={n} idx={i + 1}/>
               ))}
 
-              {/* PRO BLUR GATE */}
-              {lockedRows.length > 0 && (
-                <div style={{position:"relative", overflow:"hidden", borderRadius:8,
-                  marginTop:4}}>
-                  <div style={{display:"flex", flexDirection:"column", gap:14,
-                    filter:"blur(5px)", userSelect:"none", pointerEvents:"none", opacity:0.65}}>
-                    {lockedRows.slice(0, 4).map((n, i) => (
-                      <NewsRowCard key={`locked-${i}`} n={n} idx={FREE_ROW_COUNT + 1 + i}/>
-                    ))}
+              {/* LOCKED — the server sent NO data for these; render absence placeholders + ONE CTA */}
+              {lockedCount > 0 && (
+                <>
+                  {Array.from({ length: Math.min(lockedCount, LOCKED_PREVIEW_ROWS) }).map((_, i) => (
+                    <LockedNewsRow key={`lock-${i}`}/>
+                  ))}
+                  <div style={{marginTop:4, padding:"14px 18px", display:"flex", alignItems:"center", gap:14,
+                    flexWrap:"wrap", background:C.greenLight, border:`1px solid ${C.greenBorder}`, borderRadius:8}}>
+                    <span style={{flex:1, minWidth:0, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:C.ink}}>
+                      🔒 Sign in to see all {lockedCount} {lockedCount === 1 ? 'story' : 'stories'}
+                    </span>
+                    {/* Free login gate (not Pro) — matches the app's existing /sign-in entry (TopNav, watchlist) */}
+                    <a href="/sign-in" style={{background:C.green, color:"#fff", textDecoration:"none", whiteSpace:"nowrap",
+                      padding:"10px 18px", borderRadius:6, fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif"}}>
+                      Sign in
+                    </a>
                   </div>
-                  <div style={{position:"absolute", inset:0, display:"flex",
-                    alignItems:"center", justifyContent:"center",
-                    background:"linear-gradient(to bottom, rgba(245,246,243,0.4) 0%, rgba(245,246,243,0.92) 60%)"}}>
-                    <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
-                      borderRadius:10, padding:"18px 24px", display:"flex", alignItems:"center", gap:16,
-                      boxShadow:"0 8px 32px rgba(0,0,0,0.10)", maxWidth:520}}>
-                      <span style={{fontSize:22}}>🔒</span>
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:14, fontWeight:600, color:C.ink, marginBottom:3}}>
-                          {lockedRows.length} more stor{lockedRows.length === 1 ? 'y' : 'ies'} behind Pro
-                        </div>
-                        <div style={{fontSize:12, color:C.muted, fontWeight:300}}>
-                          Full real-time feed · updated every minute · $29/mo
-                        </div>
-                      </div>
-                      <button style={{background:C.green, border:"none", color:"#fff",
-                        padding:"10px 18px", borderRadius:6, fontSize:13, fontWeight:600,
-                        cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-                        onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-                        onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                        Unlock Pro
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                </>
               )}
             </>
           )}
