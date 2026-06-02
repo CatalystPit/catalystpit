@@ -4,6 +4,8 @@
 // /api/earnings, /api/insiders, /api/politicians, /api/short-interest. Every source item carries
 // its real date so the model never improvises one. 8-K is not wired anywhere yet → passed empty.
 
+import { resolveUserTier, FREE_BULLSBEARS_VISIBLE } from '../../../lib/entitlements';
+
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
@@ -404,6 +406,32 @@ async function generate(origin, ticker) {
   };
 }
 
+// Apply the Free/Pro entitlement gate to an OUTBOUND payload ONLY — the KV cache
+// always keeps the full 5+5 synthesis (every kvSet below is unchanged). Error
+// payloads pass through untouched (no tier field, no truncation). Free users get
+// summary_line + the first bull/bear; the rest are stripped server-side and the
+// hidden counts are returned so the UI can show a lock state. `extra` carries the
+// per-path flags (cached, and refreshed_recently on the throttle path).
+async function gateResponse(payload, extra) {
+  if (!payload || payload.error) return { ...payload, ...extra };   // errors pass through unchanged
+
+  const tier = await resolveUserTier();
+  if (tier !== 'free') return { ...payload, tier, ...extra };       // Pro/Elite → full object + tier
+
+  const bulls = payload.bulls || [];
+  const bears = payload.bears || [];
+  return {                                                          // Free → truncate; drop _dropped + generatedAt
+    ticker: payload.ticker,
+    summary_line: payload.summary_line ?? null,
+    bulls: bulls.slice(0, FREE_BULLSBEARS_VISIBLE),
+    bears: bears.slice(0, FREE_BULLSBEARS_VISIBLE),
+    lockedBullCount: Math.max(0, bulls.length - FREE_BULLSBEARS_VISIBLE),
+    lockedBearCount: Math.max(0, bears.length - FREE_BULLSBEARS_VISIBLE),
+    tier: 'free',
+    ...extra,
+  };
+}
+
 export async function GET(request) {
   let ticker = '';
   try {
@@ -421,21 +449,21 @@ export async function GET(request) {
       const recentlyRefreshed = await kvExists(refreshKey);
       if (recentlyRefreshed) {
         const cached = await kvGet(cacheKey);
-        return Response.json({ ...(cached || { ticker, bulls: [], bears: [] }), cached: true, refreshed_recently: true });
+        return Response.json(await gateResponse(cached || { ticker, bulls: [], bears: [] }, { cached: true, refreshed_recently: true }));
       }
       const fresh = await generate(origin, ticker);
       await kvSet(refreshKey, { at: Date.now() }, TTL_LASTREFRESH);
       await kvSet(cacheKey, fresh, fresh.error ? TTL_EMPTY : TTL_OK);
-      return Response.json({ ...fresh, cached: false });
+      return Response.json(await gateResponse(fresh, { cached: false }));
     }
 
     // normal path: cache hit → serve; miss → generate, cache, return.
     const cached = await kvGet(cacheKey);
-    if (cached) return Response.json({ ...cached, cached: true });
+    if (cached) return Response.json(await gateResponse(cached, { cached: true }));
 
     const fresh = await generate(origin, ticker);
     await kvSet(cacheKey, fresh, fresh.error ? TTL_EMPTY : TTL_OK);
-    return Response.json({ ...fresh, cached: false });
+    return Response.json(await gateResponse(fresh, { cached: false }));
   } catch (e) {
     console.log(`[bulls_bears] ${ticker} route error: ${e.message}`);
     return Response.json({ error: 'synthesis_unavailable', reason: 'route_error' }, { status: 200 });

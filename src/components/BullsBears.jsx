@@ -35,14 +35,40 @@ function Bullet({ b, accent }) {
   );
 }
 
-function Column({ title, color, bullets }) {
+// Locked placeholder row — represents the ABSENCE of a bullet that was never
+// delivered to the client (free tier). Contains ZERO synthesis text: just a faint
+// muted bar + a tiny lock glyph, sized to roughly match a Bullet's footprint.
+// This is not blur-over-real-content — there is no real content behind it.
+const LOCK_WIDTHS = ['78%', '64%', '72%', '68%', '74%'];
+function LockedRow({ w }) {
+  return (
+    <div style={{ marginBottom: 14 }} aria-hidden="true">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <span style={{ fontSize: 10, color: C.hint, lineHeight: 1, flexShrink: 0 }}>🔒</span>
+        <div style={{ height: 11, width: w, borderRadius: 4, background: C.surface2 }} />
+      </div>
+      <div style={{ marginTop: 6, width: 54, height: 14, borderRadius: 4, background: C.surface, border: `1px solid ${C.border}` }} />
+    </div>
+  );
+}
+
+function Column({ title, color, bullets, lockedCount = 0 }) {
+  const hasContent = bullets.length > 0 || lockedCount > 0;
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
       <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: '0.8px',
         color, marginBottom: 12, textTransform: 'uppercase' }}>{title}</div>
-      {bullets.length === 0
+      {!hasContent
         ? <div style={{ fontSize: 12, color: C.dim, fontStyle: 'italic' }}>No clear signals from current data.</div>
-        : bullets.map((b, i) => <Bullet key={i} b={b} accent={color} />)}
+        : (
+          <>
+            {bullets.map((b, i) => <Bullet key={i} b={b} accent={color} />)}
+            {/* lockedCount placeholder rows — no bullet data is passed in (none exists) */}
+            {Array.from({ length: lockedCount }).map((_, i) => (
+              <LockedRow key={`lock-${i}`} w={LOCK_WIDTHS[i % LOCK_WIDTHS.length]} />
+            ))}
+          </>
+        )}
     </div>
   );
 }
@@ -116,6 +142,12 @@ export default function BullsBears({ ticker }) {
   const bulls = data.bulls || [];
   const bears = data.bears || [];
   const ago = updatedAgo(data.generatedAt);
+  // Tier-agnostic: the component only reads the locked counts. Free → N>0, the
+  // locked bullets were stripped server-side and are NOT in the payload. Pro/elite
+  // → undefined/0 → no placeholders, no CTA. The UI cannot reveal what it never got.
+  const lockedBull = data.lockedBullCount || 0;
+  const lockedBear = data.lockedBearCount || 0;
+  const lockedTotal = lockedBull + lockedBear;
 
   return card(<>{header}
     <div style={{ padding: 16 }}>
@@ -135,9 +167,24 @@ export default function BullsBears({ ticker }) {
       )}
 
       <div className="bb-cols">
-        <Column title="Bulls Say" color={C.green} bullets={bulls} />
-        <Column title="Bears Say" color={C.red} bullets={bears} />
+        <Column title="Bulls Say" color={C.green} bullets={bulls} lockedCount={lockedBull} />
+        <Column title="Bears Say" color={C.red} bullets={bears} lockedCount={lockedBear} />
       </div>
+
+      {/* upgrade CTA — only when there are locked points (free tier). Pro/elite: lockedTotal 0 → hidden. */}
+      {lockedTotal > 0 && (
+        <div style={{ marginTop: 16, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12,
+          flexWrap: 'wrap', background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 8 }}>
+          <span style={{ flex: 1, minWidth: 0, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.ink }}>
+            🔒 {lockedTotal} more {lockedTotal === 1 ? 'point' : 'points'} in the full Bull &amp; Bear breakdown
+          </span>
+          {/* M7: point to upgrade/checkout flow */}
+          <a href="/account" style={{ background: C.green, color: '#fff', textDecoration: 'none', whiteSpace: 'nowrap',
+            padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: "'DM Sans',sans-serif" }}>
+            Upgrade to Pro
+          </a>
+        </div>
+      )}
 
       {/* footer: source categories + disclaimer */}
       <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${C.surface}` }}>
