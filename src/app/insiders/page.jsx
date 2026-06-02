@@ -157,6 +157,9 @@ export default function InsidersPage() {
     else if (sortBy === 'SHARES') { const nz=rows.filter(r=>r.shares>0),z=rows.filter(r=>!(r.shares>0)); nz.sort((a,b)=>dir*(a.shares-b.shares)); rows=[...nz,...z]; }
   }
 
+  // Server-side gate: signed-out → lockedCount>0 (preview rows only); signed-in → 0/absent.
+  const lockedCount = data?.lockedCount || 0;
+
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
   const buys  = isTradeView ? rows.filter(i=>i.type==='BUY').length  : 0;
   const sells = isTradeView ? rows.filter(i=>i.type==='SELL').length : 0;
@@ -338,10 +341,32 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
                     </tr>
                   ))}
+                  {/* Locked placeholder rows — NO real row data (server sent none). */}
+                  {lockedCount > 0 && Array.from({length: Math.min(lockedCount, 3)}).map((_, i) => (
+                    <tr key={`lock-${i}`} aria-hidden="true" style={{borderBottom:`1px solid ${C.surface}`,borderLeft:`3px solid ${C.border}`}}>
+                      {Array(8).fill(0).map((_, c) => (
+                        <td key={c} style={{padding:"15px 16px"}}>
+                          <div style={{height:11,borderRadius:4,background:C.border,width:c===3?"75%":c===2?"80%":c===0?"60%":"50%"}}/>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
               </div>
             </div>
+
+            {/* Sign-in gate CTA (free login, not Pro) — only when rows are locked (signed-out). */}
+            {lockedCount > 0 && (
+              <div style={{marginTop:12,padding:"14px 18px",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8}}>
+                <span style={{flex:1,minWidth:0,fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.ink}}>
+                  🔒 Sign in to see all {lockedCount} insider trades
+                </span>
+                <a href="/sign-in" style={{background:C.green,color:"#fff",textDecoration:"none",whiteSpace:"nowrap",padding:"10px 18px",borderRadius:6,fontSize:13,fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>
+                  Sign in
+                </a>
+              </div>
+            )}
           </>
         )}
 

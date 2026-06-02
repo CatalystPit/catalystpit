@@ -1,8 +1,15 @@
+import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, desc, sql } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
+
+// AUTH gate (sign-in, NOT tier — mirrors /api/news): signed-in users of ANY tier
+// get the full set; signed-out get a FREE_PREVIEW_ROWS preview + lockedCount, with
+// the locked rows never leaving the server. Response varies by auth → never CDN-cached.
+const FREE_PREVIEW_ROWS = 10;
+const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 // bioguide slug -> headshot; name-slug (unmatched member) -> null (initials avatar)
 const photoUrl = (slug) =>
@@ -137,6 +144,9 @@ async function feedView(limit) {
 
 export async function GET(request) {
   try {
+    const { userId } = await auth();
+    const loggedIn = !!userId;
+
     const { searchParams } = new URL(request.url);
     const slug    = searchParams.get('slug')?.trim();
     const ticker  = searchParams.get('ticker')?.toUpperCase().trim();
@@ -145,26 +155,35 @@ export async function GET(request) {
     const party   = searchParams.get('party') || null;
     const limit   = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '10', 10) || 10, 1), 50);
 
+    // Member detail — LEFT UNGATED. The /politicians/[slug] page shows a member's
+    // full history with no sign-in CTA; capping would silently truncate it. (Flagged.)
     if (slug) {
       const payload = await detailView(slug);
-      console.log(`[politicians_api] detail slug=${slug} trades=${payload.trades.length}`);
-      return Response.json(payload);
+      console.log(`[politicians_api] detail slug=${slug} trades=${payload.trades.length} loggedIn=${loggedIn}`);
+      return Response.json({ ...payload, loggedIn }, { headers: NO_STORE });
     }
+    // Ticker drill-down — LEFT UNGATED (shared with the /ticker government tab, no CTA). (Flagged.)
     if (ticker) {
       const payload = await tickerView(ticker);
-      console.log(`[politicians_api] ticker=${ticker} trades=${payload.count}`);
-      return Response.json(payload);
+      console.log(`[politicians_api] ticker=${ticker} trades=${payload.count} loggedIn=${loggedIn}`);
+      return Response.json({ ...payload, loggedIn }, { headers: NO_STORE });
     }
+    // Feed (homepage teaser) — AUTH-GATED. Signed-out capped to the preview.
     if (view === 'feed') {
       const payload = await feedView(limit);
-      console.log(`[politicians_api] feed trades=${payload.count}`);
-      return Response.json(payload);
+      const trades = loggedIn ? payload.trades : payload.trades.slice(0, FREE_PREVIEW_ROWS);
+      const lockedCount = loggedIn ? 0 : Math.max(0, payload.trades.length - FREE_PREVIEW_ROWS);
+      console.log(`[politicians_api] feed trades=${trades.length} locked=${lockedCount} loggedIn=${loggedIn}`);
+      return Response.json({ view: 'feed', count: trades.length, trades, lockedCount, loggedIn }, { headers: NO_STORE });
     }
+    // Member list — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
     const members = await listView({ view, chamber, party });
-    console.log(`[politicians_api] list view=${view} members=${members.length}`);
-    return Response.json({ view, count: members.length, members });
+    const shown = loggedIn ? members : members.slice(0, FREE_PREVIEW_ROWS);
+    const lockedCount = loggedIn ? 0 : Math.max(0, members.length - FREE_PREVIEW_ROWS);
+    console.log(`[politicians_api] list view=${view} members=${shown.length} locked=${lockedCount} loggedIn=${loggedIn}`);
+    return Response.json({ view, count: shown.length, members: shown, lockedCount, loggedIn }, { headers: NO_STORE });
   } catch (e) {
     console.log(`[politicians_api] failed: ${e.message}`);
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });
   }
 }

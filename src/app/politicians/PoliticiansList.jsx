@@ -87,8 +87,27 @@ function MemberCard({ m }) {
   );
 }
 
+// Locked placeholder card — NO real member data (server sent none for signed-out
+// users beyond the preview). Faint muted bars matching MemberCard's footprint + lock glyph.
+function LockedMemberCard() {
+  return (
+    <div aria-hidden="true" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{ width: 52, height: 52, borderRadius: '50%', background: C.surface, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: C.hint }}>🔒</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ height: 13, width: '70%', borderRadius: 4, background: C.surface, marginBottom: 8 }} />
+          <div style={{ height: 10, width: '45%', borderRadius: 4, background: C.surface }} />
+        </div>
+      </div>
+      <div style={{ height: 10, width: '100%', borderRadius: 4, background: C.surface }} />
+      <div style={{ height: 5, width: '100%', borderRadius: 3, background: C.surface }} />
+    </div>
+  );
+}
+
 export default function PoliticiansList() {
   const [members, setMembers] = useState(null);
+  const [lockedCount, setLockedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [view, setView] = useState('most_active');
@@ -106,8 +125,9 @@ export default function PoliticiansList() {
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setMembers(json.members || []);
+      setLockedCount(json.lockedCount || 0);   // signed-out → >0; signed-in → 0/absent
     } catch (e) {
-      setError(e.message); setMembers(null);
+      setError(e.message); setMembers(null); setLockedCount(0);
     } finally {
       setLoading(false);
     }
@@ -162,7 +182,27 @@ export default function PoliticiansList() {
                 ))
               : (members || []).length === 0
                 ? <div style={{ gridColumn: '1/-1', textAlign: 'center', color: C.muted, fontSize: 13, padding: '40px 16px' }}>No members match these filters.</div>
-                : members.map((m) => <MemberCard key={m.slug} m={m} />)}
+                : (
+                  <>
+                    {members.map((m) => <MemberCard key={m.slug} m={m} />)}
+                    {/* Locked placeholder cards — no real member data (server sent none). */}
+                    {lockedCount > 0 && Array.from({ length: Math.min(lockedCount, 3) }).map((_, i) => (
+                      <LockedMemberCard key={`lock-${i}`} />
+                    ))}
+                  </>
+                )}
+          </div>
+        )}
+
+        {/* Sign-in gate CTA (free login, not Pro) — only when members are locked (signed-out). */}
+        {!loading && !error && lockedCount > 0 && (
+          <div style={{ marginTop: 14, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 8 }}>
+            <span style={{ flex: 1, minWidth: 0, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.ink }}>
+              🔒 Sign in to see all {lockedCount} members
+            </span>
+            <a href="/sign-in" style={{ background: C.green, color: '#fff', textDecoration: 'none', whiteSpace: 'nowrap', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans',sans-serif" }}>
+              Sign in
+            </a>
           </div>
         )}
 

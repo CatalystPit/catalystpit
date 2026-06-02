@@ -357,16 +357,16 @@ export default function CatalystPit() {
                   boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
                   <span style={{fontSize:16}}>🔒</span>
                   <div>
-                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Unlock All Insider Trades</div>
-                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Real-time Form 4 filings · Pro $29/mo</div>
+                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Sign in to explore all insider trades</div>
+                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Free account · real-time Form 4 filings</div>
                   </div>
-                  <button style={{background:C.green, border:"none", color:"#fff",
-                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500,
+                  <a href="/sign-in" style={{background:C.green, border:"none", color:"#fff",
+                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",
                     cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
                     onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Get Access
-                  </button>
+                    Sign in
+                  </a>
                 </div>
               </div>
             </div>
@@ -451,16 +451,16 @@ export default function CatalystPit() {
                   boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
                   <span style={{fontSize:16}}>🔒</span>
                   <div>
-                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Unlock All Politician Trades</div>
-                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Congressional disclosures · Pro $29/mo</div>
+                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Sign in to explore all politician trades</div>
+                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Free account · STOCK Act disclosures</div>
                   </div>
-                  <button style={{background:C.green, border:"none", color:"#fff",
-                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500,
+                  <a href="/sign-in" style={{background:C.green, border:"none", color:"#fff",
+                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",
                     cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
                     onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Get Access
-                  </button>
+                    Sign in
+                  </a>
                 </div>
               </div>
             </div>
