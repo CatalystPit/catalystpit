@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { C, Skel } from '../lib/cp-shared';
+import { estimateNextEarnings } from '../lib/earnings-estimate';
 
 const usd = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
 const pct = (n) => (n == null || isNaN(n)) ? null : `${n >= 0 ? '+' : ''}${Number(n).toFixed(2)}%`;
@@ -12,10 +13,15 @@ const fmtAdded = (s) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
+const MiniLabel = ({ children }) => (
+  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 8, color: C.dim, letterSpacing: '0.5px', marginBottom: 3 }}>{children}</div>
+);
+
 function Row({ item, onRemove, removing }) {
-  const pending = item.price === undefined;   // price not yet resolved (phase 1 / just-added)
+  const pending = item.price === undefined;   // price + last Form 4 resolve together (?prices=1)
   const change = pct(item.changePct);
   const up = (item.changePct ?? 0) >= 0;
+  const f4 = item.lastForm4;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
@@ -34,24 +40,43 @@ function Row({ item, onRemove, removing }) {
         </span>
       </a>
 
-      {pending ? (
-        <Skel w={84} h={14} mb={0} />     /* price still loading */
-      ) : (
-        <>
-          <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap' }}>
-            {usd(item.price)}
-          </span>
-          {change && (
+      {/* LAST FORM 4 (P/S code · filing date) */}
+      <div style={{ width: 116, textAlign: 'right', flexShrink: 0 }}>
+        <MiniLabel>LAST FORM 4</MiniLabel>
+        {pending ? <Skel w={76} h={12} mb={0} />
+          : f4 ? (
             <span className="cp-num" style={{
-              fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
-              color: up ? C.green : C.red, background: up ? C.greenLight : C.redLight,
-              padding: '2px 7px', borderRadius: 4, minWidth: 56, textAlign: 'center',
-            }}>
-              {change}
-            </span>
-          )}
-        </>
-      )}
+              fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, whiteSpace: 'nowrap',
+              background: f4.action === 'BUY' ? C.greenLight : C.redLight,
+              color: f4.action === 'BUY' ? C.green : C.red,
+            }}>{(f4.code || (f4.action === 'BUY' ? 'P' : 'S'))} · {fmtAdded(f4.date)}</span>
+          ) : <span style={{ fontSize: 11, color: C.dim }}>—</span>}
+      </div>
+
+      {/* NEXT EARNINGS (SEC-cadence estimate, filled lazily) */}
+      <div style={{ width: 92, textAlign: 'right', flexShrink: 0 }}>
+        <MiniLabel>NEXT EARN · EST</MiniLabel>
+        {item.nextEarnings === undefined ? <Skel w={58} h={12} mb={0} />
+          : item.nextEarnings ? <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.text, whiteSpace: 'nowrap' }}>{fmtAdded(item.nextEarnings)}</span>
+          : <span style={{ fontSize: 11, color: C.dim }}>—</span>}
+      </div>
+
+      {/* PRICE */}
+      <div style={{ width: 96, textAlign: 'right', flexShrink: 0 }}>
+        <MiniLabel>PRICE</MiniLabel>
+        {pending ? <Skel w={76} h={12} mb={0} /> : (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+            <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap' }}>{usd(item.price)}</span>
+            {change && (
+              <span className="cp-num" style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap',
+                color: up ? C.green : C.red, background: up ? C.greenLight : C.redLight,
+                padding: '2px 6px', borderRadius: 4,
+              }}>{change}</span>
+            )}
+          </div>
+        )}
+      </div>
 
       <button
         onClick={() => onRemove(item.ticker)}
@@ -84,20 +109,23 @@ export default function WatchlistSection() {
   useEffect(() => {
     let alive = true;
     (async () => {
+      let tickers = [];
       let proceed = false;
       try {
         const r = await fetch('/api/watchlist');            // phase 1: bare {ticker, added_at}
         const bare = r.ok ? await r.json() : null;
         if (alive) {
-          if (Array.isArray(bare)) { setList(bare); proceed = bare.length > 0; }
+          if (Array.isArray(bare)) { setList(bare); tickers = bare.map(x => x.ticker); proceed = bare.length > 0; }
           else { setList([]); setError(true); }
         }
       } catch {
         if (alive) { setList([]); setError(true); }
       }
       if (!alive || !proceed) return;
+
+      // phase 2: prices + last Form 4 (one enriched call)
       try {
-        const r = await fetch('/api/watchlist?prices=1');   // phase 2: resolve prices
+        const r = await fetch('/api/watchlist?prices=1');
         const priced = r.ok ? await r.json() : null;
         if (alive && Array.isArray(priced)) setList(priced);
         else if (alive) setList(prev => (prev || []).map(x => x.price === undefined ? { ...x, price: null } : x));
@@ -105,6 +133,17 @@ export default function WatchlistSection() {
         // Phase-2 failure → resolve pending rows to "—" so they don't shimmer forever.
         if (alive) setList(prev => (prev || []).map(x => x.price === undefined ? { ...x, price: null } : x));
       }
+
+      // phase 3: next-earnings estimate per ticker (lazy; /api/earnings is KV-cached 24h)
+      await Promise.all(tickers.map(async (t) => {
+        let est = null;
+        try {
+          const er = await fetch(`/api/earnings?ticker=${encodeURIComponent(t)}`);
+          const ej = er.ok ? await er.json() : null;
+          est = estimateNextEarnings(ej?.earnings || []);
+        } catch { est = null; }
+        if (alive) setList(prev => (prev || []).map(x => x.ticker === t ? { ...x, nextEarnings: est } : x));
+      }));
     })();
     return () => { alive = false; };
   }, []);

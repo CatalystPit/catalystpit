@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
-import { watchlist, tickerDailyCandles } from '../../../lib/schema';
+import { watchlist, tickerDailyCandles, insiderTrades } from '../../../lib/schema';
 import { and, eq, desc, inArray } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
@@ -151,9 +151,28 @@ async function withPrices(list) {
   });
 }
 
+// Attach the latest open-market Form 4 (P/S code + filing date) per ticker — one
+// DISTINCT ON query for the whole list. { action, code, date } | null (no filings).
+async function withLastForm4(list) {
+  if (list.length === 0) return list;
+  const tickers = list.map(r => r.ticker);
+  const rows = await db
+    .selectDistinctOn([insiderTrades.ticker], {
+      ticker: insiderTrades.ticker,
+      action: insiderTrades.action,
+      code:   insiderTrades.transactionCode,
+      date:   insiderTrades.filingDate,
+    })
+    .from(insiderTrades)
+    .where(and(inArray(insiderTrades.ticker, tickers), inArray(insiderTrades.action, ['BUY', 'SELL'])))
+    .orderBy(insiderTrades.ticker, desc(insiderTrades.filingDate));
+  const by = new Map(rows.map(r => [r.ticker, { action: r.action, code: r.code, date: r.date }]));
+  return list.map(r => ({ ...r, lastForm4: by.get(r.ticker) || null }));
+}
+
 // GET — return the session user's watchlist (empty array if none). With
-// ?prices=1, each row is enriched with a static cached price (see withPrices);
-// the bare form stays cheap for the star button's membership check.
+// ?prices=1, each row is enriched with a static cached price (see withPrices)
+// plus the latest Form 4 flag; the bare form stays cheap for the star button.
 export async function GET(request) {
   try {
     const { userId } = await auth();
@@ -161,7 +180,7 @@ export async function GET(request) {
 
     const list = await getList(userId);
     const wantPrices = new URL(request.url).searchParams.get('prices') === '1';
-    const payload = wantPrices ? await withPrices(list) : list;
+    const payload = wantPrices ? await withLastForm4(await withPrices(list)) : list;
     console.log(`[watchlist_api] GET user=${userId} count=${list.length}${wantPrices ? ' +prices' : ''}`);
     return Response.json(payload);
   } catch (e) {
