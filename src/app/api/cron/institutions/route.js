@@ -178,6 +178,24 @@ async function resolveTickers(cusips) {
   return out;
 }
 
+// Self-bootstrap the tables so the feature works without a separate manual migration.
+// All IF NOT EXISTS → safe to run every time; no data loss.
+async function ensureTables() {
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS fund_holdings (
+    id serial PRIMARY KEY, cik text NOT NULL, quarter date NOT NULL, cusip text NOT NULL,
+    ticker text, issuer text, class text NOT NULL DEFAULT '', shares double precision,
+    value double precision, put_call text NOT NULL DEFAULT '', filed_date date,
+    inserted_at timestamptz NOT NULL DEFAULT now())`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_fund_holding ON fund_holdings (cik, quarter, cusip, class, put_call)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fund_holdings_cik_quarter ON fund_holdings (cik, quarter)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fund_holdings_ticker ON fund_holdings (ticker)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fund_holdings_cusip ON fund_holdings (cusip)`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS fund_filings (
+    cik text NOT NULL, quarter date NOT NULL, filed_date date, accession text,
+    total_value double precision, holdings_count integer,
+    inserted_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (cik, quarter))`);
+}
+
 export async function GET(request) {
   const onlySlug = new URL(request.url).searchParams.get('fund');   // ?fund=slug imports one fund
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
@@ -188,6 +206,8 @@ export async function GET(request) {
     try { const { userId } = await auth(); if (userId) authorized = true; } catch { /* no session */ }
   }
   if (!authorized) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+  try { await ensureTables(); } catch (e) { console.log(`[institutions] ensureTables failed: ${e.message}`); return Response.json({ ok: false, error: `ensureTables: ${e.message}` }, { status: 500 }); }
 
   const startedAt = Date.now();
   const doTickers = !onlySlug;   // skip the slow OpenFIGI pass on manual single-fund runs (issuer names still show)
@@ -212,7 +232,7 @@ export async function GET(request) {
       }
       done.push(`${fund.slug}:${resolved.entityName}(${ingested})`);
     } catch (e) {
-      skipped.push(`${fund.slug}(err:${e.message.slice(0, 40)})`);
+      skipped.push(`${fund.slug}(err:${e.message.slice(0, 120)})`);
     }
   }
 
