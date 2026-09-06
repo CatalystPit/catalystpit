@@ -144,6 +144,20 @@ export const toArr = (val, ...wrapperKeys) => {
   return [];
 };
 
+// Kick off Stripe Pro checkout (C5): POST /api/stripe/checkout → redirect to Stripe.
+// Signed-out → /sign-in; not-configured / error → friendly alert (no dead button).
+export async function startCheckout() {
+  try {
+    const r = await fetch('/api/stripe/checkout', { method: 'POST' });
+    if (r.status === 401) { window.location.href = '/sign-in'; return; }
+    const j = await r.json().catch(() => ({}));
+    if (j.url) { window.location.href = j.url; return; }
+    alert(j.error === 'not_configured' ? 'Pro isn’t available just yet — check back soon.' : 'Could not start checkout. Please try again.');
+  } catch {
+    alert('Could not start checkout. Please try again.');
+  }
+}
+
 // ─── GLOBAL STYLES + FONTS ──────────────────────────────────────────────────
 export function BrandStyles() {
   return (

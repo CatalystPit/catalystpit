@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
-  fetchKey, toArr,
+  fetchKey, toArr, startCheckout,
   BrandStyles, Skel, Dot, NewsPhotoCard,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
 } from "../lib/cp-shared";
@@ -351,7 +351,7 @@ export default function CatalystPit() {
                       Pro unlocks the full feed, updated every minute
                     </span>
                   </div>
-                  <button style={{background:C.green, border:"none", color:"#fff",
+                  <button onClick={startCheckout} style={{background:C.green, border:"none", color:"#fff",
                     padding:"8px 18px", borderRadius:6, fontSize:12, fontWeight:500,
                     cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
@@ -572,7 +572,7 @@ export default function CatalystPit() {
                 </li>
               ))}
             </ul>
-            <button style={{width:"100%", background:C.green, border:"none", color:"#fff",
+            <button onClick={startCheckout} style={{width:"100%", background:C.green, border:"none", color:"#fff",
               padding:"11px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer",
               fontFamily:"'DM Sans',sans-serif"}}
               onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
