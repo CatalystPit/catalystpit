@@ -27,6 +27,14 @@
     {
       "path": "/api/cron/sync-short-interest",
       "schedule": "0 13 * * 1"
+    },
+    {
+      "path": "/api/cron/pit-snapshot",
+      "schedule": "*/15 13-20 * * 1-5"
+    },
+    {
+      "path": "/api/cron/pit-snapshot",
+      "schedule": "0 * * * *"
     }
   ],
   "headers": [
@@ -71,6 +79,9 @@
     },
     "src/app/api/claude/route.js": {
       "maxDuration": 10
+    },
+    "src/app/api/cron/pit-snapshot/route.js": {
+      "maxDuration": 60
     }
   }
 }

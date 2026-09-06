@@ -14,7 +14,7 @@ async function kvGet(key) {
   return data.result;
 }
 
-const VALID_KEYS = new Set(['top_stories', 'market_snapshot', 'ticker_tape']);
+const VALID_KEYS = new Set(['top_stories', 'market_snapshot', 'ticker_tape', 'pit_snapshot']);
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);

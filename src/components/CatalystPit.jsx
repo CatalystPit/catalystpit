@@ -76,14 +76,27 @@ const partyStyle = (party) => {
 
 const fetchAll = async () => {
   try {
-    const [stories, snapshot, tape, insiderData, politicianData, clusterData] = await Promise.all([
-      fetchNews(),                 // was: fetchKey("top_stories")
-      fetchKey("market_snapshot"),
+    // Tape + market-snapshot prices stay on the market-cache reader. pit_snapshot (B1)
+    // drives stories/catalysts/insiders/congress in ONE read; the per-API fetches below
+    // are the fallback for the deploy→first-cron gap or a cron failure.
+    const [tape, marketSnap, snap] = await Promise.all([
       fetchKey("ticker_tape"),
-      fetchInsiders(),
-      fetchPoliticians(),
-      fetchClusters(),
+      fetchKey("market_snapshot"),
+      fetchKey("pit_snapshot"),
     ]);
+
+    const usingSnapshot = !!snap && (Array.isArray(snap.insiders) || Array.isArray(snap.stories));
+    let stories, insiderData, politicianData, clusterData;
+    if (usingSnapshot) {
+      stories = snap.stories || [];
+      insiderData = { trades: snap.insiders || [] };
+      politicianData = { trades: snap.congress || [] };
+      clusterData = null;                          // catalysts arrive pre-built in the snapshot
+    } else {
+      [stories, insiderData, politicianData, clusterData] = await Promise.all([
+        fetchNews(), fetchInsiders(), fetchPoliticians(), fetchClusters(),
+      ]);
+    }
 
     const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
     const tickers = tapeArr.map(t => ({
@@ -132,8 +145,8 @@ const fetchAll = async () => {
       traded: p.transactionDate || '',
     }));
 
-    const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
-    const vix     = safeN(snapshot?.VIX?.price ?? snapshot?.VIX?.last ?? 18.3);
+    const spy_chg = safeN(marketSnap?.SPY?.changePct ?? marketSnap?.SPY?.chg ?? marketSnap?.SPY?.change_pct ?? 1.2);
+    const vix     = safeN(marketSnap?.VIX?.price ?? marketSnap?.VIX?.last ?? 18.3);
 
     // NEVER WHITE (Rule 0): if the news feed is empty, synthesize up to 5 headlines
     // from the real insider filings we already fetched — no invented content.
@@ -146,20 +159,25 @@ const fetchAll = async () => {
         sym: i.sym, summary: '', imageUrl: null, url: `/ticker/${i.sym}`,
       }));
 
-    // TODAY IN THE PIT — feasible catalyst cards from real filings/Congress only.
-    const topBuys = insiders.filter(i => i.type === 'BUY').sort((a, b) => b.valueNum - a.valueNum);
-    const clusters = toArr(clusterData);
-    const catalysts = [];
-    if (topBuys[0]) catalysts.push({ kind:'BUY', label:'LARGEST OPEN-MARKET BUY',
-      sym: topBuys[0].sym, line: `${topBuys[0].name || 'Insider'} bought`, value: topBuys[0].value, date: topBuys[0].filed });
-    if (clusters[0]) catalysts.push({ kind:'BUY', label:'CLUSTER BUY · 30D',
-      sym: clusters[0].ticker, line: `${clusters[0].buyers} insiders bought`,
-      value: fmtInsiderValue(clusters[0].totalValue), date: clusters[0].lastBuy });
-    if (politicians[0]) catalysts.push({ kind: politicians[0].type, label:'LATEST CONGRESS TRADE',
-      sym: politicians[0].sym, line: `${politicians[0].name} ${politicians[0].type === 'BUY' ? 'bought' : 'sold'}`,
-      value: politicians[0].amount, date: politicians[0].traded });
-    if (topBuys[1]) catalysts.push({ kind:'BUY', label:'OPEN-MARKET BUY',
-      sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
+    // TODAY IN THE PIT — pre-built in the snapshot; otherwise build locally from fetched data.
+    let catalysts;
+    if (usingSnapshot) {
+      catalysts = Array.isArray(snap.catalysts) ? snap.catalysts : [];
+    } else {
+      const topBuys = insiders.filter(i => i.type === 'BUY').sort((a, b) => b.valueNum - a.valueNum);
+      const clusters = toArr(clusterData);
+      catalysts = [];
+      if (topBuys[0]) catalysts.push({ kind:'BUY', label:'LARGEST OPEN-MARKET BUY',
+        sym: topBuys[0].sym, line: `${topBuys[0].name || 'Insider'} bought`, value: topBuys[0].value, date: topBuys[0].filed });
+      if (clusters[0]) catalysts.push({ kind:'BUY', label:'CLUSTER BUY · 30D',
+        sym: clusters[0].ticker, line: `${clusters[0].buyers} insiders bought`,
+        value: fmtInsiderValue(clusters[0].totalValue), date: clusters[0].lastBuy });
+      if (politicians[0]) catalysts.push({ kind: politicians[0].type, label:'LATEST CONGRESS TRADE',
+        sym: politicians[0].sym, line: `${politicians[0].name} ${politicians[0].type === 'BUY' ? 'bought' : 'sold'}`,
+        value: politicians[0].amount, date: politicians[0].traded });
+      if (topBuys[1]) catalysts.push({ kind:'BUY', label:'OPEN-MARKET BUY',
+        sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
+    }
 
     return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg, vix };
   } catch (e) {
