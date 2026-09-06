@@ -30,6 +30,17 @@ const fetchPoliticians = async () => {
   } catch { return null; }
 };
 
+// Top Stories now come from the dedicated /api/news route (real news, auth-gated),
+// not the KV-backed /api/claude reader. Returns the article array or null.
+const fetchNews = async () => {
+  try {
+    const r = await fetch('/api/news');
+    if (!r.ok) return null;
+    const j = await r.json();            // { data:[...], lockedCount, loggedIn, ... }
+    return Array.isArray(j?.data) ? j.data : null;
+  } catch { return null; }
+};
+
 const fmtInsiderValue = (n) => {
   const v = Number(n);
   if (!v || isNaN(v)) return '—';
@@ -56,7 +67,7 @@ const partyStyle = (party) => {
 const fetchAll = async () => {
   try {
     const [stories, snapshot, tape, insiderData, politicianData] = await Promise.all([
-      fetchKey("top_stories"),
+      fetchNews(),                 // was: fetchKey("top_stories")
       fetchKey("market_snapshot"),
       fetchKey("ticker_tape"),
       fetchInsiders(),
@@ -107,7 +118,18 @@ const fetchAll = async () => {
     const spy_chg = safeN(snapshot?.SPY?.changePct ?? snapshot?.SPY?.chg ?? snapshot?.SPY?.change_pct ?? 1.2);
     const vix     = safeN(snapshot?.VIX?.price ?? snapshot?.VIX?.last ?? 18.3);
 
-    return { tickers, news, insiders, politicians, spy_chg, vix };
+    // NEVER WHITE (Rule 0): if the news feed is empty, synthesize up to 5 headlines
+    // from the real insider filings we already fetched — no invented content.
+    const newsFinal = news.length ? news : insiders
+      .filter(i => i.type === 'BUY' || i.type === 'SELL')
+      .slice(0, 5)
+      .map(i => ({
+        headline: `${i.sym}: ${i.name || 'Insider'} ${i.type === 'BUY' ? 'bought' : 'sold'} ${i.value}`,
+        source: 'SEC Form 4', mins: null, tag: 'SEC',
+        sym: i.sym, summary: '', imageUrl: null, url: `/ticker/${i.sym}`,
+      }));
+
+    return { tickers, news: newsFinal, insiders, politicians, spy_chg, vix };
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -203,6 +225,11 @@ export default function CatalystPit() {
                     </div>
                   ))}
                 </div>
+              ) : news.length === 0 ? (
+                <div style={{padding:"28px 8px", textAlign:"center"}}>
+                  <div style={{fontSize:14, fontWeight:600, color:C.ink, marginBottom:4}}>Markets are quiet right now</div>
+                  <div style={{fontSize:12, color:C.muted, fontWeight:300}}>New filings and headlines land here before the bell.</div>
+                </div>
               ) : (
                 <>
                   <div style={{marginBottom:12}}>
@@ -239,50 +266,6 @@ export default function CatalystPit() {
                   </button>
                 </div>
               )}
-            </div>
-          </div>
-
-          {/* MARKETS PULSE */}
-          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
-            <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.border}`,
-              background:C.surface, display:"flex", alignItems:"center", gap:7}}>
-              <Dot/>
-              <span style={{fontSize:13, fontWeight:600, color:C.ink}}>MARKETS PULSE</span>
-              <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9,
-                color:C.dim, letterSpacing:"0.8px"}}>LIVE</span>
-            </div>
-            <div style={{padding:16}}>
-              <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:12}}>
-                {loading || !data?.tickers?.length ? (
-                  Array(4).fill(0).map((_, i) => (
-                    <div key={i} style={{background:C.surface, borderRadius:7,
-                      padding:"14px 14px", border:`1px solid ${C.border}`}}>
-                      <Skel w="50%" h={11} mb={6}/>
-                      <Skel h={22} mb={5}/>
-                      <Skel w="40%" h={11} mb={0}/>
-                    </div>
-                  ))
-                ) : (
-                  data.tickers.slice(0, 4).map((t, i) => (
-                    <div key={i} className="hov" onClick={() => goTicker(t.sym)} style={{background:C.surface, borderRadius:7,
-                      padding:"14px 14px", border:`1px solid ${C.border}`, cursor:"pointer",
-                      transition:"background 0.15s"}}>
-                      <div className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.muted, marginBottom:5}}>{t.sym}</div>
-                      <div className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:22, fontWeight:600,
-                        color:C.ink, marginBottom:4}}>
-                        {t.sym === "BTC" || (+t.price > 10000)
-                          ? (+t.price).toLocaleString("en-US", {maximumFractionDigits:2})
-                          : fmt2(+t.price)}
-                      </div>
-                      <span className="cp-num" style={{fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:600,
-                        color:chgC(t.chg), background:chgBg(t.chg),
-                        padding:"2px 7px", borderRadius:3}}>
-                        {t.chg > 0 ? "▲" : "▼"} {Math.abs(safeN(t.chg)).toFixed(2)}%
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
             </div>
           </div>
 
