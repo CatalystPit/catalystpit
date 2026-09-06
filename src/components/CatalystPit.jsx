@@ -41,6 +41,16 @@ const fetchNews = async () => {
   } catch { return null; }
 };
 
+// Cluster buys (≥3 distinct insiders, same ticker, 30d) — ungated aggregate view.
+const fetchClusters = async () => {
+  try {
+    const r = await fetch('/api/insiders?view=cluster_buys');
+    if (!r.ok) return null;
+    const j = await r.json();            // { view:'cluster_buys', clusters:[...] }
+    return Array.isArray(j?.clusters) ? j.clusters : null;
+  } catch { return null; }
+};
+
 const fmtInsiderValue = (n) => {
   const v = Number(n);
   if (!v || isNaN(v)) return '—';
@@ -66,12 +76,13 @@ const partyStyle = (party) => {
 
 const fetchAll = async () => {
   try {
-    const [stories, snapshot, tape, insiderData, politicianData] = await Promise.all([
+    const [stories, snapshot, tape, insiderData, politicianData, clusterData] = await Promise.all([
       fetchNews(),                 // was: fetchKey("top_stories")
       fetchKey("market_snapshot"),
       fetchKey("ticker_tape"),
       fetchInsiders(),
       fetchPoliticians(),
+      fetchClusters(),
     ]);
 
     const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
@@ -135,7 +146,22 @@ const fetchAll = async () => {
         sym: i.sym, summary: '', imageUrl: null, url: `/ticker/${i.sym}`,
       }));
 
-    return { tickers, news: newsFinal, insiders, politicians, spy_chg, vix };
+    // TODAY IN THE PIT — feasible catalyst cards from real filings/Congress only.
+    const topBuys = insiders.filter(i => i.type === 'BUY').sort((a, b) => b.valueNum - a.valueNum);
+    const clusters = toArr(clusterData);
+    const catalysts = [];
+    if (topBuys[0]) catalysts.push({ kind:'BUY', label:'LARGEST OPEN-MARKET BUY',
+      sym: topBuys[0].sym, line: `${topBuys[0].name || 'Insider'} bought`, value: topBuys[0].value, date: topBuys[0].filed });
+    if (clusters[0]) catalysts.push({ kind:'BUY', label:'CLUSTER BUY · 30D',
+      sym: clusters[0].ticker, line: `${clusters[0].buyers} insiders bought`,
+      value: fmtInsiderValue(clusters[0].totalValue), date: clusters[0].lastBuy });
+    if (politicians[0]) catalysts.push({ kind: politicians[0].type, label:'LATEST CONGRESS TRADE',
+      sym: politicians[0].sym, line: `${politicians[0].name} ${politicians[0].type === 'BUY' ? 'bought' : 'sold'}`,
+      value: politicians[0].amount, date: politicians[0].traded });
+    if (topBuys[1]) catalysts.push({ kind:'BUY', label:'OPEN-MARKET BUY',
+      sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
+
+    return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg, vix };
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -164,6 +190,7 @@ export default function CatalystPit() {
   const insiders = data?.insiders || [];
   const insidersShown = insiders.slice(0, 10);
   const politicians = data?.politicians || [];
+  const catalysts = data?.catalysts || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
 
   const router = useRouter();
@@ -198,6 +225,49 @@ export default function CatalystPit() {
 
         {/* LEFT */}
         <div style={{display:"flex", flexDirection:"column", gap:16, minWidth:0}}>
+
+          {/* TODAY IN THE PIT */}
+          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+            <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.border}`, background:C.surface,
+              display:"flex", alignItems:"center", gap:7}}>
+              <Dot/>
+              <span style={{fontSize:13, fontWeight:600, color:C.ink}}>TODAY IN THE PIT</span>
+              <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9,
+                color:C.dim, letterSpacing:"0.8px"}}>FILINGS · CONGRESS</span>
+            </div>
+            <div style={{padding:14}}>
+              {loading ? (
+                <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:12}}>
+                  {Array(4).fill(0).map((_, i) => (
+                    <div key={i} style={{background:C.surface, borderRadius:7, padding:14, border:`1px solid ${C.border}`}}>
+                      <Skel w="60%" h={10} mb={8}/><Skel h={18} mb={6}/><Skel w="70%" h={11} mb={0}/>
+                    </div>
+                  ))}
+                </div>
+              ) : catalysts.length === 0 ? (
+                <div style={{padding:"20px 8px", textAlign:"center", fontSize:12, color:C.muted, fontWeight:300}}>
+                  No catalysts to show yet — filings land here through the session.
+                </div>
+              ) : (
+                <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:12}}>
+                  {catalysts.map((c, i) => (
+                    <div key={i} className="hov" onClick={() => goTicker(c.sym)}
+                      style={{background:C.surface, borderRadius:7, padding:14, border:`1px solid ${C.border}`,
+                        borderLeft:`3px solid ${insStyle(c.kind).fg}`, cursor:"pointer", transition:"background 0.15s"}}>
+                      <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim,
+                        letterSpacing:"0.8px", marginBottom:7}}>{c.label}</div>
+                      <div style={{display:"flex", alignItems:"center", gap:7, marginBottom:5}}>
+                        <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:15, fontWeight:700, color:C.green}}>{c.sym}</span>
+                        <span style={{fontSize:9, padding:"2px 7px", borderRadius:3, fontFamily:"'DM Sans',sans-serif",
+                          fontWeight:600, background:insStyle(c.kind).bg, color:insStyle(c.kind).fg}}>{c.value}</span>
+                      </div>
+                      <div style={{fontSize:12, color:C.muted, fontWeight:300}}>{c.line}{c.date ? ` · ${c.date}` : ''}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* TOP STORIES */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
