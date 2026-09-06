@@ -541,6 +541,32 @@ export function TickerTape({tickers}) {
   );
 }
 
+// ─── TICKER LOGO (img via /api/logo, initials-badge fallback) ────────────────
+const LOGO_PALETTE = ['#1E5C38', '#1A3A78', '#7A5818', '#5A2A98', '#8A2A40', '#1A5A58', '#8A4810'];
+export function TickerLogo({ symbol, size = 18 }) {
+  const [failed, setFailed] = useState(false);
+  const sym = (symbol || '').toUpperCase();
+  const initials = sym.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?';
+  let h = 0; for (let i = 0; i < sym.length; i++) h = (h * 31 + sym.charCodeAt(i)) >>> 0;
+  const bg = LOGO_PALETTE[h % LOGO_PALETTE.length];
+
+  if (sym && sym !== '?' && !failed) {
+    return (
+      <img src={`/api/logo?ticker=${encodeURIComponent(sym)}`} alt="" width={size} height={size}
+        onError={() => setFailed(true)}
+        style={{ width: size, height: size, borderRadius: 4, objectFit: 'contain',
+          background: '#fff', border: `1px solid ${C.border}`, flexShrink: 0, display: 'block' }} />
+    );
+  }
+  return (
+    <span style={{ width: size, height: size, borderRadius: 4, background: bg, color: '#fff', flexShrink: 0,
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: Math.round(size * 0.42), fontWeight: 700, fontFamily: "'DM Sans',sans-serif", letterSpacing: '-0.02em' }}>
+      {initials}
+    </span>
+  );
+}
+
 // ─── MARKET SNAPSHOT SIDEBAR CARD ───────────────────────────────────────────
 export function MarketSnapshotCard({tickers, loading=false}) {
   const hasData = tickers && tickers.length > 0;
@@ -564,7 +590,10 @@ export function MarketSnapshotCard({tickers, loading=false}) {
           alignItems:"center", padding:"9px 14px",
           borderBottom:i < tickers.length - 1 ? `1px solid ${C.surface}` : "none",
           transition:"background 0.15s", cursor:"pointer"}}>
-          <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
+          <span style={{display:"flex", alignItems:"center", gap:8, minWidth:0}}>
+            <TickerLogo symbol={t.sym} size={18}/>
+            <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600, color:C.ink}}>{t.sym}</span>
+          </span>
           <div style={{display:"flex", alignItems:"center", gap:7}}>
             <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, color:C.text}}>
               {t.sym === "BTC" || (safeN(t.price) > 10000)
@@ -717,7 +746,10 @@ export function WatchlistHomeCard() {
         style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 14px",
           borderBottom: i < shown.length - 1 ? `1px solid ${C.surface}` : "none",
           transition:"background 0.15s", cursor:"pointer"}}>
-        <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600, color:C.ink}}>{t.ticker}</span>
+        <span style={{display:"flex", alignItems:"center", gap:8, minWidth:0}}>
+          <TickerLogo symbol={t.ticker} size={18}/>
+          <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600, color:C.ink}}>{t.ticker}</span>
+        </span>
         <div style={{display:"flex", alignItems:"center", gap:7}}>
           {t.price === undefined ? (
             <Skel w={54} h={12} mb={0}/>     /* price still loading */
