@@ -33,16 +33,21 @@ async function listView() {
   const known = ciks.filter(Boolean);
   let latestByCik = {};
   if (known.length) {
-    // Latest filing summary per cik.
-    const rows = await db
-      .selectDistinctOn([fundFilings.cik], {
-        cik: fundFilings.cik, quarter: fundFilings.quarter, filedDate: fundFilings.filedDate,
-        totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount,
-      })
-      .from(fundFilings)
-      .where(inArray(fundFilings.cik, known))
-      .orderBy(fundFilings.cik, desc(fundFilings.quarter));
-    latestByCik = Object.fromEntries(rows.map((r) => [r.cik, r]));
+    // Latest filing summary per cik. Resilient: if the table doesn't exist yet (migration not
+    // run) or the DB hiccups, still return the roster so the page renders "awaiting import".
+    try {
+      const rows = await db
+        .selectDistinctOn([fundFilings.cik], {
+          cik: fundFilings.cik, quarter: fundFilings.quarter, filedDate: fundFilings.filedDate,
+          totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount,
+        })
+        .from(fundFilings)
+        .where(inArray(fundFilings.cik, known))
+        .orderBy(fundFilings.cik, desc(fundFilings.quarter));
+      latestByCik = Object.fromEntries(rows.map((r) => [r.cik, r]));
+    } catch (e) {
+      console.log(`[institutions_api] list summary query failed (migration not run?): ${e.message}`);
+    }
   }
   const funds = INSTITUTIONS.map((f) => {
     const cik = bySlug[f.slug];
@@ -63,9 +68,16 @@ async function detailView(slug) {
   const cik = await cikFor(fund);
   if (!cik) return { fund: { slug: fund.slug, label: fund.label, manager: fund.manager, category: fund.category }, hasData: false };
 
-  const quarters = await db.select({ quarter: fundFilings.quarter, filedDate: fundFilings.filedDate, totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount })
-    .from(fundFilings).where(eq(fundFilings.cik, cik)).orderBy(desc(fundFilings.quarter)).limit(2);
-  if (!quarters.length) return { fund: { slug: fund.slug, label: fund.label, manager: fund.manager, category: fund.category }, hasData: false };
+  const meta = { slug: fund.slug, label: fund.label, manager: fund.manager, category: fund.category };
+  let quarters = [];
+  try {
+    quarters = await db.select({ quarter: fundFilings.quarter, filedDate: fundFilings.filedDate, totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount })
+      .from(fundFilings).where(eq(fundFilings.cik, cik)).orderBy(desc(fundFilings.quarter)).limit(2);
+  } catch (e) {
+    console.log(`[institutions_api] detail query failed (migration not run?): ${e.message}`);
+    return { fund: meta, hasData: false };
+  }
+  if (!quarters.length) return { fund: meta, hasData: false };
 
   const latest = quarters[0];
   const prior = quarters[1] || null;
