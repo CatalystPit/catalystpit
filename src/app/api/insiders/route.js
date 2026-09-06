@@ -138,10 +138,18 @@ export async function GET(request) {
     }
 
     // Row/category views — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
+    // Optional screener params (C3): ?days= (traded within N days) + ?minValue= ($ floor),
+    // layered on top of the selected view's own WHERE.
+    const days = parseInt(searchParams.get('days') ?? '', 10);
+    const minValue = parseInt(searchParams.get('minValue') ?? '', 10);
     const cfg = ROW_VIEWS[view] ?? ROW_VIEWS.latest;
     const resolvedView = ROW_VIEWS[view] ? view : 'latest';
+    const conds = [];
+    if (cfg.where) conds.push(cfg.where);
+    if (Number.isFinite(days) && days > 0) conds.push(sql`${insiderTrades.transactionDate} >= current_date - make_interval(days => ${days})`);
+    if (Number.isFinite(minValue) && minValue > 0) conds.push(gte(insiderTrades.totalValue, minValue));
     let q = db.select().from(insiderTrades);
-    if (cfg.where) q = q.where(cfg.where);
+    if (conds.length) q = q.where(conds.length === 1 ? conds[0] : and(...conds));
     q = q.orderBy(...cfg.orderBy).limit(limit);
     const all = await q;
     const trades = loggedIn ? all : all.slice(0, FREE_PREVIEW_ROWS);
