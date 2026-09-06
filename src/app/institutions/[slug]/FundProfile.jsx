@@ -171,7 +171,10 @@ export default function FundProfile({ slug }) {
                       style={{ flexGrow: Math.max(h.value || 1, 1), flexBasis: 96, minWidth: 84, height: 62, borderRadius: 5,
                         background: TILE_COLORS[i % TILE_COLORS.length], color: '#fff', padding: '8px 10px', cursor: h.ticker ? 'pointer' : 'default',
                         display: 'flex', flexDirection: 'column', justifyContent: 'space-between', overflow: 'hidden' }}>
-                      <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.ticker || h.issuer}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        {h.ticker && <TickerLogo symbol={h.ticker} size={18} />}
+                        <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.ticker || h.issuer}</span>
+                      </div>
                       <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, opacity: 0.85 }}>{pct.toFixed(1)}%{h.putCall ? ` · ${h.putCall.toUpperCase()}` : ''}</span>
                     </div>
                   );
