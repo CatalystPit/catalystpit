@@ -85,8 +85,11 @@ export default function FundProfile({ slug }) {
       // The summary returns counts, not the holdings — reload the profile and let the data speak.
       const rr = await fetch(`/api/institutions?slug=${encodeURIComponent(slug)}`);
       const dd = rr.ok ? await rr.json() : null;
-      if (dd?.hasData) { setD(dd); setImportMsg(''); }
-      else { if (dd) setD(dd); setImportMsg(`Import ran but no holdings landed — ${JSON.stringify(j)}`); }
+      const tr = j.tickersResolved;
+      if (dd?.hasData) {
+        setD(dd);
+        setImportMsg(tr === 0 ? 'Imported ✓ — but 0 tickers resolved. Set OPENFIGI_API_KEY (free) in Vercel + re-import to get logos/links.' : `Imported ✓ — ${tr ?? '?'} tickers resolved.`);
+      } else { if (dd) setD(dd); setImportMsg(`Import ran but no holdings landed — ${JSON.stringify(j)}`); }
     } catch (e) {
       setImportMsg(`Failed: ${e.message}`);
     } finally {
