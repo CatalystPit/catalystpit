@@ -46,7 +46,7 @@
     },
     {
       "path": "/api/cron/institutions",
-      "schedule": "0 8 * * *"
+      "schedule": "*/30 * * * *"
     }
   ],
   "headers": [
