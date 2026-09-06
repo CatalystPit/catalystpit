@@ -2,7 +2,7 @@
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles } from '../../../lib/cp-shared';
-import TickerChart from '../../../components/TickerChart';
+import TradingViewChart from '../../../components/TradingViewChart';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
 
@@ -166,7 +166,7 @@ function NewsRow({ n, idx }) {
 }
 
 // ── HERO (always visible, above tabs): header + price/5-stat + price chart ──
-function Hero({ data, insider, gov }) {
+function Hero({ data }) {
   const q = data.quote || {};
   const m = data.metric || {};
   const up = (q.dp ?? 0) >= 0;
@@ -221,12 +221,8 @@ function Hero({ data, insider, gov }) {
         </div>
       </div>
 
-      {/* price chart (Session 2) — markers wired in Steps 8–9 */}
-      <TickerChart
-        ticker={data.symbol}
-        insiderTrades={insider?.trades || []}
-        congressTrades={gov?.trades || []}
-      />
+      {/* price chart — licensed TradingView embed (A4); replaces self-plotted Polygon/Tiingo bars */}
+      <TradingViewChart ticker={data.symbol} />
     </>
   );
 }
@@ -847,7 +843,7 @@ function OverviewTab({ data, insider, gov, onTab }) {
     ['IPO Date', fmtIpo(data.ipo)],
   ];
   const newsRows = (data.news || []).slice(0, 3);
-  const insRows = (insider?.trades || []).slice(0, 3);
+  const insRows = (insider?.trades || []).slice(0, 5);
   const govRows = (gov?.trades || []).slice(0, 3);
 
   return (
@@ -904,7 +900,7 @@ function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
 function ValidView({ data, tab, onTab, insider, gov, earnings, short }) {
   return (
     <>
-      <Hero data={data} insider={insider} gov={gov} />
+      <Hero data={data} />
       <TabBar active={tab} onSelect={onTab} />
       <TabContent tab={tab} data={data} insider={insider} gov={gov} earnings={earnings} short={short} onTab={onTab} />
     </>
