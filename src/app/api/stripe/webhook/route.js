@@ -19,9 +19,11 @@ function verify(payload, sigHeader, secret) {
   try { return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(v1)); } catch { return false; }
 }
 
-async function setPlan(userId, plan) {
+async function setPlan(userId, plan, customerId) {
   if (!userId) return;
-  try { const c = await clerkClient(); await c.users.updateUser(userId, { publicMetadata: { plan } }); }
+  const meta = { publicMetadata: { plan } };                 // plan is client-readable
+  if (customerId) meta.privateMetadata = { stripeCustomerId: customerId };  // server-only, for the billing portal
+  try { const c = await clerkClient(); await c.users.updateUser(userId, meta); }
   catch (e) { console.log(`[stripe_webhook] setPlan ${userId}=${plan} failed: ${e.message}`); }
 }
 
@@ -55,7 +57,7 @@ export async function POST(request) {
           body: new URLSearchParams({ 'metadata[userId]': userId }).toString(),
         }).catch(() => {});
       }
-      await setPlan(userId, 'pro');
+      await setPlan(userId, 'pro', obj.customer);
     } else if (event.type === 'customer.subscription.deleted') {
       await setPlan(await userIdFromCustomer(obj.customer), 'free');
     } else if (event.type === 'customer.subscription.updated') {

@@ -1,6 +1,7 @@
 'use client';
 import { UserProfile } from '@clerk/nextjs';
 import { Logo, Footer } from '../../lib/cp-shared';
+import AccountBilling from '../../components/AccountBilling';
 const C = {
   bg: "#F5F6F3",
   white: "#FFFFFF",
@@ -40,6 +41,11 @@ export default function AccountPage() {
           Manage your profile, security, and sessions.
         </p>
       </div>
+      {/* BILLING / PLAN */}
+      <div style={{ maxWidth: 880, margin: "0 auto", padding: "16px 24px 0" }}>
+        <AccountBilling />
+      </div>
+
       {/* CLERK USER PROFILE */}
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "16px 24px 48px" }}>
         <UserProfile
