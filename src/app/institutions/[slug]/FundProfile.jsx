@@ -69,14 +69,12 @@ export default function FundProfile({ slug }) {
     try {
       const r = await fetch(`/api/cron/institutions?fund=${encodeURIComponent(slug)}`);
       const j = await r.json().catch(() => ({}));
-      if (r.status === 401) { setImportMsg('Please sign in to import this fund.'); }
-      else if (Array.isArray(j.done) && j.done.length) {
-        setImportMsg(`Imported: ${j.done.join(', ')}. Loading…`);
-        const rr = await fetch(`/api/institutions?slug=${encodeURIComponent(slug)}`);
-        if (rr.ok) setD(await rr.json());
-      } else {
-        setImportMsg(`Result: ${JSON.stringify(j)}`);
-      }
+      if (r.status === 401) { setImportMsg('Please sign in to import this fund.'); return; }
+      // The summary returns counts, not the holdings — reload the profile and let the data speak.
+      const rr = await fetch(`/api/institutions?slug=${encodeURIComponent(slug)}`);
+      const dd = rr.ok ? await rr.json() : null;
+      if (dd?.hasData) { setD(dd); setImportMsg(''); }
+      else { if (dd) setD(dd); setImportMsg(`Import ran but no holdings landed — ${JSON.stringify(j)}`); }
     } catch (e) {
       setImportMsg(`Failed: ${e.message}`);
     } finally {
