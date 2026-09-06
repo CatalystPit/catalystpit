@@ -18,8 +18,6 @@ const fmtQ = (s) => {
   const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
   return isNaN(d.getTime()) ? s : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
-const TILE_COLORS = ['#1E5C38', '#2A7848', '#1A3A78', '#3A5A9A', '#5A2A98', '#7A5818', '#1A5A58', '#8A4810'];
-
 // Options flag — a PUT is a bearish/short-style position, a CALL bullish. Never rendered as a
 // long "buy" (a fund can be short a name via puts, e.g. Burry/PLTR).
 function PC({ pc }) {
@@ -28,6 +26,32 @@ function PC({ pc }) {
   return (
     <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', padding: '1px 6px', borderRadius: 3, marginLeft: 6,
       background: put ? C.redLight : C.greenLight, color: put ? C.red : C.green }}>{pc.toUpperCase()}</span>
+  );
+}
+
+// Holding-map tile: the company logo fills the box (no color fill); ticker + % on a strip below.
+// Falls back to ticker/issuer text when there's no logo (unresolved, or FMP has no image).
+function MapTile({ h, pct, flexGrow, onClick }) {
+  const [failed, setFailed] = useState(false);
+  const showLogo = h.ticker && !failed;
+  return (
+    <div onClick={onClick} title={`${h.ticker || h.issuer} · ${pct.toFixed(1)}%${h.putCall ? ' ' + h.putCall.toUpperCase() : ''}`}
+      style={{ flexGrow: Math.max(flexGrow, 1), flexBasis: 120, minWidth: 104, height: 92, borderRadius: 6, overflow: 'hidden',
+        position: 'relative', background: '#fff', border: `1px solid ${C.border}`, cursor: h.ticker ? 'pointer' : 'default' }}>
+      {showLogo ? (
+        <img src={`/api/logo?ticker=${encodeURIComponent(h.ticker)}`} alt={h.ticker} onError={() => setFailed(true)}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 22, width: '100%', height: 'calc(100% - 22px)', objectFit: 'contain', padding: '12px' }} />
+      ) : (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', textAlign: 'center' }}>
+          <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: h.ticker ? 16 : 11, fontWeight: 700, color: C.ink, wordBreak: 'break-word' }}>{h.ticker || h.issuer}</span>
+        </div>
+      )}
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 22, padding: '0 8px', background: 'rgba(12,20,16,0.85)', color: '#fff',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+        <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.ticker || ''}</span>
+        <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>{pct.toFixed(1)}%{h.putCall ? ` ${h.putCall.toUpperCase()}` : ''}</span>
+      </div>
+    </div>
   );
 }
 
@@ -164,21 +188,9 @@ export default function FundProfile({ slug }) {
                 <span style={{ marginLeft: 'auto', fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontFamily: "'DM Sans',sans-serif" }}>TOP {Math.min(holdings.length, 30)} BY VALUE</span>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 12 }}>
-                {holdings.slice(0, 30).map((h, i) => {
-                  const pct = (h.value || 0) / shownTotal * 100;
-                  return (
-                    <div key={i} onClick={() => go(h.ticker)} title={`${h.ticker || h.issuer} · ${pct.toFixed(1)}%`}
-                      style={{ flexGrow: Math.max(h.value || 1, 1), flexBasis: 96, minWidth: 84, height: 62, borderRadius: 5,
-                        background: TILE_COLORS[i % TILE_COLORS.length], color: '#fff', padding: '8px 10px', cursor: h.ticker ? 'pointer' : 'default',
-                        display: 'flex', flexDirection: 'column', justifyContent: 'space-between', overflow: 'hidden' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                        {h.ticker && <TickerLogo symbol={h.ticker} size={18} />}
-                        <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.ticker || h.issuer}</span>
-                      </div>
-                      <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, opacity: 0.85 }}>{pct.toFixed(1)}%{h.putCall ? ` · ${h.putCall.toUpperCase()}` : ''}</span>
-                    </div>
-                  );
-                })}
+                {holdings.slice(0, 30).map((h, i) => (
+                  <MapTile key={i} h={h} pct={(h.value || 0) / shownTotal * 100} flexGrow={h.value || 1} onClick={() => go(h.ticker)} />
+                ))}
               </div>
             </div>
 
