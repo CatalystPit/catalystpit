@@ -369,7 +369,9 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
 
 // ─── TOP NAV (sticky) ───────────────────────────────────────────────────────
 export function TopNav({ active }) {
-  const links = ["Markets", "News", "Screener", "Insiders", "Politicians", "Charts", "Crypto"];
+  // Nav lists only dense rooms (A5). Crypto/Charts/Screener removed until they're worth a tab;
+  // logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
+  const links = ["News", "Insiders", "Politicians"];
   const [menuOpen, setMenuOpen] = useState(false);
   const linkColor = (l) => active === l ? "#FFFFFF" : "rgba(255,255,255,0.75)";
   return (
