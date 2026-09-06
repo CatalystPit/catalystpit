@@ -6,7 +6,7 @@ import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
   fetchKey, toArr, startCheckout,
-  BrandStyles, Skel, Dot, NewsPhotoCard,
+  BrandStyles, Skel, Dot, NewsPhotoCard, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
 } from "../lib/cp-shared";
 
@@ -275,7 +275,8 @@ export default function CatalystPit() {
                       <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim,
                         letterSpacing:"0.8px", marginBottom:7}}>{c.label}</div>
                       <div style={{display:"flex", alignItems:"center", gap:7, marginBottom:5}}>
-                        <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:15, fontWeight:700, color:C.green}}>{c.sym}</span>
+                        <TickerLogo symbol={c.sym} size={20}/>
+                      <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:15, fontWeight:700, color:C.green}}>{c.sym}</span>
                         <span style={{fontSize:9, padding:"2px 7px", borderRadius:3, fontFamily:"'DM Sans',sans-serif",
                           fontWeight:600, background:insStyle(c.kind).bg, color:insStyle(c.kind).fg}}>{c.value}</span>
                       </div>
@@ -393,7 +394,7 @@ export default function CatalystPit() {
                     transition:"background 0.15s", cursor:"pointer",
                     borderLeft:`3px solid ${insStyle(ins.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif",
-                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr">{ins.sym}</td>
+                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr"><span style={{display:"flex", alignItems:"center", gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
                     <td style={{padding:"11px 16px", fontSize:13, color:C.text, fontWeight:400}}>{ins.name}</td>
                     <td style={{padding:"11px 16px", fontSize:12, color:C.muted, fontWeight:300}}>{ins.role}</td>
                     <td style={{padding:"11px 16px"}}>
@@ -480,7 +481,7 @@ export default function CatalystPit() {
                     transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
                     borderLeft:`3px solid ${insStyle(p.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif",
-                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr">{p.sym}</td>
+                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr"><span style={{display:"flex", alignItems:"center", gap:8}}><TickerLogo symbol={p.sym} size={18}/>{p.sym}</span></td>
                     <td style={{padding:"11px 16px", fontSize:13, color:C.text, fontWeight:400}}>{p.name}</td>
                     <td style={{padding:"11px 16px"}}>
                       <span style={{fontSize:10, padding:"3px 9px", borderRadius:3,
@@ -607,6 +608,7 @@ export default function CatalystPit() {
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>
+                    <TickerLogo symbol={ins.sym} size={16}/>
                     <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12,
                       fontWeight:600, color:C.ink}}>{ins.sym}</span>
                     <span style={{fontSize:9, padding:"2px 6px", borderRadius:3,
@@ -641,6 +643,7 @@ export default function CatalystPit() {
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:p.slug ? "pointer" : "default"}}>
                 <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
                   <div style={{display:"flex", alignItems:"center", gap:6}}>
+                    <TickerLogo symbol={p.sym} size={16}/>
                     <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12,
                       fontWeight:600, color:C.ink}}>{p.sym}</span>
                     <span style={{fontSize:9, padding:"2px 6px", borderRadius:3,

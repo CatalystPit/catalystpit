@@ -503,6 +503,7 @@ export function TickerTape({tickers}) {
             const valid = t.sym && t.sym !== '?';
             const cell = (
               <>
+                <TickerLogo symbol={t.sym} size={16}/>
                 <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
                 <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.ink, fontWeight:500}}>
                   {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
