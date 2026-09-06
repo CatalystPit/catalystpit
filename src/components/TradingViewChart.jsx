@@ -53,7 +53,7 @@ export default function TradingViewChart({ ticker }) {
         <span style={{ marginLeft: 'auto', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px' }}>TRADINGVIEW</span>
       </div>
       {/* fixed-height host so the autosize widget has a real height to fill */}
-      <div ref={hostRef} style={{ height: 'clamp(420px, 65vh, 640px)', width: '100%' }} />
+      <div ref={hostRef} style={{ height: 'clamp(560px, 80vh, 840px)', width: '100%' }} />
     </div>
   );
 }
