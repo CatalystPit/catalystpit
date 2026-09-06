@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles } from '../../../lib/cp-shared';
 import TradingViewChart from '../../../components/TradingViewChart';
 import { estimateNextEarnings } from '../../../lib/earnings-estimate';
+import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
 
@@ -884,6 +885,8 @@ function OverviewTab({ data, insider, gov, onTab }) {
           : govRows.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No government trades on file for {data.symbol}.</div>
           : <GovTable rows={govRows} />}
       </Section>
+
+      <AffiliateStrip />
     </>
   );
 }
