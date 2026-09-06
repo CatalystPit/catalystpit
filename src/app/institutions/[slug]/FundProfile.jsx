@@ -75,7 +75,7 @@ export default function FundProfile({ slug }) {
         const rr = await fetch(`/api/institutions?slug=${encodeURIComponent(slug)}`);
         if (rr.ok) setD(await rr.json());
       } else {
-        setImportMsg(`No data returned — ${JSON.stringify(j.skipped || j.error || j)}`);
+        setImportMsg(`Result: ${JSON.stringify(j)}`);
       }
     } catch (e) {
       setImportMsg(`Failed: ${e.message}`);
