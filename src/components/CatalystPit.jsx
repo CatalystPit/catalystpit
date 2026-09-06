@@ -351,12 +351,12 @@ export default function CatalystPit() {
                       Pro unlocks the full feed, updated every minute
                     </span>
                   </div>
-                  <button onClick={startCheckout} style={{background:C.green, border:"none", color:"#fff",
+                  <button onClick={() => startCheckout()} style={{background:C.green, border:"none", color:"#fff",
                     padding:"8px 18px", borderRadius:6, fontSize:12, fontWeight:500,
                     cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
                     onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Unlock Pro — $29/mo
+                    Unlock Pro — $12/mo
                   </button>
                 </div>
               )}
@@ -561,7 +561,7 @@ export default function CatalystPit() {
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,
             borderRadius:8, padding:"16px"}}>
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
-              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO — $29/MO</div>
+              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO — $12/MO</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
               {["Full real-time news feed","All insider filings · live",
                 "Full screener · 12 filters","Live charts · all timeframes","Options flow & dark pool",
@@ -572,14 +572,19 @@ export default function CatalystPit() {
                 </li>
               ))}
             </ul>
-            <button onClick={startCheckout} style={{width:"100%", background:C.green, border:"none", color:"#fff",
+            <button onClick={() => startCheckout()} style={{width:"100%", background:C.green, border:"none", color:"#fff",
               padding:"11px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer",
               fontFamily:"'DM Sans',sans-serif"}}
               onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
               onMouseLeave={e => e.currentTarget.style.background = C.green}>
-              Start Pro — $29/mo
+              Start Pro — $12/mo
             </button>
-            <p style={{fontSize:10, color:C.muted, textAlign:"center", marginTop:7, fontWeight:300}}>
+            <button onClick={() => startCheckout('annual')} style={{width:"100%", background:"transparent",
+              border:"none", color:C.green, marginTop:8, cursor:"pointer", fontSize:12, fontWeight:600,
+              fontFamily:"'DM Sans',sans-serif"}}>
+              or save with $99/year →
+            </button>
+            <p style={{fontSize:10, color:C.muted, textAlign:"center", marginTop:6, fontWeight:300}}>
               Cancel anytime · No contracts
             </p>
           </div>

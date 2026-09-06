@@ -146,9 +146,13 @@ export const toArr = (val, ...wrapperKeys) => {
 
 // Kick off Stripe Pro checkout (C5): POST /api/stripe/checkout → redirect to Stripe.
 // Signed-out → /sign-in; not-configured / error → friendly alert (no dead button).
-export async function startCheckout() {
+export async function startCheckout(interval) {
   try {
-    const r = await fetch('/api/stripe/checkout', { method: 'POST' });
+    const r = await fetch('/api/stripe/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interval: interval === 'annual' ? 'annual' : 'monthly' }),
+    });
     if (r.status === 401) { window.location.href = '/sign-in'; return; }
     const j = await r.json().catch(() => ({}));
     if (j.url) { window.location.href = j.url; return; }

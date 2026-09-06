@@ -5,14 +5,19 @@ export const runtime = 'nodejs';
 // C5 — start a Stripe subscription checkout (Pro). Stripe REST (no SDK). Gated on
 // STRIPE_SECRET_KEY + STRIPE_PRICE_ID → 503 until set. The Clerk userId rides on
 // client_reference_id so the webhook can stamp the plan back onto the right user.
-const SECRET = process.env.STRIPE_SECRET_KEY;
-const PRICE  = process.env.STRIPE_PRICE_ID;
-const SITE   = process.env.NEXT_PUBLIC_SITE_URL || 'https://catalystpit.com';
+const SECRET        = process.env.STRIPE_SECRET_KEY;
+const PRICE         = process.env.STRIPE_PRICE_ID;          // monthly
+const PRICE_ANNUAL  = process.env.STRIPE_PRICE_ID_ANNUAL;   // yearly (optional)
+const SITE          = process.env.NEXT_PUBLIC_SITE_URL || 'https://catalystpit.com';
 
-export async function POST() {
+export async function POST(request) {
   const { userId } = await auth();
   if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
-  if (!SECRET || !PRICE) return Response.json({ error: 'not_configured' }, { status: 503 });
+
+  let interval = 'monthly';
+  try { const b = await request.json(); if (b?.interval === 'annual') interval = 'annual'; } catch { /* no body → monthly */ }
+  const PRICE_ID = (interval === 'annual' && PRICE_ANNUAL) ? PRICE_ANNUAL : PRICE;
+  if (!SECRET || !PRICE_ID) return Response.json({ error: 'not_configured' }, { status: 503 });
 
   let email = null;
   try {
@@ -23,7 +28,7 @@ export async function POST() {
 
   const form = new URLSearchParams();
   form.set('mode', 'subscription');
-  form.set('line_items[0][price]', PRICE);
+  form.set('line_items[0][price]', PRICE_ID);
   form.set('line_items[0][quantity]', '1');
   form.set('success_url', `${SITE}/account?upgraded=1`);
   form.set('cancel_url', `${SITE}/?checkout=cancelled`);
