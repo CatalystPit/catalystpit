@@ -19,6 +19,9 @@ const fmtQ = (s) => {
 
 export default function InstitutionsClient() {
   const [funds, setFunds] = useState(null);
+  const [admin, setAdmin] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState('');
   const router = useRouter();
 
   useEffect(() => {
@@ -27,10 +30,34 @@ export default function InstitutionsClient() {
       try { const r = await fetch('/api/institutions'); const j = r.ok ? await r.json() : null; if (alive) setFunds(j?.funds || []); }
       catch { if (alive) setFunds([]); }
     })();
+    (async () => {
+      try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; if (alive) setAdmin(!!j?.admin); } catch {}
+    })();
     return () => { alive = false; };
   }, []);
 
+  // Admin: fill the whole slate by repeatedly running the bounded server ingest until nothing
+  // remains (idempotent — completed funds are skipped, so later passes are fast).
+  async function importAll() {
+    if (importing) return;
+    setImporting(true);
+    for (let i = 0; i < 8; i++) {
+      setProgress(`Import pass ${i + 1} — pulling 13F filings from SEC (up to a few minutes)…`);
+      try { const r = await fetch('/api/cron/institutions'); await r.json().catch(() => ({})); } catch {}
+      let remain = 0, loaded = 0;
+      try {
+        const lr = await fetch('/api/institutions');
+        const lj = lr.ok ? await lr.json() : null;
+        if (lj?.funds) { setFunds(lj.funds); loaded = lj.funds.filter((f) => f.hasData).length; remain = lj.funds.length - loaded; }
+      } catch {}
+      setProgress(`${loaded} funds loaded · ${remain} remaining`);
+      if (remain === 0) break;
+    }
+    setImporting(false);
+  }
+
   const cats = funds ? [...new Set(funds.map((f) => f.category))] : [];
+  const missing = funds ? funds.filter((f) => !f.hasData).length : 0;
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -46,6 +73,16 @@ export default function InstitutionsClient() {
           <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>
             What the big managers hold, from quarterly 13F filings. Positions are reported up to 45 days after quarter-end — as-of dates shown per fund.
           </p>
+          {admin && (
+            <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <button onClick={importAll} disabled={importing || missing === 0}
+                style={{ background: C.green, border: 'none', color: '#fff', padding: '8px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                  cursor: (importing || missing === 0) ? 'default' : 'pointer', opacity: (importing || missing === 0) ? 0.6 : 1, fontFamily: "'DM Sans',sans-serif" }}>
+                {importing ? 'Importing…' : missing === 0 ? 'All funds imported' : `Import all remaining (${missing})`}
+              </button>
+              {progress && <span style={{ fontSize: 12, color: C.muted, fontFamily: "'DM Sans',sans-serif" }}>{progress}</span>}
+            </div>
+          )}
         </div>
       </div>
 

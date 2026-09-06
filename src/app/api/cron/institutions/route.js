@@ -2,7 +2,7 @@ import { db } from '../../../../lib/db';
 import { fundHoldings, fundFilings } from '../../../../lib/schema';
 import { INSTITUTIONS } from '../../../../lib/institutions.mjs';
 import { and, eq, sql, inArray } from 'drizzle-orm';
-import { auth } from '@clerk/nextjs/server';
+import { auth, clerkClient } from '@clerk/nextjs/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -14,6 +14,18 @@ export const maxDuration = 300;
 const KV_TOKEN    = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
 const OPENFIGI_KEY = process.env.OPENFIGI_API_KEY;   // optional — higher OpenFIGI rate/batch
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;         // enables the in-app admin import trigger
+
+// True when the signed-in user is the configured admin (for manual imports without the cron secret).
+async function isAdmin() {
+  try {
+    const { userId } = await auth();
+    if (!userId || !ADMIN_EMAIL) return false;
+    const u = await (await clerkClient()).users.getUser(userId);
+    const email = u.emailAddresses.find((e) => e.id === u.primaryEmailAddressId)?.emailAddress || u.emailAddresses[0]?.emailAddress;
+    return !!email && email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  } catch { return false; }
+}
 const KV_BASE     = 'https://powerful-grouper-86116.upstash.io';
 const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com', 'Accept-Encoding': 'gzip, deflate' };
 
@@ -200,11 +212,9 @@ export async function GET(request) {
   const onlySlug = new URL(request.url).searchParams.get('fund');   // ?fund=slug imports one fund
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
   let authorized = isVercelCron || request.headers.get('authorization') === `Bearer ${CRON_SECRET}`;
-  // Manual single-fund import: allowed for any signed-in user (bounded + idempotent). Full-slate
-  // runs still require the cron secret / Vercel cron.
-  if (!authorized && onlySlug) {
-    try { const { userId } = await auth(); if (userId) authorized = true; } catch { /* no session */ }
-  }
+  // Manual trigger (single or full-slate) allowed for the configured admin only — imports are heavy
+  // and sign-ups are public, so this must not be open to any signed-in user.
+  if (!authorized) authorized = await isAdmin();
   if (!authorized) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   try { await ensureTables(); } catch (e) { console.log(`[institutions] ensureTables failed: ${e.message}`); return Response.json({ ok: false, error: `ensureTables: ${e.message}` }, { status: 500 }); }

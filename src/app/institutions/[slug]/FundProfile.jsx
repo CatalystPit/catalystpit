@@ -1,7 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@clerk/nextjs';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo } from '../../../lib/cp-shared';
 
 const fmtB = (n) => {
@@ -94,7 +93,7 @@ export default function FundProfile({ slug }) {
   const [d, setD] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
-  const { isSignedIn } = useAuth();
+  const [admin, setAdmin] = useState(false);
   const router = useRouter();
   const go = (t) => { if (t) router.push(`/ticker/${encodeURIComponent(t)}`); };
 
@@ -127,6 +126,7 @@ export default function FundProfile({ slug }) {
       try { const r = await fetch(`/api/institutions?slug=${encodeURIComponent(slug)}`); const j = r.ok ? await r.json() : { error: true }; if (alive) setD(j); }
       catch { if (alive) setD({ error: true }); }
     })();
+    (async () => { try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; if (alive) setAdmin(!!j?.admin); } catch {} })();
     return () => { alive = false; };
   }, [slug]);
 
@@ -158,14 +158,12 @@ export default function FundProfile({ slug }) {
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center' }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>No 13F on file yet</div>
             <div style={{ fontSize: 12, color: C.muted, fontWeight: 300, marginBottom: 16 }}>This manager&apos;s filing hasn&apos;t been imported yet.</div>
-            {isSignedIn ? (
+            {admin && (
               <button onClick={runImport} disabled={importing}
                 style={{ background: C.green, border: 'none', color: '#fff', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600,
                   cursor: importing ? 'default' : 'pointer', opacity: importing ? 0.7 : 1, fontFamily: "'DM Sans',sans-serif" }}>
                 {importing ? 'Importing…' : 'Import this fund now'}
               </button>
-            ) : (
-              <div style={{ fontSize: 12, color: C.muted }}>Sign in to import this fund.</div>
             )}
             {importMsg && (
               <div style={{ marginTop: 14, fontSize: 12, color: C.muted, fontFamily: "'DM Sans',sans-serif", wordBreak: 'break-word', maxWidth: 560, marginLeft: 'auto', marginRight: 'auto' }}>{importMsg}</div>
