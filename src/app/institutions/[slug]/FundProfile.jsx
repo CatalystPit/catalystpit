@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@clerk/nextjs';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo } from '../../../lib/cp-shared';
 
 const fmtB = (n) => {
@@ -55,8 +56,33 @@ function ActivityList({ title, rows, kind }) {
 
 export default function FundProfile({ slug }) {
   const [d, setD] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
+  const { isSignedIn } = useAuth();
   const router = useRouter();
   const go = (t) => { if (t) router.push(`/ticker/${encodeURIComponent(t)}`); };
+
+  async function runImport() {
+    if (importing) return;
+    setImporting(true);
+    setImportMsg('Importing from SEC EDGAR — this can take up to a minute…');
+    try {
+      const r = await fetch(`/api/cron/institutions?fund=${encodeURIComponent(slug)}`);
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401) { setImportMsg('Please sign in to import this fund.'); }
+      else if (Array.isArray(j.done) && j.done.length) {
+        setImportMsg(`Imported: ${j.done.join(', ')}. Loading…`);
+        const rr = await fetch(`/api/institutions?slug=${encodeURIComponent(slug)}`);
+        if (rr.ok) setD(await rr.json());
+      } else {
+        setImportMsg(`No data returned — ${JSON.stringify(j.skipped || j.error || j)}`);
+      }
+    } catch (e) {
+      setImportMsg(`Failed: ${e.message}`);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -94,7 +120,19 @@ export default function FundProfile({ slug }) {
         ) : !d.hasData ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center' }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 4 }}>No 13F on file yet</div>
-            <div style={{ fontSize: 12, color: C.muted, fontWeight: 300 }}>This manager&apos;s filing hasn&apos;t been imported yet — check back after the next ingest.</div>
+            <div style={{ fontSize: 12, color: C.muted, fontWeight: 300, marginBottom: 16 }}>This manager&apos;s filing hasn&apos;t been imported yet.</div>
+            {isSignedIn ? (
+              <button onClick={runImport} disabled={importing}
+                style={{ background: C.green, border: 'none', color: '#fff', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                  cursor: importing ? 'default' : 'pointer', opacity: importing ? 0.7 : 1, fontFamily: "'DM Sans',sans-serif" }}>
+                {importing ? 'Importing…' : 'Import this fund now'}
+              </button>
+            ) : (
+              <div style={{ fontSize: 12, color: C.muted }}>Sign in to import this fund.</div>
+            )}
+            {importMsg && (
+              <div style={{ marginTop: 14, fontSize: 12, color: C.muted, fontFamily: "'DM Sans',sans-serif", wordBreak: 'break-word', maxWidth: 560, marginLeft: 'auto', marginRight: 'auto' }}>{importMsg}</div>
+            )}
           </div>
         ) : (
           <>

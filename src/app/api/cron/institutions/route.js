@@ -2,6 +2,7 @@ import { db } from '../../../../lib/db';
 import { fundHoldings, fundFilings } from '../../../../lib/schema';
 import { INSTITUTIONS } from '../../../../lib/institutions.mjs';
 import { and, eq, sql, inArray } from 'drizzle-orm';
+import { auth } from '@clerk/nextjs/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -178,12 +179,18 @@ async function resolveTickers(cusips) {
 }
 
 export async function GET(request) {
+  const onlySlug = new URL(request.url).searchParams.get('fund');   // ?fund=slug imports one fund
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
-  if (!isVercelCron && request.headers.get('authorization') !== `Bearer ${CRON_SECRET}`)
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  let authorized = isVercelCron || request.headers.get('authorization') === `Bearer ${CRON_SECRET}`;
+  // Manual single-fund import: allowed for any signed-in user (bounded + idempotent). Full-slate
+  // runs still require the cron secret / Vercel cron.
+  if (!authorized && onlySlug) {
+    try { const { userId } = await auth(); if (userId) authorized = true; } catch { /* no session */ }
+  }
+  if (!authorized) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   const startedAt = Date.now();
-  const onlySlug = new URL(request.url).searchParams.get('fund');   // ?fund=slug to test one
+  const doTickers = !onlySlug;   // skip the slow OpenFIGI pass on manual single-fund runs (issuer names still show)
   const funds = onlySlug ? INSTITUTIONS.filter((f) => f.slug === onlySlug) : INSTITUTIONS;
 
   const done = [], skipped = [];
@@ -209,9 +216,9 @@ export async function GET(request) {
     }
   }
 
-  // Bounded ticker resolution: highest-value unresolved CUSIPs first.
+  // Bounded ticker resolution: highest-value unresolved CUSIPs first. (Skipped on manual runs.)
   let tickersResolved = 0;
-  try {
+  if (doTickers) try {
     const rows = await db.select({ cusip: fundHoldings.cusip, v: sql`max(${fundHoldings.value})`.mapWith(Number) })
       .from(fundHoldings).where(sql`${fundHoldings.ticker} is null`)
       .groupBy(fundHoldings.cusip).orderBy(sql`max(${fundHoldings.value}) desc`).limit(TICKER_BUDGET);
