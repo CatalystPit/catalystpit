@@ -94,14 +94,20 @@ const fetchAll = async () => {
     }));
 
     const insidersArr = toArr(insiderData, 'trades');
-    const insiders = insidersArr.map(i => ({
+    const insidersAll = insidersArr.map(i => ({
       sym:   i.ticker || '?',
       name:  i.executive || '',
       role:  i.title || '',
       type:  i.action === 'BUY' ? 'BUY' : i.action === 'SELL' ? 'SELL' : 'OTHER',
       value: fmtInsiderValue(i.totalValue),
+      valueNum: safeN(i.totalValue),          // numeric, for the value floor
       filed: i.filingDate || '',
     }));
+    // A1 filter: P/S only (already via view=transactions) + value ≥ $100k.
+    // Relax to $25k when a hard floor would leave too few rows to fill the tape.
+    const MIN_HI = 100000, MIN_LO = 25000;
+    const hiRows = insidersAll.filter(i => i.valueNum >= MIN_HI);
+    const insiders = hiRows.length >= 5 ? hiRows : insidersAll.filter(i => i.valueNum >= MIN_LO);
 
     const politiciansArr = toArr(politicianData, 'trades');
     const politicians = politiciansArr.map(p => ({
@@ -156,7 +162,7 @@ export default function CatalystPit() {
 
   const news = data?.news || [];
   const insiders = data?.insiders || [];
-  const insidersShown = insiders.slice(0, 12);
+  const insidersShown = insiders.slice(0, 10);
   const politicians = data?.politicians || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
 
