@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { watchlist, tickerDailyCandles, insiderTrades } from '../../../lib/schema';
 import { and, eq, desc, inArray } from 'drizzle-orm';
+import { resolveUserTier, WATCHLIST_LIMIT } from '../../../lib/entitlements';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;          // we may fan out a bounded set of Finnhub /quote calls
@@ -205,6 +206,16 @@ export async function POST(request) {
 
     const v = normalizeTicker(body?.ticker);
     if (!v.ok) return Response.json({ error: v.error }, { status: 400 });
+
+    // Free-tier cap (C2): 15 names. Adding an already-present ticker is a no-op and never
+    // blocked; only a NEW ticker that would exceed the cap is rejected.
+    const current = await getList(userId);
+    const tier = await resolveUserTier();
+    const limit = WATCHLIST_LIMIT[tier] ?? WATCHLIST_LIMIT.free;
+    const already = current.some(r => r.ticker === v.ticker);
+    if (!already && current.length >= limit) {
+      return Response.json({ error: `Watchlist full — your plan allows ${limit} tickers.`, limit }, { status: 403 });
+    }
 
     await db
       .insert(watchlist)

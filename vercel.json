@@ -35,6 +35,10 @@
     {
       "path": "/api/cron/pit-snapshot",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/insider-alerts",
+      "schedule": "*/30 * * * *"
     }
   ],
   "headers": [
@@ -81,6 +85,9 @@
       "maxDuration": 10
     },
     "src/app/api/cron/pit-snapshot/route.js": {
+      "maxDuration": 60
+    },
+    "src/app/api/cron/insider-alerts/route.js": {
       "maxDuration": 60
     }
   }
