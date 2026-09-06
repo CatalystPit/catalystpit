@@ -168,11 +168,9 @@ function NewsRow({ n, idx }) {
     : inner;
 }
 
-// ── HERO (always visible, above tabs): header + price/5-stat + price chart ──
+// ── HERO (always visible, above tabs): identity + key stats + TradingView chart ──
 function Hero({ data, earnings }) {
-  const q = data.quote || {};
   const m = data.metric || {};
-  const up = (q.dp ?? 0) >= 0;
   const nextEarnings = estimateNextEarnings(earnings?.earnings || []);
   return (
     <>
@@ -194,37 +192,23 @@ function Hero({ data, earnings }) {
         )}
       </div>
 
-      {/* price + 5-stat */}
+      {/* key statistics — NO last-sale price (production = EDGAR + widget); live price is in
+          the TradingView chart below. Fundamentals/52w are historical; short interest = FINRA. */}
       <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-          <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 34, fontWeight: 700, color: C.ink }}>{usd(q.c)}</span>
-          {q.c != null && q.dp != null && (
-            <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700,
-              color: up ? C.green : C.red, background: up ? C.greenLight : C.redLight, padding: '3px 10px', borderRadius: 5 }}>
-              {up ? '▲' : '▼'} {q.d >= 0 ? '+' : ''}{fmtNum(q.d)} ({q.dp >= 0 ? '+' : ''}{fmtNum(q.dp)}%)
-            </span>
-          )}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.ink }}>Key statistics</span>
+          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim }}>Live price &amp; interactive chart below</span>
         </div>
-        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, marginTop: 6 }}>
-          Day {usd(q.l)} – {usd(q.h)} · Prev close {usd(q.pc)}
-        </div>
-        <div className="tk-hero-grid" style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.surface}` }}>
-          {/* Row 1 */}
-          <StatCell label="OPEN"           value={usd(q.o)} />
-          <StatCell label="PREVIOUS CLOSE" value={usd(q.pc)} />
-          <StatCell label="DAY RANGE"      value={(q.l != null && q.h != null) ? `${usd(q.l)} – ${usd(q.h)}` : '—'} />
+        <div className="tk-hero-grid" style={{ marginTop: 16 }}>
           <StatCell label="52-WEEK RANGE"  value={(m.low52 != null && m.high52 != null) ? `${usd(m.low52)} – ${usd(m.high52)}` : '—'} />
-          {/* Row 2 */}
           <StatCell label="MARKET CAP"     value={fmtMktCap(m.marketCap)} />
           <StatCell label="P/E (TTM)"      value={fmtNum(m.peTTM)} />
           <StatCell label="EPS (TTM)"      value={fmtEps(m.epsTTM)} />
           <StatCell label="DIVIDEND YIELD" value={fmtPct(m.divYield)} />
-          {/* Row 3 */}
           <StatCell label="AVG VOLUME (10D)" value={fmtVolM(m.avgVol10d)} />
           <StatCell label="50-DAY MA"      value={usd(data.fiftyDayMA)} />
           <StatCell label="BETA"           value={fmtNum(m.beta)} />
           <StatCell label="INDUSTRY"       value={data.industry || '—'} />
-          {/* Row 4 (Sector dropped → 15 fields) */}
           <StatCell label="SHORT INTEREST" value={fmtShares(data.shortInterest?.shortIntShares)} />
           <StatCell label="SHORT % FLOAT"  value={fmtPct(data.shortInterest?.pctFloat)} />
           <StatCell label="DAYS TO COVER"  value={fmtNum(data.shortInterest?.daysToCover)} />
