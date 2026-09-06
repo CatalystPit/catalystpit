@@ -479,20 +479,34 @@ export function TickerTape({tickers}) {
       {hasData ? (
         <div style={{display:"flex", transform:`translateX(${pos%w}px)`,
           whiteSpace:"nowrap", willChange:"transform"}}>
-          {[...tickers, ...tickers, ...tickers].map((t, i) => (
-            <div key={i} style={{display:"flex", alignItems:"center", gap:6,
-              padding:"0 16px", borderRight:`1px solid ${C.border}`}}>
-              <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
-              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.ink, fontWeight:500}}>
-                {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
-              </span>
-              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
-                color:chgC(t.chg), background:chgBg(t.chg),
-                padding:"1px 5px", borderRadius:3, fontWeight:600}}>
-                {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
-              </span>
-            </div>
-          ))}
+          {[...tickers, ...tickers, ...tickers].map((t, i) => {
+            const valid = t.sym && t.sym !== '?';
+            const cell = (
+              <>
+                <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.muted, fontWeight:400}}>{t.sym}</span>
+                <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.ink, fontWeight:500}}>
+                  {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
+                </span>
+                <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
+                  color:chgC(t.chg), background:chgBg(t.chg),
+                  padding:"1px 5px", borderRadius:3, fontWeight:600}}>
+                  {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
+                </span>
+              </>
+            );
+            return valid ? (
+              <a key={i} href={`/ticker/${encodeURIComponent(t.sym)}`} className="hov"
+                style={{display:"flex", alignItems:"center", gap:6, padding:"0 16px",
+                  borderRight:`1px solid ${C.border}`, textDecoration:"none", color:"inherit", cursor:"pointer"}}>
+                {cell}
+              </a>
+            ) : (
+              <div key={i} style={{display:"flex", alignItems:"center", gap:6,
+                padding:"0 16px", borderRight:`1px solid ${C.border}`}}>
+                {cell}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div style={{padding:"0 16px", fontFamily:"'DM Sans',sans-serif",
