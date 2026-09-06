@@ -36,6 +36,26 @@ const fmtDateLong = (s) => {
   return isNaN(d.getTime()) ? s : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
+// Estimated next earnings date from historical SEC filing cadence (median gap between
+// consecutive report dates, rolled forward to the next future date). ESTIMATE ONLY —
+// SEC/EDGAR has no forward calendar. Returns 'YYYY-MM-DD' or null when too few points.
+function estimateNextEarnings(rows) {
+  const reports = (rows || []).map((r) => r.report_date).filter(Boolean).sort();   // ascending
+  if (reports.length < 3) return null;
+  const gaps = [];
+  for (let i = 1; i < reports.length; i++) {
+    const g = (Date.parse(reports[i]) - Date.parse(reports[i - 1])) / 86_400_000;
+    if (g > 40 && g < 140) gaps.push(g);                                            // sane quarterly gaps only
+  }
+  if (!gaps.length) return null;
+  gaps.sort((a, b) => a - b);
+  const medGap = gaps[Math.floor(gaps.length / 2)];
+  let t = Date.parse(reports[reports.length - 1]) + medGap * 86_400_000;
+  if (isNaN(t)) return null;
+  for (let guard = 0; t < Date.now() && guard < 8; guard++) t += medGap * 86_400_000;  // roll forward to a future date
+  return new Date(t).toISOString().slice(0, 10);
+}
+
 // ── trade helpers (mirror /insiders) ──
 const actionStyle = (t) => t === 'BUY' ? { fg: C.green, bg: C.greenLight }
   : t === 'SELL' ? { fg: C.red, bg: C.redLight } : { fg: C.dim, bg: C.surface };
@@ -166,10 +186,11 @@ function NewsRow({ n, idx }) {
 }
 
 // ── HERO (always visible, above tabs): header + price/5-stat + price chart ──
-function Hero({ data }) {
+function Hero({ data, earnings }) {
   const q = data.quote || {};
   const m = data.metric || {};
   const up = (q.dp ?? 0) >= 0;
+  const nextEarnings = estimateNextEarnings(earnings?.earnings || []);
   return (
     <>
       {/* identity */}
@@ -182,6 +203,12 @@ function Hero({ data }) {
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: '0.5px' }}>
           {data.exchange || '—'}{data.industry ? ` · ${data.industry}` : ''}
         </div>
+        {nextEarnings && (
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+            Next earnings <span style={{ fontWeight: 600, color: C.ink }}>{fmtDateLong(nextEarnings)}</span>
+            <span style={{ color: C.dim }}> · estimated from filing history</span>
+          </div>
+        )}
       </div>
 
       {/* price + 5-stat */}
@@ -900,7 +927,7 @@ function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
 function ValidView({ data, tab, onTab, insider, gov, earnings, short }) {
   return (
     <>
-      <Hero data={data} />
+      <Hero data={data} earnings={earnings} />
       <TabBar active={tab} onSelect={onTab} />
       <TabContent tab={tab} data={data} insider={insider} gov={gov} earnings={earnings} short={short} onTab={onTab} />
     </>
