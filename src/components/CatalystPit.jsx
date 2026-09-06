@@ -386,7 +386,7 @@ export default function CatalystPit() {
               <tbody>
                 {loading ? Array(3).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
-                )) : politicians.slice(0, 10).map((p, i, arr) => (
+                )) : politicians.slice(0, 3).map((p, i, arr) => (
                   <tr key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
                     style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
@@ -539,7 +539,7 @@ export default function CatalystPit() {
               <div key={i} style={{padding:"10px 14px", borderBottom:`1px solid ${C.surface}`}}>
                 <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
               </div>
-            )) : politicians.slice(0, 8).map((p, i) => (
+            )) : politicians.slice(0, 3).map((p, i) => (
               <div key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
                 style={{padding:"10px 14px",
                 borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:p.slug ? "pointer" : "default"}}>
