@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { C, Dot, Skel, TopNav, Footer, BrandStyles, fetchKey, toArr } from '../../lib/cp-shared';
+import { C, Dot, Skel, TopNav, Footer, BrandStyles, fetchKey, toArr, TickerLogo } from '../../lib/cp-shared';
 
 // C4 — Markets = "names with catalysts today" from the pit_snapshot. NO last-sale/prices
 // (compliance): this is a catalyst board (filings + Congress + headlines), not a gainers tape.
@@ -77,6 +77,7 @@ export default function MarketsClient() {
                   <div key={i} className="hov" onClick={() => go(c.sym)} style={{ background: C.surface, borderRadius: 7, padding: 14, border: `1px solid ${C.border}`, borderLeft: `3px solid ${insStyle(c.kind).fg}`, cursor: 'pointer' }}>
                     <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 7 }}>{c.label}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
+                      <TickerLogo symbol={c.sym} size={20} />
                       <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.green }}>{c.sym}</span>
                       <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, background: insStyle(c.kind).bg, color: insStyle(c.kind).fg }}>{c.value}</span>
                     </div>
@@ -96,7 +97,7 @@ export default function MarketsClient() {
               : insiders.map((i2, i) => (
                 <div key={i} className="hov" onClick={() => go(i2.ticker)} style={{ padding: '11px 16px', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                   <div style={{ minWidth: 0 }}>
-                    <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{i2.ticker}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><TickerLogo symbol={i2.ticker} size={16} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{i2.ticker}</span></span>
                     <span style={{ fontSize: 12, color: C.muted, fontWeight: 300, marginLeft: 8 }}>{i2.executive || 'Insider'}</span>
                   </div>
                   <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}>{fmtVal(i2.totalValue)}</span>
@@ -111,7 +112,7 @@ export default function MarketsClient() {
               : congress.map((p, i) => (
                 <div key={i} className="hov" onClick={() => go(p.ticker)} style={{ padding: '11px 16px', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                   <div style={{ minWidth: 0 }}>
-                    <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{p.ticker || '—'}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><TickerLogo symbol={p.ticker} size={16} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{p.ticker || '—'}</span></span>
                     <span style={{ fontSize: 12, color: C.muted, fontWeight: 300, marginLeft: 8 }}>{p.representative}</span>
                   </div>
                   <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, background: insStyle(p.action).bg, color: insStyle(p.action).fg, whiteSpace: 'nowrap' }}>{p.action}</span>

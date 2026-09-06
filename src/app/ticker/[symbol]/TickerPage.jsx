@@ -1,7 +1,7 @@
 'use client';
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles } from '../../../lib/cp-shared';
+import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo } from '../../../lib/cp-shared';
 import TradingViewChart from '../../../components/TradingViewChart';
 import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
@@ -177,7 +177,10 @@ function Hero({ data, earnings }) {
       {/* identity */}
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+            <TickerLogo symbol={data.symbol} size={30} />
+            <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
+          </span>
           <span style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{data.name}</span>
           <span style={{ marginLeft: 'auto', alignSelf: 'center' }}><WatchlistStar symbol={data.symbol} /></span>
         </div>

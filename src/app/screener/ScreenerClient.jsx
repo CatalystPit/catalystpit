@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { C, Dot, Skel, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
+import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
 
 // Screener v1 (C3): a flexible scan over insider filings (our densest data), backed by
 // /api/insiders row-views + the new ?days=/?minValue= params. The plan's "earnings in 14d"
@@ -136,7 +136,7 @@ export default function ScreenerClient() {
                     <tr><td colSpan={6} style={{ padding: '40px 16px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No clusters right now.</td></tr>
                   ) : clusters.map((c, i) => (
                     <tr key={i} className="hov" onClick={() => goTicker(c.ticker)} style={{ borderBottom: i < clusters.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${C.green}`, cursor: 'pointer' }}>
-                      <td style={{ padding: '13px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{c.ticker}</td>
+                      <td style={{ padding: '13px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={c.ticker} size={18} />{c.ticker}</span></td>
                       <td style={{ padding: '13px 16px', fontSize: 13, color: C.text, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeEntities(c.company || '')}</td>
                       <td style={{ padding: '13px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, color: C.green }}>{c.buyers}</td>
                       <td style={{ padding: '13px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>{c.trades}</td>
@@ -159,7 +159,7 @@ export default function ScreenerClient() {
                     return (
                       <tr key={r.id || i} className="hov" onClick={() => goTicker(r.ticker)} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}`, cursor: 'pointer' }}>
                         <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.transactionDate || r.filingDate || '—'}</td>
-                        <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{r.ticker}</td>
+                        <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={r.ticker} size={18} />{r.ticker}</span></td>
                         <td style={{ padding: '11px 16px', fontSize: 13, color: C.text, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeEntities(r.company || '')}</td>
                         <td style={{ padding: '11px 16px', fontSize: 13, color: C.text }}>
                           <div>{decodeEntities(r.executive || '')}</div>

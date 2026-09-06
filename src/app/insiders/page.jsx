@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from "react";
-import { Footer, TopNav } from '../../lib/cp-shared';
+import { Footer, TopNav, TickerLogo } from '../../lib/cp-shared';
 import { useRouter } from 'next/navigation';
 
 const C = {
@@ -265,7 +265,7 @@ export default function InsidersPage() {
               {(data.trending||[]).map((t,i)=>(
                 <div key={i} className="row-hov" onClick={()=>goTicker(t.ticker)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderBottom:i<data.trending.length-1?`1px solid ${C.surface}`:"none"}}>
                   <div style={{display:"flex",gap:12,alignItems:"baseline"}}>
-                    <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green,minWidth:64}}>{t.ticker}</span>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:8,minWidth:64}}><TickerLogo symbol={t.ticker} size={18}/><span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>{t.ticker}</span></span>
                     <span style={{fontSize:12,color:C.muted,maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{decodeEntities(t.company||'')}</span>
                   </div>
                   <div className="cp-num" style={{fontFamily:"'DM Sans',sans-serif",fontSize:12}}>
@@ -292,7 +292,7 @@ export default function InsidersPage() {
                   <tr><td colSpan={6} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>No clusters (3+ insiders buying the same ticker within 30 days) right now.</td></tr>
                 ) : data.clusters.map((c,i)=>(
                   <tr key={i} className="row-hov" onClick={()=>goTicker(c.ticker)} style={{borderBottom:i<data.clusters.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${C.green}`}}>
-                    <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>{c.ticker}</td>
+                    <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={c.ticker} size={18}/>{c.ticker}</span></td>
                     <td style={{padding:"13px 16px",fontSize:13,color:C.text,maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{decodeEntities(c.company||'')}</td>
                     <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:C.green}}>{c.buyers}</td>
                     <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.text}}>{c.trades}</td>
@@ -330,7 +330,7 @@ export default function InsidersPage() {
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
-                      <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>{ins.sym}</td>
+                      <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
                       <td style={{padding:"13px 16px",fontSize:13,color:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
                       <td style={{padding:"13px 16px",fontSize:13,color:C.text}}>
                         <div>{ins.name}</div>

@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { C, Skel } from '../lib/cp-shared';
+import { C, Skel, TickerLogo } from '../lib/cp-shared';
 import { estimateNextEarnings } from '../lib/earnings-estimate';
 
 const usd = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -29,9 +29,10 @@ function Row({ item, onRemove, removing }) {
       transition: 'opacity 0.15s',
     }}>
       <a href={`/ticker/${encodeURIComponent(item.ticker)}`} style={{
-        flex: 1, minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 10,
+        flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10,
         textDecoration: 'none',
       }}>
+        <TickerLogo symbol={item.ticker} size={22} />
         <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 16, fontWeight: 700, color: C.green }}>
           {item.ticker}
         </span>
