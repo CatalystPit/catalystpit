@@ -767,56 +767,66 @@ export function WatchlistHomeCard() {
   );
 }
 
-// ─── CATALYST BRIEF SIGNUP CARD (self-contained: own state + toast) ─────────
+// ─── CATALYST BRIEF SIGNUP CARD (self-contained: own state + Beehiiv POST) ────
+// Real signup via /api/subscribe → Beehiiv (server holds the API key). No 6 AM
+// promise until the newsletter actually ships (B5 / Rule 0).
 export function CatalystBriefCard() {
   const [email, setEmail] = useState("");
-  const [toasted, setToasted] = useState(false);
-  const submit = () => {
-    if (!email || !email.includes("@")) return;
-    setEmail("");
-    setToasted(true);
-    setTimeout(() => setToasted(false), 4000);
+  const [status, setStatus] = useState("idle");   // idle | submitting | success | error
+  const [msg, setMsg] = useState("");
+  const submit = async () => {
+    const e = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || status === "submitting") return;
+    setStatus("submitting"); setMsg("");
+    try {
+      const r = await fetch("/api/subscribe", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: e }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.ok) { setEmail(""); setStatus("success"); setMsg("You're on the list — we'll send the first brief soon."); }
+      else if (j.error === "not_configured") { setStatus("error"); setMsg("Signups open soon — check back shortly."); }
+      else if (j.error === "invalid email") { setStatus("error"); setMsg("That email doesn't look right."); }
+      else { setStatus("error"); setMsg("Couldn't sign you up — try again in a moment."); }
+    } catch {
+      setStatus("error"); setMsg("Couldn't sign you up — try again in a moment.");
+    }
   };
+  const busy = status === "submitting";
   return (
-    <>
-      <div style={{background:"#0C1410", borderRadius:8, padding:"18px",
-        position:"relative", overflow:"hidden"}}>
-        <div style={{position:"absolute", top:0, left:0, right:0, height:3, background:"#5AB87A"}}/>
-        <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:"#3A6A48",
-          fontWeight:600, letterSpacing:"1.5px", marginBottom:8}}>THE CATALYST BRIEF</div>
-        <div style={{fontFamily:"'Cormorant Garamond',serif", fontSize:19, fontWeight:300,
-          color:"#FFFFFF", lineHeight:1.3, marginBottom:6}}>
-          Your morning edge.<br/><em style={{color:C.greenOnDark, fontWeight:600, fontSize:22}}>Straight to your inbox.</em>
-        </div>
-        <p style={{fontSize:12, color:"#3A5A42", fontWeight:600, lineHeight:1.7, marginBottom:12}}>
-          Top movers, insider trades, politician buys, and one high-conviction idea.
-        </p>
-        <input value={email} onChange={e => setEmail(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && submit()}
-          placeholder="Your email address"
-          className="cp-brief-email"
-          style={{width:"100%", background:"#1A2820", border:"1px solid #2A3A2E",
-            color:"#FFFFFF", padding:"9px 12px", borderRadius:6, fontSize:12,
-            fontFamily:"'DM Sans',sans-serif", outline:"none", fontWeight:300, marginBottom:6}}/>
-        <button onClick={submit} style={{width:"100%", background:"#5AB87A", border:"none",
-          color:"#fff", padding:"10px", borderRadius:6, fontSize:12, fontWeight:500,
-          cursor:"pointer", fontFamily:"'DM Sans',sans-serif"}}
-          onMouseEnter={e => e.currentTarget.style.background = "#4AA868"}
-          onMouseLeave={e => e.currentTarget.style.background = "#5AB87A"}>
-          Get the Brief →
-        </button>
-        <p style={{fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:6,
-          fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>Free forever · No credit card</p>
+    <div style={{background:"#0C1410", borderRadius:8, padding:"18px",
+      position:"relative", overflow:"hidden"}}>
+      <div style={{position:"absolute", top:0, left:0, right:0, height:3, background:"#5AB87A"}}/>
+      <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:"#3A6A48",
+        fontWeight:600, letterSpacing:"1.5px", marginBottom:8}}>THE CATALYST BRIEF</div>
+      <div style={{fontFamily:"'Cormorant Garamond',serif", fontSize:19, fontWeight:300,
+        color:"#FFFFFF", lineHeight:1.3, marginBottom:6}}>
+        Your morning edge.<br/><em style={{color:C.greenOnDark, fontWeight:600, fontSize:22}}>Straight to your inbox.</em>
       </div>
-
-      <div style={{position:"fixed", bottom:24, left:"50%",
-        transform:`translateX(-50%) translateY(${toasted?0:80}px)`,
-        background:C.white, border:`1px solid ${C.greenBorder}`, padding:"13px 24px",
-        borderRadius:10, fontSize:13, zIndex:999, transition:"transform 0.4s ease",
-        boxShadow:"0 8px 40px rgba(0,0,0,0.12)", whiteSpace:"nowrap"}}>
-        <span style={{color:C.green, fontWeight:600}}>You're on the list.</span> We'll send the first brief soon.
-      </div>
-    </>
+      <p style={{fontSize:12, color:"#3A5A42", fontWeight:600, lineHeight:1.7, marginBottom:12}}>
+        Top movers, insider trades, politician buys, and one high-conviction idea.
+      </p>
+      <input value={email} onChange={e => { setEmail(e.target.value); if (status === "error") { setStatus("idle"); setMsg(""); } }}
+        onKeyDown={e => e.key === "Enter" && submit()}
+        placeholder="Your email address"
+        className="cp-brief-email"
+        disabled={busy}
+        style={{width:"100%", background:"#1A2820", border:"1px solid #2A3A2E",
+          color:"#FFFFFF", padding:"9px 12px", borderRadius:6, fontSize:12,
+          fontFamily:"'DM Sans',sans-serif", outline:"none", fontWeight:300, marginBottom:6}}/>
+      <button onClick={submit} disabled={busy} style={{width:"100%", background:"#5AB87A", border:"none",
+        color:"#fff", padding:"10px", borderRadius:6, fontSize:12, fontWeight:500,
+        cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1, fontFamily:"'DM Sans',sans-serif"}}
+        onMouseEnter={e => { if (!busy) e.currentTarget.style.background = "#4AA868"; }}
+        onMouseLeave={e => e.currentTarget.style.background = "#5AB87A"}>
+        {busy ? "Adding…" : "Get the Brief →"}
+      </button>
+      {msg
+        ? <p style={{fontSize:11, marginTop:8, marginBottom:0, textAlign:"center", fontFamily:"'DM Sans',sans-serif",
+            color: status === "success" ? "#5AB87A" : "#E0A0A0"}}>{msg}</p>
+        : <p style={{fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:6,
+            fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>Free forever · No credit card</p>}
+    </div>
   );
 }
 
