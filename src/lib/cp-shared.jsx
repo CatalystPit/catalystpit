@@ -770,7 +770,7 @@ export function CatalystBriefCard() {
           fontWeight:600, letterSpacing:"1.5px", marginBottom:8}}>THE CATALYST BRIEF</div>
         <div style={{fontFamily:"'Cormorant Garamond',serif", fontSize:19, fontWeight:300,
           color:"#FFFFFF", lineHeight:1.3, marginBottom:6}}>
-          Your morning edge.<br/><em style={{color:C.greenOnDark, fontWeight:600, fontSize:22}}>Delivered at 6 AM.</em>
+          Your morning edge.<br/><em style={{color:C.greenOnDark, fontWeight:600, fontSize:22}}>Straight to your inbox.</em>
         </div>
         <p style={{fontSize:12, color:"#3A5A42", fontWeight:600, lineHeight:1.7, marginBottom:12}}>
           Top movers, insider trades, politician buys, and one high-conviction idea.
@@ -787,7 +787,7 @@ export function CatalystBriefCard() {
           cursor:"pointer", fontFamily:"'DM Sans',sans-serif"}}
           onMouseEnter={e => e.currentTarget.style.background = "#4AA868"}
           onMouseLeave={e => e.currentTarget.style.background = "#5AB87A"}>
-          Get Free Access →
+          Get the Brief →
         </button>
         <p style={{fontSize:10, color:"rgba(255,255,255,0.5)", marginTop:6,
           fontFamily:"'DM Sans',sans-serif", textAlign:"center"}}>Free forever · No credit card</p>
@@ -798,7 +798,7 @@ export function CatalystBriefCard() {
         background:C.white, border:`1px solid ${C.greenBorder}`, padding:"13px 24px",
         borderRadius:10, fontSize:13, zIndex:999, transition:"transform 0.4s ease",
         boxShadow:"0 8px 40px rgba(0,0,0,0.12)", whiteSpace:"nowrap"}}>
-        <span style={{color:C.green, fontWeight:600}}>You're in.</span> First brief arrives at 6 AM.
+        <span style={{color:C.green, fontWeight:600}}>You're on the list.</span> We'll send the first brief soon.
       </div>
     </>
   );
