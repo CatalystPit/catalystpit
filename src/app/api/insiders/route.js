@@ -37,7 +37,11 @@ const ROW_VIEWS = {
     orderBy: [desc(insiderTrades.totalValue)],
   },
   significant: {
-    where: gte(insiderTrades.totalValue, 1000000),
+    // P or S and value ≥ $1M, OR an open-market buy ≥ $100k. Excludes OTHER grants.
+    where: or(
+      and(inArray(insiderTrades.action, ['BUY', 'SELL']), gte(insiderTrades.totalValue, 1000000)),
+      and(eq(insiderTrades.action, 'BUY'),                gte(insiderTrades.totalValue, 100000)),
+    ),
     orderBy: [desc(insiderTrades.filingDate), desc(insiderTrades.totalValue)],
   },
   transactions: {
@@ -105,7 +109,7 @@ export async function GET(request) {
 
     const { searchParams } = new URL(request.url);
     const ticker = searchParams.get('ticker')?.toUpperCase().trim() || null;
-    const view = searchParams.get('view') || 'latest';
+    const view = searchParams.get('view') || 'buying';
     const limitRaw = parseInt(searchParams.get('limit') ?? '200', 10);
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 200, 1), 1000);
 

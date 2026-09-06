@@ -48,6 +48,8 @@ const mapRow = (r) => ({
   avgPrice: typeof r.pricePerShare === 'number' ? r.pricePerShare : 0,
   company:  decodeEntities(r.company || ''),
   filed:    r.filingDate || '',
+  traded:   r.transactionDate || '',
+  code:     r.transactionCode || '',
 });
 
 const CATEGORIES = [
@@ -91,7 +93,7 @@ export default function InsidersPage() {
   const [data, setData] = useState(null);          // raw API payload (view-shaped)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeView, setActiveView] = useState('latest');
+  const [activeView, setActiveView] = useState('buying');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy,  setSortBy]  = useState(null);
@@ -313,8 +315,8 @@ export default function InsidersPage() {
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
                   {[
-                    {label:"Date",sortKey:"DATE"},{label:"Ticker",sortKey:"TICKER"},{label:"Company",sortKey:null},
-                    {label:"Insider",sortKey:null},{label:"Type",sortKey:null},{label:"Shares",sortKey:"SHARES",align:"right"},
+                    {label:"Filed",sortKey:"DATE"},{label:"Traded",sortKey:null},{label:"Ticker",sortKey:"TICKER"},{label:"Company",sortKey:null},
+                    {label:"Insider",sortKey:null},{label:"Type",sortKey:null},{label:"Code",sortKey:null},{label:"Shares",sortKey:"SHARES",align:"right"},
                     {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},
                   ].map(h=>{
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
@@ -323,10 +325,11 @@ export default function InsidersPage() {
                 </tr></thead>
                 <tbody>
                   {rows.length===0 ? (
-                    <tr><td colSpan={8} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
+                    <tr><td colSpan={10} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
                       <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>{ins.sym}</td>
                       <td style={{padding:"13px 16px",fontSize:13,color:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
                       <td style={{padding:"13px 16px",fontSize:13,color:C.text}}>
@@ -336,6 +339,7 @@ export default function InsidersPage() {
                       <td style={{padding:"13px 16px"}}>
                         <span style={{fontSize:11,padding:"4px 10px",borderRadius:4,fontFamily:"'DM Sans',sans-serif",fontWeight:600,letterSpacing:"0.5px",background:actionStyles(ins.type).bg,color:actionStyles(ins.type).fg}}>{ins.type}</span>
                       </td>
+                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap"}}>{fmtPrice(ins.avgPrice)}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
@@ -344,9 +348,9 @@ export default function InsidersPage() {
                   {/* Locked placeholder rows — NO real row data (server sent none). */}
                   {lockedCount > 0 && Array.from({length: Math.min(lockedCount, 3)}).map((_, i) => (
                     <tr key={`lock-${i}`} aria-hidden="true" style={{borderBottom:`1px solid ${C.surface}`,borderLeft:`3px solid ${C.border}`}}>
-                      {Array(8).fill(0).map((_, c) => (
+                      {Array(10).fill(0).map((_, c) => (
                         <td key={c} style={{padding:"15px 16px"}}>
-                          <div style={{height:11,borderRadius:4,background:C.border,width:c===3?"75%":c===2?"80%":c===0?"60%":"50%"}}/>
+                          <div style={{height:11,borderRadius:4,background:C.border,width:c===5?"75%":c===3?"80%":c===0?"60%":"50%"}}/>
                         </td>
                       ))}
                     </tr>
