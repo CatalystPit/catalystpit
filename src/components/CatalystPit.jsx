@@ -191,7 +191,7 @@ export default function CatalystPit() {
   const insidersShown = insiders.slice(0, 10);
   const politicians = data?.politicians || [];
   const catalysts = data?.catalysts || [];
-  const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"}) : "--:--";
+  const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"}) : "--:--";
 
   const router = useRouter();
   const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
@@ -279,7 +279,7 @@ export default function CatalystPit() {
               </div>
               <div style={{display:"flex", alignItems:"center", gap:6,
                 fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.dim}}>
-                {timeStr}
+                Updated {timeStr} ET
                 <button onClick={loadData} style={{background:"transparent", border:"none",
                   color:C.muted, cursor:"pointer", fontSize:11, padding:"2px 6px",
                   borderRadius:4, fontFamily:"'DM Sans',sans-serif"}}
@@ -327,7 +327,7 @@ export default function CatalystPit() {
                   padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
                   <div>
                     <a href="/news" style={{fontSize:13, fontWeight:600, color:C.green, textDecoration:"none"}}>
-                      See all breaking news in real-time →
+                      See all breaking news →
                     </a>
                     <span style={{fontSize:12, color:C.muted, fontWeight:300, marginLeft:8}}>
                       Pro unlocks the full feed, updated every minute
@@ -417,7 +417,7 @@ export default function CatalystPit() {
                   <span style={{fontSize:16}}>🔒</span>
                   <div>
                     <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Sign in to explore all insider trades</div>
-                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Free account · real-time Form 4 filings</div>
+                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Free account · SEC Form 4 filings</div>
                   </div>
                   <a href="/sign-in" style={{background:C.green, border:"none", color:"#fff",
                     padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",

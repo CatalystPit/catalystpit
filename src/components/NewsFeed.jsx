@@ -234,7 +234,7 @@ export default function NewsFeed() {
   const restRows = filtered.slice(1);   // all rows the server sent (already gated); render as-is
 
   const timeStr = lastUp
-    ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit"})
+    ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"})
     : "--:--";
 
   return (
@@ -259,7 +259,7 @@ export default function NewsFeed() {
           </span>
           <div className="cp-num" style={{display:"flex", alignItems:"center", gap:8, marginLeft:"auto",
             fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.dim}}>
-            <Dot/>AI LIVE · {timeStr}
+            <Dot/>Updated {timeStr} ET
             <button onClick={loadData} style={{background:"transparent", border:`1px solid ${C.border}`,
               color:C.muted, cursor:"pointer", fontSize:12, padding:"4px 10px",
               borderRadius:5, fontFamily:"'DM Sans',sans-serif"}}

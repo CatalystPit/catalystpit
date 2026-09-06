@@ -162,7 +162,7 @@ export default function InsidersPage() {
   // Server-side gate: signed-out → lockedCount>0 (preview rows only); signed-in → 0/absent.
   const lockedCount = data?.lockedCount || 0;
 
-  const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"}) : "--:--";
+  const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"}) : "--:--";
   const buys  = isTradeView ? rows.filter(i=>i.type==='BUY').length  : 0;
   const sells = isTradeView ? rows.filter(i=>i.type==='SELL').length : 0;
 
@@ -185,10 +185,10 @@ export default function InsidersPage() {
         <div style={{maxWidth:1380,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:12}}>
           <div>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-              <Dot/><span style={{fontFamily:"'DM Sans',sans-serif",fontSize:10,color:C.muted,letterSpacing:"1px"}}>FORM 4 · SEC EDGAR · LIVE</span>
+              <Dot/><span style={{fontFamily:"'DM Sans',sans-serif",fontSize:10,color:C.muted,letterSpacing:"1px"}}>FORM 4 · SEC EDGAR</span>
             </div>
             <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:600,color:C.ink,margin:"0 0 4px",letterSpacing:"-0.5px"}}>Insider Trades</h1>
-            <p style={{fontSize:13,color:C.muted,margin:0,fontWeight:300}}>Real-time Form 4 filings. See when executives buy or sell their own company stock.</p>
+            <p style={{fontSize:13,color:C.muted,margin:0,fontWeight:300}}>Form 4 filings, as reported to the SEC. See when executives buy or sell their own company stock.</p>
           </div>
           <div style={{display:"flex",gap:12,alignItems:"center"}}>
             {isTradeView && (
@@ -204,7 +204,7 @@ export default function InsidersPage() {
               </>
             )}
             <div className="cp-num" style={{fontFamily:"'DM Sans',sans-serif",fontSize:10,color:C.dim}}>
-              Updated {timeStr}
+              Updated {timeStr} ET
               <button onClick={refresh} style={{background:"transparent",border:"none",color:C.green,cursor:"pointer",fontSize:12,marginLeft:8,fontFamily:"'DM Sans',sans-serif"}}>↻</button>
             </div>
           </div>
