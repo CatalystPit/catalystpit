@@ -124,7 +124,7 @@ export const storyPhoto = (sym, tag, slot) => {
 // ─── DATA FETCHING ──────────────────────────────────────────────────────────
 export const fetchKey = async (key) => {
   try {
-    const r = await fetch(`/api/claude?key=${key}`);
+    const r = await fetch(`/api/market?key=${key}`);
     if (!r.ok) return null;
     const d = await r.json();
     if (!d || !d.data) return null;
