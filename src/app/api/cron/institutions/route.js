@@ -210,7 +210,7 @@ export async function GET(request) {
   try { await ensureTables(); } catch (e) { console.log(`[institutions] ensureTables failed: ${e.message}`); return Response.json({ ok: false, error: `ensureTables: ${e.message}` }, { status: 500 }); }
 
   const startedAt = Date.now();
-  const doTickers = !onlySlug;   // skip the slow OpenFIGI pass on manual single-fund runs (issuer names still show)
+  const tickerBudget = onlySlug ? 150 : TICKER_BUDGET;   // resolve tickers on manual runs too (single funds are small)
   const funds = onlySlug ? INSTITUTIONS.filter((f) => f.slug === onlySlug) : INSTITUTIONS;
 
   const done = [], skipped = [];
@@ -238,10 +238,10 @@ export async function GET(request) {
 
   // Bounded ticker resolution: highest-value unresolved CUSIPs first. (Skipped on manual runs.)
   let tickersResolved = 0;
-  if (doTickers) try {
+  try {
     const rows = await db.select({ cusip: fundHoldings.cusip, v: sql`max(${fundHoldings.value})`.mapWith(Number) })
       .from(fundHoldings).where(sql`${fundHoldings.ticker} is null`)
-      .groupBy(fundHoldings.cusip).orderBy(sql`max(${fundHoldings.value}) desc`).limit(TICKER_BUDGET);
+      .groupBy(fundHoldings.cusip).orderBy(sql`max(${fundHoldings.value}) desc`).limit(tickerBudget);
     if (rows.length) {
       const map = await resolveTickers(rows.map((r) => r.cusip));
       for (const [cusip, ticker] of map) {

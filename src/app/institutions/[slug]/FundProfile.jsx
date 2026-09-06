@@ -20,6 +20,17 @@ const fmtQ = (s) => {
 };
 const TILE_COLORS = ['#1E5C38', '#2A7848', '#1A3A78', '#3A5A9A', '#5A2A98', '#7A5818', '#1A5A58', '#8A4810'];
 
+// Options flag — a PUT is a bearish/short-style position, a CALL bullish. Never rendered as a
+// long "buy" (a fund can be short a name via puts, e.g. Burry/PLTR).
+function PC({ pc }) {
+  if (!pc) return null;
+  const put = /put/i.test(pc);
+  return (
+    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', padding: '1px 6px', borderRadius: 3, marginLeft: 6,
+      background: put ? C.redLight : C.greenLight, color: put ? C.red : C.green }}>{pc.toUpperCase()}</span>
+  );
+}
+
 function Stat({ label, value }) {
   return (
     <div>
@@ -44,6 +55,7 @@ function ActivityList({ title, rows, kind }) {
           <div style={{ minWidth: 0, flex: 1 }}>
             <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, color: r.ticker ? C.green : C.text }}>{r.ticker || r.issuer}</span>
             {r.ticker && <span style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginLeft: 6 }}>{r.issuer}</span>}
+            <PC pc={r.putCall} />
           </div>
           <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color, whiteSpace: 'nowrap' }}>
             {kind === 'exited' ? 'sold all' : kind === 'new' ? 'new' : `${fmtSh(r.prevShares)}→${fmtSh(r.shares)}`}
@@ -157,7 +169,7 @@ export default function FundProfile({ slug }) {
                         background: TILE_COLORS[i % TILE_COLORS.length], color: '#fff', padding: '8px 10px', cursor: h.ticker ? 'pointer' : 'default',
                         display: 'flex', flexDirection: 'column', justifyContent: 'space-between', overflow: 'hidden' }}>
                       <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.ticker || h.issuer}</span>
-                      <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, opacity: 0.85 }}>{pct.toFixed(1)}%</span>
+                      <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, opacity: 0.85 }}>{pct.toFixed(1)}%{h.putCall ? ` · ${h.putCall.toUpperCase()}` : ''}</span>
                     </div>
                   );
                 })}
@@ -166,10 +178,10 @@ export default function FundProfile({ slug }) {
 
             {/* activity */}
             <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-              <ActivityList title="New buys" rows={d.activity?.new || []} kind="new" />
-              <ActivityList title="Added" rows={d.activity?.added || []} kind="added" />
-              <ActivityList title="Trimmed" rows={d.activity?.trimmed || []} kind="trimmed" />
-              <ActivityList title="Exited" rows={d.activity?.exited || []} kind="exited" />
+              <ActivityList title="New positions" rows={d.activity?.new || []} kind="new" />
+              <ActivityList title="Increased" rows={d.activity?.added || []} kind="added" />
+              <ActivityList title="Reduced" rows={d.activity?.trimmed || []} kind="trimmed" />
+              <ActivityList title="Closed" rows={d.activity?.exited || []} kind="exited" />
             </div>
             {!d.prior && <div style={{ marginTop: 8, fontSize: 11, color: C.dim, fontWeight: 300 }}>Quarter-over-quarter activity appears once a second quarter is imported.</div>}
 
@@ -190,7 +202,7 @@ export default function FundProfile({ slug }) {
                     {holdings.map((h, i) => (
                       <tr key={i} className={h.ticker ? 'hov' : undefined} onClick={() => go(h.ticker)} style={{ borderBottom: i < holdings.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: h.ticker ? 'pointer' : 'default' }}>
                         <td style={{ padding: '10px 16px' }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={h.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: h.ticker ? C.green : C.dim }}>{h.ticker || '—'}</span></span></td>
-                        <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.issuer}{h.putCall ? ` (${h.putCall})` : ''}</td>
+                        <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.issuer}<PC pc={h.putCall} /></td>
                         <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtSh(h.shares)}</td>
                         <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtB(h.value)}</td>
                         <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{((h.value || 0) / shownTotal * 100).toFixed(1)}%</td>
@@ -202,7 +214,7 @@ export default function FundProfile({ slug }) {
             </div>
 
             <div style={{ marginTop: 14, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-              Long US-listed 13F positions as reported to the SEC (as of {fmtQ(d.latest?.quarter)}, filed {fmtQ(d.latest?.filedDate)}). Excludes cash, shorts, non-US and non-13F holdings. "% Port." is relative to the positions shown. Not financial advice.
+              13F positions as reported to the SEC (as of {fmtQ(d.latest?.quarter)}, filed {fmtQ(d.latest?.filedDate)}). Includes reported options — <b>PUT</b> = bearish, <b>CALL</b> = bullish (option positions on the underlying, not share ownership). Excludes cash, direct short sales, non-US and non-13F holdings. "% Port." is relative to the positions shown. Not financial advice.
             </div>
           </>
         )}

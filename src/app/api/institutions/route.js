@@ -93,19 +93,20 @@ async function detailView(slug) {
   // QoQ activity — diff top DIFF_CAP positions of each quarter by CUSIP.
   let activity = { new: [], added: [], trimmed: [], exited: [] };
   if (prior) {
-    const load = (q) => db.select({ cusip: fundHoldings.cusip, ticker: fundHoldings.ticker, issuer: fundHoldings.issuer, shares: fundHoldings.shares, value: fundHoldings.value })
+    const load = (q) => db.select({ cusip: fundHoldings.cusip, ticker: fundHoldings.ticker, issuer: fundHoldings.issuer, shares: fundHoldings.shares, value: fundHoldings.value, putCall: fundHoldings.putCall })
       .from(fundHoldings).where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, q)))
       .orderBy(desc(fundHoldings.value)).limit(DIFF_CAP);
     const [cur, prev] = await Promise.all([load(latest.quarter), load(prior.quarter)]);
-    const prevBy = new Map(prev.map((r) => [r.cusip, r]));
-    const curBy = new Map(cur.map((r) => [r.cusip, r]));
+    const key = (r) => `${r.cusip}|${r.putCall || ''}`;   // a put and the underlying shares are distinct positions
+    const prevBy = new Map(prev.map((r) => [key(r), r]));
+    const curBy = new Map(cur.map((r) => [key(r), r]));
     for (const r of cur) {
-      const p = prevBy.get(r.cusip);
+      const p = prevBy.get(key(r));
       if (!p) activity.new.push({ ...r, prevShares: 0 });
       else if ((r.shares || 0) > (p.shares || 0) * 1.001) activity.added.push({ ...r, prevShares: p.shares });
       else if ((r.shares || 0) < (p.shares || 0) * 0.999) activity.trimmed.push({ ...r, prevShares: p.shares });
     }
-    for (const p of prev) if (!curBy.has(p.cusip)) activity.exited.push({ ...p, prevShares: p.shares, value: 0 });
+    for (const p of prev) if (!curBy.has(key(p))) activity.exited.push({ ...p, prevShares: p.shares, value: 0 });
     const byVal = (a, b) => (b.value || 0) - (a.value || 0);
     const byPrev = (a, b) => (b.prevShares || 0) - (a.prevShares || 0);
     activity.new = activity.new.sort(byVal).slice(0, 20);
