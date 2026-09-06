@@ -152,3 +152,42 @@ export const watchlist = pgTable('watchlist', {
 }, (t) => ({
   uqUserTicker: uniqueIndex('uq_watchlist_user_ticker').on(t.userId, t.ticker),
 }));
+
+// ── 13F institutional holdings (Institutions feature) ────────────────────────
+// One row per reported position, per manager (CIK), per quarter. `ticker` resolved from
+// `cusip` at ingest (OpenFIGI, best-effort/bounded) — null until resolved; `issuer` (from the
+// filing) is always present so the UI never renders blank. `value` normalized to whole USD
+// (13F reported value in $thousands before 2023, whole dollars after — ingestion handles it).
+export const fundHoldings = pgTable('fund_holdings', {
+  id:         serial('id').primaryKey(),
+  cik:        text('cik').notNull(),
+  quarter:    date('quarter', { mode: 'string' }).notNull(),   // period-of-report end (e.g. 2025-06-30)
+  cusip:      text('cusip').notNull(),
+  ticker:     text('ticker'),
+  issuer:     text('issuer'),
+  cls:        text('class').notNull().default(''),             // title of class
+  shares:     doublePrecision('shares'),
+  value:      doublePrecision('value'),                        // USD market value (whole dollars)
+  putCall:    text('put_call').notNull().default(''),          // 'Put' | 'Call' | ''
+  filedDate:  date('filed_date', { mode: 'string' }),
+  insertedAt: timestamp('inserted_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uq:        uniqueIndex('uq_fund_holding').on(t.cik, t.quarter, t.cusip, t.cls, t.putCall),
+  idxFundQ:  index('idx_fund_holdings_cik_quarter').on(t.cik, t.quarter),
+  idxTicker: index('idx_fund_holdings_ticker').on(t.ticker),
+  idxCusip:  index('idx_fund_holdings_cusip').on(t.cusip),
+}));
+
+// Per-manager, per-quarter filing summary — powers the list + latest-quarter lookups without
+// scanning holdings. total_value = 13F portfolio value (long US positions only), whole dollars.
+export const fundFilings = pgTable('fund_filings', {
+  cik:           text('cik').notNull(),
+  quarter:       date('quarter', { mode: 'string' }).notNull(),
+  filedDate:     date('filed_date', { mode: 'string' }),
+  accession:     text('accession'),
+  totalValue:    doublePrecision('total_value'),
+  holdingsCount: integer('holdings_count'),
+  insertedAt:    timestamp('inserted_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.cik, t.quarter] }),
+}));

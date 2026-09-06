@@ -389,7 +389,7 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
 export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
-  const links = ["News", "Screener", "Insiders", "Politicians"];
+  const links = ["News", "Screener", "Insiders", "Politicians", "Institutions"];
   const [menuOpen, setMenuOpen] = useState(false);
   const linkColor = (l) => active === l ? "#FFFFFF" : "rgba(255,255,255,0.75)";
   return (
