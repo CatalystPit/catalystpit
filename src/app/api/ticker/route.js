@@ -214,7 +214,33 @@ async function cachedNews(sym) {
   return { value: items, source: 'live' };
 }
 
-// validity cascade: profile2 (name) → prefetched /quote c>0 → /search exact. Content-based,
+// SEC company_tickers.json → ticker→company name. Identity resolution WITHOUT a
+// market-data vendor (rule: resolve name from SEC, not Finnhub, on production). KV-cached
+// 7d + module-memoised for warm invocations. null when SEC has no such symbol.
+const SEC_NAME_UA = { 'User-Agent': 'CatalystPit contact@catalystpit.com' };
+let SEC_NAMES = null;
+async function loadSecNames() {
+  if (SEC_NAMES) return SEC_NAMES;
+  const hit = await kvGet('catalystpit:sec:ticker_names');
+  if (hit != null) { try { SEC_NAMES = JSON.parse(hit); return SEC_NAMES; } catch { /* refetch */ } }
+  try {
+    const r = await fetch('https://www.sec.gov/files/company_tickers.json', { headers: SEC_NAME_UA });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const map = {};
+    for (const e of Object.values(data)) if (e?.ticker) map[String(e.ticker).toUpperCase()] = e.title || null;
+    SEC_NAMES = map;
+    await kvSet('catalystpit:sec:ticker_names', JSON.stringify(map), 7 * 24 * 3600);
+    return map;
+  } catch { return null; }
+}
+async function secTickerName(sym) {
+  const map = await loadSecNames();
+  return map ? (map[sym] || null) : null;
+}
+
+// validity cascade: profile2 (name) → prefetched /quote c>0 → /search exact → SEC name.
+// Content-based,
 // since Finnhub 200s everything. The quote is fetched in parallel by the caller, so the happy
 // path costs no extra call; /search only fires for the rare profile-less + no-quote ticker.
 async function resolveValidity(sym, profile, quote) {
@@ -223,6 +249,8 @@ async function resolveValidity(sym, profile, quote) {
   const se = await fh(`/search?q=${encodeURIComponent(sym)}`);
   const exact = (se?.result || []).find(r => (r.symbol || '').toUpperCase() === sym);
   if (exact) return { valid: true, name: exact.description || sym };
+  const secName = await secTickerName(sym);          // SEC identity fallback — no market-data vendor
+  if (secName) return { valid: true, name: secName };
   return { valid: false, name: null };
 }
 

@@ -947,9 +947,9 @@ function NotFound({ symbol }) {
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '48px 24px', textAlign: 'center' }}>
       <div style={{ fontSize: 40, marginBottom: 8 }}>🔍</div>
-      <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Ticker not found</div>
+      <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: C.ink, marginBottom: 6 }}>No filings yet</div>
       <div style={{ fontSize: 14, color: C.muted, fontWeight: 300 }}>
-        We couldn&apos;t find a ticker matching <span style={{ fontFamily: "'DM Sans',sans-serif", color: C.ink, fontWeight: 600 }}>{symbol}</span>.
+        We don&apos;t have filings yet for <span style={{ fontFamily: "'DM Sans',sans-serif", color: C.ink, fontWeight: 600 }}>{symbol}</span>. Try another symbol, or check back later.
       </div>
       <RetrySearch />
     </div>
