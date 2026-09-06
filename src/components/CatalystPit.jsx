@@ -501,6 +501,9 @@ export default function CatalystPit() {
               </tbody>
             </table>
             </div>
+            <div style={{padding:"8px 16px", fontSize:10, color:C.dim, fontWeight:300, borderTop:`1px solid ${C.surface}`}}>
+              Disclosed under the STOCK Act — trades may be reported up to ~45 days after execution.
+            </div>
             <div style={{position:"relative", overflow:"hidden"}}>
               {[1,2,3].map(i => (
                 <div key={i} style={{padding:"11px 16px", borderTop:`1px solid ${C.surface}`,

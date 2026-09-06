@@ -69,6 +69,7 @@ async function buildCongress() {
     state: congressTrades.state, memberSlug: congressTrades.memberSlug, action: congressTrades.action,
     amountRange: congressTrades.amountRange, transactionDate: congressTrades.transactionDate,
   }).from(congressTrades)
+    .where(sql`${congressTrades.ticker} is not null`)   // matched, ticker-linked rows only
     .orderBy(sql`${congressTrades.transactionDate} desc nulls last`, desc(congressTrades.id))
     .limit(3);
 }
