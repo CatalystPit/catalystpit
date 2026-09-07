@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, desc, sql } from 'drizzle-orm';
+import { resolveUserTier } from '../../../lib/entitlements';
 
 export const runtime = 'nodejs';
 
@@ -146,6 +147,8 @@ export async function GET(request) {
   try {
     const { userId } = await auth();
     const loggedIn = !!userId;
+    const tier = await resolveUserTier();
+    const isPro = tier === 'pro' || tier === 'elite';   // Pro gate (not just sign-in) for feed + list
 
     const { searchParams } = new URL(request.url);
     const slug    = searchParams.get('slug')?.trim();
@@ -171,17 +174,17 @@ export async function GET(request) {
     // Feed (homepage teaser) — AUTH-GATED. Signed-out capped to the preview.
     if (view === 'feed') {
       const payload = await feedView(limit);
-      const trades = loggedIn ? payload.trades : payload.trades.slice(0, FREE_PREVIEW_ROWS);
-      const lockedCount = loggedIn ? 0 : Math.max(0, payload.trades.length - FREE_PREVIEW_ROWS);
-      console.log(`[politicians_api] feed trades=${trades.length} locked=${lockedCount} loggedIn=${loggedIn}`);
-      return Response.json({ view: 'feed', count: trades.length, trades, lockedCount, loggedIn }, { headers: NO_STORE });
+      const trades = isPro ? payload.trades : payload.trades.slice(0, FREE_PREVIEW_ROWS);
+      const lockedCount = isPro ? 0 : Math.max(0, payload.trades.length - FREE_PREVIEW_ROWS);
+      console.log(`[politicians_api] feed trades=${trades.length} locked=${lockedCount} tier=${tier}`);
+      return Response.json({ view: 'feed', count: trades.length, trades, lockedCount, tier, loggedIn }, { headers: NO_STORE });
     }
     // Member list — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
     const members = await listView({ view, chamber, party });
-    const shown = loggedIn ? members : members.slice(0, FREE_PREVIEW_ROWS);
-    const lockedCount = loggedIn ? 0 : Math.max(0, members.length - FREE_PREVIEW_ROWS);
-    console.log(`[politicians_api] list view=${view} members=${shown.length} locked=${lockedCount} loggedIn=${loggedIn}`);
-    return Response.json({ view, count: shown.length, members: shown, lockedCount, loggedIn }, { headers: NO_STORE });
+    const shown = isPro ? members : members.slice(0, FREE_PREVIEW_ROWS);
+    const lockedCount = isPro ? 0 : Math.max(0, members.length - FREE_PREVIEW_ROWS);
+    console.log(`[politicians_api] list view=${view} members=${shown.length} locked=${lockedCount} tier=${tier}`);
+    return Response.json({ view, count: shown.length, members: shown, lockedCount, tier, loggedIn }, { headers: NO_STORE });
   } catch (e) {
     console.log(`[politicians_api] failed: ${e.message}`);
     return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });

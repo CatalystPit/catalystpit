@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { insiderTrades } from '../../../lib/schema';
 import { and, or, eq, gt, gte, ilike, inArray, desc, sql } from 'drizzle-orm';
+import { resolveUserTier } from '../../../lib/entitlements';
 
 export const runtime = 'nodejs';
 
@@ -152,10 +153,13 @@ export async function GET(request) {
     if (conds.length) q = q.where(conds.length === 1 ? conds[0] : and(...conds));
     q = q.orderBy(...cfg.orderBy).limit(limit);
     const all = await q;
-    const trades = loggedIn ? all : all.slice(0, FREE_PREVIEW_ROWS);
-    const lockedCount = loggedIn ? 0 : Math.max(0, all.length - FREE_PREVIEW_ROWS);
-    console.log(`[insiders_api] view=${resolvedView} returned=${trades.length} locked=${lockedCount} loggedIn=${loggedIn}`);
-    return Response.json({ view: resolvedView, count: trades.length, trades, lockedCount, loggedIn }, { headers: NO_STORE });
+    // Pro gate (not just sign-in): Free (incl. signed-in) sees a preview; Pro/Elite get the full set.
+    const tier = await resolveUserTier();
+    const isPro = tier === 'pro' || tier === 'elite';
+    const trades = isPro ? all : all.slice(0, FREE_PREVIEW_ROWS);
+    const lockedCount = isPro ? 0 : Math.max(0, all.length - FREE_PREVIEW_ROWS);
+    console.log(`[insiders_api] view=${resolvedView} returned=${trades.length} locked=${lockedCount} tier=${tier}`);
+    return Response.json({ view: resolvedView, count: trades.length, trades, lockedCount, tier, loggedIn }, { headers: NO_STORE });
   } catch (e) {
     console.log(`[insiders_api] failed: ${e.message}`);
     return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });

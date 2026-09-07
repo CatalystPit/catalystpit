@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { C, Skel, Dot, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
+import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout } from '../../lib/cp-shared';
 import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat } from './ui';
 
 // ─── filter definitions ──────────────────────────────────────────────────────
@@ -198,11 +198,11 @@ export default function PoliticiansList() {
         {!loading && !error && lockedCount > 0 && (
           <div style={{ marginTop: 14, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 8 }}>
             <span style={{ flex: 1, minWidth: 0, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.ink }}>
-              🔒 Sign in to see all {lockedCount} members
+              🔒 {lockedCount} more members — unlock the full list with Pro
             </span>
-            <a href="/sign-in" style={{ background: C.green, color: '#fff', textDecoration: 'none', whiteSpace: 'nowrap', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans',sans-serif" }}>
-              Sign in
-            </a>
+            <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+              Unlock Pro — $12/mo
+            </button>
           </div>
         )}
 
