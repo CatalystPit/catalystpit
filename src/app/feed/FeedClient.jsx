@@ -344,7 +344,7 @@ export default function FeedClient() {
           {me.canPost ? (
             <>
               <textarea value={input} onChange={(e) => setInput(e.target.value)} maxLength={MAX} rows={3}
-                placeholder="Share a thought…  ($NVDA tags a ticker)"
+                placeholder="Share a thought…"
                 style={{ width: '100%', resize: 'vertical', border: 'none', outline: 'none', fontSize: 15, fontFamily: "'DM Sans',sans-serif", color: C.ink, boxSizing: 'border-box' }} />
               {imagePreview && (
                 <div style={{ marginTop: 8 }}>

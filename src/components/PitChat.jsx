@@ -365,7 +365,7 @@ export default function PitChat({ height = 620, onClose }) {
                 style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer',
                   fontSize: 17, lineHeight: 1, padding: '7px 9px', flexShrink: 0 }}>😊</button>
               <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={onKey}
-                rows={1} placeholder="Message the Pit…  ($NVDA links a ticker)"
+                rows={1} placeholder="Message the Pit…"
                 style={{ flex: 1, resize: 'none', maxHeight: 90, padding: '9px 10px', borderRadius: 6,
                   border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "'DM Sans',sans-serif",
                   outline: 'none', color: C.ink }} />
