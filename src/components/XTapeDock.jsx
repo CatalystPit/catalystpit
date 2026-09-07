@@ -16,7 +16,7 @@ import { useEffect, useState } from 'react';
 import XTape from './XTape';
 import { C } from '../lib/cp-shared';
 
-const PANEL_W = 340;
+const PANEL_W = 300;
 const MOBILE_Q = '(max-width: 860px)';
 const PREF_KEY = 'cp_tape_open';
 
@@ -61,7 +61,7 @@ export default function XTapeDock() {
     return (
       <>
         <button onClick={() => toggle(true)} aria-label="Open the Tape"
-          style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 60, width: 52, height: 52,
+          style={{ position: 'fixed', left: 16, bottom: 16, zIndex: 60, width: 52, height: 52,
             borderRadius: '50%', background: C.green, color: '#fff', border: 'none', cursor: 'pointer',
             fontSize: 22, boxShadow: '0 4px 14px rgba(0,0,0,0.25)', display: open ? 'none' : 'flex',
             alignItems: 'center', justifyContent: 'center' }}>
@@ -71,8 +71,8 @@ export default function XTapeDock() {
           <div onClick={() => toggle(false)}
             style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(0,0,0,0.45)' }}>
             <div onClick={(e) => e.stopPropagation()}
-              style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(92vw, 380px)',
-                background: C.bg, overflowY: 'auto', boxShadow: '-8px 0 24px rgba(0,0,0,0.2)' }}>
+              style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: 'min(92vw, 360px)',
+                background: C.bg, overflowY: 'auto', boxShadow: '8px 0 24px rgba(0,0,0,0.2)' }}>
               <XTape height={vh} onClose={() => toggle(false)} />
             </div>
           </div>
@@ -85,23 +85,23 @@ export default function XTapeDock() {
   return (
     <>
       <button onClick={() => toggle()} aria-label={open ? 'Collapse the Tape' : 'Open the Tape'}
-        style={{ position: 'fixed', top: '50%', right: open ? PANEL_W : 0, transform: 'translateY(-50%)',
-          zIndex: 61, transition: 'right 0.25s ease', display: 'flex', flexDirection: 'column',
+        style={{ position: 'fixed', top: '50%', left: open ? PANEL_W : 0, transform: 'translateY(-50%)',
+          zIndex: 61, transition: 'left 0.25s ease', display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: 6, padding: '12px 7px', cursor: 'pointer',
-          background: C.green, color: '#fff', border: 'none', borderRadius: '8px 0 0 8px',
-          boxShadow: '-2px 0 10px rgba(0,0,0,0.12)' }}>
+          background: C.green, color: '#fff', border: 'none', borderRadius: '0 8px 8px 0',
+          boxShadow: '2px 0 10px rgba(0,0,0,0.12)' }}>
         <span style={{ fontSize: 16, lineHeight: 1 }}>⚡</span>
-        <span style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', fontSize: 10,
+        <span style={{ writingMode: 'vertical-rl', fontSize: 10,
           fontWeight: 700, letterSpacing: 1.5, fontFamily: "'DM Sans',sans-serif" }}>
           TAPE
         </span>
       </button>
 
       {mounted && (
-        <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: PANEL_W, zIndex: 60,
-          transform: open ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
-          background: C.bg, borderLeft: `1px solid ${C.border}`, overflowY: 'auto',
-          boxShadow: open ? '-8px 0 24px rgba(0,0,0,0.12)' : 'none' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, bottom: 0, width: PANEL_W, zIndex: 60,
+          transform: open ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 0.25s ease',
+          background: C.bg, borderRight: `1px solid ${C.border}`, overflowY: 'auto',
+          boxShadow: open ? '8px 0 24px rgba(0,0,0,0.12)' : 'none' }}>
           <XTape height={vh} onClose={() => toggle(false)} />
         </div>
       )}
