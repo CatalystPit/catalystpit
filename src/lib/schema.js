@@ -216,6 +216,17 @@ export const pitProfiles = pgTable('pit_profiles', {
   uqHandle: uniqueIndex('uq_pit_profiles_handle').on(t.handle),
 }));
 
+// Reactions on chat messages (👍❤️🔥 …). One row per (message, user, emoji). Any signed-in user.
+export const pitMessageReactions = pgTable('pit_message_reactions', {
+  messageId: integer('message_id').notNull(),
+  userId:    text('user_id').notNull(),
+  emoji:     text('emoji').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk:     primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
+  idxMsg: index('idx_pit_reactions_msg').on(t.messageId),
+}));
+
 // ── Follows (Phase 3) — directed edges: follower → following (both Clerk user IDs) ──
 export const pitFollows = pgTable('pit_follows', {
   followerId:  text('follower_id').notNull(),

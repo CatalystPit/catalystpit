@@ -69,6 +69,26 @@ const fmtTime = (ts) => {
   catch { return ''; }
 };
 
+// Quick reactions (must match REACTIONS in lib/pit.js). Composer emoji palette below.
+const REACTIONS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '🚀', '💯'];
+const EMOJIS = ['😀', '😂', '😅', '😍', '😎', '🤔', '😳', '😭', '😡', '🥳', '👍', '👎', '👏', '🙏', '💪', '🤝',
+  '🔥', '💯', '🚀', '📈', '📉', '💰', '💎', '🐂', '🐻', '⚠️', '✅', '❌', '❤️', '👀', '🎯', '🤑'];
+
+// Apply a reaction delta to a message's reactions array (used for both optimistic + live updates).
+function applyReaction(m, emoji, delta, updateMine) {
+  const rx = [...(m.reactions || [])];
+  const i = rx.findIndex((r) => r.emoji === emoji);
+  if (i === -1) {
+    if (delta > 0) rx.push({ emoji, count: 1, mine: !!updateMine });
+  } else {
+    const count = rx[i].count + delta;
+    const mine = updateMine ? delta > 0 : rx[i].mine;
+    if (count <= 0) rx.splice(i, 1);
+    else rx[i] = { emoji, count, mine };
+  }
+  return { ...m, reactions: rx };
+}
+
 export default function PitChat({ height = 620, onClose }) {
   const [messages, setMessages] = useState([]);
   const [me, setMe] = useState({ canPost: false, loggedIn: false, admin: false });
@@ -76,12 +96,16 @@ export default function PitChat({ height = 620, onClose }) {
   const [live, setLive] = useState(false);
   const [input, setInput] = useState('');
   const [notice, setNotice] = useState('');
+  const [reactFor, setReactFor] = useState(null);   // messageId whose reaction picker is open
+  const [showEmoji, setShowEmoji] = useState(false); // composer emoji palette
   const listRef = useRef(null);
   const clientRef = useRef(null);
+  const meIdRef = useRef(null);                       // stable userId for the live reaction handler
 
   const addMessage = useCallback((msg) => {
     if (!msg || msg.id == null) return;
-    setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+    const withRx = { ...msg, reactions: msg.reactions || [] };
+    setMessages((prev) => (prev.some((m) => m.id === withRx.id) ? prev : [...prev, withRx]));
   }, []);
   const removeMessage = useCallback((id) => {
     setMessages((prev) => prev.filter((m) => m.id !== id));
@@ -97,8 +121,8 @@ export default function PitChat({ height = 620, onClose }) {
         const r = await fetch('/api/pit/messages', { cache: 'no-store' });
         const j = r.ok ? await r.json() : null;
         if (cancelled) return;
-        if (j?.messages) setMessages(j.messages);
-        if (j?.me) setMe(j.me);
+        if (j?.messages) setMessages(j.messages.map((m) => ({ ...m, reactions: m.reactions || [] })));
+        if (j?.me) { setMe(j.me); meIdRef.current = j.me.userId || null; }
       } catch { /* keep empty */ }
 
       try {
@@ -113,6 +137,11 @@ export default function PitChat({ height = 620, onClose }) {
         channel = client.channels.get('the-pit');
         channel.subscribe('message', (m) => addMessage(m.data));
         channel.subscribe('delete', (m) => removeMessage(m.data?.id));
+        channel.subscribe('reaction', (m) => {
+          const d = m.data;
+          if (!d || d.userId === meIdRef.current) return;   // our own change was applied optimistically
+          setMessages((prev) => prev.map((msg) => (msg.id === d.messageId ? applyReaction(msg, d.emoji, d.delta, false) : msg)));
+        });
 
         // presence — enter only if signed-in (anon has no clientId / presence capability)
         const syncOnline = async () => {
@@ -165,6 +194,19 @@ export default function PitChat({ height = 620, onClose }) {
       if (j?.message) addMessage(j.message);   // dedup-safe; also arrives via broadcast
     } catch { setNotice('Could not send.'); }
   };
+
+  const toggleReaction = async (msg, emoji) => {
+    if (!me.loggedIn) { setNotice('Sign in to react.'); return; }
+    const existing = (msg.reactions || []).find((r) => r.emoji === emoji);
+    const on = !(existing && existing.mine);
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? applyReaction(m, emoji, on ? 1 : -1, true) : m)));
+    setReactFor(null);
+    try {
+      await fetch('/api/pit/react', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msg.id, emoji, on }) });
+    } catch { /* optimistic already applied */ }
+  };
+
+  const insertEmoji = (e) => { setInput((v) => v + e); setShowEmoji(false); };
 
   const report = async (id) => {
     try {
@@ -228,6 +270,10 @@ export default function PitChat({ height = 620, onClose }) {
                 )}
                 <span style={{ fontSize: 10, color: C.dim }}>{fmtTime(m.createdAt)}</span>
                 <span className="pit-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 8, opacity: 0 }}>
+                  {me.loggedIn && (
+                    <button onClick={() => setReactFor(reactFor === m.id ? null : m.id)} title="React"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 12, padding: 0 }}>☺</button>
+                  )}
                   {me.loggedIn && m.userId !== me.userId && (
                     <button onClick={() => report(m.id)} title="Report"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 11, padding: 0 }}>⚑</button>
@@ -241,6 +287,28 @@ export default function PitChat({ height = 620, onClose }) {
               <div style={{ fontSize: 13, color: C.text, lineHeight: 1.4, wordBreak: 'break-word' }}>
                 <Body text={m.body} />
               </div>
+
+              {reactFor === m.id && (
+                <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap', width: 'fit-content',
+                  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 6px' }}>
+                  {REACTIONS.map((e) => (
+                    <button key={e} onClick={() => toggleReaction(m, e)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 2, lineHeight: 1 }}>{e}</button>
+                  ))}
+                </div>
+              )}
+              {m.reactions && m.reactions.length > 0 && (
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
+                  {m.reactions.map((r) => (
+                    <button key={r.emoji} onClick={() => toggleReaction(m, r.emoji)}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, cursor: 'pointer',
+                        background: r.mine ? C.greenLight : C.surface, border: `1px solid ${r.mine ? C.greenBorder : C.border}`,
+                        borderRadius: 10, padding: '1px 7px', color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
+                      <span style={{ fontSize: 12 }}>{r.emoji}</span>{r.count}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -250,18 +318,33 @@ export default function PitChat({ height = 620, onClose }) {
       <div style={{ borderTop: `1px solid ${C.border}`, padding: 10, flexShrink: 0 }}>
         {notice && <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>{notice}</div>}
         {me.canPost ? (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={onKey}
-              rows={1} placeholder="Message the Pit…  ($NVDA links a ticker)"
-              style={{ flex: 1, resize: 'none', maxHeight: 90, padding: '9px 10px', borderRadius: 6,
-                border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "'DM Sans',sans-serif",
-                outline: 'none', color: C.ink }} />
-            <button onClick={send} disabled={!input.trim()}
-              style={{ background: input.trim() ? C.green : C.surface2, color: input.trim() ? '#fff' : C.dim,
-                border: 'none', borderRadius: 6, padding: '9px 16px', fontSize: 13, fontWeight: 600,
-                cursor: input.trim() ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>
-              Send
-            </button>
+          <div style={{ position: 'relative' }}>
+            {showEmoji && (
+              <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 6, zIndex: 5,
+                background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: 8, width: 250,
+                boxShadow: '0 6px 20px rgba(0,0,0,0.12)', display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 2 }}>
+                {EMOJIS.map((e) => (
+                  <button key={e} onClick={() => insertEmoji(e)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, padding: 3, lineHeight: 1, borderRadius: 4 }}>{e}</button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+              <button onClick={() => setShowEmoji((s) => !s)} title="Emoji"
+                style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, cursor: 'pointer',
+                  fontSize: 17, lineHeight: 1, padding: '7px 9px', flexShrink: 0 }}>😊</button>
+              <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={onKey}
+                rows={1} placeholder="Message the Pit…  ($NVDA links a ticker)"
+                style={{ flex: 1, resize: 'none', maxHeight: 90, padding: '9px 10px', borderRadius: 6,
+                  border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "'DM Sans',sans-serif",
+                  outline: 'none', color: C.ink }} />
+              <button onClick={send} disabled={!input.trim()}
+                style={{ background: input.trim() ? C.green : C.surface2, color: input.trim() ? '#fff' : C.dim,
+                  border: 'none', borderRadius: 6, padding: '9px 16px', fontSize: 13, fontWeight: 600,
+                  cursor: input.trim() ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>
+                Send
+              </button>
+            </div>
           </div>
         ) : me.loggedIn ? (
           <button onClick={() => startCheckout()}

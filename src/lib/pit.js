@@ -42,8 +42,19 @@ export async function ensurePitTables() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pit_reports_message ON pit_reports (message_id)`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS pit_message_reactions (
+    message_id INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (message_id, user_id, emoji)
+  )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pit_reactions_msg ON pit_message_reactions (message_id)`);
   _ensured = true;
 }
+
+// Allowed quick-reaction emojis on chat messages (curated set → prevents junk reactions).
+export const REACTIONS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '🚀', '💯'];
 
 // ── Ably (REST, server) — token minting + server-authoritative publish ──
 let _rest = null;

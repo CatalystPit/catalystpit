@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../../lib/db';
-import { pitMessages, pitProfiles } from '../../../../lib/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { pitMessages, pitProfiles, pitMessageReactions } from '../../../../lib/schema';
+import { eq, desc, sql, and, inArray } from 'drizzle-orm';
 import { resolveUserTier } from '../../../../lib/entitlements';
 import {
   getIdentity, isAdminUser, sanitizeBody, rateLimited, pitPublish, ensurePitTables,
@@ -43,6 +43,27 @@ export async function GET() {
       .limit(HISTORY);
 
     const messages = rows.reverse();   // oldest→newest for display
+
+    // Attach reaction counts (+ which the viewer used) for these messages.
+    const ids = messages.map((m) => m.id);
+    if (ids.length) {
+      const counts = await db.select({
+        messageId: pitMessageReactions.messageId, emoji: pitMessageReactions.emoji,
+        n: sql`count(*)`.mapWith(Number),
+      })
+        .from(pitMessageReactions).where(inArray(pitMessageReactions.messageId, ids))
+        .groupBy(pitMessageReactions.messageId, pitMessageReactions.emoji);
+      let mine = new Set();
+      if (userId) {
+        const mrows = await db.select({ messageId: pitMessageReactions.messageId, emoji: pitMessageReactions.emoji })
+          .from(pitMessageReactions).where(and(inArray(pitMessageReactions.messageId, ids), eq(pitMessageReactions.userId, userId)));
+        mine = new Set(mrows.map((r) => `${r.messageId}|${r.emoji}`));
+      }
+      const byMsg = {};
+      for (const c of counts) (byMsg[c.messageId] ||= []).push({ emoji: c.emoji, count: c.n, mine: mine.has(`${c.messageId}|${c.emoji}`) });
+      for (const m of messages) m.reactions = byMsg[m.id] || [];
+    }
+
     return Response.json(
       // Admin (ADMIN_EMAIL) can always post — the operator shouldn't need a Pro plan to talk.
       { messages, me: { userId, tier, canPost: isPro || admin, admin, loggedIn: !!userId } },
