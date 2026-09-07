@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../../lib/db';
-import { pitMessages } from '../../../../lib/schema';
-import { eq, desc } from 'drizzle-orm';
+import { pitMessages, pitProfiles } from '../../../../lib/schema';
+import { eq, desc, sql } from 'drizzle-orm';
 import { resolveUserTier } from '../../../../lib/entitlements';
 import {
   getIdentity, isAdminUser, sanitizeBody, rateLimited, pitPublish, ensurePitTables,
@@ -27,12 +27,17 @@ export async function GET() {
     const isPro = tier === 'pro' || tier === 'elite';
 
     await ensurePitTables();
+    // Resolve identity LIVE from the author's current profile (fall back to the snapshot for
+    // authors without a profile), so renaming a handle/display name never breaks old message links.
     const rows = await db.select({
-      id: pitMessages.id, userId: pitMessages.userId, username: pitMessages.username,
-      handle: pitMessages.handle, avatarUrl: pitMessages.avatarUrl, tier: pitMessages.tier,
-      body: pitMessages.body, createdAt: pitMessages.createdAt,
+      id: pitMessages.id, userId: pitMessages.userId,
+      username: sql`coalesce(${pitProfiles.displayName}, ${pitMessages.username})`,
+      handle:   sql`coalesce(${pitProfiles.handle}, ${pitMessages.handle})`,
+      avatarUrl: sql`coalesce(${pitProfiles.avatarUrl}, ${pitMessages.avatarUrl})`,
+      tier: pitMessages.tier, body: pitMessages.body, createdAt: pitMessages.createdAt,
     })
       .from(pitMessages)
+      .leftJoin(pitProfiles, eq(pitProfiles.userId, pitMessages.userId))
       .where(eq(pitMessages.deleted, false))
       .orderBy(desc(pitMessages.createdAt))
       .limit(HISTORY);

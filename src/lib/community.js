@@ -1,6 +1,6 @@
 import { sql, eq, and, desc, lt, inArray } from 'drizzle-orm';
 import { db } from './db';
-import { pitFollows, pitPosts, pitPostLikes } from './schema';
+import { pitFollows, pitPosts, pitPostLikes, pitProfiles } from './schema';
 import { sanitizeBody } from './pit';
 
 // Follows + feed (Phase 3). Self-creates tables (immune to Neon-branch mismatch).
@@ -85,7 +85,18 @@ export async function listFeed({ scope = 'global', viewerId = null, limit = 30, 
     conds.push(inArray(pitPosts.userId, ids));
   }
 
-  const rows = await db.select().from(pitPosts).where(and(...conds)).orderBy(desc(pitPosts.createdAt)).limit(limit);
+  // Resolve author identity LIVE from their current profile (fall back to snapshot) so renaming
+  // never breaks post links.
+  const rows = await db.select({
+    id: pitPosts.id, userId: pitPosts.userId,
+    username: sql`coalesce(${pitProfiles.displayName}, ${pitPosts.username})`,
+    handle:   sql`coalesce(${pitProfiles.handle}, ${pitPosts.handle})`,
+    avatarUrl: sql`coalesce(${pitProfiles.avatarUrl}, ${pitPosts.avatarUrl})`,
+    body: pitPosts.body, likeCount: pitPosts.likeCount, createdAt: pitPosts.createdAt,
+  })
+    .from(pitPosts)
+    .leftJoin(pitProfiles, eq(pitProfiles.userId, pitPosts.userId))
+    .where(and(...conds)).orderBy(desc(pitPosts.createdAt)).limit(limit);
 
   // which of these has the viewer liked?
   let likedSet = new Set();
