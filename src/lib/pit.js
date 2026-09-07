@@ -53,8 +53,8 @@ export async function ensurePitTables() {
   _ensured = true;
 }
 
-// Allowed quick-reaction emojis on chat messages (curated set → prevents junk reactions).
-export const REACTIONS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '🚀', '💯'];
+// Allowed reactions on chat messages. Chat UI uses just 👍 / 👎 (Facebook-style like/dislike).
+export const REACTIONS = ['👍', '👎'];
 
 // ── Ably (REST, server) — token minting + server-authoritative publish ──
 let _rest = null;

@@ -69,10 +69,21 @@ const fmtTime = (ts) => {
   catch { return ''; }
 };
 
-// Quick reactions (must match REACTIONS in lib/pit.js). Composer emoji palette below.
-const REACTIONS = ['👍', '❤️', '🔥', '😂', '😮', '😢', '🚀', '💯'];
+// Composer emoji palette (for typing emojis into messages). Message reactions are just 👍/👎.
 const EMOJIS = ['😀', '😂', '😅', '😍', '😎', '🤔', '😳', '😭', '😡', '🥳', '👍', '👎', '👏', '🙏', '💪', '🤝',
   '🔥', '💯', '🚀', '📈', '📉', '💰', '💎', '🐂', '🐻', '⚠️', '✅', '❌', '❤️', '👀', '🎯', '🤑'];
+
+// Clean line thumb icons (up/down) — Facebook-style like/dislike, not childish emoji.
+function Thumb({ down, size = 15, color, filled }) {
+  const up = 'M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3';
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color || 'currentColor'}
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      style={down ? { transform: 'rotate(180deg)' } : undefined}>
+      <path d={up} />
+    </svg>
+  );
+}
 
 // Apply a reaction delta to a message's reactions array (used for both optimistic + live updates).
 function applyReaction(m, emoji, delta, updateMine) {
@@ -96,7 +107,6 @@ export default function PitChat({ height = 620, onClose }) {
   const [live, setLive] = useState(false);
   const [input, setInput] = useState('');
   const [notice, setNotice] = useState('');
-  const [reactFor, setReactFor] = useState(null);   // messageId whose reaction picker is open
   const [showEmoji, setShowEmoji] = useState(false); // composer emoji palette
   const listRef = useRef(null);
   const clientRef = useRef(null);
@@ -207,6 +217,7 @@ export default function PitChat({ height = 620, onClose }) {
   };
 
   const insertEmoji = (e) => { setInput((v) => v + e); setShowEmoji(false); };
+  const reply = (m) => { const tag = `@${m.handle || m.username} `; setInput((v) => (v.startsWith(tag) ? v : tag + v)); };
 
   const report = async (id) => {
     try {
@@ -270,10 +281,6 @@ export default function PitChat({ height = 620, onClose }) {
                 )}
                 <span style={{ fontSize: 10, color: C.dim }}>{fmtTime(m.createdAt)}</span>
                 <span className="pit-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 8, opacity: 0 }}>
-                  {me.loggedIn && (
-                    <button onClick={() => setReactFor(reactFor === m.id ? null : m.id)} title="React"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 12, padding: 0 }}>☺</button>
-                  )}
                   {me.loggedIn && m.userId !== me.userId && (
                     <button onClick={() => report(m.id)} title="Report"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 11, padding: 0 }}>⚑</button>
@@ -288,27 +295,23 @@ export default function PitChat({ height = 620, onClose }) {
                 <Body text={m.body} />
               </div>
 
-              {reactFor === m.id && (
-                <div style={{ display: 'flex', gap: 4, marginTop: 5, flexWrap: 'wrap', width: 'fit-content',
-                  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 6px' }}>
-                  {REACTIONS.map((e) => (
-                    <button key={e} onClick={() => toggleReaction(m, e)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 2, lineHeight: 1 }}>{e}</button>
-                  ))}
-                </div>
-              )}
-              {m.reactions && m.reactions.length > 0 && (
-                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 5 }}>
-                  {m.reactions.map((r) => (
-                    <button key={r.emoji} onClick={() => toggleReaction(m, r.emoji)}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, cursor: 'pointer',
-                        background: r.mine ? C.greenLight : C.surface, border: `1px solid ${r.mine ? C.greenBorder : C.border}`,
-                        borderRadius: 10, padding: '1px 7px', color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
-                      <span style={{ fontSize: 12 }}>{r.emoji}</span>{r.count}
+              {/* Facebook-style row: like / dislike / reply */}
+              {(() => {
+                const up = (m.reactions || []).find((r) => r.emoji === '👍');
+                const down = (m.reactions || []).find((r) => r.emoji === '👎');
+                const btn = { background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" };
+                return (
+                  <div style={{ display: 'flex', gap: 16, marginTop: 5, alignItems: 'center' }}>
+                    <button onClick={() => toggleReaction(m, '👍')} style={{ ...btn, color: up?.mine ? C.green : C.dim }}>
+                      <Thumb color={up?.mine ? C.green : C.dim} filled={!!up?.mine} />{up?.count || ''}
                     </button>
-                  ))}
-                </div>
-              )}
+                    <button onClick={() => toggleReaction(m, '👎')} style={{ ...btn, color: down?.mine ? C.red : C.dim }}>
+                      <Thumb down color={down?.mine ? C.red : C.dim} filled={!!down?.mine} />{down?.count || ''}
+                    </button>
+                    {me.loggedIn && <button onClick={() => reply(m)} style={{ ...btn, color: C.dim }}>Reply</button>}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ))}

@@ -25,6 +25,17 @@ const fmtTime = (ts) => { try { return new Date(ts).toLocaleString([], { month: 
 
 const MAX = 500;
 const POST_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+const REACTION_LABELS = { '👍': 'Like', '❤️': 'Love', '😂': 'Haha', '😮': 'Wow', '😢': 'Sad', '😡': 'Angry' };
+
+// Clean line thumbs-up (replaces the childish yellow 👍 for the default/Like state).
+function ThumbUp({ size = 17, color, filled }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? color : 'none'} stroke={color || 'currentColor'}
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+    </svg>
+  );
+}
 
 // Clean speech-bubble icon (replaces the childish 💬 emoji).
 function MsgIcon({ size = 18, color }) {
@@ -121,6 +132,9 @@ function PostCard({ post, me, onDelete }) {
   const [count, setCount] = useState(post.commentCount || 0);
   const [rx, setRx] = useState({ reactions: post.reactions || {}, total: post.reactionTotal || 0, mine: post.myReaction || null });
   const [reactOpen, setReactOpen] = useState(false);
+  const holdRef = useRef(null);
+  const startHold = () => { holdRef.current = setTimeout(() => setReactOpen(true), 350); };  // long-press (touch)
+  const cancelHold = () => { if (holdRef.current) clearTimeout(holdRef.current); };
 
   const react = async (emoji) => {
     if (!me.loggedIn) { window.location.href = '/sign-in'; return; }
@@ -168,28 +182,27 @@ function PostCard({ post, me, onDelete }) {
             </a>
           )}
           <div style={{ marginTop: 10, display: 'flex', gap: 14, alignItems: 'center' }}>
-            {/* reaction button + picker */}
-            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            {/* reaction button — click to Like, hover (desktop) or press-and-hold (mobile) to pick */}
+            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+              onMouseEnter={() => setReactOpen(true)} onMouseLeave={() => setReactOpen(false)}>
               <button onClick={() => react(rx.mine || '👍')}
+                onTouchStart={startHold} onTouchEnd={cancelHold} onTouchMove={cancelHold}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
                   color: rx.mine ? C.green : C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
-                <span style={{ fontSize: 17 }}>{rx.mine || '👍'}</span>
-                {rx.mine ? 'Reacted' : 'Like'}
+                {rx.mine && rx.mine !== '👍'
+                  ? <span style={{ fontSize: 16 }}>{rx.mine}</span>
+                  : <ThumbUp color={rx.mine === '👍' ? C.green : C.dim} filled={rx.mine === '👍'} />}
+                {rx.mine ? REACTION_LABELS[rx.mine] || 'Reacted' : 'Like'}
               </button>
-              <button onClick={() => setReactOpen((o) => !o)} aria-label="Pick a reaction"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 10, padding: '0 4px' }}>▾</button>
               {reactOpen && (
-                <>
-                  <div onClick={() => setReactOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
-                  <div style={{ position: 'absolute', bottom: '135%', left: 0, zIndex: 11, display: 'flex', gap: 2,
-                    background: C.white, border: `1px solid ${C.border}`, borderRadius: 22, padding: '5px 8px', boxShadow: '0 6px 18px rgba(0,0,0,0.16)' }}>
-                    {POST_REACTIONS.map((e) => (
-                      <button key={e} onClick={() => react(e)} title={e}
-                        style={{ background: rx.mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer',
-                          fontSize: 22, padding: '2px 4px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
-                    ))}
-                  </div>
-                </>
+                <div style={{ position: 'absolute', bottom: '135%', left: 0, zIndex: 11, display: 'flex', gap: 2,
+                  background: C.white, border: `1px solid ${C.border}`, borderRadius: 22, padding: '5px 8px', boxShadow: '0 6px 18px rgba(0,0,0,0.16)' }}>
+                  {POST_REACTIONS.map((e) => (
+                    <button key={e} onClick={() => react(e)} title={REACTION_LABELS[e]}
+                      style={{ background: rx.mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer',
+                        fontSize: 22, padding: '2px 4px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
+                  ))}
+                </div>
               )}
             </div>
             {rx.total > 0 && (
