@@ -65,17 +65,16 @@ export async function GET() {
     }
 
     return Response.json(
-      // Admin (ADMIN_EMAIL) can always post — the operator shouldn't need a Pro plan to talk.
-      { messages, me: { userId, tier, canPost: isPro || admin, admin, loggedIn: !!userId } },
+      // The Pit is open to all signed-in users — canPost = signed in.
+      { messages, me: { userId, tier, canPost: !!userId, admin, loggedIn: !!userId } },
       { headers: NO_STORE },
     );
   } catch (e) {
     console.log(`[pit_messages] GET failed: ${e.message}`);
     // Preserve login/admin context so the composer still resolves correctly, and surface the
     // error so we can diagnose (e.g. missing table on the connected DB branch).
-    const isPro = tier === 'pro' || tier === 'elite';
     return Response.json(
-      { messages: [], me: { userId, tier, canPost: isPro || admin, admin, loggedIn: !!userId }, error: e.message },
+      { messages: [], me: { userId, tier, canPost: !!userId, admin, loggedIn: !!userId }, error: e.message },
       { status: 200, headers: NO_STORE },
     );
   }
@@ -87,10 +86,9 @@ export async function POST(request) {
     const { userId } = await auth();
     if (!userId) return Response.json({ error: 'sign_in_required' }, { status: 401, headers: NO_STORE });
 
+    // The Pit is open to ALL signed-in users (free + pro). We still record the poster's tier so
+    // Pro members can be shown with a distinct name color in chat.
     const tier = await resolveUserTier();
-    const isPro = tier === 'pro' || tier === 'elite';
-    if (!isPro && !(await isAdminUser(userId)))   // admin bypasses the Pro gate
-      return Response.json({ error: 'pro_required' }, { status: 403, headers: NO_STORE });
 
     if (await rateLimited(`pit:rl:${userId}`))
       return Response.json({ error: 'rate_limited' }, { status: 429, headers: NO_STORE });
