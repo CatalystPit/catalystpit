@@ -103,11 +103,23 @@ export default function ProfileView({ handle }) {
                     <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
                       {p.xHandle && (
                         <a href={`https://x.com/${p.xHandle}`} target="_blank" rel="noopener noreferrer"
-                          style={{ fontSize: 12, color: C.green, textDecoration: 'none', fontWeight: 600 }}>𝕏 @{p.xHandle}</a>
+                          style={{ fontSize: 12, color: C.green, textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                          </svg>
+                          @{p.xHandle}
+                        </a>
                       )}
                       {p.igHandle && (
                         <a href={`https://instagram.com/${p.igHandle}`} target="_blank" rel="noopener noreferrer"
-                          style={{ fontSize: 12, color: C.green, textDecoration: 'none', fontWeight: 600 }}>📷 @{p.igHandle}</a>
+                          style={{ fontSize: 12, color: C.green, textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="2" y="2" width="20" height="20" rx="5.5" />
+                            <circle cx="12" cy="12" r="4" />
+                            <circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" stroke="none" />
+                          </svg>
+                          @{p.igHandle}
+                        </a>
                       )}
                     </div>
                   )}
