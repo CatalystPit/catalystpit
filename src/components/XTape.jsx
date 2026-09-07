@@ -52,7 +52,7 @@ function loadWidgets() {
   return widgetsPromise;
 }
 
-export default function XTape() {
+export default function XTape({ height = 620 }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
 
@@ -70,7 +70,7 @@ export default function XTape() {
           return twttr.widgets.createTimeline(
             { sourceType: 'list', id: LIST_ID },
             ref.current,
-            { theme: 'light', chrome: 'noheader nofooter transparent', height: 620 },
+            { theme: 'light', chrome: 'noheader nofooter transparent', height },
           );
         })
         .then((el) => {
