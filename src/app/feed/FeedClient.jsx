@@ -210,12 +210,12 @@ function PostCard({ post, me, onDelete }) {
                 <span style={{ fontSize: 13 }}>{topEmojis.slice(0, 3).join('')}</span>{rx.total}
               </span>
             )}
-            {/* comment */}
+            {/* comment — sits right next to the reaction, Facebook-style */}
             <button onClick={() => setOpen((o) => !o)}
-              style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+              style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
                 color: C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
               <MsgIcon size={18} />
-              {count > 0 && count}
+              Comment{count > 0 ? ` ${count}` : ''}
             </button>
           </div>
           {open && <CommentThread postId={post.id} me={me} onAdded={() => setCount((c) => c + 1)} onRemoved={() => setCount((c) => Math.max(0, c - 1))} />}

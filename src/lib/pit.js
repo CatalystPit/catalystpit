@@ -53,8 +53,8 @@ export async function ensurePitTables() {
   _ensured = true;
 }
 
-// Allowed reactions on chat messages. Chat UI uses just 👍 / 👎 (Facebook-style like/dislike).
-export const REACTIONS = ['👍', '👎'];
+// Allowed reactions on chat messages (mirrors the feed post reactions).
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
 
 // ── Ably (REST, server) — token minting + server-authoritative publish ──
 let _rest = null;

@@ -85,19 +85,20 @@ function Thumb({ down, size = 15, color, filled }) {
   );
 }
 
-// Apply a reaction delta to a message's reactions array (used for both optimistic + live updates).
-function applyReaction(m, emoji, delta, updateMine) {
-  const rx = [...(m.reactions || [])];
-  const i = rx.findIndex((r) => r.emoji === emoji);
-  if (i === -1) {
-    if (delta > 0) rx.push({ emoji, count: 1, mine: !!updateMine });
-  } else {
-    const count = rx[i].count + delta;
-    const mine = updateMine ? delta > 0 : rx[i].mine;
-    if (count <= 0) rx.splice(i, 1);
-    else rx[i] = { emoji, count, mine };
-  }
-  return { ...m, reactions: rx };
+// Reactions mirror the feed: one per user (mutually exclusive), pick via hover/hold.
+const CHAT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+const CHAT_LABELS = { '👍': 'Like', '❤️': 'Love', '😂': 'Haha', '😮': 'Wow', '😢': 'Sad', '😡': 'Angry' };
+
+const myReactionOf = (m) => (m.reactions || []).find((r) => r.mine)?.emoji || null;
+const reactionsFromCounts = (counts, myEmoji) =>
+  Object.entries(counts || {}).map(([emoji, count]) => ({ emoji, count, mine: emoji === myEmoji }));
+// Optimistic exclusive change: user switches from oldEmoji → newEmoji (either may be null).
+function applyExclusive(m, oldEmoji, newEmoji) {
+  const counts = {};
+  for (const r of (m.reactions || [])) counts[r.emoji] = r.count;
+  if (oldEmoji && counts[oldEmoji]) { counts[oldEmoji] -= 1; if (counts[oldEmoji] <= 0) delete counts[oldEmoji]; }
+  if (newEmoji) counts[newEmoji] = (counts[newEmoji] || 0) + 1;
+  return { ...m, reactions: reactionsFromCounts(counts, newEmoji) };
 }
 
 export default function PitChat({ height = 620, onClose }) {
@@ -108,9 +109,13 @@ export default function PitChat({ height = 620, onClose }) {
   const [input, setInput] = useState('');
   const [notice, setNotice] = useState('');
   const [showEmoji, setShowEmoji] = useState(false); // composer emoji palette
+  const [reactOpenId, setReactOpenId] = useState(null); // message whose reaction picker is open
   const listRef = useRef(null);
   const clientRef = useRef(null);
   const meIdRef = useRef(null);                       // stable userId for the live reaction handler
+  const holdRef = useRef(null);
+  const startHold = (id) => { holdRef.current = setTimeout(() => setReactOpenId(id), 350); };
+  const cancelHold = () => { if (holdRef.current) clearTimeout(holdRef.current); };
 
   const addMessage = useCallback((msg) => {
     if (!msg || msg.id == null) return;
@@ -150,7 +155,9 @@ export default function PitChat({ height = 620, onClose }) {
         channel.subscribe('reaction', (m) => {
           const d = m.data;
           if (!d || d.userId === meIdRef.current) return;   // our own change was applied optimistically
-          setMessages((prev) => prev.map((msg) => (msg.id === d.messageId ? applyReaction(msg, d.emoji, d.delta, false) : msg)));
+          // Broadcast carries aggregate counts; keep our own reaction flag intact.
+          setMessages((prev) => prev.map((msg) => (msg.id === d.messageId
+            ? { ...msg, reactions: reactionsFromCounts(d.counts, myReactionOf(msg)) } : msg)));
         });
 
         // presence — enter only if signed-in (anon has no clientId / presence capability)
@@ -205,14 +212,17 @@ export default function PitChat({ height = 620, onClose }) {
     } catch { setNotice('Could not send.'); }
   };
 
-  const toggleReaction = async (msg, emoji) => {
+  // Set (or toggle off) the user's single reaction on a message — mutually exclusive.
+  const setReaction = async (msg, emoji) => {
     if (!me.loggedIn) { setNotice('Sign in to react.'); return; }
-    const existing = (msg.reactions || []).find((r) => r.emoji === emoji);
-    const on = !(existing && existing.mine);
-    setMessages((prev) => prev.map((m) => (m.id === msg.id ? applyReaction(m, emoji, on ? 1 : -1, true) : m)));
-    setReactFor(null);
+    const mineNow = myReactionOf(msg);
+    const target = mineNow === emoji ? null : emoji;   // re-picking removes it
+    setMessages((prev) => prev.map((m) => (m.id === msg.id ? applyExclusive(m, mineNow, target) : m)));
+    setReactOpenId(null);
     try {
-      await fetch('/api/pit/react', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msg.id, emoji, on }) });
+      const r = await fetch('/api/pit/react', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: msg.id, emoji: target }) });
+      const j = await r.json();
+      if (j && j.counts) setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, reactions: reactionsFromCounts(j.counts, target) } : m)));
     } catch { /* optimistic already applied */ }
   };
 
@@ -295,20 +305,34 @@ export default function PitChat({ height = 620, onClose }) {
                 <Body text={m.body} />
               </div>
 
-              {/* Facebook-style row: like / dislike / reply */}
+              {/* Facebook-style row: Like (hover/hold → pick reaction) · Reply · summary */}
               {(() => {
-                const up = (m.reactions || []).find((r) => r.emoji === '👍');
-                const down = (m.reactions || []).find((r) => r.emoji === '👎');
-                const btn = { background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" };
+                const mine = myReactionOf(m);
+                const total = (m.reactions || []).reduce((s, r) => s + r.count, 0);
+                const emojis = (m.reactions || []).map((r) => r.emoji);
+                const btn = { background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" };
                 return (
-                  <div style={{ display: 'flex', gap: 16, marginTop: 5, alignItems: 'center' }}>
-                    <button onClick={() => toggleReaction(m, '👍')} style={{ ...btn, color: up?.mine ? C.green : C.dim }}>
-                      <Thumb color={up?.mine ? C.green : C.dim} filled={!!up?.mine} />{up?.count || ''}
-                    </button>
-                    <button onClick={() => toggleReaction(m, '👎')} style={{ ...btn, color: down?.mine ? C.red : C.dim }}>
-                      <Thumb down color={down?.mine ? C.red : C.dim} filled={!!down?.mine} />{down?.count || ''}
-                    </button>
+                  <div style={{ display: 'flex', gap: 14, marginTop: 5, alignItems: 'center' }}>
+                    <div style={{ position: 'relative', display: 'inline-flex' }}
+                      onMouseEnter={() => setReactOpenId(m.id)} onMouseLeave={() => setReactOpenId(null)}>
+                      <button onClick={() => setReaction(m, mine || '👍')}
+                        onTouchStart={() => startHold(m.id)} onTouchEnd={cancelHold} onTouchMove={cancelHold}
+                        style={{ ...btn, color: mine ? C.green : C.dim }}>
+                        {mine && mine !== '👍' ? <span style={{ fontSize: 14 }}>{mine}</span> : <Thumb color={mine === '👍' ? C.green : C.dim} filled={mine === '👍'} />}
+                        {mine ? CHAT_LABELS[mine] || 'Liked' : 'Like'}
+                      </button>
+                      {reactOpenId === m.id && (
+                        <div style={{ position: 'absolute', bottom: '150%', left: 0, zIndex: 11, display: 'flex', gap: 2,
+                          background: C.white, border: `1px solid ${C.border}`, borderRadius: 20, padding: '4px 7px', boxShadow: '0 6px 18px rgba(0,0,0,0.18)' }}>
+                          {CHAT_REACTIONS.map((e) => (
+                            <button key={e} onClick={() => setReaction(m, e)} title={CHAT_LABELS[e]}
+                              style={{ background: mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer', fontSize: 19, padding: '1px 3px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     {me.loggedIn && <button onClick={() => reply(m)} style={{ ...btn, color: C.dim }}>Reply</button>}
+                    {total > 0 && <span style={{ fontSize: 11, color: C.muted, display: 'inline-flex', alignItems: 'center', gap: 3 }}>{[...new Set(emojis)].slice(0, 3).join('')} {total}</span>}
                   </div>
                 );
               })()}
