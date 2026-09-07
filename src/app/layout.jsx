@@ -35,6 +35,9 @@ export default function RootLayout({ children }) {
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
           <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
           <style>{`
+            /* App shell shifts right to make room for the open Tape dock; --cp-tape is set
+               by XTapeDock (= panel width when open on desktop, 0px otherwise). */
+            #cp-shell { margin-left: var(--cp-tape, 0px); transition: margin-left 0.25s ease; }
             .cp-num {
               font-family: 'Inter', sans-serif !important;
               font-weight: 600 !important;
@@ -87,7 +90,13 @@ export default function RootLayout({ children }) {
           `}</style>
         </head>
         <body style={{ margin: 0, padding: 0 }}>
-          {children}
+          {/* App shell — pushed right by the open Tape dock (--cp-tape) so content never sits
+              under the panel. Block element, so the margin shrinks its width (no horizontal
+              scroll) and shifts the sticky nav/ticker with it. The dock renders OUTSIDE the
+              shell, so it stays pinned at the left edge. */}
+          <div id="cp-shell">
+            {children}
+          </div>
           <XTapeDock/>
         </body>
       </html>

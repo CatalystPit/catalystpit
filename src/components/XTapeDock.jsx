@@ -60,6 +60,13 @@ export default function XTapeDock() {
     return () => { mq.removeEventListener('change', applyMq); window.removeEventListener('resize', setH); };
   }, []);
 
+  // Drive the app-shell push: reserve the panel's width on desktop when open, 0 otherwise
+  // (mobile uses an overlay sheet, so it never pushes content).
+  useEffect(() => {
+    const w = (!mobile && open) ? `${panelW}px` : '0px';
+    document.documentElement.style.setProperty('--cp-tape', w);
+  }, [open, mobile, panelW]);
+
   const toggle = (next) => {
     const v = typeof next === 'boolean' ? next : !open;
     setOpen(v);
