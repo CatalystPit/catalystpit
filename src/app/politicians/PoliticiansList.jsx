@@ -189,24 +189,29 @@ export default function PoliticiansList() {
                 : (
                   <>
                     {members.map((m) => <MemberCard key={m.slug} m={m} />)}
-                    {/* Locked placeholder cards — no real member data (server sent none). */}
-                    {lockedCount > 0 && Array.from({ length: Math.min(lockedCount, 6) }).map((_, i) => (
-                      <LockedMemberCard key={`lock-${i}`} />
-                    ))}
                   </>
                 )}
           </div>
         )}
 
-        {/* Sign-in gate CTA (free login, not Pro) — only when members are locked (signed-out). */}
+        {/* Locked members — blurred teaser with the Pro unlock card overlaid on top. */}
         {!loading && !error && lockedCount > 0 && (
-          <div style={{ marginTop: 14, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 8 }}>
-            <span style={{ flex: 1, minWidth: 0, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.ink }}>
-              🔒 {lockedCount} more members — unlock the full list with Pro
-            </span>
-            <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-              Unlock Pro — $12/mo
-            </button>
+          <div style={{ position: 'relative', marginTop: 14, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+              {Array.from({ length: 6 }).map((_, i) => <LockedMemberCard key={`lock-${i}`} />)}
+            </div>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(245,246,243,0.6)', padding: 16 }}>
+              <div style={{ background: C.white, border: `1px solid ${C.greenBorder}`, borderRadius: 10, padding: '16px 22px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', justifyContent: 'center', boxShadow: '0 6px 24px rgba(0,0,0,0.12)', textAlign: 'center' }}>
+                <span style={{ fontSize: 20 }}>🔒</span>
+                <div>
+                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, color: C.ink }}>{lockedCount.toLocaleString()} more members</div>
+                  <div style={{ fontSize: 12, color: C.muted, fontWeight: 300 }}>Unlock every member&apos;s trades with Pro</div>
+                </div>
+                <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+                  Unlock Pro — $12/mo
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

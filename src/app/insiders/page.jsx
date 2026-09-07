@@ -345,37 +345,33 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
                     </tr>
                   ))}
-                  {/* Locked rows — blurred teaser (Pro unlocks). No real row data leaves the server. */}
-                  {lockedCount > 0 && Array.from({length: Math.min(lockedCount, 6)}).map((_, i) => (
-                    <tr key={`lock-${i}`} aria-hidden="true" style={{borderBottom:`1px solid ${C.surface}`, borderLeft:`3px solid ${C.border}`, filter:"blur(4px)", userSelect:"none", pointerEvents:"none", opacity:0.6}}>
-                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim}}>██████████</td>
-                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim}}>██████████</td>
-                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>████</td>
-                      <td style={{padding:"13px 16px",fontSize:13,color:C.text}}>████████ ███████</td>
-                      <td style={{padding:"13px 16px",fontSize:13,color:C.text}}>█████████</td>
-                      <td style={{padding:"13px 16px"}}><span style={{fontSize:10,padding:"3px 9px",borderRadius:3,fontFamily:"'DM Sans',sans-serif",fontWeight:600,background:C.greenLight,color:C.green}}>BUY</span></td>
-                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted}}>P</td>
-                      <td style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.text}}>███████</td>
-                      <td style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.muted}}>$████</td>
-                      <td style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:C.green}}>$██.█M</td>
-                    </tr>
-                  ))}
                 </tbody>
               </table>
               </div>
+              {lockedCount > 0 && (
+                <div style={{position:"relative", overflow:"hidden"}}>
+                  {Array.from({length:6}).map((_, i) => (
+                    <div key={i} style={{display:"flex", gap:16, alignItems:"center", padding:"13px 16px", borderTop:`1px solid ${C.surface}`, filter:"blur(4px)", userSelect:"none", pointerEvents:"none", opacity:0.55}}>
+                      <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim, width:78}}>██████████</div>
+                      <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:13, fontWeight:700, color:C.green, width:52}}>████</div>
+                      <div style={{fontSize:13, color:C.text, flex:1}}>████████ ██████</div>
+                      <span style={{fontSize:10, padding:"3px 9px", borderRadius:3, fontFamily:"'DM Sans',sans-serif", fontWeight:600, background:C.greenLight, color:C.green}}>BUY</span>
+                      <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:14, fontWeight:700, color:C.green, width:72, textAlign:"right"}}>$██.█M</div>
+                    </div>
+                  ))}
+                  <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(245,246,243,0.6)", padding:16}}>
+                    <div style={{background:C.white, border:`1px solid ${C.greenBorder}`, borderRadius:10, padding:"16px 22px", display:"flex", alignItems:"center", gap:14, flexWrap:"wrap", justifyContent:"center", boxShadow:"0 6px 24px rgba(0,0,0,0.12)", textAlign:"center"}}>
+                      <span style={{fontSize:20}}>🔒</span>
+                      <div>
+                        <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:14, fontWeight:700, color:C.ink}}>{lockedCount.toLocaleString()} more insider trades</div>
+                        <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Unlock the full history with Pro</div>
+                      </div>
+                      <button onClick={() => startCheckout()} style={{background:C.green, color:"#fff", border:"none", whiteSpace:"nowrap", padding:"10px 18px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif"}}>Unlock Pro — $12/mo</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-
-            {/* Sign-in gate CTA (free login, not Pro) — only when rows are locked (signed-out). */}
-            {lockedCount > 0 && (
-              <div style={{marginTop:12,padding:"14px 18px",display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8}}>
-                <span style={{flex:1,minWidth:0,fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.ink}}>
-                  🔒 {lockedCount} more insider trades — unlock the full list with Pro
-                </span>
-                <button onClick={() => startCheckout()} style={{background:C.green,color:"#fff",border:"none",whiteSpace:"nowrap",padding:"10px 18px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>
-                  Unlock Pro — $12/mo
-                </button>
-              </div>
-            )}
           </>
         )}
 

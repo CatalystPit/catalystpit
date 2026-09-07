@@ -157,7 +157,19 @@ export async function GET(request) {
     const tier = await resolveUserTier();
     const isPro = tier === 'pro' || tier === 'elite';
     const trades = isPro ? all : all.slice(0, FREE_PREVIEW_ROWS);
-    const lockedCount = isPro ? 0 : Math.max(0, all.length - FREE_PREVIEW_ROWS);
+    let lockedCount = 0;
+    if (!isPro) {
+      // True total for the view (unbounded by the display `limit`) so the upsell count is honest.
+      let fullCount = all.length;
+      try {
+        const cntWhere = conds.length ? (conds.length === 1 ? conds[0] : and(...conds)) : undefined;
+        let cq = db.select({ n: sql`count(*)`.mapWith(Number) }).from(insiderTrades);
+        if (cntWhere) cq = cq.where(cntWhere);
+        const [{ n }] = await cq;
+        fullCount = n;
+      } catch { /* fall back to fetched length */ }
+      lockedCount = Math.max(0, fullCount - FREE_PREVIEW_ROWS);
+    }
     console.log(`[insiders_api] view=${resolvedView} returned=${trades.length} locked=${lockedCount} tier=${tier}`);
     return Response.json({ view: resolvedView, count: trades.length, trades, lockedCount, tier, loggedIn }, { headers: NO_STORE });
   } catch (e) {
