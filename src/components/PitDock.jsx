@@ -35,7 +35,7 @@ export default function PitDock() {
     // Default: open on desktop for everyone, closed on mobile.
     setOpen(saved == null ? !mq.matches : saved === '1');
 
-    const setH = () => setVh(Math.max(360, window.innerHeight - 40));
+    const setH = () => setVh(Math.max(360, window.innerHeight));
     setH();
     window.addEventListener('resize', setH);
     return () => { mq.removeEventListener('change', applyMq); window.removeEventListener('resize', setH); };
@@ -100,10 +100,9 @@ export default function PitDock() {
 
       <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: PANEL_W, zIndex: 60,
         transform: open ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
-        padding: 8, boxSizing: 'border-box', overflow: 'hidden',
         boxShadow: open ? '-8px 0 24px rgba(0,0,0,0.12)' : 'none',
         pointerEvents: open ? 'auto' : 'none' }}>
-        {open && <PitChat height={vh - 16} onClose={() => toggle(false)} />}
+        {open && <PitChat height={vh} onClose={() => toggle(false)} />}
       </div>
     </>
   );
