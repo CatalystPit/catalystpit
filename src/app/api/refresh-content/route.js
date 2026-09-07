@@ -103,7 +103,23 @@ export async function GET(request) {
   } else {
     try {
       const enriched = await enrichNewsInBatches(newsArr);
-      await kvSet('catalystpit:top_stories', JSON.stringify(enriched));
+      // Claude is unreliable at echoing long image URLs — re-attach media/links from the ORIGINAL
+      // raw articles (matched on the verbatim title) so images/urls always survive enrichment.
+      const norm = (t) => String(t || '').trim().toLowerCase();
+      const origByTitle = new Map(newsArr.map((a) => [norm(a.title || a.headline), a]));
+      const merged = enriched.map((e) => {
+        const o = origByTitle.get(norm(e.title)) || {};
+        return {
+          ...e,
+          url: o.url || e.url || null,
+          image_url: o.image_url || o.imageUrl || o.image || e.image_url || null,
+          source: e.source || o.source || 'Market News',
+          published: o.published || e.published || null,
+        };
+      });
+      const withImg = merged.filter((m) => m.image_url).length;
+      console.log(`🖼️ top_stories: ${withImg}/${merged.length} have images after re-attach`);
+      await kvSet('catalystpit:top_stories', JSON.stringify(merged));
       results.refreshed.push('catalystpit:top_stories');
     } catch (e) {
       results.failed.push({ key:'catalystpit:top_stories', error:e.message });
