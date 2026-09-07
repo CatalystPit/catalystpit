@@ -216,7 +216,13 @@ export default function PitChat({ height = 620, onClose }) {
             <Avatar url={m.avatarUrl} name={m.username} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{m.username}</span>
+                {m.handle ? (
+                  <a href={`/u/${m.handle}`} style={{ fontSize: 12, fontWeight: 700, color: C.ink, textDecoration: 'none' }}>
+                    {m.username}
+                  </a>
+                ) : (
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{m.username}</span>
+                )}
                 <span style={{ fontSize: 10, color: C.dim }}>{fmtTime(m.createdAt)}</span>
                 <span className="pit-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 8, opacity: 0 }}>
                   {me.loggedIn && m.userId !== me.userId && (
@@ -268,7 +274,8 @@ export default function PitChat({ height = 620, onClose }) {
           </a>
         )}
         <div style={{ marginTop: 7, fontSize: 10, color: C.dim, textAlign: 'center', lineHeight: 1.4 }}>
-          Be civil. Not investment advice. Reported messages are reviewed.
+          Be civil. Not investment advice.
+          {me.loggedIn && <> · <a href="/settings/profile" style={{ color: C.muted, textDecoration: 'underline' }}>Your profile</a></>}
         </div>
       </div>
 

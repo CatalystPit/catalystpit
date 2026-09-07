@@ -187,6 +187,7 @@ export const pitMessages = pgTable('pit_messages', {
   id:        serial('id').primaryKey(),
   userId:    text('user_id').notNull(),                    // Clerk user ID (author)
   username:  text('username').notNull(),                   // display name at post time
+  handle:    text('handle'),                               // author @handle at post time (→ /u/handle)
   avatarUrl: text('avatar_url'),                           // Clerk imageUrl at post time
   tier:      text('tier'),                                 // 'pro' | 'elite' at post time
   body:      text('body').notNull(),                       // sanitized message text
@@ -194,6 +195,24 @@ export const pitMessages = pgTable('pit_messages', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   idxCreated: index('idx_pit_messages_created').on(t.createdAt),
+}));
+
+// ── Community profiles (Phase 2) ─────────────────────────────────────────────
+// One row per user — the social identity layer on top of Clerk. Auto-created with a default
+// handle on first activity; users then customize. `handle` is the public URL key (/u/handle).
+// `showWatchlist` is opt-in: a profile only exposes the user's watchlist when they enable it.
+export const pitProfiles = pgTable('pit_profiles', {
+  userId:        text('user_id').primaryKey(),          // Clerk user ID
+  handle:        text('handle').notNull(),              // unique public @handle (lowercased)
+  displayName:   text('display_name'),
+  bio:           text('bio'),
+  avatarUrl:     text('avatar_url'),                    // defaults to Clerk imageUrl
+  xHandle:       text('x_handle'),                      // optional link to their X
+  showWatchlist: boolean('show_watchlist').notNull().default(false),
+  createdAt:     timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uqHandle: uniqueIndex('uq_pit_profiles_handle').on(t.handle),
 }));
 
 // Message reports (any signed-in user can flag; admin reviews). Kept separate from

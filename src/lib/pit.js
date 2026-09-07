@@ -2,6 +2,7 @@ import { clerkClient } from '@clerk/nextjs/server';
 import { Rest } from 'ably';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
+import { getOrCreateProfile } from './profiles';
 
 // Server-side helpers for The Pit (live chat). Realtime transport = Ably; message history +
 // moderation live in Neon (see schema pitMessages/pitReports). Everything degrades gracefully
@@ -32,6 +33,7 @@ export async function ensurePitTables() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pit_messages_created ON pit_messages (created_at)`);
+  await db.execute(sql`ALTER TABLE pit_messages ADD COLUMN IF NOT EXISTS handle TEXT`);   // Phase 2
   await db.execute(sql`CREATE TABLE IF NOT EXISTS pit_reports (
     id SERIAL PRIMARY KEY,
     message_id INTEGER NOT NULL,
@@ -60,17 +62,17 @@ export async function pitPublish(event, data) {
   catch (e) { console.log(`[pit] publish ${event} failed: ${e.message}`); }
 }
 
-// ── Clerk identity snapshot ──
+// ── Identity snapshot (from the community profile — the source of truth since Phase 2) ──
 export async function getIdentity(userId) {
   try {
-    const u = await (await clerkClient()).users.getUser(userId);
-    const username =
-      u.username ||
-      [u.firstName, u.lastName].filter(Boolean).join(' ').trim() ||
-      'Trader';
-    return { username, avatarUrl: u.imageUrl || null };
+    const p = await getOrCreateProfile(userId);
+    return {
+      username: p.displayName || p.handle || 'Trader',
+      handle: p.handle || null,
+      avatarUrl: p.avatarUrl || null,
+    };
   } catch {
-    return { username: 'Trader', avatarUrl: null };
+    return { username: 'Trader', handle: null, avatarUrl: null };
   }
 }
 

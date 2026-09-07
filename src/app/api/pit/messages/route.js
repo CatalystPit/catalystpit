@@ -29,7 +29,7 @@ export async function GET() {
     await ensurePitTables();
     const rows = await db.select({
       id: pitMessages.id, userId: pitMessages.userId, username: pitMessages.username,
-      avatarUrl: pitMessages.avatarUrl, tier: pitMessages.tier,
+      handle: pitMessages.handle, avatarUrl: pitMessages.avatarUrl, tier: pitMessages.tier,
       body: pitMessages.body, createdAt: pitMessages.createdAt,
     })
       .from(pitMessages)
@@ -74,12 +74,12 @@ export async function POST(request) {
     const clean = sanitizeBody(body);
     if (!clean) return Response.json({ error: 'empty' }, { status: 400, headers: NO_STORE });
 
-    const { username, avatarUrl } = await getIdentity(userId);
+    const { username, handle, avatarUrl } = await getIdentity(userId);
     const [row] = await db.insert(pitMessages)
-      .values({ userId, username, avatarUrl, tier, body: clean })
+      .values({ userId, username, handle, avatarUrl, tier, body: clean })
       .returning({
         id: pitMessages.id, userId: pitMessages.userId, username: pitMessages.username,
-        avatarUrl: pitMessages.avatarUrl, tier: pitMessages.tier,
+        handle: pitMessages.handle, avatarUrl: pitMessages.avatarUrl, tier: pitMessages.tier,
         body: pitMessages.body, createdAt: pitMessages.createdAt,
       });
 
