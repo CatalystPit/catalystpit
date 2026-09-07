@@ -89,7 +89,10 @@ function Thumb({ down, size = 15, color, filled }) {
 const CHAT_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
 const CHAT_LABELS = { '👍': 'Like', '❤️': 'Love', '😂': 'Haha', '😮': 'Wow', '😢': 'Sad', '😡': 'Angry' };
 const PRO_GOLD = '#B8860B';
+const ADMIN_PURPLE = '#7C3AED';
 const isProTier = (t) => t === 'pro' || t === 'elite';
+const isAdminTier = (t) => t === 'admin';
+const nameColorFor = (t) => (isAdminTier(t) ? ADMIN_PURPLE : isProTier(t) ? PRO_GOLD : C.ink);
 
 const myReactionOf = (m) => (m.reactions || []).find((r) => r.mine)?.emoji || null;
 const reactionsFromCounts = (counts, myEmoji) =>
@@ -286,15 +289,17 @@ export default function PitChat({ height = 620, onClose }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
                 {m.handle ? (
-                  <a href={`/u/${m.handle}`} style={{ fontSize: 12, fontWeight: 700, color: isProTier(m.tier) ? PRO_GOLD : C.ink, textDecoration: 'none' }}>
+                  <a href={`/u/${m.handle}`} style={{ fontSize: 12, fontWeight: 700, color: nameColorFor(m.tier), textDecoration: 'none' }}>
                     {m.username}
                   </a>
                 ) : (
-                  <span style={{ fontSize: 12, fontWeight: 700, color: isProTier(m.tier) ? PRO_GOLD : C.ink }}>{m.username}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: nameColorFor(m.tier) }}>{m.username}</span>
                 )}
-                {isProTier(m.tier) && (
+                {isAdminTier(m.tier) ? (
+                  <span style={{ fontSize: 8, fontWeight: 800, color: '#fff', background: ADMIN_PURPLE, borderRadius: 3, padding: '1px 4px', letterSpacing: 0.5 }}>ADMIN</span>
+                ) : isProTier(m.tier) ? (
                   <span style={{ fontSize: 8, fontWeight: 800, color: '#fff', background: PRO_GOLD, borderRadius: 3, padding: '1px 4px', letterSpacing: 0.5 }}>PRO</span>
-                )}
+                ) : null}
                 {m.handle && (
                   <a href={`/u/${m.handle}`} style={{ fontSize: 10, color: C.dim, textDecoration: 'none' }}>@{m.handle}</a>
                 )}

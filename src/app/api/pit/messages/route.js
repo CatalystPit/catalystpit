@@ -99,8 +99,10 @@ export async function POST(request) {
     if (!clean) return Response.json({ error: 'empty' }, { status: 400, headers: NO_STORE });
 
     const { username, handle, avatarUrl } = await getIdentity(userId);
+    // Stamp the author's role for name-color: 'admin' (operator) > 'pro'/'elite' > 'free'.
+    const role = (await isAdminUser(userId)) ? 'admin' : tier;
     const [row] = await db.insert(pitMessages)
-      .values({ userId, username, handle, avatarUrl, tier, body: clean })
+      .values({ userId, username, handle, avatarUrl, tier: role, body: clean })
       .returning({
         id: pitMessages.id, userId: pitMessages.userId, username: pitMessages.username,
         handle: pitMessages.handle, avatarUrl: pitMessages.avatarUrl, tier: pitMessages.tier,

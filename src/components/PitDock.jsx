@@ -46,6 +46,13 @@ export default function PitDock() {
     document.documentElement.style.setProperty('--cp-pit', (!mobile && open) ? `${PANEL_W}px` : '0px');
   }, [open, mobile]);
 
+  // Let other components (e.g. the homepage "Join The Pit" widget) open the dock.
+  useEffect(() => {
+    const openIt = () => { setOpen(true); try { localStorage.setItem(PREF_KEY, '1'); } catch { /* ignore */ } };
+    window.addEventListener('cp-open-pit', openIt);
+    return () => window.removeEventListener('cp-open-pit', openIt);
+  }, []);
+
   const toggle = (next) => {
     const v = typeof next === 'boolean' ? next : !open;
     setOpen(v);

@@ -9,6 +9,7 @@ import {
   BrandStyles, Skel, Dot, NewsPhotoCard, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
 } from "../lib/cp-shared";
+import PitLiveCard from "./PitLiveCard";
 
 // Insider trades come from Postgres via /api/insiders (not KV). Homepage shows
 // only real BUY/SELL transactions (view=transactions), excluding OTHER grants.
@@ -553,6 +554,8 @@ export default function CatalystPit() {
         <div style={{display:"flex", flexDirection:"column", gap:14, minWidth:0}}>
 
           <CatalystBriefCard/>
+
+          <PitLiveCard/>
 
           <MarketSnapshotCard tickers={data?.tickers} loading={loading}/>
 
