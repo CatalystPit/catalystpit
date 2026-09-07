@@ -1,7 +1,7 @@
 'use client';
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo } from '../../../lib/cp-shared';
+import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../../lib/cp-shared';
 import TradingViewChart from '../../../components/TradingViewChart';
 import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
@@ -318,15 +318,46 @@ function InsiderTable({ rows }) {
   );
 }
 
-// Insider Trades tab — /api/insiders?ticker=.
+// Pro upsell strip — shown when a Free user hits a depth cap.
+function ProUpsell({ remaining, what }) {
+  return (
+    <div style={{ marginTop: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+      background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 8 }}>
+      <span style={{ flex: 1, minWidth: 0, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.ink }}>
+        🔒 {remaining} more {what} — unlock the full history with Pro.
+      </span>
+      <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap',
+        padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+        Unlock Pro — $12/mo
+      </button>
+    </div>
+  );
+}
+
+// Insider Trades tab — /api/insiders?ticker=. Free tier sees the latest 10; Pro unlocks full depth.
 function InsiderTab({ symbol, insider }) {
+  const [pro, setPro] = useState(null);   // null = tier unresolved
+  useEffect(() => {
+    let alive = true;
+    (async () => { try { const r = await fetch('/api/me/plan'); const j = r.ok ? await r.json() : null; if (alive) setPro(j?.tier === 'pro' || j?.tier === 'elite'); } catch { if (alive) setPro(false); } })();
+    return () => { alive = false; };
+  }, []);
   const loading = insider == null;
-  const rows = insider?.trades || [];
+  const all = insider?.trades || [];
+  const FREE = 10;
+  const isPro = pro === true;
+  const rows = isPro ? all : all.slice(0, FREE);
+  const locked = pro === false ? Math.max(0, all.length - FREE) : 0;
   return (
     <Section title="Insider trades">
       {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
-        : rows.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No insider trades on file for {symbol}.</div>
-        : <InsiderTable rows={rows} />}
+        : all.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No insider trades on file for {symbol}.</div>
+        : (
+          <>
+            <InsiderTable rows={rows} />
+            {locked > 0 && <ProUpsell remaining={locked} what="insider filings" />}
+          </>
+        )}
     </Section>
   );
 }
