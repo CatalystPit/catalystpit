@@ -415,8 +415,11 @@ export function NotificationBell() {
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
       <button onClick={toggle} aria-label="Notifications"
-        style={{ position: 'relative', background: 'transparent', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 17, padding: '4px 6px', lineHeight: 1 }}>
-        🔔
+        style={{ position: 'relative', background: 'transparent', border: 'none', cursor: 'pointer', color: '#fff', padding: '4px 6px', lineHeight: 0, display: 'inline-flex' }}>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </svg>
         {unread > 0 && (
           <span className="cp-num" style={{ position: 'absolute', top: -3, right: -3, background: '#E5484D', color: '#fff',
             borderRadius: 10, fontSize: 9, minWidth: 15, height: 15, padding: '0 3px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

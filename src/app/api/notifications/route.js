@@ -6,14 +6,15 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 // GET → the signed-in user's recent notifications + unread count.
 export async function GET() {
+  let userId = null;
+  try { ({ userId } = await auth()); } catch { /* signed out */ }
   try {
-    const { userId } = await auth();
-    if (!userId) return Response.json({ notifications: [], unread: 0 }, { headers: NO_STORE });
+    if (!userId) return Response.json({ notifications: [], unread: 0, loggedIn: false }, { headers: NO_STORE });
     const [notifications, unread] = await Promise.all([listNotifications(userId), unreadCount(userId)]);
-    return Response.json({ notifications, unread }, { headers: NO_STORE });
+    return Response.json({ notifications, unread, loggedIn: true }, { headers: NO_STORE });
   } catch (e) {
     console.log(`[notifications] GET failed: ${e.message}`);
-    return Response.json({ notifications: [], unread: 0 }, { status: 200, headers: NO_STORE });
+    return Response.json({ notifications: [], unread: 0, loggedIn: !!userId, error: e.message }, { status: 200, headers: NO_STORE });
   }
 }
 
