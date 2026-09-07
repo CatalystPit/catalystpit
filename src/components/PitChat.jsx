@@ -223,6 +223,9 @@ export default function PitChat({ height = 620, onClose }) {
                 ) : (
                   <span style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{m.username}</span>
                 )}
+                {m.handle && (
+                  <a href={`/u/${m.handle}`} style={{ fontSize: 10, color: C.dim, textDecoration: 'none' }}>@{m.handle}</a>
+                )}
                 <span style={{ fontSize: 10, color: C.dim }}>{fmtTime(m.createdAt)}</span>
                 <span className="pit-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 8, opacity: 0 }}>
                   {me.loggedIn && m.userId !== me.userId && (
