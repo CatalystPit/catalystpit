@@ -1,4 +1,5 @@
 import { ClerkProvider } from '@clerk/nextjs';
+import XTapeDock from '../components/XTapeDock';
 
 export const metadata = {
   title: 'CatalystPit — Live Market Intelligence',
@@ -87,6 +88,7 @@ export default function RootLayout({ children }) {
         </head>
         <body style={{ margin: 0, padding: 0 }}>
           {children}
+          <XTapeDock/>
         </body>
       </html>
     </ClerkProvider>

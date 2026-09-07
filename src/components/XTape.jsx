@@ -52,7 +52,7 @@ function loadWidgets() {
   return widgetsPromise;
 }
 
-export default function XTape({ height = 620 }) {
+export default function XTape({ height = 620, onClose }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
 
@@ -101,6 +101,13 @@ export default function XTape({ height = 620 }) {
             background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: '2px 6px' }}>
             VIA X
           </span>
+          {onClose && (
+            <button onClick={onClose} aria-label="Collapse tape"
+              style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
+                color: C.muted, fontSize: 16, lineHeight: 1, padding: '2px 4px' }}>
+              ✕
+            </button>
+          )}
         </div>
         <div style={{ marginTop: 5, fontSize: 11, fontWeight: 300, color: C.muted, lineHeight: 1.4 }}>
           Unverified social tape — mixes official prints and rumors. Not investment advice.
