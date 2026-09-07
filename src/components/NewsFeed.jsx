@@ -7,6 +7,7 @@ import {
   BrandStyles, Skel, Dot, TagBadge,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
 } from "../lib/cp-shared";
+import XTape from "./XTape";
 
 const LOCKED_PREVIEW_ROWS = 3; // how many faint placeholder rows to tease (CTA shows the true count)
 
@@ -379,6 +380,7 @@ export default function NewsFeed() {
             onQueryChange={setTickerQuery}
             trending={trendingTickers}
           />
+          <XTape/>
           <MarketSnapshotCard tickers={data?.tickers} loading={loading}/>
           <CatalystBriefCard/>
         </div>
