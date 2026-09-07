@@ -318,35 +318,55 @@ function InsiderTable({ rows }) {
   );
 }
 
-// Pro upsell strip — shown when a Free user hits a depth cap.
-function ProUpsell({ remaining, what }) {
+// Tier check — Pro/Elite unlock full depth. null while resolving.
+function usePro() {
+  const [pro, setPro] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => { try { const r = await fetch('/api/me/plan'); const j = r.ok ? await r.json() : null; if (alive) setPro(j?.tier === 'pro' || j?.tier === 'elite'); } catch { if (alive) setPro(false); } })();
+    return () => { alive = false; };
+  }, []);
+  return pro;
+}
+
+// Blurred locked rows + centered Pro unlock card — teaser after the free cap (not a hard cutoff).
+function LockedRows({ what, remaining }) {
   return (
-    <div style={{ marginTop: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-      background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 8 }}>
-      <span style={{ flex: 1, minWidth: 0, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.ink }}>
-        🔒 {remaining} more {what} — unlock the full history with Pro.
-      </span>
-      <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap',
-        padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-        Unlock Pro — $12/mo
-      </button>
+    <div style={{ position: 'relative', overflow: 'hidden' }}>
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} style={{ display: 'flex', gap: 16, alignItems: 'center', padding: '13px 16px', borderTop: `1px solid ${C.surface}`,
+          filter: 'blur(4px)', userSelect: 'none', pointerEvents: 'none', opacity: 0.55 }}>
+          <div style={{ width: 64, height: 12, background: C.border2, borderRadius: 4 }} />
+          <div style={{ flex: 1, height: 12, background: C.border, borderRadius: 4 }} />
+          <div style={{ width: 90, height: 12, background: C.border, borderRadius: 4 }} />
+          <div style={{ width: 60, height: 12, background: C.border2, borderRadius: 4 }} />
+        </div>
+      ))}
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(245,246,243,0.55)', padding: 12 }}>
+        <div style={{ background: C.white, border: `1px solid ${C.greenBorder}`, borderRadius: 8, padding: '12px 18px', display: 'flex', alignItems: 'center',
+          gap: 12, boxShadow: '0 4px 16px rgba(0,0,0,0.08)', flexWrap: 'wrap', justifyContent: 'center' }}>
+          <span style={{ fontSize: 16 }}>🔒</span>
+          <div>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.ink }}>{remaining} more {what}</div>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, fontWeight: 300 }}>Unlock the full history with Pro</div>
+          </div>
+          <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap',
+            padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+            Unlock Pro — $12/mo
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 // Insider Trades tab — /api/insiders?ticker=. Free tier sees the latest 10; Pro unlocks full depth.
 function InsiderTab({ symbol, insider }) {
-  const [pro, setPro] = useState(null);   // null = tier unresolved
-  useEffect(() => {
-    let alive = true;
-    (async () => { try { const r = await fetch('/api/me/plan'); const j = r.ok ? await r.json() : null; if (alive) setPro(j?.tier === 'pro' || j?.tier === 'elite'); } catch { if (alive) setPro(false); } })();
-    return () => { alive = false; };
-  }, []);
+  const pro = usePro();
   const loading = insider == null;
   const all = insider?.trades || [];
   const FREE = 10;
-  const isPro = pro === true;
-  const rows = isPro ? all : all.slice(0, FREE);
+  const rows = pro === true ? all : all.slice(0, FREE);
   const locked = pro === false ? Math.max(0, all.length - FREE) : 0;
   return (
     <Section title="Insider trades">
@@ -355,7 +375,7 @@ function InsiderTab({ symbol, insider }) {
         : (
           <>
             <InsiderTable rows={rows} />
-            {locked > 0 && <ProUpsell remaining={locked} what="insider filings" />}
+            {locked > 0 && <LockedRows what="insider filings" remaining={locked} />}
           </>
         )}
     </Section>
@@ -413,13 +433,22 @@ function GovTable({ rows }) {
 
 // Government Trades tab — /api/politicians?ticker=, with the killer return-since-trade column.
 function GovernmentTab({ symbol, gov }) {
+  const pro = usePro();
   const loading = gov == null;
-  const rows = gov?.trades || [];
+  const all = gov?.trades || [];
+  const FREE = 10;
+  const rows = pro === true ? all : all.slice(0, FREE);
+  const locked = pro === false ? Math.max(0, all.length - FREE) : 0;
   return (
     <Section title="Government trades">
       {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
-        : rows.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No government trades on file for {symbol}.</div>
-        : <GovTable rows={rows} />}
+        : all.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No government trades on file for {symbol}.</div>
+        : (
+          <>
+            <GovTable rows={rows} />
+            {locked > 0 && <LockedRows what="Congress trades" remaining={locked} />}
+          </>
+        )}
     </Section>
   );
 }
