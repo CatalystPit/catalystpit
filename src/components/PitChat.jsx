@@ -250,19 +250,19 @@ export default function PitChat({ height = 620, onClose }) {
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden',
       fontFamily: "'DM Sans',sans-serif", display: 'flex', flexDirection: 'column', height }}>
       {/* header */}
-      <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}`, display: 'flex',
+      <div style={{ padding: '12px 14px', background: C.green, display: 'flex',
         alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>The Pit</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>The Pit</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
-          color: live ? C.green : C.dim, fontWeight: 600 }}>
+          color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%',
-            background: live ? C.green : C.hint, display: 'inline-block' }} />
+            background: live ? '#7CFFB0' : 'rgba(255,255,255,0.5)', display: 'inline-block' }} />
           {online} online
         </span>
         {onClose && (
           <button onClick={onClose} aria-label="Collapse The Pit"
             style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
-              color: C.muted, fontSize: 16, lineHeight: 1, padding: '2px 4px' }}>✕</button>
+              color: '#fff', fontSize: 16, lineHeight: 1, padding: '2px 4px' }}>✕</button>
         )}
       </div>
 

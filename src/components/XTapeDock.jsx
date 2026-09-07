@@ -85,7 +85,9 @@ export default function XTapeDock() {
             borderRadius: '50%', background: C.green, color: '#fff', border: 'none', cursor: 'pointer',
             fontSize: 22, boxShadow: '0 4px 14px rgba(0,0,0,0.25)', display: open ? 'none' : 'flex',
             alignItems: 'center', justifyContent: 'center' }}>
-          ⚡
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+          </svg>
         </button>
         {open && (
           <div onClick={() => toggle(false)}
@@ -110,7 +112,9 @@ export default function XTapeDock() {
           alignItems: 'center', gap: 6, padding: '12px 7px', cursor: 'pointer',
           background: C.green, color: '#fff', border: 'none', borderRadius: '0 8px 8px 0',
           boxShadow: '2px 0 10px rgba(0,0,0,0.12)' }}>
-        <span style={{ fontSize: 16, lineHeight: 1 }}>⚡</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+        </svg>
         <span style={{ writingMode: 'vertical-rl', fontSize: 10,
           fontWeight: 700, letterSpacing: 1.5, fontFamily: "'DM Sans',sans-serif" }}>
           TAPE
