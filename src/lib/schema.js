@@ -227,6 +227,24 @@ export const pitMessageReactions = pgTable('pit_message_reactions', {
   idxMsg: index('idx_pit_reactions_msg').on(t.messageId),
 }));
 
+// ── Notifications (Phase 4) — one row per event delivered to a recipient ──
+// type: 'follow' | 'like' | 'comment'. Actor identity snapshotted for rendering without a join.
+export const pitNotifications = pgTable('pit_notifications', {
+  id:          serial('id').primaryKey(),
+  userId:      text('user_id').notNull(),          // recipient
+  actorUserId: text('actor_user_id'),
+  actorName:   text('actor_name'),
+  actorHandle: text('actor_handle'),
+  actorAvatar: text('actor_avatar'),
+  type:        text('type').notNull(),
+  postId:      integer('post_id'),
+  excerpt:     text('excerpt'),
+  read:        boolean('read').notNull().default(false),
+  createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxUser: index('idx_pit_notifs_user').on(t.userId, t.createdAt),
+}));
+
 // ── Follows (Phase 3) — directed edges: follower → following (both Clerk user IDs) ──
 export const pitFollows = pgTable('pit_follows', {
   followerId:  text('follower_id').notNull(),

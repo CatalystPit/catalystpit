@@ -386,6 +386,75 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
 }
 
 // ─── TOP NAV (sticky) ───────────────────────────────────────────────────────
+// Notification bell for the nav (signed-in). Polls unread count; opening marks all read.
+export function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const [list, setList] = useState([]);
+  const [unread, setUnread] = useState(0);
+
+  const load = async () => {
+    try {
+      const r = await fetch('/api/notifications', { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      if (j) { setList(j.notifications || []); setUnread(j.unread || 0); }
+    } catch { /* ignore */ }
+  };
+  useEffect(() => { load(); const id = setInterval(load, 60000); return () => clearInterval(id); }, []);
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && unread > 0) { setUnread(0); try { await fetch('/api/notifications', { method: 'POST' }); } catch { /* ignore */ } }
+  };
+
+  const verb = (n) => n.type === 'follow' ? 'followed you'
+    : n.type === 'like' ? 'liked your post'
+    : n.type === 'comment' ? 'commented on your post' : 'sent you an update';
+  const href = (n) => (n.type === 'follow' && n.actorHandle) ? `/u/${n.actorHandle}` : '/feed';
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex' }}>
+      <button onClick={toggle} aria-label="Notifications"
+        style={{ position: 'relative', background: 'transparent', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 17, padding: '4px 6px', lineHeight: 1 }}>
+        🔔
+        {unread > 0 && (
+          <span className="cp-num" style={{ position: 'absolute', top: -3, right: -3, background: '#E5484D', color: '#fff',
+            borderRadius: 10, fontSize: 9, minWidth: 15, height: 15, padding: '0 3px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
+          <div style={{ position: 'absolute', top: '135%', right: 0, width: 320, maxHeight: 420, overflowY: 'auto',
+            background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', zIndex: 201 }}>
+            <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
+              Notifications
+            </div>
+            {list.length === 0 ? (
+              <div style={{ padding: '24px 14px', textAlign: 'center', color: C.dim, fontSize: 12, fontFamily: "'DM Sans',sans-serif" }}>Nothing yet.</div>
+            ) : list.map((n) => (
+              <a key={n.id} href={href(n)}
+                style={{ display: 'flex', gap: 9, padding: '10px 14px', borderBottom: `1px solid ${C.surface}`,
+                  textDecoration: 'none', background: n.read ? C.white : C.greenLight, fontFamily: "'DM Sans',sans-serif" }}>
+                {n.actorAvatar
+                  ? <img src={n.actorAvatar} alt="" width={30} height={30} style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                  : <span style={{ width: 30, height: 30, borderRadius: '50%', background: C.green, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{(n.actorName || 'T').slice(0, 1).toUpperCase()}</span>}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.4 }}><b>{n.actorName}</b> {verb(n)}</div>
+                  {n.excerpt && <div style={{ fontSize: 11, color: C.muted, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>“{n.excerpt}”</div>}
+                  <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>{timeAgo(minsSince(n.createdAt))}</div>
+                </div>
+              </a>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
@@ -441,6 +510,7 @@ export function TopNav({ active }) {
           </a>
         </SignedOut>
         <SignedIn>
+          <NotificationBell/>
           <UserButton afterSignOutUrl="/" userProfileMode="navigation" userProfileUrl="/account" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
         </SignedIn>
 

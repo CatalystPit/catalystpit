@@ -2,6 +2,7 @@ import { sql, eq, and, desc, lt, inArray } from 'drizzle-orm';
 import { db } from './db';
 import { pitFollows, pitPosts, pitPostLikes, pitPostComments, pitProfiles } from './schema';
 import { sanitizeBody } from './pit';
+import { addNotification } from './notifications';
 
 // Follows + feed (Phase 3). Self-creates tables (immune to Neon-branch mismatch).
 
@@ -55,7 +56,8 @@ export async function ensureCommunityTables() {
 export async function followUser(followerId, followingId) {
   if (!followerId || !followingId || followerId === followingId) return;
   await ensureCommunityTables();
-  await db.insert(pitFollows).values({ followerId, followingId }).onConflictDoNothing();
+  const ins = await db.insert(pitFollows).values({ followerId, followingId }).onConflictDoNothing().returning({ f: pitFollows.followerId });
+  if (ins.length) await addNotification(followingId, followerId, 'follow');   // only on a NEW follow
 }
 export async function unfollowUser(followerId, followingId) {
   await ensureCommunityTables();
@@ -129,6 +131,8 @@ export async function toggleLike(postId, userId, on) {
     const ins = await db.insert(pitPostLikes).values({ postId, userId }).onConflictDoNothing().returning({ postId: pitPostLikes.postId });
     if (ins.length) {
       const [r] = await db.update(pitPosts).set({ likeCount: sql`${pitPosts.likeCount} + 1` }).where(eq(pitPosts.id, postId)).returning({ likeCount: pitPosts.likeCount });
+      const [post] = await db.select({ userId: pitPosts.userId, body: pitPosts.body }).from(pitPosts).where(eq(pitPosts.id, postId)).limit(1);
+      if (post) await addNotification(post.userId, userId, 'like', { postId, excerpt: post.body });
       return { liked: true, likeCount: r?.likeCount ?? null };
     }
   } else {
@@ -162,6 +166,8 @@ export async function addComment(postId, userId, identity, body) {
     avatarUrl: identity.avatarUrl || null, body: clean,
   }).returning();
   await db.update(pitPosts).set({ commentCount: sql`${pitPosts.commentCount} + 1` }).where(eq(pitPosts.id, postId));
+  const [post] = await db.select({ userId: pitPosts.userId }).from(pitPosts).where(eq(pitPosts.id, postId)).limit(1);
+  if (post) await addNotification(post.userId, userId, 'comment', { postId, excerpt: clean });
   return row;
 }
 
