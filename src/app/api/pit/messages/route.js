@@ -14,9 +14,16 @@ const HISTORY = 60;   // recent messages sent on open
 
 // GET — recent history (open to everyone) + the viewer's own context (can they post? are they admin?)
 export async function GET() {
+  // Resolve auth OUTSIDE the try so the response always reports login state even if the DB query
+  // fails (otherwise a query error looks like "signed out" to the client).
+  let userId = null;
+  try { ({ userId } = await auth()); } catch { /* signed out */ }
+
+  let tier = 'free';
+  let admin = false;
   try {
-    const { userId } = await auth();
-    const tier = await resolveUserTier();
+    tier = await resolveUserTier();
+    admin = userId ? await isAdminUser(userId) : false;
     const isPro = tier === 'pro' || tier === 'elite';
 
     const rows = await db.select({
@@ -30,8 +37,6 @@ export async function GET() {
       .limit(HISTORY);
 
     const messages = rows.reverse();   // oldest→newest for display
-    const admin = userId ? await isAdminUser(userId) : false;
-
     return Response.json(
       // Admin (ADMIN_EMAIL) can always post — the operator shouldn't need a Pro plan to talk.
       { messages, me: { userId, tier, canPost: isPro || admin, admin, loggedIn: !!userId } },
@@ -39,7 +44,13 @@ export async function GET() {
     );
   } catch (e) {
     console.log(`[pit_messages] GET failed: ${e.message}`);
-    return Response.json({ messages: [], me: { canPost: false } }, { status: 200, headers: NO_STORE });
+    // Preserve login/admin context so the composer still resolves correctly, and surface the
+    // error so we can diagnose (e.g. missing table on the connected DB branch).
+    const isPro = tier === 'pro' || tier === 'elite';
+    return Response.json(
+      { messages: [], me: { userId, tier, canPost: isPro || admin, admin, loggedIn: !!userId }, error: e.message },
+      { status: 200, headers: NO_STORE },
+    );
   }
 }
 
