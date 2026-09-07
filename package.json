@@ -10,6 +10,7 @@
   "dependencies": {
     "@clerk/nextjs": "^6.39.3",
     "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.8.0",
     "ably": "^2.28.0",
     "drizzle-orm": "^0.45.2",
     "lightweight-charts": "^5.2.0",

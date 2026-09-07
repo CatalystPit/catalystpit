@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
 
 const CASHTAG_RE = /\$[A-Za-z]{1,5}\b/g;
@@ -164,6 +164,20 @@ export default function FeedClient() {
   const [posting, setPosting] = useState(false);
   const [notice, setNotice] = useState('');
   const [more, setMore] = useState(false);
+  const [image, setImage] = useState(null);           // selected File
+  const [imagePreview, setImagePreview] = useState(null); // object URL
+  const fileRef = useRef(null);
+
+  const pickImage = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) { setNotice('Images only.'); return; }
+    if (f.size > 4 * 1024 * 1024) { setNotice('Image must be under 4MB.'); return; }
+    setNotice('');
+    setImage(f);
+    setImagePreview(URL.createObjectURL(f));
+  };
+  const clearImage = () => { setImage(null); setImagePreview(null); if (fileRef.current) fileRef.current.value = ''; };
 
   const load = useCallback(async (sc) => {
     setLoading(true);
@@ -193,14 +207,26 @@ export default function FeedClient() {
 
   const submit = async () => {
     const body = input.trim();
-    if (!body) return;
+    if (!body && !image) return;
     setPosting(true); setNotice('');
     try {
-      const r = await fetch('/api/feed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) });
+      let imageUrl = null;
+      if (image) {
+        const fd = new FormData();
+        fd.append('file', image);
+        const up = await fetch('/api/upload', { method: 'POST', body: fd });
+        if (!up.ok) {
+          const ej = await up.json().catch(() => ({}));
+          setNotice(ej.error === 'uploads_not_configured' ? 'Image uploads not set up yet.' : 'Image upload failed.');
+          setPosting(false); return;
+        }
+        imageUrl = (await up.json()).url;
+      }
+      const r = await fetch('/api/feed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body, imageUrl }) });
       if (r.status === 429) { setNotice('Slow down a moment.'); }
       else if (r.status === 403) { setNotice('Pro members only.'); }
       else if (!r.ok) { setNotice('Could not post.'); }
-      else { const j = await r.json(); if (j?.post) { setPosts((p) => [j.post, ...p]); setInput(''); } }
+      else { const j = await r.json(); if (j?.post) { setPosts((p) => [j.post, ...p]); setInput(''); clearImage(); } }
     } catch { setNotice('Could not post.'); }
     setPosting(false);
   };
@@ -248,12 +274,28 @@ export default function FeedClient() {
               <textarea value={input} onChange={(e) => setInput(e.target.value)} maxLength={MAX} rows={3}
                 placeholder="Share a thought…  ($NVDA tags a ticker)"
                 style={{ width: '100%', resize: 'vertical', border: 'none', outline: 'none', fontSize: 15, fontFamily: "'DM Sans',sans-serif", color: C.ink, boxSizing: 'border-box' }} />
+              {imagePreview && (
+                <div style={{ position: 'relative', marginTop: 8, display: 'inline-block' }}>
+                  <img src={imagePreview} alt="" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 8, border: `1px solid ${C.border}`, display: 'block' }} />
+                  <button onClick={clearImage} aria-label="Remove image"
+                    style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%', border: 'none',
+                      background: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>✕</button>
+                </div>
+              )}
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={pickImage} style={{ display: 'none' }} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                <button onClick={() => fileRef.current?.click()} title="Add a photo"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.green, fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
+                  </svg>
+                  Photo
+                </button>
                 <span style={{ fontSize: 11, color: C.dim }}>{input.length}/{MAX}</span>
                 {notice && <span style={{ fontSize: 12, color: C.muted }}>{notice}</span>}
-                <button onClick={submit} disabled={posting || !input.trim()}
-                  style={{ marginLeft: 'auto', background: input.trim() ? C.green : C.surface2, color: input.trim() ? '#fff' : C.dim,
-                    border: 'none', borderRadius: 6, padding: '9px 20px', fontSize: 13, fontWeight: 600, cursor: input.trim() ? 'pointer' : 'default' }}>
+                <button onClick={submit} disabled={posting || (!input.trim() && !image)}
+                  style={{ marginLeft: 'auto', background: (input.trim() || image) ? C.green : C.surface2, color: (input.trim() || image) ? '#fff' : C.dim,
+                    border: 'none', borderRadius: 6, padding: '9px 20px', fontSize: 13, fontWeight: 600, cursor: (input.trim() || image) ? 'pointer' : 'default' }}>
                   {posting ? 'Posting…' : 'Post'}
                 </button>
               </div>

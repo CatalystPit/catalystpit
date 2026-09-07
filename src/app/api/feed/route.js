@@ -44,9 +44,12 @@ export async function POST(request) {
     if (await rateLimited(`pit:feedrl:${userId}`))
       return Response.json({ error: 'rate_limited' }, { status: 429, headers: NO_STORE });
 
-    const { body } = await request.json().catch(() => ({}));
+    const { body, imageUrl } = await request.json().catch(() => ({}));
+    // Only accept an image URL we minted (Vercel Blob public host) — never an arbitrary URL.
+    const safeImage = (typeof imageUrl === 'string' && /^https:\/\/[a-z0-9.-]+\.public\.blob\.vercel-storage\.com\//.test(imageUrl))
+      ? imageUrl : null;
     const identity = await getIdentity(userId);
-    const post = await createPost(userId, identity, body);
+    const post = await createPost(userId, identity, body, safeImage);
     if (!post) return Response.json({ error: 'empty' }, { status: 400, headers: NO_STORE });
     return Response.json({ post }, { headers: NO_STORE });
   } catch (e) {
