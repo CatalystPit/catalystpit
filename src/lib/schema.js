@@ -275,9 +275,12 @@ export const pitPosts = pgTable('pit_posts', {
   idxUser:    index('idx_pit_posts_user').on(t.userId),
 }));
 
+// One reaction per user per post (Facebook-style — pk on post+user). `emoji` is the chosen
+// reaction (defaults to 👍); pit_posts.like_count = total reactions on the post.
 export const pitPostLikes = pgTable('pit_post_likes', {
   postId:    integer('post_id').notNull(),
   userId:    text('user_id').notNull(),
+  emoji:     text('emoji').notNull().default('👍'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.postId, t.userId] }),

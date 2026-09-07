@@ -37,6 +37,7 @@ export async function ensureCommunityTables() {
   )`);
   await db.execute(sql`ALTER TABLE pit_posts ADD COLUMN IF NOT EXISTS comment_count INTEGER NOT NULL DEFAULT 0`);
   await db.execute(sql`ALTER TABLE pit_posts ADD COLUMN IF NOT EXISTS image_url TEXT`);
+  await db.execute(sql`ALTER TABLE pit_post_likes ADD COLUMN IF NOT EXISTS emoji TEXT NOT NULL DEFAULT '👍'`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS pit_post_comments (
     id SERIAL PRIMARY KEY,
     post_id INTEGER NOT NULL,
@@ -85,7 +86,7 @@ export async function createPost(userId, identity, body, imageUrl = null) {
     userId, handle: identity.handle || null, username: identity.username || 'Trader',
     avatarUrl: identity.avatarUrl || null, body: clean || '', imageUrl: imageUrl || null,
   }).returning();
-  return { ...row, liked: false };
+  return { ...row, reactions: {}, reactionTotal: 0, myReaction: null };
 }
 
 export async function listFeed({ scope = 'global', viewerId = null, limit = 30, before = null } = {}) {
@@ -115,36 +116,65 @@ export async function listFeed({ scope = 'global', viewerId = null, limit = 30, 
     .leftJoin(pitProfiles, eq(pitProfiles.userId, pitPosts.userId))
     .where(and(...conds)).orderBy(desc(pitPosts.createdAt)).limit(limit);
 
-  // which of these has the viewer liked?
-  let likedSet = new Set();
-  if (viewerId && rows.length) {
-    const liked = await db.select({ postId: pitPostLikes.postId }).from(pitPostLikes)
-      .where(and(eq(pitPostLikes.userId, viewerId), inArray(pitPostLikes.postId, rows.map((r) => r.id))));
-    likedSet = new Set(liked.map((l) => l.postId));
+  // Reaction summary (counts by emoji + the viewer's own reaction) for these posts.
+  const ids = rows.map((r) => r.id);
+  const rx = {}; const mineMap = {};
+  if (ids.length) {
+    const counts = await db.select({ postId: pitPostLikes.postId, emoji: pitPostLikes.emoji, n: sql`count(*)`.mapWith(Number) })
+      .from(pitPostLikes).where(inArray(pitPostLikes.postId, ids)).groupBy(pitPostLikes.postId, pitPostLikes.emoji);
+    for (const c of counts) { (rx[c.postId] ||= { reactions: {}, total: 0 }); rx[c.postId].reactions[c.emoji] = c.n; rx[c.postId].total += c.n; }
+    if (viewerId) {
+      const mrows = await db.select({ postId: pitPostLikes.postId, emoji: pitPostLikes.emoji }).from(pitPostLikes)
+        .where(and(inArray(pitPostLikes.postId, ids), eq(pitPostLikes.userId, viewerId)));
+      for (const m of mrows) mineMap[m.postId] = m.emoji;
+    }
   }
-  return rows.map((r) => ({ ...r, liked: likedSet.has(r.id) }));
+  return rows.map((r) => ({
+    ...r,
+    reactions: rx[r.id]?.reactions || {},
+    reactionTotal: rx[r.id]?.total || 0,
+    myReaction: mineMap[r.id] || null,
+  }));
 }
 
-export async function toggleLike(postId, userId, on) {
+// Facebook-style reactions (one per user per post). emoji=null removes the reaction.
+export const POST_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+
+async function postReactionSummary(postId, viewerId) {
+  const counts = await db.select({ emoji: pitPostLikes.emoji, n: sql`count(*)`.mapWith(Number) })
+    .from(pitPostLikes).where(eq(pitPostLikes.postId, postId)).groupBy(pitPostLikes.emoji);
+  let mine = null;
+  if (viewerId) {
+    const [m] = await db.select({ emoji: pitPostLikes.emoji }).from(pitPostLikes)
+      .where(and(eq(pitPostLikes.postId, postId), eq(pitPostLikes.userId, viewerId))).limit(1);
+    mine = m?.emoji || null;
+  }
+  const reactions = {}; let total = 0;
+  for (const c of counts) { reactions[c.emoji] = c.n; total += c.n; }
+  return { reactions, total, mine };
+}
+
+export async function setPostReaction(postId, userId, emoji) {
   await ensureCommunityTables();
-  if (on) {
-    const ins = await db.insert(pitPostLikes).values({ postId, userId }).onConflictDoNothing().returning({ postId: pitPostLikes.postId });
-    if (ins.length) {
-      const [r] = await db.update(pitPosts).set({ likeCount: sql`${pitPosts.likeCount} + 1` }).where(eq(pitPosts.id, postId)).returning({ likeCount: pitPosts.likeCount });
+  const [existing] = await db.select({ emoji: pitPostLikes.emoji }).from(pitPostLikes)
+    .where(and(eq(pitPostLikes.postId, postId), eq(pitPostLikes.userId, userId))).limit(1);
+
+  if (emoji && POST_REACTIONS.includes(emoji)) {
+    if (existing) {
+      if (existing.emoji !== emoji) {
+        await db.update(pitPostLikes).set({ emoji }).where(and(eq(pitPostLikes.postId, postId), eq(pitPostLikes.userId, userId)));
+      }
+    } else {
+      await db.insert(pitPostLikes).values({ postId, userId, emoji }).onConflictDoNothing();
+      await db.update(pitPosts).set({ likeCount: sql`${pitPosts.likeCount} + 1` }).where(eq(pitPosts.id, postId));
       const [post] = await db.select({ userId: pitPosts.userId, body: pitPosts.body }).from(pitPosts).where(eq(pitPosts.id, postId)).limit(1);
       if (post) await addNotification(post.userId, userId, 'like', { postId, excerpt: post.body });
-      return { liked: true, likeCount: r?.likeCount ?? null };
     }
-  } else {
-    const del = await db.delete(pitPostLikes).where(and(eq(pitPostLikes.postId, postId), eq(pitPostLikes.userId, userId))).returning({ postId: pitPostLikes.postId });
-    if (del.length) {
-      const [r] = await db.update(pitPosts).set({ likeCount: sql`GREATEST(${pitPosts.likeCount} - 1, 0)` }).where(eq(pitPosts.id, postId)).returning({ likeCount: pitPosts.likeCount });
-      return { liked: false, likeCount: r?.likeCount ?? null };
-    }
+  } else if (existing) {
+    await db.delete(pitPostLikes).where(and(eq(pitPostLikes.postId, postId), eq(pitPostLikes.userId, userId)));
+    await db.update(pitPosts).set({ likeCount: sql`GREATEST(${pitPosts.likeCount} - 1, 0)` }).where(eq(pitPosts.id, postId));
   }
-  // no-op (already in desired state) → return current count
-  const [r] = await db.select({ likeCount: pitPosts.likeCount }).from(pitPosts).where(eq(pitPosts.id, postId));
-  return { liked: on, likeCount: r?.likeCount ?? null };
+  return postReactionSummary(postId, userId);
 }
 
 export async function deletePost(postId, userId, isAdmin) {

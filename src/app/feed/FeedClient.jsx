@@ -24,6 +24,17 @@ function Avatar({ url, name, size = 40 }) {
 const fmtTime = (ts) => { try { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
 
 const MAX = 500;
+const POST_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+
+// Clean speech-bubble icon (replaces the childish 💬 emoji).
+function MsgIcon({ size = 18, color }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || 'currentColor'}
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  );
+}
 
 // Expandable comment thread under a post. Loads on open; Pro/admin can add, author/admin can delete.
 function CommentThread({ postId, me, onAdded, onRemoved }) {
@@ -105,9 +116,31 @@ function CommentThread({ postId, me, onAdded, onRemoved }) {
   );
 }
 
-function PostCard({ post, me, onLike, onDelete }) {
+function PostCard({ post, me, onDelete }) {
   const [open, setOpen] = useState(false);
   const [count, setCount] = useState(post.commentCount || 0);
+  const [rx, setRx] = useState({ reactions: post.reactions || {}, total: post.reactionTotal || 0, mine: post.myReaction || null });
+  const [reactOpen, setReactOpen] = useState(false);
+
+  const react = async (emoji) => {
+    if (!me.loggedIn) { window.location.href = '/sign-in'; return; }
+    const target = rx.mine === emoji ? null : emoji;   // re-picking your reaction removes it
+    setRx((prev) => {
+      const reactions = { ...prev.reactions };
+      let total = prev.total;
+      if (prev.mine) { reactions[prev.mine] = (reactions[prev.mine] || 1) - 1; if (reactions[prev.mine] <= 0) delete reactions[prev.mine]; total -= 1; }
+      if (target) { reactions[target] = (reactions[target] || 0) + 1; total += 1; }
+      return { reactions, total, mine: target };
+    });
+    setReactOpen(false);
+    try {
+      const r = await fetch('/api/feed/like', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ postId: post.id, emoji: target }) });
+      const j = await r.json();
+      if (j && j.reactions) setRx({ reactions: j.reactions, total: j.total, mine: j.mine });
+    } catch { /* optimistic already applied */ }
+  };
+  const topEmojis = Object.keys(rx.reactions);
+
   return (
     <div className="feed-post" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
       <div style={{ display: 'flex', gap: 11 }}>
@@ -134,17 +167,41 @@ function PostCard({ post, me, onLike, onDelete }) {
               <img src={post.imageUrl} alt="" style={{ maxWidth: '100%', borderRadius: 8, border: `1px solid ${C.border}` }} />
             </a>
           )}
-          <div style={{ marginTop: 9, display: 'flex', gap: 18, alignItems: 'center' }}>
-            <button onClick={() => onLike(post)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
-                color: post.liked ? C.red : C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
-              <span style={{ fontSize: 15 }}>{post.liked ? '♥' : '♡'}</span>
-              {post.likeCount > 0 && post.likeCount}
-            </button>
+          <div style={{ marginTop: 10, display: 'flex', gap: 14, alignItems: 'center' }}>
+            {/* reaction button + picker */}
+            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+              <button onClick={() => react(rx.mine || '👍')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                  color: rx.mine ? C.green : C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
+                <span style={{ fontSize: 17 }}>{rx.mine || '👍'}</span>
+                {rx.mine ? 'Reacted' : 'Like'}
+              </button>
+              <button onClick={() => setReactOpen((o) => !o)} aria-label="Pick a reaction"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 10, padding: '0 4px' }}>▾</button>
+              {reactOpen && (
+                <>
+                  <div onClick={() => setReactOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
+                  <div style={{ position: 'absolute', bottom: '135%', left: 0, zIndex: 11, display: 'flex', gap: 2,
+                    background: C.white, border: `1px solid ${C.border}`, borderRadius: 22, padding: '5px 8px', boxShadow: '0 6px 18px rgba(0,0,0,0.16)' }}>
+                    {POST_REACTIONS.map((e) => (
+                      <button key={e} onClick={() => react(e)} title={e}
+                        style={{ background: rx.mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer',
+                          fontSize: 22, padding: '2px 4px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            {rx.total > 0 && (
+              <span style={{ fontSize: 12, color: C.muted, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ fontSize: 13 }}>{topEmojis.slice(0, 3).join('')}</span>{rx.total}
+              </span>
+            )}
+            {/* comment */}
             <button onClick={() => setOpen((o) => !o)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
                 color: C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
-              <span style={{ fontSize: 14 }}>💬</span>
+              <MsgIcon size={18} />
               {count > 0 && count}
             </button>
           </div>
@@ -235,16 +292,6 @@ export default function FeedClient() {
     setPosting(false);
   };
 
-  const like = async (post) => {
-    if (!me.loggedIn) { setNotice('Sign in to like.'); return; }
-    const on = !post.liked;
-    setPosts((p) => p.map((x) => x.id === post.id ? { ...x, liked: on, likeCount: Math.max(0, (x.likeCount || 0) + (on ? 1 : -1)) } : x));
-    try {
-      const r = await fetch('/api/feed/like', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ postId: post.id, on }) });
-      const j = await r.json();
-      if (j && j.likeCount != null) setPosts((p) => p.map((x) => x.id === post.id ? { ...x, liked: j.liked, likeCount: j.likeCount } : x));
-    } catch { /* optimistic already applied */ }
-  };
 
   const del = async (id) => {
     try { const r = await fetch(`/api/feed?id=${id}`, { method: 'DELETE' }); if (r.ok) setPosts((p) => p.filter((x) => x.id !== id)); } catch { /* ignore */ }
@@ -279,11 +326,14 @@ export default function FeedClient() {
                 placeholder="Share a thought…  ($NVDA tags a ticker)"
                 style={{ width: '100%', resize: 'vertical', border: 'none', outline: 'none', fontSize: 15, fontFamily: "'DM Sans',sans-serif", color: C.ink, boxSizing: 'border-box' }} />
               {imagePreview && (
-                <div style={{ position: 'relative', marginTop: 8, display: 'inline-block' }}>
-                  <img src={imagePreview} alt="" style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 8, border: `1px solid ${C.border}`, display: 'block' }} />
-                  <button onClick={clearImage} aria-label="Remove image"
-                    style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%', border: 'none',
-                      background: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>✕</button>
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginBottom: 4 }}>PREVIEW — not posted yet</div>
+                  <div style={{ position: 'relative', display: 'inline-block' }}>
+                    <img src={imagePreview} alt="" style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 8, border: `1px solid ${C.border}`, display: 'block' }} />
+                    <button onClick={clearImage} aria-label="Remove image"
+                      style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: '50%', border: 'none',
+                        background: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>✕</button>
+                  </div>
                 </div>
               )}
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={pickImage} style={{ display: 'none' }} />
@@ -325,7 +375,7 @@ export default function FeedClient() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {posts.map((post) => (
-              <PostCard key={post.id} post={post} me={me} onLike={like} onDelete={del} />
+              <PostCard key={post.id} post={post} me={me} onDelete={del} />
             ))}
             {more && (
               <button onClick={loadMore} style={{ background: C.white, border: `1px solid ${C.border}`, color: C.ink, borderRadius: 8, padding: '10px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
