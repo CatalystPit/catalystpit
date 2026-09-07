@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { C } from '../lib/cp-shared';
+import { openPitDock } from '../lib/pitDockBus';
 
 const PRO_GOLD = '#B8860B';
 const ADMIN_PURPLE = '#7C3AED';
@@ -41,7 +42,7 @@ export default function PitLiveCard() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  const openPit = () => { try { window.dispatchEvent(new Event('cp-open-pit')); } catch { /* ignore */ } };
+  const openPit = () => openPitDock();
 
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden', fontFamily: "'DM Sans',sans-serif" }}>

@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import PitChat from './PitChat';
 import { C } from '../lib/cp-shared';
+import { onOpenPitDock } from '../lib/pitDockBus';
 
 const PANEL_W = 330;
 const MOBILE_Q = '(max-width: 860px)';
@@ -47,11 +48,10 @@ export default function PitDock() {
   }, [open, mobile]);
 
   // Let other components (e.g. the homepage "Join The Pit" widget) open the dock.
-  useEffect(() => {
-    const openIt = () => { setOpen(true); try { localStorage.setItem(PREF_KEY, '1'); } catch { /* ignore */ } };
-    window.addEventListener('cp-open-pit', openIt);
-    return () => window.removeEventListener('cp-open-pit', openIt);
-  }, []);
+  useEffect(() => onOpenPitDock(() => {
+    setOpen(true);
+    try { localStorage.setItem(PREF_KEY, '1'); } catch { /* ignore */ }
+  }), []);
 
   const toggle = (next) => {
     const v = typeof next === 'boolean' ? next : !open;
