@@ -62,10 +62,16 @@ async function resolveCik(fund) {
   let cik = fund.cik ? unpad(fund.cik) : (cached || null);
 
   if (!cik) {
-    // EDGAR company search (atom) → first CIK that files 13F-HR.
-    const atom = await secText(`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=${encodeURIComponent(fund.secName)}&type=13F-HR&dateb=&owner=include&count=5&output=atom`);
-    const m = atom && atom.match(/<CIK>(\d+)<\/CIK>/i);
-    if (m) cik = unpad(m[1]);
+    // EDGAR company search matches on a "starts-with" of the entity name, so search WITHOUT the
+    // trailing legal suffix (LLC / L.P. / LTD / Inc …) — those often differ from what EDGAR stores.
+    const q = String(fund.secName || '').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim()
+      .replace(/\s+(l\s*p|llc|llp|inc|ltd|corp|co|lllp)\s*$/i, '').trim();
+    for (const name of [q, fund.secName]) {
+      const atom = await secText(`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=${encodeURIComponent(name)}&type=13F-HR&dateb=&owner=include&count=10&output=atom`);
+      const m = atom && (atom.match(/<cik>(\d+)<\/cik>/i) || atom.match(/CIK=(\d{4,10})/i));
+      if (m) { cik = unpad(m[1]); break; }
+      await sleep(120);
+    }
   }
   if (!cik) return null;
 
