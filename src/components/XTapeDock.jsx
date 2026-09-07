@@ -13,14 +13,27 @@
 //   open (don't auto-load the embed for mobile visitors who never open it).
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import XTape from './XTape';
 import { C } from '../lib/cp-shared';
 
-const PANEL_W = 300;
 const MOBILE_Q = '(max-width: 860px)';
 const PREF_KEY = 'cp_tape_open';
 
+// Per-page panel width. These pages run content/headers close to the left edge, so a slimmer
+// panel keeps the overlap off them; Home/News have room, so they stay comfortable.
+function widthForPath(p) {
+  if (!p) return 300;
+  if (p.startsWith('/ticker'))      return 250;
+  if (p.startsWith('/screener'))    return 250;
+  if (p.startsWith('/insiders'))    return 262;
+  if (p.startsWith('/politicians')) return 276;
+  return 300;
+}
+
 export default function XTapeDock() {
+  const pathname = usePathname();
+  const panelW = widthForPath(pathname);
   const [ready, setReady] = useState(false);   // client-mounted (dock is client-only chrome)
   const [mobile, setMobile] = useState(false);
   const [open, setOpen] = useState(false);
@@ -85,7 +98,7 @@ export default function XTapeDock() {
   return (
     <>
       <button onClick={() => toggle()} aria-label={open ? 'Collapse the Tape' : 'Open the Tape'}
-        style={{ position: 'fixed', top: '50%', left: open ? PANEL_W : 0, transform: 'translateY(-50%)',
+        style={{ position: 'fixed', top: '50%', left: open ? panelW : 0, transform: 'translateY(-50%)',
           zIndex: 61, transition: 'left 0.25s ease', display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: 6, padding: '12px 7px', cursor: 'pointer',
           background: C.green, color: '#fff', border: 'none', borderRadius: '0 8px 8px 0',
@@ -98,7 +111,7 @@ export default function XTapeDock() {
       </button>
 
       {mounted && (
-        <div style={{ position: 'fixed', top: 0, left: 0, bottom: 0, width: PANEL_W, zIndex: 60,
+        <div style={{ position: 'fixed', top: 0, left: 0, bottom: 0, width: panelW, zIndex: 60,
           transform: open ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 0.25s ease',
           background: C.bg, borderRight: `1px solid ${C.border}`, overflowY: 'auto',
           boxShadow: open ? '8px 0 24px rgba(0,0,0,0.12)' : 'none' }}>
