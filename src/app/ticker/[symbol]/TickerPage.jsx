@@ -84,6 +84,7 @@ const TABS = [
   { id: 'insider',    label: 'Insider Trades' },
   { id: 'short',      label: 'Short Interest' },
   { id: 'government', label: 'Government Trades' },
+  { id: 'institutions', label: 'Institutions' },
   { id: 'financials', label: 'Financials' },
 ];
 const PLACEHOLDERS = {
@@ -878,6 +879,68 @@ function OverviewTab({ data, insider, gov, onTab }) {
   );
 }
 
+// Institutions tab — which tracked funds hold this ticker (reverse 13F view). Self-fetches.
+function InstitutionsTab({ symbol }) {
+  const [state, setState] = useState({ loading: true, error: false, funds: [] });
+  useEffect(() => {
+    let alive = true;
+    setState({ loading: true, error: false, funds: [] });
+    (async () => {
+      try {
+        const r = await fetch(`/api/institutions?ticker=${encodeURIComponent(symbol)}`);
+        const j = r.ok ? await r.json() : null;
+        if (!alive) return;
+        if (!j || j.error) setState({ loading: false, error: true, funds: [] });
+        else setState({ loading: false, error: false, funds: j.funds || [] });
+      } catch { if (alive) setState({ loading: false, error: true, funds: [] }); }
+    })();
+    return () => { alive = false; };
+  }, [symbol]);
+
+  const { loading, error, funds } = state;
+  return (
+    <Section title="Institutional holders" badge="13F · SEC">
+      {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
+        : error ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>Couldn&apos;t load institutional holders right now.</div>
+        : funds.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>None of the funds we track report holding {symbol}.</div>
+        : (
+          <>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+                <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+                  {[['Fund', 'left'], ['Shares', 'right'], ['Value', 'right'], ['% of fund', 'right'], ['As of', 'right']].map(([h, al]) => (
+                    <th key={h} style={{ padding: '8px 16px', textAlign: al, fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {funds.map((f, i) => {
+                    const put = /put/i.test(f.putCall || ''); const call = /call/i.test(f.putCall || '');
+                    return (
+                      <tr key={i} style={{ borderBottom: i < funds.length - 1 ? `1px solid ${C.surface}` : 'none' }}>
+                        <td style={{ padding: '11px 16px' }}>
+                          <a href={`/institutions/${f.slug}`} className="sym-lnk" style={{ color: C.ink, textDecoration: 'none', fontWeight: 600, fontSize: 13 }}>{f.label}</a>
+                          {(put || call) && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 3, marginLeft: 6, background: put ? C.redLight : C.greenLight, color: put ? C.red : C.green }}>{f.putCall.toUpperCase()}</span>}
+                          <div style={{ fontSize: 11, color: C.muted, fontWeight: 300 }}>{f.manager}</div>
+                        </td>
+                        <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtShares(f.shares)}</td>
+                        <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap' }}>{fmtBig(f.value)}</td>
+                        <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{f.pctPort != null ? `${f.pctPort}%` : '—'}</td>
+                        <td className="cp-num" style={{ padding: '11px 16px', textAlign: 'right', fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{fmtDateLong(f.quarter)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
+              From the managers we track on <a href="/institutions" style={{ color: C.green, textDecoration: 'none' }}>Institutions</a> — each fund&apos;s latest 13F (reported up to 45 days after quarter-end). PUT/CALL = options positions (bearish/bullish), not share ownership. Not financial advice.
+            </div>
+          </>
+        )}
+    </Section>
+  );
+}
+
 function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
   if (tab === 'overview') return <OverviewTab data={data} insider={insider} gov={gov} onTab={onTab} />;
   if (tab === 'news') return <NewsTab data={data} />;
@@ -886,6 +949,7 @@ function TabContent({ tab, data, insider, gov, earnings, short, onTab }) {
   if (tab === 'earnings') return <EarningsTab symbol={data.symbol} earnings={earnings} />;
   if (tab === 'insider') return <InsiderTab symbol={data.symbol} insider={insider} />;
   if (tab === 'government') return <GovernmentTab symbol={data.symbol} gov={gov} />;
+  if (tab === 'institutions') return <InstitutionsTab symbol={data.symbol} />;
   if (tab === 'short') return <ShortInterestTab symbol={data.symbol} short={short} />;
   if (tab === 'financials') return <FinancialsTab symbol={data.symbol} />;
   if (PLACEHOLDERS[tab]) {

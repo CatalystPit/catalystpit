@@ -123,10 +123,48 @@ async function detailView(slug) {
   };
 }
 
+// Reverse map cik → tracked fund (config cik or the cron's KV-cached resolution).
+async function buildCikToFund() {
+  const ciks = await Promise.all(INSTITUTIONS.map(cikFor));
+  const map = {};
+  INSTITUTIONS.forEach((f, i) => { if (ciks[i]) map[ciks[i]] = { slug: f.slug, label: f.label, manager: f.manager }; });
+  return map;
+}
+
+// Which tracked funds hold a given ticker (in each fund's LATEST filed quarter).
+async function tickerView(ticker) {
+  const holds = await db.select({ cik: fundHoldings.cik, quarter: fundHoldings.quarter, shares: fundHoldings.shares, value: fundHoldings.value, putCall: fundHoldings.putCall })
+    .from(fundHoldings).where(eq(fundHoldings.ticker, ticker));
+  if (!holds.length) return { ticker, funds: [], count: 0 };
+
+  const ciks = [...new Set(holds.map((h) => h.cik))];
+  const latest = await db.selectDistinctOn([fundFilings.cik], { cik: fundFilings.cik, quarter: fundFilings.quarter, totalValue: fundFilings.totalValue })
+    .from(fundFilings).where(inArray(fundFilings.cik, ciks)).orderBy(fundFilings.cik, desc(fundFilings.quarter));
+  const latestByCik = Object.fromEntries(latest.map((r) => [r.cik, r]));
+  const cikToFund = await buildCikToFund();
+
+  const funds = [];
+  for (const h of holds) {
+    const lq = latestByCik[h.cik];
+    if (!lq || h.quarter !== lq.quarter) continue;      // only each fund's current quarter
+    const f = cikToFund[h.cik];
+    if (!f) continue;                                    // not a tracked fund (e.g. removed)
+    funds.push({
+      slug: f.slug, label: f.label, manager: f.manager,
+      shares: h.shares, value: h.value, putCall: h.putCall, quarter: h.quarter,
+      pctPort: lq.totalValue ? +(h.value / lq.totalValue * 100).toFixed(2) : null,
+    });
+  }
+  funds.sort((a, b) => (b.value || 0) - (a.value || 0));
+  return { ticker, funds, count: funds.length };
+}
+
 export async function GET(request) {
   try {
-    const slug = new URL(request.url).searchParams.get('slug');
-    const payload = slug ? await detailView(slug) : await listView();
+    const sp = new URL(request.url).searchParams;
+    const ticker = sp.get('ticker');
+    const slug = sp.get('slug');
+    const payload = ticker ? await tickerView(ticker.toUpperCase().trim()) : slug ? await detailView(slug) : await listView();
     return Response.json(payload, { headers: CACHE });
   } catch (e) {
     console.log(`[institutions_api] failed: ${e.message}`);
