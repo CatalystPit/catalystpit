@@ -33,7 +33,8 @@ export async function GET() {
     const admin = userId ? await isAdminUser(userId) : false;
 
     return Response.json(
-      { messages, me: { userId, tier, canPost: isPro, admin, loggedIn: !!userId } },
+      // Admin (ADMIN_EMAIL) can always post — the operator shouldn't need a Pro plan to talk.
+      { messages, me: { userId, tier, canPost: isPro || admin, admin, loggedIn: !!userId } },
       { headers: NO_STORE },
     );
   } catch (e) {
@@ -49,7 +50,8 @@ export async function POST(request) {
     if (!userId) return Response.json({ error: 'sign_in_required' }, { status: 401, headers: NO_STORE });
 
     const tier = await resolveUserTier();
-    if (tier !== 'pro' && tier !== 'elite')
+    const isPro = tier === 'pro' || tier === 'elite';
+    if (!isPro && !(await isAdminUser(userId)))   // admin bypasses the Pro gate
       return Response.json({ error: 'pro_required' }, { status: 403, headers: NO_STORE });
 
     if (await rateLimited(`pit:rl:${userId}`))
