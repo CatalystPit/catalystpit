@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { getOrCreateProfile, getPublicProfile, updateProfile } from '../../../lib/profiles';
+import { getFollowState } from '../../../lib/community';
 
 export const runtime = 'nodejs';
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
@@ -14,7 +15,9 @@ export async function GET(request) {
     if (handle) {
       const profile = await getPublicProfile(handle);
       if (!profile) return Response.json({ error: 'not_found' }, { status: 404, headers: NO_STORE });
-      return Response.json({ profile }, { headers: NO_STORE });
+      const { userId: viewerId } = await auth();
+      const follow = await getFollowState(viewerId, profile.userId);
+      return Response.json({ profile: { ...profile, ...follow } }, { headers: NO_STORE });
     }
 
     const { userId } = await auth();

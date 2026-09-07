@@ -1,0 +1,194 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
+
+const CASHTAG_RE = /\$[A-Za-z]{1,5}\b/g;
+function Body({ text }) {
+  const parts = []; let last = 0, m; CASHTAG_RE.lastIndex = 0;
+  while ((m = CASHTAG_RE.exec(text))) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const sym = m[0].slice(1).toUpperCase();
+    parts.push(<a key={m.index} href={`/ticker/${sym}`} style={{ color: C.green, fontWeight: 600, textDecoration: 'none' }}>{m[0].toUpperCase()}</a>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+function Avatar({ url, name, size = 40 }) {
+  const [failed, setFailed] = useState(false);
+  const initials = (name || 'T').trim().slice(0, 1).toUpperCase();
+  if (url && !failed) return <img src={url} alt="" width={size} height={size} onError={() => setFailed(true)} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />;
+  return <span style={{ width: size, height: size, borderRadius: '50%', background: C.green, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.42, fontWeight: 700, flexShrink: 0 }}>{initials}</span>;
+}
+const fmtTime = (ts) => { try { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
+
+const MAX = 500;
+
+export default function FeedClient() {
+  const [scope, setScope] = useState('global');
+  const [posts, setPosts] = useState([]);
+  const [me, setMe] = useState({ canPost: false, loggedIn: false, admin: false });
+  const [loading, setLoading] = useState(true);
+  const [input, setInput] = useState('');
+  const [posting, setPosting] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [more, setMore] = useState(false);
+
+  const load = useCallback(async (sc) => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/feed?scope=${sc}`, { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      setPosts(j?.posts || []);
+      if (j?.me) setMe(j.me);
+      setMore((j?.posts || []).length >= 30);
+    } catch { setPosts([]); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(scope); }, [scope, load]);
+
+  const loadMore = async () => {
+    const last = posts[posts.length - 1];
+    if (!last) return;
+    try {
+      const r = await fetch(`/api/feed?scope=${scope}&before=${encodeURIComponent(last.createdAt)}`, { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      const next = j?.posts || [];
+      setPosts((p) => [...p, ...next]);
+      setMore(next.length >= 30);
+    } catch { /* ignore */ }
+  };
+
+  const submit = async () => {
+    const body = input.trim();
+    if (!body) return;
+    setPosting(true); setNotice('');
+    try {
+      const r = await fetch('/api/feed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) });
+      if (r.status === 429) { setNotice('Slow down a moment.'); }
+      else if (r.status === 403) { setNotice('Pro members only.'); }
+      else if (!r.ok) { setNotice('Could not post.'); }
+      else { const j = await r.json(); if (j?.post) { setPosts((p) => [j.post, ...p]); setInput(''); } }
+    } catch { setNotice('Could not post.'); }
+    setPosting(false);
+  };
+
+  const like = async (post) => {
+    if (!me.loggedIn) { setNotice('Sign in to like.'); return; }
+    const on = !post.liked;
+    setPosts((p) => p.map((x) => x.id === post.id ? { ...x, liked: on, likeCount: Math.max(0, (x.likeCount || 0) + (on ? 1 : -1)) } : x));
+    try {
+      const r = await fetch('/api/feed/like', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ postId: post.id, on }) });
+      const j = await r.json();
+      if (j && j.likeCount != null) setPosts((p) => p.map((x) => x.id === post.id ? { ...x, liked: j.liked, likeCount: j.likeCount } : x));
+    } catch { /* optimistic already applied */ }
+  };
+
+  const del = async (id) => {
+    try { const r = await fetch(`/api/feed?id=${id}`, { method: 'DELETE' }); if (r.ok) setPosts((p) => p.filter((x) => x.id !== id)); } catch { /* ignore */ }
+  };
+
+  const Tab = ({ id, label }) => (
+    <button onClick={() => setScope(id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 2px',
+      fontSize: 14, fontWeight: scope === id ? 700 : 500, color: scope === id ? C.ink : C.muted,
+      borderBottom: scope === id ? `2px solid ${C.green}` : '2px solid transparent', fontFamily: "'DM Sans',sans-serif" }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
+      <BrandStyles />
+      <TopNav active="Feed" />
+      <div style={{ maxWidth: 640, margin: '20px auto', padding: '0 20px 48px' }}>
+        <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 600, color: C.ink, margin: '0 0 2px' }}>Feed</h1>
+        <p style={{ fontSize: 13, color: C.muted, margin: '0 0 14px', fontWeight: 300 }}>Traders sharing thoughts, ideas, and catalysts. Post with a $CASHTAG to tag a stock.</p>
+
+        <div style={{ display: 'flex', gap: 20, borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
+          <Tab id="global" label="For you" />
+          <Tab id="following" label="Following" />
+        </div>
+
+        {/* composer */}
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
+          {me.canPost ? (
+            <>
+              <textarea value={input} onChange={(e) => setInput(e.target.value)} maxLength={MAX} rows={3}
+                placeholder="Share a thought…  ($NVDA tags a ticker)"
+                style={{ width: '100%', resize: 'vertical', border: 'none', outline: 'none', fontSize: 15, fontFamily: "'DM Sans',sans-serif", color: C.ink, boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                <span style={{ fontSize: 11, color: C.dim }}>{input.length}/{MAX}</span>
+                {notice && <span style={{ fontSize: 12, color: C.muted }}>{notice}</span>}
+                <button onClick={submit} disabled={posting || !input.trim()}
+                  style={{ marginLeft: 'auto', background: input.trim() ? C.green : C.surface2, color: input.trim() ? '#fff' : C.dim,
+                    border: 'none', borderRadius: 6, padding: '9px 20px', fontSize: 13, fontWeight: 600, cursor: input.trim() ? 'pointer' : 'default' }}>
+                  {posting ? 'Posting…' : 'Post'}
+                </button>
+              </div>
+            </>
+          ) : me.loggedIn ? (
+            <button onClick={() => startCheckout()} style={{ width: '100%', background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '11px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              🔒 Upgrade to Pro to post to the feed
+            </button>
+          ) : (
+            <a href="/sign-in" style={{ display: 'block', textAlign: 'center', background: C.green, color: '#fff', textDecoration: 'none', borderRadius: 6, padding: '11px', fontSize: 13, fontWeight: 600 }}>
+              Sign in to post
+            </a>
+          )}
+        </div>
+
+        {/* posts */}
+        {loading ? (
+          <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: 'center' }}>Loading…</div>
+        ) : posts.length === 0 ? (
+          <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
+            {scope === 'following' ? 'Follow some traders to see their posts here.' : 'No posts yet. Be the first.'}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {posts.map((post) => (
+              <div key={post.id} className="feed-post" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                <div style={{ display: 'flex', gap: 11 }}>
+                  <Avatar url={post.avatarUrl} name={post.username} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+                      {post.handle
+                        ? <a href={`/u/${post.handle}`} style={{ fontSize: 14, fontWeight: 700, color: C.ink, textDecoration: 'none' }}>{post.username}</a>
+                        : <span style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{post.username}</span>}
+                      {post.handle && <span style={{ fontSize: 12, color: C.dim }}>@{post.handle}</span>}
+                      <span style={{ fontSize: 11, color: C.dim }}>· {fmtTime(post.createdAt)}</span>
+                      {(me.admin || (me.userId && me.userId === post.userId)) && (
+                        <button onClick={() => del(post.id)} title="Delete" className="feed-del"
+                          style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 12, opacity: 0 }}>✕</button>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 15, color: C.text, lineHeight: 1.5, marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      <Body text={post.body} />
+                    </div>
+                    <div style={{ marginTop: 9 }}>
+                      <button onClick={() => like(post)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                          color: post.liked ? C.red : C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
+                        <span style={{ fontSize: 15 }}>{post.liked ? '♥' : '♡'}</span>
+                        {post.likeCount > 0 && post.likeCount}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {more && (
+              <button onClick={loadMore} style={{ background: C.white, border: `1px solid ${C.border}`, color: C.ink, borderRadius: 8, padding: '10px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                Load more
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      <Footer />
+      <style>{`.feed-post:hover .feed-del { opacity: 1 !important; }`}</style>
+    </div>
+  );
+}

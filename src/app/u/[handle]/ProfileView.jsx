@@ -23,6 +23,10 @@ export default function ProfileView({ handle }) {
   const [state, setState] = useState('loading'); // loading | ok | notfound
   const [p, setP] = useState(null);
   const [isOwn, setIsOwn] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [following, setFollowing] = useState(false);
+  const [followers, setFollowers] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +40,11 @@ export default function ProfileView({ handle }) {
         if (!pubRes.ok) { setState('notfound'); return; }
         const j = await pubRes.json();
         setP(j.profile); setState('ok');
+        setFollowing(!!j.profile.isFollowing);
+        setFollowers(j.profile.followers || 0);
+        setFollowingCount(j.profile.following || 0);
         if (meRes && meRes.ok) {
+          setLoggedIn(true);
           const mj = await meRes.json();
           if (mj?.profile?.handle && mj.profile.handle === j.profile.handle) setIsOwn(true);
         }
@@ -44,6 +52,20 @@ export default function ProfileView({ handle }) {
     })();
     return () => { cancelled = true; };
   }, [handle]);
+
+  const toggleFollow = async () => {
+    if (!loggedIn) { window.location.href = '/sign-in'; return; }
+    const next = !following;
+    setFollowing(next);
+    setFollowers((n) => Math.max(0, n + (next ? 1 : -1)));
+    try {
+      const r = next
+        ? await fetch('/api/follow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ handle: p.handle }) })
+        : await fetch(`/api/follow?handle=${encodeURIComponent(p.handle)}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (j && typeof j.followers === 'number') { setFollowers(j.followers); setFollowing(!!j.isFollowing); }
+    } catch { /* optimistic already applied */ }
+  };
 
   const initials = (p?.displayName || handle || 'T').trim().slice(0, 1).toUpperCase();
 
@@ -73,18 +95,35 @@ export default function ProfileView({ handle }) {
                   <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 26, fontWeight: 600, color: C.ink, lineHeight: 1.1 }}>{p.displayName}</div>
                   <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>@{p.handle}</div>
                   <div style={{ fontSize: 11, color: C.dim, marginTop: 6 }}>Joined {fmtDate(p.joinedAt)}</div>
-                  {p.xHandle && (
-                    <a href={`https://x.com/${p.xHandle}`} target="_blank" rel="noopener noreferrer"
-                      style={{ fontSize: 12, color: C.green, textDecoration: 'none', fontWeight: 600, marginTop: 6, display: 'inline-block' }}>
-                      𝕏 @{p.xHandle}
-                    </a>
+                  <div style={{ display: 'flex', gap: 14, marginTop: 8, fontSize: 12, color: C.muted }}>
+                    <span><b style={{ color: C.ink }}>{followers}</b> followers</span>
+                    <span><b style={{ color: C.ink }}>{followingCount}</b> following</span>
+                  </div>
+                  {(p.xHandle || p.igHandle) && (
+                    <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+                      {p.xHandle && (
+                        <a href={`https://x.com/${p.xHandle}`} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 12, color: C.green, textDecoration: 'none', fontWeight: 600 }}>𝕏 @{p.xHandle}</a>
+                      )}
+                      {p.igHandle && (
+                        <a href={`https://instagram.com/${p.igHandle}`} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 12, color: C.green, textDecoration: 'none', fontWeight: 600 }}>📷 @{p.igHandle}</a>
+                      )}
+                    </div>
                   )}
                 </div>
-                {isOwn && (
+                {isOwn ? (
                   <a href="/settings/profile" style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.ink,
                     textDecoration: 'none', padding: '7px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>
                     Edit profile
                   </a>
+                ) : (
+                  <button onClick={toggleFollow}
+                    style={{ background: following ? C.surface : C.green, border: following ? `1px solid ${C.border}` : 'none',
+                      color: following ? C.ink : '#fff', padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                      cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: "'DM Sans',sans-serif" }}>
+                    {following ? 'Following' : 'Follow'}
+                  </button>
                 )}
               </div>
               {p.bio && <div style={{ fontSize: 14, color: C.text, lineHeight: 1.5, marginTop: 14 }}>{p.bio}</div>}

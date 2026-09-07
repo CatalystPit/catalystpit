@@ -12,7 +12,7 @@ const ERRORS = { invalid_handle: 'Handle must be 3–20 chars: letters, numbers,
 
 export default function ProfileEditor() {
   const [state, setState] = useState('loading'); // loading | ready | signedout
-  const [form, setForm] = useState({ handle: '', displayName: '', bio: '', xHandle: '', showWatchlist: false });
+  const [form, setForm] = useState({ handle: '', displayName: '', bio: '', xHandle: '', igHandle: '', showWatchlist: false });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
@@ -25,7 +25,7 @@ export default function ProfileEditor() {
         const p = j.profile || {};
         setForm({
           handle: p.handle || '', displayName: p.displayName || '', bio: p.bio || '',
-          xHandle: p.xHandle || '', showWatchlist: !!p.showWatchlist,
+          xHandle: p.xHandle || '', igHandle: p.igHandle || '', showWatchlist: !!p.showWatchlist,
         });
         setState('ready');
       } catch { setState('ready'); }
@@ -92,6 +92,14 @@ export default function ProfileEditor() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 14, color: C.dim }}>@</span>
                 <input value={form.xHandle} onChange={set('xHandle')} maxLength={30} placeholder="yourX" style={field} />
+              </div>
+            </div>
+
+            <div>
+              <label style={label}>Instagram handle (optional)</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 14, color: C.dim }}>@</span>
+                <input value={form.igHandle} onChange={set('igHandle')} maxLength={30} placeholder="yourIG" style={field} />
               </div>
             </div>
 

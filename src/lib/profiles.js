@@ -21,14 +21,21 @@ export async function ensureProfileTables() {
     bio TEXT,
     avatar_url TEXT,
     x_handle TEXT,
+    ig_handle TEXT,
     show_watchlist BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_pit_profiles_handle ON pit_profiles (handle)`);
+  await db.execute(sql`ALTER TABLE pit_profiles ADD COLUMN IF NOT EXISTS ig_handle TEXT`);   // Phase 3
   // pit_messages predates Phase 2 — add the handle column if the table already exists.
   await db.execute(sql`ALTER TABLE pit_messages ADD COLUMN IF NOT EXISTS handle TEXT`);
   _ensured = true;
+}
+
+// Social handle: allow letters, numbers, dot, underscore (covers X + Instagram). No @.
+export function normalizeSocial(raw) {
+  return String(raw || '').toLowerCase().replace(/^@/, '').replace(/[^a-z0-9._]/g, '').slice(0, 30);
 }
 
 // Normalize a desired handle to the allowed charset (lowercase alnum + underscore).
@@ -103,7 +110,8 @@ export async function updateProfile(userId, patch) {
   }
   if (patch.displayName != null) set.displayName = String(patch.displayName).slice(0, 60).trim() || null;
   if (patch.bio != null) set.bio = String(patch.bio).replace(/[<>]/g, '').slice(0, BIO_MAX).trim() || null;
-  if (patch.xHandle != null) set.xHandle = normalizeHandle(String(patch.xHandle).replace(/^@/, '')).slice(0, 30) || null;
+  if (patch.xHandle != null) set.xHandle = normalizeSocial(patch.xHandle) || null;
+  if (patch.igHandle != null) set.igHandle = normalizeSocial(patch.igHandle) || null;
   if (patch.showWatchlist != null) set.showWatchlist = !!patch.showWatchlist;
 
   await getOrCreateProfile(userId);   // ensure a row exists to update
@@ -137,11 +145,13 @@ export async function getPublicProfile(handle) {
   }
 
   return {
+    userId: p.userId,          // used server-side by the profile route for follow state
     handle: p.handle,
     displayName: p.displayName || p.handle,
     bio: p.bio || null,
     avatarUrl: p.avatarUrl || null,
     xHandle: p.xHandle || null,
+    igHandle: p.igHandle || null,
     showWatchlist: p.showWatchlist,
     joinedAt: p.createdAt,
     recent,

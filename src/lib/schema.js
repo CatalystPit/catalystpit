@@ -208,11 +208,48 @@ export const pitProfiles = pgTable('pit_profiles', {
   bio:           text('bio'),
   avatarUrl:     text('avatar_url'),                    // defaults to Clerk imageUrl
   xHandle:       text('x_handle'),                      // optional link to their X
+  igHandle:      text('ig_handle'),                     // optional link to their Instagram
   showWatchlist: boolean('show_watchlist').notNull().default(false),
   createdAt:     timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uqHandle: uniqueIndex('uq_pit_profiles_handle').on(t.handle),
+}));
+
+// ── Follows (Phase 3) — directed edges: follower → following (both Clerk user IDs) ──
+export const pitFollows = pgTable('pit_follows', {
+  followerId:  text('follower_id').notNull(),
+  followingId: text('following_id').notNull(),
+  createdAt:   timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk:          primaryKey({ columns: [t.followerId, t.followingId] }),
+  idxFollowing: index('idx_pit_follows_following').on(t.followingId),
+}));
+
+// ── Feed posts (Phase 3) — persistent "thoughts", Facebook/StockTwits style ──
+// Author identity is snapshotted (like chat) so the feed renders even if a profile changes.
+// likeCount is denormalized off pit_post_likes for cheap sorting/display.
+export const pitPosts = pgTable('pit_posts', {
+  id:        serial('id').primaryKey(),
+  userId:    text('user_id').notNull(),
+  handle:    text('handle'),
+  username:  text('username').notNull(),
+  avatarUrl: text('avatar_url'),
+  body:      text('body').notNull(),
+  likeCount: integer('like_count').notNull().default(0),
+  deleted:   boolean('deleted').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxCreated: index('idx_pit_posts_created').on(t.createdAt),
+  idxUser:    index('idx_pit_posts_user').on(t.userId),
+}));
+
+export const pitPostLikes = pgTable('pit_post_likes', {
+  postId:    integer('post_id').notNull(),
+  userId:    text('user_id').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.postId, t.userId] }),
 }));
 
 // Message reports (any signed-in user can flag; admin reviews). Kept separate from
