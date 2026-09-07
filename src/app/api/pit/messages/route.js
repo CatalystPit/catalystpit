@@ -4,7 +4,7 @@ import { pitMessages } from '../../../../lib/schema';
 import { eq, desc } from 'drizzle-orm';
 import { resolveUserTier } from '../../../../lib/entitlements';
 import {
-  getIdentity, isAdminUser, sanitizeBody, rateLimited, pitPublish,
+  getIdentity, isAdminUser, sanitizeBody, rateLimited, pitPublish, ensurePitTables,
 } from '../../../../lib/pit';
 
 export const runtime = 'nodejs';
@@ -26,6 +26,7 @@ export async function GET() {
     admin = userId ? await isAdminUser(userId) : false;
     const isPro = tier === 'pro' || tier === 'elite';
 
+    await ensurePitTables();
     const rows = await db.select({
       id: pitMessages.id, userId: pitMessages.userId, username: pitMessages.username,
       avatarUrl: pitMessages.avatarUrl, tier: pitMessages.tier,
@@ -68,6 +69,7 @@ export async function POST(request) {
     if (await rateLimited(`pit:rl:${userId}`))
       return Response.json({ error: 'rate_limited' }, { status: 429, headers: NO_STORE });
 
+    await ensurePitTables();
     const { body } = await request.json().catch(() => ({}));
     const clean = sanitizeBody(body);
     if (!clean) return Response.json({ error: 'empty' }, { status: 400, headers: NO_STORE });
@@ -100,6 +102,7 @@ export async function DELETE(request) {
     const id = parseInt(searchParams.get('id') ?? '', 10);
     if (!Number.isFinite(id)) return Response.json({ error: 'bad_id' }, { status: 400, headers: NO_STORE });
 
+    await ensurePitTables();
     await db.update(pitMessages).set({ deleted: true }).where(eq(pitMessages.id, id));
     await pitPublish('delete', { id });
     return Response.json({ ok: true }, { headers: NO_STORE });

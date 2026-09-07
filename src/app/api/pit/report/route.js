@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../../lib/db';
 import { pitReports } from '../../../../lib/schema';
+import { ensurePitTables } from '../../../../lib/pit';
 
 export const runtime = 'nodejs';
 
@@ -16,6 +17,7 @@ export async function POST(request) {
     const id = parseInt(messageId, 10);
     if (!Number.isFinite(id)) return Response.json({ error: 'bad_id' }, { status: 400, headers: NO_STORE });
 
+    await ensurePitTables();
     await db.insert(pitReports).values({
       messageId: id,
       reporterUserId: userId,

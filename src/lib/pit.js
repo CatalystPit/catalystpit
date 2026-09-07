@@ -1,5 +1,7 @@
 import { clerkClient } from '@clerk/nextjs/server';
 import { Rest } from 'ably';
+import { sql } from 'drizzle-orm';
+import { db } from './db';
 
 // Server-side helpers for The Pit (live chat). Realtime transport = Ably; message history +
 // moderation live in Neon (see schema pitMessages/pitReports). Everything degrades gracefully
@@ -12,6 +14,34 @@ export const RATE_WINDOW = 60;           // …per this many seconds, per user
 
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+
+// Self-create the Pit tables against whatever DB the app is connected to (mirrors the Institutions
+// cron's ensureTables). Makes the feature independent of which Neon branch a migration ran on.
+// Idempotent (IF NOT EXISTS) and memoised per warm instance.
+let _ensured = false;
+export async function ensurePitTables() {
+  if (_ensured) return;
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS pit_messages (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    username TEXT NOT NULL,
+    avatar_url TEXT,
+    tier TEXT,
+    body TEXT NOT NULL,
+    deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pit_messages_created ON pit_messages (created_at)`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS pit_reports (
+    id SERIAL PRIMARY KEY,
+    message_id INTEGER NOT NULL,
+    reporter_user_id TEXT NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_pit_reports_message ON pit_reports (message_id)`);
+  _ensured = true;
+}
 
 // ── Ably (REST, server) — token minting + server-authoritative publish ──
 let _rest = null;
