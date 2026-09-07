@@ -25,6 +25,136 @@ const fmtTime = (ts) => { try { return new Date(ts).toLocaleString([], { month: 
 
 const MAX = 500;
 
+// Expandable comment thread under a post. Loads on open; Pro/admin can add, author/admin can delete.
+function CommentThread({ postId, me, onAdded, onRemoved }) {
+  const [list, setList] = useState(null);
+  const [input, setInput] = useState('');
+  const [posting, setPosting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/feed/comment?postId=${postId}`, { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        if (!cancelled) setList(j?.comments || []);
+      } catch { if (!cancelled) setList([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [postId]);
+
+  const submit = async () => {
+    const body = input.trim();
+    if (!body) return;
+    setPosting(true);
+    try {
+      const r = await fetch('/api/feed/comment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ postId, body }) });
+      if (r.ok) { const j = await r.json(); if (j.comment) { setList((l) => [...(l || []), j.comment]); setInput(''); onAdded && onAdded(); } }
+    } catch { /* ignore */ }
+    setPosting(false);
+  };
+  const del = async (id) => {
+    try { const r = await fetch(`/api/feed/comment?id=${id}`, { method: 'DELETE' }); if (r.ok) { setList((l) => l.filter((c) => c.id !== id)); onRemoved && onRemoved(); } } catch { /* ignore */ }
+  };
+
+  return (
+    <div style={{ marginTop: 10, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+      {list === null ? (
+        <div style={{ fontSize: 12, color: C.dim }}>Loading comments…</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {list.map((c) => (
+            <div key={c.id} className="feed-comment" style={{ display: 'flex', gap: 8 }}>
+              <Avatar url={c.avatarUrl} name={c.username} size={26} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  {c.handle
+                    ? <a href={`/u/${c.handle}`} style={{ fontSize: 12, fontWeight: 700, color: C.ink, textDecoration: 'none' }}>{c.username}</a>
+                    : <span style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{c.username}</span>}
+                  <span style={{ fontSize: 10, color: C.dim }}>· {fmtTime(c.createdAt)}</span>
+                  {(me.admin || (me.userId && me.userId === c.userId)) && (
+                    <button onClick={() => del(c.id)} title="Delete" className="feed-cdel"
+                      style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 11, opacity: 0 }}>✕</button>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.4, wordBreak: 'break-word' }}><Body text={c.body} /></div>
+              </div>
+            </div>
+          ))}
+          {list.length === 0 && <div style={{ fontSize: 12, color: C.dim }}>No comments yet.</div>}
+
+          {me.canPost ? (
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+                maxLength={500} placeholder="Add a comment…"
+                style={{ flex: 1, padding: '8px 10px', borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: 'none', color: C.ink }} />
+              <button onClick={submit} disabled={posting || !input.trim()}
+                style={{ background: input.trim() ? C.green : C.surface2, color: input.trim() ? '#fff' : C.dim, border: 'none', borderRadius: 6, padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: input.trim() ? 'pointer' : 'default' }}>
+                Reply
+              </button>
+            </div>
+          ) : me.loggedIn ? (
+            <div style={{ fontSize: 12, color: C.dim }}>Pro members can comment. <a href="#" onClick={(e) => { e.preventDefault(); startCheckout(); }} style={{ color: C.green, fontWeight: 600 }}>Upgrade</a></div>
+          ) : (
+            <div style={{ fontSize: 12, color: C.dim }}><a href="/sign-in" style={{ color: C.green, fontWeight: 600 }}>Sign in</a> to comment.</div>
+          )}
+        </div>
+      )}
+      <style>{`.feed-comment:hover .feed-cdel { opacity: 1 !important; }`}</style>
+    </div>
+  );
+}
+
+function PostCard({ post, me, onLike, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [count, setCount] = useState(post.commentCount || 0);
+  return (
+    <div className="feed-post" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+      <div style={{ display: 'flex', gap: 11 }}>
+        <Avatar url={post.avatarUrl} name={post.username} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+            {post.handle
+              ? <a href={`/u/${post.handle}`} style={{ fontSize: 14, fontWeight: 700, color: C.ink, textDecoration: 'none' }}>{post.username}</a>
+              : <span style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{post.username}</span>}
+            {post.handle && <span style={{ fontSize: 12, color: C.dim }}>@{post.handle}</span>}
+            <span style={{ fontSize: 11, color: C.dim }}>· {fmtTime(post.createdAt)}</span>
+            {(me.admin || (me.userId && me.userId === post.userId)) && (
+              <button onClick={() => onDelete(post.id)} title="Delete" className="feed-del"
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 12, opacity: 0 }}>✕</button>
+            )}
+          </div>
+          {post.body && (
+            <div style={{ fontSize: 15, color: C.text, lineHeight: 1.5, marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              <Body text={post.body} />
+            </div>
+          )}
+          {post.imageUrl && (
+            <a href={post.imageUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 10 }}>
+              <img src={post.imageUrl} alt="" style={{ maxWidth: '100%', borderRadius: 8, border: `1px solid ${C.border}` }} />
+            </a>
+          )}
+          <div style={{ marginTop: 9, display: 'flex', gap: 18, alignItems: 'center' }}>
+            <button onClick={() => onLike(post)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                color: post.liked ? C.red : C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
+              <span style={{ fontSize: 15 }}>{post.liked ? '♥' : '♡'}</span>
+              {post.likeCount > 0 && post.likeCount}
+            </button>
+            <button onClick={() => setOpen((o) => !o)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                color: C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
+              <span style={{ fontSize: 14 }}>💬</span>
+              {count > 0 && count}
+            </button>
+          </div>
+          {open && <CommentThread postId={post.id} me={me} onAdded={() => setCount((c) => c + 1)} onRemoved={() => setCount((c) => Math.max(0, c - 1))} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FeedClient() {
   const [scope, setScope] = useState('global');
   const [posts, setPosts] = useState([]);
@@ -149,35 +279,7 @@ export default function FeedClient() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {posts.map((post) => (
-              <div key={post.id} className="feed-post" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
-                <div style={{ display: 'flex', gap: 11 }}>
-                  <Avatar url={post.avatarUrl} name={post.username} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
-                      {post.handle
-                        ? <a href={`/u/${post.handle}`} style={{ fontSize: 14, fontWeight: 700, color: C.ink, textDecoration: 'none' }}>{post.username}</a>
-                        : <span style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>{post.username}</span>}
-                      {post.handle && <span style={{ fontSize: 12, color: C.dim }}>@{post.handle}</span>}
-                      <span style={{ fontSize: 11, color: C.dim }}>· {fmtTime(post.createdAt)}</span>
-                      {(me.admin || (me.userId && me.userId === post.userId)) && (
-                        <button onClick={() => del(post.id)} title="Delete" className="feed-del"
-                          style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: C.red, fontSize: 12, opacity: 0 }}>✕</button>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 15, color: C.text, lineHeight: 1.5, marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      <Body text={post.body} />
-                    </div>
-                    <div style={{ marginTop: 9 }}>
-                      <button onClick={() => like(post)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
-                          color: post.liked ? C.red : C.dim, fontSize: 13, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>
-                        <span style={{ fontSize: 15 }}>{post.liked ? '♥' : '♡'}</span>
-                        {post.likeCount > 0 && post.likeCount}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <PostCard key={post.id} post={post} me={me} onLike={like} onDelete={del} />
             ))}
             {more && (
               <button onClick={loadMore} style={{ background: C.white, border: `1px solid ${C.border}`, color: C.ink, borderRadius: 8, padding: '10px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>

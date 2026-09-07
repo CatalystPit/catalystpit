@@ -230,15 +230,17 @@ export const pitFollows = pgTable('pit_follows', {
 // Author identity is snapshotted (like chat) so the feed renders even if a profile changes.
 // likeCount is denormalized off pit_post_likes for cheap sorting/display.
 export const pitPosts = pgTable('pit_posts', {
-  id:        serial('id').primaryKey(),
-  userId:    text('user_id').notNull(),
-  handle:    text('handle'),
-  username:  text('username').notNull(),
-  avatarUrl: text('avatar_url'),
-  body:      text('body').notNull(),
-  likeCount: integer('like_count').notNull().default(0),
-  deleted:   boolean('deleted').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  id:           serial('id').primaryKey(),
+  userId:       text('user_id').notNull(),
+  handle:       text('handle'),
+  username:     text('username').notNull(),
+  avatarUrl:    text('avatar_url'),
+  body:         text('body').notNull(),
+  imageUrl:     text('image_url'),                                  // optional attached picture
+  likeCount:    integer('like_count').notNull().default(0),
+  commentCount: integer('comment_count').notNull().default(0),
+  deleted:      boolean('deleted').notNull().default(false),
+  createdAt:    timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   idxCreated: index('idx_pit_posts_created').on(t.createdAt),
   idxUser:    index('idx_pit_posts_user').on(t.userId),
@@ -250,6 +252,22 @@ export const pitPostLikes = pgTable('pit_post_likes', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.postId, t.userId] }),
+}));
+
+// Comments on feed posts. Author identity resolved live from profiles at read time (snapshot kept
+// as fallback). commentCount on pit_posts is denormalized off this table.
+export const pitPostComments = pgTable('pit_post_comments', {
+  id:        serial('id').primaryKey(),
+  postId:    integer('post_id').notNull(),
+  userId:    text('user_id').notNull(),
+  handle:    text('handle'),
+  username:  text('username').notNull(),
+  avatarUrl: text('avatar_url'),
+  body:      text('body').notNull(),
+  deleted:   boolean('deleted').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxPost: index('idx_pit_comments_post').on(t.postId),
 }));
 
 // Message reports (any signed-in user can flag; admin reviews). Kept separate from
