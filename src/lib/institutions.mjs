@@ -66,7 +66,7 @@ export const INSTITUTIONS = [
   { slug: 'state-street',      label: 'State Street', manager: 'State Street', category: 'Asset managers', secName: 'State Street Corp', cik: '93751' },
   { slug: 'fidelity',          label: 'Fidelity (FMR)', manager: 'FMR LLC', category: 'Asset managers', secName: 'FMR LLC', cik: '315066' },
   { slug: 'capital-world',     label: 'Capital Group', manager: 'Capital World Investors', category: 'Asset managers', secName: 'Capital World Investors' },
-  { slug: 't-rowe-price',      label: 'T. Rowe Price', manager: 'T. Rowe Price', category: 'Asset managers', secName: 'Price T Rowe Associates Inc /MD/' },
+  { slug: 't-rowe-price',      label: 'T. Rowe Price', manager: 'T. Rowe Price', category: 'Asset managers', secName: 'Price T Rowe Group Inc', cik: '1113169' },
   { slug: 'jpmorgan-am',       label: 'JPMorgan AM', manager: 'JPMorgan', category: 'Asset managers', secName: 'JPMorgan Chase & Co', cik: '19617' },
   { slug: 'goldman-am',        label: 'Goldman Sachs AM', manager: 'Goldman Sachs', category: 'Asset managers', secName: 'Goldman Sachs Group Inc', cik: '886982' },
   { slug: 'morgan-stanley',    label: 'Morgan Stanley (MSIM)', manager: 'Morgan Stanley', category: 'Asset managers', secName: 'Morgan Stanley', cik: '895421' },
