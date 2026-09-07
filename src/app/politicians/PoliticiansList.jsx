@@ -91,16 +91,20 @@ function MemberCard({ m }) {
 // users beyond the preview). Faint muted bars matching MemberCard's footprint + lock glyph.
 function LockedMemberCard() {
   return (
-    <div aria-hidden="true" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div aria-hidden="true" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 12,
+      filter: 'blur(4px)', userSelect: 'none', pointerEvents: 'none', opacity: 0.6 }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <div style={{ width: 52, height: 52, borderRadius: '50%', background: C.surface, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: C.hint }}>🔒</div>
+        <div style={{ width: 52, height: 52, borderRadius: '50%', background: C.surface2, flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ height: 13, width: '70%', borderRadius: 4, background: C.surface, marginBottom: 8 }} />
-          <div style={{ height: 10, width: '45%', borderRadius: 4, background: C.surface }} />
+          <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink }}>████████ ██████</div>
+          <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, marginTop: 5 }}>███ · ██ · House</div>
         </div>
       </div>
-      <div style={{ height: 10, width: '100%', borderRadius: 4, background: C.surface }} />
-      <div style={{ height: 5, width: '100%', borderRadius: 3, background: C.surface }} />
+      <div style={{ display: 'flex', gap: 18 }}>
+        <div><div style={{ fontSize: 9, color: C.dim }}>TRADES</div><div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink }}>██</div></div>
+        <div><div style={{ fontSize: 9, color: C.dim }}>VOLUME</div><div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink }}>$███K</div></div>
+        <div><div style={{ fontSize: 9, color: C.dim }}>LAST TRADE</div><div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink }}>██████</div></div>
+      </div>
     </div>
   );
 }
@@ -186,7 +190,7 @@ export default function PoliticiansList() {
                   <>
                     {members.map((m) => <MemberCard key={m.slug} m={m} />)}
                     {/* Locked placeholder cards — no real member data (server sent none). */}
-                    {lockedCount > 0 && Array.from({ length: Math.min(lockedCount, 3) }).map((_, i) => (
+                    {lockedCount > 0 && Array.from({ length: Math.min(lockedCount, 6) }).map((_, i) => (
                       <LockedMemberCard key={`lock-${i}`} />
                     ))}
                   </>

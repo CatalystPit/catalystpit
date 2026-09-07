@@ -345,14 +345,19 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
                     </tr>
                   ))}
-                  {/* Locked placeholder rows — NO real row data (server sent none). */}
-                  {lockedCount > 0 && Array.from({length: Math.min(lockedCount, 3)}).map((_, i) => (
-                    <tr key={`lock-${i}`} aria-hidden="true" style={{borderBottom:`1px solid ${C.surface}`,borderLeft:`3px solid ${C.border}`}}>
-                      {Array(10).fill(0).map((_, c) => (
-                        <td key={c} style={{padding:"15px 16px"}}>
-                          <div style={{height:11,borderRadius:4,background:C.border,width:c===5?"75%":c===3?"80%":c===0?"60%":"50%"}}/>
-                        </td>
-                      ))}
+                  {/* Locked rows — blurred teaser (Pro unlocks). No real row data leaves the server. */}
+                  {lockedCount > 0 && Array.from({length: Math.min(lockedCount, 6)}).map((_, i) => (
+                    <tr key={`lock-${i}`} aria-hidden="true" style={{borderBottom:`1px solid ${C.surface}`, borderLeft:`3px solid ${C.border}`, filter:"blur(4px)", userSelect:"none", pointerEvents:"none", opacity:0.6}}>
+                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim}}>██████████</td>
+                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim}}>██████████</td>
+                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>████</td>
+                      <td style={{padding:"13px 16px",fontSize:13,color:C.text}}>████████ ███████</td>
+                      <td style={{padding:"13px 16px",fontSize:13,color:C.text}}>█████████</td>
+                      <td style={{padding:"13px 16px"}}><span style={{fontSize:10,padding:"3px 9px",borderRadius:3,fontFamily:"'DM Sans',sans-serif",fontWeight:600,background:C.greenLight,color:C.green}}>BUY</span></td>
+                      <td style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted}}>P</td>
+                      <td style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.text}}>███████</td>
+                      <td style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.muted}}>$████</td>
+                      <td style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:C.green}}>$██.█M</td>
                     </tr>
                   ))}
                 </tbody>
