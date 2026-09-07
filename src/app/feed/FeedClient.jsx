@@ -217,7 +217,11 @@ export default function FeedClient() {
         const up = await fetch('/api/upload', { method: 'POST', body: fd });
         if (!up.ok) {
           const ej = await up.json().catch(() => ({}));
-          setNotice(ej.error === 'uploads_not_configured' ? 'Image uploads not set up yet.' : 'Image upload failed.');
+          const msg = ej.error === 'uploads_not_configured' ? 'Image uploads not set up yet.'
+            : ej.error === 'too_large' ? 'Image must be under 4MB.'
+            : ej.error === 'bad_type' ? 'Use JPG, PNG, WebP, or GIF.'
+            : `Image upload failed: ${ej.error || up.status}`;
+          setNotice(msg);
           setPosting(false); return;
         }
         imageUrl = (await up.json()).url;
