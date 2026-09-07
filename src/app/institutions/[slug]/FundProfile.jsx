@@ -63,7 +63,7 @@ function Stat({ label, value }) {
   );
 }
 
-function ActivityList({ title, rows, kind }) {
+function ActivityList({ title, rows, kind, onPick }) {
   const color = kind === 'exited' || kind === 'trimmed' ? C.red : C.green;
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
@@ -73,7 +73,8 @@ function ActivityList({ title, rows, kind }) {
       {rows.length === 0 ? (
         <div style={{ padding: '16px 14px', fontSize: 12, color: C.muted, fontWeight: 300 }}>None</div>
       ) : rows.map((r, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none' }}>
+        <div key={i} className={r.ticker ? 'hov' : undefined} onClick={r.ticker ? () => onPick(r.ticker) : undefined}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 14px', borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: r.ticker ? 'pointer' : 'default' }}>
           <TickerLogo symbol={r.ticker || ''} size={16} />
           <div style={{ minWidth: 0, flex: 1 }}>
             <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700, color: r.ticker ? C.green : C.text }}>{r.ticker || r.issuer}</span>
@@ -194,10 +195,10 @@ export default function FundProfile({ slug }) {
 
             {/* activity */}
             <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
-              <ActivityList title="New positions" rows={d.activity?.new || []} kind="new" />
-              <ActivityList title="Increased" rows={d.activity?.added || []} kind="added" />
-              <ActivityList title="Reduced" rows={d.activity?.trimmed || []} kind="trimmed" />
-              <ActivityList title="Closed" rows={d.activity?.exited || []} kind="exited" />
+              <ActivityList title="New positions" rows={d.activity?.new || []} kind="new" onPick={go} />
+              <ActivityList title="Increased" rows={d.activity?.added || []} kind="added" onPick={go} />
+              <ActivityList title="Reduced" rows={d.activity?.trimmed || []} kind="trimmed" onPick={go} />
+              <ActivityList title="Closed" rows={d.activity?.exited || []} kind="exited" onPick={go} />
             </div>
             {!d.prior && <div style={{ marginTop: 8, fontSize: 11, color: C.dim, fontWeight: 300 }}>Quarter-over-quarter activity appears once a second quarter is imported.</div>}
 
