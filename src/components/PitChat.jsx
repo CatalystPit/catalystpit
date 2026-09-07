@@ -275,8 +275,12 @@ export default function PitChat({ height = 620, onClose }) {
           </div>
         )}
         {messages.map((m) => (
-          <div key={m.id} className="pit-msg" style={{ display: 'flex', gap: 9 }}>
-            <Avatar url={m.avatarUrl} name={m.username} />
+          <div key={m.id} className="pit-msg" style={{ display: 'flex', gap: 9, padding: '6px 8px', borderRadius: 6 }}>
+            {m.handle ? (
+              <a href={`/u/${m.handle}`} className="pit-av" title={`@${m.handle}`} style={{ display: 'inline-flex', flexShrink: 0 }}>
+                <Avatar url={m.avatarUrl} name={m.username} />
+              </a>
+            ) : <Avatar url={m.avatarUrl} name={m.username} />}
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
                 {m.handle ? (
@@ -392,7 +396,12 @@ export default function PitChat({ height = 620, onClose }) {
         </div>
       </div>
 
-      <style>{`.pit-msg:hover .pit-actions { opacity: 1 !important; }`}</style>
+      <style>{`
+        .pit-msg { transition: background 0.12s ease; }
+        .pit-msg:hover { background: ${C.surface}; }
+        .pit-msg:hover .pit-actions { opacity: 1 !important; }
+        .pit-av:hover { opacity: 0.82; }
+      `}</style>
     </div>
   );
 }

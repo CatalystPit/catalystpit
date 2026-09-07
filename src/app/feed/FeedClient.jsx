@@ -87,7 +87,11 @@ function CommentThread({ postId, me, onAdded, onRemoved }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {list.map((c) => (
             <div key={c.id} className="feed-comment" style={{ display: 'flex', gap: 8 }}>
-              <Avatar url={c.avatarUrl} name={c.username} size={26} />
+              {c.handle ? (
+                <a href={`/u/${c.handle}`} className="cp-av" title={`@${c.handle}`} style={{ display: 'inline-flex', flexShrink: 0 }}>
+                  <Avatar url={c.avatarUrl} name={c.username} size={26} />
+                </a>
+              ) : <Avatar url={c.avatarUrl} name={c.username} size={26} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                   {c.handle
@@ -158,7 +162,11 @@ function PostCard({ post, me, onDelete }) {
   return (
     <div className="feed-post" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
       <div style={{ display: 'flex', gap: 11 }}>
-        <Avatar url={post.avatarUrl} name={post.username} />
+        {post.handle ? (
+          <a href={`/u/${post.handle}`} className="cp-av" title={`@${post.handle}`} style={{ display: 'inline-flex', flexShrink: 0 }}>
+            <Avatar url={post.avatarUrl} name={post.username} />
+          </a>
+        ) : <Avatar url={post.avatarUrl} name={post.username} />}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
             {post.handle
@@ -399,7 +407,11 @@ export default function FeedClient() {
         )}
       </div>
       <Footer />
-      <style>{`.feed-post:hover .feed-del { opacity: 1 !important; }`}</style>
+      <style>{`
+        .feed-post:hover .feed-del { opacity: 1 !important; }
+        .cp-av { transition: opacity 0.12s ease; }
+        .cp-av:hover { opacity: 0.82; }
+      `}</style>
     </div>
   );
 }
