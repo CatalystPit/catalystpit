@@ -18,7 +18,6 @@ export const INSTITUTIONS = [
   { slug: 'himalaya',          label: 'Himalaya Capital', manager: 'Li Lu', category: 'Value & legends', secName: 'Himalaya Capital Management LLC' },
   { slug: 'akre',              label: 'Akre Capital', manager: 'Chuck Akre', category: 'Value & legends', secName: 'Akre Capital Management LLC' },
   { slug: 'pabrai',            label: 'Pabrai Investment Funds', manager: 'Mohnish Pabrai', category: 'Value & legends', secName: 'Dalal Street, LLC' },
-  { slug: 'ruane-cunniff',     label: 'Ruane Cunniff (Sequoia)', manager: 'Ruane Cunniff', category: 'Value & legends', secName: 'Ruane Cunniff & Goldfarb L.P.' },
 
   // ── Quant & multi-strat ──
   { slug: 'bridgewater',       label: 'Bridgewater Associates', manager: 'Ray Dalio', category: 'Quant & multi-strat', secName: 'Bridgewater Associates, LP', cik: '1350694' },
@@ -28,8 +27,6 @@ export const INSTITUTIONS = [
   { slug: 'two-sigma',         label: 'Two Sigma Investments', manager: 'Siegel / Overdeck', category: 'Quant & multi-strat', secName: 'Two Sigma Investments, LP' },
   { slug: 'aqr',               label: 'AQR Capital', manager: 'Cliff Asness', category: 'Quant & multi-strat', secName: 'AQR Capital Management LLC' },
   { slug: 'point72',           label: 'Point72', manager: 'Steve Cohen', category: 'Quant & multi-strat', secName: 'Point72 Asset Management, L.P.' },
-  { slug: 'de-shaw',           label: 'D.E. Shaw', manager: 'David Shaw', category: 'Quant & multi-strat', secName: 'D. E. Shaw & Co, Inc.' },
-  { slug: 'balyasny',          label: 'Balyasny', manager: 'Dmitry Balyasny', category: 'Quant & multi-strat', secName: 'Balyasny Asset Management LLC' },
   { slug: 'marshall-wace',     label: 'Marshall Wace', manager: 'Paul Marshall', category: 'Quant & multi-strat', secName: 'Marshall Wace LLP' },
 
   // ── Tiger cubs & growth ──
@@ -66,7 +63,6 @@ export const INSTITUTIONS = [
   { slug: 'state-street',      label: 'State Street', manager: 'State Street', category: 'Asset managers', secName: 'State Street Corp', cik: '93751' },
   { slug: 'fidelity',          label: 'Fidelity (FMR)', manager: 'FMR LLC', category: 'Asset managers', secName: 'FMR LLC', cik: '315066' },
   { slug: 'capital-world',     label: 'Capital Group', manager: 'Capital World Investors', category: 'Asset managers', secName: 'Capital World Investors' },
-  { slug: 't-rowe-price',      label: 'T. Rowe Price', manager: 'T. Rowe Price', category: 'Asset managers', secName: 'Price T Rowe Group Inc', cik: '1113169' },
   { slug: 'jpmorgan-am',       label: 'JPMorgan AM', manager: 'JPMorgan', category: 'Asset managers', secName: 'JPMorgan Chase & Co', cik: '19617' },
   { slug: 'goldman-am',        label: 'Goldman Sachs AM', manager: 'Goldman Sachs', category: 'Asset managers', secName: 'Goldman Sachs Group Inc', cik: '886982' },
   { slug: 'morgan-stanley',    label: 'Morgan Stanley (MSIM)', manager: 'Morgan Stanley', category: 'Asset managers', secName: 'Morgan Stanley', cik: '895421' },
