@@ -33,6 +33,7 @@ export default function ProfileEditor() {
   }, []);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+  const normHandle = form.handle.toLowerCase().replace(/[^a-z0-9_]/g, '');
 
   const save = async () => {
     setSaving(true); setMsg('');
@@ -67,17 +68,21 @@ export default function ProfileEditor() {
         {state === 'ready' && (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
-              <label style={label}>Handle</label>
+              <label style={label}>Username — this is your profile link</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 14, color: C.dim }}>@</span>
-                <input value={form.handle} onChange={set('handle')} maxLength={HANDLE_MAX} placeholder="yourhandle" style={field} />
+                <input value={form.handle} onChange={set('handle')} maxLength={HANDLE_MAX} placeholder="yourusername" style={field} />
               </div>
-              {form.handle && <div style={{ fontSize: 11, color: C.dim, marginTop: 5 }}>Your page: /u/{form.handle.toLowerCase().replace(/[^a-z0-9_]/g, '')}</div>}
+              <div style={{ marginTop: 8, padding: '8px 10px', background: C.greenLight, border: `1px solid ${C.greenBorder}`,
+                borderRadius: 6, fontSize: 12, color: C.muted }}>
+                Your profile lives at:{' '}
+                <span style={{ color: C.green, fontWeight: 700 }}>catalystpit.com/u/{normHandle || 'yourusername'}</span>
+              </div>
             </div>
 
             <div>
-              <label style={label}>Display name</label>
-              <input value={form.displayName} onChange={set('displayName')} maxLength={60} placeholder="How your name appears" style={field} />
+              <label style={label}>Display name — how your name shows on posts (not your link)</label>
+              <input value={form.displayName} onChange={set('displayName')} maxLength={60} placeholder="e.g. The Pit" style={field} />
             </div>
 
             <div>
