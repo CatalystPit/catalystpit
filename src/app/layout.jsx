@@ -1,5 +1,6 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import XTapeDock from '../components/XTapeDock';
+import PitDock from '../components/PitDock';
 
 export const metadata = {
   title: 'CatalystPit — Live Market Intelligence',
@@ -35,9 +36,10 @@ export default function RootLayout({ children }) {
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
           <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
           <style>{`
-            /* App shell shifts right to make room for the open Tape dock; --cp-tape is set
-               by XTapeDock (= panel width when open on desktop, 0px otherwise). */
-            #cp-shell { margin-left: var(--cp-tape, 0px); transition: margin-left 0.25s ease; }
+            /* App shell shifts inward to make room for the open docks: --cp-tape (left Tape)
+               and --cp-pit (right Pit chat), each set by its dock (= panel width when open on
+               desktop, 0px otherwise). Block element, so it just shrinks — no horizontal scroll. */
+            #cp-shell { margin-left: var(--cp-tape, 0px); margin-right: var(--cp-pit, 0px); transition: margin 0.25s ease; }
             .cp-num {
               font-family: 'Inter', sans-serif !important;
               font-weight: 600 !important;
@@ -98,6 +100,7 @@ export default function RootLayout({ children }) {
             {children}
           </div>
           <XTapeDock/>
+          <PitDock/>
         </body>
       </html>
     </ClerkProvider>

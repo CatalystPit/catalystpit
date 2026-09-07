@@ -178,6 +178,36 @@ export const fundHoldings = pgTable('fund_holdings', {
   idxCusip:  index('idx_fund_holdings_cusip').on(t.cusip),
 }));
 
+// ── The Pit — Pro members' live chat (community feature) ─────────────────────
+// One row per message. Identity (username/avatar/tier) is SNAPSHOTTED at post time so
+// history renders correctly even if a user later changes their name or lapses from Pro.
+// Reads are open to everyone; posting is Pro/Elite-only, enforced in /api/pit/messages.
+// `deleted` is a soft-delete flag (admin moderation) — deleted rows are filtered from reads.
+export const pitMessages = pgTable('pit_messages', {
+  id:        serial('id').primaryKey(),
+  userId:    text('user_id').notNull(),                    // Clerk user ID (author)
+  username:  text('username').notNull(),                   // display name at post time
+  avatarUrl: text('avatar_url'),                           // Clerk imageUrl at post time
+  tier:      text('tier'),                                 // 'pro' | 'elite' at post time
+  body:      text('body').notNull(),                       // sanitized message text
+  deleted:   boolean('deleted').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxCreated: index('idx_pit_messages_created').on(t.createdAt),
+}));
+
+// Message reports (any signed-in user can flag; admin reviews). Kept separate from
+// messages so a message can accrue multiple reports without mutating the row.
+export const pitReports = pgTable('pit_reports', {
+  id:             serial('id').primaryKey(),
+  messageId:      integer('message_id').notNull(),
+  reporterUserId: text('reporter_user_id').notNull(),
+  reason:         text('reason'),
+  createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxMessage: index('idx_pit_reports_message').on(t.messageId),
+}));
+
 // Per-manager, per-quarter filing summary — powers the list + latest-quarter lookups without
 // scanning holdings. total_value = 13F portfolio value (long US positions only), whole dollars.
 export const fundFilings = pgTable('fund_filings', {
