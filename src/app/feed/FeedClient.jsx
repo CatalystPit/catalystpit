@@ -139,6 +139,10 @@ function PostCard({ post, me, onDelete }) {
   const holdRef = useRef(null);
   const startHold = () => { holdRef.current = setTimeout(() => setReactOpen(true), 350); };  // long-press (touch)
   const cancelHold = () => { if (holdRef.current) clearTimeout(holdRef.current); };
+  // Hover with a close-delay so you can move the mouse from the thumb up to the picker.
+  const closeRef = useRef(null);
+  const openPicker = () => { if (closeRef.current) clearTimeout(closeRef.current); setReactOpen(true); };
+  const closePickerSoon = () => { if (closeRef.current) clearTimeout(closeRef.current); closeRef.current = setTimeout(() => setReactOpen(false), 300); };
 
   const react = async (emoji) => {
     if (!me.loggedIn) { window.location.href = '/sign-in'; return; }
@@ -192,7 +196,7 @@ function PostCard({ post, me, onDelete }) {
           <div style={{ marginTop: 10, display: 'flex', gap: 14, alignItems: 'center' }}>
             {/* reaction button — click to Like, hover (desktop) or press-and-hold (mobile) to pick */}
             <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
-              onMouseEnter={() => setReactOpen(true)} onMouseLeave={() => setReactOpen(false)}>
+              onMouseEnter={openPicker} onMouseLeave={closePickerSoon}>
               <button onClick={() => react(rx.mine || '👍')}
                 onTouchStart={startHold} onTouchEnd={cancelHold} onTouchMove={cancelHold}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -203,13 +207,16 @@ function PostCard({ post, me, onDelete }) {
                 {rx.mine ? REACTION_LABELS[rx.mine] || 'Reacted' : 'Like'}
               </button>
               {reactOpen && (
-                <div style={{ position: 'absolute', bottom: '135%', left: 0, zIndex: 11, display: 'flex', gap: 2,
-                  background: C.white, border: `1px solid ${C.border}`, borderRadius: 22, padding: '5px 8px', boxShadow: '0 6px 18px rgba(0,0,0,0.16)' }}>
-                  {POST_REACTIONS.map((e) => (
-                    <button key={e} onClick={() => react(e)} title={REACTION_LABELS[e]}
-                      style={{ background: rx.mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer',
-                        fontSize: 22, padding: '2px 4px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
-                  ))}
+                <div onMouseEnter={openPicker} onMouseLeave={closePickerSoon}
+                  style={{ position: 'absolute', bottom: '100%', left: 0, paddingBottom: 8, zIndex: 11 }}>
+                  <div style={{ display: 'flex', gap: 2, background: C.white, border: `1px solid ${C.border}`,
+                    borderRadius: 22, padding: '5px 8px', boxShadow: '0 6px 18px rgba(0,0,0,0.16)' }}>
+                    {POST_REACTIONS.map((e) => (
+                      <button key={e} onClick={() => react(e)} title={REACTION_LABELS[e]}
+                        style={{ background: rx.mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer',
+                          fontSize: 22, padding: '2px 4px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

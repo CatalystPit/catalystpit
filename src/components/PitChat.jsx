@@ -121,6 +121,10 @@ export default function PitChat({ height = 620, onClose }) {
   const holdRef = useRef(null);
   const startHold = (id) => { holdRef.current = setTimeout(() => setReactOpenId(id), 350); };
   const cancelHold = () => { if (holdRef.current) clearTimeout(holdRef.current); };
+  // Hover with a close-delay so the mouse can travel from the thumb up to the picker.
+  const reactCloseRef = useRef(null);
+  const openReact = (id) => { if (reactCloseRef.current) clearTimeout(reactCloseRef.current); setReactOpenId(id); };
+  const closeReactSoon = () => { if (reactCloseRef.current) clearTimeout(reactCloseRef.current); reactCloseRef.current = setTimeout(() => setReactOpenId(null), 300); };
 
   const addMessage = useCallback((msg) => {
     if (!msg || msg.id == null) return;
@@ -328,7 +332,7 @@ export default function PitChat({ height = 620, onClose }) {
                 return (
                   <div style={{ display: 'flex', gap: 14, marginTop: 5, alignItems: 'center' }}>
                     <div style={{ position: 'relative', display: 'inline-flex' }}
-                      onMouseEnter={() => setReactOpenId(m.id)} onMouseLeave={() => setReactOpenId(null)}>
+                      onMouseEnter={() => openReact(m.id)} onMouseLeave={closeReactSoon}>
                       <button onClick={() => setReaction(m, mine || '👍')}
                         onTouchStart={() => startHold(m.id)} onTouchEnd={cancelHold} onTouchMove={cancelHold}
                         style={{ ...btn, color: mine ? C.green : C.dim }}>
@@ -336,12 +340,15 @@ export default function PitChat({ height = 620, onClose }) {
                         {mine ? CHAT_LABELS[mine] || 'Liked' : 'Like'}
                       </button>
                       {reactOpenId === m.id && (
-                        <div style={{ position: 'absolute', bottom: '150%', left: 0, zIndex: 11, display: 'flex', gap: 2,
-                          background: C.white, border: `1px solid ${C.border}`, borderRadius: 20, padding: '4px 7px', boxShadow: '0 6px 18px rgba(0,0,0,0.18)' }}>
-                          {CHAT_REACTIONS.map((e) => (
-                            <button key={e} onClick={() => setReaction(m, e)} title={CHAT_LABELS[e]}
-                              style={{ background: mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer', fontSize: 19, padding: '1px 3px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
-                          ))}
+                        <div onMouseEnter={() => openReact(m.id)} onMouseLeave={closeReactSoon}
+                          style={{ position: 'absolute', bottom: '100%', left: 0, paddingBottom: 8, zIndex: 11 }}>
+                          <div style={{ display: 'flex', gap: 2, background: C.white, border: `1px solid ${C.border}`,
+                            borderRadius: 20, padding: '4px 7px', boxShadow: '0 6px 18px rgba(0,0,0,0.18)' }}>
+                            {CHAT_REACTIONS.map((e) => (
+                              <button key={e} onClick={() => setReaction(m, e)} title={CHAT_LABELS[e]}
+                                style={{ background: mine === e ? C.greenLight : 'none', border: 'none', cursor: 'pointer', fontSize: 19, padding: '1px 3px', lineHeight: 1, borderRadius: '50%' }}>{e}</button>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
