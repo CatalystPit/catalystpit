@@ -14,7 +14,8 @@ const PANELS = [
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
   { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
   { id: 'news',      title: 'News',         tag: 'LIVE' },
-  { id: 'movers',    title: 'Movers',       tag: 'SOON' },
+  { id: 'pitscan',   title: 'Pit Scan',     tag: 'PRESET' },
+  { id: 'scanner',   title: 'Scanner',      tag: 'CUSTOM' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
@@ -46,7 +47,9 @@ function defaultLayout(width) {
     // center column
     chart:     { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
     news:      { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' },
-    movers:    { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' }, // default overlaps news (hidden by default)
+    // scanners default to the center-bottom area (add-only; overlap news until arranged)
+    pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'blue' },
+    scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'blue' },
@@ -115,7 +118,76 @@ function HaltBody({ onPick }) {
   );
 }
 
-const MoversBody = () => <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>Top gainers, losers & unusual volume — landing here next.</div>;
+const SECTORS = ['', 'Technology', 'Financial Services', 'Healthcare', 'Energy', 'Consumer Cyclical', 'Industrials', 'Communication Services', 'Consumer Defensive', 'Basic Materials', 'Real Estate', 'Utilities'];
+const scanField = { padding: '5px 7px', borderRadius: 5, border: `1px solid ${C.border}`, fontSize: 11.5, fontFamily: "'DM Sans',sans-serif", outline: 'none', color: C.ink, width: '100%', boxSizing: 'border-box' };
+const fmtCap = (m) => (m == null ? '—' : m >= 1e12 ? `$${(m / 1e12).toFixed(1)}T` : m >= 1e9 ? `$${(m / 1e9).toFixed(1)}B` : m >= 1e6 ? `$${(m / 1e6).toFixed(0)}M` : `$${m}`);
+
+// Movers / scanner panel. mode='preset' → Pit Scan (auto-runs our formula). mode='custom' → user filters.
+function ScanBody({ mode, onPick }) {
+  const [rows, setRows] = useState(null);
+  const [configured, setConfigured] = useState(true);
+  const [f, setF] = useState({ priceMin: '', priceMax: '', volumeMin: '', mktCapMin: '', sector: '' });
+  const setFf = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
+
+  const run = async () => {
+    setRows(null);
+    const qs = new URLSearchParams({ mode });
+    if (mode === 'custom') { for (const [k, v] of Object.entries(f)) if (v) qs.set(k, v); }
+    try {
+      const r = await fetch(`/api/scan?${qs.toString()}`, { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      setConfigured(j?.configured !== false);
+      setRows(j?.rows || []);
+    } catch { setRows([]); }
+  };
+  useEffect(() => { if (mode === 'preset') run(); else setRows([]); /* custom waits for Run */ }, [mode]);
+
+  const results = (
+    rows === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Scanning…</div>
+      : !configured ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Scanner needs a market-data feed. Add <b>FMP_API_KEY</b> to enable live movers.</div>
+      : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>{mode === 'custom' ? 'No matches — adjust your filters and Run.' : 'No results.'}</div>
+      : (
+        <div style={{ overflow: 'auto', flex: 1 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.symbol + i} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+                  <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+                    <span onClick={() => onPick && onPick(r.symbol)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <TickerLogo symbol={r.symbol} size={15} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.symbol}</span>
+                    </span>
+                  </td>
+                  <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>{r.price != null ? fmt2(r.price) : '—'}</td>
+                  {r.changePct != null
+                    ? <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>{r.changePct > 0 ? '+' : ''}{fmt2(r.changePct)}%</td>
+                    : <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.dim }}>{fmtCap(r.marketCap)}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+  );
+
+  if (mode === 'preset') return results;
+  // custom: filter bar + Run + results
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ padding: 8, borderBottom: `1px solid ${C.border}`, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, flexShrink: 0 }}>
+        <input style={scanField} placeholder="Min price" value={f.priceMin} onChange={setFf('priceMin')} inputMode="decimal" />
+        <input style={scanField} placeholder="Max price" value={f.priceMax} onChange={setFf('priceMax')} inputMode="decimal" />
+        <input style={scanField} placeholder="Min volume" value={f.volumeMin} onChange={setFf('volumeMin')} inputMode="numeric" />
+        <input style={scanField} placeholder="Min mkt cap" value={f.mktCapMin} onChange={setFf('mktCapMin')} inputMode="numeric" />
+        <select style={{ ...scanField, gridColumn: '1 / 2' }} value={f.sector} onChange={setFf('sector')}>
+          {SECTORS.map((s) => <option key={s} value={s}>{s || 'Any sector'}</option>)}
+        </select>
+        <button onClick={run} style={{ gridColumn: '2 / 3', background: C.green, color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Run scan</button>
+      </div>
+      {rows === null || rows.length === 0 || !configured ? results
+        : <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{results}</div>}
+    </div>
+  );
+}
 
 const timeAgoShort = (iso) => {
   if (!iso) return '';
@@ -342,7 +414,9 @@ function Workspace() {
     : def.id === 'chat' ? <PitChat bare />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'news' ? <NewsBody />
-    : <MoversBody />);
+    : def.id === 'pitscan' ? <ScanBody mode="preset" onPick={(s) => linkSymbol('pitscan', s)} />
+    : def.id === 'scanner' ? <ScanBody mode="custom" onPick={(s) => linkSymbol('scanner', s)} />
+    : null);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{chartSymbol}</span> : null);
 
