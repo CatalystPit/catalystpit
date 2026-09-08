@@ -1,15 +1,16 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout } from '../../lib/cp-shared';
+import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
 
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
 // saved to localStorage. Chart center, halt scanner + movers around it.
 const PANELS = [
-  { id: 'halts',  title: 'Halt Scanner', dot: C.red,   tag: 'US · LIVE' },
-  { id: 'chart',  title: 'Chart',        dot: C.green, tag: 'TRADINGVIEW' },
-  { id: 'movers', title: 'Movers',       dot: C.green, tag: 'SOON' },
+  { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
+  { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
+  { id: 'movers',    title: 'Movers',       tag: 'SOON' },
+  { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
 ];
 const MIN_W = 240, MIN_H = 220;
 
@@ -27,10 +28,13 @@ function defaultLayout(width) {
   const gap = 12;
   const unit = (w - gap * 2) / 12;
   const h = 560;
+  const rightX = Math.round(unit * 9) + gap * 2;
+  const rightW = Math.round(unit * 3) - 2;
   return {
-    halts:  { x: 0, y: 0, w: Math.round(unit * 3), h, color: 'blue' },
-    chart:  { x: Math.round(unit * 3) + gap, y: 0, w: Math.round(unit * 6), h, color: 'blue' },
-    movers: { x: Math.round(unit * 9) + gap * 2, y: 0, w: Math.round(unit * 3) - 2, h, color: 'blue' },
+    halts:     { x: 0, y: 0, w: Math.round(unit * 3), h, color: 'blue' },
+    chart:     { x: Math.round(unit * 3) + gap, y: 0, w: Math.round(unit * 6), h, color: 'blue' },
+    movers:    { x: rightX, y: 0, w: rightW, h: 274, color: 'blue' },
+    watchlist: { x: rightX, y: 286, w: rightW, h: 274, color: 'blue' },
   };
 }
 
@@ -97,6 +101,80 @@ function HaltBody({ onPick }) {
 }
 
 const MoversBody = () => <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>Top gainers, losers & unusual volume — landing here next.</div>;
+
+function WatchlistBody({ onPick }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try { const r = await fetch('/api/watchlist?prices=1', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive) setRows(Array.isArray(j) ? j : []); }
+      catch { if (alive) setRows([]); }
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (rows === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading…</div>;
+  if (rows.length === 0) return <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>Your watchlist is empty. Tap the ★ on any ticker page to track it here. <a href="/watchlist" style={{ color: C.green, fontWeight: 600 }}>Manage</a></div>;
+  return (
+    <div style={{ overflow: 'auto', flex: 1 }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.ticker} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+              <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
+                <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
+                </span>
+                <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
+              </td>
+              <td className="cp-num" style={{ padding: '8px 12px', textAlign: 'right', color: C.ink }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</td>
+              <td className="cp-num" style={{ padding: '8px 12px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
+                {r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Rolling ticker strip for the bottom of the Terminal (SPY/QQQ/DIA/etc. from the pit tape).
+function BottomTape() {
+  const [tk, setTk] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const tape = await fetchKey('ticker_tape');
+        const arr = toArr(tape, 'tickers', 'ticker_tape', 'data');
+        const mapped = arr.map((t) => ({
+          sym: t.symbol || t.sym || t.ticker || '?',
+          price: parseFloat(t.price ?? t.last ?? t.close ?? t.regularMarketPrice) || 0,
+          chg: parseFloat(t.changePct ?? t.chg ?? t.change_pct ?? t.changePercent) || 0,
+        })).filter((t) => t.price > 0);
+        if (alive) setTk(mapped);
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (!tk.length) return null;
+  const items = [...tk, ...tk];
+  return (
+    <div style={{ borderTop: `1px solid ${C.border}`, background: C.white, overflow: 'hidden', padding: '8px 0' }}>
+      <div style={{ display: 'inline-flex', whiteSpace: 'nowrap', animation: 'cp-btape 55s linear infinite' }}>
+        {items.map((t, i) => (
+          <a key={i} href={`/ticker/${encodeURIComponent(t.sym)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 16px', textDecoration: 'none' }}>
+            <TickerLogo symbol={t.sym} size={15} />
+            <span className="cp-tkr" style={{ fontSize: 11, color: C.muted }}>{t.sym}</span>
+            <span className="cp-num" style={{ fontSize: 11, color: C.ink, fontWeight: 600 }}>{t.price > 1000 ? (+t.price).toLocaleString() : fmt2(+t.price)}</span>
+            <span className="cp-num" style={{ fontSize: 10, color: t.chg >= 0 ? C.green : C.red, fontWeight: 600 }}>{t.chg > 0 ? '+' : ''}{fmt2(t.chg)}%</span>
+          </a>
+        ))}
+      </div>
+      <style>{`@keyframes cp-btape { from { transform: translateX(0); } to { transform: translateX(-50%); } }`}</style>
+    </div>
+  );
+}
 
 // ── Panel chrome ──
 function PanelCard({ def, colorKey, onCycleColor, onMoveStart, onResizeStart, draggable, headerRight, children }) {
@@ -182,6 +260,7 @@ function Workspace() {
 
   const bodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={chartSymbol} />
     : def.id === 'halts' ? <HaltBody onPick={(s) => linkSymbol('halts', s)} />
+    : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
     : <MoversBody />);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{chartSymbol}</span> : null);
@@ -264,6 +343,7 @@ export default function TerminalClient() {
           <Workspace />
         )}
       </div>
+      <BottomTape />
       <Footer />
     </div>
   );
