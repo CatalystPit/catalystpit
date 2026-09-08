@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import ConsensusTeaser from "./ConsensusTeaser";
 import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
@@ -243,6 +244,9 @@ export default function CatalystPit() {
 
         {/* LEFT */}
         <div style={{display:"flex", flexDirection:"column", gap:16, minWidth:0}}>
+
+          {/* PIT CONSENSUS — flagship cross-signal teaser */}
+          <ConsensusTeaser />
 
           {/* TODAY IN THE PIT */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>

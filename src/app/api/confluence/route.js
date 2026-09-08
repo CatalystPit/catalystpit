@@ -23,12 +23,33 @@ async function kvSet(k, v, ttl) {
 
 // GET ?dir=bull|bear → ranked confluence list. Public teaser (first 5) for free/signed-out;
 // Pro/Elite get the full board. Full list cached in KV (30 min); tier only controls the slice.
+async function boardFor(dir) {
+  let full = await kvGet(`confluence:${dir}`);
+  if (!full) { full = await computeConfluence(dir); await kvSet(`confluence:${dir}`, full, TTL); }
+  return full;
+}
+
 export async function GET(request) {
   try {
-    const dir = new URL(request.url).searchParams.get('dir') === 'bear' ? 'bear' : 'bull';
+    const sp = new URL(request.url).searchParams;
 
-    let full = await kvGet(`confluence:${dir}`);
-    if (!full) { full = await computeConfluence(dir); await kvSet(`confluence:${dir}`, full, TTL); }
+    // Single-ticker lookup (for ticker-page badges) — returns that name's standing on each
+    // board regardless of tier; it's one ticker, and it promotes the full feature.
+    const tickerParam = sp.get('ticker');
+    if (tickerParam) {
+      const sym = tickerParam.toUpperCase();
+      const pick = async (dir) => {
+        const full = await boardFor(dir);
+        const idx = full.findIndex((r) => r.ticker === sym);
+        return idx >= 0 ? { rank: idx + 1, ...full[idx] } : null;
+      };
+      const [bull, bear] = await Promise.all([pick('bull'), pick('bear')]);
+      return Response.json({ ticker: sym, bull, bear }, { headers: NO_STORE });
+    }
+
+    const dir = sp.get('dir') === 'bear' ? 'bear' : 'bull';
+
+    const full = await boardFor(dir);
 
     const { userId } = await auth();
     const tier = await resolveUserTier();

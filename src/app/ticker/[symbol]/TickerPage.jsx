@@ -8,6 +8,7 @@ import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
+import ConsensusBadge from '../../../components/ConsensusBadge';
 
 // ── formatters (null/NaN → "—", per the null-rather-than-guess rule) ──
 const usd      = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -195,6 +196,7 @@ function Hero({ data, earnings }) {
             <span style={{ color: C.dim }}> · estimated from filing history</span>
           </div>
         )}
+        <div><ConsensusBadge symbol={data.symbol} /></div>
       </div>
 
       {/* key statistics — NO last-sale price (production = EDGAR + widget); live price is in
