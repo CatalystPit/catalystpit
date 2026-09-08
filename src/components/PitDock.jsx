@@ -16,10 +16,11 @@ import { C } from '../lib/cp-shared';
 import { onOpenPitDock } from '../lib/pitDockBus';
 
 const PANEL_W = 330;
-const MIN_W = 280, MAX_W = 560;
+const MIN_W = 280, MAX_W = 560, MIN_H = 300;
 const MOBILE_Q = '(max-width: 860px)';
 const PREF_KEY = 'cp_pit_open';
 const W_KEY = 'cp_pit_w';
+const H_KEY = 'cp_pit_h';
 
 export default function PitDock() {
   const [ready, setReady] = useState(false);
@@ -27,10 +28,13 @@ export default function PitDock() {
   const [open, setOpen] = useState(false);
   const [vh, setVh] = useState(700);
   const [termW, setTermW] = useState(300);      // Terminal-only resizable width
+  const [termH, setTermH] = useState(0);        // Terminal-only resizable height (0 = full)
 
   const pathname = usePathname();
   const onTerminal = !!pathname && pathname.startsWith('/terminal');
   const panelW = onTerminal ? termW : PANEL_W;  // only the Terminal gets a custom (narrowable) width
+  const customH = onTerminal && termH > 0;      // Terminal + user has set a height
+  const chatH = customH ? termH : vh;
 
   useEffect(() => {
     setReady(true);
@@ -44,6 +48,7 @@ export default function PitDock() {
     // Default: open on desktop for everyone, closed on mobile.
     setOpen(saved == null ? !mq.matches : saved === '1');
     try { const s = localStorage.getItem(W_KEY); const n = parseInt(s, 10); if (n) setTermW(Math.min(MAX_W, Math.max(MIN_W, n))); } catch { /* ignore */ }
+    try { const s = localStorage.getItem(H_KEY); const n = parseInt(s, 10); if (n) setTermH(Math.min(window.innerHeight, Math.max(MIN_H, n))); } catch { /* ignore */ }
 
     const setH = () => setVh(Math.max(360, window.innerHeight));
     setH();
@@ -62,6 +67,15 @@ export default function PitDock() {
     const sx = e.clientX; const base = termW; let latest = base;
     const move = (ev) => { latest = Math.min(MAX_W, Math.max(MIN_W, base + (sx - ev.clientX))); setTermW(latest); };
     const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); try { localStorage.setItem(W_KEY, String(latest)); } catch { /* ignore */ } };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+
+  // Drag the dock's bottom edge to resize its height (Terminal only).
+  const startResizeH = (e) => {
+    e.preventDefault();
+    const sy = e.clientY; const base = customH ? termH : vh; let latest = base;
+    const move = (ev) => { latest = Math.min(window.innerHeight, Math.max(MIN_H, base + (ev.clientY - sy))); setTermH(latest); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); try { localStorage.setItem(H_KEY, String(latest)); } catch { /* ignore */ } };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
 
@@ -123,15 +137,19 @@ export default function PitDock() {
         </span>
       </button>
 
-      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: panelW, zIndex: 60,
+      <div style={{ position: 'fixed', top: 0, right: 0, ...(customH ? { height: chatH } : { bottom: 0 }), width: panelW, zIndex: 60,
         transform: open ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
         boxShadow: open ? '-8px 0 24px rgba(0,0,0,0.12)' : 'none',
         pointerEvents: open ? 'auto' : 'none' }}>
         {onTerminal && open && (
           <div onPointerDown={startResize}
-            title="Drag to resize" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 7, cursor: 'col-resize', zIndex: 62, touchAction: 'none', background: 'transparent' }} />
+            title="Drag to resize width" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 7, cursor: 'col-resize', zIndex: 62, touchAction: 'none', background: 'transparent' }} />
         )}
-        {open && <PitChat height={vh} onClose={() => toggle(false)} />}
+        {onTerminal && open && (
+          <div onPointerDown={startResizeH}
+            title="Drag to resize height" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 7, cursor: 'row-resize', zIndex: 62, touchAction: 'none', background: 'transparent' }} />
+        )}
+        {open && <PitChat height={chatH} onClose={() => toggle(false)} />}
       </div>
     </>
   );
