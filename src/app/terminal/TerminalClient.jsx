@@ -221,8 +221,12 @@ function Workspace() {
     apply(); mq.addEventListener('change', apply);
     const width = ref.current ? ref.current.clientWidth : 1200;
     let saved = null; try { saved = JSON.parse(localStorage.getItem('cp_terminal_layout') || 'null'); } catch { /* ignore */ }
-    const raw = saved && saved.chart ? saved : defaultLayout(width);
-    const norm = {}; for (const d of PANELS) norm[d.id] = { ...raw[d.id], color: raw[d.id]?.color || 'blue' };
+    const raw = saved && saved.chart ? saved : {};
+    const dl = defaultLayout(width);
+    // Merge: default coords as the base, saved values on top — so panels added after a layout was
+    // saved (e.g. Watchlist) still get valid x/y/w/h instead of NaN.
+    const norm = {};
+    for (const d of PANELS) { const s = raw[d.id] || {}; norm[d.id] = { ...dl[d.id], ...s, color: s.color || dl[d.id].color || 'blue' }; }
     setLayout(norm);
     return () => mq.removeEventListener('change', apply);
   }, []);
@@ -280,7 +284,7 @@ function Workspace() {
     );
   }
 
-  const containerH = Math.max(...PANELS.map((d) => layout[d.id].y + layout[d.id].h)) + 8;
+  const containerH = Math.max(...PANELS.map((d) => (layout[d.id]?.y || 0) + (layout[d.id]?.h || 0)), 400) + 8;
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
