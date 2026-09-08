@@ -1,0 +1,41 @@
+import { computeConfluence } from '../../../lib/confluence';
+import { resolveUserTier } from '../../../lib/entitlements';
+
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+const NO_STORE = { 'Cache-Control': 'private, no-store' };
+
+const KV_URL = process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const TTL = 1800;              // 30 min — underlying filings move slowly
+const FREE_ROWS = 5;          // public teaser
+
+async function kvGet(k) {
+  if (!KV_URL || !KV_TOKEN) return null;
+  try { const r = await fetch(`${KV_URL}/get/${encodeURIComponent(k)}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: 'no-store' }); if (!r.ok) return null; const { result } = await r.json(); return result ? JSON.parse(result) : null; } catch { return null; }
+}
+async function kvSet(k, v, ttl) {
+  if (!KV_URL || !KV_TOKEN) return;
+  try { await fetch(`${KV_URL}/set/${encodeURIComponent(k)}?EX=${ttl}`, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(v) }); } catch { /* non-fatal */ }
+}
+
+// GET ?dir=bull|bear → ranked confluence list. Public teaser (first 5) for free/signed-out;
+// Pro/Elite get the full board. Full list cached in KV (30 min); tier only controls the slice.
+export async function GET(request) {
+  try {
+    const dir = new URL(request.url).searchParams.get('dir') === 'bear' ? 'bear' : 'bull';
+
+    let full = await kvGet(`confluence:${dir}`);
+    if (!full) { full = await computeConfluence(dir); await kvSet(`confluence:${dir}`, full, TTL); }
+
+    const tier = await resolveUserTier();
+    const isPro = tier === 'pro' || tier === 'elite';
+    const list = isPro ? full : full.slice(0, FREE_ROWS);
+    const lockedCount = isPro ? 0 : Math.max(0, full.length - FREE_ROWS);
+
+    return Response.json({ dir, list, lockedCount, tier, total: full.length }, { headers: NO_STORE });
+  } catch (e) {
+    console.log(`[confluence] ${e.message}`);
+    return Response.json({ dir: 'bull', list: [], lockedCount: 0, error: e.message }, { status: 200, headers: NO_STORE });
+  }
+}
