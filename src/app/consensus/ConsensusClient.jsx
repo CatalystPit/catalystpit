@@ -45,7 +45,7 @@ function Row({ r, dir, rank }) {
   );
 }
 
-export default function ConfluenceClient() {
+export default function ConsensusClient() {
   const [dir, setDir] = useState('bull');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -71,9 +71,9 @@ export default function ConfluenceClient() {
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
       <BrandStyles />
-      <TopNav active="Confluence" />
+      <TopNav active="Pit Consensus" />
       <div style={{ maxWidth: 820, margin: '22px auto', padding: '0 20px 48px' }}>
-        <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 600, color: C.ink, margin: '0 0 2px' }}>Confluence</h1>
+        <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 600, color: C.ink, margin: '0 0 2px' }}>Pit Consensus</h1>
         <p style={{ fontSize: 13, color: C.muted, margin: '0 0 14px', fontWeight: 300 }}>
           Where smart money stacks — names insiders, Congress, and hedge funds are {dir === 'bear' ? 'all selling' : 'all buying'} at once. Two or more aligned signals to make the board.
         </p>

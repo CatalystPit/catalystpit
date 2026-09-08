@@ -463,9 +463,11 @@ export function NotificationBell() {
 export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
-  const links = ["Terminal", "Confluence", "Feed", "News", "Screener", "Insiders", "Politicians", "Institutions"];
+  const links = ["Terminal", "Pit Consensus", "Feed", "News", "Screener", "Insiders", "Politicians", "Institutions"];
   const [menuOpen, setMenuOpen] = useState(false);
   const linkColor = (l) => active === l ? "#FFFFFF" : "rgba(255,255,255,0.75)";
+  // Most links map to /<lowercased>; multi-word names get an explicit path.
+  const hrefFor = (l) => l === "Pit Consensus" ? "/consensus" : `/${l.toLowerCase()}`;
   return (
     <div style={{background:C.navBg, height:50, display:"flex", alignItems:"center",
       justifyContent:"space-between", padding:"0 24px", position:"sticky", top:0, zIndex:100,
@@ -476,7 +478,7 @@ export function TopNav({ active }) {
       <div className="cp-nav-links" style={{gap:20, alignItems:"center", marginLeft:40,
         paddingLeft:40, flex:"1 1 auto", minWidth:0, overflow:"hidden"}}>
         {links.map(l => (
-          <a key={l} href={`/${l.toLowerCase()}`} className="nbtn"
+          <a key={l} href={hrefFor(l)} className="nbtn"
             style={{fontSize:15, color:linkColor(l), cursor:"pointer", transition:"color 0.2s",
               fontWeight: active === l ? 600 : 400, letterSpacing:"0.02em", textDecoration:"none",
               borderBottom: active === l ? "2px solid #5AB87A" : "none", paddingBottom: active === l ? 2 : 0}}>
@@ -537,7 +539,7 @@ export function TopNav({ active }) {
             <SymbolSearch mobile onNavigate={() => setMenuOpen(false)} />
           </div>
           {links.map(l => (
-            <a key={l} href={`/${l.toLowerCase()}`} onClick={() => setMenuOpen(false)}
+            <a key={l} href={hrefFor(l)} onClick={() => setMenuOpen(false)}
               style={{fontSize:14, color:linkColor(l), fontWeight: active === l ? 600 : 400,
                 textDecoration:"none", padding:"11px 24px",
                 borderLeft: active === l ? "3px solid #5AB87A" : "3px solid transparent"}}>
