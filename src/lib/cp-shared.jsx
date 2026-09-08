@@ -630,7 +630,7 @@ export function TickerLogo({ symbol, size = 18 }) {
 
   if (sym && sym !== '?' && !failed) {
     return (
-      <img src={`/api/logo?ticker=${encodeURIComponent(sym)}&v=2`} alt="" width={size} height={size}
+      <img src={`/api/logo?ticker=${encodeURIComponent(sym)}&v=3`} alt="" width={size} height={size}
         onError={() => setFailed(true)}
         style={{ width: size, height: size, borderRadius: 4, objectFit: 'contain',
           background: '#fff', border: `1px solid ${C.border}`, flexShrink: 0, display: 'block' }} />
@@ -992,7 +992,7 @@ export function Footer() {
       </div>
       <div style={{display:"flex", alignItems:"center", gap:6,
         fontFamily:"'DM Sans',sans-serif", fontSize:10, color:"rgba(255,255,255,0.5)"}}>
-        2026 CATALYSTPIT · NOT FINANCIAL ADVICE · DELAYED FILINGS
+        2026 CATALYSTPIT · NOT FINANCIAL ADVICE · DELAYED FILINGS · <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{color:"rgba(255,255,255,0.5)", textDecoration:"none"}}>LOGOS BY LOGO.DEV</a>
       </div>
     </div>
   );
