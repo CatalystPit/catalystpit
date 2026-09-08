@@ -62,7 +62,7 @@ function ChartBody({ symbol }) {
     s.async = true;
     s.innerHTML = JSON.stringify({
       autosize: true, symbol, interval: 'D', timezone: 'America/New_York', theme: 'light',
-      style: '1', locale: 'en', hide_side_toolbar: true, allow_symbol_change: true, support_host: 'https://www.tradingview.com',
+      style: '1', locale: 'en', hide_side_toolbar: false, allow_symbol_change: true, support_host: 'https://www.tradingview.com',
     });
     c.appendChild(s); h.appendChild(c);
     return () => { h.innerHTML = ''; };
