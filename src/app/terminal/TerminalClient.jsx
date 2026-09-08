@@ -1,10 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Responsive, WidthProvider } from 'react-grid-layout';
+import dynamic from 'next/dynamic';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout } from '../../lib/cp-shared';
 
-const Grid = WidthProvider(Responsive);
+// Load react-grid-layout CLIENT-ONLY — it touches the DOM and crashes Vercel's server prerender.
+const Grid = dynamic(
+  () => import('react-grid-layout').then((m) => m.WidthProvider(m.Responsive)),
+  { ssr: false },
+);
 
 // ── Benzinga-style movable workspace: drag panels by their header, resize from the corner,
 // layout persists per browser. Chart center, halt scanner + movers around it. ──
