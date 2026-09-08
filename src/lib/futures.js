@@ -9,8 +9,8 @@ export const FUTURES = {
   // Index
   ES:  { label: 'S&P 500',              tv: 'TVC:SPX',        cat: 'Index' },
   MES: { label: 'S&P 500 (Micro)',      tv: 'TVC:SPX',        cat: 'Index' },
-  NQ:  { label: 'Nasdaq 100',           tv: 'TVC:NDQ',        cat: 'Index' },
-  MNQ: { label: 'Nasdaq 100 (Micro)',   tv: 'TVC:NDQ',        cat: 'Index' },
+  NQ:  { label: 'Nasdaq 100',           tv: 'TVC:NDX',        cat: 'Index' },
+  MNQ: { label: 'Nasdaq 100 (Micro)',   tv: 'TVC:NDX',        cat: 'Index' },
   YM:  { label: 'Dow Jones',            tv: 'TVC:DJI',        cat: 'Index' },
   RTY: { label: 'Russell 2000',         tv: 'TVC:RUT',        cat: 'Index' },
   VIX: { label: 'Volatility (VIX)',     tv: 'TVC:VIX',        cat: 'Index' },
