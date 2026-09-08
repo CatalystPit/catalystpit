@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/refresh-content",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 13-21 * * 1-5"
     },
     {
       "path": "/api/refresh-congress",
