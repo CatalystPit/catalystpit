@@ -90,7 +90,7 @@ const bodyFor = (id) => (id === 'chart' ? <ChartBody symbol="SPY" /> : id === 'h
 // ── Panel chrome ──
 function PanelCard({ def, onMoveStart, onResizeStart, draggable }) {
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+    <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
       <div onPointerDown={draggable ? onMoveStart : undefined}
         style={{ cursor: draggable ? 'move' : 'default', padding: '9px 12px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, touchAction: 'none' }}>
         {def.dot && <span style={{ width: 8, height: 8, borderRadius: '50%', background: def.dot }} />}
@@ -101,8 +101,8 @@ function PanelCard({ def, onMoveStart, onResizeStart, draggable }) {
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{bodyFor(def.id)}</div>
       {draggable && (
         <div onPointerDown={onResizeStart}
-          style={{ position: 'absolute', right: 0, bottom: 0, width: 18, height: 18, cursor: 'se-resize', touchAction: 'none' }}>
-          <span style={{ position: 'absolute', right: 4, bottom: 4, width: 7, height: 7, borderRight: `2px solid ${C.dim}`, borderBottom: `2px solid ${C.dim}` }} />
+          style={{ position: 'absolute', right: 0, bottom: 0, width: 22, height: 22, cursor: 'se-resize', touchAction: 'none', zIndex: 5 }}>
+          <span style={{ position: 'absolute', right: 4, bottom: 4, width: 8, height: 8, borderRight: `2px solid ${C.muted}`, borderBottom: `2px solid ${C.muted}` }} />
         </div>
       )}
     </div>
@@ -111,9 +111,12 @@ function PanelCard({ def, onMoveStart, onResizeStart, draggable }) {
 
 function Workspace() {
   const ref = useRef(null);
-  const [layout, setLayout] = useState(null);
+  const layoutRef = useRef(null);           // always-current layout for pointer math
+  const [layout, setLayoutState] = useState(null);
   const [mobile, setMobile] = useState(false);
   const [dragging, setDragging] = useState(false);
+
+  const setLayout = (l) => { layoutRef.current = l; setLayoutState(l); };
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 900px)');
@@ -128,24 +131,20 @@ function Workspace() {
   const persist = (l) => { try { localStorage.setItem('cp_terminal_layout', JSON.stringify(l)); } catch { /* ignore */ } };
 
   const start = (id, e, mode) => {
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     const sx = e.clientX, sy = e.clientY;
-    let base;
-    setLayout((l) => { base = l[id]; return l; });
-    const o = { ...base };
+    const o = { ...layoutRef.current[id] };   // real current position (from the ref)
     setDragging(true);
     const move = (ev) => {
-      setLayout((l) => {
-        const next = mode === 'move'
-          ? { ...l[id], x: Math.max(0, o.x + (ev.clientX - sx)), y: Math.max(0, o.y + (ev.clientY - sy)) }
-          : { ...l[id], w: Math.max(MIN_W, o.w + (ev.clientX - sx)), h: Math.max(MIN_H, o.h + (ev.clientY - sy)) };
-        return { ...l, [id]: next };
-      });
+      const next = mode === 'move'
+        ? { ...o, x: Math.max(0, o.x + (ev.clientX - sx)), y: Math.max(0, o.y + (ev.clientY - sy)) }
+        : { ...o, w: Math.max(MIN_W, o.w + (ev.clientX - sx)), h: Math.max(MIN_H, o.h + (ev.clientY - sy)) };
+      setLayout({ ...layoutRef.current, [id]: next });
     };
     const up = () => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
       setDragging(false);
-      setLayout((l) => { persist(l); return l; });
+      persist(layoutRef.current);
     };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
