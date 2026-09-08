@@ -328,6 +328,7 @@ export default function TerminalClient() {
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
       <BrandStyles />
       <TopNav active="Terminal" />
+      <BottomTape />
       <div style={{ maxWidth: 1440, margin: '18px auto', padding: '0 16px 48px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 28, fontWeight: 600, color: C.ink, margin: 0 }}>Terminal</h1>
@@ -347,7 +348,6 @@ export default function TerminalClient() {
           <Workspace />
         )}
       </div>
-      <BottomTape />
       <Footer />
     </div>
   );
