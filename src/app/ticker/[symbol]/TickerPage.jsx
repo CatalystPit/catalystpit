@@ -1135,7 +1135,7 @@ function FuturesView({ fut }) {
     return (
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center' }}>
         <div style={{ fontSize: 16, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Unknown futures symbol /{fut.root}</div>
-        <div style={{ fontSize: 13, color: C.muted }}>Try /ES, /NQ, /YM, /RTY, /VIX, /CL, /NG, /GC, /SI, /DXY, /US10Y, /BTC.</div>
+        <div style={{ fontSize: 13, color: C.muted }}>Try /ES, /NQ, /YM, /RTY, /VIX, /CL, /NG, /GC, /SI, /HG, /DXY, /6E, /BTC.</div>
       </div>
     );
   }
