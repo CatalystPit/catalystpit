@@ -124,7 +124,7 @@ export default function XTapeDock() {
       </button>
 
       {mounted && (
-        <div style={{ position: 'fixed', top: 50, left: 0, bottom: 0, width: panelW, zIndex: 60,
+        <div style={{ position: 'fixed', top: 0, left: 0, bottom: 0, width: panelW, zIndex: 60,
           transform: open ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 0.25s ease',
           background: C.bg, borderRight: `1px solid ${C.border}`, overflowY: 'auto',
           boxShadow: open ? '8px 0 24px rgba(0,0,0,0.12)' : 'none' }}>

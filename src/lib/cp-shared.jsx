@@ -474,7 +474,7 @@ export function TopNav({ active }) {
 
       {/* Desktop links — hidden ≤860px via .cp-nav-links */}
       <div className="cp-nav-links" style={{gap:20, alignItems:"center", marginLeft:40,
-        paddingLeft:40}}>
+        paddingLeft:40, flex:"1 1 auto", minWidth:0, overflow:"hidden"}}>
         {links.map(l => (
           <a key={l} href={`/${l.toLowerCase()}`} className="nbtn"
             style={{fontSize:15, color:linkColor(l), cursor:"pointer", transition:"color 0.2s",
