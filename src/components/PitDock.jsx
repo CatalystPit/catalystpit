@@ -10,19 +10,27 @@
 // Mobile (≤860px): floating button (bottom-right) opens a full-screen sheet.
 
 import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import PitChat from './PitChat';
 import { C } from '../lib/cp-shared';
 import { onOpenPitDock } from '../lib/pitDockBus';
 
 const PANEL_W = 330;
+const MIN_W = 280, MAX_W = 560;
 const MOBILE_Q = '(max-width: 860px)';
 const PREF_KEY = 'cp_pit_open';
+const W_KEY = 'cp_pit_w';
 
 export default function PitDock() {
   const [ready, setReady] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [open, setOpen] = useState(false);
   const [vh, setVh] = useState(700);
+  const [termW, setTermW] = useState(300);      // Terminal-only resizable width
+
+  const pathname = usePathname();
+  const onTerminal = !!pathname && pathname.startsWith('/terminal');
+  const panelW = onTerminal ? termW : PANEL_W;  // only the Terminal gets a custom (narrowable) width
 
   useEffect(() => {
     setReady(true);
@@ -35,6 +43,7 @@ export default function PitDock() {
     try { saved = localStorage.getItem(PREF_KEY); } catch { /* private mode */ }
     // Default: open on desktop for everyone, closed on mobile.
     setOpen(saved == null ? !mq.matches : saved === '1');
+    try { const s = localStorage.getItem(W_KEY); const n = parseInt(s, 10); if (n) setTermW(Math.min(MAX_W, Math.max(MIN_W, n))); } catch { /* ignore */ }
 
     const setH = () => setVh(Math.max(360, window.innerHeight));
     setH();
@@ -44,8 +53,17 @@ export default function PitDock() {
 
   // Reserve space on the right for the open panel (desktop only).
   useEffect(() => {
-    document.documentElement.style.setProperty('--cp-pit', (!mobile && open) ? `${PANEL_W}px` : '0px');
-  }, [open, mobile]);
+    document.documentElement.style.setProperty('--cp-pit', (!mobile && open) ? `${panelW}px` : '0px');
+  }, [open, mobile, panelW]);
+
+  // Drag the dock's left edge to resize (Terminal only).
+  const startResize = (e) => {
+    e.preventDefault();
+    const sx = e.clientX; const base = termW; let latest = base;
+    const move = (ev) => { latest = Math.min(MAX_W, Math.max(MIN_W, base + (sx - ev.clientX))); setTermW(latest); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); try { localStorage.setItem(W_KEY, String(latest)); } catch { /* ignore */ } };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
 
   // Let other components (e.g. the homepage "Join The Pit" widget) open the dock.
   useEffect(() => onOpenPitDock(() => {
@@ -91,7 +109,7 @@ export default function PitDock() {
   return (
     <>
       <button onClick={() => toggle()} aria-label={open ? 'Collapse The Pit' : 'Open The Pit'}
-        style={{ position: 'fixed', top: '50%', right: open ? PANEL_W : 0, transform: 'translateY(-50%)',
+        style={{ position: 'fixed', top: '50%', right: open ? panelW : 0, transform: 'translateY(-50%)',
           zIndex: 61, transition: 'right 0.25s ease', display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: 6, padding: '12px 7px', cursor: 'pointer',
           background: C.green, color: '#fff', border: 'none', borderRadius: '8px 0 0 8px',
@@ -105,10 +123,14 @@ export default function PitDock() {
         </span>
       </button>
 
-      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: PANEL_W, zIndex: 60,
+      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: panelW, zIndex: 60,
         transform: open ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
         boxShadow: open ? '-8px 0 24px rgba(0,0,0,0.12)' : 'none',
         pointerEvents: open ? 'auto' : 'none' }}>
+        {onTerminal && open && (
+          <div onPointerDown={startResize}
+            title="Drag to resize" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 7, cursor: 'col-resize', zIndex: 62, touchAction: 'none', background: 'transparent' }} />
+        )}
         {open && <PitChat height={vh} onClose={() => toggle(false)} />}
       </div>
     </>
