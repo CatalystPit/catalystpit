@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import EightKWire from "./EightKWire";
 import {
   C, TAG, CARD_COLORS,
   fetchKey, toArr, minsSince, timeAgo,
@@ -379,6 +380,7 @@ export default function NewsFeed() {
             onQueryChange={setTickerQuery}
             trending={trendingTickers}
           />
+          <EightKWire limit={30}/>
           <MarketSnapshotCard tickers={data?.tickers} loading={loading}/>
           <CatalystBriefCard/>
         </div>

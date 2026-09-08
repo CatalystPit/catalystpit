@@ -47,6 +47,10 @@
     {
       "path": "/api/cron/institutions",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/eightk",
+      "schedule": "*/5 * * * *"
     }
   ],
   "headers": [
@@ -103,6 +107,9 @@
     },
     "src/app/api/cron/institutions/route.js": {
       "maxDuration": 300
+    },
+    "src/app/api/cron/eightk/route.js": {
+      "maxDuration": 60
     }
   }
 }

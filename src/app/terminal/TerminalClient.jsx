@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
+import EightKWire from '../../components/EightKWire';
 
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
@@ -14,6 +15,7 @@ const PANELS = [
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
   { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
   { id: 'news',      title: 'News',         tag: 'LIVE' },
+  { id: 'eightk',    title: '8-K Wire',     tag: 'SEC' },
   { id: 'pitscan',   title: 'Pit Scan',     tag: 'PRESET' },
   { id: 'scanner',   title: 'Scanner',      tag: 'CUSTOM' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
@@ -47,7 +49,8 @@ function defaultLayout(width) {
     // center column
     chart:     { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
     news:      { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' },
-    // scanners default to the center-bottom area (add-only; overlap news until arranged)
+    // add-only panels default to the center-bottom area (overlap news until arranged)
+    eightk:    { x: centerX, y: 392, w: centerW, h: 240, color: 'blue' },
     pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'blue' },
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     // right column
@@ -414,6 +417,7 @@ function Workspace() {
     : def.id === 'chat' ? <PitChat bare />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'news' ? <NewsBody />
+    : def.id === 'eightk' ? <EightKWire bare />
     : def.id === 'pitscan' ? <ScanBody mode="preset" onPick={(s) => linkSymbol('pitscan', s)} />
     : def.id === 'scanner' ? <ScanBody mode="custom" onPick={(s) => linkSymbol('scanner', s)} />
     : null);

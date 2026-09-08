@@ -30,6 +30,26 @@ export const insiderTrades = pgTable('insider_trades', {
   idxActionFiling:     index('idx_insider_action_filing').on(t.action, t.filingDate),
 }));
 
+export const eightkFilings = pgTable('eightk_filings', {
+  id:            serial('id').primaryKey(),
+  ticker:        text('ticker').notNull(),
+  company:       text('company'),
+  cik:           text('cik').notNull(),
+  items:         text('items'),                          // CSV of item codes, e.g. "2.02,9.01"
+  material:      boolean('material').notNull().default(false),
+  primaryDocUrl: text('primary_doc_url'),
+  filingUrl:     text('filing_url'),                     // EDGAR index page
+  reportDate:    date('report_date', { mode: 'string' }),
+  accession:     text('accession').notNull(),
+  filedAt:       timestamp('filed_at', { withTimezone: true }).notNull(),
+  insertedAt:    timestamp('inserted_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uqAcc:        uniqueIndex('uq_eightk_accession').on(t.accession),
+  idxFiledAt:   index('idx_eightk_filed_at').on(t.filedAt),
+  idxMaterial:  index('idx_eightk_material_filed').on(t.material, t.filedAt),
+  idxTicker:    index('idx_eightk_ticker').on(t.ticker),
+}));
+
 export const congressTrades = pgTable('congress_trades', {
   id:               serial('id').primaryKey(),
   txHash:           text('tx_hash').notNull(),            // sha256 synthetic dedup key
