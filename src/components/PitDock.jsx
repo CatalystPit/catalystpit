@@ -50,7 +50,7 @@ export default function PitDock() {
     try { const s = localStorage.getItem(W_KEY); const n = parseInt(s, 10); if (n) setTermW(Math.min(MAX_W, Math.max(MIN_W, n))); } catch { /* ignore */ }
     try { const s = localStorage.getItem(H_KEY); const n = parseInt(s, 10); if (n) setTermH(Math.min(window.innerHeight, Math.max(MIN_H, n))); } catch { /* ignore */ }
 
-    const setH = () => setVh(Math.max(360, window.innerHeight));
+    const setH = () => setVh(Math.max(360, window.innerHeight - 50));   // below the 50px sticky nav
     setH();
     window.addEventListener('resize', setH);
     return () => { mq.removeEventListener('change', applyMq); window.removeEventListener('resize', setH); };
@@ -138,7 +138,7 @@ export default function PitDock() {
         </span>
       </button>
 
-      <div style={{ position: 'fixed', top: 0, right: 0, ...(customH ? { height: chatH } : { bottom: 0 }), width: panelW, zIndex: 60,
+      <div style={{ position: 'fixed', top: 50, right: 0, ...(customH ? { height: chatH } : { bottom: 0 }), width: panelW, zIndex: 60,
         transform: open ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
         boxShadow: open ? '-8px 0 24px rgba(0,0,0,0.12)' : 'none',
         pointerEvents: open ? 'auto' : 'none' }}>

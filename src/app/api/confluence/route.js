@@ -1,5 +1,7 @@
+import { auth } from '@clerk/nextjs/server';
 import { computeConfluence } from '../../../lib/confluence';
 import { resolveUserTier } from '../../../lib/entitlements';
+import { isAdminUser } from '../../../lib/pit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -28,10 +30,12 @@ export async function GET(request) {
     let full = await kvGet(`confluence:${dir}`);
     if (!full) { full = await computeConfluence(dir); await kvSet(`confluence:${dir}`, full, TTL); }
 
+    const { userId } = await auth();
     const tier = await resolveUserTier();
-    const isPro = tier === 'pro' || tier === 'elite';
-    const list = isPro ? full : full.slice(0, FREE_ROWS);
-    const lockedCount = isPro ? 0 : Math.max(0, full.length - FREE_ROWS);
+    const admin = userId ? await isAdminUser(userId) : false;
+    const isFull = tier === 'pro' || tier === 'elite' || admin;   // admin sees the full board too
+    const list = isFull ? full : full.slice(0, FREE_ROWS);
+    const lockedCount = isFull ? 0 : Math.max(0, full.length - FREE_ROWS);
 
     return Response.json({ dir, list, lockedCount, tier, total: full.length }, { headers: NO_STORE });
   } catch (e) {
