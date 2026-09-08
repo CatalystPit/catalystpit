@@ -358,7 +358,9 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
     if (!s) return;                  // empty submit = no-op
     setV('');                        // clear for the next search
     if (onNavigate) onNavigate();    // close the mobile drawer
-    router.push(`/ticker/${encodeURIComponent(s)}`);
+    // Futures convention "/ES" → URL-safe "FUT.ES" (avoids an encoded slash in the path).
+    const target = s.startsWith('/') ? `FUT.${s.slice(1)}` : s;
+    router.push(`/ticker/${encodeURIComponent(target)}`);
   };
   return (
     <form onSubmit={submit} style={{ position: "relative", display: "flex", alignItems: "center",
@@ -376,7 +378,7 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
       </button>
       <input type="text" value={v} onChange={e => setV(e.target.value.toUpperCase())}
         onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-        aria-label="Search ticker symbol" placeholder="Search ticker, company..."
+        aria-label="Search ticker symbol" placeholder="Ticker, company, or /ES futures…"
         className="cp-nav-search-input"
         style={{ width: "100%", height: "100%", background: "transparent", border: "none", outline: "none",
           color: "#1A1A1A", fontFamily: "'DM Sans',sans-serif", fontSize: 14, letterSpacing: "0.5px",

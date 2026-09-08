@@ -3,6 +3,7 @@ import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../../lib/cp-shared';
 import TradingViewChart from '../../../components/TradingViewChart';
+import { resolveFutures } from '../../../lib/futures';
 import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
@@ -1127,15 +1128,49 @@ function TickerBody({ symbol }) {
   return <ValidView data={data} tab={tab} onTab={onTab} insider={insider} gov={gov} earnings={earnings} short={short} />;
 }
 
+// Futures view — slash-prefixed symbols (/ES, /CL, /GC). No SEC/insider/fundamentals apply to a
+// futures contract, so we show a clean header + the TradingView continuous front-month chart.
+function FuturesView({ fut }) {
+  if (fut.unknown) {
+    return (
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center' }}>
+        <div style={{ fontSize: 16, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Unknown futures symbol /{fut.root}</div>
+        <div style={{ fontSize: 13, color: C.muted }}>Try /ES, /NQ, /YM, /RTY, /CL, /NG, /GC, /SI, /HG, /ZB, /ZN, /ZC, /6E, /BTC.</div>
+      </div>
+    );
+  }
+  const exchange = (fut.tv.split(':')[0] || '').replace('_', ' ');
+  return (
+    <>
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '18px 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+          <span className="cp-tkr" style={{ fontSize: 26, fontWeight: 800, color: C.ink }}>/{fut.root}</span>
+          <span style={{ fontSize: 15, color: C.ink, fontWeight: 600 }}>{fut.label}</span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: C.green, background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 4, padding: '2px 7px', letterSpacing: 0.5 }}>FUTURES</span>
+        </div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 5 }}>
+          {fut.cat} · continuous front-month · {exchange}
+        </div>
+      </div>
+      <TradingViewChart ticker={fut.tv} />
+    </>
+  );
+}
+
 export default function TickerPage({ symbol }) {
+  const fut = resolveFutures(symbol);
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
       <BrandStyles />
       <TopNav />
       <div style={{ maxWidth: 1440, margin: '0 auto', padding: '24px 24px 40px' }}>
-        <Suspense fallback={<LoadingShell />}>
-          <TickerBody symbol={symbol} />
-        </Suspense>
+        {fut ? (
+          <FuturesView fut={fut} />
+        ) : (
+          <Suspense fallback={<LoadingShell />}>
+            <TickerBody symbol={symbol} />
+          </Suspense>
+        )}
       </div>
       <Footer />
     </div>
