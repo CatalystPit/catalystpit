@@ -1,5 +1,6 @@
 import { db } from '../../../lib/db';
 import { insiderTrades as insiderTradesTable } from '../../../lib/schema';
+import { inArray } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -18,6 +19,18 @@ async function kvSet(key, value) {
     { method:'POST', headers:{ Authorization:`Bearer ${KV_TOKEN}`, 'Content-Type':'text/plain' }, body:value }
   );
   console.log(`✅ ${key}`);
+}
+
+async function kvGet(key) {
+  try {
+    const r = await fetch(
+      `https://powerful-grouper-86116.upstash.io/get/${encodeURIComponent(key)}`,
+      { headers: { Authorization: `Bearer ${KV_TOKEN}` } }
+    );
+    if (!r.ok) return null;
+    const { result } = await r.json();
+    return result ?? null;
+  } catch { return null; }
 }
 
 async function fetchStockPrices(tickers) {
@@ -139,42 +152,56 @@ function parseForm4(xml, filing) {
   });
 }
 
+const FORM4_PAGES = 4;   // getcurrent pages (start 0,100,200,300) → ~200 unique filings/run
+const SEEN_KEY = 'catalystpit:insider:seen_accessions';
+
 async function fetchForm4Trades() {
   try {
-    const atomRes = await fetch(
-      'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=100&output=atom',
-      { headers: SEC_HEADERS }
-    );
-    if (!atomRes.ok) {
-      console.log(`❌ SEC atom feed: HTTP ${atomRes.status}`);
-      return [];
-    }
-    const atomXml = await atomRes.text();
-
-    // Each filing appears twice in the atom feed (Issuer + Reporting Owner views).
-    // De-dupe by accession#, keep only Issuer entries for clean ticker source.
-    const entries = [...atomXml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(m => m[1]);
+    // Scan several pages of SEC's live Form 4 stream so post-close bursts aren't missed.
+    // Each filing appears 2x (Issuer + reporting-owner views) — de-dupe to Issuer.
     const filings = new Map();
-    for (const entry of entries) {
-      const title = entry.match(/<title>(.*?)<\/title>/)?.[1] || '';
-      if (!title.includes('(Issuer)')) continue;
-      const link = entry.match(/<link[^>]+href="([^"]+)"/)?.[1] || '';
-      const lm = link.match(/\/data\/(\d+)\/(\d+)\/([\d-]+)-index\.htm/);
-      if (!lm) continue;
-      const [, cik, accessionNoDashes, accessionWithDashes] = lm;
-      const filingDate = entry.match(/<updated>(.*?)<\/updated>/)?.[1]?.split('T')[0] || '';
-      filings.set(accessionWithDashes, {
-        accession: accessionWithDashes,
-        cik, accessionNoDashes,
-        indexUrl: link,
-        filingDate,
-      });
+    for (let p = 0; p < FORM4_PAGES; p++) {
+      const atomRes = await fetch(
+        `https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=4&dateb=&owner=include&count=100&start=${p * 100}&output=atom`,
+        { headers: SEC_HEADERS }
+      );
+      if (!atomRes.ok) { console.log(`❌ SEC atom p${p}: HTTP ${atomRes.status}`); break; }
+      const entries = [...(await atomRes.text()).matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(m => m[1]);
+      if (entries.length === 0) break;                 // past the end of the stream
+      let added = 0;
+      for (const entry of entries) {
+        const title = entry.match(/<title>(.*?)<\/title>/)?.[1] || '';
+        if (!title.includes('(Issuer)')) continue;
+        const link = entry.match(/<link[^>]+href="([^"]+)"/)?.[1] || '';
+        const lm = link.match(/\/data\/(\d+)\/(\d+)\/([\d-]+)-index\.htm/);
+        if (!lm) continue;
+        const [, cik, accessionNoDashes, accessionWithDashes] = lm;
+        if (filings.has(accessionWithDashes)) continue;
+        const filingDate = entry.match(/<updated>(.*?)<\/updated>/)?.[1]?.split('T')[0] || '';
+        filings.set(accessionWithDashes, { accession: accessionWithDashes, cik, accessionNoDashes, indexUrl: link, filingDate });
+        added++;
+      }
+      if (added === 0 && p > 0) break;                 // nothing new on this page → stop paging
     }
 
-    console.log(`📋 SEC: ${entries.length} atom entries → ${filings.size} unique Form 4 filings`);
+    // Only fetch details (2 SEC reqs each) for accessions we haven't handled — skip what's already
+    // in Postgres AND a rolling KV "seen" set (also stops re-parsing derivative-only filings every run).
+    let candidates = Array.from(filings.values());
+    const scanned = candidates.length;
+    let seen = [];
+    try { const s = await kvGet(SEEN_KEY); if (s) seen = JSON.parse(s); } catch { /* ignore */ }
+    const seenSet = new Set(seen);
+    if (candidates.length > 0) {
+      const known = await db.select({ accession: insiderTradesTable.accession })
+        .from(insiderTradesTable)
+        .where(inArray(insiderTradesTable.accession, candidates.map(f => f.accession)));
+      known.forEach(k => seenSet.add(k.accession));
+    }
+    candidates = candidates.filter(f => !seenSet.has(f.accession));
+    console.log(`📋 SEC: ${scanned} unique Form 4 scanned · ${scanned - candidates.length} skipped (seen) · ${candidates.length} new`);
 
     // Two requests per filing (index.json + ownership xml) throttled to stay under SEC's 10 req/sec.
-    const results = await throttledBatch(Array.from(filings.values()), 5, 600, async (f) => {
+    const results = await throttledBatch(candidates, 5, 600, async (f) => {
       try {
         const idxRes = await fetch(
           `https://www.sec.gov/Archives/edgar/data/${f.cik}/${f.accessionNoDashes}/index.json`,
@@ -196,6 +223,12 @@ async function fetchForm4Trades() {
         return [];
       }
     });
+
+    // Remember what we just processed so we don't re-fetch it next run (cap keeps the KV value small).
+    const processed = candidates.map(f => f.accession);
+    if (processed.length > 0) {
+      try { await kvSet(SEEN_KEY, JSON.stringify([...processed, ...seen].slice(0, 600))); } catch { /* ignore */ }
+    }
 
     const flat = results.flat();
     const codeCounts = flat.reduce((acc, t) => {
