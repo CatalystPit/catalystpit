@@ -8,14 +8,18 @@ import XTape from '../../components/XTape';
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
 // saved to localStorage. Chart center, halt scanner + movers around it.
+// Full widget registry — users add/remove any of these (Benzinga-style).
 const PANELS = [
   { id: 'tape',      title: 'Tape · X',     tag: 'SOCIAL' },
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
   { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
+  { id: 'news',      title: 'News',         tag: 'LIVE' },
   { id: 'movers',    title: 'Movers',       tag: 'SOON' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
+const PANEL_BY_ID = Object.fromEntries(PANELS.map((p) => [p.id, p]));
+const DEFAULT_VISIBLE = ['tape', 'halts', 'chart', 'news', 'watchlist', 'chat'];
 const MIN_W = 240, MIN_H = 220;
 
 // Link groups (Benzinga-style): panels sharing a color sync — click a symbol in one and it loads
@@ -41,7 +45,8 @@ function defaultLayout(width) {
     halts:     { x: 0, y: botY, w: leftW, h: top, color: 'blue' },
     // center column
     chart:     { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
-    movers:    { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' },
+    news:      { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' },
+    movers:    { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' }, // default overlaps news (hidden by default)
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'blue' },
@@ -111,6 +116,52 @@ function HaltBody({ onPick }) {
 }
 
 const MoversBody = () => <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>Top gainers, losers & unusual volume — landing here next.</div>;
+
+const timeAgoShort = (iso) => {
+  if (!iso) return '';
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return `${mins}m`;
+  if (mins < 1440) return `${Math.round(mins / 60)}h`;
+  return `${Math.round(mins / 1440)}d`;
+};
+
+function NewsBody() {
+  const [items, setItems] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch('/api/news', { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        const arr = toArr(j?.data, 'stories', 'top_stories', 'articles', 'items', 'data');
+        if (alive) setItems(arr.map((s) => ({
+          headline: s.title || s.headline || s.summary || '',
+          source: s.source || s.outlet || s.publisher || 'Market News',
+          url: s.url || null,
+          published: s.published || s.published_at || s.date || null,
+          sym: (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || null),
+        })).filter((a) => a.headline));
+      } catch { if (alive) setItems([]); }
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (items === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading…</div>;
+  if (items.length === 0) return <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No headlines right now.</div>;
+  return (
+    <div style={{ overflow: 'auto', flex: 1 }}>
+      {items.map((n, i) => (
+        <a key={i} href={n.url || '#'} target={n.url ? '_blank' : undefined} rel="noopener noreferrer"
+          style={{ display: 'block', padding: '9px 12px', borderTop: i ? `1px solid ${C.surface}` : 'none', textDecoration: 'none' }}>
+          <div style={{ fontSize: 12.5, color: C.ink, fontWeight: 600, lineHeight: 1.35 }}>{n.headline}</div>
+          <div style={{ fontSize: 10.5, color: C.dim, marginTop: 2 }}>
+            {n.sym ? <span className="cp-tkr" style={{ color: C.green, fontWeight: 700 }}>{n.sym} · </span> : null}
+            {n.source}{n.published ? ` · ${timeAgoShort(n.published)}` : ''}
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
 
 function WatchlistBody({ onPick }) {
   const [rows, setRows] = useState(null);
@@ -187,7 +238,7 @@ function BottomTape() {
 }
 
 // ── Panel chrome ──
-function PanelCard({ def, colorKey, onCycleColor, onMoveStart, onResizeStart, draggable, headerRight, children }) {
+function PanelCard({ def, colorKey, onCycleColor, onMoveStart, onResizeStart, draggable, headerRight, onRemove, children }) {
   return (
     <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
       <div onPointerDown={draggable ? onMoveStart : undefined}
@@ -202,6 +253,10 @@ function PanelCard({ def, colorKey, onCycleColor, onMoveStart, onResizeStart, dr
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {headerRight}
           {draggable && <span style={{ color: C.hint, fontSize: 13, letterSpacing: -1 }}>⠿</span>}
+          {onRemove && (
+            <button onPointerDown={(e) => e.stopPropagation()} onClick={onRemove} title="Remove panel"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 15, lineHeight: 1, padding: 0 }}>×</button>
+          )}
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{children}</div>
@@ -222,8 +277,12 @@ function Workspace() {
   const [mobile, setMobile] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [chartSymbol, setChartSymbol] = useState('SPY');
+  const [visible, setVisibleState] = useState(DEFAULT_VISIBLE);
+  const visibleRef = useRef(DEFAULT_VISIBLE);
+  const [addOpen, setAddOpen] = useState(false);
 
   const setLayout = (l) => { layoutRef.current = l; setLayoutState(l); };
+  const setVisible = (v) => { visibleRef.current = v; setVisibleState(v); };
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 900px)');
@@ -238,6 +297,8 @@ function Workspace() {
     const norm = {};
     for (const d of PANELS) { const s = raw[d.id] || {}; norm[d.id] = { ...dl[d.id], ...s, color: s.color || dl[d.id].color || 'blue' }; }
     setLayout(norm);
+    let vis = null; try { vis = JSON.parse(localStorage.getItem('cp_terminal_visible') || 'null'); } catch { /* ignore */ }
+    setVisible(Array.isArray(vis) && vis.length ? vis.filter((id) => PANEL_BY_ID[id]) : DEFAULT_VISIBLE);
     return () => mq.removeEventListener('change', apply);
   }, []);
 
@@ -262,7 +323,10 @@ function Workspace() {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
 
-  const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); };
+  const persistVisible = (v) => { try { localStorage.setItem('cp_terminal_visible', JSON.stringify(v)); } catch { /* ignore */ } };
+  const addPanel = (id) => { if (visibleRef.current.includes(id)) return; const v = [...visibleRef.current, id]; setVisible(v); persistVisible(v); setAddOpen(false); };
+  const removePanel = (id) => { const v = visibleRef.current.filter((x) => x !== id); setVisible(v); persistVisible(v); };
+  const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); setVisible(DEFAULT_VISIBLE); persistVisible(DEFAULT_VISIBLE); };
 
   // Link-group sync: clicking a symbol in a source panel loads it in chart panels sharing its color.
   const linkSymbol = (sourceId, sym) => {
@@ -277,6 +341,7 @@ function Workspace() {
     : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
     : def.id === 'chat' ? <PitChat bare />
     : def.id === 'tape' ? <XTape bare />
+    : def.id === 'news' ? <NewsBody />
     : <MoversBody />);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{chartSymbol}</span> : null);
@@ -287,29 +352,52 @@ function Workspace() {
   if (mobile) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {PANELS.map((def) => (
-          <div key={def.id} style={{ position: 'relative', height: def.id === 'chart' ? 420 : def.id === 'chat' ? 460 : def.id === 'tape' ? 500 : 320 }}>
-            <PanelCard def={def} draggable={false} colorKey={layout[def.id]?.color} headerRight={headerRightOf(def)}>{bodyOf(def)}</PanelCard>
+        {visible.map((id) => { const def = PANEL_BY_ID[id]; if (!def) return null; return (
+          <div key={id} style={{ position: 'relative', height: id === 'chart' ? 420 : id === 'chat' ? 460 : id === 'tape' ? 500 : 320 }}>
+            <PanelCard def={def} draggable={false} colorKey={layout[id]?.color} headerRight={headerRightOf(def)} onRemove={() => removePanel(id)}>{bodyOf(def)}</PanelCard>
           </div>
-        ))}
+        ); })}
       </div>
     );
   }
 
-  const containerH = Math.max(...PANELS.map((d) => (layout[d.id]?.y || 0) + (layout[d.id]?.h || 0)), 400) + 8;
+  const containerH = Math.max(...visible.map((id) => (layout[id]?.y || 0) + (layout[id]?.h || 0)), 400) + 8;
+  const hidden = PANELS.filter((d) => !visible.includes(d.id));
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <button onClick={reset} style={{ background: C.white, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Reset layout</button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => setAddOpen((o) => !o)}
+            style={{ background: C.green, border: 'none', color: '#fff', borderRadius: 6, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+            + Add panel
+          </button>
+          {addOpen && (
+            <>
+              <div onClick={() => setAddOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 20 }} />
+              <div style={{ position: 'absolute', right: 0, top: '112%', zIndex: 21, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', minWidth: 180, overflow: 'hidden' }}>
+                {hidden.length === 0 ? (
+                  <div style={{ padding: '10px 14px', fontSize: 12, color: C.dim }}>All panels added.</div>
+                ) : hidden.map((d) => (
+                  <button key={d.id} onClick={() => addPanel(d.id)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
+                    {d.title}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+        <button onClick={reset} style={{ background: C.white, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Reset layout</button>
       </div>
       <div ref={ref} style={{ position: 'relative', width: '100%', height: containerH }}>
-        {PANELS.map((def) => {
-          const p = layout[def.id];
+        {visible.map((id) => {
+          const def = PANEL_BY_ID[id]; const p = layout[id];
+          if (!def || !p) return null;
           return (
-            <div key={def.id} style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h }}>
-              <PanelCard def={def} draggable colorKey={p.color} onCycleColor={() => cycleColor(def.id)}
-                onMoveStart={(e) => start(def.id, e, 'move')} onResizeStart={(e) => start(def.id, e, 'resize')}
-                headerRight={headerRightOf(def)}>{bodyOf(def)}</PanelCard>
+            <div key={id} style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h }}>
+              <PanelCard def={def} draggable colorKey={p.color} onCycleColor={() => cycleColor(id)}
+                onMoveStart={(e) => start(id, e, 'move')} onResizeStart={(e) => start(id, e, 'resize')}
+                headerRight={headerRightOf(def)} onRemove={() => removePanel(id)}>{bodyOf(def)}</PanelCard>
             </div>
           );
         })}
