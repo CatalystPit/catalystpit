@@ -13,15 +13,24 @@ const PANELS = [
 ];
 const MIN_W = 240, MIN_H = 220;
 
+// Link groups (Benzinga-style): panels sharing a color sync — click a symbol in one and it loads
+// in linked chart panels. Click the header chip to cycle a panel's group.
+const LINK_COLORS = [
+  { key: 'blue', c: '#2A6FDB' }, { key: 'green', c: '#1E5C38' },
+  { key: 'orange', c: '#E08A1E' }, { key: 'red', c: '#A83030' }, { key: 'none', c: '#C4C8BE' },
+];
+const colorOf = (key) => (LINK_COLORS.find((x) => x.key === key) || LINK_COLORS[4]).c;
+const nextColor = (key) => { const i = LINK_COLORS.findIndex((x) => x.key === key); return LINK_COLORS[(i + 1) % LINK_COLORS.length].key; };
+
 function defaultLayout(width) {
   const w = width || 1200;
   const gap = 12;
   const unit = (w - gap * 2) / 12;
   const h = 560;
   return {
-    halts:  { x: 0, y: 0, w: Math.round(unit * 3), h },
-    chart:  { x: Math.round(unit * 3) + gap, y: 0, w: Math.round(unit * 6), h },
-    movers: { x: Math.round(unit * 9) + gap * 2, y: 0, w: Math.round(unit * 3) - 2, h },
+    halts:  { x: 0, y: 0, w: Math.round(unit * 3), h, color: 'blue' },
+    chart:  { x: Math.round(unit * 3) + gap, y: 0, w: Math.round(unit * 6), h, color: 'blue' },
+    movers: { x: Math.round(unit * 9) + gap * 2, y: 0, w: Math.round(unit * 3) - 2, h, color: 'blue' },
   };
 }
 
@@ -44,10 +53,11 @@ function ChartBody({ symbol }) {
     c.appendChild(s); h.appendChild(c);
     return () => { h.innerHTML = ''; };
   }, [symbol]);
-  return <div ref={host} style={{ flex: 1, minHeight: 0 }} />;
+  // relative wrapper + absolute-fill host so the TradingView autosize widget gets a real height
+  return <div style={{ position: 'relative', flex: 1, minHeight: 0 }}><div ref={host} style={{ position: 'absolute', inset: 0 }} /></div>;
 }
 
-function HaltBody() {
+function HaltBody({ onPick }) {
   const [halts, setHalts] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -67,9 +77,11 @@ function HaltBody() {
           {halts.map((h, i) => (
             <tr key={`${h.symbol}-${h.haltTime}-${i}`} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
               <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
-                <a href={`/ticker/${encodeURIComponent(h.symbol)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}>
+                <span onClick={() => onPick && onPick(h.symbol)} title="Load in chart"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <TickerLogo symbol={h.symbol} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{h.symbol}</span>
-                </a>
+                </span>
+                <a href={`/ticker/${encodeURIComponent(h.symbol)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
               </td>
               <td style={{ padding: '8px 12px', color: C.text }}>{h.reason}</td>
               <td className="cp-num" style={{ padding: '8px 12px', color: C.muted, whiteSpace: 'nowrap' }}>{fmtHalt(h.haltTime)}</td>
@@ -85,20 +97,26 @@ function HaltBody() {
 }
 
 const MoversBody = () => <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>Top gainers, losers & unusual volume — landing here next.</div>;
-const bodyFor = (id) => (id === 'chart' ? <ChartBody symbol="SPY" /> : id === 'halts' ? <HaltBody /> : <MoversBody />);
 
 // ── Panel chrome ──
-function PanelCard({ def, onMoveStart, onResizeStart, draggable }) {
+function PanelCard({ def, colorKey, onCycleColor, onMoveStart, onResizeStart, draggable, headerRight, children }) {
   return (
     <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
       <div onPointerDown={draggable ? onMoveStart : undefined}
         style={{ cursor: draggable ? 'move' : 'default', padding: '9px 12px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, touchAction: 'none' }}>
-        {def.dot && <span style={{ width: 8, height: 8, borderRadius: '50%', background: def.dot }} />}
+        {draggable && (
+          <button onPointerDown={(e) => e.stopPropagation()} onClick={onCycleColor}
+            title="Link group — panels sharing this color sync (click to change)"
+            style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(0,0,0,0.15)', background: colorOf(colorKey), cursor: 'pointer', padding: 0, flexShrink: 0 }} />
+        )}
         <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{def.title}</span>
         {def.tag && <span style={{ fontSize: 9, color: C.dim, letterSpacing: 0.5 }}>{def.tag}</span>}
-        {draggable && <span style={{ marginLeft: 'auto', color: C.hint, fontSize: 13, letterSpacing: -1 }}>⠿</span>}
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {headerRight}
+          {draggable && <span style={{ color: C.hint, fontSize: 13, letterSpacing: -1 }}>⠿</span>}
+        </span>
       </div>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{bodyFor(def.id)}</div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{children}</div>
       {draggable && (
         <div onPointerDown={onResizeStart}
           style={{ position: 'absolute', right: 0, bottom: 0, width: 22, height: 22, cursor: 'se-resize', touchAction: 'none', zIndex: 5 }}>
@@ -115,6 +133,7 @@ function Workspace() {
   const [layout, setLayoutState] = useState(null);
   const [mobile, setMobile] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [chartSymbol, setChartSymbol] = useState('SPY');
 
   const setLayout = (l) => { layoutRef.current = l; setLayoutState(l); };
 
@@ -124,7 +143,9 @@ function Workspace() {
     apply(); mq.addEventListener('change', apply);
     const width = ref.current ? ref.current.clientWidth : 1200;
     let saved = null; try { saved = JSON.parse(localStorage.getItem('cp_terminal_layout') || 'null'); } catch { /* ignore */ }
-    setLayout(saved && saved.chart ? saved : defaultLayout(width));
+    const raw = saved && saved.chart ? saved : defaultLayout(width);
+    const norm = {}; for (const d of PANELS) norm[d.id] = { ...raw[d.id], color: raw[d.id]?.color || 'blue' };
+    setLayout(norm);
     return () => mq.removeEventListener('change', apply);
   }, []);
 
@@ -151,6 +172,20 @@ function Workspace() {
 
   const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); };
 
+  // Link-group sync: clicking a symbol in a source panel loads it in chart panels sharing its color.
+  const linkSymbol = (sourceId, sym) => {
+    const src = layoutRef.current?.[sourceId]?.color;
+    const chartColor = layoutRef.current?.chart?.color;
+    if (src && src !== 'none' && src === chartColor) setChartSymbol(sym);
+  };
+  const cycleColor = (id) => { const l = layoutRef.current; const nl = { ...l, [id]: { ...l[id], color: nextColor(l[id].color) } }; setLayout(nl); persist(nl); };
+
+  const bodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={chartSymbol} />
+    : def.id === 'halts' ? <HaltBody onPick={(s) => linkSymbol('halts', s)} />
+    : <MoversBody />);
+  const headerRightOf = (def) => (def.id === 'chart'
+    ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{chartSymbol}</span> : null);
+
   if (!layout) return <div style={{ color: C.dim, fontSize: 13, padding: 40, textAlign: 'center' }}>Loading workspace…</div>;
 
   // Mobile: stack the panels, no dragging.
@@ -159,7 +194,7 @@ function Workspace() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {PANELS.map((def) => (
           <div key={def.id} style={{ position: 'relative', height: def.id === 'chart' ? 420 : 320 }}>
-            <PanelCard def={def} draggable={false} />
+            <PanelCard def={def} draggable={false} colorKey={layout[def.id]?.color} headerRight={headerRightOf(def)}>{bodyOf(def)}</PanelCard>
           </div>
         ))}
       </div>
@@ -177,7 +212,9 @@ function Workspace() {
           const p = layout[def.id];
           return (
             <div key={def.id} style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h }}>
-              <PanelCard def={def} draggable onMoveStart={(e) => start(def.id, e, 'move')} onResizeStart={(e) => start(def.id, e, 'resize')} />
+              <PanelCard def={def} draggable colorKey={p.color} onCycleColor={() => cycleColor(def.id)}
+                onMoveStart={(e) => start(def.id, e, 'move')} onResizeStart={(e) => start(def.id, e, 'resize')}
+                headerRight={headerRightOf(def)}>{bodyOf(def)}</PanelCard>
             </div>
           );
         })}
