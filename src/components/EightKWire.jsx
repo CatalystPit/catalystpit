@@ -5,21 +5,34 @@
 import { useEffect, useState, useCallback } from 'react';
 import { C, Dot, TickerLogo, timeAgo, minsSince } from '../lib/cp-shared';
 
-function Row({ f }) {
+function Row({ f, onPick }) {
   const mat = f.material;
   const chipBg = mat ? '#FFF6E8' : C.surface;
   const chipFg = mat ? '#7A5018' : C.muted;
   const extra = Math.max(0, (f.items?.length || 0) - 1);
+  const tickerInner = (
+    <>
+      <TickerLogo symbol={f.ticker} size={20} />
+      <span className="cp-tkr" style={{ fontSize: 13, fontWeight: 700, color: C.green }}>{f.ticker}</span>
+    </>
+  );
   return (
     <div className="hov" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
       borderLeft: `3px solid ${mat ? '#D9A441' : C.border}`, borderBottom: `1px solid ${C.surface}` }}>
       <span className="cp-num" style={{ width: 34, fontSize: 10, color: C.dim, flexShrink: 0 }}>
         {timeAgo(minsSince(f.filedAt))}
       </span>
-      <a href={`/ticker/${encodeURIComponent(f.ticker)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, textDecoration: 'none', flexShrink: 0 }}>
-        <TickerLogo symbol={f.ticker} size={20} />
-        <span className="cp-tkr" style={{ fontSize: 13, fontWeight: 700, color: C.green }}>{f.ticker}</span>
-      </a>
+      {onPick ? (
+        // In the Terminal: load the symbol into linked chart panels instead of navigating away.
+        <span onClick={() => onPick(f.ticker)} title={`Load ${f.ticker} in chart`}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexShrink: 0, cursor: 'pointer' }}>
+          {tickerInner}
+        </span>
+      ) : (
+        <a href={`/ticker/${encodeURIComponent(f.ticker)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, textDecoration: 'none', flexShrink: 0 }}>
+          {tickerInner}
+        </a>
+      )}
       <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 7 }}>
         <span style={{ fontSize: 10, fontWeight: 600, background: chipBg, color: chipFg, borderRadius: 3, padding: '2px 7px', whiteSpace: 'nowrap' }}>
           {f.primaryLabel}
@@ -39,7 +52,7 @@ function Row({ f }) {
   );
 }
 
-export default function EightKWire({ bare = false, limit = 30 }) {
+export default function EightKWire({ bare = false, limit = 30, onPick = null }) {
   const [all, setAll] = useState(false);
   const [list, setList] = useState(null);
 
@@ -73,7 +86,7 @@ export default function EightKWire({ bare = false, limit = 30 }) {
           No {all ? '' : 'material '}8-K filings in the last few days.
         </div>
       ) : (
-        list.map((f, i) => <Row key={f.ticker + i} f={f} />)
+        list.map((f, i) => <Row key={f.ticker + i} f={f} onPick={onPick} />)
       )}
     </div>
   );

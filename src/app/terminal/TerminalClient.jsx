@@ -417,7 +417,7 @@ function Workspace() {
     : def.id === 'chat' ? <PitChat bare />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'news' ? <NewsBody />
-    : def.id === 'eightk' ? <EightKWire bare />
+    : def.id === 'eightk' ? <EightKWire bare onPick={(s) => linkSymbol('eightk', s)} />
     : def.id === 'pitscan' ? <ScanBody mode="preset" onPick={(s) => linkSymbol('pitscan', s)} />
     : def.id === 'scanner' ? <ScanBody mode="custom" onPick={(s) => linkSymbol('scanner', s)} />
     : null);
