@@ -45,8 +45,8 @@ function ChartBody({ symbol }) {
   const host = useRef(null);
   useEffect(() => {
     const h = host.current; if (!h) return; h.innerHTML = '';
-    const c = document.createElement('div'); c.style.height = '100%'; c.style.width = '100%';
-    const w = document.createElement('div'); w.style.height = '100%'; w.style.width = '100%'; c.appendChild(w);
+    const c = document.createElement('div'); c.className = 'tradingview-widget-container'; c.style.height = '100%'; c.style.width = '100%';
+    const w = document.createElement('div'); w.className = 'tradingview-widget-container__widget'; w.style.height = '100%'; w.style.width = '100%'; c.appendChild(w);
     const s = document.createElement('script');
     s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
     s.async = true;
