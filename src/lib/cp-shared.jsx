@@ -630,7 +630,7 @@ export function TickerLogo({ symbol, size = 18 }) {
 
   if (sym && sym !== '?' && !failed) {
     return (
-      <img src={`/api/logo?ticker=${encodeURIComponent(sym)}`} alt="" width={size} height={size}
+      <img src={`/api/logo?ticker=${encodeURIComponent(sym)}&v=2`} alt="" width={size} height={size}
         onError={() => setFailed(true)}
         style={{ width: size, height: size, borderRadius: 4, objectFit: 'contain',
           background: '#fff', border: `1px solid ${C.border}`, flexShrink: 0, display: 'block' }} />
