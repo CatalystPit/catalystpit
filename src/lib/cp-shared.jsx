@@ -475,8 +475,8 @@ export function TopNav({ active }) {
       <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
 
       {/* Desktop links — hidden ≤860px via .cp-nav-links */}
-      <div className="cp-nav-links" style={{gap:20, alignItems:"center", marginLeft:40,
-        paddingLeft:40, flex:"1 1 auto", minWidth:0, overflow:"hidden"}}>
+      <div className="cp-nav-links" style={{gap:16, alignItems:"center", marginLeft:24,
+        paddingLeft:24, flex:"1 1 auto", minWidth:0, overflow:"hidden"}}>
         {links.map(l => (
           <a key={l} href={hrefFor(l)} className="nbtn"
             style={{fontSize:15, color:linkColor(l), cursor:"pointer", transition:"color 0.2s",
@@ -485,15 +485,6 @@ export function TopNav({ active }) {
             {l}
           </a>
         ))}
-        {/* Watchlist — personal feature, only for signed-in users */}
-        <SignedIn>
-          <a href="/watchlist" className="nbtn"
-            style={{fontSize:15, color:linkColor("Watchlist"), cursor:"pointer", transition:"color 0.2s",
-              fontWeight: active === "Watchlist" ? 600 : 400, letterSpacing:"0.02em", textDecoration:"none",
-              borderBottom: active === "Watchlist" ? "2px solid #5AB87A" : "none", paddingBottom: active === "Watchlist" ? 2 : 0}}>
-            Watchlist
-          </a>
-        </SignedIn>
       </div>
 
       <div style={{display:"flex", gap:8, alignItems:"center"}}>
@@ -517,6 +508,16 @@ export function TopNav({ active }) {
           </a>
         </SignedOut>
         <SignedIn>
+          <a href="/watchlist" title="Watchlist" aria-label="Watchlist"
+            style={{display:"inline-flex", alignItems:"center", textDecoration:"none",
+              color: active === "Watchlist" ? "#5AB87A" : "rgba(255,255,255,0.8)"}}
+            onMouseEnter={e => { if (active !== "Watchlist") e.currentTarget.style.color = "#FFFFFF"; }}
+            onMouseLeave={e => { if (active !== "Watchlist") e.currentTarget.style.color = "rgba(255,255,255,0.8)"; }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill={active === "Watchlist" ? "#5AB87A" : "none"}
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+            </svg>
+          </a>
           <NotificationBell/>
           <UserButton afterSignOutUrl="/" userProfileMode="navigation" userProfileUrl="/account" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
         </SignedIn>
