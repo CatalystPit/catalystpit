@@ -56,10 +56,10 @@ export default function PitDock() {
     return () => { mq.removeEventListener('change', applyMq); window.removeEventListener('resize', setH); };
   }, []);
 
-  // Reserve space on the right for the open panel (desktop only).
+  // Reserve space on the right for the open panel (desktop only; not on Terminal — chat is a panel there).
   useEffect(() => {
-    document.documentElement.style.setProperty('--cp-pit', (!mobile && open) ? `${panelW}px` : '0px');
-  }, [open, mobile, panelW]);
+    document.documentElement.style.setProperty('--cp-pit', (!mobile && open && !onTerminal) ? `${panelW}px` : '0px');
+  }, [open, mobile, panelW, onTerminal]);
 
   // Drag the dock's left edge to resize (Terminal only).
   const startResize = (e) => {
@@ -92,6 +92,7 @@ export default function PitDock() {
   };
 
   if (!ready) return null;
+  if (onTerminal) return null;   // Terminal renders the chat as a movable workspace panel
 
   // ── MOBILE: floating button + full-screen sheet ──
   if (mobile) {

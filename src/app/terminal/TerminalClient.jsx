@@ -2,15 +2,19 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
+import PitChat from '../../components/PitChat';
+import XTape from '../../components/XTape';
 
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
 // saved to localStorage. Chart center, halt scanner + movers around it.
 const PANELS = [
+  { id: 'tape',      title: 'Tape · X',     tag: 'SOCIAL' },
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
   { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
   { id: 'movers',    title: 'Movers',       tag: 'SOON' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
+  { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
 const MIN_W = 240, MIN_H = 220;
 
@@ -27,14 +31,20 @@ function defaultLayout(width) {
   const w = width || 1200;
   const gap = 12;
   const unit = (w - gap * 2) / 12;
-  const h = 560;
-  const rightX = Math.round(unit * 9) + gap * 2;
-  const rightW = Math.round(unit * 3) - 2;
+  const leftW = Math.round(unit * 3);
+  const centerX = leftW + gap, centerW = Math.round(unit * 6);
+  const rightX = Math.round(unit * 9) + gap * 2, rightW = Math.round(unit * 3) - 2;
+  const top = 274, botY = 286;
   return {
-    halts:     { x: 0, y: 0, w: Math.round(unit * 3), h, color: 'blue' },
-    chart:     { x: Math.round(unit * 3) + gap, y: 0, w: Math.round(unit * 6), h, color: 'blue' },
-    movers:    { x: rightX, y: 0, w: rightW, h: 274, color: 'blue' },
-    watchlist: { x: rightX, y: 286, w: rightW, h: 274, color: 'blue' },
+    // left column
+    tape:      { x: 0, y: 0, w: leftW, h: top, color: 'blue' },
+    halts:     { x: 0, y: botY, w: leftW, h: top, color: 'blue' },
+    // center column
+    chart:     { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
+    movers:    { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' },
+    // right column
+    watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
+    chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'blue' },
   };
 }
 
@@ -265,6 +275,8 @@ function Workspace() {
   const bodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={chartSymbol} />
     : def.id === 'halts' ? <HaltBody onPick={(s) => linkSymbol('halts', s)} />
     : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
+    : def.id === 'chat' ? <PitChat bare />
+    : def.id === 'tape' ? <XTape bare />
     : <MoversBody />);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{chartSymbol}</span> : null);
@@ -276,7 +288,7 @@ function Workspace() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {PANELS.map((def) => (
-          <div key={def.id} style={{ position: 'relative', height: def.id === 'chart' ? 420 : 320 }}>
+          <div key={def.id} style={{ position: 'relative', height: def.id === 'chart' ? 420 : def.id === 'chat' ? 460 : def.id === 'tape' ? 500 : 320 }}>
             <PanelCard def={def} draggable={false} colorKey={layout[def.id]?.color} headerRight={headerRightOf(def)}>{bodyOf(def)}</PanelCard>
           </div>
         ))}

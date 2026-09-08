@@ -33,6 +33,7 @@ function widthForPath(p) {
 
 export default function XTapeDock() {
   const pathname = usePathname();
+  const onTerminal = !!pathname && pathname.startsWith('/terminal');   // Terminal shows Tape as a panel instead
   const panelW = widthForPath(pathname);
   const [ready, setReady] = useState(false);   // client-mounted (dock is client-only chrome)
   const [mobile, setMobile] = useState(false);
@@ -63,9 +64,9 @@ export default function XTapeDock() {
   // Drive the app-shell push: reserve the panel's width on desktop when open, 0 otherwise
   // (mobile uses an overlay sheet, so it never pushes content).
   useEffect(() => {
-    const w = (!mobile && open) ? `${panelW}px` : '0px';
+    const w = (!mobile && open && !onTerminal) ? `${panelW}px` : '0px';
     document.documentElement.style.setProperty('--cp-tape', w);
-  }, [open, mobile, panelW]);
+  }, [open, mobile, panelW, onTerminal]);
 
   const toggle = (next) => {
     const v = typeof next === 'boolean' ? next : !open;
@@ -75,6 +76,7 @@ export default function XTapeDock() {
   };
 
   if (!ready) return null;
+  if (onTerminal) return null;   // Terminal renders the Tape as a movable workspace panel
 
   // ── MOBILE: floating button + full-screen sheet (lazy mount) ──
   if (mobile) {

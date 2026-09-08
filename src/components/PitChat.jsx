@@ -106,7 +106,7 @@ function applyExclusive(m, oldEmoji, newEmoji) {
   return { ...m, reactions: reactionsFromCounts(counts, newEmoji) };
 }
 
-export default function PitChat({ height = 620, onClose }) {
+export default function PitChat({ height = 620, onClose, bare = false }) {
   const [messages, setMessages] = useState([]);
   const [me, setMe] = useState({ canPost: false, loggedIn: false, admin: false });
   const [online, setOnline] = useState(0);
@@ -256,24 +256,26 @@ export default function PitChat({ height = 620, onClose }) {
   const onKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
 
   return (
-    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden',
-      fontFamily: "'DM Sans',sans-serif", display: 'flex', flexDirection: 'column', height }}>
-      {/* header */}
-      <div style={{ padding: '12px 14px', background: C.green, display: 'flex',
-        alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>The Pit</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
-          color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%',
-            background: live ? '#7CFFB0' : 'rgba(255,255,255,0.5)', display: 'inline-block' }} />
-          {online} online
-        </span>
-        {onClose && (
-          <button onClick={onClose} aria-label="Collapse The Pit"
-            style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
-              color: '#fff', fontSize: 16, lineHeight: 1, padding: '2px 4px' }}>✕</button>
-        )}
-      </div>
+    <div style={{ background: C.white, border: bare ? 'none' : `1px solid ${C.border}`, borderRadius: bare ? 0 : 8, overflow: 'hidden',
+      fontFamily: "'DM Sans',sans-serif", display: 'flex', flexDirection: 'column', height: bare ? '100%' : height }}>
+      {/* header (hidden in "bare" mode — e.g. inside a Terminal panel that has its own header) */}
+      {!bare && (
+        <div style={{ padding: '12px 14px', background: C.green, display: 'flex',
+          alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>The Pit</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
+            color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%',
+              background: live ? '#7CFFB0' : 'rgba(255,255,255,0.5)', display: 'inline-block' }} />
+            {online} online
+          </span>
+          {onClose && (
+            <button onClick={onClose} aria-label="Collapse The Pit"
+              style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
+                color: '#fff', fontSize: 16, lineHeight: 1, padding: '2px 4px' }}>✕</button>
+          )}
+        </div>
+      )}
 
       {/* messages */}
       <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '10px 12px',

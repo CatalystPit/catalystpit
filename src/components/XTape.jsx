@@ -52,7 +52,7 @@ function loadWidgets() {
   return widgetsPromise;
 }
 
-export default function XTape({ height = 620, onClose }) {
+export default function XTape({ height = 620, onClose, bare = false }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
 
@@ -92,22 +92,24 @@ export default function XTape({ height = 620, onClose }) {
   if (!LIST_ID) return null;
 
   return (
-    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden',
-      fontFamily: "'DM Sans',sans-serif" }}>
-      {/* Green top bar: black X logo + white "Tape" */}
-      <div style={{ background: C.green, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="#000" aria-hidden="true">
-          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-        </svg>
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Tape</span>
-        {onClose && (
-          <button onClick={onClose} aria-label="Collapse tape"
-            style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
-              color: '#fff', fontSize: 16, lineHeight: 1, padding: '2px 4px' }}>
-            ✕
-          </button>
-        )}
-      </div>
+    <div style={{ background: C.white, border: bare ? 'none' : `1px solid ${C.border}`, borderRadius: bare ? 0 : 8,
+      overflow: bare ? 'auto' : 'hidden', height: bare ? '100%' : undefined, fontFamily: "'DM Sans',sans-serif" }}>
+      {/* Green top bar: black X logo + white "Tape" (hidden in bare mode — panel has its own header) */}
+      {!bare && (
+        <div style={{ background: C.green, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="#000" aria-hidden="true">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24h-6.66l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+          </svg>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#fff' }}>Tape</span>
+          {onClose && (
+            <button onClick={onClose} aria-label="Collapse tape"
+              style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer',
+                color: '#fff', fontSize: 16, lineHeight: 1, padding: '2px 4px' }}>
+              ✕
+            </button>
+          )}
+        </div>
+      )}
       <div style={{ padding: '8px 14px', fontSize: 11, fontWeight: 300, color: C.muted, lineHeight: 1.4, borderBottom: `1px solid ${C.border}` }}>
         Unverified social tape — mixes official prints and rumors. Not investment advice.
       </div>
