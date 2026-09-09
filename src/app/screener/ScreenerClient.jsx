@@ -1,191 +1,204 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
+import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
 
-// Screener v1 (C3): a flexible scan over insider filings (our densest data), backed by
-// /api/insiders row-views + the new ?days=/?minValue= params. The plan's "earnings in 14d"
-// leg is deferred until a forward earnings calendar exists (same blocker as B2).
-const fmtMoney = (n) => {
-  const v = Number(n);
-  if (!v || isNaN(v)) return '—';
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
-  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
-  return `$${v.toLocaleString('en-US')}`;
-};
-const actionStyle = (t) => t === 'BUY' ? { fg: C.green, bg: C.greenLight } : t === 'SELL' ? { fg: C.red, bg: C.redLight } : { fg: C.dim, bg: C.surface };
-const decodeEntities = (s) => typeof s !== 'string' ? s
-  : s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+// Stock Screener (Finviz-style) — filter the market by exchange, sector, market cap, price, volume.
+// Backed by /api/screener (FMP). Dormant/"connecting" until FMP_API_KEY is set server-side.
 
-const ACTIONS = [{ k: 'buying', l: 'Buys' }, { k: 'selling', l: 'Sells' }, { k: 'transactions', l: 'Both' }];
-const WINDOWS = [{ k: 7, l: '7d' }, { k: 30, l: '30d' }, { k: 90, l: '90d' }];
-const VALUES  = [{ k: 25000, l: '$25K+' }, { k: 100000, l: '$100K+' }, { k: 1000000, l: '$1M+' }];
-const PRESETS = [
-  { key: 'pit',      label: 'Pit Scan',     hint: 'open-market buys · 30d · $100K+',  view: 'buying',       days: 30,   minValue: 100000 },
-  { key: 'clusters', label: 'Cluster Buys', hint: '3+ insiders · same ticker · 30d',  view: 'cluster_buys', days: null, minValue: null },
-  { key: 'bigsell',  label: 'Big Sells',    hint: 'sells · 30d · $1M+',                view: 'selling',      days: 30,   minValue: 1000000 },
+const SECTORS = ['Basic Materials', 'Communication Services', 'Consumer Cyclical', 'Consumer Defensive', 'Energy', 'Financial Services', 'Healthcare', 'Industrials', 'Real Estate', 'Technology', 'Utilities'];
+const EXCHANGES = ['NASDAQ', 'NYSE', 'AMEX'];
+
+const MCAP = [
+  { k: 'any',   l: 'Any market cap' },
+  { k: 'mega',  l: 'Mega ($200B+)',      min: 200e9 },
+  { k: 'large', l: 'Large ($10–200B)',   min: 10e9, max: 200e9 },
+  { k: 'mid',   l: 'Mid ($2–10B)',       min: 2e9,  max: 10e9 },
+  { k: 'small', l: 'Small ($300M–2B)',   min: 300e6, max: 2e9 },
+  { k: 'micro', l: 'Micro ($50–300M)',   min: 50e6, max: 300e6 },
+  { k: 'nano',  l: 'Nano (<$50M)',       max: 50e6 },
+];
+const PRICE = [
+  { k: 'any', l: 'Any price' },
+  { k: 'u5',  l: 'Under $5',     max: 5 },
+  { k: '5-20',  l: '$5 – $20',   min: 5, max: 20 },
+  { k: '20-50', l: '$20 – $50',  min: 20, max: 50 },
+  { k: '50-100', l: '$50 – $100', min: 50, max: 100 },
+  { k: 'o100', l: 'Over $100',   min: 100 },
+];
+const VOL = [
+  { k: 'any', l: 'Any volume' },
+  { k: '100k', l: 'Over 100K', min: 100000 },
+  { k: '500k', l: 'Over 500K', min: 500000 },
+  { k: '1m',  l: 'Over 1M',   min: 1000000 },
+  { k: '5m',  l: 'Over 5M',   min: 5000000 },
 ];
 
-function FilterGroup({ label, opts, val, on }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, letterSpacing: '0.5px' }}>{label.toUpperCase()}</span>
-      <div style={{ display: 'flex', gap: 4 }}>
-        {opts.map(o => {
-          const active = o.k === val;
-          return (
-            <button key={o.k} onClick={() => on(o.k)}
-              style={{ background: active ? C.green : C.white, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.green : C.border}`, borderRadius: 5, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-              {o.l}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+const fmtCap = (n) => {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${Math.round(n).toLocaleString()}`;
+};
+const fmtVol = (n) => {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
+  return String(n);
+};
+const fmtPrice = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
+
+const selStyle = { background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, padding: '7px 10px', fontSize: 12.5, color: C.text, fontFamily: "'DM Sans',sans-serif", cursor: 'pointer', outline: 'none' };
 
 export default function ScreenerClient() {
   const router = useRouter();
-  const [view, setView] = useState('buying');
-  const [days, setDays] = useState(30);
-  const [minValue, setMinValue] = useState(100000);
+  const [exchange, setExchange] = useState('');
+  const [sector, setSector] = useState('');
+  const [mcap, setMcap] = useState('any');
+  const [price, setPrice] = useState('any');
+  const [vol, setVol] = useState('any');
+  const [sort, setSort] = useState('marketCap');
+  const [dir, setDir] = useState('desc');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const goTicker = (s) => { if (s && s !== '?') router.push(`/ticker/${encodeURIComponent(s)}`); };
-  const applyPreset = (p) => { setView(p.view); if (p.days != null) setDays(p.days); if (p.minValue != null) setMinValue(p.minValue); };
+
+  const params = useMemo(() => {
+    const p = new URLSearchParams();
+    if (exchange) p.set('exchange', exchange);
+    if (sector) p.set('sector', sector);
+    const mc = MCAP.find((x) => x.k === mcap); if (mc?.min) p.set('marketCapMin', String(mc.min)); if (mc?.max) p.set('marketCapMax', String(mc.max));
+    const pr = PRICE.find((x) => x.k === price); if (pr?.min) p.set('priceMin', String(pr.min)); if (pr?.max) p.set('priceMax', String(pr.max));
+    const vl = VOL.find((x) => x.k === vol); if (vl?.min) p.set('volumeMin', String(vl.min));
+    p.set('sort', sort); p.set('dir', dir); p.set('limit', '150');
+    return p.toString();
+  }, [exchange, sector, mcap, price, vol, sort, dir]);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const url = view === 'cluster_buys'
-        ? `/api/insiders?view=cluster_buys`
-        : `/api/insiders?view=${view}&days=${days}&minValue=${minValue}&limit=100`;
-      const r = await fetch(url);
-      const j = r.ok ? await r.json() : null;
-      setData(j && !j.error ? j : null);
-    } catch { setData(null); }
-    finally { setLoading(false); }
-  }, [view, days, minValue]);
-
+    try { const r = await fetch(`/api/screener?${params}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; setData(j); }
+    catch { setData({ configured: true, rows: [] }); }
+    setLoading(false);
+  }, [params]);
   useEffect(() => { load(); }, [load]);
 
-  const isCluster = data?.view === 'cluster_buys';
-  const rows = Array.isArray(data?.trades) ? data.trades : [];
-  const clusters = Array.isArray(data?.clusters) ? data.clusters : [];
-  const lockedCount = data?.lockedCount || 0;
-  const th = (label, align) => (
-    <th key={label} style={{ padding: '8px 16px', textAlign: align || 'left', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{label.toUpperCase()}</th>
-  );
+  const reset = () => { setExchange(''); setSector(''); setMcap('any'); setPrice('any'); setVol('any'); setSort('marketCap'); setDir('desc'); };
+  const goTicker = (s) => { if (s) router.push(`/ticker/${encodeURIComponent(s)}`); };
+  const toggleSort = (col) => { if (sort === col) setDir((d) => (d === 'asc' ? 'desc' : 'asc')); else { setSort(col); setDir('desc'); } };
+
+  const rows = data?.rows || [];
+  const configured = data?.configured !== false;
+
+  const Th = ({ label, col, align }) => {
+    const active = sort === col;
+    return (
+      <th onClick={col ? () => toggleSort(col) : undefined}
+        style={{ padding: '10px 14px', textAlign: align || 'left', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: active ? C.green : C.dim, letterSpacing: '0.8px', fontWeight: 400, cursor: col ? 'pointer' : 'default', userSelect: 'none', whiteSpace: 'nowrap' }}>
+        {label.toUpperCase()}{active ? (dir === 'asc' ? ' ↑' : ' ↓') : ''}
+      </th>
+    );
+  };
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
       <BrandStyles />
       <TopNav active="Screener" />
 
-      <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '20px 24px' }}>
+      <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '18px 24px' }}>
         <div style={{ maxWidth: 1380, margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <Dot /><span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.muted, letterSpacing: '1px' }}>FORM 4 · SEC EDGAR</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <Dot /><span style={{ fontSize: 10, color: C.muted, letterSpacing: '1px' }}>MARKET SCREENER</span>
           </div>
-          <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 32, fontWeight: 600, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.5px' }}>Screener</h1>
-          <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>Scan insider filings by window, size, and direction. Start with a preset, then tune.</p>
+          <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 600, color: C.ink, margin: 0 }}>Stock Screener</h1>
+          <p style={{ fontSize: 13, color: C.muted, margin: '4px 0 0', fontWeight: 300 }}>Filter the market by exchange, sector, market cap, price, and volume.</p>
         </div>
       </div>
 
-      <div style={{ maxWidth: 1380, margin: '0 auto', padding: '16px 24px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
-          {PRESETS.map(p => {
-            const active = p.view === view && (p.days == null || p.days === days) && (p.minValue == null || p.minValue === minValue);
-            return (
-              <button key={p.key} onClick={() => applyPreset(p)} className="cat"
-                style={{ textAlign: 'left', background: active ? C.green : C.white, border: `1px solid ${active ? C.green : C.border}`, borderRadius: 8, padding: '12px 14px', cursor: 'pointer' }}>
-                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, color: active ? '#fff' : C.ink }}>{p.label}</div>
-                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, marginTop: 3, color: active ? 'rgba(255,255,255,0.8)' : C.dim }}>{p.hint}</div>
-              </button>
-            );
-          })}
-        </div>
-
-        {!isCluster && (
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-            <FilterGroup label="Direction" opts={ACTIONS} val={view} on={setView} />
-            <FilterGroup label="Window" opts={WINDOWS} val={days} on={setDays} />
-            <FilterGroup label="Min value" opts={VALUES} val={minValue} on={setMinValue} />
-          </div>
-        )}
-
-        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim }}>
-          {loading ? 'Scanning…' : isCluster ? `${clusters.length} clusters` : `${rows.length} matches`}
-          <span style={{ marginLeft: 10, color: C.hint }}>· Earnings-window filter coming with the earnings calendar.</span>
+      {/* FILTER BAR */}
+      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: '12px 24px' }}>
+        <div style={{ maxWidth: 1380, margin: '0 auto', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={exchange} onChange={(e) => setExchange(e.target.value)} style={selStyle}>
+            <option value="">Any exchange</option>
+            {EXCHANGES.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <select value={sector} onChange={(e) => setSector(e.target.value)} style={selStyle}>
+            <option value="">Any sector</option>
+            {SECTORS.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+          <select value={mcap} onChange={(e) => setMcap(e.target.value)} style={selStyle}>
+            {MCAP.map((x) => <option key={x.k} value={x.k}>{x.l}</option>)}
+          </select>
+          <select value={price} onChange={(e) => setPrice(e.target.value)} style={selStyle}>
+            {PRICE.map((x) => <option key={x.k} value={x.k}>{x.l}</option>)}
+          </select>
+          <select value={vol} onChange={(e) => setVol(e.target.value)} style={selStyle}>
+            {VOL.map((x) => <option key={x.k} value={x.k}>{x.l}</option>)}
+          </select>
+          <button onClick={reset} style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 12, textDecoration: 'underline', fontFamily: "'DM Sans',sans-serif" }}>Reset</button>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: C.dim, fontFamily: "'DM Sans',sans-serif" }} className="cp-num">
+            {loading ? '…' : configured ? `${rows.length} matches` : ''}
+          </span>
         </div>
       </div>
 
-      <div style={{ maxWidth: 1380, margin: '12px auto', padding: '0 24px 40px' }}>
-        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            {loading ? (
-              <div style={{ padding: 16 }}>{Array(8).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
-            ) : isCluster ? (
+      <div style={{ maxWidth: 1380, margin: '16px auto', padding: '0 24px 48px' }}>
+        {!configured ? (
+          <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '48px 24px', textAlign: 'center' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.ink, marginBottom: 8 }}>Screener is connecting to its data source</div>
+            <div style={{ fontSize: 13, color: C.muted, fontWeight: 300, maxWidth: 480, margin: '0 auto', lineHeight: 1.6 }}>
+              The stock screener is built and ready — it lights up as soon as the market-data feed is connected. Insider screening lives on the <a href="/insiders" style={{ color: C.green, fontWeight: 600 }}>Insiders</a> page.
+            </div>
+          </div>
+        ) : loading ? (
+          <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 }}>
+            {Array(10).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}
+          </div>
+        ) : rows.length === 0 ? (
+          <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
+            No stocks match these filters. Try widening them.
+          </div>
+        ) : (
+          <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
-                  {[['Ticker'], ['Company'], ['Buyers', 'right'], ['Trades', 'right'], ['Total $', 'right'], ['Window']].map(([h, a]) => th(h, a))}
-                </tr></thead>
+                <thead>
+                  <tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+                    <Th label="Ticker" col="symbol" />
+                    <Th label="Company" />
+                    <Th label="Price" col="price" align="right" />
+                    <Th label="Market Cap" col="marketCap" align="right" />
+                    <Th label="Volume" col="volume" align="right" />
+                    <Th label="Sector" />
+                    <Th label="Exch" />
+                  </tr>
+                </thead>
                 <tbody>
-                  {clusters.length === 0 ? (
-                    <tr><td colSpan={6} style={{ padding: '40px 16px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No clusters right now.</td></tr>
-                  ) : clusters.map((c, i) => (
-                    <tr key={i} className="hov" onClick={() => goTicker(c.ticker)} style={{ borderBottom: i < clusters.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${C.green}`, cursor: 'pointer' }}>
-                      <td style={{ padding: '13px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={c.ticker} size={18} />{c.ticker}</span></td>
-                      <td style={{ padding: '13px 16px', fontSize: 13, color: C.text, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeEntities(c.company || '')}</td>
-                      <td style={{ padding: '13px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, color: C.green }}>{c.buyers}</td>
-                      <td style={{ padding: '13px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text }}>{c.trades}</td>
-                      <td style={{ padding: '13px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.text }}>{fmtMoney(c.totalValue)}</td>
-                      <td style={{ padding: '13px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{c.firstBuy} → {c.lastBuy}</td>
+                  {rows.map((r, i) => (
+                    <tr key={r.symbol} className="row-hov" onClick={() => goTicker(r.symbol)}
+                      style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: 'pointer' }}>
+                      <td className="cp-tkr" style={{ padding: '11px 14px', fontSize: 13, fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={r.symbol} size={18} />{r.symbol}</span>
+                      </td>
+                      <td style={{ padding: '11px 14px', fontSize: 13, color: C.text, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</td>
+                      <td className="cp-num" style={{ padding: '11px 14px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap' }}>{fmtPrice(r.price)}</td>
+                      <td className="cp-num" style={{ padding: '11px 14px', textAlign: 'right', fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtCap(r.marketCap)}</td>
+                      <td className="cp-num" style={{ padding: '11px 14px', textAlign: 'right', fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtVol(r.volume)}</td>
+                      <td style={{ padding: '11px 14px', fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{r.sector || '—'}</td>
+                      <td style={{ padding: '11px 14px', fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.exchange || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            ) : (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
-                  {[['Traded'], ['Ticker'], ['Company'], ['Insider'], ['Type'], ['Code'], ['Value', 'right']].map(([h, a]) => th(h, a))}
-                </tr></thead>
-                <tbody>
-                  {rows.length === 0 ? (
-                    <tr><td colSpan={7} style={{ padding: '40px 16px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No filings match this scan. Widen the window or lower the min value.</td></tr>
-                  ) : rows.map((r, i) => {
-                    const as = actionStyle(r.action);
-                    return (
-                      <tr key={r.id || i} className="hov" onClick={() => goTicker(r.ticker)} style={{ borderBottom: i < rows.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}`, cursor: 'pointer' }}>
-                        <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{r.transactionDate || r.filingDate || '—'}</td>
-                        <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={r.ticker} size={18} />{r.ticker}</span></td>
-                        <td style={{ padding: '11px 16px', fontSize: 13, color: C.text, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{decodeEntities(r.company || '')}</td>
-                        <td style={{ padding: '11px 16px', fontSize: 13, color: C.text }}>
-                          <div>{decodeEntities(r.executive || '')}</div>
-                          {r.title && <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginTop: 2 }}>{decodeEntities(r.title)}</div>}
-                        </td>
-                        <td style={{ padding: '11px 16px' }}><span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, background: as.bg, color: as.fg }}>{r.action}</span></td>
-                        <td style={{ padding: '11px 16px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted }}>{r.transactionCode || '—'}</td>
-                        <td style={{ padding: '11px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, color: as.fg, whiteSpace: 'nowrap' }}>{fmtMoney(r.totalValue)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        {lockedCount > 0 && (
-          <div style={{ marginTop: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 8 }}>
-            <span style={{ flex: 1, minWidth: 0, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.ink }}>🔒 Sign in to see all {lockedCount} matches</span>
-            <a href="/sign-in" style={{ background: C.green, color: '#fff', textDecoration: 'none', whiteSpace: 'nowrap', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans',sans-serif" }}>Sign in</a>
+            </div>
           </div>
         )}
-      </div>
 
+        <div style={{ marginTop: 14, fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
+          Fundamentals screener — price, market cap, and volume are delayed/EOD. Not investment advice.
+        </div>
+      </div>
       <Footer />
+      <style>{`.row-hov:hover{background:${C.surface}!important}`}</style>
     </div>
   );
 }

@@ -98,6 +98,8 @@ export default function InsidersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy,  setSortBy]  = useState(null);
   const [sortDir, setSortDir] = useState('asc');
+  const [days, setDays] = useState(0);          // 0 = any window (folded-in screener filter)
+  const [minValue, setMinValue] = useState(0);  // 0 = any size
   const [lastUp, setLastUp] = useState(null);
   const router = useRouter();
   const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
@@ -106,10 +108,11 @@ export default function InsidersPage() {
     setLoading(true);
     setError(null);
     try {
-      const url = ticker
-        ? `/api/insiders?ticker=${encodeURIComponent(ticker)}&limit=200`
-        : `/api/insiders?view=${view}&limit=200`;
-      const res = await fetch(url);
+      const q = new URLSearchParams({ limit: '200' });
+      if (ticker) q.set('ticker', ticker); else q.set('view', view);
+      if (days > 0) q.set('days', String(days));
+      if (minValue > 0) q.set('minValue', String(minValue));
+      const res = await fetch(`/api/insiders?${q.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
@@ -121,7 +124,7 @@ export default function InsidersPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [days, minValue]);
 
   // Debounce raw search → debouncedSearch
   useEffect(() => {
@@ -224,6 +227,19 @@ export default function InsidersPage() {
               <span style={{color:C.muted,fontWeight:400}}>back to {VIEW_LABEL[activeView]}</span>
             </span>
           )}
+          {/* Folded-in screener filters: window + min transaction size (apply to trade views) */}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto",flexWrap:"wrap"}}>
+            <span style={{fontFamily:"'DM Sans',sans-serif",fontSize:10,color:C.dim,letterSpacing:"0.5px"}}>WINDOW</span>
+            {[{k:0,l:'Any'},{k:7,l:'7d'},{k:30,l:'30d'},{k:90,l:'90d'}].map(o=>{
+              const active=days===o.k;
+              return <button key={o.k} onClick={()=>setDays(o.k)} style={{background:active?C.green:C.white,color:active?'#fff':C.muted,border:`1px solid ${active?C.green:C.border}`,borderRadius:5,padding:"5px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>{o.l}</button>;
+            })}
+            <span style={{fontFamily:"'DM Sans',sans-serif",fontSize:10,color:C.dim,letterSpacing:"0.5px",marginLeft:6}}>SIZE</span>
+            {[{k:0,l:'Any'},{k:25000,l:'$25K+'},{k:100000,l:'$100K+'},{k:1000000,l:'$1M+'}].map(o=>{
+              const active=minValue===o.k;
+              return <button key={o.k} onClick={()=>setMinValue(o.k)} style={{background:active?C.green:C.white,color:active?'#fff':C.muted,border:`1px solid ${active?C.green:C.border}`,borderRadius:5,padding:"5px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>{o.l}</button>;
+            })}
+          </div>
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:10}}>
