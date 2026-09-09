@@ -25,15 +25,19 @@ export async function GET(request) {
     const ticker = (sp.get('ticker') || '').toUpperCase().trim();
     if (ticker) conds.push(ilike(screenerStocks.ticker, `${ticker}%`));
 
-    const where = conds.length ? and(...conds) : undefined;
+    const where = conds.length ? and(...conds) : null;
     const sortCol = SORT_MAP[sp.get('sort')] || screenerStocks.consensusScore;
     const dirFn = sp.get('dir') === 'asc' ? asc : desc;
     const pageSize = Math.min(100, Math.max(10, parseInt(sp.get('pageSize') || '50', 10) || 50));
     const page = Math.max(0, parseInt(sp.get('page') || '0', 10) || 0);
 
+    // Build queries without ever passing .where(undefined) (some Drizzle builds error on it).
+    let rowsQ = db.select().from(screenerStocks);
+    let cntQ = db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
+    if (where) { rowsQ = rowsQ.where(where); cntQ = cntQ.where(where); }
     const [rows, [{ n }]] = await Promise.all([
-      db.select().from(screenerStocks).where(where).orderBy(dirFn(sortCol), asc(screenerStocks.ticker)).limit(pageSize).offset(page * pageSize),
-      db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks).where(where),
+      rowsQ.orderBy(dirFn(sortCol), asc(screenerStocks.ticker)).limit(pageSize).offset(page * pageSize),
+      cntQ,
     ]);
 
     const activeCount = Object.keys(active).filter((k) => FILTERS[k]?.available && active[k] && Object.keys(active[k]).length).length;

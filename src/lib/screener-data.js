@@ -70,6 +70,9 @@ function atr(candles, n = 14) {
 const perf = (closes, back) => closes.length > back ? ((closes[closes.length - 1] / closes[closes.length - 1 - back]) - 1) * 100 : null;
 
 const WINDOW = 90;
+const FINNHUB_KEY = process.env.FINNHUB_KEY;
+const MAX_QUOTES = 120;                       // live-quote fetches/run (stay under Finnhub 60/min)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   await ensureScreenerTables();
@@ -112,8 +115,8 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     .where(and(eq(eightkFilings.material, true), sql`${eightkFilings.filedAt} >= now() - interval '7 days'`)).groupBy(eightkFilings.ticker);
   const has8k = new Set(ek.map((r) => r.ticker));
 
-  // Latest short interest + float.
-  const si = await db.selectDistinctOn([shortInterest.ticker], { ticker: shortInterest.ticker, shares: shortInterest.shortIntShares, dtc: shortInterest.daysToCover })
+  // Latest short interest + float (FINRA is market-wide → also our breadth + volume source).
+  const si = await db.selectDistinctOn([shortInterest.ticker], { ticker: shortInterest.ticker, shares: shortInterest.shortIntShares, dtc: shortInterest.daysToCover, avg: shortInterest.avgDailyVolume })
     .from(shortInterest).orderBy(shortInterest.ticker, desc(shortInterest.settlementDate));
   const siByT = new Map(si.map((r) => [r.ticker, r]));
   const fl = await db.select({ ticker: tickerFloat.ticker, floatShares: tickerFloat.floatShares, sharesOut: tickerFloat.outstandingShares }).from(tickerFloat);
@@ -126,6 +129,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   fundNet.forEach((_, t) => universe.add(t));
   consensus.forEach((_, t) => universe.add(t));
   has8k.forEach((t) => universe.add(t));
+  si.forEach((r) => r.ticker && universe.add(r.ticker));   // FINRA breadth (market-wide) + volume
   const insByT = new Map(insRows.map((r) => [r.ticker, r]));
   const conByT = new Map(conRows.map((r) => [r.ticker, r]));
 
@@ -158,14 +162,37 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     }
   }
 
-  // 4) Merge → upsert rows in batches.
   const tickers = [...universe].filter(Boolean);
+
+  // 3b) Delayed prices: candles already give EOD price for the warmed set. For the most relevant
+  // unpriced names (signals first, then most liquid by FINRA avg vol), pull a live/delayed Finnhub
+  // quote (bounded + throttled under 60/min). Price is coalesced on upsert so it accumulates nightly.
+  const quotes = new Map();
+  if (FINNHUB_KEY) {
+    const need = tickers.filter((t) => !tech.has(t));
+    const isSignal = (t) => insByT.has(t) || conByT.has(t) || consensus.has(t) || fundNet.has(t) || has8k.has(t);
+    need.sort((a, bb) => {
+      const sa = isSignal(a) ? 0 : 1, sb = isSignal(bb) ? 0 : 1;
+      if (sa !== sb) return sa - sb;
+      return (siByT.get(bb)?.avg || 0) - (siByT.get(a)?.avg || 0);
+    });
+    for (const t of need.slice(0, MAX_QUOTES)) {
+      try {
+        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`, { cache: 'no-store' });
+        if (r.ok) { const q = await r.json(); if (q && q.c) quotes.set(t, { price: q.c, changePct: q.dp ?? null }); }
+      } catch { /* skip */ }
+      await sleep(1100);
+    }
+  }
+
+  // 4) Merge → upsert rows in batches.
   const rowsOut = tickers.map((t) => {
-    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t);
+    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), qq = quotes.get(t);
     const floatShares = f?.floatShares ?? null;
     return {
       ticker: t, company: i?.company || null,
-      price: tk?.price ?? null, changePct: tk?.changePct ?? null, volume: tk?.volume ?? null, avgVol: tk?.avgVol ?? null, relVol: tk?.relVol ?? null,
+      price: tk?.price ?? qq?.price ?? null, changePct: tk?.changePct ?? qq?.changePct ?? null,
+      volume: tk?.volume ?? s?.avg ?? null, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
       floatShares, sharesOut: f?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
       rsi14: tk?.rsi14 ?? null, sma20: tk?.sma20 ?? null, sma50: tk?.sma50 ?? null, sma200: tk?.sma200 ?? null,
@@ -186,7 +213,8 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       target: screenerStocks.ticker,
       set: {
         company: sql`coalesce(excluded.company, screener_stocks.company)`,
-        price: sql`excluded.price`, changePct: sql`excluded.change_pct`, volume: sql`excluded.volume`, avgVol: sql`excluded.avg_vol`, relVol: sql`excluded.rel_vol`,
+        price: sql`coalesce(excluded.price, screener_stocks.price)`, changePct: sql`coalesce(excluded.change_pct, screener_stocks.change_pct)`,
+        volume: sql`coalesce(excluded.volume, screener_stocks.volume)`, avgVol: sql`coalesce(excluded.avg_vol, screener_stocks.avg_vol)`, relVol: sql`excluded.rel_vol`,
         floatShares: sql`excluded.float_shares`, sharesOut: sql`excluded.shares_out`, shortFloat: sql`excluded.short_float`, daysToCover: sql`excluded.days_to_cover`,
         rsi14: sql`excluded.rsi14`, sma20: sql`excluded.sma20`, sma50: sql`excluded.sma50`, sma200: sql`excluded.sma200`,
         hi52: sql`excluded.hi52`, lo52: sql`excluded.lo52`, atr14: sql`excluded.atr14`,
