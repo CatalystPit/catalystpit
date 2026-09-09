@@ -352,19 +352,53 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
   const router = useRouter();
   const [v, setV] = useState('');
   const [focused, setFocused] = useState(false);
-  const submit = (e) => {
-    if (e) e.preventDefault();
-    const s = v.trim().toUpperCase();
-    if (!s) return;                  // empty submit = no-op
-    setV('');                        // clear for the next search
-    if (onNavigate) onNavigate();    // close the mobile drawer
+  const [results, setResults] = useState([]);
+  const [active, setActive] = useState(-1);          // highlighted suggestion index
+  const timer = useRef(null);
+  const blurT = useRef(null);
+
+  const go = (raw) => {
+    const s = String(raw || '').trim().toUpperCase();
+    if (!s) return;
+    setV(''); setResults([]); setActive(-1);
+    if (onNavigate) onNavigate();
     // Futures convention "/ES" → URL-safe "FUT.ES" (avoids an encoded slash in the path).
     const target = s.startsWith('/') ? `FUT.${s.slice(1)}` : s;
     router.push(`/ticker/${encodeURIComponent(target)}`);
   };
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    if (active >= 0 && results[active]) return go(results[active].ticker);
+    go(v);
+  };
+
+  // Debounced autocomplete against /api/symbol-search (skips futures "/…" queries).
+  const onChange = (val) => {
+    const up = val.toUpperCase();
+    setV(up); setActive(-1);
+    if (timer.current) clearTimeout(timer.current);
+    if (up.trim().length < 1 || up.startsWith('/')) { setResults([]); return; }
+    timer.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/symbol-search?q=${encodeURIComponent(up.trim())}`);
+        const j = r.ok ? await r.json() : null;
+        setResults(Array.isArray(j?.results) ? j.results : []);
+      } catch { setResults([]); }
+    }, 130);
+  };
+
+  const onKeyDown = (e) => {
+    if (!results.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(results.length - 1, i + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(-1, i - 1)); }
+    else if (e.key === 'Escape') { setResults([]); setActive(-1); }
+  };
+
+  const showDrop = focused && results.length > 0 && !v.startsWith('/');
+
   return (
     <form onSubmit={submit} style={{ position: "relative", display: "flex", alignItems: "center",
-      height: 32, width: mobile ? "100%" : 280,
+      height: 32, width: mobile ? "100%" : 210,
       background: "#FFFFFF", borderRadius: 999,
       border: `1px solid ${focused ? "#1E5C38" : "rgba(0,0,0,0.08)"}` }}>
       <button type="submit" aria-label="Search ticker symbol" tabIndex={-1}
@@ -376,13 +410,33 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
           <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
       </button>
-      <input type="text" value={v} onChange={e => setV(e.target.value.toUpperCase())}
-        onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
-        aria-label="Search ticker symbol" placeholder="Ticker, company, or /ES futures…"
+      <input type="text" value={v} onChange={e => onChange(e.target.value)} onKeyDown={onKeyDown}
+        onFocus={() => { setFocused(true); if (blurT.current) clearTimeout(blurT.current); }}
+        onBlur={() => { blurT.current = setTimeout(() => setFocused(false), 160); }}
+        aria-label="Search ticker symbol" placeholder={mobile ? "Ticker, company, or /ES…" : "Search ticker…"}
         className="cp-nav-search-input"
         style={{ width: "100%", height: "100%", background: "transparent", border: "none", outline: "none",
           color: "#1A1A1A", fontFamily: "'DM Sans',sans-serif", fontSize: 14, letterSpacing: "0.5px",
           padding: "0 14px 0 36px", borderRadius: 999, minWidth: 0 }} />
+
+      {showDrop && (
+        <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 200,
+          background: "#FFFFFF", border: "1px solid rgba(0,0,0,0.10)", borderRadius: 10,
+          boxShadow: "0 10px 28px rgba(0,0,0,0.16)", overflow: "hidden", maxHeight: 320, overflowY: "auto" }}>
+          {results.map((r, i) => (
+            <button key={r.ticker + i} type="button"
+              onMouseDown={(e) => { e.preventDefault(); go(r.ticker); }}
+              onMouseEnter={() => setActive(i)}
+              style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left",
+                padding: "8px 12px", background: i === active ? "#F0F5F1" : "#FFFFFF", border: "none",
+                borderBottom: i < results.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer" }}>
+              <TickerLogo symbol={r.ticker} size={20} />
+              <span className="cp-tkr" style={{ fontSize: 13, fontWeight: 700, color: "#1E5C38", flexShrink: 0 }}>{r.ticker}</span>
+              <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 300, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </form>
   );
 }
@@ -487,7 +541,7 @@ export function TopNav({ active }) {
         ))}
       </div>
 
-      <div style={{display:"flex", gap:8, alignItems:"center"}}>
+      <div style={{display:"flex", gap:8, alignItems:"center", marginLeft:20, flexShrink:0}}>
         <span className="cp-nav-search"><SymbolSearch /></span>
         <SignedOut>
           <a href="/sign-in" style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)",
