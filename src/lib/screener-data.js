@@ -164,34 +164,14 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
 
   const tickers = [...universe].filter(Boolean);
 
-  // 3b) Delayed prices: candles already give EOD price for the warmed set. For the most relevant
-  // unpriced names (signals first, then most liquid by FINRA avg vol), pull a live/delayed Finnhub
-  // quote (bounded + throttled under 60/min). Price is coalesced on upsert so it accumulates nightly.
-  const quotes = new Map();
-  if (FINNHUB_KEY) {
-    const need = tickers.filter((t) => !tech.has(t));
-    const isSignal = (t) => insByT.has(t) || conByT.has(t) || consensus.has(t) || fundNet.has(t) || has8k.has(t);
-    need.sort((a, bb) => {
-      const sa = isSignal(a) ? 0 : 1, sb = isSignal(bb) ? 0 : 1;
-      if (sa !== sb) return sa - sb;
-      return (siByT.get(bb)?.avg || 0) - (siByT.get(a)?.avg || 0);
-    });
-    for (const t of need.slice(0, MAX_QUOTES)) {
-      try {
-        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`, { cache: 'no-store' });
-        if (r.ok) { const q = await r.json(); if (q && q.c) quotes.set(t, { price: q.c, changePct: q.dp ?? null }); }
-      } catch { /* skip */ }
-      await sleep(1100);
-    }
-  }
-
-  // 4) Merge → upsert rows in batches.
+  // 4) Merge → upsert the universe FIRST (fast, no network) so stocks always land even if the
+  // later quote pass is slow/times out.
   const rowsOut = tickers.map((t) => {
-    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), qq = quotes.get(t);
+    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t);
     const floatShares = f?.floatShares ?? null;
     return {
       ticker: t, company: i?.company || null,
-      price: tk?.price ?? qq?.price ?? null, changePct: tk?.changePct ?? qq?.changePct ?? null,
+      price: tk?.price ?? null, changePct: tk?.changePct ?? null,
       volume: tk?.volume ?? s?.avg ?? null, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
       floatShares, sharesOut: f?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
@@ -227,5 +207,30 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     });
     upserts += batch.length;
   }
-  return { universe: tickers.length, technicals: tech.size, upserts };
+
+  // 5) Delayed prices (AFTER the write). Candles gave EOD close for the warmed set; for the most
+  // relevant unpriced names (signals first, then most liquid by FINRA avg vol) pull a throttled
+  // Finnhub quote and update price-only. Coalesced, so coverage accumulates across nightly runs.
+  let quoted = 0;
+  if (FINNHUB_KEY) {
+    const isSignal = (t) => insByT.has(t) || conByT.has(t) || consensus.has(t) || fundNet.has(t) || has8k.has(t);
+    const need = tickers.filter((t) => !tech.has(t)).sort((a, bb) => {
+      const sa = isSignal(a) ? 0 : 1, sb = isSignal(bb) ? 0 : 1;
+      if (sa !== sb) return sa - sb;
+      return (siByT.get(bb)?.avg || 0) - (siByT.get(a)?.avg || 0);
+    });
+    for (const t of need.slice(0, MAX_QUOTES)) {
+      try {
+        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`, { cache: 'no-store' });
+        if (r.ok) {
+          const q = await r.json();
+          if (q && q.c) { await db.update(screenerStocks).set({ price: q.c, changePct: q.dp ?? null }).where(eq(screenerStocks.ticker, t)); quoted++; }
+        }
+      } catch { /* skip */ }
+      await sleep(1100);
+    }
+  }
+
+  const [{ n }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
+  return { universe: tickers.length, technicals: tech.size, upserts, quoted, tableCount: n };
 }
