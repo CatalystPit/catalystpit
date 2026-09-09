@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import EightKWire from "./EightKWire";
+import TopCatalysts from "./TopCatalysts";
+import { impactOf, IMPACT_STYLE } from "../lib/impact";
 import {
   C, TAG, CARD_COLORS,
   fetchKey, toArr, minsSince, timeAgo,
@@ -72,6 +74,9 @@ function NewsRowCard({n, idx}) {
       </div>
       <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:5}}>
         <div style={{display:"flex", alignItems:"center", gap:7, flexWrap:"wrap"}}>
+          {(() => { const st = IMPACT_STYLE[impactOf({ title: n.headline, category: n.tag, source: n.source })]; return st ? (
+            <span style={{fontSize:9, fontWeight:700, color:st.fg, background:st.bg, borderRadius:3, padding:"2px 7px", letterSpacing:"0.3px"}}>{st.label}</span>
+          ) : null; })()}
           <TagBadge tag={n.tag}/>
           {hasValidTicker && (
             <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
@@ -188,6 +193,7 @@ export default function NewsFeed() {
   const [lastUp, setLastUp] = useState(null);
   const [activeCategory, setActiveCategory] = useState('ALL');
   const [tickerQuery, setTickerQuery] = useState('');
+  const [impactOnly, setImpactOnly] = useState(false);   // show only HIGH/NOTABLE catalysts
   // Sources the user has chosen to hide (press-release wires + outlets). Persisted so it sticks.
   const [hiddenSources, setHiddenSources] = useState(() => new Set());
 
@@ -244,9 +250,10 @@ export default function NewsFeed() {
       if (activeCategory !== 'ALL' && a.tag !== activeCategory) return false;
       if (tickerQuery && (!a.sym || !a.sym.toUpperCase().includes(tickerQuery))) return false;
       if (a.source && hiddenSources.has(a.source)) return false;
+      if (impactOnly && impactOf({ title: a.headline, category: a.tag, source: a.source }) === 'routine') return false;
       return true;
     });
-  }, [articles, activeCategory, tickerQuery, hiddenSources]);
+  }, [articles, activeCategory, tickerQuery, hiddenSources, impactOnly]);
 
   // Trending tickers — unique syms from the unfiltered set (so chips don't disappear when filtering)
   const trendingTickers = useMemo(() => {
@@ -301,6 +308,14 @@ export default function NewsFeed() {
       {/* CATEGORY FILTER CHIPS */}
       <div style={{background:C.white, borderBottom:`1px solid ${C.border}`, padding:"10px 24px"}}>
         <div style={{maxWidth:1380, margin:"0 auto", display:"flex", gap:6, flexWrap:"wrap"}}>
+          <button onClick={() => setImpactOnly(v => !v)}
+            style={{fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:700, letterSpacing:"0.3px",
+              padding:"6px 12px", borderRadius:14, cursor:"pointer", transition:"all 0.15s",
+              border:`1px solid ${impactOnly ? '#B23B2E' : C.border}`,
+              background: impactOnly ? '#B23B2E' : C.white,
+              color: impactOnly ? '#fff' : '#B23B2E'}}>
+            ⚡ High impact
+          </button>
           {['ALL', ...availableCategories].map(cat => {
             const active = activeCategory === cat;
             const tc = TAG[cat] || {bg:C.surface, c:C.muted};
@@ -364,6 +379,7 @@ export default function NewsFeed() {
 
         {/* LEFT — FEED */}
         <div style={{display:"flex", flexDirection:"column", gap:14, minWidth:0}}>
+          <TopCatalysts/>
           {loading ? (
             <>
               <div style={{background:C.surface, borderRadius:8, overflow:"hidden"}}>
