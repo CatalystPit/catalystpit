@@ -19,22 +19,12 @@ import { C } from '../lib/cp-shared';
 
 const MOBILE_Q = '(max-width: 860px)';
 const PREF_KEY = 'cp_tape_open';
-
-// Per-page panel width. These pages run content/headers close to the left edge, so a slimmer
-// panel keeps the overlap off them; Home/News have room, so they stay comfortable.
-function widthForPath(p) {
-  if (!p) return 300;
-  if (p.startsWith('/ticker'))      return 250;
-  if (p.startsWith('/screener'))    return 250;
-  if (p.startsWith('/insiders'))    return 262;
-  if (p.startsWith('/politicians')) return 276;
-  return 300;
-}
+const PANEL_W = 330;   // match the Pit chat dock width (PitDock PANEL_W) on every page
 
 export default function XTapeDock() {
   const pathname = usePathname();
   const onTerminal = !!pathname && pathname.startsWith('/terminal');   // Terminal shows Tape as a panel instead
-  const panelW = widthForPath(pathname);
+  const panelW = PANEL_W;
   const [ready, setReady] = useState(false);   // client-mounted (dock is client-only chrome)
   const [mobile, setMobile] = useState(false);
   const [open, setOpen] = useState(false);
