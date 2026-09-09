@@ -132,8 +132,52 @@ export const FILTERS = {
   aum:          r('Assets Under Mgmt', 'ETF', 'aum', { unit: '$' }),
   expenseRatio: r('Expense Ratio %', 'ETF', 'expenseRatio', { unit: '%' }),
 };
-// Default any filter without an explicit `available` to false (data feed pending).
-for (const k of Object.keys(FILTERS)) if (FILTERS[k].available === undefined) FILTERS[k].available = false;
+// ── Per-metric predefined dropdown option sets (Finviz-style). cond = the stored filter value. ──
+const BOOL = [{ label: 'Yes', cond: { eq: true } }, { label: 'No', cond: { eq: false } }];
+const MCAP = [{ label: 'Mega ($200B+)', cond: { min: 200e9 } }, { label: 'Large ($10B–$200B)', cond: { min: 10e9, max: 200e9 } }, { label: 'Mid ($2B–$10B)', cond: { min: 2e9, max: 10e9 } }, { label: 'Small ($300M–$2B)', cond: { min: 300e6, max: 2e9 } }, { label: 'Micro ($50M–$300M)', cond: { min: 50e6, max: 300e6 } }, { label: 'Nano (<$50M)', cond: { max: 50e6 } }];
+const PRICE = [{ label: 'Under $1', cond: { max: 1 } }, { label: 'Under $5', cond: { max: 5 } }, { label: 'Under $10', cond: { max: 10 } }, { label: 'Under $20', cond: { max: 20 } }, { label: 'Under $50', cond: { max: 50 } }, { label: 'Over $1', cond: { min: 1 } }, { label: 'Over $5', cond: { min: 5 } }, { label: 'Over $10', cond: { min: 10 } }, { label: 'Over $20', cond: { min: 20 } }, { label: 'Over $50', cond: { min: 50 } }, { label: '$1–$5', cond: { min: 1, max: 5 } }, { label: '$5–$10', cond: { min: 5, max: 10 } }, { label: '$10–$20', cond: { min: 10, max: 20 } }, { label: '$20–$50', cond: { min: 20, max: 50 } }];
+const VOLP = [{ label: 'Over 100K', cond: { min: 1e5 } }, { label: 'Over 500K', cond: { min: 5e5 } }, { label: 'Over 1M', cond: { min: 1e6 } }, { label: 'Over 5M', cond: { min: 5e6 } }, { label: 'Over 10M', cond: { min: 1e7 } }, { label: 'Under 100K', cond: { max: 1e5 } }];
+const RELVOL = [{ label: 'Over 0.5', cond: { min: 0.5 } }, { label: 'Over 1', cond: { min: 1 } }, { label: 'Over 1.5', cond: { min: 1.5 } }, { label: 'Over 2', cond: { min: 2 } }, { label: 'Over 3', cond: { min: 3 } }, { label: 'Over 5', cond: { min: 5 } }, { label: 'Over 10', cond: { min: 10 } }];
+const FLOATO = [{ label: 'Under 10M', cond: { max: 1e7 } }, { label: 'Under 20M', cond: { max: 2e7 } }, { label: 'Under 50M', cond: { max: 5e7 } }, { label: 'Under 100M', cond: { max: 1e8 } }, { label: 'Over 100M', cond: { min: 1e8 } }];
+const SHORTF = [{ label: 'Over 5%', cond: { min: 5 } }, { label: 'Over 10%', cond: { min: 10 } }, { label: 'Over 20%', cond: { min: 20 } }, { label: 'Over 30%', cond: { min: 30 } }, { label: 'Under 5%', cond: { max: 5 } }];
+const DTC = [{ label: 'Over 1', cond: { min: 1 } }, { label: 'Over 3', cond: { min: 3 } }, { label: 'Over 5', cond: { min: 5 } }, { label: 'Over 10', cond: { min: 10 } }];
+const RSIO = [{ label: 'Oversold (<30)', cond: { max: 30 } }, { label: 'Under 40', cond: { max: 40 } }, { label: 'Under 50', cond: { max: 50 } }, { label: 'Over 50', cond: { min: 50 } }, { label: 'Over 60', cond: { min: 60 } }, { label: 'Overbought (>70)', cond: { min: 70 } }];
+const PERF = [{ label: 'Up', cond: { min: 0.0001 } }, { label: 'Up >5%', cond: { min: 5 } }, { label: 'Up >10%', cond: { min: 10 } }, { label: 'Up >20%', cond: { min: 20 } }, { label: 'Down', cond: { max: -0.0001 } }, { label: 'Down >5%', cond: { max: -5 } }, { label: 'Down >10%', cond: { max: -10 } }, { label: 'Down >20%', cond: { max: -20 } }];
+const DIVY = [{ label: 'Over 0%', cond: { min: 0.0001 } }, { label: 'Over 1%', cond: { min: 1 } }, { label: 'Over 2%', cond: { min: 2 } }, { label: 'Over 3%', cond: { min: 3 } }, { label: 'Over 5%', cond: { min: 5 } }];
+const BETAO = [{ label: 'Under 1', cond: { max: 1 } }, { label: 'Over 1', cond: { min: 1 } }, { label: 'Over 1.5', cond: { min: 1.5 } }, { label: 'Negative (<0)', cond: { max: 0 } }];
+const RATIO_LOW = [{ label: 'Under 5', cond: { max: 5 } }, { label: 'Under 10', cond: { max: 10 } }, { label: 'Under 15', cond: { max: 15 } }, { label: 'Under 20', cond: { max: 20 } }, { label: 'Under 30', cond: { max: 30 } }, { label: 'Over 20', cond: { min: 20 } }, { label: 'Profitable (>0)', cond: { min: 0.0001 } }];
+const PCT_POS = [{ label: 'Positive', cond: { min: 0.0001 } }, { label: 'Over 10%', cond: { min: 10 } }, { label: 'Over 20%', cond: { min: 20 } }, { label: 'Over 30%', cond: { min: 30 } }, { label: 'Negative', cond: { max: 0 } }];
+const RATIO_DE = [{ label: 'Under 0.5', cond: { max: 0.5 } }, { label: 'Under 1', cond: { max: 1 } }, { label: 'Over 1', cond: { min: 1 } }, { label: 'Over 2', cond: { min: 2 } }];
+const SMAO = [{ label: 'Price above', cond: { op: 'above' } }, { label: 'Price below', cond: { op: 'below' } }, { label: '0–5% above', cond: { op: 'band', side: 'above', lo: 0, hi: 5 } }, { label: '5–10% above', cond: { op: 'band', side: 'above', lo: 5, hi: 10 } }, { label: '0–5% below', cond: { op: 'band', side: 'below', lo: 0, hi: 5 } }, { label: '5–10% below', cond: { op: 'band', side: 'below', lo: 5, hi: 10 } }];
+const NEARO = [{ label: 'Within 1%', cond: { pct: 1 } }, { label: 'Within 3%', cond: { pct: 3 } }, { label: 'Within 5%', cond: { pct: 5 } }, { label: 'Within 10%', cond: { pct: 10 } }];
+const COUNT = [{ label: '1+', cond: { min: 1 } }, { label: '2+', cond: { min: 2 } }, { label: '3+', cond: { min: 3 } }, { label: '5+', cond: { min: 5 } }];
+const NETMONEY = [{ label: 'Net buying (>0)', cond: { min: 1 } }, { label: 'Over $100K', cond: { min: 1e5 } }, { label: 'Over $1M', cond: { min: 1e6 } }, { label: 'Net selling (<0)', cond: { max: -1 } }];
+const FUNDNET = [{ label: 'Accumulating (>0)', cond: { min: 1 } }, { label: '2+ funds', cond: { min: 2 } }, { label: '3+ funds', cond: { min: 3 } }, { label: 'Distributing (<0)', cond: { max: -1 } }];
+const CONSENSUS = [{ label: '50+', cond: { min: 50 } }, { label: '60+', cond: { min: 60 } }, { label: '70+', cond: { min: 70 } }, { label: '80+', cond: { min: 80 } }];
+
+const OPTS = {
+  marketCap: MCAP, price: PRICE, volume: VOLP, avgVol: VOLP, relVol: RELVOL, relVolT: RELVOL,
+  floatShares: FLOATO, sharesOut: FLOATO, shortFloat: SHORTF, daysToCover: DTC, dividendYield: DIVY, beta: BETAO,
+  rsi14: RSIO, near52wHigh: NEARO, near52wLow: NEARO,
+  changePct: PERF, perf1w: PERF, perf1m: PERF, perf3m: PERF, perf6m: PERF, perfYtd: PERF, perf1y: PERF, perf3y: PERF, perf5y: PERF,
+  pe: RATIO_LOW, forwardPe: RATIO_LOW, peg: RATIO_LOW, ps: RATIO_LOW, pb: RATIO_LOW, pCash: RATIO_LOW, pFcf: RATIO_LOW, evEbitda: RATIO_LOW, evSales: RATIO_LOW,
+  epsGrowthTtm: PCT_POS, revGrowthTtm: PCT_POS, epsGrowthThisYr: PCT_POS, epsGrowthNextYr: PCT_POS, epsGrowth3y: PCT_POS, epsGrowth5y: PCT_POS, epsGrowthNext5y: PCT_POS, epsGrowthQoq: PCT_POS, salesGrowthQoq: PCT_POS, salesGrowth3y: PCT_POS, salesGrowth5y: PCT_POS,
+  roe: PCT_POS, roa: PCT_POS, roic: PCT_POS, grossMargin: PCT_POS, operMargin: PCT_POS, netMargin: PCT_POS, payoutRatio: PCT_POS,
+  debtEquity: RATIO_DE, ltDebtEquity: RATIO_DE, currentRatio: RATIO_DE, quickRatio: RATIO_DE,
+  consensusScore: CONSENSUS, insiderBuyers90d: COUNT, insiderNet90d: NETMONEY, congressNet90d: NETMONEY, fundNetQoq: FUNDNET, insiderOwnPct: PCT_POS, instOwnPct: PCT_POS,
+};
+
+// Attach opts + default availability to every filter.
+for (const k of Object.keys(FILTERS)) {
+  const f = FILTERS[k];
+  if (f.available === undefined) f.available = false;
+  if (OPTS[k]) f.opts = OPTS[k];
+  else if (f.type === 'bool') f.opts = BOOL;
+  else if (f.type === 'enum') f.opts = (f.options || []).map((o) => ({ label: o, cond: { eq: o } }));
+  else if (f.type === 'sma') f.opts = SMAO;
+  else if (f.type === 'near') f.opts = NEARO;
+  else f.opts = f.unit === '%' ? PCT_POS : RATIO_LOW;   // range fallback (mostly SOON metrics)
+}
 
 // Build Drizzle conditions from the active filter object { key: {min,max}|{eq}|{pct} }.
 export function buildConds(active) {
@@ -150,8 +194,14 @@ export function buildConds(active) {
     } else if (f.type === 'enum') {
       if (cond.eq) conds.push(eq(c, String(cond.eq)));
     } else if (f.type === 'sma') {
-      if (cond.eq === 'above') conds.push(sql`${screenerStocks.price} > ${c} and ${c} is not null`);
-      else if (cond.eq === 'below') conds.push(sql`${screenerStocks.price} < ${c} and ${c} is not null`);
+      const p = screenerStocks.price;
+      if (cond.op === 'above') conds.push(sql`${p} > ${c} and ${c} is not null`);
+      else if (cond.op === 'below') conds.push(sql`${p} < ${c} and ${c} is not null`);
+      else if (cond.op === 'band') {
+        const lo = Number(cond.lo) / 100, hi = Number(cond.hi) / 100;
+        if (cond.side === 'above') conds.push(sql`${p} >= ${c} * ${1 + lo} and ${p} <= ${c} * ${1 + hi} and ${c} is not null`);
+        else conds.push(sql`${p} <= ${c} * ${1 - lo} and ${p} >= ${c} * ${1 - hi} and ${c} is not null`);
+      }
     } else if (f.type === 'near') {
       const pct = Number(cond.pct || 5) / 100;
       if (f.col === 'hi52') conds.push(sql`${screenerStocks.price} >= ${screenerStocks.hi52} * ${1 - pct} and ${screenerStocks.hi52} is not null`);

@@ -74,7 +74,7 @@ const PRESETS = {
   'Congress Buying':           { congressBuy90d: { eq: true } },
   'Institutional Accumulation':{ fundNetQoq: { min: 2 } },
   'Oversold (RSI < 30)':       { rsi14: { max: 30 } },
-  'Above 200-day SMA':         { priceVsSma200: { eq: 'above' } },
+  'Above 200-day SMA':         { priceVsSma200: { op: 'above' } },
   'Near 52-Week High':         { near52wHigh: { pct: 5 } },
   'High Relative Volume':      { relVol: { min: 2 } },
 };
@@ -82,49 +82,44 @@ const PRESETS = {
 const inputStyle = { width: 76, height: 28, borderRadius: 5, border: `1px solid ${C.border}`, padding: '0 7px', fontSize: 12, fontFamily: "'DM Sans',sans-serif", outline: 'none' };
 const selStyle = { height: 28, borderRadius: 5, border: `1px solid ${C.border}`, padding: '0 8px', fontSize: 12, fontFamily: "'DM Sans',sans-serif", background: C.white, cursor: 'pointer', outline: 'none' };
 
-function FilterControl({ fkey, def, val, onChange }) {
+// One compact Finviz-style dropdown per filter: predefined metric-specific choices + Custom range.
+function FilterControl({ def, val, onChange }) {
   const disabled = !def.available;
-  const box = (inner) => (
-    <div style={{ opacity: disabled ? 0.5 : 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 10.5, color: C.muted, fontWeight: def.pit ? 700 : 500 }}>
-        {def.pit && <span style={{ color: C.green }}>◆ </span>}{def.label}{def.sparse ? ' *' : ''}
-        {disabled && <span style={{ marginLeft: 4, fontSize: 8, color: C.dim, background: C.surface, borderRadius: 3, padding: '1px 4px' }}>SOON</span>}
+  const opts = def.opts || [];
+  const isRange = def.type === 'range';
+  const activeIdx = val ? opts.findIndex((o) => JSON.stringify(o.cond) === JSON.stringify(val)) : -1;
+  const [custom, setCustom] = useState(false);
+  const isCustomVal = !!val && activeIdx === -1;
+  const showInputs = isRange && (custom || isCustomVal);
+  const active = !!val;
+  const selVal = activeIdx >= 0 ? String(activeIdx) : ((val || custom) ? 'custom' : '');
+  const pick = (e) => {
+    const v = e.target.value;
+    if (v === '') { setCustom(false); onChange(null); }
+    else if (v === 'custom') setCustom(true);
+    else { setCustom(false); onChange(opts[Number(v)].cond); }
+  };
+  const sel = { width: '100%', height: 30, borderRadius: 6, padding: '0 8px', fontSize: 12, fontFamily: "'DM Sans',sans-serif", cursor: disabled ? 'default' : 'pointer', outline: 'none', border: `1px solid ${active ? C.green : C.border}`, background: active ? C.greenLight : C.white, color: active ? C.green : C.text, fontWeight: active ? 600 : 400 };
+  return (
+    <div style={{ opacity: disabled ? 0.55 : 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 10.5, color: C.muted, fontWeight: def.pit ? 700 : 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+        {def.pit && <span style={{ color: C.green }}>◆</span>}{def.label}{def.sparse ? ' *' : ''}
+        {disabled && <span style={{ fontSize: 8, color: C.dim, background: C.surface, borderRadius: 3, padding: '1px 4px' }}>SOON</span>}
       </span>
-      {inner}
+      <select disabled={disabled} value={selVal} onChange={pick} style={sel}>
+        <option value="">Any</option>
+        {opts.map((o, i) => <option key={i} value={i}>{o.label}</option>)}
+        {isRange && <option value="custom">Custom…</option>}
+      </select>
+      {showInputs && (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <input type="number" placeholder="min" value={val?.min ?? ''} onChange={(e) => onChange({ ...(val || {}), min: e.target.value })} style={inputStyle} />
+          <span style={{ color: C.dim }}>–</span>
+          <input type="number" placeholder="max" value={val?.max ?? ''} onChange={(e) => onChange({ ...(val || {}), max: e.target.value })} style={inputStyle} />
+        </div>
+      )}
     </div>
   );
-  if (disabled) return box(<div style={{ height: 28 }} />);
-
-  if (def.type === 'range') return box(
-    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-      <input type="number" placeholder="min" value={val?.min ?? ''} onChange={(e) => onChange({ ...val, min: e.target.value })} style={inputStyle} />
-      <span style={{ color: C.dim, fontSize: 11 }}>–</span>
-      <input type="number" placeholder="max" value={val?.max ?? ''} onChange={(e) => onChange({ ...val, max: e.target.value })} style={inputStyle} />
-    </div>
-  );
-  if (def.type === 'bool') return box(
-    <select value={val?.eq === true ? 'y' : val?.eq === false ? 'n' : ''} onChange={(e) => onChange(e.target.value === '' ? null : { eq: e.target.value === 'y' })} style={selStyle}>
-      <option value="">Any</option><option value="y">Yes</option><option value="n">No</option>
-    </select>
-  );
-  if (def.type === 'enum') return box(
-    <select value={val?.eq || ''} onChange={(e) => onChange(e.target.value ? { eq: e.target.value } : null)} style={selStyle}>
-      <option value="">Any</option>{(def.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
-    </select>
-  );
-  if (def.type === 'sma') return box(
-    <select value={val?.eq || ''} onChange={(e) => onChange(e.target.value ? { eq: e.target.value } : null)} style={selStyle}>
-      <option value="">Any</option><option value="above">Price above</option><option value="below">Price below</option>
-    </select>
-  );
-  if (def.type === 'near') return box(
-    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-      <span style={{ fontSize: 11, color: C.muted }}>within</span>
-      <input type="number" placeholder="5" value={val?.pct ?? ''} onChange={(e) => onChange(e.target.value ? { pct: e.target.value } : null)} style={{ ...inputStyle, width: 56 }} />
-      <span style={{ fontSize: 11, color: C.muted }}>%</span>
-    </div>
-  );
-  return box(<div />);
 }
 
 export default function ScreenerClient() {
@@ -205,8 +200,8 @@ export default function ScreenerClient() {
 
   const chipLabel = (key, cond) => {
     const d = meta?.[key]; if (!d) return key;
-    if (cond.eq !== undefined) return `${d.label}: ${cond.eq === true ? 'Yes' : cond.eq === false ? 'No' : cond.eq}`;
-    if (cond.pct != null) return `${d.label}: ${cond.pct}%`;
+    const opt = (d.opts || []).find((o) => JSON.stringify(o.cond) === JSON.stringify(cond));
+    if (opt) return `${d.label}: ${opt.label}`;
     const lo = cond.min != null && cond.min !== '' ? cond.min : '', hi = cond.max != null && cond.max !== '' ? cond.max : '';
     return `${d.label}: ${lo || '−∞'}–${hi || '∞'}`;
   };
