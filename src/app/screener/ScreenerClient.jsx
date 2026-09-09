@@ -140,6 +140,7 @@ export default function ScreenerClient() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState([]);
+  const [prices, setPrices] = useState({});   // on-demand quote overlay for the visible page
   const debTimer = useRef(null);
 
   // Load registry + saved + initial state from URL.
@@ -197,6 +198,17 @@ export default function ScreenerClient() {
 
   const rows = data?.rows || [];
   const total = data?.total || 0;
+
+  // Price the VISIBLE page on demand (cache-first) — like the ticker page prices one, for the ~50 rows shown.
+  useEffect(() => {
+    const need = (data?.rows || []).filter((r) => r.price == null && !prices[r.ticker]).map((r) => r.ticker).slice(0, 80);
+    if (!need.length) return;
+    let alive = true;
+    fetch(`/api/quotes?symbols=${encodeURIComponent(need.join(','))}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setPrices((p) => ({ ...p, ...j })); }).catch(() => {});
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
   const activeChips = Object.entries(filters).filter(([k]) => meta?.[k]?.available);
   const cols = VIEWS[view] || VIEWS.Overview;
   const groupsToShow = activeCat === 'All' ? REAL_CATS : [activeCat];
@@ -304,7 +316,10 @@ export default function ScreenerClient() {
               <tbody>
                 {loading ? Array(10).fill(0).map((_, i) => <tr key={i}><td colSpan={cols.length + 1} style={{ padding: '10px 14px' }}><Skel h={16} mb={0} /></td></tr>)
                   : rows.length === 0 ? <tr><td colSpan={cols.length + 1} style={{ padding: '40px 14px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No stocks match these filters. Widen them or clear a chip.</td></tr>
-                  : rows.map((r) => (
+                  : rows.map((r0) => {
+                    const pr = prices[r0.ticker];
+                    const r = pr ? { ...r0, price: r0.price ?? pr.price, changePct: r0.changePct ?? pr.changePct } : r0;
+                    return (
                     <tr key={r.ticker} className="row-hov" onClick={() => router.push(`/ticker/${encodeURIComponent(r.ticker)}`)} style={{ borderBottom: `1px solid ${C.surface}`, cursor: 'pointer' }}>
                       <td className="cp-tkr" style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><TickerLogo symbol={r.ticker} size={18} />{r.ticker}</span>
@@ -314,7 +329,8 @@ export default function ScreenerClient() {
                         return <td key={ck} className={typeof v === 'number' ? 'cp-num' : undefined} style={{ padding: '10px 14px', textAlign: c.align || 'left', fontSize: 12.5, color, fontWeight: ck === 'consensusScore' ? 700 : 400, maxWidth: ck === 'company' ? 220 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.fmt(v)}</td>;
                       })}
                     </tr>
-                  ))}
+                    );
+                  })}
               </tbody>
             </table>
           </div>
