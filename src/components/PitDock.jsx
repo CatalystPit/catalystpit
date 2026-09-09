@@ -127,7 +127,7 @@ export default function PitDock() {
   return (
     <>
       <button onClick={() => toggle()} aria-label={open ? 'Collapse The Pit' : 'Open The Pit'}
-        style={{ position: 'fixed', top: isSignedIn ? '25%' : '50%', right: open ? panelW : 0, transform: 'translateY(-50%)',
+        style={{ position: 'fixed', top: isSignedIn ? '75%' : '50%', right: open ? panelW : 0, transform: 'translateY(-50%)',
           zIndex: 61, transition: 'right 0.25s ease', display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: 6, padding: '12px 7px', cursor: 'pointer',
           background: C.green, color: '#fff', border: 'none', borderRadius: '8px 0 0 8px',
@@ -141,7 +141,7 @@ export default function PitDock() {
         </span>
       </button>
 
-      <div style={{ position: 'fixed', top: 0, right: 0, height: chatH, width: panelW, zIndex: 60,
+      <div style={{ position: 'fixed', right: 0, ...(isSignedIn ? { bottom: 0, height: chatH } : { top: 0, bottom: 0 }), width: panelW, zIndex: 60,
         transform: open ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
         boxShadow: open ? '-8px 0 24px rgba(0,0,0,0.12)' : 'none',
         pointerEvents: open ? 'auto' : 'none' }}>
