@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
-import EightKWire from '../../components/EightKWire';
+import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
@@ -14,15 +14,14 @@ const PANELS = [
   { id: 'tape',      title: 'Tape · X',     tag: 'SOCIAL' },
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
   { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
-  { id: 'news',      title: 'News',         tag: 'LIVE' },
-  { id: 'eightk',    title: '8-K Wire',     tag: 'SEC' },
+  { id: 'newswire',  title: 'News Wire',    tag: 'NEWS · PR · 8-K' },
   { id: 'pitscan',   title: 'Pit Scan',     tag: 'PRESET' },
   { id: 'scanner',   title: 'Scanner',      tag: 'CUSTOM' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
 const PANEL_BY_ID = Object.fromEntries(PANELS.map((p) => [p.id, p]));
-const DEFAULT_VISIBLE = ['tape', 'halts', 'chart', 'news', 'watchlist', 'chat'];
+const DEFAULT_VISIBLE = ['tape', 'halts', 'chart', 'newswire', 'watchlist', 'chat'];
 const MIN_W = 240, MIN_H = 220;
 
 // Link groups (Benzinga-style): panels sharing a color sync — click a symbol in one and it loads
@@ -48,9 +47,8 @@ function defaultLayout(width) {
     halts:     { x: 0, y: botY, w: leftW, h: top, color: 'blue' },
     // center column
     chart:     { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
-    news:      { x: centerX, y: 392, w: centerW, h: 168, color: 'blue' },
-    // add-only panels default to the center-bottom area (overlap news until arranged)
-    eightk:    { x: centerX, y: 392, w: centerW, h: 240, color: 'blue' },
+    newswire:  { x: centerX, y: 392, w: centerW, h: 220, color: 'blue' },
+    // add-only panels default to the center-bottom area (overlap until arranged)
     pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'blue' },
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     // right column
@@ -200,40 +198,56 @@ const timeAgoShort = (iso) => {
   return `${Math.round(mins / 1440)}d`;
 };
 
-function NewsBody() {
+// One unified wire: market news + press-release wires (/api/news) + 8-K filings (/api/eightk),
+// time-sorted, impact-flagged. Clicking a ticker loads it in linked chart panels.
+function NewsWireBody({ onPick }) {
   const [items, setItems] = useState(null);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch('/api/news', { cache: 'no-store' });
-        const j = r.ok ? await r.json() : null;
-        const arr = toArr(j?.data, 'stories', 'top_stories', 'articles', 'items', 'data');
-        if (alive) setItems(arr.map((s) => ({
-          headline: s.title || s.headline || s.summary || '',
-          source: s.source || s.outlet || s.publisher || 'Market News',
-          url: s.url || null,
-          published: s.published || s.published_at || s.date || null,
-          sym: (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || null),
-        })).filter((a) => a.headline));
-      } catch { if (alive) setItems([]); }
-    })();
-    return () => { alive = false; };
+  const load = useCallback(async () => {
+    try {
+      const [nRes, eRes] = await Promise.all([
+        fetch('/api/news', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        fetch('/api/eightk?limit=40', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      ]);
+      const pool = [];
+      for (const s of toArr(nRes?.data, 'stories', 'top_stories', 'articles', 'items', 'data')) {
+        const headline = s.title || s.headline || s.summary || '';
+        if (!headline) continue;
+        const sym = (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || null);
+        pool.push({ headline, source: s.source || 'News', url: s.url || null, published: s.published || s.date || null, sym,
+          tier: impactOf({ title: headline, category: s.category || s.tag, source: s.source }) });
+      }
+      for (const f of (eRes?.list || [])) {
+        pool.push({ headline: f.primaryLabel || 'Filing', source: '8-K', url: f.url || null, published: f.filedAt || null, sym: f.ticker,
+          tier: impactOf({ title: f.primaryLabel, material: f.material, category: f.primaryLabel }) });
+      }
+      pool.sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0));
+      setItems(pool.slice(0, 80));
+    } catch { setItems([]); }
   }, []);
-  if (items === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading…</div>;
+  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
+
+  if (items === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading the wire…</div>;
   if (items.length === 0) return <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No headlines right now.</div>;
   return (
     <div style={{ overflow: 'auto', flex: 1 }}>
-      {items.map((n, i) => (
-        <a key={i} href={n.url || '#'} target={n.url ? '_blank' : undefined} rel="noopener noreferrer"
-          style={{ display: 'block', padding: '9px 12px', borderTop: i ? `1px solid ${C.surface}` : 'none', textDecoration: 'none' }}>
-          <div style={{ fontSize: 12.5, color: C.ink, fontWeight: 600, lineHeight: 1.35 }}>{n.headline}</div>
-          <div style={{ fontSize: 10.5, color: C.dim, marginTop: 2 }}>
-            {n.sym ? <span className="cp-tkr" style={{ color: C.green, fontWeight: 700 }}>{n.sym} · </span> : null}
-            {n.source}{n.published ? ` · ${timeAgoShort(n.published)}` : ''}
+      {items.map((n, i) => {
+        const st = IMPACT_STYLE[n.tier];
+        return (
+          <div key={i} className="hov" style={{ padding: '8px 12px', borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+              {st && <span style={{ fontSize: 8, fontWeight: 700, color: st.fg, background: st.bg, borderRadius: 3, padding: '1px 5px' }}>{st.label}</span>}
+              {n.sym && <span onClick={() => onPick && onPick(n.sym)} title={`Load ${n.sym} in chart`} className="cp-tkr"
+                style={{ fontSize: 11, fontWeight: 700, color: C.green, cursor: onPick ? 'pointer' : 'default' }}>{n.sym}</span>}
+              <span style={{ marginLeft: 'auto', fontSize: 9.5, color: C.dim, whiteSpace: 'nowrap' }}>
+                {n.source}{n.published ? ` · ${timeAgoShort(n.published)}` : ''}
+              </span>
+            </div>
+            {n.url
+              ? <a href={n.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.ink, fontWeight: 600, lineHeight: 1.3, textDecoration: 'none', display: 'block' }}>{n.headline}</a>
+              : <div style={{ fontSize: 12, color: C.ink, fontWeight: 600, lineHeight: 1.3 }}>{n.headline}</div>}
           </div>
-        </a>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -370,9 +384,12 @@ function Workspace() {
     // Merge: default coords as the base, saved values on top — so panels added after a layout was
     // saved (e.g. Watchlist) still get valid x/y/w/h instead of NaN.
     const norm = {};
-    for (const d of PANELS) { const s = raw[d.id] || {}; norm[d.id] = { ...dl[d.id], ...s, color: s.color || dl[d.id].color || 'blue' }; }
+    // 'newswire' inherits the old 'news' panel's saved position for users who had it placed.
+    for (const d of PANELS) { const s = raw[d.id] || (d.id === 'newswire' ? raw.news : null) || {}; norm[d.id] = { ...dl[d.id], ...s, color: s.color || dl[d.id].color || 'blue' }; }
     setLayout(norm);
     let vis = null; try { vis = JSON.parse(localStorage.getItem('cp_terminal_visible') || 'null'); } catch { /* ignore */ }
+    // Migrate the old split panels → the unified News Wire (dedupe if both were present).
+    if (Array.isArray(vis)) vis = [...new Set(vis.map((id) => (id === 'news' || id === 'eightk') ? 'newswire' : id))];
     setVisible(Array.isArray(vis) && vis.length ? vis.filter((id) => PANEL_BY_ID[id]) : DEFAULT_VISIBLE);
     return () => mq.removeEventListener('change', apply);
   }, []);
@@ -416,8 +433,7 @@ function Workspace() {
     : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
     : def.id === 'chat' ? <PitChat bare />
     : def.id === 'tape' ? <XTape bare />
-    : def.id === 'news' ? <NewsBody />
-    : def.id === 'eightk' ? <EightKWire bare onPick={(s) => linkSymbol('eightk', s)} />
+    : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <ScanBody mode="preset" onPick={(s) => linkSymbol('pitscan', s)} />
     : def.id === 'scanner' ? <ScanBody mode="custom" onPick={(s) => linkSymbol('scanner', s)} />
     : null);
