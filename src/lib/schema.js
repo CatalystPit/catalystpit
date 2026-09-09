@@ -169,6 +169,7 @@ export const watchlist = pgTable('watchlist', {
   userId:   text('user_id').notNull(),       // Clerk user ID — row owner
   ticker:   text('ticker').notNull(),        // uppercase symbol (enforced in API)
   listId:   integer('list_id'),              // which named list (null → user's default, backfilled lazily)
+  position: integer('position'),             // user drag-order within the list (null → sort by addedAt)
   addedAt:  timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uqUserTicker: uniqueIndex('uq_watchlist_user_ticker').on(t.userId, t.ticker),

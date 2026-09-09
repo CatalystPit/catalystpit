@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { watchlist, tickerDailyCandles, insiderTrades } from '../../../lib/schema';
-import { and, eq, desc, inArray } from 'drizzle-orm';
+import { and, eq, desc, inArray, sql } from 'drizzle-orm';
 import { resolveUserTier, WATCHLIST_LIMIT } from '../../../lib/entitlements';
 import { ensureDefaultList } from '../../../lib/watchlists';
 
@@ -48,7 +48,7 @@ async function getList(userId, listId) {
     .select({ ticker: watchlist.ticker, added_at: watchlist.addedAt })
     .from(watchlist)
     .where(where)
-    .orderBy(desc(watchlist.addedAt));
+    .orderBy(sql`position asc nulls last`, desc(watchlist.addedAt));   // user drag-order first, then recency
 }
 
 // ─── shared quote cache (Upstash REST) — mirrors src/app/api/ticker/route.js ──
@@ -225,17 +225,44 @@ export async function POST(request) {
       return Response.json({ error: `List full — your plan allows ${limit} tickers per list.`, limit }, { status: 403 });
     }
 
+    // New/moved tickers land at the TOP of the list (position = current min − 1).
+    const [{ minpos }] = await db.select({ minpos: sql`coalesce(min(${watchlist.position}), 0)`.mapWith(Number) })
+      .from(watchlist).where(and(eq(watchlist.userId, userId), eq(watchlist.listId, listId)));
+    const topPos = (minpos ?? 0) - 1;
     // Upsert: a ticker lives in one list, so adding it here MOVES it to this list (v1 model).
     await db
       .insert(watchlist)
-      .values({ userId, ticker: v.ticker, listId })
-      .onConflictDoUpdate({ target: [watchlist.userId, watchlist.ticker], set: { listId } });
+      .values({ userId, ticker: v.ticker, listId, position: topPos })
+      .onConflictDoUpdate({ target: [watchlist.userId, watchlist.ticker], set: { listId, position: topPos } });
 
     const list = await getList(userId, listId);
     console.log(`[watchlist_api] POST user=${userId} ticker=${v.ticker} list=${listId} count=${list.length}`);
     return Response.json(list);
   } catch (e) {
     console.log(`[watchlist_api] POST failed: ${e.message}`);
+    return Response.json({ error: e.message }, { status: 500 });
+  }
+}
+
+// PATCH — reorder a list. Body { listId?, order: [ticker, ...] } sets position = index for each,
+// so the user's drag order persists. Scoped to the session user; unknown tickers are ignored.
+export async function PATCH(request) {
+  try {
+    const { userId } = await auth();
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    const body = await request.json().catch(() => ({}));
+    const order = Array.isArray(body?.order) ? body.order.map((t) => String(t).toUpperCase()).filter((t) => TICKER_RE.test(t)) : [];
+    const def = await ensureDefaultList(userId);
+    const listId = body?.listId ? parseInt(body.listId, 10) : def.id;
+    if (order.length) {
+      const cases = order.map((t, i) => sql`WHEN ${t} THEN ${i}`);
+      await db.execute(sql`UPDATE watchlist SET position = CASE ticker ${sql.join(cases, sql` `)} ELSE position END
+        WHERE user_id = ${userId} AND list_id = ${listId} AND ticker IN (${sql.join(order.map((t) => sql`${t}`), sql`, `)})`);
+    }
+    const list = await getList(userId, listId);
+    return Response.json(list);
+  } catch (e) {
+    console.log(`[watchlist_api] PATCH failed: ${e.message}`);
     return Response.json({ error: e.message }, { status: 500 });
   }
 }

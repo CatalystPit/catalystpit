@@ -25,7 +25,24 @@ function Body({ onClose }) {
   const [q, setQ] = useState('');
   const [sugg, setSugg] = useState([]);
   const [msg, setMsg] = useState('');
+  const [dragIdx, setDragIdx] = useState(null);
   const timer = useRef(null);
+
+  const saveOrder = async (order) => {
+    try { await fetch('/api/watchlist', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listId: activeId, order }) }); } catch { /* ignore */ }
+  };
+  const onDropRow = (toIdx) => {
+    if (dragIdx == null || dragIdx === toIdx) { setDragIdx(null); return; }
+    setRows((prev) => {
+      if (!prev) return prev;
+      const next = [...prev];
+      const [m] = next.splice(dragIdx, 1);
+      next.splice(toIdx, 0, m);
+      saveOrder(next.map((r) => r.ticker));
+      return next;
+    });
+    setDragIdx(null);
+  };
 
   const loadLists = useCallback(async () => {
     try {
@@ -181,28 +198,30 @@ function Body({ onClose }) {
             Your watchlist is empty. Hit <b style={{ color: C.green }}>+</b> above or tap the ★ on any ticker page.
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={r.ticker} className="wl-row" style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
-                  <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
-                    <a href={`/ticker/${encodeURIComponent(r.ticker)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}>
-                      <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
-                    </a>
-                  </td>
-                  <td className="cp-num" style={{ padding: '8px 8px', textAlign: 'right', color: C.ink }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</td>
-                  <td className="cp-num" style={{ padding: '8px 8px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
-                    {r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}
-                  </td>
-                  <td style={{ padding: '8px 10px 8px 4px', textAlign: 'right', width: 20 }}>
-                    <button onClick={() => remove(r.ticker)} aria-label={`Remove ${r.ticker}`} title="Remove"
-                      style={{ background: 'transparent', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = C.red)} onMouseLeave={(e) => (e.currentTarget.style.color = C.dim)}>×</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div>
+            {rows.map((r, i) => (
+              <div key={r.ticker} draggable
+                onDragStart={() => setDragIdx(i)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => onDropRow(i)}
+                onDragEnd={() => setDragIdx(null)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px',
+                  borderTop: i ? `1px solid ${C.surface}` : 'none',
+                  background: dragIdx === i ? C.surface : '#fff', opacity: dragIdx === i ? 0.5 : 1 }}>
+                <span title="Drag to reorder" style={{ cursor: 'grab', color: C.dim, fontSize: 12, lineHeight: 1, userSelect: 'none', flexShrink: 0 }}>⋮⋮</span>
+                <a href={`/ticker/${encodeURIComponent(r.ticker)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', flex: 1, minWidth: 0 }}>
+                  <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
+                </a>
+                <span className="cp-num" style={{ fontSize: 12.5, color: C.ink, whiteSpace: 'nowrap' }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</span>
+                <span className="cp-num" style={{ fontSize: 12.5, minWidth: 54, textAlign: 'right', whiteSpace: 'nowrap', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
+                  {r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}
+                </span>
+                <button onClick={() => remove(r.ticker)} aria-label={`Remove ${r.ticker}`} title="Remove"
+                  style={{ background: 'transparent', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = C.red)} onMouseLeave={(e) => (e.currentTarget.style.color = C.dim)}>×</button>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

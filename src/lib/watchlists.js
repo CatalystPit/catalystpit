@@ -19,6 +19,7 @@ export async function ensureWatchlistTables() {
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_watchlist_lists_user ON watchlist_lists (user_id)`);
   await db.execute(sql`ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS list_id INTEGER`);
+  await db.execute(sql`ALTER TABLE watchlist ADD COLUMN IF NOT EXISTS position INTEGER`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_watchlist_list ON watchlist (list_id)`);
   _ensured = true;
 }
