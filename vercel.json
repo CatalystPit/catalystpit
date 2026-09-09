@@ -59,6 +59,10 @@
     {
       "path": "/api/cron/screener-technicals",
       "schedule": "50 8 * * *"
+    },
+    {
+      "path": "/api/cron/screener-meta",
+      "schedule": "10 9 * * *"
     }
   ],
   "headers": [
@@ -123,6 +127,9 @@
       "maxDuration": 300
     },
     "src/app/api/cron/screener-technicals/route.js": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/screener-meta/route.js": {
       "maxDuration": 300
     }
   }

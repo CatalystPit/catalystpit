@@ -1,6 +1,6 @@
 import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
-import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks } from './schema';
+import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta } from './schema';
 import { computeConfluence } from './confluence';
 
 // Populates the screener_stocks universe from data we ALREADY own (no external provider):
@@ -40,7 +40,86 @@ export async function ensureScreenerTables() {
     sort_dir TEXT, view TEXT, columns TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_screener_saved_user ON screener_saved (user_id)`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS screener_meta (
+    ticker TEXT PRIMARY KEY, market_cap DOUBLE PRECISION, sector TEXT, industry TEXT, exchange TEXT,
+    asset_type TEXT, country TEXT, shares_out DOUBLE PRECISION, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
   _ensured = true;
+}
+
+// Polygon primary_exchange (MIC) → our exchange label.
+const EXCH_MAP = { XNAS: 'NASDAQ', XNGS: 'NASDAQ', XNCM: 'NASDAQ', XNMS: 'NASDAQ', ARCX: 'NYSE', XNYS: 'NYSE', XASE: 'AMEX', BATS: 'AMEX', XCBO: 'AMEX' };
+// Coarse SIC-code → GICS-ish sector (approximate; good enough for screening buckets).
+function sicToSector(code) {
+  const n = parseInt(code, 10); if (!Number.isFinite(n)) return null;
+  if (n >= 2833 && n <= 2836) return 'Healthcare';         // biologics/pharma
+  if (n >= 3570 && n <= 3579) return 'Technology';
+  if (n >= 3670 && n <= 3679) return 'Technology';
+  if (n >= 7370 && n <= 7379) return 'Technology';         // software/data
+  if (n >= 100 && n <= 999) return 'Basic Materials';
+  if (n >= 1000 && n <= 1499) return 'Basic Materials';
+  if (n >= 1500 && n <= 1799) return 'Industrials';
+  if (n >= 2000 && n <= 2199) return 'Consumer Defensive';
+  if (n >= 2200 && n <= 2399) return 'Consumer Cyclical';
+  if (n >= 2800 && n <= 2899) return 'Basic Materials';
+  if (n >= 2900 && n <= 2999) return 'Energy';
+  if (n >= 1300 && n <= 1399) return 'Energy';
+  if (n >= 3000 && n <= 3999) return 'Industrials';
+  if (n >= 4000 && n <= 4799) return 'Industrials';
+  if (n >= 4800 && n <= 4899) return 'Communication Services';
+  if (n >= 4900 && n <= 4999) return 'Utilities';
+  if (n >= 5000 && n <= 5999) return 'Consumer Cyclical';
+  if (n >= 6500 && n <= 6599) return 'Real Estate';
+  if (n >= 6000 && n <= 6799) return 'Financial Services';
+  if (n >= 8000 && n <= 8099) return 'Healthcare';
+  if (n >= 7000 && n <= 8999) return 'Consumer Cyclical';
+  return null;
+}
+async function fetchDetail(t) {
+  try {
+    const r = await fetch(`https://api.polygon.io/v3/reference/tickers/${encodeURIComponent(t)}?apiKey=${POLYGON_KEY}`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    const d = (await r.json())?.results;
+    if (!d) return null;
+    return {
+      ticker: t,
+      marketCap: d.market_cap ?? null,
+      sector: sicToSector(d.sic_code),
+      industry: d.sic_description || null,
+      exchange: EXCH_MAP[d.primary_exchange] || null,
+      assetType: d.type === 'ETF' ? 'ETF' : d.type === 'CS' ? 'Stock' : (d.type || null),
+      country: d.locale === 'us' ? 'USA' : (d.locale ? d.locale.toUpperCase() : null),
+      sharesOut: d.weighted_shares_outstanding ?? d.share_class_shares_outstanding ?? null,
+    };
+  } catch { return null; }
+}
+
+// Populate screener_meta from Polygon ticker-details. Bounded per run, prioritized by volume, skips
+// rows refreshed within staleDays — so it accumulates full coverage over a few runs and refreshes.
+export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14 } = {}) {
+  await ensureScreenerTables();
+  if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
+  const uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
+  const have = new Map((await db.select({ t: screenerMeta.ticker, u: screenerMeta.updatedAt }).from(screenerMeta)).map((r) => [r.t, r.u]));
+  const cutoff = Date.now() - staleDays * 86400000;
+  const need = uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; })
+    .sort((a, b) => (b.vol || 0) - (a.vol || 0)).slice(0, cap).map((r) => r.t);
+
+  const rows = [];
+  for (let i = 0; i < need.length; i += concurrency) {
+    const got = await Promise.all(need.slice(i, i + concurrency).map(fetchDetail));
+    got.forEach((d) => { if (d) rows.push({ ...d, updatedAt: new Date() }); });
+  }
+  let saved = 0;
+  for (let i = 0; i < rows.length; i += 300) {
+    const batch = rows.slice(i, i + 300);
+    await db.insert(screenerMeta).values(batch).onConflictDoUpdate({
+      target: screenerMeta.ticker,
+      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, updatedAt: sql`now()` },
+    });
+    saved += batch.length;
+  }
+  return { requested: need.length, fetched: rows.length, saved };
 }
 
 // Backfill technicals market-wide from Polygon grouped-daily history (Stocks Starter = unlimited
@@ -234,6 +313,9 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   const fl = await db.select({ ticker: tickerFloat.ticker, floatShares: tickerFloat.floatShares, sharesOut: tickerFloat.outstandingShares }).from(tickerFloat);
   const flByT = new Map(fl.map((r) => [r.ticker, r]));
 
+  // Persistent descriptive meta (market cap / sector / exchange / asset type) from Polygon details.
+  const metaByT = new Map((await db.select().from(screenerMeta)).map((r) => [r.ticker, r]));
+
   // 2) Universe = union of all tickers we have any signal/candle for.
   const universe = new Set();
   insRows.forEach((r) => r.ticker && universe.add(r.ticker));
@@ -305,14 +387,15 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // 4) Insert the universe FIRST (fast, no network) so stocks always land even if the later quote
   // pass is slow/times out.
   const rowsOut = tickers.map((t) => {
-    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t);
+    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t), m = metaByT.get(t);
     const floatShares = f?.floatShares ?? null;
     const vol = tk?.volume ?? pg?.volume ?? s?.avg ?? null;
     return {
-      ticker: t, company: i?.company || null,
+      ticker: t, company: i?.company || m?.industry || null,
+      exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: m?.marketCap ?? null,
       price: tk?.price ?? pg?.price ?? priceMap.get(t)?.price ?? null, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
       volume: vol, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
-      floatShares, sharesOut: f?.sharesOut ?? null,
+      floatShares, sharesOut: f?.sharesOut ?? m?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
       rsi14: tk?.rsi14 ?? null, sma20: tk?.sma20 ?? null, sma50: tk?.sma50 ?? null, sma200: tk?.sma200 ?? null,
       hi52: tk?.hi52 ?? null, lo52: tk?.lo52 ?? null, atr14: tk?.atr14 ?? null,
@@ -332,6 +415,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       target: screenerStocks.ticker,
       set: {
         company: sql`coalesce(excluded.company, screener_stocks.company)`,
+        exchange: sql`excluded.exchange`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, country: sql`excluded.country`, assetType: sql`excluded.asset_type`, marketCap: sql`excluded.market_cap`,
         price: sql`coalesce(excluded.price, screener_stocks.price)`, changePct: sql`coalesce(excluded.change_pct, screener_stocks.change_pct)`,
         volume: sql`coalesce(excluded.volume, screener_stocks.volume)`, avgVol: sql`coalesce(excluded.avg_vol, screener_stocks.avg_vol)`, relVol: sql`excluded.rel_vol`,
         floatShares: sql`excluded.float_shares`, sharesOut: sql`excluded.shares_out`, shortFloat: sql`excluded.short_float`, daysToCover: sql`excluded.days_to_cover`,

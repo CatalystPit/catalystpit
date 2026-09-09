@@ -444,6 +444,21 @@ export const screenerStocks = pgTable('screener_stocks', {
   idxPrice:     index('idx_screener_price').on(t.price),
 }));
 
+// Persistent per-ticker reference data from Polygon ticker-details (market cap / sector / exchange /
+// asset type / shares). Separate table so it SURVIVES the screener_stocks clean-rebuild; the rebuild
+// reads it to fill the descriptive columns. Populated by /api/cron/screener-meta (bounded, accumulates).
+export const screenerMeta = pgTable('screener_meta', {
+  ticker:    text('ticker').primaryKey(),
+  marketCap: doublePrecision('market_cap'),
+  sector:    text('sector'),
+  industry:  text('industry'),
+  exchange:  text('exchange'),
+  assetType: text('asset_type'),
+  country:   text('country'),
+  sharesOut: doublePrecision('shares_out'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Saved screeners (logged-in users). filters/columns are JSON blobs (the filter set + view + columns).
 export const screenerSaved = pgTable('screener_saved', {
   id:        serial('id').primaryKey(),

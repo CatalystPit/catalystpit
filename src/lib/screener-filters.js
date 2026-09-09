@@ -18,12 +18,12 @@ const e = (label, category, col, options, extra = {}) => ({ label, category, typ
 
 export const FILTERS = {
   // ══ DESCRIPTIVE ══
-  exchange:     e('Exchange', 'Descriptive', 'exchange', EXCHANGES),
+  exchange:     e('Exchange', 'Descriptive', 'exchange', EXCHANGES, { available: true }),
   index:        e('Index', 'Descriptive', 'index', ['S&P 500', 'NASDAQ 100', 'DJIA', 'Russell 2000']),
-  sector:       e('Sector', 'Descriptive', 'sector', SECTORS),
+  sector:       e('Sector', 'Descriptive', 'sector', SECTORS, { available: true }),
   industry:     e('Industry', 'Descriptive', 'industry'),
-  country:      e('Country', 'Descriptive', 'country', ['USA', 'China', 'Canada', 'UK', 'Israel', 'Other']),
-  marketCap:    r('Market Cap', 'Descriptive', 'marketCap', { unit: '$' }),
+  country:      e('Country', 'Descriptive', 'country', ['USA', 'China', 'Canada', 'UK', 'Israel', 'Other'], { available: true }),
+  marketCap:    r('Market Cap', 'Descriptive', 'marketCap', { unit: '$', available: true }),
   price:        r('Price', 'Descriptive', 'price', { unit: '$', available: true }),
   ipoDate:      e('IPO Date', 'Descriptive', 'ipoDate', ['Today', 'This week', 'This month', 'This year', 'Prior year', '2+ years ago']),
   sharesOut:    r('Shares Out', 'Descriptive', 'sharesOut', { available: true, sparse: true }),
@@ -38,7 +38,7 @@ export const FILTERS = {
   beta:         r('Beta', 'Descriptive', 'beta'),
   analystRec:   e('Analyst Rec', 'Descriptive', 'analystRec', ['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell']),
   earningsDate: e('Earnings Date', 'Descriptive', 'earningsDate', ['Today', 'Tomorrow', 'This week', 'Next week', 'This month']),
-  assetType:    e('Asset Type', 'Descriptive', 'assetType', ['Stock', 'ETF']),
+  assetType:    e('Asset Type', 'Descriptive', 'assetType', ['Stock', 'ETF'], { available: true }),
   theme:        e('Theme', 'Descriptive', 'theme'),
   subTheme:     e('Sub-Theme', 'Descriptive', 'subTheme'),
   tags:         e('Tags', 'Descriptive', 'tags'),
