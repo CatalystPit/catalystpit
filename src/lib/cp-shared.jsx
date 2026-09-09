@@ -562,13 +562,7 @@ export function TopNav({ active }) {
           </a>
         </SignedOut>
         <SignedIn>
-          <a href="/watchlist" className="nbtn"
-            style={{fontSize:15, color:linkColor("Watchlist"), cursor:"pointer", transition:"color 0.2s",
-              fontWeight: active === "Watchlist" ? 600 : 400, letterSpacing:"0.02em", textDecoration:"none",
-              whiteSpace:"nowrap",
-              borderBottom: active === "Watchlist" ? "2px solid #5AB87A" : "none", paddingBottom: active === "Watchlist" ? 2 : 0}}>
-            Watchlist
-          </a>
+          {/* Watchlist lives in the right-edge WatchlistDock now (desktop); still in the mobile menu. */}
           <NotificationBell/>
           <UserButton afterSignOutUrl="/" userProfileMode="navigation" userProfileUrl="/account" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
         </SignedIn>

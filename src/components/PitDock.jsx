@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import PitChat from './PitChat';
 import { C } from '../lib/cp-shared';
 import { onOpenPitDock } from '../lib/pitDockBus';
@@ -32,9 +33,11 @@ export default function PitDock() {
 
   const pathname = usePathname();
   const onTerminal = !!pathname && pathname.startsWith('/terminal');
+  const { isSignedIn } = useUser();
   const panelW = onTerminal ? termW : PANEL_W;  // only the Terminal gets a custom (narrowable) width
   const customH = onTerminal && termH > 0;      // Terminal + user has set a height
-  const chatH = customH ? termH : vh;
+  // Signed-in users get the Watchlist dock on the bottom half, so the chat takes the top half.
+  const chatH = customH ? termH : (isSignedIn ? Math.round(vh / 2) : vh);
 
   useEffect(() => {
     setReady(true);
@@ -124,7 +127,7 @@ export default function PitDock() {
   return (
     <>
       <button onClick={() => toggle()} aria-label={open ? 'Collapse The Pit' : 'Open The Pit'}
-        style={{ position: 'fixed', top: '50%', right: open ? panelW : 0, transform: 'translateY(-50%)',
+        style={{ position: 'fixed', top: isSignedIn ? '25%' : '50%', right: open ? panelW : 0, transform: 'translateY(-50%)',
           zIndex: 61, transition: 'right 0.25s ease', display: 'flex', flexDirection: 'column',
           alignItems: 'center', gap: 6, padding: '12px 7px', cursor: 'pointer',
           background: C.green, color: '#fff', border: 'none', borderRadius: '8px 0 0 8px',
@@ -138,7 +141,7 @@ export default function PitDock() {
         </span>
       </button>
 
-      <div style={{ position: 'fixed', top: 0, right: 0, ...(customH ? { height: chatH } : { bottom: 0 }), width: panelW, zIndex: 60,
+      <div style={{ position: 'fixed', top: 0, right: 0, height: chatH, width: panelW, zIndex: 60,
         transform: open ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.25s ease',
         boxShadow: open ? '-8px 0 24px rgba(0,0,0,0.12)' : 'none',
         pointerEvents: open ? 'auto' : 'none' }}>

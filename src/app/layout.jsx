@@ -1,6 +1,7 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import XTapeDock from '../components/XTapeDock';
 import PitDock from '../components/PitDock';
+import WatchlistDock from '../components/WatchlistDock';
 
 export const metadata = {
   title: 'CatalystPit — Live Market Intelligence',
@@ -39,7 +40,7 @@ export default function RootLayout({ children }) {
             /* App shell shifts inward to make room for the open docks: --cp-tape (left Tape)
                and --cp-pit (right Pit chat), each set by its dock (= panel width when open on
                desktop, 0px otherwise). Block element, so it just shrinks — no horizontal scroll. */
-            #cp-shell { margin-left: var(--cp-tape, 0px); margin-right: var(--cp-pit, 0px); transition: margin 0.25s ease; }
+            #cp-shell { margin-left: var(--cp-tape, 0px); margin-right: max(var(--cp-pit, 0px), var(--cp-watch, 0px)); transition: margin 0.25s ease; }
             .cp-num {
               font-family: 'Inter', sans-serif !important;
               font-weight: 600 !important;
@@ -101,6 +102,7 @@ export default function RootLayout({ children }) {
           </div>
           <XTapeDock/>
           <PitDock/>
+          <WatchlistDock/>
         </body>
       </html>
     </ClerkProvider>
