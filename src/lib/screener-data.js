@@ -71,8 +71,30 @@ const perf = (closes, back) => closes.length > back ? ((closes[closes.length - 1
 
 const WINDOW = 90;
 const FINNHUB_KEY = process.env.FINNHUB_KEY;
-const MAX_QUOTES = 120;                       // live-quote fetches/run (stay under Finnhub 60/min)
+const MAX_QUOTES = 180;                        // live-quote fetches/run (stay under Finnhub 60/min)
+const KV_READ_CAP = 3000;                      // how many prioritized tickers to price from the KV cache
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Shared quote cache (same key/shape as /api/ticker + /api/watchlist) → prices persist across the
+// screener's nightly clean-rebuild and are reused from anywhere a ticker was quoted.
+const KV_URL = process.env.KV_REST_API_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+const qKey = (s) => `catalystpit:ticker:${s}:quote`;
+async function kvGetQuote(t) {
+  if (!KV_URL || !KV_TOKEN) return null;
+  try {
+    const r = await fetch(`${KV_URL}/get/${encodeURIComponent(qKey(t))}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` } });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d.result) return null;
+    const q = JSON.parse(d.result);
+    return (q && q.c) ? { price: q.c, changePct: q.dp ?? null } : null;
+  } catch { return null; }
+}
+async function kvSetQuote(t, q) {
+  if (!KV_URL || !KV_TOKEN) return;
+  try { await fetch(`${KV_URL}/set/${encodeURIComponent(qKey(t))}?ex=86400`, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'text/plain' }, body: JSON.stringify(q) }); } catch { /* non-fatal */ }
+}
 
 // A "clean" common-stock symbol: 1–5 letters, no suffix (drops warrants/units/preferred/rights).
 const CLEAN_SYM = /^[A-Z]{1,5}$/;
@@ -172,6 +194,18 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // BRK.B). Drops anything number-leading or malformed regardless of which source added it.
   const tickers = [...universe].filter((t) => t && /^[A-Z]{1,5}(\.[A-Z])?$/.test(t));
 
+  // Prices from the shared KV quote cache (persisted from prior runs + ticker-page/watchlist views),
+  // for the prioritized set that lacks a candle price. Free, no rate limit — just cache reads.
+  const isSignal = (t) => insByT.has(t) || conByT.has(t) || consensus.has(t) || fundNet.has(t) || has8k.has(t);
+  const prioritize = (a, bb) => { const sa = isSignal(a) ? 0 : 1, sb = isSignal(bb) ? 0 : 1; return sa !== sb ? sa - sb : (siByT.get(bb)?.avg || 0) - (siByT.get(a)?.avg || 0); };
+  const priceMap = new Map();
+  const needPrice = tickers.filter((t) => !tech.has(t)).sort(prioritize);
+  for (let i = 0; i < Math.min(needPrice.length, KV_READ_CAP); i += 50) {
+    const batch = needPrice.slice(i, i + 50);
+    const got = await Promise.all(batch.map(kvGetQuote));
+    got.forEach((q, j) => { if (q) priceMap.set(batch[j], q); });
+  }
+
   // Clean rebuild: clear the table, then insert the fresh universe. Prevents any accumulation of
   // delisted/junk tickers across runs (why the count was stuck at 25k).
   await db.delete(screenerStocks);
@@ -183,7 +217,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     const floatShares = f?.floatShares ?? null;
     return {
       ticker: t, company: i?.company || null,
-      price: tk?.price ?? null, changePct: tk?.changePct ?? null,
+      price: tk?.price ?? priceMap.get(t)?.price ?? null, changePct: tk?.changePct ?? priceMap.get(t)?.changePct ?? null,
       volume: tk?.volume ?? s?.avg ?? null, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
       floatShares, sharesOut: f?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
@@ -225,18 +259,19 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // Finnhub quote and update price-only. Coalesced, so coverage accumulates across nightly runs.
   let quoted = 0;
   if (FINNHUB_KEY) {
-    const isSignal = (t) => insByT.has(t) || conByT.has(t) || consensus.has(t) || fundNet.has(t) || has8k.has(t);
-    const need = tickers.filter((t) => !tech.has(t)).sort((a, bb) => {
-      const sa = isSignal(a) ? 0 : 1, sb = isSignal(bb) ? 0 : 1;
-      if (sa !== sb) return sa - sb;
-      return (siByT.get(bb)?.avg || 0) - (siByT.get(a)?.avg || 0);
-    });
+    // Only names still missing a price (no candle, not in KV cache) — fetch fresh + write-through to
+    // KV so they persist and reuse next run / on ticker pages.
+    const need = tickers.filter((t) => !tech.has(t) && !priceMap.has(t)).sort(prioritize);
     for (const t of need.slice(0, MAX_QUOTES)) {
       try {
         const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`, { cache: 'no-store' });
         if (r.ok) {
           const q = await r.json();
-          if (q && q.c) { await db.update(screenerStocks).set({ price: q.c, changePct: q.dp ?? null }).where(eq(screenerStocks.ticker, t)); quoted++; }
+          if (q && q.c) {
+            await db.update(screenerStocks).set({ price: q.c, changePct: q.dp ?? null }).where(eq(screenerStocks.ticker, t));
+            await kvSetQuote(t, { c: q.c, d: q.d ?? null, dp: q.dp ?? null, h: q.h ?? null, l: q.l ?? null, o: q.o ?? null, pc: q.pc ?? null });
+            quoted++;
+          }
         }
       } catch { /* skip */ }
       await sleep(1100);
@@ -244,5 +279,5 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   }
 
   const [{ n }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
-  return { universe: tickers.length, technicals: tech.size, upserts, quoted, tableCount: n };
+  return { universe: tickers.length, technicals: tech.size, cachedPrices: priceMap.size, quoted, tableCount: n };
 }
