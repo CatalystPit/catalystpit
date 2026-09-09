@@ -96,6 +96,37 @@ async function kvSetQuote(t, q) {
   try { await fetch(`${KV_URL}/set/${encodeURIComponent(qKey(t))}?ex=86400`, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'text/plain' }, body: JSON.stringify(q) }); } catch { /* non-fatal */ }
 }
 
+// ── Polygon grouped-daily: EOD OHLCV for the WHOLE US market in one call (delayed/EOD, all tiers). ──
+const POLYGON_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
+const ymd = (d) => d.toISOString().slice(0, 10);
+async function fetchGrouped(dateStr) {
+  try {
+    const r = await fetch(`https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/${dateStr}?adjusted=true&apiKey=${POLYGON_KEY}`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return Array.isArray(j.results) && j.results.length ? j.results : null;   // [{T,o,h,l,c,v}]
+  } catch { return null; }
+}
+// Latest two trading days (walk back over weekends/holidays) → price/volume + change% per ticker.
+async function polygonEod() {
+  if (!POLYGON_KEY) return null;
+  const now = new Date();
+  const found = [];
+  for (let i = 1; i <= 6 && found.length < 2; i++) {
+    const d = new Date(now); d.setUTCDate(now.getUTCDate() - i);
+    const res = await fetchGrouped(ymd(d));
+    if (res) found.push({ date: ymd(d), res });
+  }
+  if (!found.length) return null;
+  const prevClose = new Map((found[1]?.res || []).map((x) => [x.T, x.c]));
+  const map = new Map();
+  for (const x of found[0].res) {
+    const pc = prevClose.get(x.T);
+    map.set(x.T, { price: x.c, volume: x.v, changePct: (pc && pc > 0) ? ((x.c - pc) / pc) * 100 : null });
+  }
+  return { date: found[0].date, map, res: found[0].res };
+}
+
 // A "clean" common-stock symbol: 1–5 letters, no suffix (drops warrants/units/preferred/rights).
 const CLEAN_SYM = /^[A-Z]{1,5}$/;
 const MIN_LIQUID_VOL = 50000;   // FINRA breadth floor: skip dead/thin names (signal tickers bypass)
@@ -158,6 +189,10 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   has8k.forEach((t) => universe.add(t));
   // FINRA breadth, filtered to clean, liquid common-stock symbols (signal tickers are already in).
   si.forEach((r) => { if (r.ticker && CLEAN_SYM.test(r.ticker) && (r.avg || 0) >= MIN_LIQUID_VOL) universe.add(r.ticker); });
+
+  // Polygon grouped-daily → market-wide EOD price/volume/change (the real universe + prices).
+  const poly = await polygonEod();
+  if (poly) poly.map.forEach((_, t) => { if (CLEAN_SYM.test(t)) universe.add(t); });
   const insByT = new Map(insRows.map((r) => [r.ticker, r]));
   const conByT = new Map(conRows.map((r) => [r.ticker, r]));
 
@@ -199,11 +234,14 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   const isSignal = (t) => insByT.has(t) || conByT.has(t) || consensus.has(t) || fundNet.has(t) || has8k.has(t);
   const prioritize = (a, bb) => { const sa = isSignal(a) ? 0 : 1, sb = isSignal(bb) ? 0 : 1; return sa !== sb ? sa - sb : (siByT.get(bb)?.avg || 0) - (siByT.get(a)?.avg || 0); };
   const priceMap = new Map();
-  const needPrice = tickers.filter((t) => !tech.has(t)).sort(prioritize);
-  for (let i = 0; i < Math.min(needPrice.length, KV_READ_CAP); i += 50) {
-    const batch = needPrice.slice(i, i + 50);
-    const got = await Promise.all(batch.map(kvGetQuote));
-    got.forEach((q, j) => { if (q) priceMap.set(batch[j], q); });
+  // Only fall back to the KV cache when Polygon didn't provide a price for this ticker.
+  if (!poly) {
+    const needPrice = tickers.filter((t) => !tech.has(t)).sort(prioritize);
+    for (let i = 0; i < Math.min(needPrice.length, KV_READ_CAP); i += 50) {
+      const batch = needPrice.slice(i, i + 50);
+      const got = await Promise.all(batch.map(kvGetQuote));
+      got.forEach((q, j) => { if (q) priceMap.set(batch[j], q); });
+    }
   }
 
   // Clean rebuild: clear the table, then insert the fresh universe. Prevents any accumulation of
@@ -213,12 +251,13 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // 4) Insert the universe FIRST (fast, no network) so stocks always land even if the later quote
   // pass is slow/times out.
   const rowsOut = tickers.map((t) => {
-    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t);
+    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t);
     const floatShares = f?.floatShares ?? null;
+    const vol = tk?.volume ?? pg?.volume ?? s?.avg ?? null;
     return {
       ticker: t, company: i?.company || null,
-      price: tk?.price ?? priceMap.get(t)?.price ?? null, changePct: tk?.changePct ?? priceMap.get(t)?.changePct ?? null,
-      volume: tk?.volume ?? s?.avg ?? null, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
+      price: tk?.price ?? pg?.price ?? priceMap.get(t)?.price ?? null, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
+      volume: vol, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
       floatShares, sharesOut: f?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
       rsi14: tk?.rsi14 ?? null, sma20: tk?.sma20 ?? null, sma50: tk?.sma50 ?? null, sma200: tk?.sma200 ?? null,
@@ -254,11 +293,20 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     upserts += batch.length;
   }
 
-  // 5) Delayed prices (AFTER the write). Candles gave EOD close for the warmed set; for the most
-  // relevant unpriced names (signals first, then most liquid by FINRA avg vol) pull a throttled
-  // Finnhub quote and update price-only. Coalesced, so coverage accumulates across nightly runs.
+  // 4b) Store today's Polygon bars into ticker_daily_candles so technicals (RSI/SMA/52w/perf)
+  // accumulate market-wide over time (the existing candle compute picks them up next runs).
+  if (poly) {
+    const candleRows = poly.res.filter((x) => CLEAN_SYM.test(x.T) && x.c != null)
+      .map((x) => ({ ticker: x.T, date: poly.date, open: x.o, high: x.h, low: x.l, close: x.c, volume: x.v ?? 0, source: 'polygon' }));
+    for (let i = 0; i < candleRows.length; i += 500) {
+      try { await db.insert(tickerDailyCandles).values(candleRows.slice(i, i + 500)).onConflictDoNothing(); } catch { /* skip */ }
+    }
+  }
+
+  // 5) Delayed prices — ONLY when Polygon didn't cover the universe (fallback). Candles gave EOD for
+  // the warmed set; pull a throttled Finnhub quote for the top unpriced names + write-through to KV.
   let quoted = 0;
-  if (FINNHUB_KEY) {
+  if (FINNHUB_KEY && !poly) {
     // Only names still missing a price (no candle, not in KV cache) — fetch fresh + write-through to
     // KV so they persist and reuse next run / on ticker pages.
     const need = tickers.filter((t) => !tech.has(t) && !priceMap.has(t)).sort(prioritize);
@@ -279,5 +327,5 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   }
 
   const [{ n }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
-  return { universe: tickers.length, technicals: tech.size, cachedPrices: priceMap.size, quoted, tableCount: n };
+  return { universe: tickers.length, technicals: tech.size, polygon: poly ? poly.map.size : 0, polygonDate: poly?.date || null, quoted, tableCount: n };
 }
