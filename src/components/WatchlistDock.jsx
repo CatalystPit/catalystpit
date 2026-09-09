@@ -15,18 +15,74 @@ const MOBILE_Q = '(max-width: 860px)';
 const PREF_KEY = 'cp_watch_open';
 
 function Body({ onClose }) {
+  const [lists, setLists] = useState([]);        // [{id,name,isDefault,count}]
+  const [activeId, setActiveId] = useState(null);
   const [rows, setRows] = useState(null);
+  const [menu, setMenu] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameVal, setRenameVal] = useState('');
   const [adding, setAdding] = useState(false);
   const [q, setQ] = useState('');
   const [sugg, setSugg] = useState([]);
   const [msg, setMsg] = useState('');
   const timer = useRef(null);
 
-  const load = useCallback(async () => {
-    try { const r = await fetch('/api/watchlist?prices=1', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; setRows(Array.isArray(j) ? j : []); }
+  const loadLists = useCallback(async () => {
+    try {
+      const r = await fetch('/api/watchlist/lists', { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      if (!j?.lists) return;
+      setLists(j.lists);
+      setActiveId((prev) => {
+        let saved = prev;
+        if (saved == null) { try { saved = parseInt(localStorage.getItem('cp_watch_list') || '', 10) || null; } catch { /* ignore */ } }
+        return j.lists.some((l) => l.id === saved) ? saved : j.defaultId;
+      });
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadLists(); }, [loadLists]);
+
+  const loadRows = useCallback(async (id) => {
+    if (!id) return;
+    try { const r = await fetch(`/api/watchlist?prices=1&listId=${id}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; setRows(Array.isArray(j) ? j : []); }
     catch { setRows([]); }
   }, []);
-  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
+  useEffect(() => {
+    if (!activeId) return;
+    setRows(null); loadRows(activeId);
+    const t = setInterval(() => loadRows(activeId), 60000);
+    return () => clearInterval(t);
+  }, [activeId, loadRows]);
+
+  const activeList = lists.find((l) => l.id === activeId);
+  const activeName = activeList?.name || 'Watchlist';
+
+  const switchList = (id) => { setActiveId(id); setMenu(false); setRenaming(false); setAdding(false); try { localStorage.setItem('cp_watch_list', String(id)); } catch { /* ignore */ } };
+
+  const newList = async () => {
+    setMsg('');
+    try {
+      const r = await fetch('/api/watchlist/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'New list' }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 403) { setMsg(j.error || 'Multiple watchlists are a Pro feature.'); return; }
+      if (j?.lists) {
+        setLists(j.lists);
+        const created = j.lists.reduce((a, b) => (b.id > (a?.id || 0) ? b : a), null);
+        if (created) { switchList(created.id); setRenaming(true); setRenameVal(created.name); }
+      }
+    } catch { setMsg('Could not create list.'); }
+  };
+  const doRename = async () => {
+    const nm = renameVal.trim();
+    setRenaming(false);
+    if (!nm || !activeId) return;
+    try { const r = await fetch('/api/watchlist/lists', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: activeId, name: nm }) }); const j = r.ok ? await r.json() : null; if (j?.lists) setLists(j.lists); } catch { /* ignore */ }
+  };
+  const doDelete = async () => {
+    if (!activeId || activeList?.isDefault) return;
+    setMenu(false);
+    try { const r = await fetch(`/api/watchlist/lists?id=${activeId}`, { method: 'DELETE' }); const j = r.ok ? await r.json() : null; if (j?.lists) { setLists(j.lists); switchList(j.defaultId); } } catch { /* ignore */ }
+  };
 
   const onQ = (val) => {
     const up = val.toUpperCase(); setQ(up); setMsg('');
@@ -38,32 +94,61 @@ function Body({ onClose }) {
     }, 130);
   };
   const add = async (ticker) => {
-    const t = String(ticker || '').trim().toUpperCase(); if (!t) return;
+    const t = String(ticker || '').trim().toUpperCase(); if (!t || !activeId) return;
     setQ(''); setSugg([]);
     try {
-      const r = await fetch('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: t }) });
-      if (r.status === 403) { const j = await r.json().catch(() => ({})); setMsg(j.error || 'Watchlist full.'); return; }
+      const r = await fetch('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticker: t, listId: activeId }) });
+      if (r.status === 403) { const j = await r.json().catch(() => ({})); setMsg(j.error || 'List full.'); return; }
       if (!r.ok) { setMsg('Could not add that ticker.'); return; }
-      load();
+      loadRows(activeId); loadLists();
     } catch { setMsg('Could not add that ticker.'); }
   };
   const remove = async (ticker) => {
-    try { await fetch(`/api/watchlist?ticker=${encodeURIComponent(ticker)}`, { method: 'DELETE' }); load(); } catch { /* ignore */ }
+    try { await fetch(`/api/watchlist?ticker=${encodeURIComponent(ticker)}&listId=${activeId}`, { method: 'DELETE' }); loadRows(activeId); loadLists(); } catch { /* ignore */ }
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: C.white, borderLeft: `1px solid ${C.border}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: C.green, color: '#fff', flexShrink: 0 }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', background: C.green, color: '#fff', flexShrink: 0 }}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="#fff" aria-hidden="true">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
-        <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.3px' }}>WATCHLIST</span>
+        {renaming ? (
+          <input autoFocus value={renameVal} onChange={(e) => setRenameVal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') doRename(); if (e.key === 'Escape') setRenaming(false); }} onBlur={doRename}
+            style={{ flex: 1, minWidth: 0, height: 24, borderRadius: 5, border: 'none', padding: '0 8px', fontSize: 13, fontWeight: 700, fontFamily: "'DM Sans',sans-serif", outline: 'none' }} />
+        ) : (
+          <button onClick={() => setMenu((v) => !v)} title="Switch or manage lists"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700, letterSpacing: '0.3px', padding: 0, minWidth: 0 }}>
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>{activeName}</span>
+            <span style={{ fontSize: 10, opacity: 0.9 }}>▾</span>
+          </button>
+        )}
         <button onClick={() => { setAdding((v) => !v); setMsg(''); setQ(''); setSugg([]); }} aria-label="Add ticker"
           title="Add a ticker" style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.18)', border: 'none', color: '#fff', cursor: 'pointer', width: 22, height: 22, borderRadius: 5, fontSize: 17, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           {adding ? '×' : '+'}
         </button>
-        <a href="/watchlist" style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, textDecoration: 'none' }}>Manage</a>
         <button onClick={onClose} aria-label="Collapse watchlist" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>›</button>
+
+        {menu && (
+          <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 8, minWidth: 210, zIndex: 6, background: '#fff', color: C.ink, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 10px 26px rgba(0,0,0,0.18)', overflow: 'hidden' }}>
+            {lists.map((l) => (
+              <button key={l.id} onClick={() => switchList(l.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 12px', background: l.id === activeId ? C.greenLight : '#fff', border: 'none', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', fontSize: 12.5, fontWeight: l.id === activeId ? 700 : 500, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
+                <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.name}</span>
+                <span style={{ fontSize: 10, color: C.dim }}>{l.count}</span>
+              </button>
+            ))}
+            <button onClick={newList} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: '#fff', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, color: C.green, fontFamily: "'DM Sans',sans-serif" }}>＋ New list</button>
+            {activeList && (
+              <button onClick={() => { setMenu(false); setRenaming(true); setRenameVal(activeName); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: '#fff', border: 'none', borderTop: `1px solid ${C.surface}`, cursor: 'pointer', fontSize: 12, color: C.muted, fontFamily: "'DM Sans',sans-serif" }}>✎ Rename</button>
+            )}
+            {activeList && !activeList.isDefault && (
+              <button onClick={doDelete} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: '#fff', border: 'none', cursor: 'pointer', fontSize: 12, color: C.red, fontFamily: "'DM Sans',sans-serif" }}>🗑 Delete list</button>
+            )}
+            {msg && <div style={{ padding: '8px 12px', fontSize: 11, color: C.red, borderTop: `1px solid ${C.surface}` }}>{msg}</div>}
+          </div>
+        )}
       </div>
 
       {adding && (

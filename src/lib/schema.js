@@ -168,9 +168,24 @@ export const watchlist = pgTable('watchlist', {
   id:       serial('id').primaryKey(),
   userId:   text('user_id').notNull(),       // Clerk user ID — row owner
   ticker:   text('ticker').notNull(),        // uppercase symbol (enforced in API)
+  listId:   integer('list_id'),              // which named list (null → user's default, backfilled lazily)
   addedAt:  timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uqUserTicker: uniqueIndex('uq_watchlist_user_ticker').on(t.userId, t.ticker),
+}));
+
+// Named watchlists (multiple = Pro perk). A user's tickers each belong to one list (v1: a ticker
+// lives in exactly one list; adding it elsewhere moves it). is_default = the list the ticker-page ★
+// and legacy surfaces (homepage/Terminal) read/write.
+export const watchlistLists = pgTable('watchlist_lists', {
+  id:        serial('id').primaryKey(),
+  userId:    text('user_id').notNull(),
+  name:      text('name').notNull(),
+  isDefault: boolean('is_default').notNull().default(false),
+  position:  integer('position').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxUser: index('idx_watchlist_lists_user').on(t.userId),
 }));
 
 // ── 13F institutional holdings (Institutions feature) ────────────────────────

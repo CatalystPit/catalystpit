@@ -3,6 +3,7 @@ import { db } from '../../../lib/db';
 import { watchlist, tickerDailyCandles, insiderTrades } from '../../../lib/schema';
 import { and, eq, desc, inArray } from 'drizzle-orm';
 import { resolveUserTier, WATCHLIST_LIMIT } from '../../../lib/entitlements';
+import { ensureDefaultList } from '../../../lib/watchlists';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;          // we may fan out a bounded set of Finnhub /quote calls
@@ -41,11 +42,12 @@ function normalizeTicker(raw) {
 // The logged-in user's list, most-recent-first. user_id is ALWAYS the session
 // user — never a caller-supplied value — so this is the only shape any of the
 // handlers return to the client.
-async function getList(userId) {
+async function getList(userId, listId) {
+  const where = listId ? and(eq(watchlist.userId, userId), eq(watchlist.listId, listId)) : eq(watchlist.userId, userId);
   return db
     .select({ ticker: watchlist.ticker, added_at: watchlist.addedAt })
     .from(watchlist)
-    .where(eq(watchlist.userId, userId))
+    .where(where)
     .orderBy(desc(watchlist.addedAt));
 }
 
@@ -179,8 +181,11 @@ export async function GET(request) {
     const { userId } = await auth();
     if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
 
-    const list = await getList(userId);
-    const wantPrices = new URL(request.url).searchParams.get('prices') === '1';
+    const def = await ensureDefaultList(userId);
+    const sp = new URL(request.url).searchParams;
+    const listId = sp.get('listId') ? parseInt(sp.get('listId'), 10) : def.id;
+    const list = await getList(userId, listId);
+    const wantPrices = sp.get('prices') === '1';
     const payload = wantPrices ? await withLastForm4(await withPrices(list)) : list;
     console.log(`[watchlist_api] GET user=${userId} count=${list.length}${wantPrices ? ' +prices' : ''}`);
     return Response.json(payload);
@@ -207,23 +212,27 @@ export async function POST(request) {
     const v = normalizeTicker(body?.ticker);
     if (!v.ok) return Response.json({ error: v.error }, { status: 400 });
 
-    // Free-tier cap (C2): 15 names. Adding an already-present ticker is a no-op and never
+    const def = await ensureDefaultList(userId);
+    const listId = body?.listId ? parseInt(body.listId, 10) : def.id;
+
+    // Per-list ticker cap (per tier). Adding an already-present ticker is a no-op and never
     // blocked; only a NEW ticker that would exceed the cap is rejected.
-    const current = await getList(userId);
+    const current = await getList(userId, listId);
     const tier = await resolveUserTier();
     const limit = WATCHLIST_LIMIT[tier] ?? WATCHLIST_LIMIT.free;
     const already = current.some(r => r.ticker === v.ticker);
     if (!already && current.length >= limit) {
-      return Response.json({ error: `Watchlist full — your plan allows ${limit} tickers.`, limit }, { status: 403 });
+      return Response.json({ error: `List full — your plan allows ${limit} tickers per list.`, limit }, { status: 403 });
     }
 
+    // Upsert: a ticker lives in one list, so adding it here MOVES it to this list (v1 model).
     await db
       .insert(watchlist)
-      .values({ userId, ticker: v.ticker })
-      .onConflictDoNothing({ target: [watchlist.userId, watchlist.ticker] });
+      .values({ userId, ticker: v.ticker, listId })
+      .onConflictDoUpdate({ target: [watchlist.userId, watchlist.ticker], set: { listId } });
 
-    const list = await getList(userId);
-    console.log(`[watchlist_api] POST user=${userId} ticker=${v.ticker} count=${list.length}`);
+    const list = await getList(userId, listId);
+    console.log(`[watchlist_api] POST user=${userId} ticker=${v.ticker} list=${listId} count=${list.length}`);
     return Response.json(list);
   } catch (e) {
     console.log(`[watchlist_api] POST failed: ${e.message}`);
@@ -241,7 +250,8 @@ export async function DELETE(request) {
     const { userId } = await auth();
     if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
 
-    let raw = new URL(request.url).searchParams.get('ticker');
+    const sp = new URL(request.url).searchParams;
+    let raw = sp.get('ticker');
     if (!raw) {
       try {
         const body = await request.json();
@@ -260,7 +270,9 @@ export async function DELETE(request) {
         .where(and(eq(watchlist.userId, userId), eq(watchlist.ticker, v.ticker)));
     }
 
-    const list = await getList(userId);
+    const def = await ensureDefaultList(userId);
+    const listId = sp.get('listId') ? parseInt(sp.get('listId'), 10) : def.id;
+    const list = await getList(userId, listId);
     console.log(`[watchlist_api] DELETE user=${userId} ticker=${v.ok ? v.ticker : '(none)'} count=${list.length}`);
     return Response.json(list);
   } catch (e) {
