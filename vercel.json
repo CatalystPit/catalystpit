@@ -51,6 +51,10 @@
     {
       "path": "/api/cron/eightk",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/screener",
+      "schedule": "30 8 * * *"
     }
   ],
   "headers": [
@@ -110,6 +114,9 @@
     },
     "src/app/api/cron/eightk/route.js": {
       "maxDuration": 60
+    },
+    "src/app/api/cron/screener/route.js": {
+      "maxDuration": 300
     }
   }
 }

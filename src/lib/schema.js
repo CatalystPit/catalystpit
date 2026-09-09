@@ -363,3 +363,98 @@ export const fundFilings = pgTable('fund_filings', {
 }, (t) => ({
   pk: primaryKey({ columns: [t.cik, t.quarter] }),
 }));
+
+// ── Stock Screener universe ──────────────────────────────────────────────────
+// One denormalized row per screenable US ticker. The screener queries THIS table only
+// (never external APIs per keystroke). Populated by lib/screener-data.js rebuild():
+//  - proprietary signal cols (insider/congress/13F/consensus/8-K/news) from our own tables
+//  - price/volume/technical cols computed from ticker_daily_candles (our warmed set)
+//  - short interest / float from short_interest + ticker_float
+//  - descriptive/valuation/growth/quality cols stay NULL until a bulk provider is ingested
+//    (Finviz-foundation filters render "coming soon" while null).
+export const screenerStocks = pgTable('screener_stocks', {
+  ticker:        text('ticker').primaryKey(),
+  company:       text('company'),
+  // descriptive (mostly provider-fed — null until a feed lands)
+  exchange:      text('exchange'),
+  sector:        text('sector'),
+  industry:      text('industry'),
+  country:       text('country'),
+  assetType:     text('asset_type'),          // 'stock' | 'etf'
+  marketCap:     doublePrecision('market_cap'),
+  ipoDate:       date('ipo_date', { mode: 'string' }),
+  // price / volume (from candles — our warmed set)
+  price:         doublePrecision('price'),
+  changePct:     doublePrecision('change_pct'),
+  volume:        doublePrecision('volume'),
+  avgVol:        doublePrecision('avg_vol'),
+  relVol:        doublePrecision('rel_vol'),
+  floatShares:   doublePrecision('float_shares'),
+  sharesOut:     doublePrecision('shares_out'),
+  shortFloat:    doublePrecision('short_float'),
+  daysToCover:   doublePrecision('days_to_cover'),
+  dividendYield: doublePrecision('dividend_yield'),
+  beta:          doublePrecision('beta'),
+  // technical (computed from candles)
+  rsi14:         doublePrecision('rsi14'),
+  sma20:         doublePrecision('sma20'),
+  sma50:         doublePrecision('sma50'),
+  sma200:        doublePrecision('sma200'),
+  hi52:          doublePrecision('hi52'),
+  lo52:          doublePrecision('lo52'),
+  atr14:         doublePrecision('atr14'),
+  perf1w:        doublePrecision('perf_1w'),
+  perf1m:        doublePrecision('perf_1m'),
+  perf3m:        doublePrecision('perf_3m'),
+  perf6m:        doublePrecision('perf_6m'),
+  perfYtd:       doublePrecision('perf_ytd'),
+  perf1y:        doublePrecision('perf_1y'),
+  // valuation / growth / quality / ownership (provider — null until a feed lands)
+  pe:            doublePrecision('pe'),
+  forwardPe:     doublePrecision('forward_pe'),
+  peg:           doublePrecision('peg'),
+  ps:            doublePrecision('ps'),
+  pb:            doublePrecision('pb'),
+  evEbitda:      doublePrecision('ev_ebitda'),
+  epsGrowthTtm:  doublePrecision('eps_growth_ttm'),
+  revGrowthTtm:  doublePrecision('rev_growth_ttm'),
+  roe:           doublePrecision('roe'),
+  grossMargin:   doublePrecision('gross_margin'),
+  netMargin:     doublePrecision('net_margin'),
+  debtEquity:    doublePrecision('debt_equity'),
+  insiderOwnPct: doublePrecision('insider_own_pct'),
+  instOwnPct:    doublePrecision('inst_own_pct'),
+  // ── proprietary Catalyst Pit signals (AVAILABLE NOW) ──
+  insiderNet90d:    doublePrecision('insider_net_90d'),   // sum(buys)-sum(sells) $ over 90d
+  insiderBuyers90d: integer('insider_buyers_90d'),        // distinct execs buying, 90d
+  insiderBuy90d:    boolean('insider_buy_90d').default(false),
+  insiderSell90d:   boolean('insider_sell_90d').default(false),
+  congressNet90d:   doublePrecision('congress_net_90d'),
+  congressBuy90d:   boolean('congress_buy_90d').default(false),
+  fundNetQoq:       integer('fund_net_qoq'),              // 13F accumulating - reducing funds
+  consensusScore:   integer('consensus_score'),           // Pit Consensus (bull) score
+  hasMaterial8k:    boolean('has_material_8k').default(false),
+  newsRecent:       boolean('news_recent').default(false),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxSector:    index('idx_screener_sector').on(t.sector),
+  idxMcap:      index('idx_screener_mcap').on(t.marketCap),
+  idxConsensus: index('idx_screener_consensus').on(t.consensusScore),
+  idxInsiderBuy: index('idx_screener_insider_buy').on(t.insiderBuy90d),
+  idxPrice:     index('idx_screener_price').on(t.price),
+}));
+
+// Saved screeners (logged-in users). filters/columns are JSON blobs (the filter set + view + columns).
+export const screenerSaved = pgTable('screener_saved', {
+  id:        serial('id').primaryKey(),
+  userId:    text('user_id').notNull(),
+  name:      text('name').notNull(),
+  filters:   text('filters'),                 // JSON string of active filters
+  sortBy:    text('sort_by'),
+  sortDir:   text('sort_dir'),
+  view:      text('view'),
+  columns:   text('columns'),                 // JSON string of custom column keys
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxUser: index('idx_screener_saved_user').on(t.userId),
+}));
