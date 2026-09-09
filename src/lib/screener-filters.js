@@ -222,4 +222,5 @@ export const SORT_MAP = {
   volume: screenerStocks.volume, relVol: screenerStocks.relVol, marketCap: screenerStocks.marketCap,
   rsi14: screenerStocks.rsi14, consensusScore: screenerStocks.consensusScore, insiderNet90d: screenerStocks.insiderNet90d,
   perf1m: screenerStocks.perf1m, perf3m: screenerStocks.perf3m, shortFloat: screenerStocks.shortFloat,
+  pe: screenerStocks.pe, sector: screenerStocks.sector,
 };

@@ -50,15 +50,17 @@ const COL = {
   congressBuy90d:  { label: 'Congress', fmt: yesNo, align: 'center', pit: true },
   fundNetQoq:      { label: '13F Net', fmt: (v) => v == null ? '—' : (v > 0 ? `+${v}` : String(v)), align: 'right', pit: true },
   hasMaterial8k:   { label: '8-K', fmt: yesNo, align: 'center', pit: true },
-  pe: { label: 'P/E', fmt: num2, align: 'right' }, ps: { label: 'P/S', fmt: num2, align: 'right' }, pb: { label: 'P/B', fmt: num2, align: 'right' },
+  pe: { label: 'P/E', fmt: num2, sort: 'pe', align: 'right' }, ps: { label: 'P/S', fmt: num2, align: 'right' }, pb: { label: 'P/B', fmt: num2, align: 'right' },
   roe: { label: 'ROE', fmt: (v) => v == null ? '—' : `${v.toFixed(1)}%`, align: 'right' },
   grossMargin: { label: 'Gross M', fmt: (v) => v == null ? '—' : `${v.toFixed(1)}%`, align: 'right' },
   netMargin: { label: 'Net M', fmt: (v) => v == null ? '—' : `${v.toFixed(1)}%`, align: 'right' },
-  sector: { label: 'Sector', fmt: (v) => v || '—' },
+  sector: { label: 'Sector', fmt: (v) => v || '—', sort: 'sector' },
+  industry: { label: 'Industry', fmt: (v) => v || '—' },
+  country: { label: 'Country', fmt: (v) => v || '—' },
 };
 
 const VIEWS = {
-  Overview:    ['company', 'price', 'changePct', 'volume', 'relVol', 'consensusScore', 'insiderBuy90d'],
+  Overview:    ['company', 'sector', 'industry', 'country', 'marketCap', 'pe', 'price', 'changePct', 'volume'],
   Ownership:   ['insiderBuy90d', 'insiderBuyers90d', 'insiderNet90d', 'congressBuy90d', 'fundNetQoq', 'consensusScore'],
   Technical:   ['price', 'rsi14', 'sma20', 'sma50', 'sma200', 'hi52', 'lo52', 'relVol'],
   Performance: ['price', 'changePct', 'perf1w', 'perf1m', 'perf3m', 'perf6m', 'perf1y'],
@@ -199,9 +201,10 @@ export default function ScreenerClient() {
   const rows = data?.rows || [];
   const total = data?.total || 0;
 
-  // Price the VISIBLE page on demand (cache-first) — like the ticker page prices one, for the ~50 rows shown.
+  // Freshen the VISIBLE page's price/change/volume via the entitlement-aware quotes API (Pro=real-time,
+  // Free=delayed). Provider-agnostic (Polygon now, Twelve Data later). Runs once per page/filter change.
   useEffect(() => {
-    const need = (data?.rows || []).filter((r) => r.price == null && !prices[r.ticker]).map((r) => r.ticker).slice(0, 80);
+    const need = (data?.rows || []).map((r) => r.ticker).slice(0, 80);
     if (!need.length) return;
     let alive = true;
     fetch(`/api/quotes?symbols=${encodeURIComponent(need.join(','))}`, { cache: 'no-store' })
@@ -318,7 +321,7 @@ export default function ScreenerClient() {
                   : rows.length === 0 ? <tr><td colSpan={cols.length + 1} style={{ padding: '40px 14px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No stocks match these filters. Widen them or clear a chip.</td></tr>
                   : rows.map((r0) => {
                     const pr = prices[r0.ticker];
-                    const r = pr ? { ...r0, price: r0.price ?? pr.price, changePct: r0.changePct ?? pr.changePct } : r0;
+                    const r = pr ? { ...r0, price: pr.price ?? r0.price, changePct: pr.changePct ?? r0.changePct, volume: pr.volume ?? r0.volume } : r0;
                     return (
                     <tr key={r.ticker} className="row-hov" onClick={() => router.push(`/ticker/${encodeURIComponent(r.ticker)}`)} style={{ borderBottom: `1px solid ${C.surface}`, cursor: 'pointer' }}>
                       <td className="cp-tkr" style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}>
