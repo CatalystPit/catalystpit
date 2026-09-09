@@ -1,4 +1,4 @@
-import { sql, and, eq, gte, lt, inArray, desc, isNotNull } from 'drizzle-orm';
+import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks } from './schema';
 import { computeConfluence } from './confluence';
@@ -168,10 +168,16 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     }
   }
 
-  const tickers = [...universe].filter(Boolean);
+  // Global symbol sanity: only real stock symbols (1–5 letters, optional single-letter class like
+  // BRK.B). Drops anything number-leading or malformed regardless of which source added it.
+  const tickers = [...universe].filter((t) => t && /^[A-Z]{1,5}(\.[A-Z])?$/.test(t));
 
-  // 4) Merge → upsert the universe FIRST (fast, no network) so stocks always land even if the
-  // later quote pass is slow/times out.
+  // Clean rebuild: clear the table, then insert the fresh universe. Prevents any accumulation of
+  // delisted/junk tickers across runs (why the count was stuck at 25k).
+  await db.delete(screenerStocks);
+
+  // 4) Insert the universe FIRST (fast, no network) so stocks always land even if the later quote
+  // pass is slow/times out.
   const rowsOut = tickers.map((t) => {
     const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t);
     const floatShares = f?.floatShares ?? null;
@@ -214,9 +220,6 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     upserts += batch.length;
   }
 
-  // Prune rows not in this run's universe (delisted / filtered-out junk from prior runs).
-  const pruned = (await db.delete(screenerStocks).where(lt(screenerStocks.updatedAt, runTs)).returning({ t: screenerStocks.ticker })).length;
-
   // 5) Delayed prices (AFTER the write). Candles gave EOD close for the warmed set; for the most
   // relevant unpriced names (signals first, then most liquid by FINRA avg vol) pull a throttled
   // Finnhub quote and update price-only. Coalesced, so coverage accumulates across nightly runs.
@@ -241,5 +244,5 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   }
 
   const [{ n }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
-  return { universe: tickers.length, technicals: tech.size, upserts, pruned, quoted, tableCount: n };
+  return { universe: tickers.length, technicals: tech.size, upserts, quoted, tableCount: n };
 }
