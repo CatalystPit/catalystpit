@@ -54,7 +54,7 @@ export async function ensureScreenerTables() {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   // Extra screener_stocks columns (idempotent adds): fundamentals + Polygon-computed quote/technicals.
-  for (const c of ['ev_sales', 'p_cash', 'roa', 'oper_margin', 'current_ratio', 'quick_ratio', 'lt_debt_equity', 'eps_growth_qoq', 'sales_growth_qoq', 'eps_growth_3y', 'sales_growth_3y', 'change_from_open', 'gap', 'volatility', 'high20d', 'high50d', 'all_time_high']) {
+  for (const c of ['ev_sales', 'p_cash', 'roa', 'oper_margin', 'current_ratio', 'quick_ratio', 'lt_debt_equity', 'eps_growth_qoq', 'sales_growth_qoq', 'eps_growth_3y', 'sales_growth_3y', 'change_from_open', 'gap', 'volatility', 'high20d', 'high50d', 'all_time_high', 'perf_3y', 'perf_5y']) {
     await db.execute(sql.raw(`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS ${c} DOUBLE PRECISION`));
   }
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS annual_dividend DOUBLE PRECISION`);
@@ -266,6 +266,18 @@ export async function backfillTechnicals({ days = 200 } = {}) {
   const spyVar = variance(spyRet);
   const yearStart = `${now.getUTCFullYear()}-01-01`;
 
+  // Perf 3Y/5Y: one grouped snapshot ~3y and ~5y ago gives every ticker's close then (cheap — 2 calls).
+  async function closesAgo(yearsBack) {
+    for (let off = 0; off < 8; off++) {
+      const d = new Date(now); d.setUTCFullYear(now.getUTCFullYear() - yearsBack); d.setUTCDate(d.getUTCDate() - off);
+      const res = await fetchGrouped(ymd(d));
+      if (res) return new Map(res.map((x) => [x.T, x.c]));
+    }
+    return new Map();
+  }
+  const close3y = await closesAgo(3);
+  const close5y = await closesAgo(5);
+
   const rowsT = [];
   for (const [t, revArr] of series) {
     if (revArr.length < 2) continue;
@@ -283,6 +295,8 @@ export async function backfillTechnicals({ days = 200 } = {}) {
       hi52: yr.length ? Math.max(...yr) : null, lo52: yr.length ? Math.min(...yr) : null, atr14: atr(arr),
       perf1w: perf(closes, 5), perf1m: perf(closes, 21), perf3m: perf(closes, 63), perf6m: perf(closes, 126), perf1y: perf(closes, 252),
       perfYtd: (ytdBase > 0) ? (last / ytdBase - 1) * 100 : null,
+      perf3y: (close3y.get(t) > 0) ? (last / close3y.get(t) - 1) * 100 : null,
+      perf5y: (close5y.get(t) > 0) ? (last / close5y.get(t) - 1) * 100 : null,
       volatility: rets.length ? stddev(rets) * Math.sqrt(252) * 100 : null,   // annualized %
       beta: (spyVar > 0) ? beta(rets, spyRet, spyVar) : null,
       // % from N-day high (0 = at high, negative = below) — Finviz-style distance-from-high
@@ -300,7 +314,8 @@ export async function backfillTechnicals({ days = 200 } = {}) {
         rsi14: sql`excluded.rsi14`, sma20: sql`excluded.sma20`, sma50: sql`excluded.sma50`, sma200: sql`excluded.sma200`,
         hi52: sql`excluded.hi52`, lo52: sql`excluded.lo52`, atr14: sql`excluded.atr14`,
         perf1w: sql`excluded.perf_1w`, perf1m: sql`excluded.perf_1m`, perf3m: sql`excluded.perf_3m`, perf6m: sql`excluded.perf_6m`, perf1y: sql`excluded.perf_1y`,
-        perfYtd: sql`excluded.perf_ytd`, volatility: sql`excluded.volatility`, beta: sql`excluded.beta`,
+        perfYtd: sql`excluded.perf_ytd`, perf3y: sql`excluded.perf_3y`, perf5y: sql`excluded.perf_5y`,
+        volatility: sql`excluded.volatility`, beta: sql`excluded.beta`,
         high20d: sql`excluded.high20d`, high50d: sql`excluded.high50d`, allTimeHigh: sql`excluded.all_time_high`,
       },
     });

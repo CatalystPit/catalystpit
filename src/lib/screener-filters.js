@@ -1,5 +1,6 @@
-import { gte, lte, eq, ilike, sql } from 'drizzle-orm';
+import { gte, lte, eq, ilike, inArray, sql } from 'drizzle-orm';
 import { screenerStocks } from './schema';
+import { INDEX_MEMBERS } from './index-constituents';
 
 // Declarative screener filter registry. Adding a filter later = add ONE entry here (+ populate the
 // column in screener-data.js). `available:false` = data not ingested yet → the UI renders it as
@@ -19,7 +20,7 @@ const e = (label, category, col, options, extra = {}) => ({ label, category, typ
 export const FILTERS = {
   // ══ DESCRIPTIVE ══
   exchange:     e('Exchange', 'Descriptive', 'exchange', EXCHANGES, { available: true }),
-  index:        e('Index', 'Descriptive', 'index', ['S&P 500', 'NASDAQ 100', 'DJIA', 'Russell 2000']),
+  index:        { label: 'Index', category: 'Descriptive', type: 'index', col: 'ticker', options: ['S&P 500', 'NASDAQ 100', 'DJIA'], available: true },
   sector:       e('Sector', 'Descriptive', 'sector', SECTORS, { available: true }),
   industry:     e('Industry', 'Descriptive', 'industry'),
   country:      e('Country', 'Descriptive', 'country', ['USA', 'China', 'Canada', 'UK', 'Israel', 'Other'], { available: true }),
@@ -173,7 +174,7 @@ for (const k of Object.keys(FILTERS)) {
   if (f.available === undefined) f.available = false;
   if (OPTS[k]) f.opts = OPTS[k];
   else if (f.type === 'bool') f.opts = BOOL;
-  else if (f.type === 'enum') f.opts = (f.options || []).map((o) => ({ label: o, cond: { eq: o } }));
+  else if (f.type === 'enum' || f.type === 'index') f.opts = (f.options || []).map((o) => ({ label: o, cond: { eq: o } }));
   else if (f.type === 'sma') f.opts = SMAO;
   else if (f.type === 'near') f.opts = NEARO;
   else f.opts = f.unit === '%' ? PCT_POS : RATIO_LOW;   // range fallback (mostly SOON metrics)
@@ -184,7 +185,7 @@ for (const k of ['pe', 'ps', 'pb', 'evEbitda', 'evSales', 'pCash', 'roe', 'roa',
   if (FILTERS[k]) FILTERS[k].available = true;
 }
 // Polygon-computed quote/technical extras (2026-09-09).
-for (const k of ['dividendYield', 'beta', 'volatility', 'changeFromOpen', 'gap', 'high20d', 'high50d', 'allTimeHigh', 'perfYtd']) {
+for (const k of ['dividendYield', 'beta', 'volatility', 'changeFromOpen', 'gap', 'high20d', 'high50d', 'allTimeHigh', 'perfYtd', 'perf3y', 'perf5y']) {
   if (FILTERS[k]) FILTERS[k].available = true;
 }
 
@@ -202,6 +203,9 @@ export function buildConds(active) {
       if (typeof cond.eq === 'boolean') conds.push(eq(c, cond.eq));
     } else if (f.type === 'enum') {
       if (cond.eq) conds.push(eq(c, String(cond.eq)));
+    } else if (f.type === 'index') {
+      const list = INDEX_MEMBERS[cond.eq];
+      if (list && list.length) conds.push(inArray(screenerStocks.ticker, list));
     } else if (f.type === 'sma') {
       const p = screenerStocks.price;
       if (cond.op === 'above') conds.push(sql`${p} > ${c} and ${c} is not null`);

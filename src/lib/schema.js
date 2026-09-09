@@ -409,6 +409,8 @@ export const screenerStocks = pgTable('screener_stocks', {
   perf6m:        doublePrecision('perf_6m'),
   perfYtd:       doublePrecision('perf_ytd'),
   perf1y:        doublePrecision('perf_1y'),
+  perf3y:        doublePrecision('perf_3y'),
+  perf5y:        doublePrecision('perf_5y'),
   // valuation / growth / quality / ownership (provider — null until a feed lands)
   pe:            doublePrecision('pe'),
   forwardPe:     doublePrecision('forward_pe'),
