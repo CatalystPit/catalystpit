@@ -79,10 +79,10 @@ const PRESETS = {
   'High Relative Volume':      { relVol: { min: 2 } },
 };
 
-const inputStyle = { width: 76, height: 28, borderRadius: 5, border: `1px solid ${C.border}`, padding: '0 7px', fontSize: 12, fontFamily: "'DM Sans',sans-serif", outline: 'none' };
-const selStyle = { height: 28, borderRadius: 5, border: `1px solid ${C.border}`, padding: '0 8px', fontSize: 12, fontFamily: "'DM Sans',sans-serif", background: C.white, cursor: 'pointer', outline: 'none' };
+const inputStyle = { width: 72, height: 26, borderRadius: 5, border: `1px solid ${C.border}`, padding: '0 7px', fontSize: 11.5, fontFamily: "'DM Sans',sans-serif", outline: 'none' };
+const selStyle = { height: 26, borderRadius: 5, border: `1px solid ${C.border}`, padding: '0 7px', fontSize: 11.5, fontFamily: "'DM Sans',sans-serif", background: C.white, cursor: 'pointer', outline: 'none' };
 
-// One compact Finviz-style dropdown per filter: predefined metric-specific choices + Custom range.
+// Compact Finviz-style unit: label + dropdown on ONE line. Predefined metric options + Custom range.
 function FilterControl({ def, val, onChange }) {
   const disabled = !def.available;
   const opts = def.opts || [];
@@ -99,23 +99,26 @@ function FilterControl({ def, val, onChange }) {
     else if (v === 'custom') setCustom(true);
     else { setCustom(false); onChange(opts[Number(v)].cond); }
   };
-  const sel = { width: '100%', height: 30, borderRadius: 6, padding: '0 8px', fontSize: 12, fontFamily: "'DM Sans',sans-serif", cursor: disabled ? 'default' : 'pointer', outline: 'none', border: `1px solid ${active ? C.green : C.border}`, background: active ? C.greenLight : C.white, color: active ? C.green : C.text, fontWeight: active ? 600 : 400 };
+  const sel = { flex: '1 1 auto', minWidth: 0, height: 23, borderRadius: 4, padding: '0 3px', fontSize: 11, fontFamily: "'DM Sans',sans-serif", cursor: disabled ? 'default' : 'pointer', outline: 'none', border: `1px solid ${active ? C.green : C.border}`, background: active ? C.greenLight : C.white, color: active ? C.green : C.text, fontWeight: active ? 600 : 400 };
+  const inp = { width: 58, height: 22, borderRadius: 4, border: `1px solid ${C.border}`, padding: '0 5px', fontSize: 11, outline: 'none' };
   return (
-    <div style={{ opacity: disabled ? 0.55 : 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 10.5, color: C.muted, fontWeight: def.pit ? 700 : 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-        {def.pit && <span style={{ color: C.green }}>◆</span>}{def.label}{def.sparse ? ' *' : ''}
-        {disabled && <span style={{ fontSize: 8, color: C.dim, background: C.surface, borderRadius: 3, padding: '1px 4px' }}>SOON</span>}
-      </span>
-      <select disabled={disabled} value={selVal} onChange={pick} style={sel}>
-        <option value="">Any</option>
-        {opts.map((o, i) => <option key={i} value={i}>{o.label}</option>)}
-        {isRange && <option value="custom">Custom…</option>}
-      </select>
+    <div style={{ opacity: disabled ? 0.5 : 1, display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+        <span title={def.label} style={{ fontSize: 10.5, color: def.pit ? C.green : C.muted, fontWeight: def.pit ? 700 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: '0 1 auto', maxWidth: '52%' }}>
+          {def.pit && '◆'}{def.label}
+        </span>
+        <select disabled={disabled} value={selVal} onChange={pick} style={sel}>
+          <option value="">Any</option>
+          {opts.map((o, i) => <option key={i} value={i}>{o.label}</option>)}
+          {isRange && <option value="custom">Custom…</option>}
+        </select>
+        {disabled && <span style={{ fontSize: 8, color: C.dim, flexShrink: 0 }}>soon</span>}
+      </div>
       {showInputs && (
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          <input type="number" placeholder="min" value={val?.min ?? ''} onChange={(e) => onChange({ ...(val || {}), min: e.target.value })} style={inputStyle} />
-          <span style={{ color: C.dim }}>–</span>
-          <input type="number" placeholder="max" value={val?.max ?? ''} onChange={(e) => onChange({ ...(val || {}), max: e.target.value })} style={inputStyle} />
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', paddingLeft: 2 }}>
+          <input type="number" placeholder="min" value={val?.min ?? ''} onChange={(e) => onChange({ ...(val || {}), min: e.target.value })} style={inp} />
+          <span style={{ color: C.dim, fontSize: 10 }}>–</span>
+          <input type="number" placeholder="max" value={val?.max ?? ''} onChange={(e) => onChange({ ...(val || {}), max: e.target.value })} style={inp} />
         </div>
       )}
     </div>
@@ -212,9 +215,9 @@ export default function ScreenerClient() {
       <TopNav active="Screener" />
 
       {/* HEADER CONTROLS */}
-      <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '14px 24px' }}>
-        <div style={{ maxWidth: 1440, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 24, fontWeight: 600, color: C.ink, marginRight: 6 }}>Screener</span>
+      <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '7px 20px' }}>
+        <div style={{ maxWidth: 1760, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 19, fontWeight: 600, color: C.ink, marginRight: 4 }}>Screener</span>
           <select onChange={(e) => { if (e.target.value) applyPreset(PRESETS[e.target.value]); e.target.value = ''; }} style={selStyle} defaultValue="">
             <option value="">Presets…</option>
             {Object.keys(PRESETS).map((p) => <option key={p} value={p}>{p}</option>)}
@@ -239,32 +242,32 @@ export default function ScreenerClient() {
 
       {/* FILTER PANEL */}
       {showFilters && meta && (
-        <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: '10px 24px 16px' }}>
-          <div style={{ maxWidth: 1440, margin: '0 auto' }}>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: '7px 20px 9px' }}>
+          <div style={{ maxWidth: 1760, margin: '0 auto' }}>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
               {CATS.map((cat) => (
-                <button key={cat} onClick={() => setActiveCat(cat)} style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 14, cursor: 'pointer', border: `1px solid ${activeCat === cat ? C.ink : C.border}`, background: activeCat === cat ? C.ink : C.white, color: activeCat === cat ? '#fff' : C.muted }}>{cat}</button>
+                <button key={cat} onClick={() => setActiveCat(cat)} style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 11, cursor: 'pointer', border: `1px solid ${activeCat === cat ? C.ink : C.border}`, background: activeCat === cat ? C.ink : C.white, color: activeCat === cat ? '#fff' : C.muted }}>{cat}</button>
               ))}
             </div>
             {groupsToShow.map((cat) => {
               const fs = Object.entries(meta).filter(([, d]) => d.category === cat);
               if (!fs.length) return null;
               return (
-                <div key={cat} style={{ marginBottom: 16 }}>
-                  {activeCat === 'All' && <div style={{ fontSize: 11, fontWeight: 700, color: C.ink, letterSpacing: '0.6px', margin: '2px 0 10px', borderBottom: `1px solid ${C.border}`, paddingBottom: 5 }}>{cat.toUpperCase()}</div>}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px 16px' }}>
+                <div key={cat} style={{ marginBottom: 8 }}>
+                  {activeCat === 'All' && <div style={{ fontSize: 9.5, fontWeight: 700, color: C.dim, letterSpacing: '1px', margin: '2px 0 4px' }}>— {cat.toUpperCase()} —</div>}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '4px 16px' }}>
                     {fs.map(([key, def]) => <FilterControl key={key} fkey={key} def={def} val={filters[key]} onChange={(v) => setFilter(key, v)} />)}
                   </div>
                 </div>
               );
             })}
-            <div style={{ marginTop: 10, fontSize: 10.5, color: C.dim }}>◆ = Catalyst Pit signal (live) · &nbsp; SOON = awaiting market-data feed · &nbsp; * = data available for a subset of tickers</div>
+            <div style={{ marginTop: 4, fontSize: 9.5, color: C.dim }}>◆ = Catalyst Pit signal (live) · soon = awaiting market-data feed · * = subset of tickers</div>
           </div>
         </div>
       )}
 
       {/* ACTIVE CHIPS + COUNTS */}
-      <div style={{ maxWidth: 1440, margin: '0 auto', padding: '12px 24px 0', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ maxWidth: 1760, margin: '0 auto', padding: '7px 20px 0', display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>Active: {activeChips.length}</span>
         <span style={{ fontSize: 12, color: C.ink, fontWeight: 700 }} className="cp-num">{loading ? '…' : `${total.toLocaleString()} stocks`}</span>
         {activeChips.map(([key, cond]) => (
@@ -277,14 +280,14 @@ export default function ScreenerClient() {
       </div>
 
       {/* VIEW TABS */}
-      <div style={{ maxWidth: 1440, margin: '0 auto', padding: '10px 24px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      <div style={{ maxWidth: 1760, margin: '0 auto', padding: '7px 20px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {Object.keys(VIEWS).map((v) => (
-          <button key={v} onClick={() => setView(v)} style={{ fontSize: 11, fontWeight: 600, padding: '5px 11px', borderRadius: 6, cursor: 'pointer', border: 'none', background: view === v ? C.green : 'transparent', color: view === v ? '#fff' : C.muted }}>{v}</button>
+          <button key={v} onClick={() => setView(v)} style={{ fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', border: 'none', background: view === v ? C.green : 'transparent', color: view === v ? '#fff' : C.muted }}>{v}</button>
         ))}
       </div>
 
       {/* RESULTS */}
-      <div style={{ maxWidth: 1440, margin: '12px auto', padding: '0 24px 48px' }}>
+      <div style={{ maxWidth: 1760, margin: '8px auto', padding: '0 20px 40px' }}>
         <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
