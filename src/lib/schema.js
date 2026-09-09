@@ -438,6 +438,11 @@ export const screenerStocks = pgTable('screener_stocks', {
   salesGrowthQoq:doublePrecision('sales_growth_qoq'),
   epsGrowth3y:   doublePrecision('eps_growth_3y'),
   salesGrowth3y: doublePrecision('sales_growth_3y'),
+  epsGrowth5y:   doublePrecision('eps_growth_5y'),
+  salesGrowth5y: doublePrecision('sales_growth_5y'),
+  epsGrowthThisYr: doublePrecision('eps_growth_this_yr'),
+  roic:          doublePrecision('roic'),
+  payoutRatio:   doublePrecision('payout_ratio'),
   // Polygon-computed quote/technical extras (self-created via ALTER)
   changeFromOpen:doublePrecision('change_from_open'),
   gap:           doublePrecision('gap'),
@@ -456,6 +461,8 @@ export const screenerStocks = pgTable('screener_stocks', {
   consensusScore:   integer('consensus_score'),           // Pit Consensus (bull) score
   hasMaterial8k:    boolean('has_material_8k').default(false),
   newsRecent:       boolean('news_recent').default(false),
+  newsCategory:     text('news_category'),                 // most-recent 8-K catalyst category
+  breakingToday:    boolean('breaking_today').default(false),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   idxSector:    index('idx_screener_sector').on(t.sector),
@@ -507,6 +514,10 @@ export const screenerFundamentals = pgTable('screener_fundamentals', {
   salesGrowthQoq:doublePrecision('sales_growth_qoq'),
   epsGrowth3y:   doublePrecision('eps_growth_3y'),
   salesGrowth3y: doublePrecision('sales_growth_3y'),
+  epsGrowth5y:   doublePrecision('eps_growth_5y'),
+  salesGrowth5y: doublePrecision('sales_growth_5y'),
+  epsGrowthThisYr: doublePrecision('eps_growth_this_yr'),
+  roic:          doublePrecision('roic'),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

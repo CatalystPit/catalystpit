@@ -54,10 +54,15 @@ export async function ensureScreenerTables() {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
   // Extra screener_stocks columns (idempotent adds): fundamentals + Polygon-computed quote/technicals.
-  for (const c of ['ev_sales', 'p_cash', 'roa', 'oper_margin', 'current_ratio', 'quick_ratio', 'lt_debt_equity', 'eps_growth_qoq', 'sales_growth_qoq', 'eps_growth_3y', 'sales_growth_3y', 'change_from_open', 'gap', 'volatility', 'high20d', 'high50d', 'all_time_high', 'perf_3y', 'perf_5y']) {
+  for (const c of ['ev_sales', 'p_cash', 'roa', 'oper_margin', 'current_ratio', 'quick_ratio', 'lt_debt_equity', 'eps_growth_qoq', 'sales_growth_qoq', 'eps_growth_3y', 'sales_growth_3y', 'change_from_open', 'gap', 'volatility', 'high20d', 'high50d', 'all_time_high', 'perf_3y', 'perf_5y', 'eps_growth_5y', 'sales_growth_5y', 'eps_growth_this_yr', 'roic', 'payout_ratio']) {
     await db.execute(sql.raw(`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS ${c} DOUBLE PRECISION`));
   }
+  for (const c of ['eps_growth_5y', 'sales_growth_5y', 'eps_growth_this_yr', 'roic']) {
+    await db.execute(sql.raw(`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS ${c} DOUBLE PRECISION`));
+  }
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS annual_dividend DOUBLE PRECISION`);
+  await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS news_category TEXT`);
+  await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS breaking_today BOOLEAN DEFAULT FALSE`);
   _ensured = true;
 }
 
@@ -114,6 +119,10 @@ async function fetchFinancials(t) {
       epsGrowthTtm: growth(epsTtm, epsPrev), revGrowthTtm: growth(revenueTtm, revPrev),
       epsGrowthQoq: growth(epsQ, epsQyr), salesGrowthQoq: growth(revQ, revQyr),
       epsGrowth3y: cagr(annEps[0], annEps[3], 3), salesGrowth3y: cagr(annRev[0], annRev[3], 3),
+      epsGrowth5y: cagr(annEps[0], annEps[5], 5), salesGrowth5y: cagr(annRev[0], annRev[5], 5),
+      epsGrowthThisYr: growth(annEps[0], annEps[1]),
+      // ROIC ≈ net income TTM / invested capital (equity + total debt).
+      roic: (((equity || 0) + (liab ?? ltDebt ?? 0)) > 0 && netTtm != null) ? (netTtm / ((equity || 0) + (liab ?? ltDebt ?? 0))) * 100 : null,
     };
   } catch { return null; }
 }
@@ -143,7 +152,8 @@ export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleD
         grossMargin: sql`excluded.gross_margin`, operMargin: sql`excluded.oper_margin`, netMargin: sql`excluded.net_margin`, roe: sql`excluded.roe`, roa: sql`excluded.roa`,
         currentRatio: sql`excluded.current_ratio`, quickRatio: sql`excluded.quick_ratio`, debtEquity: sql`excluded.debt_equity`, ltDebtEquity: sql`excluded.lt_debt_equity`,
         epsGrowthTtm: sql`excluded.eps_growth_ttm`, revGrowthTtm: sql`excluded.rev_growth_ttm`, epsGrowthQoq: sql`excluded.eps_growth_qoq`, salesGrowthQoq: sql`excluded.sales_growth_qoq`,
-        epsGrowth3y: sql`excluded.eps_growth_3y`, salesGrowth3y: sql`excluded.sales_growth_3y`, updatedAt: sql`now()`,
+        epsGrowth3y: sql`excluded.eps_growth_3y`, salesGrowth3y: sql`excluded.sales_growth_3y`,
+        epsGrowth5y: sql`excluded.eps_growth_5y`, salesGrowth5y: sql`excluded.sales_growth_5y`, epsGrowthThisYr: sql`excluded.eps_growth_this_yr`, roic: sql`excluded.roic`, updatedAt: sql`now()`,
       },
     });
     saved += batch.length;
@@ -425,6 +435,21 @@ async function polygonEod() {
   return { date: found[0].date, map, res: found[0].res };
 }
 
+// 8-K item code → screener News Category (mirrors eightk.js ITEM_MAP groupings). First match wins.
+const EIGHTK_CAT = {
+  '2.02': 'Earnings', '7.01': 'Guidance',
+  '1.01': 'Contract', '2.01': 'M&A', '5.01': 'M&A',
+  '3.02': 'Offering', '2.03': 'Debt', '2.04': 'Debt',
+  '2.05': 'Impairment', '2.06': 'Impairment',
+  '5.02': 'Management Change', '1.03': 'Bankruptcy', '3.01': 'Delisting',
+  '1.05': 'Cybersecurity', '4.02': 'Restatement', '4.01': 'Auditor Change',
+};
+function eightkCategory(itemsCsv) {
+  const codes = String(itemsCsv || '').split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  for (const c of codes) if (EIGHTK_CAT[c]) return EIGHTK_CAT[c];
+  return codes.length ? 'Other' : null;
+}
+
 // A "clean" common-stock symbol: 1–5 letters, no suffix (drops warrants/units/preferred/rights).
 const CLEAN_SYM = /^[A-Z]{1,5}$/;
 const MIN_LIQUID_VOL = 50000;   // FINRA breadth floor: skip dead/thin names (signal tickers bypass)
@@ -471,6 +496,18 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     .where(and(eq(eightkFilings.material, true), sql`${eightkFilings.filedAt} >= now() - interval '7 days'`)).groupBy(eightkFilings.ticker);
   const has8k = new Set(ek.map((r) => r.ticker));
 
+  // 8-K catalyst category + "breaking today" from the last 14d of filings (most-recent per ticker).
+  const ekAll = await db.select({ ticker: eightkFilings.ticker, items: eightkFilings.items, filedAt: eightkFilings.filedAt })
+    .from(eightkFilings).where(sql`${eightkFilings.filedAt} >= now() - interval '14 days'`).orderBy(desc(eightkFilings.filedAt));
+  const newsCat = new Map();
+  const breaking = new Set();
+  const todayStr = ymd(new Date());
+  for (const r of ekAll) {
+    if (!r.ticker) continue;
+    if (!newsCat.has(r.ticker)) { const cat = eightkCategory(r.items); if (cat) newsCat.set(r.ticker, cat); }
+    if (r.filedAt && ymd(new Date(r.filedAt)) === todayStr) breaking.add(r.ticker);
+  }
+
   // Latest short interest + float (FINRA is market-wide → also our breadth + volume source).
   const si = await db.selectDistinctOn([shortInterest.ticker], { ticker: shortInterest.ticker, shares: shortInterest.shortIntShares, dtc: shortInterest.daysToCover, avg: shortInterest.avgDailyVolume })
     .from(shortInterest).orderBy(shortInterest.ticker, desc(shortInterest.settlementDate));
@@ -490,6 +527,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   fundNet.forEach((_, t) => universe.add(t));
   consensus.forEach((_, t) => universe.add(t));
   has8k.forEach((t) => universe.add(t));
+  newsCat.forEach((_, t) => universe.add(t));
   // FINRA breadth, filtered to clean, liquid common-stock symbols (signal tickers are already in).
   si.forEach((r) => { if (r.ticker && CLEAN_SYM.test(r.ticker) && (r.avg || 0) >= MIN_LIQUID_VOL) universe.add(r.ticker); });
 
@@ -580,6 +618,9 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       epsGrowthTtm: fd?.epsGrowthTtm ?? null, revGrowthTtm: fd?.revGrowthTtm ?? null,
       epsGrowthQoq: fd?.epsGrowthQoq ?? null, salesGrowthQoq: fd?.salesGrowthQoq ?? null,
       epsGrowth3y: fd?.epsGrowth3y ?? null, salesGrowth3y: fd?.salesGrowth3y ?? null,
+      epsGrowth5y: fd?.epsGrowth5y ?? null, salesGrowth5y: fd?.salesGrowth5y ?? null,
+      epsGrowthThisYr: fd?.epsGrowthThisYr ?? null, roic: fd?.roic ?? null,
+      payoutRatio: (m?.annualDividend > 0 && fd?.epsTtm > 0) ? (m.annualDividend / fd.epsTtm) * 100 : null,
       floatShares, sharesOut: f?.sharesOut ?? m?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
       rsi14: tk?.rsi14 ?? null, sma20: tk?.sma20 ?? null, sma50: tk?.sma50 ?? null, sma200: tk?.sma200 ?? null,
@@ -589,6 +630,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       congressNet90d: c?.net ?? null, congressBuy90d: !!c?.buy,
       fundNetQoq: fundNet.get(t) ?? null, consensusScore: consensus.get(t) ?? null,
       hasMaterial8k: has8k.has(t), newsRecent: has8k.has(t),
+      newsCategory: newsCat.get(t) ?? null, breakingToday: breaking.has(t),
       updatedAt: runTs,
     };
   });
@@ -606,6 +648,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
         currentRatio: sql`excluded.current_ratio`, quickRatio: sql`excluded.quick_ratio`, debtEquity: sql`excluded.debt_equity`, ltDebtEquity: sql`excluded.lt_debt_equity`,
         epsGrowthTtm: sql`excluded.eps_growth_ttm`, revGrowthTtm: sql`excluded.rev_growth_ttm`, epsGrowthQoq: sql`excluded.eps_growth_qoq`, salesGrowthQoq: sql`excluded.sales_growth_qoq`,
         epsGrowth3y: sql`excluded.eps_growth_3y`, salesGrowth3y: sql`excluded.sales_growth_3y`,
+        epsGrowth5y: sql`excluded.eps_growth_5y`, salesGrowth5y: sql`excluded.sales_growth_5y`, epsGrowthThisYr: sql`excluded.eps_growth_this_yr`, roic: sql`excluded.roic`, payoutRatio: sql`excluded.payout_ratio`,
         changeFromOpen: sql`excluded.change_from_open`, gap: sql`excluded.gap`, dividendYield: sql`excluded.dividend_yield`,
         price: sql`coalesce(excluded.price, screener_stocks.price)`, changePct: sql`coalesce(excluded.change_pct, screener_stocks.change_pct)`,
         volume: sql`coalesce(excluded.volume, screener_stocks.volume)`, avgVol: sql`coalesce(excluded.avg_vol, screener_stocks.avg_vol)`, relVol: sql`excluded.rel_vol`,
@@ -616,7 +659,9 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
         insiderNet90d: sql`excluded.insider_net_90d`, insiderBuyers90d: sql`excluded.insider_buyers_90d`, insiderBuy90d: sql`excluded.insider_buy_90d`, insiderSell90d: sql`excluded.insider_sell_90d`,
         congressNet90d: sql`excluded.congress_net_90d`, congressBuy90d: sql`excluded.congress_buy_90d`,
         fundNetQoq: sql`excluded.fund_net_qoq`, consensusScore: sql`excluded.consensus_score`,
-        hasMaterial8k: sql`excluded.has_material_8k`, newsRecent: sql`excluded.news_recent`, updatedAt: sql`excluded.updated_at`,
+        hasMaterial8k: sql`excluded.has_material_8k`, newsRecent: sql`excluded.news_recent`,
+        newsCategory: sql`excluded.news_category`, breakingToday: sql`excluded.breaking_today`,
+        updatedAt: sql`excluded.updated_at`,
       },
     });
     upserts += batch.length;

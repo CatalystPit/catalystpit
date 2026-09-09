@@ -1,6 +1,7 @@
 import { gte, lte, eq, ilike, inArray, sql } from 'drizzle-orm';
 import { screenerStocks } from './schema';
 import { INDEX_MEMBERS } from './index-constituents';
+import { THEMES, SUBTHEMES, THEME_MAP } from './themes';
 
 // Declarative screener filter registry. Adding a filter later = add ONE entry here (+ populate the
 // column in screener-data.js). `available:false` = data not ingested yet → the UI renders it as
@@ -40,9 +41,9 @@ export const FILTERS = {
   analystRec:   e('Analyst Rec', 'Descriptive', 'analystRec', ['Strong Buy', 'Buy', 'Hold', 'Sell', 'Strong Sell']),
   earningsDate: e('Earnings Date', 'Descriptive', 'earningsDate', ['Today', 'Tomorrow', 'This week', 'Next week', 'This month']),
   assetType:    e('Asset Type', 'Descriptive', 'assetType', ['Stock', 'ETF'], { available: true }),
-  theme:        e('Theme', 'Descriptive', 'theme'),
-  subTheme:     e('Sub-Theme', 'Descriptive', 'subTheme'),
-  tags:         e('Tags', 'Descriptive', 'tags'),
+  theme:        { label: 'Theme', category: 'Descriptive', type: 'members', membersKey: 'themes', options: Object.keys(THEMES), available: true },
+  subTheme:     { label: 'Sub-Theme', category: 'Descriptive', type: 'members', membersKey: 'subthemes', options: Object.keys(SUBTHEMES), available: true },
+  tags:         { label: 'Tags', category: 'Descriptive', type: 'members', membersKey: 'tags', options: Object.keys(THEMES), available: true },
 
   // ══ FUNDAMENTAL — Valuation ══
   pe:           r('P/E', 'Fundamental', 'pe'),
@@ -125,8 +126,8 @@ export const FILTERS = {
   // ══ NEWS ══
   hasMaterial8k: b('Material 8-K', 'News', 'hasMaterial8k', { pit: true, available: true }),
   newsRecent:    b('Recent Catalyst', 'News', 'newsRecent', { pit: true, available: true }),
-  newsCategory:  e('News Category', 'News', 'newsCategory', ['Earnings', 'Guidance', 'Offering', 'FDA', 'M&A', 'Upgrade/Downgrade', 'Insider Purchase', 'SEC Filing', 'Contract', 'Partnership', 'Management Change']),
-  breakingToday: b('Breaking Today', 'News', 'breakingToday'),
+  newsCategory:  e('News Category', 'News', 'newsCategory', ['Earnings', 'Guidance', 'M&A', 'Offering', 'Debt', 'Impairment', 'Contract', 'Management Change', 'Bankruptcy', 'Delisting', 'Cybersecurity', 'Restatement', 'Auditor Change', 'Other'], { available: true }),
+  breakingToday: b('Breaking Today', 'News', 'breakingToday', { available: true }),
 
   // ══ ETF ══
   etfType:      e('ETF Type', 'ETF', 'etfType', ['Equity', 'Bond', 'Commodity', 'Sector', 'Leveraged', 'Inverse']),
@@ -174,7 +175,7 @@ for (const k of Object.keys(FILTERS)) {
   if (f.available === undefined) f.available = false;
   if (OPTS[k]) f.opts = OPTS[k];
   else if (f.type === 'bool') f.opts = BOOL;
-  else if (f.type === 'enum' || f.type === 'index') f.opts = (f.options || []).map((o) => ({ label: o, cond: { eq: o } }));
+  else if (f.type === 'enum' || f.type === 'index' || f.type === 'members') f.opts = (f.options || []).map((o) => ({ label: o, cond: { eq: o } }));
   else if (f.type === 'sma') f.opts = SMAO;
   else if (f.type === 'near') f.opts = NEARO;
   else f.opts = f.unit === '%' ? PCT_POS : RATIO_LOW;   // range fallback (mostly SOON metrics)
@@ -186,6 +187,10 @@ for (const k of ['pe', 'ps', 'pb', 'evEbitda', 'evSales', 'pCash', 'roe', 'roa',
 }
 // Polygon-computed quote/technical extras (2026-09-09).
 for (const k of ['dividendYield', 'beta', 'volatility', 'changeFromOpen', 'gap', 'high20d', 'high50d', 'allTimeHigh', 'perfYtd', 'perf3y', 'perf5y']) {
+  if (FILTERS[k]) FILTERS[k].available = true;
+}
+// Additional Polygon-computable fundamentals + curated/news filters (2026-09-09).
+for (const k of ['roic', 'payoutRatio', 'epsGrowthThisYr', 'epsGrowth5y', 'salesGrowth5y']) {
   if (FILTERS[k]) FILTERS[k].available = true;
 }
 
@@ -205,6 +210,9 @@ export function buildConds(active) {
       if (cond.eq) conds.push(eq(c, String(cond.eq)));
     } else if (f.type === 'index') {
       const list = INDEX_MEMBERS[cond.eq];
+      if (list && list.length) conds.push(inArray(screenerStocks.ticker, list));
+    } else if (f.type === 'members') {
+      const list = (THEME_MAP[f.membersKey] || {})[cond.eq];
       if (list && list.length) conds.push(inArray(screenerStocks.ticker, list));
     } else if (f.type === 'sma') {
       const p = screenerStocks.price;
