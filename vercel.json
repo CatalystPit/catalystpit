@@ -53,20 +53,20 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/screener-meta",
+      "schedule": "30 7 * * *"
+    },
+    {
+      "path": "/api/cron/screener-fundamentals",
+      "schedule": "50 7 * * *"
+    },
+    {
       "path": "/api/cron/screener",
       "schedule": "30 8 * * *"
     },
     {
       "path": "/api/cron/screener-technicals",
       "schedule": "50 8 * * *"
-    },
-    {
-      "path": "/api/cron/screener-meta",
-      "schedule": "10 9 * * *"
-    },
-    {
-      "path": "/api/cron/screener-fundamentals",
-      "schedule": "30 9 * * *"
     }
   ],
   "headers": [
