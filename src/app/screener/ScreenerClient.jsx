@@ -7,7 +7,8 @@ import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib
 // smart-money filters are live now; descriptive/fundamental filters render "coming soon" until a
 // bulk market-data feed is connected. Catalyst Pit design system; no third-party embeds.
 
-const CATS = ['Descriptive', 'Fundamental', 'Technical', 'Performance', 'Ownership', 'News', 'ETF'];
+const REAL_CATS = ['Descriptive', 'Fundamental', 'Technical', 'Performance', 'Ownership', 'News', 'ETF'];
+const CATS = ['All', ...REAL_CATS];
 
 const num0 = (n) => (n == null || isNaN(n)) ? '—' : Math.round(n).toLocaleString();
 const num2 = (n) => (n == null || isNaN(n)) ? '—' : Number(n).toFixed(2);
@@ -136,7 +137,7 @@ export default function ScreenerClient() {
   const [ticker, setTicker] = useState('');
   const [page, setPage] = useState(0);
   const [view, setView] = useState('Overview');
-  const [activeCat, setActiveCat] = useState('Ownership');
+  const [activeCat, setActiveCat] = useState('All');
   const [showFilters, setShowFilters] = useState(true);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -200,7 +201,7 @@ export default function ScreenerClient() {
   const total = data?.total || 0;
   const activeChips = Object.entries(filters).filter(([k]) => meta?.[k]?.available);
   const cols = VIEWS[view] || VIEWS.Overview;
-  const catFilters = meta ? Object.entries(meta).filter(([, d]) => d.category === activeCat) : [];
+  const groupsToShow = activeCat === 'All' ? REAL_CATS : [activeCat];
 
   const chipLabel = (key, cond) => {
     const d = meta?.[key]; if (!d) return key;
@@ -250,10 +251,18 @@ export default function ScreenerClient() {
                 <button key={cat} onClick={() => setActiveCat(cat)} style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 14, cursor: 'pointer', border: `1px solid ${activeCat === cat ? C.ink : C.border}`, background: activeCat === cat ? C.ink : C.white, color: activeCat === cat ? '#fff' : C.muted }}>{cat}</button>
               ))}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px 16px' }}>
-              {catFilters.map(([key, def]) => <FilterControl key={key} fkey={key} def={def} val={filters[key]} onChange={(v) => setFilter(key, v)} />)}
-              {catFilters.length === 0 && <div style={{ fontSize: 12, color: C.dim }}>No filters in this category yet.</div>}
-            </div>
+            {groupsToShow.map((cat) => {
+              const fs = Object.entries(meta).filter(([, d]) => d.category === cat);
+              if (!fs.length) return null;
+              return (
+                <div key={cat} style={{ marginBottom: 16 }}>
+                  {activeCat === 'All' && <div style={{ fontSize: 11, fontWeight: 700, color: C.ink, letterSpacing: '0.6px', margin: '2px 0 10px', borderBottom: `1px solid ${C.border}`, paddingBottom: 5 }}>{cat.toUpperCase()}</div>}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '12px 16px' }}>
+                    {fs.map(([key, def]) => <FilterControl key={key} fkey={key} def={def} val={filters[key]} onChange={(v) => setFilter(key, v)} />)}
+                  </div>
+                </div>
+              );
+            })}
             <div style={{ marginTop: 10, fontSize: 10.5, color: C.dim }}>◆ = Catalyst Pit signal (live) · &nbsp; SOON = awaiting market-data feed · &nbsp; * = data available for a subset of tickers</div>
           </div>
         </div>
