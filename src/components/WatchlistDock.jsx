@@ -210,7 +210,7 @@ function Body({ onClose }) {
                   background: dragIdx === i ? C.surface : '#fff', opacity: dragIdx === i ? 0.5 : 1 }}>
                 <span title="Drag to reorder" style={{ cursor: 'grab', color: C.dim, fontSize: 12, lineHeight: 1, userSelect: 'none', flexShrink: 0 }}>⋮⋮</span>
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', flex: 1, minWidth: 0 }}>
-                  <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
+                  <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700, fontSize: 12 }}>{r.ticker}</span>
                 </a>
                 <span className="cp-num" style={{ fontSize: 12.5, color: C.ink, whiteSpace: 'nowrap' }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</span>
                 <span className="cp-num" style={{ fontSize: 12.5, minWidth: 54, textAlign: 'right', whiteSpace: 'nowrap', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
