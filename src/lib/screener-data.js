@@ -1,4 +1,4 @@
-import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
+import { sql, and, eq, gte, lt, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks } from './schema';
 import { computeConfluence } from './confluence';
@@ -74,8 +74,13 @@ const FINNHUB_KEY = process.env.FINNHUB_KEY;
 const MAX_QUOTES = 120;                       // live-quote fetches/run (stay under Finnhub 60/min)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A "clean" common-stock symbol: 1–5 letters, no suffix (drops warrants/units/preferred/rights).
+const CLEAN_SYM = /^[A-Z]{1,5}$/;
+const MIN_LIQUID_VOL = 50000;   // FINRA breadth floor: skip dead/thin names (signal tickers bypass)
+
 export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   await ensureScreenerTables();
+  const runTs = new Date();     // rows written this run get this exact stamp; stale rows are pruned
   const since90 = sql`current_date - make_interval(days => ${WINDOW})`;
 
   // 1) Proprietary aggregates (bulk, one query each).
@@ -129,7 +134,8 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   fundNet.forEach((_, t) => universe.add(t));
   consensus.forEach((_, t) => universe.add(t));
   has8k.forEach((t) => universe.add(t));
-  si.forEach((r) => r.ticker && universe.add(r.ticker));   // FINRA breadth (market-wide) + volume
+  // FINRA breadth, filtered to clean, liquid common-stock symbols (signal tickers are already in).
+  si.forEach((r) => { if (r.ticker && CLEAN_SYM.test(r.ticker) && (r.avg || 0) >= MIN_LIQUID_VOL) universe.add(r.ticker); });
   const insByT = new Map(insRows.map((r) => [r.ticker, r]));
   const conByT = new Map(conRows.map((r) => [r.ticker, r]));
 
@@ -182,7 +188,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       congressNet90d: c?.net ?? null, congressBuy90d: !!c?.buy,
       fundNetQoq: fundNet.get(t) ?? null, consensusScore: consensus.get(t) ?? null,
       hasMaterial8k: has8k.has(t), newsRecent: has8k.has(t),
-      updatedAt: new Date(),
+      updatedAt: runTs,
     };
   });
 
@@ -202,11 +208,14 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
         insiderNet90d: sql`excluded.insider_net_90d`, insiderBuyers90d: sql`excluded.insider_buyers_90d`, insiderBuy90d: sql`excluded.insider_buy_90d`, insiderSell90d: sql`excluded.insider_sell_90d`,
         congressNet90d: sql`excluded.congress_net_90d`, congressBuy90d: sql`excluded.congress_buy_90d`,
         fundNetQoq: sql`excluded.fund_net_qoq`, consensusScore: sql`excluded.consensus_score`,
-        hasMaterial8k: sql`excluded.has_material_8k`, newsRecent: sql`excluded.news_recent`, updatedAt: sql`now()`,
+        hasMaterial8k: sql`excluded.has_material_8k`, newsRecent: sql`excluded.news_recent`, updatedAt: sql`excluded.updated_at`,
       },
     });
     upserts += batch.length;
   }
+
+  // Prune rows not in this run's universe (delisted / filtered-out junk from prior runs).
+  const pruned = (await db.delete(screenerStocks).where(lt(screenerStocks.updatedAt, runTs)).returning({ t: screenerStocks.ticker })).length;
 
   // 5) Delayed prices (AFTER the write). Candles gave EOD close for the warmed set; for the most
   // relevant unpriced names (signals first, then most liquid by FINRA avg vol) pull a throttled
@@ -232,5 +241,5 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   }
 
   const [{ n }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
-  return { universe: tickers.length, technicals: tech.size, upserts, quoted, tableCount: n };
+  return { universe: tickers.length, technicals: tech.size, upserts, pruned, quoted, tableCount: n };
 }
