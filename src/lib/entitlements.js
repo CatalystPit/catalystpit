@@ -23,6 +23,10 @@ export async function resolveUserTier() {
   try {
     const client = await clerkClient();
     const user = await client.users.getUser(userId);
+    // Admin (ADMIN_EMAIL) always resolves to the top tier — full entitlements without a Stripe plan.
+    const email = user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)?.emailAddress
+      || user?.emailAddresses?.[0]?.emailAddress;
+    if (email && process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase()) return 'elite';
     const plan = user?.publicMetadata?.plan;
     return plan === 'pro' || plan === 'elite' ? plan : 'free';
   } catch {
