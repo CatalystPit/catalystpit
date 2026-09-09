@@ -436,6 +436,13 @@ export const screenerStocks = pgTable('screener_stocks', {
   salesGrowthQoq:doublePrecision('sales_growth_qoq'),
   epsGrowth3y:   doublePrecision('eps_growth_3y'),
   salesGrowth3y: doublePrecision('sales_growth_3y'),
+  // Polygon-computed quote/technical extras (self-created via ALTER)
+  changeFromOpen:doublePrecision('change_from_open'),
+  gap:           doublePrecision('gap'),
+  volatility:    doublePrecision('volatility'),
+  high20d:       doublePrecision('high20d'),
+  high50d:       doublePrecision('high50d'),
+  allTimeHigh:   doublePrecision('all_time_high'),
   // ── proprietary Catalyst Pit signals (AVAILABLE NOW) ──
   insiderNet90d:    doublePrecision('insider_net_90d'),   // sum(buys)-sum(sells) $ over 90d
   insiderBuyers90d: integer('insider_buyers_90d'),        // distinct execs buying, 90d
@@ -468,6 +475,7 @@ export const screenerMeta = pgTable('screener_meta', {
   assetType: text('asset_type'),
   country:   text('country'),
   sharesOut: doublePrecision('shares_out'),
+  annualDividend: doublePrecision('annual_dividend'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

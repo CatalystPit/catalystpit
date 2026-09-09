@@ -183,6 +183,10 @@ for (const k of Object.keys(FILTERS)) {
 for (const k of ['pe', 'ps', 'pb', 'evEbitda', 'evSales', 'pCash', 'roe', 'roa', 'operMargin', 'grossMargin', 'netMargin', 'currentRatio', 'quickRatio', 'debtEquity', 'ltDebtEquity', 'epsGrowthTtm', 'revGrowthTtm', 'epsGrowthQoq', 'salesGrowthQoq', 'epsGrowth3y', 'salesGrowth3y']) {
   if (FILTERS[k]) FILTERS[k].available = true;
 }
+// Polygon-computed quote/technical extras (2026-09-09).
+for (const k of ['dividendYield', 'beta', 'volatility', 'changeFromOpen', 'gap', 'high20d', 'high50d', 'allTimeHigh', 'perfYtd']) {
+  if (FILTERS[k]) FILTERS[k].available = true;
+}
 
 // Build Drizzle conditions from the active filter object { key: {min,max}|{eq}|{pct} }.
 export function buildConds(active) {

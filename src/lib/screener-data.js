@@ -53,10 +53,11 @@ export async function ensureScreenerTables() {
     sales_growth_qoq DOUBLE PRECISION, eps_growth_3y DOUBLE PRECISION, sales_growth_3y DOUBLE PRECISION,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
-  // Extra screener_stocks fundamental columns (idempotent adds).
-  for (const c of ['ev_sales', 'p_cash', 'roa', 'oper_margin', 'current_ratio', 'quick_ratio', 'lt_debt_equity', 'eps_growth_qoq', 'sales_growth_qoq', 'eps_growth_3y', 'sales_growth_3y']) {
+  // Extra screener_stocks columns (idempotent adds): fundamentals + Polygon-computed quote/technicals.
+  for (const c of ['ev_sales', 'p_cash', 'roa', 'oper_margin', 'current_ratio', 'quick_ratio', 'lt_debt_equity', 'eps_growth_qoq', 'sales_growth_qoq', 'eps_growth_3y', 'sales_growth_3y', 'change_from_open', 'gap', 'volatility', 'high20d', 'high50d', 'all_time_high']) {
     await db.execute(sql.raw(`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS ${c} DOUBLE PRECISION`));
   }
+  await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS annual_dividend DOUBLE PRECISION`);
   _ensured = true;
 }
 
@@ -180,10 +181,16 @@ function sicToSector(code) {
 }
 async function fetchDetail(t) {
   try {
-    const r = await fetch(`https://api.polygon.io/v3/reference/tickers/${encodeURIComponent(t)}?apiKey=${POLYGON_KEY}`, { cache: 'no-store' });
-    if (!r.ok) return null;
-    const d = (await r.json())?.results;
+    const [dR, divR] = await Promise.all([
+      fetch(`https://api.polygon.io/v3/reference/tickers/${encodeURIComponent(t)}?apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
+      fetch(`https://api.polygon.io/v3/reference/dividends?ticker=${encodeURIComponent(t)}&limit=4&order=desc&sort=ex_dividend_date&apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
+    ]);
+    if (!dR.ok) return null;
+    const d = (await dR.json())?.results;
     if (!d) return null;
+    // Annual dividend = sum of the last 4 cash payouts (approximates trailing annual for quarterly payers).
+    let annualDividend = null;
+    try { const divs = divR.ok ? ((await divR.json())?.results || []) : []; if (divs.length) annualDividend = divs.reduce((s, x) => s + (x.cash_amount || 0), 0); } catch { /* ignore */ }
     return {
       ticker: t,
       marketCap: d.market_cap ?? null,
@@ -193,6 +200,7 @@ async function fetchDetail(t) {
       assetType: d.type === 'ETF' ? 'ETF' : d.type === 'CS' ? 'Stock' : (d.type || null),
       country: d.locale === 'us' ? 'USA' : (d.locale ? d.locale.toUpperCase() : null),
       sharesOut: d.weighted_shares_outstanding ?? d.share_class_shares_outstanding ?? null,
+      annualDividend,
     };
   } catch { return null; }
 }
@@ -218,7 +226,7 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
     const batch = rows.slice(i, i + 300);
     await db.insert(screenerMeta).values(batch).onConflictDoUpdate({
       target: screenerMeta.ticker,
-      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, updatedAt: sql`now()` },
+      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, updatedAt: sql`now()` },
     });
     saved += batch.length;
   }
@@ -228,39 +236,59 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
 // Backfill technicals market-wide from Polygon grouped-daily history (Stocks Starter = unlimited
 // calls). Pulls `days` trading days, computes RSI/SMA/52w/ATR/perf in memory (universe tickers only),
 // writes the technical columns to screener_stocks. Idempotent; run after the main rebuild.
-export async function backfillTechnicals({ days = 150 } = {}) {
+export async function backfillTechnicals({ days = 200 } = {}) {
   await ensureScreenerTables();
   if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   const uni = new Set((await db.select({ t: screenerStocks.ticker }).from(screenerStocks)).map((r) => r.t));
   if (!uni.size) return { error: 'empty universe — run the main rebuild first' };
 
   const now = new Date();
-  const series = new Map();   // ticker -> chronological [{close,high,low}]
+  const series = new Map();   // ticker -> chronological [{close,high,low,date}]
+  const spy = [];             // SPY chronological closes (market proxy for beta)
   let gotDays = 0;
-  for (let i = 1; gotDays < days && i <= days + 25; i++) {
+  for (let i = 1; gotDays < days && i <= days + 30; i++) {
     const d = new Date(now); d.setUTCDate(now.getUTCDate() - i);
-    const res = await fetchGrouped(ymd(d));
+    const ds = ymd(d);
+    const res = await fetchGrouped(ds);
     if (!res) continue;
     gotDays++;
     for (const x of res) {
+      if (x.T === 'SPY' && x.c != null) spy.unshift(x.c);   // newest→oldest fetch; unshift = chronological
       if (!uni.has(x.T) || x.c == null) continue;
       const a = series.get(x.T) || [];
-      a.push({ close: x.c, high: x.h, low: x.l });   // pushed newest→oldest; reversed below
+      a.push({ close: x.c, high: x.h, low: x.l, date: ds });
       series.set(x.T, a);
     }
   }
+  // SPY daily returns (chronological) for beta.
+  const spyRet = [];
+  for (let i = 1; i < spy.length; i++) if (spy[i - 1] > 0) spyRet.push(spy[i] / spy[i - 1] - 1);
+  const spyVar = variance(spyRet);
+  const yearStart = `${now.getUTCFullYear()}-01-01`;
 
   const rowsT = [];
   for (const [t, revArr] of series) {
     if (revArr.length < 2) continue;
-    const arr = revArr.slice().reverse();            // chronological
+    const arr = revArr.slice().reverse();            // chronological (oldest→newest)
     const closes = arr.map((a) => a.close);
+    const last = closes[closes.length - 1];
     const yr = closes.slice(-252);
+    const rets = [];
+    for (let i = 1; i < closes.length; i++) if (closes[i - 1] > 0) rets.push(closes[i] / closes[i - 1] - 1);
+    const maxN = (n) => { const w = closes.slice(-n); return w.length ? Math.max(...w) : null; };
+    const ytdBase = arr.find((a) => a.date >= yearStart)?.close ?? null;
     rowsT.push({
       ticker: t,
       rsi14: rsi(closes), sma20: smaN(closes, 20), sma50: smaN(closes, 50), sma200: smaN(closes, 200),
       hi52: yr.length ? Math.max(...yr) : null, lo52: yr.length ? Math.min(...yr) : null, atr14: atr(arr),
       perf1w: perf(closes, 5), perf1m: perf(closes, 21), perf3m: perf(closes, 63), perf6m: perf(closes, 126), perf1y: perf(closes, 252),
+      perfYtd: (ytdBase > 0) ? (last / ytdBase - 1) * 100 : null,
+      volatility: rets.length ? stddev(rets) * Math.sqrt(252) * 100 : null,   // annualized %
+      beta: (spyVar > 0) ? beta(rets, spyRet, spyVar) : null,
+      // % from N-day high (0 = at high, negative = below) — Finviz-style distance-from-high
+      high20d: (maxN(20) > 0) ? (last / maxN(20) - 1) * 100 : null,
+      high50d: (maxN(50) > 0) ? (last / maxN(50) - 1) * 100 : null,
+      allTimeHigh: closes.length ? (last / Math.max(...closes) - 1) * 100 : null,
     });
   }
   let updated = 0;
@@ -272,11 +300,25 @@ export async function backfillTechnicals({ days = 150 } = {}) {
         rsi14: sql`excluded.rsi14`, sma20: sql`excluded.sma20`, sma50: sql`excluded.sma50`, sma200: sql`excluded.sma200`,
         hi52: sql`excluded.hi52`, lo52: sql`excluded.lo52`, atr14: sql`excluded.atr14`,
         perf1w: sql`excluded.perf_1w`, perf1m: sql`excluded.perf_1m`, perf3m: sql`excluded.perf_3m`, perf6m: sql`excluded.perf_6m`, perf1y: sql`excluded.perf_1y`,
+        perfYtd: sql`excluded.perf_ytd`, volatility: sql`excluded.volatility`, beta: sql`excluded.beta`,
+        high20d: sql`excluded.high20d`, high50d: sql`excluded.high50d`, allTimeHigh: sql`excluded.all_time_high`,
       },
     });
     updated += batch.length;
   }
   return { days: gotDays, tickers: updated };
+}
+
+// ── stats helpers for volatility/beta ──
+const variance = (a) => { if (a.length < 2) return 0; const m = a.reduce((s, x) => s + x, 0) / a.length; return a.reduce((s, x) => s + (x - m) ** 2, 0) / a.length; };
+const stddev = (a) => Math.sqrt(variance(a));
+function beta(rets, spyRet, spyVar) {
+  const n = Math.min(rets.length, spyRet.length);
+  if (n < 20 || !spyVar) return null;
+  const r = rets.slice(-n), m = spyRet.slice(-n);
+  const rm = r.reduce((s, x) => s + x, 0) / n, mm = m.reduce((s, x) => s + x, 0) / n;
+  let cov = 0; for (let i = 0; i < n; i++) cov += (r[i] - rm) * (m[i] - mm);
+  return (cov / n) / spyVar;
 }
 
 // ── technical helpers (operate on chronological arrays) ──
@@ -358,7 +400,12 @@ async function polygonEod() {
   const map = new Map();
   for (const x of found[0].res) {
     const pc = prevClose.get(x.T);
-    map.set(x.T, { price: x.c, volume: x.v, changePct: (pc && pc > 0) ? ((x.c - pc) / pc) * 100 : null });
+    map.set(x.T, {
+      price: x.c, open: x.o, volume: x.v,
+      changePct: (pc && pc > 0) ? ((x.c - pc) / pc) * 100 : null,
+      changeFromOpen: (x.o && x.o > 0 && x.c != null) ? ((x.c - x.o) / x.o) * 100 : null,
+      gap: (pc && pc > 0 && x.o != null) ? ((x.o - pc) / pc) * 100 : null,
+    });
   }
   return { date: found[0].date, map, res: found[0].res };
 }
@@ -502,6 +549,8 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       ticker: t, company: i?.company || m?.industry || null,
       exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: mcap,
       price: px, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
+      changeFromOpen: pg?.changeFromOpen ?? null, gap: pg?.gap ?? null,
+      dividendYield: (m?.annualDividend && px > 0) ? (m.annualDividend / px) * 100 : null,
       volume: vol, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
       // fundamentals — price-dependent ratios computed here with fresh price; rest copied from the table
       pe: (px != null && fd?.epsTtm > 0) ? px / fd.epsTtm : null,
@@ -542,6 +591,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
         currentRatio: sql`excluded.current_ratio`, quickRatio: sql`excluded.quick_ratio`, debtEquity: sql`excluded.debt_equity`, ltDebtEquity: sql`excluded.lt_debt_equity`,
         epsGrowthTtm: sql`excluded.eps_growth_ttm`, revGrowthTtm: sql`excluded.rev_growth_ttm`, epsGrowthQoq: sql`excluded.eps_growth_qoq`, salesGrowthQoq: sql`excluded.sales_growth_qoq`,
         epsGrowth3y: sql`excluded.eps_growth_3y`, salesGrowth3y: sql`excluded.sales_growth_3y`,
+        changeFromOpen: sql`excluded.change_from_open`, gap: sql`excluded.gap`, dividendYield: sql`excluded.dividend_yield`,
         price: sql`coalesce(excluded.price, screener_stocks.price)`, changePct: sql`coalesce(excluded.change_pct, screener_stocks.change_pct)`,
         volume: sql`coalesce(excluded.volume, screener_stocks.volume)`, avgVol: sql`coalesce(excluded.avg_vol, screener_stocks.avg_vol)`, relVol: sql`excluded.rel_vol`,
         floatShares: sql`excluded.float_shares`, sharesOut: sql`excluded.shares_out`, shortFloat: sql`excluded.short_float`, daysToCover: sql`excluded.days_to_cover`,
