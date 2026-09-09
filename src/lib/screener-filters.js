@@ -179,6 +179,11 @@ for (const k of Object.keys(FILTERS)) {
   else f.opts = f.unit === '%' ? PCT_POS : RATIO_LOW;   // range fallback (mostly SOON metrics)
 }
 
+// Fundamentals now computed from Polygon Financials (2026-09-09) → flip these live.
+for (const k of ['pe', 'ps', 'pb', 'evEbitda', 'evSales', 'pCash', 'roe', 'roa', 'operMargin', 'grossMargin', 'netMargin', 'currentRatio', 'quickRatio', 'debtEquity', 'ltDebtEquity', 'epsGrowthTtm', 'revGrowthTtm', 'epsGrowthQoq', 'salesGrowthQoq', 'epsGrowth3y', 'salesGrowth3y']) {
+  if (FILTERS[k]) FILTERS[k].available = true;
+}
+
 // Build Drizzle conditions from the active filter object { key: {min,max}|{eq}|{pct} }.
 export function buildConds(active) {
   const conds = [];

@@ -424,6 +424,18 @@ export const screenerStocks = pgTable('screener_stocks', {
   debtEquity:    doublePrecision('debt_equity'),
   insiderOwnPct: doublePrecision('insider_own_pct'),
   instOwnPct:    doublePrecision('inst_own_pct'),
+  // additional Polygon-computed fundamentals (self-created via ALTER)
+  evSales:       doublePrecision('ev_sales'),
+  pCash:         doublePrecision('p_cash'),
+  roa:           doublePrecision('roa'),
+  operMargin:    doublePrecision('oper_margin'),
+  currentRatio:  doublePrecision('current_ratio'),
+  quickRatio:    doublePrecision('quick_ratio'),
+  ltDebtEquity:  doublePrecision('lt_debt_equity'),
+  epsGrowthQoq:  doublePrecision('eps_growth_qoq'),
+  salesGrowthQoq:doublePrecision('sales_growth_qoq'),
+  epsGrowth3y:   doublePrecision('eps_growth_3y'),
+  salesGrowth3y: doublePrecision('sales_growth_3y'),
   // ── proprietary Catalyst Pit signals (AVAILABLE NOW) ──
   insiderNet90d:    doublePrecision('insider_net_90d'),   // sum(buys)-sum(sells) $ over 90d
   insiderBuyers90d: integer('insider_buyers_90d'),        // distinct execs buying, 90d
@@ -457,6 +469,35 @@ export const screenerMeta = pgTable('screener_meta', {
   country:   text('country'),
   sharesOut: doublePrecision('shares_out'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Persistent fundamentals from Polygon Financials (SEC statements). Stores price-INDEPENDENT computed
+// values + raw inputs (epsTtm/revenueTtm/equity/debt/cash/ebitda); the rebuild derives price-dependent
+// ratios (P/E, P/S, P/B, EV/*) nightly with fresh price. Separate table → survives the clean-rebuild.
+export const screenerFundamentals = pgTable('screener_fundamentals', {
+  ticker:        text('ticker').primaryKey(),
+  epsTtm:        doublePrecision('eps_ttm'),
+  revenueTtm:    doublePrecision('revenue_ttm'),
+  equity:        doublePrecision('equity'),
+  totalDebt:     doublePrecision('total_debt'),
+  cash:          doublePrecision('cash'),
+  ebitda:        doublePrecision('ebitda'),
+  grossMargin:   doublePrecision('gross_margin'),
+  operMargin:    doublePrecision('oper_margin'),
+  netMargin:     doublePrecision('net_margin'),
+  roe:           doublePrecision('roe'),
+  roa:           doublePrecision('roa'),
+  currentRatio:  doublePrecision('current_ratio'),
+  quickRatio:    doublePrecision('quick_ratio'),
+  debtEquity:    doublePrecision('debt_equity'),
+  ltDebtEquity:  doublePrecision('lt_debt_equity'),
+  epsGrowthTtm:  doublePrecision('eps_growth_ttm'),
+  revGrowthTtm:  doublePrecision('rev_growth_ttm'),
+  epsGrowthQoq:  doublePrecision('eps_growth_qoq'),
+  salesGrowthQoq:doublePrecision('sales_growth_qoq'),
+  epsGrowth3y:   doublePrecision('eps_growth_3y'),
+  salesGrowth3y: doublePrecision('sales_growth_3y'),
+  updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 // Saved screeners (logged-in users). filters/columns are JSON blobs (the filter set + view + columns).

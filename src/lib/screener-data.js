@@ -1,6 +1,6 @@
 import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
-import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta } from './schema';
+import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals } from './schema';
 import { computeConfluence } from './confluence';
 
 // Populates the screener_stocks universe from data we ALREADY own (no external provider):
@@ -44,7 +44,110 @@ export async function ensureScreenerTables() {
     ticker TEXT PRIMARY KEY, market_cap DOUBLE PRECISION, sector TEXT, industry TEXT, exchange TEXT,
     asset_type TEXT, country TEXT, shares_out DOUBLE PRECISION, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS screener_fundamentals (
+    ticker TEXT PRIMARY KEY, eps_ttm DOUBLE PRECISION, revenue_ttm DOUBLE PRECISION, equity DOUBLE PRECISION,
+    total_debt DOUBLE PRECISION, cash DOUBLE PRECISION, ebitda DOUBLE PRECISION, gross_margin DOUBLE PRECISION,
+    oper_margin DOUBLE PRECISION, net_margin DOUBLE PRECISION, roe DOUBLE PRECISION, roa DOUBLE PRECISION,
+    current_ratio DOUBLE PRECISION, quick_ratio DOUBLE PRECISION, debt_equity DOUBLE PRECISION, lt_debt_equity DOUBLE PRECISION,
+    eps_growth_ttm DOUBLE PRECISION, rev_growth_ttm DOUBLE PRECISION, eps_growth_qoq DOUBLE PRECISION,
+    sales_growth_qoq DOUBLE PRECISION, eps_growth_3y DOUBLE PRECISION, sales_growth_3y DOUBLE PRECISION,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  // Extra screener_stocks fundamental columns (idempotent adds).
+  for (const c of ['ev_sales', 'p_cash', 'roa', 'oper_margin', 'current_ratio', 'quick_ratio', 'lt_debt_equity', 'eps_growth_qoq', 'sales_growth_qoq', 'eps_growth_3y', 'sales_growth_3y']) {
+    await db.execute(sql.raw(`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS ${c} DOUBLE PRECISION`));
+  }
   _ensured = true;
+}
+
+// ── Polygon Financials → fundamentals (SEC statements). Price-independent values + raw inputs. ──
+const fval = (r, stmt, key) => r?.financials?.[stmt]?.[key]?.value ?? null;
+const sumField = (rows, stmt, key) => rows.reduce((s, r) => { const x = fval(r, stmt, key); return x == null ? s : s + x; }, 0);
+const cagr = (end, start, yrs) => (start > 0 && end > 0) ? (Math.pow(end / start, 1 / yrs) - 1) * 100 : null;
+const growth = (cur, prev) => (prev != null && prev !== 0 && cur != null) ? ((cur - prev) / Math.abs(prev)) * 100 : null;
+
+async function fetchFinancials(t) {
+  try {
+    const [qR, aR] = await Promise.all([
+      fetch(`https://api.polygon.io/vX/reference/financials?ticker=${encodeURIComponent(t)}&timeframe=quarterly&order=desc&limit=8&apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
+      fetch(`https://api.polygon.io/vX/reference/financials?ticker=${encodeURIComponent(t)}&timeframe=annual&order=desc&limit=6&apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
+    ]);
+    const q = qR.ok ? ((await qR.json())?.results || []) : [];
+    const a = aR.ok ? ((await aR.json())?.results || []) : [];
+    if (q.length < 1 && a.length < 1) return null;
+
+    const last4 = q.slice(0, 4), prev4 = q.slice(4, 8);
+    const revenueTtm = last4.length ? sumField(last4, 'income_statement', 'revenues') : null;
+    const netTtm = last4.length ? sumField(last4, 'income_statement', 'net_income_loss') : null;
+    const grossTtm = sumField(last4, 'income_statement', 'gross_profit');
+    const operTtm = sumField(last4, 'income_statement', 'operating_income_loss');
+    const epsTtm = last4.reduce((s, r) => { const x = fval(r, 'income_statement', 'diluted_earnings_per_share'); return x == null ? s : s + x; }, 0) || null;
+    const revPrev = prev4.length ? sumField(prev4, 'income_statement', 'revenues') : null;
+    const epsPrev = prev4.length ? (prev4.reduce((s, r) => { const x = fval(r, 'income_statement', 'diluted_earnings_per_share'); return x == null ? s : s + x; }, 0) || null) : null;
+
+    const bs = q[0] || a[0];
+    const equity = fval(bs, 'balance_sheet', 'equity');
+    const assets = fval(bs, 'balance_sheet', 'assets');
+    const curA = fval(bs, 'balance_sheet', 'current_assets');
+    const curL = fval(bs, 'balance_sheet', 'current_liabilities');
+    const liab = fval(bs, 'balance_sheet', 'liabilities');
+    const inv = fval(bs, 'balance_sheet', 'inventory');
+    const ltDebt = fval(bs, 'balance_sheet', 'long_term_debt') ?? fval(bs, 'balance_sheet', 'noncurrent_liabilities');
+
+    const epsQ = fval(q[0], 'income_statement', 'diluted_earnings_per_share'), epsQyr = fval(q[4], 'income_statement', 'diluted_earnings_per_share');
+    const revQ = fval(q[0], 'income_statement', 'revenues'), revQyr = fval(q[4], 'income_statement', 'revenues');
+    const annEps = a.map((r) => fval(r, 'income_statement', 'diluted_earnings_per_share'));
+    const annRev = a.map((r) => fval(r, 'income_statement', 'revenues'));
+
+    const pctMargin = (num) => (revenueTtm && revenueTtm > 0 && num != null) ? (num / revenueTtm) * 100 : null;
+    return {
+      ticker: t,
+      epsTtm, revenueTtm, equity, totalDebt: liab ?? ltDebt ?? null, cash: null, ebitda: operTtm || null,
+      grossMargin: pctMargin(grossTtm), operMargin: pctMargin(operTtm), netMargin: pctMargin(netTtm),
+      roe: (equity > 0 && netTtm != null) ? (netTtm / equity) * 100 : null,
+      roa: (assets > 0 && netTtm != null) ? (netTtm / assets) * 100 : null,
+      currentRatio: (curL > 0) ? curA / curL : null,
+      quickRatio: (curL > 0) ? (curA - (inv || 0)) / curL : null,
+      debtEquity: (equity > 0 && liab != null) ? liab / equity : null,
+      ltDebtEquity: (equity > 0 && ltDebt != null) ? ltDebt / equity : null,
+      epsGrowthTtm: growth(epsTtm, epsPrev), revGrowthTtm: growth(revenueTtm, revPrev),
+      epsGrowthQoq: growth(epsQ, epsQyr), salesGrowthQoq: growth(revQ, revQyr),
+      epsGrowth3y: cagr(annEps[0], annEps[3], 3), salesGrowth3y: cagr(annRev[0], annRev[3], 3),
+    };
+  } catch { return null; }
+}
+
+// Populate screener_fundamentals from Polygon Financials. Bounded, prioritized by volume, accumulates.
+export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleDays = 30 } = {}) {
+  await ensureScreenerTables();
+  if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
+  const uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
+  const have = new Map((await db.select({ t: screenerFundamentals.ticker, u: screenerFundamentals.updatedAt }).from(screenerFundamentals)).map((r) => [r.t, r.u]));
+  const cutoff = Date.now() - staleDays * 86400000;
+  const need = uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; })
+    .sort((a, b) => (b.vol || 0) - (a.vol || 0)).slice(0, cap).map((r) => r.t);
+
+  const rows = [];
+  for (let i = 0; i < need.length; i += concurrency) {
+    const got = await Promise.all(need.slice(i, i + concurrency).map(fetchFinancials));
+    got.forEach((d) => { if (d) rows.push({ ...d, updatedAt: new Date() }); });
+  }
+  let saved = 0;
+  for (let i = 0; i < rows.length; i += 200) {
+    const batch = rows.slice(i, i + 200);
+    await db.insert(screenerFundamentals).values(batch).onConflictDoUpdate({
+      target: screenerFundamentals.ticker,
+      set: {
+        epsTtm: sql`excluded.eps_ttm`, revenueTtm: sql`excluded.revenue_ttm`, equity: sql`excluded.equity`, totalDebt: sql`excluded.total_debt`, cash: sql`excluded.cash`, ebitda: sql`excluded.ebitda`,
+        grossMargin: sql`excluded.gross_margin`, operMargin: sql`excluded.oper_margin`, netMargin: sql`excluded.net_margin`, roe: sql`excluded.roe`, roa: sql`excluded.roa`,
+        currentRatio: sql`excluded.current_ratio`, quickRatio: sql`excluded.quick_ratio`, debtEquity: sql`excluded.debt_equity`, ltDebtEquity: sql`excluded.lt_debt_equity`,
+        epsGrowthTtm: sql`excluded.eps_growth_ttm`, revGrowthTtm: sql`excluded.rev_growth_ttm`, epsGrowthQoq: sql`excluded.eps_growth_qoq`, salesGrowthQoq: sql`excluded.sales_growth_qoq`,
+        epsGrowth3y: sql`excluded.eps_growth_3y`, salesGrowth3y: sql`excluded.sales_growth_3y`, updatedAt: sql`now()`,
+      },
+    });
+    saved += batch.length;
+  }
+  return { requested: need.length, fetched: rows.length, saved };
 }
 
 // Polygon primary_exchange (MIC) → our exchange label.
@@ -315,6 +418,8 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
 
   // Persistent descriptive meta (market cap / sector / exchange / asset type) from Polygon details.
   const metaByT = new Map((await db.select().from(screenerMeta)).map((r) => [r.ticker, r]));
+  // Persistent fundamentals (price-independent computed values + raw inputs) from Polygon Financials.
+  const fundByT = new Map((await db.select().from(screenerFundamentals)).map((r) => [r.ticker, r]));
 
   // 2) Universe = union of all tickers we have any signal/candle for.
   const universe = new Set();
@@ -387,14 +492,30 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // 4) Insert the universe FIRST (fast, no network) so stocks always land even if the later quote
   // pass is slow/times out.
   const rowsOut = tickers.map((t) => {
-    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t), m = metaByT.get(t);
+    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t), m = metaByT.get(t), fd = fundByT.get(t);
     const floatShares = f?.floatShares ?? null;
     const vol = tk?.volume ?? pg?.volume ?? s?.avg ?? null;
+    const px = tk?.price ?? pg?.price ?? priceMap.get(t)?.price ?? null;
+    const mcap = m?.marketCap ?? null;
+    const ev = (mcap != null) ? mcap + (fd?.totalDebt || 0) - (fd?.cash || 0) : null;   // enterprise value
     return {
       ticker: t, company: i?.company || m?.industry || null,
-      exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: m?.marketCap ?? null,
-      price: tk?.price ?? pg?.price ?? priceMap.get(t)?.price ?? null, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
+      exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: mcap,
+      price: px, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
       volume: vol, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
+      // fundamentals — price-dependent ratios computed here with fresh price; rest copied from the table
+      pe: (px != null && fd?.epsTtm > 0) ? px / fd.epsTtm : null,
+      ps: (mcap != null && fd?.revenueTtm > 0) ? mcap / fd.revenueTtm : null,
+      pb: (mcap != null && fd?.equity > 0) ? mcap / fd.equity : null,
+      pCash: (mcap != null && fd?.cash > 0) ? mcap / fd.cash : null,
+      evSales: (ev != null && fd?.revenueTtm > 0) ? ev / fd.revenueTtm : null,
+      evEbitda: (ev != null && fd?.ebitda > 0) ? ev / fd.ebitda : null,
+      grossMargin: fd?.grossMargin ?? null, operMargin: fd?.operMargin ?? null, netMargin: fd?.netMargin ?? null,
+      roe: fd?.roe ?? null, roa: fd?.roa ?? null, currentRatio: fd?.currentRatio ?? null, quickRatio: fd?.quickRatio ?? null,
+      debtEquity: fd?.debtEquity ?? null, ltDebtEquity: fd?.ltDebtEquity ?? null,
+      epsGrowthTtm: fd?.epsGrowthTtm ?? null, revGrowthTtm: fd?.revGrowthTtm ?? null,
+      epsGrowthQoq: fd?.epsGrowthQoq ?? null, salesGrowthQoq: fd?.salesGrowthQoq ?? null,
+      epsGrowth3y: fd?.epsGrowth3y ?? null, salesGrowth3y: fd?.salesGrowth3y ?? null,
       floatShares, sharesOut: f?.sharesOut ?? m?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
       rsi14: tk?.rsi14 ?? null, sma20: tk?.sma20 ?? null, sma50: tk?.sma50 ?? null, sma200: tk?.sma200 ?? null,
@@ -416,6 +537,11 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       set: {
         company: sql`coalesce(excluded.company, screener_stocks.company)`,
         exchange: sql`excluded.exchange`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, country: sql`excluded.country`, assetType: sql`excluded.asset_type`, marketCap: sql`excluded.market_cap`,
+        pe: sql`excluded.pe`, ps: sql`excluded.ps`, pb: sql`excluded.pb`, pCash: sql`excluded.p_cash`, evSales: sql`excluded.ev_sales`, evEbitda: sql`excluded.ev_ebitda`,
+        grossMargin: sql`excluded.gross_margin`, operMargin: sql`excluded.oper_margin`, netMargin: sql`excluded.net_margin`, roe: sql`excluded.roe`, roa: sql`excluded.roa`,
+        currentRatio: sql`excluded.current_ratio`, quickRatio: sql`excluded.quick_ratio`, debtEquity: sql`excluded.debt_equity`, ltDebtEquity: sql`excluded.lt_debt_equity`,
+        epsGrowthTtm: sql`excluded.eps_growth_ttm`, revGrowthTtm: sql`excluded.rev_growth_ttm`, epsGrowthQoq: sql`excluded.eps_growth_qoq`, salesGrowthQoq: sql`excluded.sales_growth_qoq`,
+        epsGrowth3y: sql`excluded.eps_growth_3y`, salesGrowth3y: sql`excluded.sales_growth_3y`,
         price: sql`coalesce(excluded.price, screener_stocks.price)`, changePct: sql`coalesce(excluded.change_pct, screener_stocks.change_pct)`,
         volume: sql`coalesce(excluded.volume, screener_stocks.volume)`, avgVol: sql`coalesce(excluded.avg_vol, screener_stocks.avg_vol)`, relVol: sql`excluded.rel_vol`,
         floatShares: sql`excluded.float_shares`, sharesOut: sql`excluded.shares_out`, shortFloat: sql`excluded.short_float`, daysToCover: sql`excluded.days_to_cover`,
