@@ -5,7 +5,7 @@ import EightKWire from "./EightKWire";
 import {
   C, TAG, CARD_COLORS,
   fetchKey, toArr, minsSince, timeAgo,
-  BrandStyles, Skel, Dot, TagBadge,
+  BrandStyles, Skel, Dot, TagBadge, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
 } from "../lib/cp-shared";
 
@@ -56,13 +56,19 @@ function NewsRowCard({n, idx}) {
       background:C.white, border:`1px solid ${C.border}`, borderRadius:6,
       transition:"all 0.2s", cursor:"pointer"}}>
       <div style={{width:120, height:80, borderRadius:5, overflow:"hidden", flexShrink:0,
-        position:"relative", background:`linear-gradient(135deg,${bg1},${bg2})`}}>
-        {showImg && (
+        position:"relative", background:`linear-gradient(135deg,${bg1},${bg2})`,
+        display:"flex", alignItems:"center", justifyContent:"center"}}>
+        {showImg ? (
           <img src={n.imageUrl} alt=""
             onError={() => setImgFailed(true)}
             style={{position:"absolute", inset:0, width:"100%", height:"100%",
               objectFit:"cover", objectPosition:"center top", display:"block"}}/>
-        )}
+        ) : hasValidTicker ? (
+          // No article image (e.g. press-release wires) but we have the company → show its logo.
+          <span style={{background:"#fff", borderRadius:8, padding:6, display:"inline-flex"}}>
+            <TickerLogo symbol={n.sym} size={44}/>
+          </span>
+        ) : null}
       </div>
       <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:5}}>
         <div style={{display:"flex", alignItems:"center", gap:7, flexWrap:"wrap"}}>
@@ -182,6 +188,18 @@ export default function NewsFeed() {
   const [lastUp, setLastUp] = useState(null);
   const [activeCategory, setActiveCategory] = useState('ALL');
   const [tickerQuery, setTickerQuery] = useState('');
+  // Sources the user has chosen to hide (press-release wires + outlets). Persisted so it sticks.
+  const [hiddenSources, setHiddenSources] = useState(() => new Set());
+
+  useEffect(() => {
+    try { const s = JSON.parse(localStorage.getItem('cp_news_hidden_sources') || '[]'); if (Array.isArray(s)) setHiddenSources(new Set(s)); } catch { /* ignore */ }
+  }, []);
+  const toggleSource = (src) => setHiddenSources(prev => {
+    const next = new Set(prev);
+    if (next.has(src)) next.delete(src); else next.add(src);
+    try { localStorage.setItem('cp_news_hidden_sources', JSON.stringify([...next])); } catch { /* ignore */ }
+    return next;
+  });
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -213,14 +231,22 @@ export default function NewsFeed() {
     return Array.from(seen);
   }, [articles]);
 
+  // Sources present in the unfiltered data (for the source toggle row)
+  const availableSources = useMemo(() => {
+    const seen = new Set();
+    for (const a of articles) if (a.source) seen.add(a.source);
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [articles]);
+
   // Filter pipeline
   const filtered = useMemo(() => {
     return articles.filter(a => {
       if (activeCategory !== 'ALL' && a.tag !== activeCategory) return false;
       if (tickerQuery && (!a.sym || !a.sym.toUpperCase().includes(tickerQuery))) return false;
+      if (a.source && hiddenSources.has(a.source)) return false;
       return true;
     });
-  }, [articles, activeCategory, tickerQuery]);
+  }, [articles, activeCategory, tickerQuery, hiddenSources]);
 
   // Trending tickers — unique syms from the unfiltered set (so chips don't disappear when filtering)
   const trendingTickers = useMemo(() => {
@@ -301,6 +327,37 @@ export default function NewsFeed() {
           )}
         </div>
       </div>
+
+      {/* SOURCE TOGGLES — click to hide/show a source (wires + outlets). Persisted per user. */}
+      {availableSources.length > 1 && (
+        <div style={{background:C.surface, borderBottom:`1px solid ${C.border}`, padding:"8px 24px"}}>
+          <div style={{maxWidth:1380, margin:"0 auto", display:"flex", gap:6, flexWrap:"wrap", alignItems:"center"}}>
+            <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.dim, letterSpacing:"0.5px", marginRight:4}}>SOURCES</span>
+            {availableSources.map(src => {
+              const hidden = hiddenSources.has(src);
+              return (
+                <button key={src} onClick={() => toggleSource(src)} title={hidden ? `Show ${src}` : `Hide ${src}`}
+                  style={{fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:500,
+                    padding:"4px 10px", borderRadius:12, cursor:"pointer", transition:"all 0.15s",
+                    border:`1px solid ${hidden ? C.border : C.greenBorder}`,
+                    background: hidden ? "transparent" : C.greenLight,
+                    color: hidden ? C.dim : C.green,
+                    textDecoration: hidden ? "line-through" : "none"}}>
+                  {src}
+                </button>
+              );
+            })}
+            {hiddenSources.size > 0 && (
+              <button onClick={() => { setHiddenSources(new Set()); try { localStorage.setItem('cp_news_hidden_sources', '[]'); } catch { /* ignore */ } }}
+                style={{fontSize:11, fontFamily:"'DM Sans',sans-serif", fontWeight:400,
+                  padding:"4px 10px", borderRadius:12, border:"none",
+                  background:"transparent", color:C.muted, cursor:"pointer", textDecoration:"underline"}}>
+                Show all
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* MAIN BODY */}
       <div className="cp-body-grid">

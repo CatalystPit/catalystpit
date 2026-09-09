@@ -344,6 +344,47 @@ async function fetchRSS(url, sourceName, rank, opts = {}) {
   }
 }
 
+// ── Press-release wires (PR Newswire / GlobeNewswire / Business Wire) ──
+// Free public RSS. Stored in a SEPARATE pool (catalystpit:wire_news) that is NOT Claude-enriched,
+// so adding them costs nothing extra. Ticker pulled from the "(NASDAQ: XYZ)" pattern in the title.
+const WIRE_TICKER_RE = /\((?:NASDAQ|NYSE(?:\s*American|\s*Arca)?|NYSEAMERICAN|AMEX|OTCMKTS|OTCQB|OTCQX|OTC|CBOE|BATS)\s*[:\-]\s*([A-Z][A-Z.\-]{0,6})\)/i;
+function extractWireTicker(title) {
+  const m = (title || '').match(WIRE_TICKER_RE);
+  return m ? m[1].toUpperCase().replace(/[.\-]+$/, '') : null;
+}
+function wireCategory(title) {
+  const t = (title || '').toLowerCase();
+  if (/(earnings|quarter|q[1-4]\b|full[- ]year|results|revenue|\beps\b|guidance)/.test(t)) return 'Earnings';
+  if (/(to acquire|acquisition|acquires|merger|buyout|takeover|definitive agreement)/.test(t)) return 'M&A';
+  if (/(fda|phase [123]|clinical|trial|topline|approval|nda|biologics)/.test(t)) return 'Pharma';
+  if (/(offering|priced|convertible|senior notes|private placement|registered direct|\bipo\b)/.test(t)) return 'IPO';
+  if (/(dividend|buyback|repurchase)/.test(t)) return 'Markets';
+  return 'Markets';
+}
+async function fetchWire(url, sourceName) {
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CatalystPit/1.0; +contact@catalystpit.com)' } });
+    if (!res.ok) { console.log(`❌ Wire ${sourceName}: HTTP ${res.status}`); return []; }
+    const xml = await res.text();
+    const items = [...xml.matchAll(/<item[\s>][\s\S]*?<\/item>/g)].map(m => m[0]);
+    return items.map(item => {
+      const title = extractTag(item, 'title');
+      const link  = extractTag(item, 'link');
+      if (!title || !link) return null;
+      let published = null;
+      const pubDate = extractTag(item, 'pubDate');
+      if (pubDate) { const d = new Date(pubDate); if (!isNaN(d.getTime())) published = d.toISOString(); }
+      return {
+        title, source: sourceName, url: link, image_url: null,
+        published, ticker: extractWireTicker(title), category: wireCategory(title), _wire: true,
+      };
+    }).filter(Boolean).slice(0, 40);
+  } catch (e) {
+    console.log(`❌ Wire ${sourceName}: ${e.message}`);
+    return [];
+  }
+}
+
 async function fetchFinnhubPerTicker() {
   if (!FINNHUB_KEY) return [];
   const to = new Date();
@@ -595,6 +636,29 @@ export async function GET(request) {
     await kvSet('catalystpit:_raw_news', JSON.stringify(mergedNews));
     results.refreshed.push('catalystpit:_raw_news');
   } catch(e) { fail('raw_news_sec', e); }
+
+  // Press-release wires — separate pool, NOT enriched (zero Anthropic cost). Filtered client-side by source.
+  try {
+    const [prn, gnw, bwr] = await Promise.allSettled([
+      fetchWire('https://www.prnewswire.com/rss/news-releases-list.rss', 'PR Newswire'),
+      fetchWire('https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies', 'GlobeNewswire'),
+      fetchWire('https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEF9YXA%3D%3D', 'Business Wire'),
+    ]);
+    const wireAll = [prn, gnw, bwr].flatMap(r => r.status === 'fulfilled' ? r.value : []);
+    const wireSeen = new Set();
+    const wireNews = [];
+    for (const w of wireAll) {
+      if (!w.title || hasBlockedTerm(w)) continue;
+      const key = w.title.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+      if (wireSeen.has(key)) continue;
+      wireSeen.add(key);
+      wireNews.push(w);
+    }
+    wireNews.sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0));
+    console.log(`📡 Wires: ${wireAll.length} raw → ${wireNews.length} deduped (PRN/GNW/BW)`);
+    await kvSet('catalystpit:wire_news', JSON.stringify(wireNews.slice(0, 80)));
+    results.refreshed.push('catalystpit:wire_news');
+  } catch(e) { fail('wire_news', e); }
 
   await kvSet('catalystpit:last_refresh', results.timestamp);
   return Response.json(results, { status:200 });

@@ -47,6 +47,15 @@ export async function GET() {
     if (Array.isArray(val) && val.length) { raw = val; source = 'cache'; }
   } catch { /* KV error → treat as empty, never throw */ }
 
+  // Press-release wires (separate un-enriched pool) — appended AFTER the enriched stories so the
+  // hero stays a curated story. Each carries its own `source`, filtered client-side in NewsFeed.
+  try {
+    let w = await kvGet('catalystpit:wire_news');
+    if (typeof w === 'string') { try { w = JSON.parse(w); } catch { w = null; } }
+    if (typeof w === 'string') { try { w = JSON.parse(w); } catch { w = null; } }
+    if (Array.isArray(w) && w.length) raw = [...raw, ...w];
+  } catch { /* wires optional — never break the feed */ }
+
   // Slice the RAW array (no reorder/normalize — element 0 stays the hero) so
   // NewsFeed's existing client-side normalization works unchanged. Signed-in users
   // get the full feed; signed-out get the teaser and the locked rows never ship.
