@@ -43,6 +43,60 @@ export async function ensureScreenerTables() {
   _ensured = true;
 }
 
+// Backfill technicals market-wide from Polygon grouped-daily history (Stocks Starter = unlimited
+// calls). Pulls `days` trading days, computes RSI/SMA/52w/ATR/perf in memory (universe tickers only),
+// writes the technical columns to screener_stocks. Idempotent; run after the main rebuild.
+export async function backfillTechnicals({ days = 150 } = {}) {
+  await ensureScreenerTables();
+  if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
+  const uni = new Set((await db.select({ t: screenerStocks.ticker }).from(screenerStocks)).map((r) => r.t));
+  if (!uni.size) return { error: 'empty universe — run the main rebuild first' };
+
+  const now = new Date();
+  const series = new Map();   // ticker -> chronological [{close,high,low}]
+  let gotDays = 0;
+  for (let i = 1; gotDays < days && i <= days + 25; i++) {
+    const d = new Date(now); d.setUTCDate(now.getUTCDate() - i);
+    const res = await fetchGrouped(ymd(d));
+    if (!res) continue;
+    gotDays++;
+    for (const x of res) {
+      if (!uni.has(x.T) || x.c == null) continue;
+      const a = series.get(x.T) || [];
+      a.push({ close: x.c, high: x.h, low: x.l });   // pushed newest→oldest; reversed below
+      series.set(x.T, a);
+    }
+  }
+
+  const rowsT = [];
+  for (const [t, revArr] of series) {
+    if (revArr.length < 2) continue;
+    const arr = revArr.slice().reverse();            // chronological
+    const closes = arr.map((a) => a.close);
+    const yr = closes.slice(-252);
+    rowsT.push({
+      ticker: t,
+      rsi14: rsi(closes), sma20: smaN(closes, 20), sma50: smaN(closes, 50), sma200: smaN(closes, 200),
+      hi52: yr.length ? Math.max(...yr) : null, lo52: yr.length ? Math.min(...yr) : null, atr14: atr(arr),
+      perf1w: perf(closes, 5), perf1m: perf(closes, 21), perf3m: perf(closes, 63), perf6m: perf(closes, 126), perf1y: perf(closes, 252),
+    });
+  }
+  let updated = 0;
+  for (let i = 0; i < rowsT.length; i += 300) {
+    const batch = rowsT.slice(i, i + 300);
+    await db.insert(screenerStocks).values(batch).onConflictDoUpdate({
+      target: screenerStocks.ticker,
+      set: {
+        rsi14: sql`excluded.rsi14`, sma20: sql`excluded.sma20`, sma50: sql`excluded.sma50`, sma200: sql`excluded.sma200`,
+        hi52: sql`excluded.hi52`, lo52: sql`excluded.lo52`, atr14: sql`excluded.atr14`,
+        perf1w: sql`excluded.perf_1w`, perf1m: sql`excluded.perf_1m`, perf3m: sql`excluded.perf_3m`, perf6m: sql`excluded.perf_6m`, perf1y: sql`excluded.perf_1y`,
+      },
+    });
+    updated += batch.length;
+  }
+  return { days: gotDays, tickers: updated };
+}
+
 // ── technical helpers (operate on chronological arrays) ──
 const mean = (a) => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
 const smaN = (closes, n) => closes.length >= n ? mean(closes.slice(-n)) : null;
