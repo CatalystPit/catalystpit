@@ -24,6 +24,7 @@ const PANELS = [
   { id: 'alerts',    title: 'Alerts',       tag: 'ENGINE' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
+  { id: 'feed',      title: 'Feed',         tag: 'SOCIAL' },
 ];
 const PANEL_BY_ID = Object.fromEntries(PANELS.map((p) => [p.id, p]));
 const DEFAULT_VISIBLE = ['tape', 'halts', 'chart', 'newswire', 'watchlist', 'chat'];
@@ -62,6 +63,7 @@ function defaultLayout(width) {
     why:       { x: centerX + 36, y: 422, w: centerW, h: 220, color: 'green' },
     convergence: { x: centerX + 48, y: 432, w: centerW, h: 260, color: 'green' },
     alerts:    { x: centerX + 60, y: 442, w: centerW, h: 260, color: 'blue' },
+    feed:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
@@ -621,6 +623,93 @@ function AlertsBody({ symbol }) {
   );
 }
 
+// ── FEED — scroll + post to The Pit feed inside the Terminal (for the slow moments). Reuses /api/feed;
+// $CASHTAGS set the Terminal symbol. Posting is Pro-gated server-side. ──
+const FEED_CASHTAG = /\$[A-Za-z]{1,5}\b/g;
+function FeedText({ text, onSym }) {
+  const parts = []; let last = 0, m; FEED_CASHTAG.lastIndex = 0;
+  while ((m = FEED_CASHTAG.exec(text))) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const sym = m[0].slice(1).toUpperCase();
+    parts.push(<button key={m.index} onClick={() => onSym && onSym(sym)} style={{ color: C.green, fontWeight: 600, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit' }}>{m[0].toUpperCase()}</button>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+function FeedAvatar({ url, name, size = 26 }) {
+  const [failed, setFailed] = useState(false);
+  const initials = (name || 'T').trim().slice(0, 1).toUpperCase();
+  if (url && !failed) return <img src={url} alt="" width={size} height={size} onError={() => setFailed(true)} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />;
+  return <span style={{ width: size, height: size, borderRadius: '50%', flexShrink: 0, background: C.green, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.42, fontWeight: 700 }}>{initials}</span>;
+}
+function FeedBody({ onPick }) {
+  const [posts, setPosts] = useState(null);
+  const [scope, setScope] = useState('global');
+  const [input, setInput] = useState('');
+  const [posting, setPosting] = useState(false);
+  const [notice, setNotice] = useState('');
+  const load = useCallback(async (sc) => {
+    try { const r = await fetch(`/api/feed?scope=${sc}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; setPosts(j?.posts || (Array.isArray(j) ? j : [])); } catch { setPosts([]); }
+  }, []);
+  useEffect(() => { load(scope); }, [scope, load]);
+  const submit = async () => {
+    const body = input.trim(); if (!body || posting) return;
+    setPosting(true); setNotice('');
+    try {
+      const r = await fetch('/api/feed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body, imageUrl: null }) });
+      if (r.status === 403) setNotice('Pro members only.');
+      else if (r.status === 429) setNotice('Slow down a moment.');
+      else if (!r.ok) setNotice('Could not post.');
+      else { const j = await r.json(); if (j?.post) { setPosts((p) => [j.post, ...(p || [])]); setInput(''); } }
+    } catch { setNotice('Could not post.'); }
+    setPosting(false);
+  };
+  const like = async (post) => {
+    const target = post.myReaction === '👍' ? null : '👍';
+    setPosts((ps) => (ps || []).map((p) => p.id === post.id ? { ...p, myReaction: target, reactionTotal: Math.max(0, (p.reactionTotal || 0) + (target ? 1 : -1)) } : p));
+    try { await fetch('/api/feed/like', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ postId: post.id, emoji: target }) }); } catch { /* optimistic */ }
+  };
+  const tab = (id, label) => <button key={id} onClick={() => setScope(id)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, cursor: 'pointer', border: 'none', background: scope === id ? C.ink : 'transparent', color: scope === id ? '#fff' : C.muted }}>{label}</button>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ padding: 8, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>{tab('global', 'For You')}{tab('following', 'Following')}</div>
+        <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Share a thought… ($TICKER to tag)" rows={2}
+          style={{ width: '100%', boxSizing: 'border-box', resize: 'none', borderRadius: 6, border: `1px solid ${C.border}`, padding: '6px 8px', fontSize: 12.5, fontFamily: "'DM Sans',sans-serif", outline: 'none', color: C.ink }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+          {notice && <span style={{ fontSize: 10.5, color: C.red }}>{notice}</span>}
+          <button onClick={submit} disabled={!input.trim() || posting} style={{ marginLeft: 'auto', background: input.trim() ? C.green : C.surface, color: input.trim() ? '#fff' : C.dim, border: 'none', borderRadius: 5, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: input.trim() ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>{posting ? 'Posting…' : 'Post'}</button>
+        </div>
+      </div>
+      <div style={{ overflow: 'auto', flex: 1 }}>
+        {posts === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading feed…</div>
+          : posts.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>{scope === 'following' ? 'Follow some traders to see their posts.' : 'No posts yet — be the first.'}</div>
+            : posts.map((p) => (
+              <div key={p.id} style={{ padding: '9px 11px', borderTop: `1px solid ${C.surface}` }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <FeedAvatar url={p.avatarUrl} name={p.username} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' }}>
+                      <a href={p.handle ? `/u/${p.handle}` : undefined} style={{ fontSize: 12.5, fontWeight: 700, color: C.ink, textDecoration: 'none' }}>{p.username}</a>
+                      {p.handle && <span style={{ fontSize: 10.5, color: C.dim }}>@{p.handle}</span>}
+                      <span style={{ fontSize: 10.5, color: C.dim }}>· {timeAgoShort(p.createdAt)}</span>
+                    </div>
+                    {p.body && <div style={{ fontSize: 13, color: C.text, lineHeight: 1.45, marginTop: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><FeedText text={p.body} onSym={onPick} /></div>}
+                    {p.imageUrl && <a href={p.imageUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', marginTop: 6 }}><img src={p.imageUrl} alt="" style={{ maxWidth: '100%', maxHeight: 180, borderRadius: 6, border: `1px solid ${C.border}` }} /></a>}
+                    <div style={{ display: 'flex', gap: 14, marginTop: 6, alignItems: 'center' }}>
+                      <button onClick={() => like(p)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: p.myReaction ? C.green : C.dim, fontSize: 12, fontWeight: 600, padding: 0, fontFamily: "'DM Sans',sans-serif" }}>{p.myReaction === '👍' ? '👍 Liked' : '👍 Like'}{p.reactionTotal > 0 ? ` ${p.reactionTotal}` : ''}</button>
+                      {p.commentCount > 0 && <a href="/feed" target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.dim, textDecoration: 'none' }}>💬 {p.commentCount}</a>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+      </div>
+    </div>
+  );
+}
+
 // ── PIT SCAN — proprietary engine panel (separate product from the Custom Scanner). Renders ONLY the
 // approved server output; the formula lives server-side in lib/pitscan.js and is never sent here. ──
 const SIG = {
@@ -1086,6 +1175,7 @@ function Workspace() {
     : def.id === 'halts' ? <HaltBody onPick={(s) => linkSymbol('halts', s)} />
     : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
     : def.id === 'chat' ? <PitChat bare onSymbol={selectSymbol} />
+    : def.id === 'feed' ? <FeedBody onPick={(s) => linkSymbol('feed', s)} />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
