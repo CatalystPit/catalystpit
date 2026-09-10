@@ -165,7 +165,8 @@ export async function dedupeCongressCanonical({ apply = true } = {}) {
     for (let i = 0; i < rekey.length; i += 500) {
       const batch = rekey.slice(i, i + 500);
       const values = sql.join(batch.map((r) => sql`(${r.id}, ${r.h})`), sql`, `);
-      await db.execute(sql`UPDATE congress_trades AS t SET tx_hash = v.h FROM (VALUES ${values}) AS v(id, h) WHERE t.id = v.id`);
+      // v.id::int — VALUES bound params infer as text, so cast to match t.id (integer).
+      await db.execute(sql`UPDATE congress_trades AS t SET tx_hash = v.h FROM (VALUES ${values}) AS v(id, h) WHERE t.id = v.id::int`);
     }
   }
   return { total: rows.length, groups: groups.size, duplicatesRemoved: losers.length, rekeyed: rekey.length, apply, ms: Date.now() - t0 };
