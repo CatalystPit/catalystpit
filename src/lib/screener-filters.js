@@ -23,11 +23,11 @@ export const FILTERS = {
   exchange:     e('Exchange', 'Descriptive', 'exchange', EXCHANGES, { available: true }),
   index:        { label: 'Index', category: 'Descriptive', type: 'index', col: 'ticker', options: ['S&P 500', 'NASDAQ 100', 'DJIA'], available: true },
   sector:       e('Sector', 'Descriptive', 'sector', SECTORS, { available: true }),
-  industry:     e('Industry', 'Descriptive', 'industry'),
+  industry:     { label: 'Industry', category: 'Descriptive', type: 'text', col: 'industry', available: true },
   country:      e('Country', 'Descriptive', 'country', ['USA', 'China', 'Canada', 'UK', 'Israel', 'Other'], { available: true }),
   marketCap:    r('Market Cap', 'Descriptive', 'marketCap', { unit: '$', available: true }),
   price:        r('Price', 'Descriptive', 'price', { unit: '$', available: true }),
-  ipoDate:      e('IPO Date', 'Descriptive', 'ipoDate', ['Today', 'This week', 'This month', 'This year', 'Prior year', '2+ years ago']),
+  ipoDate:      { label: 'IPO Date', category: 'Descriptive', type: 'ipodate', col: 'ipoDate', options: ['Today', 'This week', 'This month', 'This year', 'Prior year', '2+ years ago'], available: true },
   sharesOut:    r('Shares Out', 'Descriptive', 'sharesOut', { available: true, sparse: true }),
   floatShares:  r('Float', 'Descriptive', 'floatShares', { available: true, sparse: true }),
   shortFloat:   r('Short Float %', 'Descriptive', 'shortFloat', { unit: '%', available: true, sparse: true }),
@@ -97,8 +97,8 @@ export const FILTERS = {
   allTimeHigh:   r('All-Time Hi/Lo', 'Technical', 'allTimeHigh', { unit: '%' }),
   changeFromOpen:r('Chg from Open', 'Technical', 'changeFromOpen', { unit: '%' }),
   gap:           r('Gap %', 'Technical', 'gap', { unit: '%' }),
-  pattern:       e('Pattern', 'Technical', 'pattern', ['Channel Up', 'Channel Down', 'Triangle', 'Wedge', 'Double Top', 'Double Bottom', 'Head & Shoulders']),
-  candlestick:   e('Candlestick', 'Technical', 'candlestick', ['Hammer', 'Doji', 'Engulfing', 'Marubozu', 'Shooting Star']),
+  pattern:       e('Pattern', 'Technical', 'pattern', ['Channel Up', 'Channel Down', 'Triangle', 'Double Top', 'Double Bottom'], { available: true }),
+  candlestick:   e('Candlestick', 'Technical', 'candlestick', ['Hammer', 'Doji', 'Engulfing', 'Marubozu', 'Shooting Star'], { available: true }),
 
   // ══ PERFORMANCE ══
   changePct: r('Change %', 'Performance', 'changePct', { unit: '%', available: true }),
@@ -156,6 +156,19 @@ const COUNT = [{ label: '1+', cond: { min: 1 } }, { label: '2+', cond: { min: 2 
 const NETMONEY = [{ label: 'Net buying (>0)', cond: { min: 1 } }, { label: 'Over $100K', cond: { min: 1e5 } }, { label: 'Over $1M', cond: { min: 1e6 } }, { label: 'Net selling (<0)', cond: { max: -1 } }];
 const FUNDNET = [{ label: 'Accumulating (>0)', cond: { min: 1 } }, { label: '2+ funds', cond: { min: 2 } }, { label: '3+ funds', cond: { min: 3 } }, { label: 'Distributing (<0)', cond: { max: -1 } }];
 const CONSENSUS = [{ label: '50+', cond: { min: 50 } }, { label: '60+', cond: { min: 60 } }, { label: '70+', cond: { min: 70 } }, { label: '80+', cond: { min: 80 } }];
+// Industry = curated keyword dropdown matched (ILIKE) against the stored SIC description.
+const INDUSTRY = [
+  ['Software', 'SOFTWARE'], ['Semiconductors', 'SEMICONDUCTOR'], ['Computer Hardware', 'COMPUTER'],
+  ['Communications', 'COMMUNICATION'], ['Pharmaceuticals', 'PHARMACEUTICAL'], ['Biotech', 'BIOLOGICAL'],
+  ['Medical Devices', 'SURGICAL & MEDICAL'], ['Healthcare Services', 'HEALTH SERVICES'],
+  ['Banks', 'BANK'], ['Insurance', 'INSURANCE'], ['Investment / Finance', 'FINANCE SERVICES'],
+  ['Real Estate / REIT', 'REAL ESTATE'], ['Oil & Gas', 'PETROLEUM'], ['Mining', 'MINING'],
+  ['Gold', 'GOLD MINING'], ['Chemicals', 'CHEMICAL'], ['Steel / Metals', 'STEEL'],
+  ['Utilities (Electric)', 'ELECTRIC SERVICES'], ['Autos', 'MOTOR VEHICLE'], ['Aerospace / Defense', 'AIRCRAFT'],
+  ['Retail', 'RETAIL'], ['Restaurants', 'EATING PLACES'], ['Apparel', 'APPAREL'], ['Food', 'FOOD'],
+  ['Airlines', 'AIR TRANSPORT'], ['Homebuilding', 'GENERAL BLDG'], ['Telecom', 'TELEPHONE'],
+].map(([label, kw]) => ({ label, cond: { contains: kw } }));
+const IPO = ['Today', 'This week', 'This month', 'This year', 'Prior year', '2+ years ago'].map((l) => ({ label: l, cond: { eq: l } }));
 
 const OPTS = {
   marketCap: MCAP, price: PRICE, volume: VOLP, avgVol: VOLP, relVol: RELVOL, relVolT: RELVOL,
@@ -167,6 +180,7 @@ const OPTS = {
   roe: PCT_POS, roa: PCT_POS, roic: PCT_POS, grossMargin: PCT_POS, operMargin: PCT_POS, netMargin: PCT_POS, payoutRatio: PCT_POS,
   debtEquity: RATIO_DE, ltDebtEquity: RATIO_DE, currentRatio: RATIO_DE, quickRatio: RATIO_DE,
   consensusScore: CONSENSUS, insiderBuyers90d: COUNT, insiderNet90d: NETMONEY, congressNet90d: NETMONEY, fundNetQoq: FUNDNET, insiderOwnPct: PCT_POS, instOwnPct: PCT_POS,
+  industry: INDUSTRY, ipoDate: IPO,
 };
 
 // Attach opts + default availability to every filter.
@@ -214,6 +228,16 @@ export function buildConds(active) {
     } else if (f.type === 'members') {
       const list = (THEME_MAP[f.membersKey] || {})[cond.eq];
       if (list && list.length) conds.push(inArray(screenerStocks.ticker, list));
+    } else if (f.type === 'text') {
+      if (cond.contains) conds.push(ilike(c, `%${cond.contains}%`));
+    } else if (f.type === 'ipodate') {
+      const col = screenerStocks.ipoDate; const b = cond.eq;
+      if (b === 'Today') conds.push(sql`${col} = current_date`);
+      else if (b === 'This week') conds.push(sql`${col} >= date_trunc('week', current_date)`);
+      else if (b === 'This month') conds.push(sql`${col} >= date_trunc('month', current_date)`);
+      else if (b === 'This year') conds.push(sql`${col} >= date_trunc('year', current_date)`);
+      else if (b === 'Prior year') conds.push(sql`${col} >= date_trunc('year', current_date) - interval '1 year' and ${col} < date_trunc('year', current_date)`);
+      else if (b === '2+ years ago') conds.push(sql`${col} < date_trunc('year', current_date) - interval '1 year'`);
     } else if (f.type === 'sma') {
       const p = screenerStocks.price;
       if (cond.op === 'above') conds.push(sql`${p} > ${c} and ${c} is not null`);

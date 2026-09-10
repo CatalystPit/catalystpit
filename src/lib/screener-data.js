@@ -61,8 +61,11 @@ export async function ensureScreenerTables() {
     await db.execute(sql.raw(`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS ${c} DOUBLE PRECISION`));
   }
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS annual_dividend DOUBLE PRECISION`);
+  await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS ipo_date DATE`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS news_category TEXT`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS breaking_today BOOLEAN DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS candlestick TEXT`);
+  await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS pattern TEXT`);
   _ensured = true;
 }
 
@@ -211,6 +214,7 @@ async function fetchDetail(t) {
       country: d.locale === 'us' ? 'USA' : (d.locale ? d.locale.toUpperCase() : null),
       sharesOut: d.weighted_shares_outstanding ?? d.share_class_shares_outstanding ?? null,
       annualDividend,
+      ipoDate: d.list_date || null,
     };
   } catch { return null; }
 }
@@ -236,7 +240,7 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
     const batch = rows.slice(i, i + 300);
     await db.insert(screenerMeta).values(batch).onConflictDoUpdate({
       target: screenerMeta.ticker,
-      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, updatedAt: sql`now()` },
+      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, ipoDate: sql`excluded.ipo_date`, updatedAt: sql`now()` },
     });
     saved += batch.length;
   }
@@ -266,7 +270,7 @@ export async function backfillTechnicals({ days = 200 } = {}) {
       if (x.T === 'SPY' && x.c != null) spy.unshift(x.c);   // newest→oldest fetch; unshift = chronological
       if (!uni.has(x.T) || x.c == null) continue;
       const a = series.get(x.T) || [];
-      a.push({ close: x.c, high: x.h, low: x.l, date: ds });
+      a.push({ open: x.o, close: x.c, high: x.h, low: x.l, date: ds });
       series.set(x.T, a);
     }
   }
@@ -313,6 +317,8 @@ export async function backfillTechnicals({ days = 200 } = {}) {
       high20d: (maxN(20) > 0) ? (last / maxN(20) - 1) * 100 : null,
       high50d: (maxN(50) > 0) ? (last / maxN(50) - 1) * 100 : null,
       allTimeHigh: closes.length ? (last / Math.max(...closes) - 1) * 100 : null,
+      candlestick: detectCandle(arr[arr.length - 1], arr[arr.length - 2]),
+      pattern: detectPattern(arr),
     });
   }
   let updated = 0;
@@ -327,6 +333,7 @@ export async function backfillTechnicals({ days = 200 } = {}) {
         perfYtd: sql`excluded.perf_ytd`, perf3y: sql`excluded.perf_3y`, perf5y: sql`excluded.perf_5y`,
         volatility: sql`excluded.volatility`, beta: sql`excluded.beta`,
         high20d: sql`excluded.high20d`, high50d: sql`excluded.high50d`, allTimeHigh: sql`excluded.all_time_high`,
+        candlestick: sql`excluded.candlestick`, pattern: sql`excluded.pattern`,
       },
     });
     updated += batch.length;
@@ -371,6 +378,60 @@ function atr(candles, n = 14) {
   return mean(trs);
 }
 const perf = (closes, back) => closes.length > back ? ((closes[closes.length - 1] / closes[closes.length - 1 - back]) - 1) * 100 : null;
+
+// ── candlestick detection (last candle; engulfing needs the prior candle) ──
+function detectCandle(cur, prev) {
+  if (!cur || cur.open == null || cur.close == null || cur.high == null || cur.low == null) return null;
+  const range = cur.high - cur.low; if (!(range > 0)) return null;
+  if (prev && prev.open != null) {
+    const pBull = prev.close > prev.open, pBear = prev.close < prev.open;
+    const cBull = cur.close > cur.open, cBear = cur.close < cur.open;
+    if (cBull && pBear && cur.open <= prev.close && cur.close >= prev.open) return 'Engulfing';
+    if (cBear && pBull && cur.open >= prev.close && cur.close <= prev.open) return 'Engulfing';
+  }
+  const body = Math.abs(cur.close - cur.open);
+  const upper = cur.high - Math.max(cur.open, cur.close);
+  const lower = Math.min(cur.open, cur.close) - cur.low;
+  if (body <= range * 0.1) return 'Doji';
+  if (body >= range * 0.9) return 'Marubozu';
+  if (lower >= body * 2 && upper <= body * 0.6) return 'Hammer';
+  if (upper >= body * 2 && lower <= body * 0.6) return 'Shooting Star';
+  return null;
+}
+
+// least-squares fit over x = 0..n-1 → { slope, r2 }
+function linReg(ys) {
+  const n = ys.length; if (n < 2) return { slope: 0, r2: 0 };
+  const xm = (n - 1) / 2, ym = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = i - xm, dy = ys[i] - ym; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+  return { slope: sxx ? sxy / sxx : 0, r2: (sxx && syy) ? (sxy * sxy) / (sxx * syy) : 0 };
+}
+
+// ── chart-pattern heuristic over the last ~40 sessions (conservative; tags only on clear signals) ──
+function detectPattern(arr) {
+  const w = arr.slice(-40); if (w.length < 20) return null;
+  const closes = w.map((a) => a.close), highs = w.map((a) => a.high), lows = w.map((a) => a.low);
+  const last = closes[closes.length - 1]; if (!(last > 0)) return null;
+  const { slope, r2 } = linReg(closes);
+  const drift = (slope * closes.length) / last;   // total trend move over window, as % of price
+  if (r2 >= 0.6) {                                 // clean linear channel
+    if (drift > 0.05) return 'Channel Up';
+    if (drift < -0.05) return 'Channel Down';
+  }
+  // Double top/bottom: matched extremes in each half, reversal off them
+  const half = Math.floor(w.length / 2);
+  const max1 = Math.max(...highs.slice(0, half)), max2 = Math.max(...highs.slice(half));
+  const min1 = Math.min(...lows.slice(0, half)), min2 = Math.min(...lows.slice(half));
+  const mid = lows.slice(Math.floor(w.length * 0.3), Math.floor(w.length * 0.7));
+  const trough = mid.length ? Math.min(...mid) : last;
+  if (Math.abs(max1 - max2) / Math.max(max1, max2) < 0.03 && trough < Math.max(max1, max2) * 0.93 && last < Math.max(max1, max2) * 0.98) return 'Double Top';
+  if (Math.abs(min1 - min2) / Math.max(min1, min2) < 0.03 && last > Math.min(min1, min2) * 1.02) return 'Double Bottom';
+  // Converging range → Triangle (lower highs + higher lows)
+  const hi = linReg(highs), lo = linReg(lows);
+  if (hi.slope < 0 && lo.slope > 0) return 'Triangle';
+  return null;
+}
 
 const WINDOW = 90;
 const FINNHUB_KEY = process.env.FINNHUB_KEY;
@@ -600,7 +661,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     const ev = (mcap != null) ? mcap + (fd?.totalDebt || 0) - (fd?.cash || 0) : null;   // enterprise value
     return {
       ticker: t, company: i?.company || m?.industry || null,
-      exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: mcap,
+      exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: mcap, ipoDate: m?.ipoDate ?? null,
       price: px, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
       changeFromOpen: pg?.changeFromOpen ?? null, gap: pg?.gap ?? null,
       dividendYield: (m?.annualDividend && px > 0) ? (m.annualDividend / px) * 100 : null,
@@ -642,7 +703,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       target: screenerStocks.ticker,
       set: {
         company: sql`coalesce(excluded.company, screener_stocks.company)`,
-        exchange: sql`excluded.exchange`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, country: sql`excluded.country`, assetType: sql`excluded.asset_type`, marketCap: sql`excluded.market_cap`,
+        exchange: sql`excluded.exchange`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, country: sql`excluded.country`, assetType: sql`excluded.asset_type`, marketCap: sql`excluded.market_cap`, ipoDate: sql`excluded.ipo_date`,
         pe: sql`excluded.pe`, ps: sql`excluded.ps`, pb: sql`excluded.pb`, pCash: sql`excluded.p_cash`, evSales: sql`excluded.ev_sales`, evEbitda: sql`excluded.ev_ebitda`,
         grossMargin: sql`excluded.gross_margin`, operMargin: sql`excluded.oper_margin`, netMargin: sql`excluded.net_margin`, roe: sql`excluded.roe`, roa: sql`excluded.roa`,
         currentRatio: sql`excluded.current_ratio`, quickRatio: sql`excluded.quick_ratio`, debtEquity: sql`excluded.debt_equity`, ltDebtEquity: sql`excluded.lt_debt_equity`,

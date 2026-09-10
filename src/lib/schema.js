@@ -450,6 +450,8 @@ export const screenerStocks = pgTable('screener_stocks', {
   high20d:       doublePrecision('high20d'),
   high50d:       doublePrecision('high50d'),
   allTimeHigh:   doublePrecision('all_time_high'),
+  candlestick:   text('candlestick'),                     // latest detected candle pattern
+  pattern:       text('pattern'),                         // latest detected chart pattern (heuristic)
   // ── proprietary Catalyst Pit signals (AVAILABLE NOW) ──
   insiderNet90d:    doublePrecision('insider_net_90d'),   // sum(buys)-sum(sells) $ over 90d
   insiderBuyers90d: integer('insider_buyers_90d'),        // distinct execs buying, 90d
@@ -485,6 +487,7 @@ export const screenerMeta = pgTable('screener_meta', {
   country:   text('country'),
   sharesOut: doublePrecision('shares_out'),
   annualDividend: doublePrecision('annual_dividend'),
+  ipoDate:   date('ipo_date', { mode: 'string' }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
