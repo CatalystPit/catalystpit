@@ -8,7 +8,7 @@ import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib
 // bulk market-data feed is connected. Catalyst Pit design system; no third-party embeds.
 
 const REAL_CATS = ['Descriptive', 'Fundamental', 'Technical', 'Performance', 'Ownership', 'News', 'ETF'];
-const CATS = ['All', ...REAL_CATS];
+const CATS = [...REAL_CATS, 'All'];   // Descriptive first (default), All last
 
 const num0 = (n) => (n == null || isNaN(n)) ? '—' : Math.round(n).toLocaleString();
 const num2 = (n) => (n == null || isNaN(n)) ? '—' : Number(n).toFixed(2);
@@ -160,7 +160,7 @@ export default function ScreenerClient() {
   const [ticker, setTicker] = useState('');
   const [page, setPage] = useState(0);
   const [view, setView] = useState('Overview');
-  const [activeCat, setActiveCat] = useState('All');
+  const [activeCat, setActiveCat] = useState('Descriptive');
   const [showFilters, setShowFilters] = useState(true);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
