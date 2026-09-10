@@ -1116,8 +1116,14 @@ function Workspace() {
   const dirty = !!baselineRef.current && sigOf(layout, visible) !== baselineRef.current;
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <SymbolSearchBox />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 19, fontWeight: 700, color: C.ink, lineHeight: 1 }}>Terminal</span>
+            <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', background: '#B8860B', borderRadius: 3, padding: '2px 5px', letterSpacing: 0.5 }}>PRO</span>
+          </span>
+          <SymbolSearchBox />
+        </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative' }}>
           <button onClick={() => setStationOpen((o) => !o)}
@@ -1214,13 +1220,7 @@ export default function TerminalClient() {
       <TopNav active="Terminal" />
       <BottomTape />
       {/* full-bleed (no centered max-width) so the free-floating panels can be dragged to the screen edges */}
-      <div style={{ margin: '18px 0', padding: '0 12px 48px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-          <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 28, fontWeight: 600, color: C.ink, margin: 0 }}>Terminal</h1>
-          <span style={{ fontSize: 10, fontWeight: 800, color: '#fff', background: '#B8860B', borderRadius: 3, padding: '2px 6px', letterSpacing: 0.5 }}>PRO</span>
-          <span style={{ fontSize: 12, color: C.dim }}>drag panels by their header · resize from the corner</span>
-        </div>
-
+      <div style={{ margin: '8px 0', padding: '0 12px 40px' }}>
         {tier === null ? (
           <div style={{ color: C.dim, fontSize: 13, padding: 40, textAlign: 'center' }}>Loading…</div>
         ) : !isPro ? (
