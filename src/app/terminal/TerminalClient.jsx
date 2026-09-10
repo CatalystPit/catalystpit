@@ -81,6 +81,7 @@ const STATION_PRESETS = [
   { key: 'investor', name: 'Investor',   visible: ['chart', 'watchlist', 'convergence', 'newswire'] },
   { key: 'minimal',  name: 'Minimal',    visible: ['chart', 'watchlist', 'newswire'] },
   { key: 'newsdesk', name: 'News Desk',  visible: ['newswire', 'tape', 'pitscan', 'halts', 'watchlist', 'chart'] },
+  { key: 'custom',   name: 'Custom',     visible: [] },   // blank canvas — add panels from scratch
 ];
 const presetVisible = (p) => p.visible.filter((id) => PANEL_BY_ID[id]);
 
@@ -1036,7 +1037,8 @@ function Workspace() {
   const sigOf = (lay, vis) => JSON.stringify({ layout: lay, visible: vis });
   const applyLayoutVisible = (lay, vis) => {
     const nl = normalizeLayout(lay);
-    const nv = (Array.isArray(vis) && vis.length ? vis : DEFAULT_VISIBLE).filter((id) => PANEL_BY_ID[id]);
+    // Respect an explicitly empty set (blank "Custom" station); only fall back when vis isn't an array.
+    const nv = (Array.isArray(vis) ? vis : DEFAULT_VISIBLE).filter((id) => PANEL_BY_ID[id]);
     setLayout(nl); persist(nl); setVisible(nv); persistVisible(nv);
     return { nl, nv };
   };
