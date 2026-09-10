@@ -12,6 +12,13 @@ export const WATCHLIST_LIMIT = { free: 15, pro: 250, elite: 1000 };
 // default list; Pro/Elite can create additional named lists (rename/organize).
 export const WATCHLIST_LISTS_LIMIT = { free: 1, pro: 10, elite: 25 };
 
+// Market-data entitlement — single source of truth so every route/component applies the same rule:
+// Free = delayed, Pro/Elite = real-time (when the provider's plan supports it). The delay duration is
+// CONFIGURABLE (not hard-coded to 15 min) via MARKET_DATA_DELAY_MINUTES.
+export const MARKET_DATA_DELAY_MIN = parseInt(process.env.MARKET_DATA_DELAY_MINUTES || '15', 10);
+export function marketDataAccess(tier) { return tier === 'pro' || tier === 'elite' ? 'realtime' : 'delayed'; }
+export function isRealtime(tier) { return marketDataAccess(tier) === 'realtime'; }
+
 // Single source of truth for Free/Pro tier resolution, server-side. Reads the
 // Clerk session via the same auth() import the watchlist route uses, and returns
 // 'free' | 'pro' | 'elite'. Signed-out callers (userId null) resolve cleanly to

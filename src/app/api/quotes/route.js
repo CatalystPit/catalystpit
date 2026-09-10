@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { resolveUserTier } from '../../../lib/entitlements';
+import { resolveUserTier, isRealtime } from '../../../lib/entitlements';
 import { getQuotes } from '../../../lib/market-data';
 
 export const runtime = 'nodejs';
@@ -16,7 +16,7 @@ export async function GET(request) {
   if (!syms.length) return Response.json({}, { headers: { 'Cache-Control': 'private, no-store' } });
 
   let realtime = false;
-  try { const { userId } = await auth(); if (userId) { const tier = await resolveUserTier(); realtime = tier === 'pro' || tier === 'elite'; } } catch { /* signed-out → delayed */ }
+  try { const { userId } = await auth(); if (userId) realtime = isRealtime(await resolveUserTier()); } catch { /* signed-out → delayed */ }
 
   try {
     const quotes = await getQuotes(syms, { realtime });
