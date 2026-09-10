@@ -68,6 +68,41 @@ function defaultLayout(width) {
   };
 }
 
+// Category color per panel id (used when a station preset auto-arranges panels).
+const COLOR_BY_ID = { tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', alerts: 'blue', watchlist: 'blue', chat: 'green' };
+
+// Built-in Station presets — starting layouts only (code config, not stored per user). Panels that
+// don't exist yet are simply skipped; add more panel ids as future panels land. After loading a
+// preset the user can rearrange and Save As their own custom station.
+const STATION_PRESETS = [
+  { key: 'day',      name: 'Day Trader', visible: ['chart', 'pitscan', 'scanner', 'watchlist', 'newswire', 'halts'] },
+  { key: 'smallcap', name: 'Small Cap',  visible: ['pitscan', 'newswire', 'halts', 'watchlist', 'scanner', 'chat', 'chart'] },
+  { key: 'macro',    name: 'Macro',      visible: ['chart', 'newswire', 'tape', 'watchlist'] },
+  { key: 'investor', name: 'Investor',   visible: ['chart', 'watchlist', 'convergence', 'newswire'] },
+  { key: 'minimal',  name: 'Minimal',    visible: ['chart', 'watchlist', 'newswire'] },
+  { key: 'newsdesk', name: 'News Desk',  visible: ['newswire', 'tape', 'pitscan', 'halts', 'watchlist', 'chart'] },
+];
+const presetVisible = (p) => p.visible.filter((id) => PANEL_BY_ID[id]);
+
+// Auto-arrange a set of panels into a clean, non-overlapping layout (chart center-large, the rest
+// stacked in side columns). Reuses the {x,y,w,h,color} format so it plugs into the existing engine.
+function arrangeStation(ids, width) {
+  const w = width || 1200, gap = 12, unit = (w - gap * 2) / 12;
+  const col = (u) => Math.round(unit * u);
+  const out = {}, color = (id) => COLOR_BY_ID[id] || 'blue';
+  const put = (id, x, y, ww, h) => { out[id] = { x, y, w: ww, h, color: color(id) }; };
+  if (ids.includes('chart')) {
+    const leftX = 0, leftW = col(3), centerX = col(3) + gap, centerW = col(6), rightX = col(9) + gap * 2, rightW = col(3) - 2, H = 300;
+    put('chart', centerX, 0, centerW, 560);
+    let leftY = 0, rightY = 0, side = 0;
+    for (const id of ids) { if (id === 'chart') continue; if (side % 2 === 0) { put(id, leftX, leftY, leftW, H); leftY += H + gap; } else { put(id, rightX, rightY, rightW, H); rightY += H + gap; } side++; }
+  } else {
+    const cW = col(4), xs = [0, col(4) + gap, col(8) + gap * 2], ys = [0, 0, 0], H = 320;
+    ids.forEach((id, i) => { const c = i % 3; put(id, xs[c], ys[c], cW - (c === 2 ? 2 : 0), H); ys[c] += H + gap; });
+  }
+  return out;
+}
+
 const fmtHalt = (t) => (t ? `${String(t).slice(0, 5)} ET` : '—');
 
 // ── Panel bodies ──
@@ -928,6 +963,11 @@ function Workspace() {
   const [visible, setVisibleState] = useState(DEFAULT_VISIBLE);
   const visibleRef = useRef(DEFAULT_VISIBLE);
   const [addOpen, setAddOpen] = useState(false);
+  // ── Stations ──
+  const [stations, setStations] = useState([]);       // account-backed custom stations
+  const [station, setStation] = useState({ id: null, name: 'My Layout', sourceType: 'local', presetKey: null });
+  const [stationOpen, setStationOpen] = useState(false);
+  const baselineRef = useRef('');                      // JSON snapshot of the loaded station (for dirty)
 
   const setLayout = (l) => { layoutRef.current = l; setLayoutState(l); };
   const setVisible = (v) => { visibleRef.current = v; setVisibleState(v); };
@@ -950,6 +990,17 @@ function Workspace() {
     // Migrate the old split panels → the unified News Wire (dedupe if both were present).
     if (Array.isArray(vis)) vis = [...new Set(vis.map((id) => (id === 'news' || id === 'eightk') ? 'newswire' : id))];
     setVisible(Array.isArray(vis) && vis.length ? vis.filter((id) => PANEL_BY_ID[id]) : DEFAULT_VISIBLE);
+
+    // Stations: load account stations; auto-load the user's default. If none, keep the CURRENT local
+    // layout as an unsaved "My Existing Layout" so no existing workspace is ever lost.
+    (async () => {
+      const list = await loadStations();
+      const def = list.find((s) => s.isDefault);
+      if (def) { applyStation(def); return; }
+      const meta = { id: null, name: 'My Existing Layout', sourceType: 'local', presetKey: null };
+      setStation(meta);
+      baselineRef.current = sigOf(layoutRef.current, visibleRef.current);
+    })();
     return () => mq.removeEventListener('change', apply);
   }, []);
 
@@ -978,6 +1029,47 @@ function Workspace() {
   const addPanel = (id) => { if (visibleRef.current.includes(id)) return; const v = [...visibleRef.current, id]; setVisible(v); persistVisible(v); setAddOpen(false); };
   const removePanel = (id) => { const v = visibleRef.current.filter((x) => x !== id); setVisible(v); persistVisible(v); };
   const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); setVisible(DEFAULT_VISIBLE); persistVisible(DEFAULT_VISIBLE); };
+
+  // ── STATIONS ── normalizeLayout ensures every panel id has valid coords (old stations still load
+  // after new panel types are added — future-compat). sigOf = dirty-tracking signature.
+  const normalizeLayout = (lay) => { const dl = defaultLayout(ref.current?.clientWidth); const out = {}; for (const d of PANELS) out[d.id] = { ...dl[d.id], ...((lay && lay[d.id]) || {}) }; return out; };
+  const sigOf = (lay, vis) => JSON.stringify({ layout: lay, visible: vis });
+  const applyLayoutVisible = (lay, vis) => {
+    const nl = normalizeLayout(lay);
+    const nv = (Array.isArray(vis) && vis.length ? vis : DEFAULT_VISIBLE).filter((id) => PANEL_BY_ID[id]);
+    setLayout(nl); persist(nl); setVisible(nv); persistVisible(nv);
+    return { nl, nv };
+  };
+  const rememberStation = (meta) => { try { localStorage.setItem('cp_terminal_station', JSON.stringify(meta)); } catch { /* ignore */ } };
+  const applyStation = (st) => {
+    const { nl, nv } = applyLayoutVisible(st.layout, st.visible);
+    const meta = { id: st.id ?? null, name: st.name, sourceType: st.sourceType || 'custom', presetKey: st.presetKey || null };
+    setStation(meta); rememberStation(meta); baselineRef.current = sigOf(nl, nv); setStationOpen(false);
+  };
+  const applyPreset = (p) => { const vis = presetVisible(p); applyStation({ id: null, name: p.name, sourceType: 'preset', presetKey: p.key, layout: arrangeStation(vis, ref.current?.clientWidth), visible: vis }); };
+  const loadStations = async () => { try { const r = await fetch('/api/stations', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; setStations(j?.stations || []); return j?.stations || []; } catch { return []; } };
+  const saveAsStation = async () => {
+    const name = window.prompt('Name this station:', station.sourceType === 'preset' ? `${station.name} (mine)` : 'My Station'); if (!name) return;
+    try {
+      const r = await fetch('/api/stations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, layout: layoutRef.current, visible: visibleRef.current, sourceType: 'custom' }) });
+      const j = await r.json(); setStations(j?.stations || []);
+      const meta = { id: j?.id ?? null, name, sourceType: 'custom', presetKey: null }; setStation(meta); rememberStation(meta); baselineRef.current = sigOf(layoutRef.current, visibleRef.current);
+    } catch { /* ignore */ }
+  };
+  const saveStation = async () => {
+    if (!station.id) { await saveAsStation(); return; }
+    try { const r = await fetch('/api/stations', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: station.id, layout: layoutRef.current, visible: visibleRef.current }) }); const j = await r.json(); setStations(j?.stations || []); baselineRef.current = sigOf(layoutRef.current, visibleRef.current); } catch { /* ignore */ }
+  };
+  const renameStation = async () => { if (!station.id) return; const name = window.prompt('Rename station:', station.name); if (!name) return; try { const r = await fetch('/api/stations', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: station.id, name }) }); const j = await r.json(); setStations(j?.stations || []); setStation((s) => ({ ...s, name })); } catch { /* ignore */ } };
+  const duplicateStation = async () => { try { const r = await fetch('/api/stations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `${station.name} copy`, layout: layoutRef.current, visible: visibleRef.current, sourceType: 'custom' }) }); const j = await r.json(); setStations(j?.stations || []); } catch { /* ignore */ } };
+  const stationDefault = async (id) => { try { const r = await fetch('/api/stations', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, isDefault: true }) }); const j = await r.json(); setStations(j?.stations || []); } catch { /* ignore */ } };
+  const stationDelete = async (id, e) => { if (e) e.stopPropagation(); if (!window.confirm('Delete this station?')) return; try { const r = await fetch(`/api/stations?id=${id}`, { method: 'DELETE' }); const j = await r.json(); setStations(j?.stations || []); if (station.id === id) applyPreset(STATION_PRESETS[0]); } catch { /* ignore */ } };
+  const revertStation = () => { const b = baselineRef.current; if (!b) return; try { const { layout: lay, visible: vis } = JSON.parse(b); applyLayoutVisible(lay, vis); } catch { /* ignore */ } };
+  const resetStation = () => {
+    if (station.sourceType === 'preset' && station.presetKey) { const p = STATION_PRESETS.find((x) => x.key === station.presetKey); if (p) applyPreset(p); }
+    else if (station.id) { const st = stations.find((s) => s.id === station.id); if (st) applyStation(st); }
+    else { reset(); baselineRef.current = sigOf(layoutRef.current, visibleRef.current); }
+  };
 
   // Centralized symbol selection: clicking a ticker ANYWHERE in the Terminal sets the active symbol
   // (drives the chart + future symbol-aware panels) instead of navigating away. Color link-groups are
@@ -1021,11 +1113,42 @@ function Workspace() {
 
   const containerH = Math.max(...visible.map((id) => (layout[id]?.y || 0) + (layout[id]?.h || 0)), 400) + 8;
   const hidden = PANELS.filter((d) => !visible.includes(d.id));
+  const dirty = !!baselineRef.current && sigOf(layout, visible) !== baselineRef.current;
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <SymbolSearchBox />
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => setStationOpen((o) => !o)}
+            style={{ background: C.white, border: `1px solid ${dirty ? '#B45309' : C.border}`, color: dirty ? '#B45309' : C.ink, borderRadius: 6, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", maxWidth: 230, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {station.name}{dirty ? ' • Unsaved' : ''} ▾
+          </button>
+          {stationOpen && (
+            <>
+              <div onClick={() => setStationOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 20 }} />
+              <div style={{ position: 'absolute', left: 0, top: '112%', zIndex: 21, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', minWidth: 235, maxHeight: 380, overflowY: 'auto', padding: '4px 0' }}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: C.dim, letterSpacing: 0.6, padding: '6px 12px 2px' }}>PRESETS</div>
+                {STATION_PRESETS.map((p) => <button key={p.key} onClick={() => applyPreset(p)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>{p.name}</button>)}
+                <div style={{ fontSize: 9, fontWeight: 700, color: C.dim, letterSpacing: 0.6, padding: '8px 12px 2px' }}>MY STATIONS</div>
+                {stations.length === 0 ? <div style={{ padding: '4px 12px 6px', fontSize: 11, color: C.dim }}>None saved yet</div>
+                  : stations.map((s) => (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
+                      <button onClick={() => applyStation(s)} style={{ flex: 1, minWidth: 0, textAlign: 'left', padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, color: C.ink, fontFamily: "'DM Sans',sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.isDefault ? '★ ' : ''}{s.name}</button>
+                      <button onClick={(e) => { e.stopPropagation(); stationDefault(s.id); }} title="Set as default" style={{ background: 'none', border: 'none', cursor: 'pointer', color: s.isDefault ? '#E08A1E' : C.dim, fontSize: 12, padding: '0 5px' }}>★</button>
+                      <button onClick={(e) => stationDelete(s.id, e)} title="Delete" style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.dim, fontSize: 14, padding: '0 8px 0 3px' }}>×</button>
+                    </div>
+                  ))}
+                <div style={{ borderTop: `1px solid ${C.surface}`, margin: '4px 0' }} />
+                <button onClick={saveAsStation} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, color: C.green, fontFamily: "'DM Sans',sans-serif" }}>+ Save current as new station</button>
+                {station.id ? <button onClick={renameStation} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>Rename current</button> : null}
+                <button onClick={duplicateStation} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12.5, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>Duplicate current</button>
+              </div>
+            </>
+          )}
+        </div>
+        <button onClick={saveStation} disabled={!!station.id && !dirty} style={{ background: (dirty || !station.id) ? C.green : C.surface, border: 'none', color: (dirty || !station.id) ? '#fff' : C.dim, borderRadius: 6, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: (dirty || !station.id) ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>Save</button>
+        {dirty && station.id ? <button onClick={revertStation} title="Discard changes" style={{ background: C.white, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Revert</button> : null}
         <div style={{ position: 'relative' }}>
           <button onClick={() => setAddOpen((o) => !o)}
             style={{ background: C.green, border: 'none', color: '#fff', borderRadius: 6, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
@@ -1047,7 +1170,7 @@ function Workspace() {
             </>
           )}
         </div>
-        <button onClick={reset} style={{ background: C.white, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Reset layout</button>
+        <button onClick={resetStation} title="Restore this station's saved/preset layout" style={{ background: C.white, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Reset</button>
         </div>
       </div>
       <div ref={ref} style={{ position: 'relative', width: '100%', height: containerH }}>

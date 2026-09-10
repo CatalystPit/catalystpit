@@ -542,6 +542,25 @@ export const alerts = pgTable('alerts', {
   idxActiveAlerts: index('idx_alerts_active').on(t.active),
 }));
 
+// Terminal Stations — account-backed saved workspaces (so they follow the user across devices).
+// Reuses the existing {x,y,w,h,color} layout format; layout/visible are JSON blobs. Built-in presets
+// live in code (not stored per user) — only custom stations are persisted here.
+export const terminalStations = pgTable('terminal_stations', {
+  id:         serial('id').primaryKey(),
+  userId:     text('user_id').notNull(),
+  name:       text('name').notNull(),
+  isDefault:  boolean('is_default').notNull().default(false),
+  sourceType: text('source_type').default('custom'),   // 'custom' | 'preset'
+  presetKey:  text('preset_key'),
+  layout:     text('layout'),                           // JSON { id: {x,y,w,h,color} }
+  visible:    text('visible'),                          // JSON [panelId]
+  settings:   text('settings'),                         // JSON (reserved for panel-specific prefs)
+  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxStationUser: index('idx_stations_user').on(t.userId),
+}));
+
 // Saved screeners (logged-in users). filters/columns are JSON blobs (the filter set + view + columns).
 export const screenerSaved = pgTable('screener_saved', {
   id:        serial('id').primaryKey(),
