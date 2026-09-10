@@ -25,6 +25,8 @@ const PANELS = [
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
   { id: 'feed',      title: 'Feed',         tag: 'SOCIAL' },
+  { id: 'heatmap',   title: 'Heat Map',     tag: 'MARKET' },
+  { id: 'earnings',  title: 'Earnings',     tag: 'CALENDAR' },
 ];
 const PANEL_BY_ID = Object.fromEntries(PANELS.map((p) => [p.id, p]));
 const DEFAULT_VISIBLE = ['tape', 'halts', 'chart', 'newswire', 'watchlist', 'chat'];
@@ -64,6 +66,8 @@ function defaultLayout(width) {
     convergence: { x: centerX + 48, y: 432, w: centerW, h: 260, color: 'green' },
     alerts:    { x: centerX + 60, y: 442, w: centerW, h: 260, color: 'blue' },
     feed:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
+    heatmap:   { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
+    earnings:  { x: centerX + 72, y: 452, w: centerW, h: 260, color: 'orange' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
@@ -736,6 +740,92 @@ function FeedBody({ onPick }) {
   );
 }
 
+// ── HEAT MAP — sector treemap of the largest names, colored by change %, sized by market cap. From
+// our own screener universe. Click a tile to set the Terminal symbol. ──
+function heatColor(pct) {
+  if (pct == null) return '#3A443E';
+  const p = Math.max(-3, Math.min(3, pct));
+  if (p >= 0) { const t = p / 3; return `rgb(${Math.round(40 - t * 10)},${Math.round(120 + t * 70)},${Math.round(70 + t * 20)})`; }
+  const t = -p / 3; return `rgb(${Math.round(150 + t * 60)},${Math.round(60 - t * 20)},${Math.round(60 - t * 20)})`;
+}
+function HeatMapBody({ onPick }) {
+  const [rows, setRows] = useState(null);
+  const [ref, w] = useContainerSize();
+  useEffect(() => {
+    let alive = true;
+    const load = async () => { try { const r = await fetch('/api/heatmap?limit=180', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive) setRows(j?.rows || []); } catch { if (alive) setRows([]); } };
+    load(); const id = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  if (rows === null) return <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading heat map…</div>;
+  if (rows.length === 0) return <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No market data yet.</div>;
+  const bySector = {};
+  for (const r of rows) { const s = r.sector || 'Other'; (bySector[s] ||= []).push(r); }
+  const sectors = Object.entries(bySector).sort((a, b) => b[1].length - a[1].length);
+  const maxCap = Math.max(...rows.map((r) => r.marketCap || 0), 1);
+  const tileFor = (r) => { const s = Math.sqrt((r.marketCap || 0) / maxCap); return Math.round(46 + s * (w >= 480 ? 74 : 40)); };
+  return (
+    <div ref={ref} style={{ overflow: 'auto', flex: 1, padding: 6 }}>
+      {sectors.map(([sec, items]) => (
+        <div key={sec} style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.dim, letterSpacing: 0.5, padding: '2px 2px 4px', textTransform: 'uppercase' }}>{sec}</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+            {items.map((r) => { const sz = tileFor(r); return (
+              <button key={r.ticker} onClick={() => onPick && onPick(r.ticker)} title={`${r.ticker} ${r.changePct != null ? (r.changePct > 0 ? '+' : '') + r.changePct.toFixed(2) + '%' : ''}`}
+                style={{ width: sz, height: Math.max(38, sz * 0.66), background: heatColor(r.changePct), border: 'none', borderRadius: 3, cursor: 'pointer', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 2, overflow: 'hidden', lineHeight: 1.1 }}>
+                <span className="cp-tkr" style={{ fontSize: sz >= 70 ? 12 : 10, fontWeight: 700 }}>{r.ticker}</span>
+                {r.changePct != null && <span className="cp-num" style={{ fontSize: sz >= 70 ? 10 : 8.5, opacity: 0.95 }}>{r.changePct > 0 ? '+' : ''}{r.changePct.toFixed(1)}%</span>}
+              </button>
+            ); })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── EARNINGS — forward earnings calendar (grouped by date). Needs a calendar feed (Twelve Data);
+// shows a "connect data" state until then. Click a ticker to set the Terminal symbol. ──
+function EarningsBody({ onPick }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => { try { const r = await fetch('/api/earnings-calendar', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive) setData(j || { configured: false, rows: [] }); } catch { if (alive) setData({ configured: false, rows: [] }); } })();
+    return () => { alive = false; };
+  }, []);
+  if (data === null) return <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading…</div>;
+  if (!data.configured) return (
+    <div style={{ padding: '22px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.6 }}>
+      <div style={{ fontWeight: 700, color: C.ink, marginBottom: 4 }}>Earnings calendar</div>
+      Upcoming earnings dates, EPS estimates &amp; before/after-market timing. <b>Awaiting a calendar data feed</b> to go live.
+    </div>
+  );
+  const rows = data.rows || [];
+  if (!rows.length) return <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No upcoming earnings.</div>;
+  const byDate = {};
+  for (const r of rows) { (byDate[r.date] ||= []).push(r); }
+  const dates = Object.keys(byDate).sort();
+  const when = (t) => t === 'bmo' ? 'Pre' : t === 'amc' ? 'After' : '';
+  return (
+    <div style={{ overflow: 'auto', flex: 1 }}>
+      {dates.map((d) => (
+        <div key={d}>
+          <div style={{ fontSize: 9.5, fontWeight: 700, color: C.dim, letterSpacing: 0.4, padding: '6px 11px 3px', background: C.surface, position: 'sticky', top: 0 }}>{d}</div>
+          {byDate[d].map((r, i) => (
+            <div key={r.ticker + i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 11px', borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+              <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <TickerLogo symbol={r.ticker} size={15} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700, fontSize: 12 }}>{r.ticker}</span>
+              </span>
+              {when(r.time) && <span style={{ fontSize: 9, fontWeight: 700, color: C.muted, background: C.surface, borderRadius: 3, padding: '1px 5px' }}>{when(r.time)}</span>}
+              {r.epsEst != null && <span className="cp-num" style={{ marginLeft: 'auto', fontSize: 11, color: C.dim }}>Est {r.epsEst}</span>}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── PIT SCAN — proprietary engine panel (separate product from the Custom Scanner). Renders ONLY the
 // approved server output; the formula lives server-side in lib/pitscan.js and is never sent here. ──
 const SIG = {
@@ -1202,6 +1292,8 @@ function Workspace() {
     : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
     : def.id === 'chat' ? <PitChat bare onSymbol={selectSymbol} />
     : def.id === 'feed' ? <FeedBody onPick={(s) => linkSymbol('feed', s)} />
+    : def.id === 'heatmap' ? <HeatMapBody onPick={(s) => linkSymbol('heatmap', s)} />
+    : def.id === 'earnings' ? <EarningsBody onPick={(s) => linkSymbol('earnings', s)} />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
