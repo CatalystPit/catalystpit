@@ -106,6 +106,31 @@ export const congressTickerPrices = pgTable('congress_ticker_prices', {
   updatedAt:    timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Congress filing watermark (official-source ingest, Phase 4) ───────────────
+// One row per PTR document seen from the OFFICIAL sources (House Clerk PDFs +
+// Senate eFD). Makes backfill + nightly ingest idempotent and bounded: a doc is
+// fetched/parsed once, then skipped. `status` distinguishes parsed vs scanned
+// (House image PDFs / Senate paper — need OCR, deferred) vs error/empty.
+export const congressFilings = pgTable('congress_filings', {
+  id:         serial('id').primaryKey(),
+  chamber:    text('chamber').notNull(),                    // 'house' | 'senate'
+  docId:      text('doc_id').notNull(),                     // House DocID | Senate report UUID
+  year:       integer('year'),                             // filing year (House index year)
+  filerName:  text('filer_name'),
+  filingType: text('filing_type'),                         // House FilingType ('P'), 'ptr', …
+  filingDate: date('filing_date', { mode: 'string' }),
+  format:     text('format'),                              // 'efiled' | 'scanned' | 'html' | 'paper'
+  status:     text('status').notNull().default('pending'), // pending | parsed | scanned | error | empty
+  txnCount:   integer('txn_count').default(0),
+  url:        text('url'),
+  error:      text('error'),
+  firstSeen:  timestamp('first_seen', { withTimezone: true }).notNull().defaultNow(),
+  parsedAt:   timestamp('parsed_at', { withTimezone: true }),
+}, (t) => ({
+  uqDoc:      uniqueIndex('uq_congress_filing').on(t.chamber, t.docId),
+  idxStatus:  index('idx_congress_filing_status').on(t.status),
+}));
+
 // Permanent cache of daily EOD candles for the ticker price chart (1M+ timeframes).
 // Stores SPLIT/DIVIDEND-ADJUSTED OHLCV (mapped from Tiingo adj* fields on insert) so
 // historical charts have no split-induced discontinuities. Past dates are immutable —

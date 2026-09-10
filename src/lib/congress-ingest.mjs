@@ -39,9 +39,7 @@ export function filingLagDays(transactionDate, disclosureDate) {
   return Math.max(0, Math.round((d - t) / 86_400_000));
 }
 
-// Stable synthetic dedup key — the identity that uq_congress_tx enforces.
-// Identical inputs always hash identically, so re-ingesting the same disclosure
-// produces the same tx_hash and is skipped by onConflictDoNothing.
+// Legacy dedup key (FMP-era). Kept only for the one-time migration's reference.
 export function txHash({ firstName, lastName, transactionDate, ticker, type, amountRange, disclosureDate }) {
   const key = [
     (firstName || '').trim().toLowerCase(),
@@ -51,6 +49,24 @@ export function txHash({ firstName, lastName, transactionDate, ticker, type, amo
     (type   || '').trim().toLowerCase(),
     (amountRange || '').trim(),
     disclosureDate || '',
+  ].join('|');
+  return createHash('sha256').update(key).digest('hex');
+}
+
+// SOURCE-AGNOSTIC canonical dedup key — the identity uq_congress_tx enforces.
+// Built from DERIVED/normalized fields (matched member, normalized action, numeric
+// amount bounds) NOT raw source strings, so the SAME real trade reported by FMP,
+// the House Clerk, or the Senate eFD hashes IDENTICALLY and collapses to one row.
+// Deliberately excludes disclosureDate (original vs amendment differ) and raw
+// asset/type text (formatting differs per source).
+export function canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin, amountMax }) {
+  const key = [
+    (memberSlug || '').trim().toLowerCase(),
+    transactionDate || '',
+    (ticker || '').trim().toUpperCase(),
+    (action || '').trim().toUpperCase(),
+    amountMin == null ? '' : String(amountMin),
+    amountMax == null ? '' : String(amountMax),
   ].join('|');
   return createHash('sha256').update(key).digest('hex');
 }
@@ -73,17 +89,17 @@ export function buildRow(rec, chamber, index) {
   const { entry } = matchMember(index, {
     firstName: rec.firstName, lastName: rec.lastName, chamber, district: rec.district,
   });
+  // matched -> bioguide (drives headshot + detail route); else name-slug
+  const memberSlug = entry?.bioguide || nameSlug(rec.firstName, rec.lastName);
+  const action = mapAction(rec.type);
   return {
-    txHash: txHash({
-      firstName: rec.firstName, lastName: rec.lastName, transactionDate,
-      ticker, type: rec.type, amountRange: rec.amount, disclosureDate,
-    }),
+    // Canonical, source-agnostic identity: same real trade from FMP / House / Senate collapses to one row.
+    txHash: canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin: min, amountMax: max }),
     chamber,
     firstName: rec.firstName || null,
     lastName:  rec.lastName  || null,
     representative: rec.office || `${rec.firstName || ''} ${rec.lastName || ''}`.trim() || null,
-    // matched -> bioguide (drives headshot + detail route); else name-slug
-    memberSlug: entry?.bioguide || nameSlug(rec.firstName, rec.lastName),
+    memberSlug,
     party: entry?.party || null,
     state: entry?.state
       || (rec.district && /^[A-Za-z]{2}/.test(rec.district) ? rec.district.slice(0, 2).toUpperCase() : null),
@@ -93,7 +109,7 @@ export function buildRow(rec, chamber, index) {
     assetType: rec.assetType || null,
     owner: rec.owner || null,
     type: rec.type || null,
-    action: mapAction(rec.type),
+    action,
     amountRange: rec.amount || null,
     amountMin: min, amountMax: max, amountMid: mid,
     transactionDate,

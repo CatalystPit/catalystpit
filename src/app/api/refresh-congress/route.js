@@ -1,17 +1,17 @@
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
-import roster from '../../../lib/congress-roster.json';
-import { buildIndex } from '../../../lib/congress-match.mjs';
 import {
-  fetchCongressRows, fetchTiingoDaily, pickPriceOnOrBefore, fetchFinnhubQuote, throttle,
+  fetchTiingoDaily, pickPriceOnOrBefore, fetchFinnhubQuote, throttle,
 } from '../../../lib/congress-ingest.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// NOTE: trade INGEST now runs in /api/cron/congress-sync (official House Clerk +
+// Senate eFD sources; FMP retired). This cron is enrichment-only: it fills
+// price_at_trade (Tiingo) and rolls current_price (Finnhub) for ingested rows.
 const CRON_SECRET    = process.env.CRON_SECRET;
-const FMP_API_KEY    = process.env.FMP_API_KEY;
 const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
 const FINNHUB_KEY    = process.env.FINNHUB_KEY;
 
@@ -22,27 +22,7 @@ const FINNHUB_KEY    = process.env.FINNHUB_KEY;
 const TIINGO_TICKER_CAP   = 30;  // new tickers priced per tick (< Tiingo 50/hr)
 const PRICE_REFRESH_BATCH = 40;  // current-price refreshes per tick (Finnhub ~60/min)
 
-const index = buildIndex(roster);
-
-// ── 1. ingest both chambers, dedup on tx_hash, accumulate forward ──
-async function ingest(results) {
-  try {
-    const rows = await fetchCongressRows(FMP_API_KEY, index);
-    if (!rows.length) { console.log('[congress] no feed rows'); return; }
-    const inserted = await db.insert(congressTrades)
-      .values(rows)
-      .onConflictDoNothing({ target: congressTrades.txHash })
-      .returning({ id: congressTrades.id });
-    console.log(`[congress] feed=${rows.length} new=${inserted.length} dupes=${rows.length - inserted.length}`);
-    results.refreshed.push(`congress:ingest:new=${inserted.length}`);
-  } catch (e) {
-    // log-and-continue: a write failure must not fail the tick
-    console.log(`[congress] ingest failed: ${e.message}`);
-    results.failed.push({ step: 'ingest', error: e.message });
-  }
-}
-
-// ── 2. enrich price_at_trade (Tiingo EOD) for un-priced rows ──
+// ── 1. enrich price_at_trade (Tiingo EOD) for un-priced rows ──
 async function enrichPrices(results) {
   try {
     const tickers = await db.selectDistinct({ ticker: congressTrades.ticker })
@@ -78,7 +58,7 @@ async function enrichPrices(results) {
   }
 }
 
-// ── 3. rolling current_price refresh (Finnhub /quote, most-stale first) ──
+// ── 2. rolling current_price refresh (Finnhub /quote, most-stale first) ──
 async function refreshCurrentPrices(results) {
   try {
     const stale = await db
@@ -120,7 +100,6 @@ export async function GET(request) {
 
   // Sequential so the 60s budget is shared predictably; each step is independent
   // and self-contained (a failure in one logs and the next still runs).
-  await ingest(results);
   await enrichPrices(results);
   await refreshCurrentPrices(results);
 
