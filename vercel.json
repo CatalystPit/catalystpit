@@ -67,6 +67,10 @@
     {
       "path": "/api/cron/screener-technicals",
       "schedule": "50 8 * * *"
+    },
+    {
+      "path": "/api/cron/alerts",
+      "schedule": "*/5 13-21 * * 1-5"
     }
   ],
   "headers": [
@@ -91,6 +95,9 @@
     }
   ],
   "functions": {
+    "src/app/api/cron/alerts/route.js": {
+      "maxDuration": 60
+    },
     "src/app/api/refresh/route.js": {
       "maxDuration": 30
     },

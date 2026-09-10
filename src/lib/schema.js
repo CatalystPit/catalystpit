@@ -524,6 +524,23 @@ export const screenerFundamentals = pgTable('screener_fundamentals', {
   updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Alert rules (per user) — the centralized alert engine. type drives evaluation; threshold is the
+// numeric trigger (null for event alerts like news/halt). One-shot by default (active→false on fire).
+export const alerts = pgTable('alerts', {
+  id:             serial('id').primaryKey(),
+  userId:         text('user_id').notNull(),
+  symbol:         text('symbol'),
+  type:           text('type').notNull(),          // price_above|price_below|change_above|change_below|rvol_above|volume_above|news|halt
+  threshold:      doublePrecision('threshold'),
+  note:           text('note'),
+  active:         boolean('active').notNull().default(true),
+  lastTriggeredAt: timestamp('last_triggered_at', { withTimezone: true }),
+  createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxUserAlerts:  index('idx_alerts_user').on(t.userId),
+  idxActiveAlerts: index('idx_alerts_active').on(t.active),
+}));
+
 // Saved screeners (logged-in users). filters/columns are JSON blobs (the filter set + view + columns).
 export const screenerSaved = pgTable('screener_saved', {
   id:        serial('id').primaryKey(),

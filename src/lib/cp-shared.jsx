@@ -466,8 +466,9 @@ export function NotificationBell() {
 
   const verb = (n) => n.type === 'follow' ? 'followed you'
     : n.type === 'like' ? 'liked your post'
-    : n.type === 'comment' ? 'commented on your post' : 'sent you an update';
-  const href = (n) => (n.type === 'follow' && n.actorHandle) ? `/u/${n.actorHandle}` : '/feed';
+    : n.type === 'comment' ? 'commented on your post'
+    : n.type === 'alert' ? 'triggered an alert' : 'sent you an update';
+  const href = (n) => (n.type === 'follow' && n.actorHandle) ? `/u/${n.actorHandle}` : n.type === 'alert' ? '/terminal' : '/feed';
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>

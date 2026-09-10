@@ -21,6 +21,7 @@ const PANELS = [
   { id: 'movers',    title: 'Movers',       tag: 'DELAYED' },
   { id: 'why',       title: 'Why Moving',   tag: 'CATALYST' },
   { id: 'convergence', title: 'Catalyst Convergence', tag: '◆ SMART MONEY' },
+  { id: 'alerts',    title: 'Alerts',       tag: 'ENGINE' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
@@ -60,6 +61,7 @@ function defaultLayout(width) {
     movers:    { x: centerX + 12, y: 402, w: centerW, h: 260, color: 'blue' },
     why:       { x: centerX + 36, y: 422, w: centerW, h: 220, color: 'green' },
     convergence: { x: centerX + 48, y: 432, w: centerW, h: 260, color: 'green' },
+    alerts:    { x: centerX + 60, y: 442, w: centerW, h: 260, color: 'blue' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
@@ -515,6 +517,64 @@ function ConvergenceBody({ onPick }) {
   );
 }
 
+// ── ALERTS — create/manage alert rules for the active symbol; the engine (server-side) evaluates them
+// on a schedule and fires notifications to the bell. ──
+function AlertsBody({ symbol }) {
+  const [data, setData] = useState(null);   // { alerts, types }
+  const [sym, setSym] = useState(symbol || '');
+  const [type, setType] = useState('price_above');
+  const [thr, setThr] = useState('');
+  useEffect(() => { if (symbol) setSym(symbol); }, [symbol]);
+  const load = useCallback(() => fetch('/api/alerts', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => setData(j || { alerts: [], types: [] })).catch(() => setData({ alerts: [], types: [] })), []);
+  useEffect(() => { load(); }, [load]);
+  const types = data?.types || [];
+  const meta = types.find((t) => t.key === type);
+  const apply = (j) => { if (j?.alerts) setData((d) => ({ ...d, alerts: j.alerts })); };
+  const create = async () => {
+    const s = sym.trim().toUpperCase(); if (!s) return;
+    try { const r = await fetch('/api/alerts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: s, type, threshold: meta?.needsThreshold ? thr : null }) }); apply(await r.json()); setThr(''); } catch { /* ignore */ }
+  };
+  const del = async (id) => { try { apply(await (await fetch(`/api/alerts?id=${id}`, { method: 'DELETE' })).json()); } catch { /* ignore */ } };
+  const toggle = async (a) => { try { apply(await (await fetch('/api/alerts', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: a.id, active: !a.active }) })).json()); } catch { /* ignore */ } };
+  const labelOf = (k) => (types.find((t) => t.key === k)?.label || k);
+  const fld = { height: 28, boxSizing: 'border-box', borderRadius: 5, border: `1px solid ${C.border}`, padding: '0 7px', fontSize: 11.5, fontFamily: "'DM Sans',sans-serif", outline: 'none', color: C.ink, background: C.white };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ padding: 8, borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input value={sym} onChange={(e) => setSym(e.target.value.toUpperCase())} placeholder="SYMBOL" style={{ ...fld, width: 74 }} />
+        <select value={type} onChange={(e) => setType(e.target.value)} style={{ ...fld, flex: 1, minWidth: 120 }}>
+          {types.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+        </select>
+        {meta?.needsThreshold && <input value={thr} onChange={(e) => setThr(e.target.value)} placeholder={meta.unit || 'value'} inputMode="decimal" style={{ ...fld, width: 66 }} />}
+        <button onClick={create} style={{ height: 28, background: C.green, color: '#fff', border: 'none', borderRadius: 5, padding: '0 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Add</button>
+      </div>
+      <div style={{ overflow: 'auto', flex: 1 }}>
+        {data === null ? <div style={{ padding: 18, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading…</div>
+          : (data.alerts || []).length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>No alerts yet. Set one above — you&apos;ll get a bell notification when it triggers.</div>
+            : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <tbody>
+                  {data.alerts.map((a, i) => (
+                    <tr key={a.id} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none', opacity: a.active ? 1 : 0.55 }}>
+                      <td style={{ padding: '7px 9px', whiteSpace: 'nowrap' }}><span className="cp-tkr" style={{ fontWeight: 700, color: C.ink }}>{a.symbol}</span></td>
+                      <td style={{ padding: '7px 9px', color: C.text }}>{labelOf(a.type)}{a.threshold != null ? ` ${a.threshold}` : ''}</td>
+                      <td style={{ padding: '7px 9px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {a.active
+                          ? <span style={{ fontSize: 8.5, fontWeight: 700, color: C.green, background: C.greenLight, borderRadius: 3, padding: '1px 5px' }}>ARMED</span>
+                          : <button onClick={() => toggle(a)} title="Re-arm" style={{ fontSize: 8.5, fontWeight: 700, color: C.muted, background: C.surface, border: 'none', borderRadius: 3, padding: '2px 6px', cursor: 'pointer' }}>TRIGGERED · re-arm</button>}
+                        <button onClick={() => del(a.id)} title="Delete" style={{ marginLeft: 6, background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+      </div>
+    </div>
+  );
+}
+
 // ── PIT SCAN — proprietary engine panel (separate product from the Custom Scanner). Renders ONLY the
 // approved server output; the formula lives server-side in lib/pitscan.js and is never sent here. ──
 const SIG = {
@@ -929,6 +989,7 @@ function Workspace() {
     : def.id === 'movers' ? <MoversBody onPick={(s) => linkSymbol('movers', s)} />
     : def.id === 'why' ? <WhyMovingBody symbol={selectedSymbol} />
     : def.id === 'convergence' ? <ConvergenceBody onPick={(s) => linkSymbol('convergence', s)} />
+    : def.id === 'alerts' ? <AlertsBody symbol={selectedSymbol} />
     : null);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{selectedSymbol}</span> : null);
