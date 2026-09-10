@@ -222,6 +222,10 @@ export default function CatalystPit() {
   const politicians = data?.politicians || [];
   const catalysts = data?.catalysts || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"}) : "--:--";
+  // Index quotes for the MARKETS card: prefer /api/quotes, fall back to the already-loaded ticker tape.
+  const tapeMap = {};
+  (data?.tickers || []).forEach((t) => { if (t.sym) tapeMap[t.sym] = { price: t.price, changePct: t.chg }; });
+  const idxQ = (sym) => idxQuotes[sym] || tapeMap[sym] || null;
 
   const router = useRouter();
   const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
@@ -265,7 +269,7 @@ export default function CatalystPit() {
               <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim, letterSpacing:"0.8px"}}>DAILY</span>
             </div>
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, background:C.border}}>
-              {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["VIX","VIX"]].map(([sym,label]) => { const q = idxQuotes[sym]; return (
+              {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["VIX","VIX"]].map(([sym,label]) => { const q = idxQ(sym); return (
                 <div key={sym} style={{background:C.white, padding:"8px 10px"}}>
                   <div style={{display:"flex", alignItems:"baseline", gap:6, marginBottom:4, flexWrap:"wrap"}}>
                     <span style={{fontSize:10.5, fontWeight:700, color:C.muted, letterSpacing:"0.3px"}}>{label}</span>
