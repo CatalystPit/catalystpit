@@ -1,14 +1,17 @@
 import { auth } from '@clerk/nextjs/server';
+import { runPitScan } from '../../../lib/pitscan-feed';
 
 export const runtime = 'nodejs';
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
-// Movers / scanner feed. PLUG-AND-PLAY: dormant until FMP_API_KEY is set (returns configured:false
-// so the UI shows a clear "add a data feed" state). Two modes:
-//   ?mode=preset  → "Pit Scan": CatalystPit's own formula (PLACEHOLDER for now — top gainers with a
-//                   price/volume floor; swap in the real edge once we have the paid feed).
-//   ?mode=custom  → user-defined screen via FMP's stock-screener (price/volume/mktcap/sector filters).
-// Cached ~45s in KV per query. Data source: Financial Modeling Prep (delayed on lower tiers = cheap).
+// TWO SEPARATE scanner products (Terminal only):
+//   ?mode=pit     → PIT SCAN: CatalystPit's proprietary hidden momentum/abnormal-activity engine.
+//                   All scoring runs server-side in lib/pitscan.js; this route returns ONLY the
+//                   approved output fields (no weights/thresholds/sub-scores). Needs a real-time
+//                   feed — reports configured:false until one is wired.
+//   ?mode=custom  → CUSTOM SCANNER: user-defined screen via FMP's stock-screener (transparent
+//                   price/volume/mktcap/sector filters). Dormant until FMP_API_KEY is set.
+// Custom results cached ~45s in KV per query.
 
 const FMP = 'https://financialmodelingprep.com/api/v3';
 const KEY = process.env.FMP_API_KEY;
@@ -41,34 +44,32 @@ const shape = (r) => ({
 export async function GET(request) {
   try {
     await auth();   // terminal is Pro-gated in the UI; API stays lightweight
-    if (!KEY) return Response.json({ configured: false, rows: [] }, { headers: NO_STORE });
-
     const { searchParams } = new URL(request.url);
-    const mode = searchParams.get('mode') === 'custom' ? 'custom' : 'preset';
+    const mode = searchParams.get('mode');
 
-    let url;
-    if (mode === 'custom') {
-      const p = new URLSearchParams({ isActivelyTrading: 'true', exchange: 'NASDAQ,NYSE,AMEX', limit: '50', apikey: KEY });
-      const map = { priceMin: 'priceMoreThan', priceMax: 'priceLowerThan', volumeMin: 'volumeMoreThan', mktCapMin: 'marketCapMoreThan', mktCapMax: 'marketCapLowerThan' };
-      for (const [q, fmp] of Object.entries(map)) { const v = searchParams.get(q); if (v) p.set(fmp, v); }
-      const sector = searchParams.get('sector'); if (sector) p.set('sector', sector);
-      url = `${FMP}/stock-screener?${p.toString()}`;
-    } else {
-      // PLACEHOLDER preset — adjust to the real Pit Scan formula once the feed is live.
-      url = `${FMP}/stock_market/gainers?apikey=${KEY}`;
+    // ── PIT SCAN — proprietary engine, no FMP. Returns approved fields only. ──
+    if (mode === 'pit') {
+      const direction = searchParams.get('dir') === 'bear' ? 'bear' : 'bull';
+      const out = await runPitScan({ direction });
+      return Response.json({ mode: 'pit', direction, ...out }, { headers: NO_STORE });
     }
 
-    const cacheKey = `scan:${mode}:${url.replace(KEY, 'K')}`;
+    // ── CUSTOM SCANNER — FMP stock-screener (transparent user filters). ──
+    if (!KEY) return Response.json({ configured: false, rows: [] }, { headers: NO_STORE });
+    const p = new URLSearchParams({ isActivelyTrading: 'true', exchange: 'NASDAQ,NYSE,AMEX', limit: '50', apikey: KEY });
+    const map = { priceMin: 'priceMoreThan', priceMax: 'priceLowerThan', volumeMin: 'volumeMoreThan', mktCapMin: 'marketCapMoreThan', mktCapMax: 'marketCapLowerThan' };
+    for (const [q, fmp] of Object.entries(map)) { const v = searchParams.get(q); if (v) p.set(fmp, v); }
+    const sector = searchParams.get('sector'); if (sector) p.set('sector', sector);
+    const url = `${FMP}/stock-screener?${p.toString()}`;
+
+    const cacheKey = `scan:custom:${url.replace(KEY, 'K')}`;
     const cached = await kvGet(cacheKey);
     if (cached) return Response.json({ configured: true, rows: cached, cached: true }, { headers: NO_STORE });
 
     const r = await fetch(url);
     if (!r.ok) throw new Error(`FMP HTTP ${r.status}`);
     const data = await r.json();
-    let rows = Array.isArray(data) ? data.map(shape).filter((x) => x.symbol) : [];
-    // preset placeholder: keep liquid, non-penny names
-    if (mode === 'preset') rows = rows.filter((x) => (x.price ?? 0) >= 1).slice(0, 50);
-
+    const rows = Array.isArray(data) ? data.map(shape).filter((x) => x.symbol).slice(0, 50) : [];
     await kvSet(cacheKey, rows, TTL);
     return Response.json({ configured: true, rows, cached: false }, { headers: NO_STORE });
   } catch (e) {

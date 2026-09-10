@@ -15,8 +15,8 @@ const PANELS = [
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
   { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
   { id: 'newswire',  title: 'News Wire',    tag: 'NEWS · PR · 8-K' },
-  { id: 'pitscan',   title: 'Pit Scan',     tag: 'PRESET' },
-  { id: 'scanner',   title: 'Scanner',      tag: 'CUSTOM' },
+  { id: 'pitscan',   title: 'Pit Scan',        tag: 'PROPRIETARY' },
+  { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
@@ -186,6 +186,84 @@ function ScanBody({ mode, onPick }) {
       </div>
       {rows === null || rows.length === 0 || !configured ? results
         : <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>{results}</div>}
+    </div>
+  );
+}
+
+// ── PIT SCAN — proprietary engine panel (separate product from the Custom Scanner). Renders ONLY the
+// approved server output; the formula lives server-side in lib/pitscan.js and is never sent here. ──
+const SIG = {
+  WATCHING: { fg: '#64748B', bg: '#F1F5F9', label: 'WATCHING' },
+  HEATING:  { fg: '#B45309', bg: '#FEF3C7', label: 'HEATING' },
+  IGNITION: { fg: '#C2410C', bg: '#FFEDD5', label: 'IGNITION' },
+  EXTREME:  { fg: '#B91C1C', bg: '#FEE2E2', label: 'EXTREME' },
+};
+function PitScanBody({ onPick }) {
+  const [dir, setDir] = useState('bull');
+  const [rows, setRows] = useState(null);
+  const [configured, setConfigured] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch(`/api/scan?mode=pit&dir=${dir}`, { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        if (!alive) return;
+        setConfigured(j?.configured !== false);
+        setRows(j?.rows || []);
+      } catch { if (alive) setRows([]); }
+    };
+    setRows(null); load();
+    const id = setInterval(load, 30000);   // developing-move cadence
+    return () => { alive = false; clearInterval(id); };
+  }, [dir]);
+
+  const dirBtn = (d, label) => (
+    <button onClick={() => setDir(d)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', border: 'none', background: dir === d ? (d === 'bull' ? C.green : C.red) : 'transparent', color: dir === d ? '#fff' : C.muted }}>{label}</button>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        {dirBtn('bull', 'Bullish')}{dirBtn('bear', 'Bearish')}
+        <span style={{ marginLeft: 'auto', fontSize: 9, color: C.dim, letterSpacing: 0.3 }}>ABNORMAL ACTIVITY · LIVE</span>
+      </div>
+      {rows === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Scanning the tape…</div>
+        : !configured ? (
+          <div style={{ padding: '22px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.6 }}>
+            <div style={{ fontWeight: 700, color: C.ink, marginBottom: 4 }}>Pit Scan is armed</div>
+            Detects unusual momentum &amp; developing activity in real time — stocks whose price, volume, range and liquidity are suddenly accelerating. <b>Awaiting a real-time market feed</b> to go live.
+          </div>
+        )
+        : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>Quiet right now — nothing crossing Pit Scan thresholds.</div>
+          : (
+            <div style={{ overflow: 'auto', flex: 1 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead><tr style={{ background: C.surface }}>
+                  {['', 'Price', 'Chg%', 'RVOL', 'Signal', 'Prs', 'Ign'].map((h, i) => (
+                    <th key={i} style={{ padding: '5px 8px', textAlign: i === 0 ? 'left' : 'right', fontSize: 8.5, color: C.dim, letterSpacing: '0.5px', position: 'sticky', top: 0, background: C.surface }}>{h.toUpperCase()}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {rows.map((r, i) => { const s = SIG[r.signal] || SIG.WATCHING; return (
+                    <tr key={r.ticker + i} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+                      <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                        <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <TickerLogo symbol={r.ticker} size={15} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
+                        </span>
+                      </td>
+                      <td className="cp-num" style={{ padding: '6px 8px', textAlign: 'right', color: C.ink }}>{r.price != null ? fmt2(r.price) : '—'}</td>
+                      <td className="cp-num" style={{ padding: '6px 8px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>{r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}</td>
+                      <td className="cp-num" style={{ padding: '6px 8px', textAlign: 'right', color: C.text }}>{r.rvol != null ? `${fmt2(r.rvol)}×` : '—'}</td>
+                      <td style={{ padding: '6px 8px', textAlign: 'right' }}><span style={{ fontSize: 8.5, fontWeight: 700, padding: '2px 6px', borderRadius: 4, color: s.fg, background: s.bg }}>{s.label}</span></td>
+                      <td className="cp-num" style={{ padding: '6px 8px', textAlign: 'right', color: C.ink, fontWeight: 700 }}>{r.pitPressure ?? '—'}</td>
+                      <td className="cp-num" style={{ padding: '6px 8px', textAlign: 'right', color: r.pitIgnition >= 65 ? C.green : C.muted, fontWeight: 700 }}>{r.pitIgnition ?? '—'}</td>
+                    </tr>
+                  ); })}
+                </tbody>
+              </table>
+            </div>
+          )}
     </div>
   );
 }
@@ -434,7 +512,7 @@ function Workspace() {
     : def.id === 'chat' ? <PitChat bare />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
-    : def.id === 'pitscan' ? <ScanBody mode="preset" onPick={(s) => linkSymbol('pitscan', s)} />
+    : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
     : def.id === 'scanner' ? <ScanBody mode="custom" onPick={(s) => linkSymbol('scanner', s)} />
     : null);
   const headerRightOf = (def) => (def.id === 'chart'
