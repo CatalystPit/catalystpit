@@ -6,14 +6,17 @@ import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 import { selectTerminalSymbol, onTerminalRoute } from './terminalSymbolBus';
 
 // ─── PALETTE ────────────────────────────────────────────────────────────────
+// Colors are CSS variables (defined in BrandStyles for light + [data-theme="dark"]) so the whole app
+// themes from one place — every `C.x` inline style resolves to the active theme. navBg/greenOnDark
+// stay constant (brand). Fallbacks match the light theme so SSR/no-JS still renders correctly.
 export const C = {
-  bg:"#F5F6F3", white:"#FFFFFF", surface:"#F0F2EE", surface2:"#E8EAE5",
-  border:"#E0E2DC", border2:"#C4C8BE",
-  ink:"#0C1410", text:"#1A2018", muted:"#5A6458", dim:"#8A9088", hint:"#C0C4BC",
-  green:"#1E5C38", greenMid:"#2A7848", greenLight:"#E8F5EE", greenBorder:"#A8CEB8",
-  greenOnDark:"#4FB37C", // brand-green sibling, brightened for readability on dark surfaces (briefs, Pro upsells, modals) — NOT a replacement for `green`
-  red:"#A83030", redLight:"#FAEAEA", gold:"#7A5818",
-  blue:"#1A3A78", blueLight:"#E8F0FF",
+  bg:"var(--cp-bg,#F5F6F3)", white:"var(--cp-white,#FFFFFF)", surface:"var(--cp-surface,#F0F2EE)", surface2:"var(--cp-surface2,#E8EAE5)",
+  border:"var(--cp-border,#E0E2DC)", border2:"var(--cp-border2,#C4C8BE)",
+  ink:"var(--cp-ink,#0C1410)", text:"var(--cp-text,#1A2018)", muted:"var(--cp-muted,#5A6458)", dim:"var(--cp-dim,#8A9088)", hint:"var(--cp-hint,#C0C4BC)",
+  green:"var(--cp-green,#1E5C38)", greenMid:"var(--cp-greenMid,#2A7848)", greenLight:"var(--cp-greenLight,#E8F5EE)", greenBorder:"var(--cp-greenBorder,#A8CEB8)",
+  greenOnDark:"#4FB37C", // brand-green sibling, brightened for readability on dark surfaces — constant
+  red:"var(--cp-red,#A83030)", redLight:"var(--cp-redLight,#FAEAEA)", gold:"var(--cp-gold,#7A5818)",
+  blue:"var(--cp-blue,#1A3A78)", blueLight:"var(--cp-blueLight,#E8F0FF)",
   navBg:"#1E5C38",
 };
 
@@ -167,6 +170,22 @@ export async function startCheckout(interval) {
 export function BrandStyles() {
   return (
     <style>{`
+      :root{
+        --cp-bg:#F5F6F3;--cp-white:#FFFFFF;--cp-surface:#F0F2EE;--cp-surface2:#E8EAE5;
+        --cp-border:#E0E2DC;--cp-border2:#C4C8BE;
+        --cp-ink:#0C1410;--cp-text:#1A2018;--cp-muted:#5A6458;--cp-dim:#8A9088;--cp-hint:#C0C4BC;
+        --cp-green:#1E5C38;--cp-greenMid:#2A7848;--cp-greenLight:#E8F5EE;--cp-greenBorder:#A8CEB8;
+        --cp-red:#A83030;--cp-redLight:#FAEAEA;--cp-gold:#7A5818;--cp-blue:#1A3A78;--cp-blueLight:#E8F0FF;
+      }
+      :root[data-theme="dark"]{
+        color-scheme:dark;
+        --cp-bg:#0E1512;--cp-white:#161F1A;--cp-surface:#1B241F;--cp-surface2:#232E28;
+        --cp-border:#2A342E;--cp-border2:#3A453E;
+        --cp-ink:#EEF3EF;--cp-text:#D8DED8;--cp-muted:#98A49B;--cp-dim:#78847B;--cp-hint:#48524C;
+        --cp-green:#46A874;--cp-greenMid:#58BE86;--cp-greenLight:#16301F;--cp-greenBorder:#2E5A40;
+        --cp-red:#E06B6B;--cp-redLight:#3A1E1E;--cp-gold:#C79A3C;--cp-blue:#6B8FE0;--cp-blueLight:#1A2540;
+      }
+      html,body{background:var(--cp-bg);}
       @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}
       @keyframes cp-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
       @keyframes cp-fadeup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -188,9 +207,30 @@ export function BrandStyles() {
 // ─── PRIMITIVES ─────────────────────────────────────────────────────────────
 export const Skel = ({w="100%", h=14, mb=6}) => (
   <div style={{width:w, height:h, borderRadius:3, marginBottom:mb,
-    background:"linear-gradient(90deg,#E8EAE5 25%,#F0F2EE 50%,#E8EAE5 75%)",
+    background:"linear-gradient(90deg,var(--cp-surface2,#E8EAE5) 25%,var(--cp-surface,#F0F2EE) 50%,var(--cp-surface2,#E8EAE5) 75%)",
     backgroundSize:"200% 100%", animation:"cp-shimmer 1.4s infinite"}}/>
 );
+
+// Light/dark theme toggle. Sets data-theme on <html> (CSS variables in BrandStyles do the rest) and
+// persists to localStorage. A no-flash script in the root layout applies the saved theme before paint.
+export function ThemeToggle({ style }) {
+  const [dark, setDark] = useState(false);
+  useEffect(() => { setDark((typeof document !== "undefined" && document.documentElement.dataset.theme === "dark")); }, []);
+  const toggle = () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    if (next === "dark") document.documentElement.dataset.theme = "dark"; else delete document.documentElement.dataset.theme;
+    try { localStorage.setItem("cp_theme", next); } catch { /* ignore */ }
+    setDark(next === "dark");
+  };
+  return (
+    <button onClick={toggle} title={dark ? "Light mode" : "Dark mode"} aria-label="Toggle theme"
+      style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", background:"none", border:"none", cursor:"pointer", color:C.muted, padding:4, ...style }}>
+      {dark
+        ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>}
+    </button>
+  );
+}
 
 export const Dot = () => (
   <span style={{display:"inline-block", width:6, height:6, borderRadius:"50%",
@@ -545,6 +585,7 @@ export function TopNav({ active }) {
 
       <div style={{display:"flex", gap:8, alignItems:"center", marginLeft:20, flexShrink:0}}>
         <span className="cp-nav-search"><SymbolSearch /></span>
+        <ThemeToggle style={{color:"rgba(255,255,255,0.85)"}} />
         <SignedOut>
           <a href="/sign-in" style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)",
             color:"rgba(255,255,255,0.9)", height:32, padding:"0 16px", borderRadius:5, fontSize:13,
