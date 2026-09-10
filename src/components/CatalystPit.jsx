@@ -207,6 +207,15 @@ export default function CatalystPit() {
     return () => clearInterval(id);
   }, [loadData]);
 
+  // Live index quotes for the MARKETS card (last session — so weekends show the prior trading day).
+  const [idxQuotes, setIdxQuotes] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch('/api/quotes?symbols=SPY,QQQ,DIA,VIX', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setIdxQuotes(j); }).catch(() => {});
+    load(); const id = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
   const news = data?.news || [];
   const insiders = data?.insiders || [];
   const insidersShown = insiders.slice(0, 10);
@@ -256,12 +265,16 @@ export default function CatalystPit() {
               <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim, letterSpacing:"0.8px"}}>DAILY</span>
             </div>
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, background:C.border}}>
-              {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["VIX","VIX"]].map(([sym,label]) => (
+              {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["VIX","VIX"]].map(([sym,label]) => { const q = idxQuotes[sym]; return (
                 <div key={sym} style={{background:C.white, padding:"8px 10px"}}>
-                  <div style={{fontSize:10.5, fontWeight:700, color:C.muted, marginBottom:4, letterSpacing:"0.3px"}}>{label}</div>
+                  <div style={{display:"flex", alignItems:"baseline", gap:6, marginBottom:4, flexWrap:"wrap"}}>
+                    <span style={{fontSize:10.5, fontWeight:700, color:C.muted, letterSpacing:"0.3px"}}>{label}</span>
+                    {q?.price != null && <span className="cp-num" style={{fontSize:11, fontWeight:600, color:C.ink}}>{q.price >= 1000 ? (+q.price).toLocaleString(undefined,{maximumFractionDigits:2}) : (+q.price).toFixed(2)}</span>}
+                    {q?.changePct != null && <span className="cp-num" style={{fontSize:10.5, fontWeight:600, color:q.changePct >= 0 ? C.green : C.red}}>{q.changePct > 0 ? "+" : ""}{q.changePct.toFixed(2)}%</span>}
+                  </div>
                   <MiniCandles symbol={sym} height={150}/>
                 </div>
-              ))}
+              ); })}
             </div>
           </div>
 

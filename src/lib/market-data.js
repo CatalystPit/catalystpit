@@ -37,6 +37,21 @@ async function polygonQuotes(syms) {
       }
     } catch { /* skip chunk */ }
   }
+  // Indices (e.g. VIX) aren't in the stocks snapshot — try the indices snapshot for any still-missing
+  // symbol as I:{SYM}. Degrades silently if the plan doesn't include indices.
+  const missing = syms.filter((s) => !out[s]);
+  if (missing.length) {
+    try {
+      const r = await fetch(`https://api.polygon.io/v3/snapshot/indices?ticker.any_of=${missing.map((s) => 'I:' + s).join(',')}&apiKey=${POLYGON_KEY}`, { cache: 'no-store' });
+      if (r.ok) {
+        const j = await r.json();
+        for (const x of (j.results || [])) {
+          const sym = (x.ticker || '').replace(/^I:/, '');
+          if (sym) out[sym] = { price: x.value ?? x.session?.close ?? null, changePct: x.session?.change_percent ?? null, volume: null };
+        }
+      }
+    } catch { /* indices not entitled — skip */ }
+  }
   return out;
 }
 
