@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import ConsensusTeaser from "./ConsensusTeaser";
 import HeatMap from "./HeatMap";
+import MiniCandles from "./MiniCandles";
 import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
@@ -246,8 +247,23 @@ export default function CatalystPit() {
         {/* LEFT */}
         <div style={{display:"flex", flexDirection:"column", gap:16, minWidth:0}}>
 
-          {/* PIT CONSENSUS — flagship cross-signal teaser */}
-          <ConsensusTeaser />
+          {/* MARKETS — index candlestick charts (daily) */}
+          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+            <div style={{padding:"10px 16px", borderBottom:`1px solid ${C.border}`, background:C.surface,
+              display:"flex", alignItems:"center", gap:7}}>
+              <Dot/>
+              <span style={{fontSize:13, fontWeight:600, color:C.ink}}>MARKETS</span>
+              <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim, letterSpacing:"0.8px"}}>DAILY</span>
+            </div>
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, background:C.border}}>
+              {[["SPX","S&P 500"],["IXIC","Nasdaq"],["DJI","Dow"],["VIX","VIX"]].map(([sym,label]) => (
+                <div key={sym} style={{background:C.white, padding:"8px 10px"}}>
+                  <div style={{fontSize:10.5, fontWeight:700, color:C.muted, marginBottom:4, letterSpacing:"0.3px"}}>{label}</div>
+                  <MiniCandles symbol={sym} height={150}/>
+                </div>
+              ))}
+            </div>
+          </div>
 
           {/* TODAY IN THE PIT */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
@@ -368,6 +384,9 @@ export default function CatalystPit() {
               )}
             </div>
           </div>
+
+          {/* PIT CONSENSUS — flagship cross-signal teaser (under Top Stories) */}
+          <ConsensusTeaser />
 
           {/* INSIDER TRADES */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
