@@ -20,6 +20,7 @@ const PANELS = [
   { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
   { id: 'movers',    title: 'Movers',       tag: 'DELAYED' },
   { id: 'why',       title: 'Why Moving',   tag: 'CATALYST' },
+  { id: 'convergence', title: 'Catalyst Convergence', tag: '◆ SMART MONEY' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
@@ -58,6 +59,7 @@ function defaultLayout(width) {
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     movers:    { x: centerX + 12, y: 402, w: centerW, h: 260, color: 'blue' },
     why:       { x: centerX + 36, y: 422, w: centerW, h: 220, color: 'green' },
+    convergence: { x: centerX + 48, y: 432, w: centerW, h: 260, color: 'green' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
@@ -453,6 +455,66 @@ function WhyMovingBody({ symbol }) {
   );
 }
 
+// ── CATALYST CONVERGENCE — surfaces the Pit Consensus board (insiders + Congress + 13F stacking the
+// same direction) inside the Terminal. Reuses /api/confluence; free sees a teaser, Pro the full board. ──
+const CONV_SRC = { insider: 'INSIDER', congress: 'CONGRESS', fund: '13F' };
+function ConvergenceBody({ onPick }) {
+  const [dir, setDir] = useState('bull');
+  const [data, setData] = useState(null);
+  const [ref, w] = useContainerSize();
+  useEffect(() => {
+    let alive = true; setData(null);
+    const load = () => fetch(`/api/confluence?dir=${dir}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setData(j); }).catch(() => { if (alive) setData({ list: [] }); });
+    load(); const id = setInterval(load, 120000);
+    return () => { alive = false; clearInterval(id); };
+  }, [dir]);
+  const list = data?.list; const locked = data?.lockedCount || 0;
+  const showChips = w >= 300;
+  const dirBtn = (k, label) => (
+    <button key={k} onClick={() => setDir(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', border: 'none', background: dir === k ? (k === 'bull' ? C.green : C.red) : 'transparent', color: dir === k ? '#fff' : C.muted }}>{label}</button>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        {dirBtn('bull', 'Accumulation')}{dirBtn('bear', 'Distribution')}
+        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>◆ SIGNALS STACKED</span>
+      </div>
+      <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
+        {list === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading the board…</div>
+          : list.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No stacked signals right now.</div>
+            : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <tbody>
+                  {list.map((r, i) => (
+                    <tr key={r.ticker + i} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+                      <td style={{ padding: '6px 9px', whiteSpace: 'nowrap' }}>
+                        <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <TickerLogo symbol={r.ticker} size={15} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
+                        </span>
+                      </td>
+                      {showChips && <td style={{ padding: '6px 9px' }}>
+                        <span style={{ display: 'inline-flex', gap: 3, flexWrap: 'wrap' }}>
+                          {Object.keys(CONV_SRC).filter((k) => r[k]).map((k) => (
+                            <span key={k} style={{ fontSize: 8, fontWeight: 700, color: C.green, background: C.greenLight, borderRadius: 3, padding: '1px 4px' }}>{CONV_SRC[k]}</span>
+                          ))}
+                        </span>
+                      </td>}
+                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', fontWeight: 800, color: dir === 'bull' ? C.green : C.red }}>{r.score}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+        {locked > 0 && (
+          <a href="/consensus" style={{ display: 'block', padding: '10px 12px', textAlign: 'center', fontSize: 11.5, fontWeight: 600, color: C.green, textDecoration: 'none', borderTop: `1px solid ${C.surface}`, background: C.greenLight }}>
+            🔒 +{locked} more names — unlock the full board with Pro ↗
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── PIT SCAN — proprietary engine panel (separate product from the Custom Scanner). Renders ONLY the
 // approved server output; the formula lives server-side in lib/pitscan.js and is never sent here. ──
 const SIG = {
@@ -817,6 +879,7 @@ function Workspace() {
     : def.id === 'scanner' ? <CustomScannerBody onPick={(s) => linkSymbol('scanner', s)} />
     : def.id === 'movers' ? <MoversBody onPick={(s) => linkSymbol('movers', s)} />
     : def.id === 'why' ? <WhyMovingBody symbol={selectedSymbol} />
+    : def.id === 'convergence' ? <ConvergenceBody onPick={(s) => linkSymbol('convergence', s)} />
     : null);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{selectedSymbol}</span> : null);
