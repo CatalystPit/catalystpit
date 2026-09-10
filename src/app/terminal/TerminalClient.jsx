@@ -539,18 +539,36 @@ function NewsWireBody({ onPick }) {
   );
 }
 
+// Small live-status pills for watchlist tickers.
+const WL_BADGE = { news: { label: 'NEWS', fg: '#B45309', bg: '#FEF3C7' }, halt: { label: 'HALT', fg: '#B91C1C', bg: '#FEE2E2' }, pit: { label: 'PIT', fg: '#1E5C38', bg: '#E8F5EE' } };
+
 function WatchlistBody({ onPick }) {
   const [rows, setRows] = useState(null);
+  const [sig, setSig] = useState({ news: [], halt: [], pit: [] });
   const [ref, w] = useContainerSize();
   const showPrice = w >= 220;
   useEffect(() => {
     let alive = true;
-    (async () => {
+    const loadRows = async () => {
       try { const r = await fetch('/api/watchlist?prices=1', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive) setRows(Array.isArray(j) ? j : []); }
       catch { if (alive) setRows([]); }
-    })();
+    };
+    loadRows();
     return () => { alive = false; };
   }, []);
+  // Refresh live status flags (NEWS/HALT/PIT) for the watchlist tickers.
+  useEffect(() => {
+    if (!rows || !rows.length) return;
+    let alive = true;
+    const syms = rows.map((r) => r.ticker).join(',');
+    const load = async () => {
+      try { const r = await fetch(`/api/watchlist/signals?symbols=${encodeURIComponent(syms)}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive && j) setSig(j); }
+      catch { /* ignore */ }
+    };
+    load(); const id = setInterval(load, 45000);
+    return () => { alive = false; clearInterval(id); };
+  }, [rows]);
+  const badgesFor = (t) => ['halt', 'news', 'pit'].filter((k) => (sig[k] || []).includes(t));
   if (rows === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading…</div>;
   if (rows.length === 0) return <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>Your watchlist is empty. Tap the ★ on any ticker page to track it here. <a href="/watchlist" style={{ color: C.green, fontWeight: 600 }}>Manage</a></div>;
   return (
@@ -563,6 +581,7 @@ function WatchlistBody({ onPick }) {
                 <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
                 </span>
+                {badgesFor(r.ticker).map((k) => { const b = WL_BADGE[k]; return <span key={k} title={`${b.label} — live`} style={{ marginLeft: 4, fontSize: 8, fontWeight: 800, color: b.fg, background: b.bg, borderRadius: 3, padding: '1px 4px', verticalAlign: 'middle' }}>{b.label}</span>; })}
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
               </td>
               {showPrice && <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</td>}
