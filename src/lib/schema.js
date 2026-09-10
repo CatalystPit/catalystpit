@@ -206,6 +206,7 @@ export const fundHoldings = pgTable('fund_holdings', {
   value:      doublePrecision('value'),                        // USD market value (whole dollars)
   putCall:    text('put_call').notNull().default(''),          // 'Put' | 'Call' | ''
   filedDate:  date('filed_date', { mode: 'string' }),
+  accession:  text('accession'),                               // filing accession (amendment supersession)
   insertedAt: timestamp('inserted_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uq:        uniqueIndex('uq_fund_holding').on(t.cik, t.quarter, t.cusip, t.cls, t.putCall),
@@ -575,6 +576,24 @@ export const screenerSaved = pgTable('screener_saved', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   idxUser: index('idx_screener_saved_user').on(t.userId),
+}));
+
+// Auto-discovered 13F filer registry (institutions + congress expansion, Phase 2). One row per CIK
+// that has filed a 13F-HR, discovered from SEC's quarterly full-index — no curated list. The existing
+// ~57 curated funds are flagged via featured_label/slug so their pages stay prominent.
+export const institutions = pgTable('institutions', {
+  cik:              text('cik').primaryKey(),               // unpadded numeric string (matches fund_holdings.cik)
+  name:             text('name'),
+  slug:             text('slug'),
+  featuredLabel:    text('featured_label'),                 // curated display label when featured, else null
+  manager:          text('manager'),
+  category:         text('category'),
+  firstSeenQuarter: date('first_seen_quarter', { mode: 'string' }),
+  lastQuarter:      date('last_quarter', { mode: 'string' }),
+  filingCount:      integer('filing_count').default(0),
+  updatedAt:        timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxInstSlug: index('idx_institutions_slug').on(t.slug),
 }));
 
 // ── Shared security-resolution layer (institutions + congress expansion, Phase 1) ──
