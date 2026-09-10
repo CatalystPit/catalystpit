@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import ConsensusTeaser from "./ConsensusTeaser";
+import HeatMap from "./HeatMap";
 import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
@@ -594,72 +595,15 @@ export default function CatalystPit() {
             </p>
           </div>
 
-          {/* INSIDER ACTIVITY (compact) — desktop rail only; the full INSIDER
-              TRADES table covers this on mobile when the grid is single-column. */}
-          <div className="cp-rail-only" style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
+          {/* MARKET HEAT MAP — full-market treemap. Replaces the old compact insider/politician
+              rails (which duplicated the main tables on the homepage). */}
+          <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
             <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`,
               background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <span style={{fontSize:12, fontWeight:600, color:C.ink}}>INSIDER ACTIVITY</span>
-              <a href="/insiders" style={{fontSize:11, color:C.green, cursor:"pointer",
-                fontWeight:400, textDecoration:"none"}}>View All →</a>
+              <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET HEAT MAP</span>
+              <a href="/terminal" style={{fontSize:11, color:C.green, cursor:"pointer", fontWeight:400, textDecoration:"none"}}>Terminal →</a>
             </div>
-            {loading ? Array(3).fill(0).map((_, i) => (
-              <div key={i} style={{padding:"10px 14px", borderBottom:`1px solid ${C.surface}`}}>
-                <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
-              </div>
-            )) : insidersShown.map((ins, i) => (
-              <div key={i} className="hov" onClick={() => goTicker(ins.sym)} style={{padding:"10px 14px",
-                borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:"pointer"}}>
-                <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
-                  <div style={{display:"flex", alignItems:"center", gap:6}}>
-                    <TickerLogo symbol={ins.sym} size={16}/>
-                    <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12,
-                      fontWeight:600, color:C.ink}}>{ins.sym}</span>
-                    <span style={{fontSize:9, padding:"2px 6px", borderRadius:3,
-                      fontFamily:"'DM Sans',sans-serif", fontWeight:600,
-                      background:insStyle(ins.type).bg,
-                      color:insStyle(ins.type).fg}}>{ins.type}</span>
-                  </div>
-                  <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:700,
-                    color:insStyle(ins.type).fg}}>{ins.value}</span>
-                </div>
-                <div style={{fontSize:11, color:C.muted, fontWeight:300}}>{ins.name} · {ins.filed}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* POLITICIAN ACTIVITY (compact) — desktop rail only; the full
-              POLITICIAN TRADES table covers this on mobile (single-column). */}
-          <div className="cp-rail-only" style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
-            <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`,
-              background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <span style={{fontSize:12, fontWeight:600, color:C.ink}}>POLITICIAN ACTIVITY</span>
-              <a href="/politicians" style={{fontSize:11, color:C.green, cursor:"pointer",
-                fontWeight:400, textDecoration:"none"}}>View All →</a>
-            </div>
-            {loading ? Array(3).fill(0).map((_, i) => (
-              <div key={i} style={{padding:"10px 14px", borderBottom:`1px solid ${C.surface}`}}>
-                <Skel w="70%" h={12} mb={4}/><Skel w="50%" h={10} mb={0}/>
-              </div>
-            )) : politicians.slice(0, 3).map((p, i) => (
-              <div key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
-                style={{padding:"10px 14px",
-                borderBottom:`1px solid ${C.surface}`, transition:"background 0.15s", cursor:p.slug ? "pointer" : "default"}}>
-                <div style={{display:"flex", justifyContent:"space-between", marginBottom:3}}>
-                  <div style={{display:"flex", alignItems:"center", gap:6}}>
-                    <TickerLogo symbol={p.sym} size={16}/>
-                    <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:12,
-                      fontWeight:600, color:C.ink}}>{p.sym}</span>
-                    <span style={{fontSize:9, padding:"2px 6px", borderRadius:3,
-                      fontFamily:"'DM Sans',sans-serif", fontWeight:600,
-                      background:insStyle(p.type).bg, color:insStyle(p.type).fg}}>{p.type}</span>
-                  </div>
-                  <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, fontWeight:700,
-                    color:insStyle(p.type).fg, whiteSpace:"nowrap"}}>{p.amount}</span>
-                </div>
-                <div style={{fontSize:11, color:C.muted, fontWeight:300}}>{p.name} · {p.traded}</div>
-              </div>
-            ))}
+            <div style={{height:340}}><HeatMap limit={120}/></div>
           </div>
 
         </div>

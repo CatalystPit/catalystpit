@@ -6,6 +6,7 @@ import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
+import HeatMap from '../../components/HeatMap';
 
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
@@ -740,48 +741,9 @@ function FeedBody({ onPick }) {
   );
 }
 
-// ── HEAT MAP — sector treemap of the largest names, colored by change %, sized by market cap. From
-// our own screener universe. Click a tile to set the Terminal symbol. ──
-function heatColor(pct) {
-  if (pct == null) return '#3A443E';
-  const p = Math.max(-3, Math.min(3, pct));
-  if (p >= 0) { const t = p / 3; return `rgb(${Math.round(40 - t * 10)},${Math.round(120 + t * 70)},${Math.round(70 + t * 20)})`; }
-  const t = -p / 3; return `rgb(${Math.round(150 + t * 60)},${Math.round(60 - t * 20)},${Math.round(60 - t * 20)})`;
-}
+// ── HEAT MAP — Finviz-style squarified treemap (shared <HeatMap/> component). ──
 function HeatMapBody({ onPick }) {
-  const [rows, setRows] = useState(null);
-  const [ref, w] = useContainerSize();
-  useEffect(() => {
-    let alive = true;
-    const load = async () => { try { const r = await fetch('/api/heatmap?limit=180', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive) setRows(j?.rows || []); } catch { if (alive) setRows([]); } };
-    load(); const id = setInterval(load, 60000);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
-  if (rows === null) return <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading heat map…</div>;
-  if (rows.length === 0) return <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No market data yet.</div>;
-  const bySector = {};
-  for (const r of rows) { const s = r.sector || 'Other'; (bySector[s] ||= []).push(r); }
-  const sectors = Object.entries(bySector).sort((a, b) => b[1].length - a[1].length);
-  const maxCap = Math.max(...rows.map((r) => r.marketCap || 0), 1);
-  const tileFor = (r) => { const s = Math.sqrt((r.marketCap || 0) / maxCap); return Math.round(46 + s * (w >= 480 ? 74 : 40)); };
-  return (
-    <div ref={ref} style={{ overflow: 'auto', flex: 1, padding: 6 }}>
-      {sectors.map(([sec, items]) => (
-        <div key={sec} style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: C.dim, letterSpacing: 0.5, padding: '2px 2px 4px', textTransform: 'uppercase' }}>{sec}</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-            {items.map((r) => { const sz = tileFor(r); return (
-              <button key={r.ticker} onClick={() => onPick && onPick(r.ticker)} title={`${r.ticker} ${r.changePct != null ? (r.changePct > 0 ? '+' : '') + r.changePct.toFixed(2) + '%' : ''}`}
-                style={{ width: sz, height: Math.max(38, sz * 0.66), background: heatColor(r.changePct), border: 'none', borderRadius: 3, cursor: 'pointer', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 2, overflow: 'hidden', lineHeight: 1.1 }}>
-                <span className="cp-tkr" style={{ fontSize: sz >= 70 ? 12 : 10, fontWeight: 700 }}>{r.ticker}</span>
-                {r.changePct != null && <span className="cp-num" style={{ fontSize: sz >= 70 ? 10 : 8.5, opacity: 0.95 }}>{r.changePct > 0 ? '+' : ''}{r.changePct.toFixed(1)}%</span>}
-              </button>
-            ); })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+  return <div style={{ flex: 1, minHeight: 0, display: 'flex' }}><HeatMap onPick={onPick} /></div>;
 }
 
 // ── EARNINGS — forward earnings calendar (grouped by date). Needs a calendar feed (Twelve Data);
