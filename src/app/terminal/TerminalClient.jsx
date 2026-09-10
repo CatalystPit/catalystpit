@@ -523,7 +523,8 @@ export default function TerminalClient() {
       <BrandStyles />
       <TopNav active="Terminal" />
       <BottomTape />
-      <div style={{ maxWidth: 1440, margin: '18px auto', padding: '0 16px 48px' }}>
+      {/* full-bleed (no centered max-width) so the free-floating panels can be dragged to the screen edges */}
+      <div style={{ margin: '18px 0', padding: '0 12px 48px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 28, fontWeight: 600, color: C.ink, margin: 0 }}>Terminal</h1>
           <span style={{ fontSize: 10, fontWeight: 800, color: '#fff', background: '#B8860B', borderRadius: 3, padding: '2px 6px', letterSpacing: 0.5 }}>PRO</span>
