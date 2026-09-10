@@ -79,7 +79,6 @@ const TABS = [
   { id: 'news',       label: 'News' },
   { id: 'press',      label: 'Press Releases' },
   { id: 'earnings',   label: 'Earnings' },
-  { id: 'options',    label: 'Options Flow' },
   { id: 'guidance',   label: 'Guidance' },
   { id: 'dividends',  label: 'Dividends' },
   { id: 'analyst',    label: 'Analyst Ratings' },
@@ -90,7 +89,6 @@ const TABS = [
   { id: 'financials', label: 'Financials' },
 ];
 const PLACEHOLDERS = {
-  options:    'Unusual options activity — large call and put buys, premium volume, and bullish/bearish flow signals.',
   guidance:   'Company-issued forward guidance, revenue and EPS forecasts, and guidance revisions.',
   analyst:    'Wall Street analyst ratings, price targets, upgrades, downgrades, and consensus forecasts.',
 };
@@ -859,8 +857,10 @@ function EarningsTab({ symbol, earnings }) {
   const loading = earnings == null;
   const rows = earnings?.earnings || [];
   const hasDerived = rows.some((r) => r.derived);
+  const next = estimateNextEarnings(rows);
+  const title = next ? `Earnings history (Next earnings: ${fmtDateLong(next)} · est.)` : 'Earnings history';
   return (
-    <Section title="Earnings history">
+    <Section title={title}>
       {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
         : rows.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No earnings filings on file for {symbol}.</div>
         : (
