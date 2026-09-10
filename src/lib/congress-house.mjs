@@ -14,9 +14,8 @@
 //  - No robots.txt, no terms gate, no session. Static GETs; be a polite citizen.
 
 import { unzipSync, strFromU8 } from 'fflate';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { PDFParse } = require('pdf-parse');
+// pdf-parse (v2, ESM) is loaded LAZILY inside extractPdfText via dynamic import, so this
+// module imports cleanly in every runtime and the dedupe / Senate code paths never load it.
 
 const HOUSE = 'https://disclosures-clerk.house.gov/public_disc';
 const UA = 'CatalystPit (contact@catalystpit.com)';
@@ -65,6 +64,7 @@ function year(p, iFiled) { const m = String(p[iFiled] || '').match(/\/(\d{4})$/)
 
 // ── PTR PDF text → transactions ───────────────────────────────────────────────
 export async function extractPdfText(buf) {
+  const { PDFParse } = await import('pdf-parse');
   const parser = new PDFParse({ data: buf });
   try { const t = await parser.getText(); return t?.text || ''; }
   finally { await parser.destroy?.(); }
