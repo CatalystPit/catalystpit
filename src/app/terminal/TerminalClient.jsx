@@ -799,6 +799,55 @@ function PanelCard({ def, colorKey, onSetColor, onMoveStart, onResizeStart, drag
   );
 }
 
+// Terminal symbol search — type a ticker (autocomplete) to set the shared symbol; drives the chart +
+// every symbol-aware panel without depending on the chart's own search.
+function SymbolSearchBox() {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const timer = useRef(null);
+  useEffect(() => {
+    const s = q.trim();
+    if (s.length < 1) { setResults([]); setOpen(false); return; }
+    clearTimeout(timer.current);
+    timer.current = setTimeout(async () => {
+      try { const r = await fetch(`/api/symbol-search?q=${encodeURIComponent(s)}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; const rs = j?.results || []; setResults(rs); setOpen(rs.length > 0); setHi(0); } catch { setResults([]); }
+    }, 160);
+    return () => clearTimeout(timer.current);
+  }, [q]);
+  const pick = (sym) => { if (!sym) return; selectTerminalSymbol(sym); setQ(''); setResults([]); setOpen(false); };
+  const onKey = (e) => {
+    if (!open) { if (e.key === 'Enter') { e.preventDefault(); pick(q.trim().toUpperCase()); } return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, results.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(results[hi]?.ticker || q.trim().toUpperCase()); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+  return (
+    <div style={{ position: 'relative', width: 230, maxWidth: '46vw' }}>
+      <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} onFocus={() => results.length && setOpen(true)}
+        placeholder="Search symbol → chart" spellCheck={false} autoComplete="off"
+        style={{ width: '100%', height: 32, boxSizing: 'border-box', borderRadius: 6, border: `1px solid ${C.border}`, padding: '0 10px', fontSize: 12.5, fontFamily: "'DM Sans',sans-serif", outline: 'none', background: C.white, color: C.ink }} />
+      {open && results.length > 0 && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 22 }} />
+          <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, zIndex: 23, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', overflow: 'hidden', maxHeight: 320, overflowY: 'auto' }}>
+            {results.map((r, i) => (
+              <button key={r.ticker} onMouseEnter={() => setHi(i)} onClick={() => pick(r.ticker)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 11px', background: i === hi ? C.surface : 'none', border: 'none', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+                <TickerLogo symbol={r.ticker} size={16} />
+                <span className="cp-tkr" style={{ fontSize: 12.5, fontWeight: 700, color: C.ink }}>{r.ticker}</span>
+                <span style={{ fontSize: 11, color: C.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Workspace() {
   const ref = useRef(null);
   const layoutRef = useRef(null);           // always-current layout for pointer math
@@ -903,7 +952,9 @@ function Workspace() {
   const hidden = PANELS.filter((d) => !visible.includes(d.id));
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <SymbolSearchBox />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <div style={{ position: 'relative' }}>
           <button onClick={() => setAddOpen((o) => !o)}
             style={{ background: C.green, border: 'none', color: '#fff', borderRadius: 6, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
@@ -926,6 +977,7 @@ function Workspace() {
           )}
         </div>
         <button onClick={reset} style={{ background: C.white, border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Reset layout</button>
+        </div>
       </div>
       <div ref={ref} style={{ position: 'relative', width: '100%', height: containerH }}>
         {visible.map((id) => {
