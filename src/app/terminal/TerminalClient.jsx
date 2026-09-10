@@ -649,19 +649,34 @@ function FeedBody({ onPick }) {
   const [input, setInput] = useState('');
   const [posting, setPosting] = useState(false);
   const [notice, setNotice] = useState('');
+  const [image, setImage] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const fileRef = useRef(null);
+  const clearImage = () => { if (preview) { try { URL.revokeObjectURL(preview); } catch { /* ignore */ } } setImage(null); setPreview(null); if (fileRef.current) fileRef.current.value = ''; };
   const load = useCallback(async (sc) => {
     try { const r = await fetch(`/api/feed?scope=${sc}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; setPosts(j?.posts || (Array.isArray(j) ? j : [])); } catch { setPosts([]); }
   }, []);
   useEffect(() => { load(scope); }, [scope, load]);
   const submit = async () => {
-    const body = input.trim(); if (!body || posting) return;
+    const body = input.trim(); if ((!body && !image) || posting) return;
     setPosting(true); setNotice('');
     try {
-      const r = await fetch('/api/feed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body, imageUrl: null }) });
+      let imageUrl = null;
+      if (image) {
+        const fd = new FormData(); fd.append('file', image);
+        const up = await fetch('/api/upload', { method: 'POST', body: fd });
+        if (!up.ok) {
+          const ej = await up.json().catch(() => ({}));
+          setNotice(ej.error === 'uploads_not_configured' ? 'Image uploads not set up yet.' : ej.error === 'too_large' ? 'Image must be under 4MB.' : ej.error === 'bad_type' ? 'Use JPG, PNG, WebP or GIF.' : 'Image upload failed.');
+          setPosting(false); return;
+        }
+        imageUrl = (await up.json()).url;
+      }
+      const r = await fetch('/api/feed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body, imageUrl }) });
       if (r.status === 403) setNotice('Pro members only.');
       else if (r.status === 429) setNotice('Slow down a moment.');
       else if (!r.ok) setNotice('Could not post.');
-      else { const j = await r.json(); if (j?.post) { setPosts((p) => [j.post, ...(p || [])]); setInput(''); } }
+      else { const j = await r.json(); if (j?.post) { setPosts((p) => [j.post, ...(p || [])]); setInput(''); clearImage(); } }
     } catch { setNotice('Could not post.'); }
     setPosting(false);
   };
@@ -677,9 +692,17 @@ function FeedBody({ onPick }) {
         <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>{tab('global', 'For You')}{tab('following', 'Following')}</div>
         <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Share a thought… ($TICKER to tag)" rows={2}
           style={{ width: '100%', boxSizing: 'border-box', resize: 'none', borderRadius: 6, border: `1px solid ${C.border}`, padding: '6px 8px', fontSize: 12.5, fontFamily: "'DM Sans',sans-serif", outline: 'none', color: C.ink }} />
+        {preview && (
+          <div style={{ position: 'relative', display: 'inline-block', marginTop: 6 }}>
+            <img src={preview} alt="" style={{ maxHeight: 74, borderRadius: 6, border: `1px solid ${C.border}`, display: 'block' }} />
+            <button onClick={clearImage} title="Remove image" style={{ position: 'absolute', top: -6, right: -6, background: C.ink, color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: 0 }}>×</button>
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+          <button onClick={() => fileRef.current?.click()} title="Add image" style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, padding: '3px 9px', cursor: 'pointer', fontSize: 14, lineHeight: 1.2 }}>📷</button>
+          <input ref={fileRef} type="file" accept="image/*" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { clearImage(); setImage(f); setPreview(URL.createObjectURL(f)); } }} style={{ display: 'none' }} />
           {notice && <span style={{ fontSize: 10.5, color: C.red }}>{notice}</span>}
-          <button onClick={submit} disabled={!input.trim() || posting} style={{ marginLeft: 'auto', background: input.trim() ? C.green : C.surface, color: input.trim() ? '#fff' : C.dim, border: 'none', borderRadius: 5, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: input.trim() ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>{posting ? 'Posting…' : 'Post'}</button>
+          <button onClick={submit} disabled={(!input.trim() && !image) || posting} style={{ marginLeft: 'auto', background: (input.trim() || image) ? C.green : C.surface, color: (input.trim() || image) ? '#fff' : C.dim, border: 'none', borderRadius: 5, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: (input.trim() || image) ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>{posting ? 'Posting…' : 'Post'}</button>
         </div>
       </div>
       <div style={{ overflow: 'auto', flex: 1 }}>
