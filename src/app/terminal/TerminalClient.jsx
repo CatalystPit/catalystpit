@@ -18,6 +18,7 @@ const PANELS = [
   { id: 'newswire',  title: 'News Wire',    tag: 'NEWS · PR · 8-K' },
   { id: 'pitscan',   title: 'Pit Scan',        tag: 'PROPRIETARY' },
   { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
+  { id: 'movers',    title: 'Movers',       tag: 'DELAYED' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
@@ -54,6 +55,7 @@ function defaultLayout(width) {
     // add-only panels default to the center-bottom area (overlap until arranged)
     pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'green' },
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
+    movers:    { x: centerX + 12, y: 402, w: centerW, h: 260, color: 'blue' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
@@ -331,6 +333,65 @@ function CustomScannerBody({ onPick }) {
                 </tbody>
               </table>
             )}
+      </div>
+    </div>
+  );
+}
+
+// ── MOVERS — top gainers / losers / most-active from Polygon (delayed). Clicking a ticker sets the
+// Terminal symbol; columns react to panel width. ──
+function MoversBody({ onPick }) {
+  const [tab, setTab] = useState('gainers');
+  const [data, setData] = useState(null);
+  const [configured, setConfigured] = useState(true);
+  const [ref, w] = useContainerSize();
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('/api/movers', { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        if (!alive) return;
+        setConfigured(j?.configured !== false);
+        setData(j || {});
+      } catch { if (alive) setData({}); }
+    };
+    load(); const id = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  const rows = data ? (data[tab] || []) : null;
+  const showPrice = w >= 260, showVol = w >= 340;
+  const tabBtn = (k, label) => (
+    <button key={k} onClick={() => setTab(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', border: 'none', background: tab === k ? C.ink : 'transparent', color: tab === k ? '#fff' : C.muted }}>{label}</button>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        {tabBtn('gainers', 'Gainers')}{tabBtn('losers', 'Losers')}{tabBtn('active', 'Active')}
+        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>~15m DELAYED</span>
+      </div>
+      <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
+        {rows === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading movers…</div>
+          : !configured ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Movers needs a market-data feed.</div>
+            : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No movers right now.</div>
+              : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <tbody>
+                    {rows.map((r, i) => (
+                      <tr key={r.ticker + i} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+                        <td style={{ padding: '6px 9px', whiteSpace: 'nowrap' }}>
+                          <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                            <TickerLogo symbol={r.ticker} size={15} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
+                          </span>
+                        </td>
+                        {showPrice && <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: C.ink }}>{r.price != null ? fmt2(r.price) : '—'}</td>}
+                        <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>{r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}</td>
+                        {showVol && <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: C.text }}>{fmtVol(r.volume)}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
       </div>
     </div>
   );
@@ -679,6 +740,7 @@ function Workspace() {
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
     : def.id === 'scanner' ? <CustomScannerBody onPick={(s) => linkSymbol('scanner', s)} />
+    : def.id === 'movers' ? <MoversBody onPick={(s) => linkSymbol('movers', s)} />
     : null);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{selectedSymbol}</span> : null);
