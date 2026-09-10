@@ -5,7 +5,7 @@
 // via `congress_filings` so runs are idempotent + bounded; drives to full
 // coverage/history across runs. Reuses buildRow (dedup/matching) unchanged.
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, ne, inArray, sql } from 'drizzle-orm';
 import { db } from './db';
 import { congressTrades, congressFilings } from './schema';
 import roster from './congress-roster.json';
@@ -35,7 +35,9 @@ export async function ensureCongressTables() {
 
 // DocIDs already processed for a chamber (any terminal status) → skip set.
 async function seenDocIds(chamber) {
-  const rows = await db.select({ docId: congressFilings.docId }).from(congressFilings).where(eq(congressFilings.chamber, chamber));
+  // Skip already-processed docs, but RETRY ones that errored (transient fetch/parse failures).
+  const rows = await db.select({ docId: congressFilings.docId }).from(congressFilings)
+    .where(and(eq(congressFilings.chamber, chamber), ne(congressFilings.status, 'error')));
   return new Set(rows.map((r) => r.docId));
 }
 
@@ -70,10 +72,12 @@ async function ingestHouse({ ingestCap, t0, timeBudgetMs }) {
   for (let y = nowY; y > nowY - BACKFILL_YEARS; y--) years.push(y);
   const seen = await seenDocIds('house');
   let processed = 0, newTrades = 0, scanned = 0, errors = 0;
+  const errorsSample = [];
+  const noteErr = (msg) => { const m = String(msg || '').slice(0, 220); if (m && errorsSample.length < 5 && !errorsSample.includes(m)) errorsSample.push(m); };
   for (const y of years) {
     if (processed >= ingestCap || Date.now() - t0 > timeBudgetMs) break;
     let entries;
-    try { entries = await fetchHouseIndex(y); } catch (e) { console.log(`[congress-sync] house index ${y}: ${e.message}`); continue; }
+    try { entries = await fetchHouseIndex(y); } catch (e) { console.log(`[congress-sync] house index ${y}: ${e.message}`); noteErr(`index ${y}: ${e.message}`); continue; }
     for (const e of entries) {
       if (processed >= ingestCap || Date.now() - t0 > timeBudgetMs) break;
       if (seen.has(e.docId)) continue;
@@ -83,17 +87,17 @@ async function ingestHouse({ ingestCap, t0, timeBudgetMs }) {
         let n = 0;
         if (res.status === 'parsed') n = await insertRecs(res.recs, 'house');
         if (res.status === 'scanned') scanned++;
-        if (res.status === 'error') errors++;
+        if (res.status === 'error') { errors++; noteErr(res.error); }
         await recordFiling('house', { docId: e.docId, year: e.year, filerName: `${e.first} ${e.last}`.trim(), filingType: 'P', filingDate: e.filingDate, format: res.format, status: res.status, txnCount: res.transactions.length, url: res.url, error: res.error });
         newTrades += n;
       } catch (err) {
-        errors++;
+        errors++; noteErr(`${err?.message} | ${err?.cause?.message || ''}`);
         await recordFiling('house', { docId: e.docId, year: e.year, filerName: `${e.first} ${e.last}`.trim(), filingType: 'P', filingDate: e.filingDate, format: 'efiled', status: 'error', txnCount: 0, url: null, error: err.message });
       }
       await sleep(120);
     }
   }
-  return { processed, newTrades, scanned, errors };
+  return { processed, newTrades, scanned, errors, errorsSample };
 }
 
 // ── Senate: pull the PTR feed, process unseen electronic reports, bounded ──
