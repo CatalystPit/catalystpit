@@ -42,19 +42,21 @@ function defaultLayout(width) {
   const centerX = leftW + gap, centerW = Math.round(unit * 6);
   const rightX = Math.round(unit * 9) + gap * 2, rightW = Math.round(unit * 3) - 2;
   const top = 274, botY = 286;
+  // Color categories: blue = market/data/analysis · green = Catalyst Pit proprietary/community ·
+  // orange(amber) = news/catalyst/event · red = urgent market state.
   return {
     // left column
-    tape:      { x: 0, y: 0, w: leftW, h: top, color: 'blue' },
-    halts:     { x: 0, y: botY, w: leftW, h: top, color: 'blue' },
+    tape:      { x: 0, y: 0, w: leftW, h: top, color: 'orange' },
+    halts:     { x: 0, y: botY, w: leftW, h: top, color: 'red' },
     // center column
     chart:     { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
-    newswire:  { x: centerX, y: 392, w: centerW, h: 220, color: 'blue' },
+    newswire:  { x: centerX, y: 392, w: centerW, h: 220, color: 'orange' },
     // add-only panels default to the center-bottom area (overlap until arranged)
-    pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'blue' },
+    pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'green' },
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
-    chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'blue' },
+    chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
   };
 }
 
@@ -81,8 +83,23 @@ function ChartBody({ symbol }) {
   return <div style={{ position: 'relative', flex: 1, minHeight: 0 }}><div ref={host} style={{ position: 'absolute', inset: 0 }} /></div>;
 }
 
+// Panel content reacts to its OWN width (users resize each panel independently). Returns [ref, width].
+function useContainerSize() {
+  const ref = useRef(null);
+  const [w, setW] = useState(9999);
+  useEffect(() => {
+    const el = ref.current; if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((es) => { for (const e of es) setW(Math.round(e.contentRect.width)); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w];
+}
+
 function HaltBody({ onPick }) {
   const [halts, setHalts] = useState(null);
+  const [ref, w] = useContainerSize();
+  const showReason = w >= 300, showTime = w >= 440;
   useEffect(() => {
     let alive = true;
     const load = async () => {
@@ -95,21 +112,21 @@ function HaltBody({ onPick }) {
   if (halts === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading halts…</div>;
   if (halts.length === 0) return <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No halts reported yet today — this lights up the moment a stock halts.</div>;
   return (
-    <div style={{ overflow: 'auto', flex: 1 }}>
+    <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
         <tbody>
           {halts.map((h, i) => (
             <tr key={`${h.symbol}-${h.haltTime}-${i}`} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
-              <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
+              <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                 <span onClick={() => onPick && onPick(h.symbol)} title="Load in chart"
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <TickerLogo symbol={h.symbol} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{h.symbol}</span>
                 </span>
                 <a href={`/ticker/${encodeURIComponent(h.symbol)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
               </td>
-              <td style={{ padding: '8px 12px', color: C.text }}>{h.reason}</td>
-              <td className="cp-num" style={{ padding: '8px 12px', color: C.muted, whiteSpace: 'nowrap' }}>{fmtHalt(h.haltTime)}</td>
-              <td style={{ padding: '8px 12px' }}>
+              {showReason && <td style={{ padding: '7px 10px', color: C.text }}>{h.reason}</td>}
+              {showTime && <td className="cp-num" style={{ padding: '7px 10px', color: C.muted, whiteSpace: 'nowrap' }}>{fmtHalt(h.haltTime)}</td>}
+              <td style={{ padding: '7px 10px', textAlign: 'right' }}>
                 <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 4, color: h.resumed ? C.green : C.red, background: h.resumed ? C.greenLight : C.redLight }}>{h.resumed ? 'Resumed' : 'Halted'}</span>
               </td>
             </tr>
@@ -281,6 +298,8 @@ const timeAgoShort = (iso) => {
 // time-sorted, impact-flagged. Clicking a ticker loads it in linked chart panels.
 function NewsWireBody({ onPick }) {
   const [items, setItems] = useState(null);
+  const [ref, w] = useContainerSize();
+  const showMeta = w >= 300;
   const load = useCallback(async () => {
     try {
       const [nRes, eRes] = await Promise.all([
@@ -308,18 +327,18 @@ function NewsWireBody({ onPick }) {
   if (items === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading the wire…</div>;
   if (items.length === 0) return <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No headlines right now.</div>;
   return (
-    <div style={{ overflow: 'auto', flex: 1 }}>
+    <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
       {items.map((n, i) => {
         const st = IMPACT_STYLE[n.tier];
         return (
-          <div key={i} className="hov" style={{ padding: '8px 12px', borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+          <div key={i} className="hov" style={{ padding: '7px 11px', borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
               {st && <span style={{ fontSize: 8, fontWeight: 700, color: st.fg, background: st.bg, borderRadius: 3, padding: '1px 5px' }}>{st.label}</span>}
               {n.sym && <span onClick={() => onPick && onPick(n.sym)} title={`Load ${n.sym} in chart`} className="cp-tkr"
                 style={{ fontSize: 11, fontWeight: 700, color: C.green, cursor: onPick ? 'pointer' : 'default' }}>{n.sym}</span>}
-              <span style={{ marginLeft: 'auto', fontSize: 9.5, color: C.dim, whiteSpace: 'nowrap' }}>
+              {showMeta && <span style={{ marginLeft: 'auto', fontSize: 9.5, color: C.dim, whiteSpace: 'nowrap' }}>
                 {n.source}{n.published ? ` · ${timeAgoShort(n.published)}` : ''}
-              </span>
+              </span>}
             </div>
             {n.url
               ? <a href={n.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: C.ink, fontWeight: 600, lineHeight: 1.3, textDecoration: 'none', display: 'block' }}>{n.headline}</a>
@@ -333,6 +352,8 @@ function NewsWireBody({ onPick }) {
 
 function WatchlistBody({ onPick }) {
   const [rows, setRows] = useState(null);
+  const [ref, w] = useContainerSize();
+  const showPrice = w >= 220;
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -344,19 +365,19 @@ function WatchlistBody({ onPick }) {
   if (rows === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading…</div>;
   if (rows.length === 0) return <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>Your watchlist is empty. Tap the ★ on any ticker page to track it here. <a href="/watchlist" style={{ color: C.green, fontWeight: 600 }}>Manage</a></div>;
   return (
-    <div style={{ overflow: 'auto', flex: 1 }}>
+    <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
         <tbody>
           {rows.map((r, i) => (
             <tr key={r.ticker} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
-              <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
+              <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
                 <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
                 </span>
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
               </td>
-              <td className="cp-num" style={{ padding: '8px 12px', textAlign: 'right', color: C.ink }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</td>
-              <td className="cp-num" style={{ padding: '8px 12px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
+              {showPrice && <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</td>}
+              <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
                 {r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}
               </td>
             </tr>
@@ -410,7 +431,7 @@ function PanelCard({ def, colorKey, onCycleColor, onMoveStart, onResizeStart, dr
   return (
     <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
       <div onPointerDown={draggable ? onMoveStart : undefined}
-        style={{ cursor: draggable ? 'move' : 'default', padding: '9px 12px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, touchAction: 'none' }}>
+        style={{ cursor: draggable ? 'move' : 'default', padding: '6px 10px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, touchAction: 'none' }}>
         {draggable && (
           <button onPointerDown={(e) => e.stopPropagation()} onClick={onCycleColor}
             title="Link group — panels sharing this color sync (click to change)"
