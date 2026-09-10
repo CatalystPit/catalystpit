@@ -576,3 +576,32 @@ export const screenerSaved = pgTable('screener_saved', {
 }, (t) => ({
   idxUser: index('idx_screener_saved_user').on(t.userId),
 }));
+
+// ── Shared security-resolution layer (institutions + congress expansion, Phase 1) ──
+// Durable CUSIP → ticker map (promotes the old KV cache to Postgres so it's queryable + reusable).
+export const cusipMap = pgTable('cusip_map', {
+  cusip:      text('cusip').primaryKey(),
+  ticker:     text('ticker'),                             // null while unresolved
+  status:     text('status').notNull().default('unresolved'),  // 'resolved' | 'unresolved' | 'manual'
+  confidence: text('confidence'),                         // 'high' | 'medium' | 'low'
+  source:     text('source'),                             // 'openfigi' | 'manual' | 'kv'
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Unresolved / ambiguous securities to reconcile (CUSIPs OpenFIGI can't map, or asset-name matches).
+// A resolution here writes back to cusip_map so future filings auto-resolve.
+export const securityReviewQueue = pgTable('security_review_queue', {
+  id:             serial('id').primaryKey(),
+  kind:           text('kind').notNull(),                 // 'cusip' | 'name'
+  key:            text('key').notNull(),                  // the CUSIP or normalized asset/issuer name
+  context:        text('context'),                        // issuer / example description for the human reviewer
+  occurrences:    integer('occurrences').notNull().default(1),
+  status:         text('status').notNull().default('open'),  // 'open' | 'resolved' | 'ignored'
+  resolvedTicker: text('resolved_ticker'),
+  firstSeen:      timestamp('first_seen', { withTimezone: true }).notNull().defaultNow(),
+  lastSeen:       timestamp('last_seen', { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt:     timestamp('resolved_at', { withTimezone: true }),
+}, (t) => ({
+  uqReview:   uniqueIndex('uq_review_kind_key').on(t.kind, t.key),
+  idxRvStatus: index('idx_review_status').on(t.status),
+}));
