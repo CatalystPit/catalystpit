@@ -1,22 +1,10 @@
 'use client';
-import { Logo, Footer } from '../../lib/cp-shared';
-
-const C = {
-  bg: "#F5F6F3",
-  white: "#FFFFFF",
-  surface: "#F0F2EE",
-  border: "#E0E2DC",
-  ink: "#0C1410",
-  text: "#1A2018",
-  muted: "#5A6458",
-  green: "#1E5C38",
-  greenMid: "#2A7848",
-  navBg: "#1E5C38",
-};
+import { C, BrandStyles, Logo, Footer } from '../../lib/cp-shared';
 
 export default function TermsPage() {
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, minHeight: "100vh", color: C.text }}>
+      <BrandStyles/>
       {/* NAV */}
       <div style={{
         background: C.navBg, height: 50, display: "flex", alignItems: "center",

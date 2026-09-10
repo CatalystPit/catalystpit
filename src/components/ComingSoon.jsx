@@ -1,14 +1,7 @@
 'use client'
 
-import { Footer, TopNav, BrandStyles } from '../lib/cp-shared';
+import { C, Footer, TopNav, BrandStyles } from '../lib/cp-shared';
 import { usePathname } from 'next/navigation';
-
-const C = {
-  bg:"#F5F6F3", white:"#FFFFFF", surface:"#F0F2EE", border:"#E0E2DC",
-  ink:"#0C1410", text:"#1A2018", muted:"#5A6458", dim:"#8A9088",
-  green:"#1E5C38", greenMid:"#2A7848", greenLight:"#E8F5EE", greenBorder:"#A8CEB8",
-  navBg:"#1E5C38",
-};
 
 const Dot = () => (
   <span style={{display:"inline-block", width:6, height:6, borderRadius:"50%",
