@@ -48,6 +48,49 @@ async function getCikMap() {
 const empty = (ticker, cik, error) =>
   Response.json({ ticker, cik: cik ?? null, count: 0, earnings: [], ...(error ? { error } : {}), meta: { cached: false, source: 'sec-edgar' } });
 
+// FALLBACK: Polygon Financials for tickers SEC XBRL can't serve as us-gaap quarters — i.e. FOREIGN
+// issuers / ADRs (NBIS etc.) that file 20-F/IFRS, not 10-Q/10-K. Maps to the same earnings row shape.
+const POLY_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
+async function polygonEarnings(ticker) {
+  if (!POLY_KEY) return [];
+  try {
+    const r = await fetch(`https://api.polygon.io/vX/reference/financials?ticker=${encodeURIComponent(ticker)}&timeframe=quarterly&order=desc&limit=12&apiKey=${POLY_KEY}`, { cache: 'no-store' });
+    if (!r.ok) return [];
+    const j = await r.json();
+    const results = Array.isArray(j.results) ? j.results : [];
+    const rows = results.map((res) => {
+      const inc = res.financials?.income_statement || {};
+      const rev = inc.revenues?.value ?? null;
+      const eps = inc.diluted_earnings_per_share?.value ?? inc.basic_earnings_per_share?.value ?? null;
+      return {
+        quarter: `${res.fiscal_period || ''} ${res.fiscal_year || ''}`.trim(),
+        report_date: res.filing_date || res.end_date || null,
+        period_end: res.end_date || null,
+        revenue: rev,
+        eps_basic: eps != null ? Math.round(eps * 100) / 100 : null,
+        form: null, derived: false,
+        filing_url: res.source_filing_url || null,
+        _rev: rev, _eps: eps, _fp: res.fiscal_period, _fy: Number(res.fiscal_year),
+      };
+    });
+    const byKey = {};
+    rows.forEach((x) => { byKey[`${x._fp}-${x._fy}`] = x; });
+    const yoy = (c, p) => (c != null && p != null && p !== 0) ? Math.round(((c - p) / Math.abs(p)) * 1000) / 10 : null;
+    for (const x of rows) { const prior = byKey[`${x._fp}-${x._fy - 1}`]; x.revenue_yoy_pct = yoy(x._rev, prior?._rev ?? null); x.eps_yoy_pct = yoy(x._eps, prior?._eps ?? null); }
+    return rows.filter((x) => x.revenue != null || x.eps_basic != null).map(({ _rev, _eps, _fp, _fy, ...r }) => r);
+  } catch { return []; }
+}
+// When SEC XBRL has no earnings, try Polygon; cache + return whichever we get (empty if neither).
+async function earningsFallback(ticker, cik) {
+  const rows = await polygonEarnings(ticker);
+  if (rows.length) {
+    const payload = { ticker, cik: cik ?? null, count: rows.length, earnings: rows, meta: { cached: false, source: 'polygon' } };
+    await kvSet(`earnings:${ticker}`, JSON.stringify(payload), TTL_EARNINGS);
+    return Response.json(payload);
+  }
+  return empty(ticker, cik);
+}
+
 export async function GET(request) {
   let ticker = '';
   try {
@@ -59,7 +102,7 @@ export async function GET(request) {
     if (hit != null) { try { const v = JSON.parse(hit); return Response.json({ ...v, meta: { ...v.meta, cached: true } }); } catch { /* refetch */ } }
 
     const cik = (await getCikMap())[ticker] || null;
-    if (!cik) return empty(ticker, null);          // not an SEC filer (ETF/foreign/junk) — legit empty, no error
+    if (!cik) return earningsFallback(ticker, null);   // not in SEC map (foreign/ADR) → try Polygon financials
 
     let facts = null, status = 0;
     try {
@@ -68,8 +111,8 @@ export async function GET(request) {
       if (r.ok) facts = await r.json();
     } catch (e) { console.log(`[earnings] ${ticker} SEC fetch threw: ${e.message}`); }
 
-    // 404 = entity has no XBRL financial facts (ETF/trust/foreign) → legit empty, not a failure.
-    if (!facts && status === 404) return empty(ticker, cik);
+    // 404 = entity has no XBRL financial facts (ETF/trust/foreign) → try Polygon before giving up.
+    if (!facts && status === 404) return earningsFallback(ticker, cik);
 
     if (!facts) {                                   // real SEC failure → stale-fallback, else empty (never 503)
       const stale = await kvGet(lastKey);
@@ -79,6 +122,7 @@ export async function GET(request) {
     }
 
     const earnings = parseEarnings(facts, cik);
+    if (!earnings.length) return earningsFallback(ticker, cik);   // foreign/IFRS filer (no us-gaap quarters) → Polygon
     const payload = { ticker, cik, count: earnings.length, earnings, meta: { cached: false, source: 'sec-edgar' } };
     await kvSet(key, JSON.stringify(payload), TTL_EARNINGS);
     await kvSet(lastKey, JSON.stringify(payload), TTL_STALE);
