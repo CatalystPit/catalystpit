@@ -151,7 +151,7 @@ function Body({ onClose }) {
           <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 8, minWidth: 210, zIndex: 6, background: C.white, color: C.ink, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 10px 26px rgba(0,0,0,0.18)', overflow: 'hidden' }}>
             {lists.map((l) => (
               <button key={l.id} onClick={() => switchList(l.id)}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 12px', background: l.id === activeId ? C.greenLight : '#fff', border: 'none', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', fontSize: 12.5, fontWeight: l.id === activeId ? 700 : 500, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 12px', background: l.id === activeId ? C.greenLight : C.white, border: 'none', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', fontSize: 12.5, fontWeight: l.id === activeId ? 700 : 500, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
                 <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.name}</span>
                 <span style={{ fontSize: 10, color: C.dim }}>{l.count}</span>
               </button>
@@ -207,7 +207,7 @@ function Body({ onClose }) {
                 onDragEnd={() => setDragIdx(null)}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px',
                   borderTop: i ? `1px solid ${C.surface}` : 'none',
-                  background: dragIdx === i ? C.surface : '#fff', opacity: dragIdx === i ? 0.5 : 1 }}>
+                  background: dragIdx === i ? C.surface : C.white, opacity: dragIdx === i ? 0.5 : 1 }}>
                 <span title="Drag to reorder" style={{ cursor: 'grab', color: C.dim, fontSize: 12, lineHeight: 1, userSelect: 'none', flexShrink: 0 }}>⋮⋮</span>
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', flex: 1, minWidth: 0 }}>
                   <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700, fontSize: 12 }}>{r.ticker}</span>
