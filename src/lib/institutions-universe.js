@@ -263,12 +263,27 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
   const all = await db.select({ cik: institutions.cik, featured: institutions.featuredLabel }).from(institutions);
   const todo = all.filter((i) => !ingested.has(i.cik)).sort((a, b) => (a.featured ? 0 : 1) - (b.featured ? 0 : 1)).slice(0, ingestCap);
 
-  let ingestedNow = 0, storedNow = 0;
+  let ingestedNow = 0, storedNow = 0, failedNow = 0;
+  const errorsSample = [];
   for (const f of todo) {
     if (Date.now() - t0 > timeBudgetMs) break;
-    const res = await ingestFiler(f.cik, cutoff);
-    if (res.stored) { ingestedNow++; storedNow += res.stored; }
+    // Per-filer isolation: a single filer's failure (e.g. a concurrent-run duplicate-key
+    // race that ON CONFLICT DO NOTHING can't swallow across uncommitted transactions, or
+    // a transient DB error) must NOT abort the whole run. Skip it; it's retried next run
+    // (ingestion is idempotent). Surface e.cause so the real Postgres reason is visible.
+    try {
+      const res = await ingestFiler(f.cik, cutoff);
+      if (res.stored) { ingestedNow++; storedNow += res.stored; }
+    } catch (e) {
+      failedNow++;
+      const error = `${e?.message || e}`.slice(0, 180);
+      const cause = `${e?.cause?.message || ''}`.slice(0, 180);
+      console.log(`[institutions-universe] filer ${f.cik} failed: ${error} | cause: ${cause}`);
+      if (errorsSample.length < 5) errorsSample.push({ cik: f.cik, error, cause });
+    }
   }
-  const tick = await resolveHoldingTickers({ cap: tickerCap });
-  return { cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, tickersResolved: tick.resolved, ms: Date.now() - t0 };
+  let tick = { resolved: 0 };
+  try { tick = await resolveHoldingTickers({ cap: tickerCap }); }
+  catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
+  return { cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, failedNow, errorsSample, tickersResolved: tick.resolved, ms: Date.now() - t0 };
 }
