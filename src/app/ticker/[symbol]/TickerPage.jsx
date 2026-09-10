@@ -944,30 +944,52 @@ function OverviewTab({ data, insider, gov, onTab }) {
 
 // Institutions tab — which tracked funds hold this ticker (reverse 13F view). Self-fetches.
 function InstitutionsTab({ symbol }) {
-  const [state, setState] = useState({ loading: true, error: false, funds: [] });
+  const [state, setState] = useState({ loading: true, error: false, funds: [], ownership: null, count: 0 });
   useEffect(() => {
     let alive = true;
-    setState({ loading: true, error: false, funds: [] });
+    setState({ loading: true, error: false, funds: [], ownership: null, count: 0 });
     (async () => {
       try {
         const r = await fetch(`/api/institutions?ticker=${encodeURIComponent(symbol)}`);
         const j = r.ok ? await r.json() : null;
         if (!alive) return;
-        if (!j || j.error) setState({ loading: false, error: true, funds: [] });
-        else setState({ loading: false, error: false, funds: j.funds || [] });
-      } catch { if (alive) setState({ loading: false, error: true, funds: [] }); }
+        if (!j || j.error) setState({ loading: false, error: true, funds: [], ownership: null, count: 0 });
+        else setState({ loading: false, error: false, funds: j.funds || [], ownership: j.ownership || null, count: j.count || (j.funds ? j.funds.length : 0) });
+      } catch { if (alive) setState({ loading: false, error: true, funds: [], ownership: null, count: 0 }); }
     })();
     return () => { alive = false; };
   }, [symbol]);
 
-  const { loading, error, funds } = state;
+  const { loading, error, funds, ownership, count } = state;
+  const pctLabel = ownership && ownership.pct != null ? (ownership.pct >= 100 ? '100%+' : `${ownership.pct.toFixed(1)}%`) : null;
   return (
     <Section title="Institutional holders" badge="13F · SEC">
       {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
         : error ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>Couldn&apos;t load institutional holders right now.</div>
-        : funds.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>None of the funds we track report holding {symbol}.</div>
+        : funds.length === 0 ? <div style={{ padding: '16px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No 13F filer reports holding {symbol} yet.</div>
         : (
           <>
+            {(pctLabel || count > 0) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'flex-end', padding: '13px 16px', background: C.surface, borderRadius: 8, marginBottom: 14 }}>
+                {pctLabel && (
+                  <div>
+                    <div style={{ fontSize: 9, letterSpacing: '0.8px', color: C.dim, fontWeight: 700 }}>13F-REPORTED INST. OWNERSHIP</div>
+                    <div className="cp-num" style={{ fontSize: 22, fontWeight: 700, color: C.ink }}>{pctLabel}</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: 9, letterSpacing: '0.8px', color: C.dim, fontWeight: 700 }}>FILERS HOLDING</div>
+                  <div className="cp-num" style={{ fontSize: 22, fontWeight: 700, color: C.ink }}>{(ownership?.filerCount || count).toLocaleString()}</div>
+                </div>
+                {ownership?.instShares != null && (
+                  <div>
+                    <div style={{ fontSize: 9, letterSpacing: '0.8px', color: C.dim, fontWeight: 700 }}>SHARES HELD</div>
+                    <div className="cp-num" style={{ fontSize: 22, fontWeight: 700, color: C.ink }}>{fmtShares(ownership.instShares)}</div>
+                  </div>
+                )}
+                {ownership?.asOf && <div style={{ marginLeft: 'auto', fontSize: 11, color: C.dim }}>as of {fmtDateLong(ownership.asOf)}</div>}
+              </div>
+            )}
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
                 <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
@@ -996,7 +1018,8 @@ function InstitutionsTab({ symbol }) {
               </table>
             </div>
             <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-              From the managers we track on <a href="/institutions" style={{ color: C.green, textDecoration: 'none' }}>Institutions</a> — each fund&apos;s latest 13F (reported up to 45 days after quarter-end). PUT/CALL = options positions (bearish/bullish), not share ownership. Not financial advice.
+              {count > funds.length && <>Showing the top {funds.length.toLocaleString()} of {count.toLocaleString()} filers by position size. </>}
+              Every SEC 13F filer — each fund&apos;s latest 13F (reported up to 45 days after quarter-end). Ownership % = long common shares ÷ shares outstanding; it excludes shorts, options, and non-13F holders, so it is a reported floor, not total ownership. PUT/CALL rows are options positions (bearish/bullish), not share ownership. Source: <a href="/institutions" style={{ color: C.green, textDecoration: 'none' }}>SEC EDGAR</a>. Not financial advice.
             </div>
           </>
         )}

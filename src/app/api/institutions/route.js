@@ -1,7 +1,7 @@
 import { db } from '../../../lib/db';
-import { fundHoldings, fundFilings } from '../../../lib/schema';
+import { fundHoldings, fundFilings, institutions, tickerInstitutionalOwnership } from '../../../lib/schema';
 import { INSTITUTIONS, INSTITUTION_BY_SLUG } from '../../../lib/institutions.mjs';
-import { and, eq, inArray, desc, sql } from 'drizzle-orm';
+import { and, eq, inArray, desc, sql, isNotNull, ilike, or } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -27,48 +27,104 @@ async function cikFor(fund) {
   return c ? String(Number(String(c).replace(/\D/g, ''))) : null;
 }
 
-async function listView() {
+// Latest filing summary (as-of quarter / 13F value / holdings count) for a set of CIKs.
+async function latestFilingByCik(ciks) {
+  if (!ciks.length) return {};
+  try {
+    const rows = await db
+      .selectDistinctOn([fundFilings.cik], {
+        cik: fundFilings.cik, quarter: fundFilings.quarter, filedDate: fundFilings.filedDate,
+        totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount,
+      })
+      .from(fundFilings)
+      .where(inArray(fundFilings.cik, ciks))
+      .orderBy(fundFilings.cik, desc(fundFilings.quarter));
+    return Object.fromEntries(rows.map((r) => [r.cik, r]));
+  } catch (e) {
+    console.log(`[institutions_api] latest-filing query failed (migration not run?): ${e.message}`);
+    return {};
+  }
+}
+
+const toCard = (r, latest) => {
+  const s = latest[r.cik] || null;
+  return {
+    slug: r.slug, label: r.featuredLabel || r.name || `CIK ${r.cik}`, manager: r.manager,
+    category: r.category || 'Other', featured: !!r.featuredLabel,
+    hasData: !!s, quarter: s?.quarter ?? null, filedDate: s?.filedDate ?? null,
+    totalValue: s?.totalValue ?? null, holdingsCount: s?.holdingsCount ?? null,
+    filingCount: r.filingCount ?? null,
+  };
+};
+
+// Featured curated funds (top of page) + a searchable, paginated directory of EVERY discovered 13F filer.
+async function listView(q, page, pageSize) {
+  // If the registry hasn't been populated yet, fall back to the curated roster so the page still renders.
+  let featuredRows = [];
+  try {
+    featuredRows = await db.select({
+      cik: institutions.cik, name: institutions.name, slug: institutions.slug, featuredLabel: institutions.featuredLabel,
+      manager: institutions.manager, category: institutions.category, filingCount: institutions.filingCount,
+    }).from(institutions).where(isNotNull(institutions.featuredLabel));
+  } catch (e) {
+    console.log(`[institutions_api] registry read failed (migration not run?): ${e.message}`);
+    return legacyListView();
+  }
+  if (!featuredRows.length) return legacyListView();
+
+  // Directory: all filers, optional name search, ordered by depth of data then recency, paginated.
+  const like = q ? `%${q}%` : null;
+  const where = like ? or(ilike(institutions.name, like), ilike(institutions.featuredLabel, like)) : undefined;
+  const dirRows = await db.select({
+    cik: institutions.cik, name: institutions.name, slug: institutions.slug, featuredLabel: institutions.featuredLabel,
+    manager: institutions.manager, category: institutions.category, filingCount: institutions.filingCount,
+    lastQuarter: institutions.lastQuarter,
+  }).from(institutions).where(where)
+    .orderBy(sql`coalesce(${institutions.filingCount}, 0) desc, ${institutions.lastQuarter} desc nulls last, ${institutions.name} asc`)
+    .limit(pageSize).offset(page * pageSize);
+  const [{ total } = { total: 0 }] = await db.select({ total: sql`count(*)`.mapWith(Number) }).from(institutions).where(where);
+
+  const ciks = [...new Set([...featuredRows.map((r) => r.cik), ...dirRows.map((r) => r.cik)])];
+  const latest = await latestFilingByCik(ciks);
+
+  const featured = featuredRows.map((r) => toCard(r, latest)).sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0));
+  const directory = dirRows.map((r) => toCard(r, latest));
+  return { featured, directory, total, page, pageSize };
+}
+
+// Pre-registry fallback: the original curated-roster view (kept for resilience during backfill).
+async function legacyListView() {
   const ciks = await Promise.all(INSTITUTIONS.map(cikFor));
   const bySlug = Object.fromEntries(INSTITUTIONS.map((f, i) => [f.slug, ciks[i]]));
-  const known = ciks.filter(Boolean);
-  let latestByCik = {};
-  if (known.length) {
-    // Latest filing summary per cik. Resilient: if the table doesn't exist yet (migration not
-    // run) or the DB hiccups, still return the roster so the page renders "awaiting import".
-    try {
-      const rows = await db
-        .selectDistinctOn([fundFilings.cik], {
-          cik: fundFilings.cik, quarter: fundFilings.quarter, filedDate: fundFilings.filedDate,
-          totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount,
-        })
-        .from(fundFilings)
-        .where(inArray(fundFilings.cik, known))
-        .orderBy(fundFilings.cik, desc(fundFilings.quarter));
-      latestByCik = Object.fromEntries(rows.map((r) => [r.cik, r]));
-    } catch (e) {
-      console.log(`[institutions_api] list summary query failed (migration not run?): ${e.message}`);
-    }
-  }
-  const funds = INSTITUTIONS.map((f) => {
-    const cik = bySlug[f.slug];
-    const s = cik ? latestByCik[cik] : null;
+  const latest = await latestFilingByCik(ciks.filter(Boolean));
+  const featured = INSTITUTIONS.map((f) => {
+    const cik = bySlug[f.slug]; const s = cik ? latest[cik] : null;
     return {
-      slug: f.slug, label: f.label, manager: f.manager, category: f.category,
-      hasData: !!s,
-      quarter: s?.quarter ?? null, filedDate: s?.filedDate ?? null,
-      totalValue: s?.totalValue ?? null, holdingsCount: s?.holdingsCount ?? null,
+      slug: f.slug, label: f.label, manager: f.manager, category: f.category, featured: true,
+      hasData: !!s, quarter: s?.quarter ?? null, filedDate: s?.filedDate ?? null,
+      totalValue: s?.totalValue ?? null, holdingsCount: s?.holdingsCount ?? null, filingCount: null,
     };
   });
-  return { funds };
+  return { featured, directory: [], total: 0, page: 0, pageSize: 0 };
 }
 
 async function detailView(slug) {
-  const fund = INSTITUTION_BY_SLUG[slug];
-  if (!fund) return { error: 'not_found' };
-  const cik = await cikFor(fund);
-  if (!cik) return { fund: { slug: fund.slug, label: fund.label, manager: fund.manager, category: fund.category }, hasData: false };
-
-  const meta = { slug: fund.slug, label: fund.label, manager: fund.manager, category: fund.category };
+  // Resolve from the auto-discovered registry first; fall back to the curated config during backfill.
+  let cik = null, meta = null;
+  try {
+    const [inst] = await db.select({
+      cik: institutions.cik, name: institutions.name, slug: institutions.slug,
+      featuredLabel: institutions.featuredLabel, manager: institutions.manager, category: institutions.category,
+    }).from(institutions).where(eq(institutions.slug, slug)).limit(1);
+    if (inst) { cik = inst.cik; meta = { slug: inst.slug, label: inst.featuredLabel || inst.name, manager: inst.manager, category: inst.category }; }
+  } catch { /* registry not ready yet */ }
+  if (!cik) {
+    const fund = INSTITUTION_BY_SLUG[slug];
+    if (!fund) return { error: 'not_found' };
+    cik = await cikFor(fund);
+    meta = { slug: fund.slug, label: fund.label, manager: fund.manager, category: fund.category };
+    if (!cik) return { fund: meta, hasData: false };
+  }
   let quarters = [];
   try {
     quarters = await db.select({ quarter: fundFilings.quarter, filedDate: fundFilings.filedDate, totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount })
@@ -116,47 +172,56 @@ async function detailView(slug) {
   }
 
   return {
-    fund: { slug: fund.slug, label: fund.label, manager: fund.manager, category: fund.category },
+    fund: meta,
     hasData: true, latest, prior,
     holdings, holdingsShown: holdings.length, totalHoldings: latest.holdingsCount,
     activity,
   };
 }
 
-// Reverse map cik → tracked fund (config cik or the cron's KV-cached resolution).
-async function buildCikToFund() {
-  const ciks = await Promise.all(INSTITUTIONS.map(cikFor));
-  const map = {};
-  INSTITUTIONS.forEach((f, i) => { if (ciks[i]) map[ciks[i]] = { slug: f.slug, label: f.label, manager: f.manager }; });
-  return map;
-}
+const HOLDER_CAP = 100;   // holders returned per ticker (mega-caps are held by thousands of filers)
 
-// Which tracked funds hold a given ticker (in each fund's LATEST filed quarter).
+// EVERY 13F filer holding a given ticker (in each fund's LATEST filed quarter), plus the precomputed
+// 13F-reported ownership stat. No longer limited to the curated 57 — reads the full registry.
 async function tickerView(ticker) {
   const holds = await db.select({ cik: fundHoldings.cik, quarter: fundHoldings.quarter, shares: fundHoldings.shares, value: fundHoldings.value, putCall: fundHoldings.putCall })
     .from(fundHoldings).where(eq(fundHoldings.ticker, ticker));
-  if (!holds.length) return { ticker, funds: [], count: 0 };
+  if (!holds.length) return { ticker, funds: [], count: 0, ownership: null };
 
   const ciks = [...new Set(holds.map((h) => h.cik))];
   const latest = await db.selectDistinctOn([fundFilings.cik], { cik: fundFilings.cik, quarter: fundFilings.quarter, totalValue: fundFilings.totalValue })
     .from(fundFilings).where(inArray(fundFilings.cik, ciks)).orderBy(fundFilings.cik, desc(fundFilings.quarter));
   const latestByCik = Object.fromEntries(latest.map((r) => [r.cik, r]));
-  const cikToFund = await buildCikToFund();
+
+  const insts = await db.select({ cik: institutions.cik, name: institutions.name, slug: institutions.slug, featuredLabel: institutions.featuredLabel, manager: institutions.manager })
+    .from(institutions).where(inArray(institutions.cik, ciks));
+  const instByCik = Object.fromEntries(insts.map((r) => [r.cik, r]));
 
   const funds = [];
   for (const h of holds) {
     const lq = latestByCik[h.cik];
     if (!lq || h.quarter !== lq.quarter) continue;      // only each fund's current quarter
-    const f = cikToFund[h.cik];
-    if (!f) continue;                                    // not a tracked fund (e.g. removed)
+    const inst = instByCik[h.cik];
     funds.push({
-      slug: f.slug, label: f.label, manager: f.manager,
+      slug: inst?.slug || `cik-${h.cik}`,
+      label: inst?.featuredLabel || inst?.name || `CIK ${h.cik}`,
+      manager: inst?.manager || null,
+      featured: !!inst?.featuredLabel,
       shares: h.shares, value: h.value, putCall: h.putCall, quarter: h.quarter,
       pctPort: lq.totalValue ? +(h.value / lq.totalValue * 100).toFixed(2) : null,
     });
   }
   funds.sort((a, b) => (b.value || 0) - (a.value || 0));
-  return { ticker, funds, count: funds.length };
+  const count = funds.length;
+
+  // Precomputed ownership stat (Σ common shares ÷ shares outstanding), if the nightly aggregate has run.
+  let ownership = null;
+  try {
+    const [o] = await db.select().from(tickerInstitutionalOwnership).where(eq(tickerInstitutionalOwnership.ticker, ticker)).limit(1);
+    if (o) ownership = { pct: o.ownershipPct, filerCount: o.filerCount, instShares: o.instShares, instValue: o.instValue, sharesOut: o.sharesOut, asOf: o.asOfQuarter };
+  } catch { /* aggregate not ready */ }
+
+  return { ticker, funds: funds.slice(0, HOLDER_CAP), count, ownership };
 }
 
 export async function GET(request) {
@@ -164,7 +229,12 @@ export async function GET(request) {
     const sp = new URL(request.url).searchParams;
     const ticker = sp.get('ticker');
     const slug = sp.get('slug');
-    const payload = ticker ? await tickerView(ticker.toUpperCase().trim()) : slug ? await detailView(slug) : await listView();
+    const q = (sp.get('q') || '').trim().slice(0, 60);
+    const page = Math.max(0, parseInt(sp.get('page') || '0', 10) || 0);
+    const pageSize = Math.min(100, Math.max(10, parseInt(sp.get('pageSize') || '48', 10) || 48));
+    const payload = ticker ? await tickerView(ticker.toUpperCase().trim())
+      : slug ? await detailView(slug)
+      : await listView(q, page, pageSize);
     return Response.json(payload, { headers: CACHE });
   } catch (e) {
     console.log(`[institutions_api] failed: ${e.message}`);

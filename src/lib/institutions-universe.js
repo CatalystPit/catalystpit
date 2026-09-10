@@ -38,7 +38,57 @@ export async function ensureUniverseTables() {
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_institutions_slug ON institutions (slug)`);
   await db.execute(sql`ALTER TABLE fund_holdings ADD COLUMN IF NOT EXISTS accession TEXT`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS ticker_institutional_ownership (
+    ticker TEXT PRIMARY KEY, as_of_quarter DATE, inst_shares DOUBLE PRECISION, inst_value DOUBLE PRECISION,
+    filer_count INTEGER, shares_out DOUBLE PRECISION, ownership_pct DOUBLE PRECISION,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
   _ensured = true;
+}
+
+// Nightly recompute of 13F-reported institutional ownership per ticker. For each fund we take its
+// LATEST filed quarter, sum COMMON-stock shares (puts/calls excluded) per ticker, divide by shares
+// outstanding (screener_meta → ticker_float fallback). Full refresh (delete + insert) so tickers that
+// dropped to zero holders don't linger. `as_of_quarter` = newest contributing quarter per ticker.
+export async function runOwnershipAggregate() {
+  await ensureUniverseTables();
+  const t0 = Date.now();
+  await db.execute(sql`DELETE FROM ticker_institutional_ownership`);
+  const res = await db.execute(sql`
+    WITH latest AS (
+      SELECT DISTINCT ON (cik) cik, quarter
+      FROM fund_filings
+      ORDER BY cik, quarter DESC
+    ),
+    agg AS (
+      SELECT h.ticker,
+             SUM(h.shares)::double precision AS inst_shares,
+             SUM(h.value)::double precision  AS inst_value,
+             COUNT(DISTINCT h.cik)           AS filer_count,
+             MAX(h.quarter)                  AS as_of
+      FROM fund_holdings h
+      JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
+      WHERE h.ticker IS NOT NULL
+        AND coalesce(h.put_call, '') = ''
+        AND coalesce(h.shares, 0) > 0
+      GROUP BY h.ticker
+    )
+    INSERT INTO ticker_institutional_ownership
+      (ticker, as_of_quarter, inst_shares, inst_value, filer_count, shares_out, ownership_pct, updated_at)
+    SELECT a.ticker, a.as_of, a.inst_shares, a.inst_value, a.filer_count,
+           so.shares_out,
+           CASE WHEN so.shares_out > 0 THEN a.inst_shares / so.shares_out * 100 ELSE NULL END,
+           now()
+    FROM agg a
+    LEFT JOIN LATERAL (
+      SELECT coalesce(sm.shares_out, tf.outstanding_shares) AS shares_out
+      FROM (SELECT 1) x
+      LEFT JOIN screener_meta sm ON sm.ticker = a.ticker
+      LEFT JOIN ticker_float  tf ON tf.ticker = a.ticker
+    ) so ON true
+  `);
+  const [{ n } = { n: 0 }] = (await db.execute(sql`SELECT count(*)::int AS n FROM ticker_institutional_ownership`))?.rows || [];
+  return { tickers: n || 0, ms: Date.now() - t0 };
 }
 
 // Map unpadded CIK → curated featured info (slug/label/manager/category) so featured funds keep their

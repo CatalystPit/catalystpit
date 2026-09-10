@@ -596,6 +596,22 @@ export const institutions = pgTable('institutions', {
   idxInstSlug: index('idx_institutions_slug').on(t.slug),
 }));
 
+// ── Precomputed 13F-reported institutional ownership per ticker (Phase 3) ──────
+// Nightly aggregate: for each ticker, sum COMMON-stock shares across every fund's
+// LATEST filed quarter (puts/calls excluded), ÷ shares outstanding. `asOfQuarter`
+// is the most recent quarter among contributors. NOT total ownership — 13F is long
+// US-listed positions from >$100M managers only, filed up to 45 days after quarter-end.
+export const tickerInstitutionalOwnership = pgTable('ticker_institutional_ownership', {
+  ticker:       text('ticker').primaryKey(),
+  asOfQuarter:  date('as_of_quarter', { mode: 'string' }),
+  instShares:   doublePrecision('inst_shares'),          // Σ common shares, latest filed per fund
+  instValue:    doublePrecision('inst_value'),           // Σ reported USD value (common only)
+  filerCount:   integer('filer_count'),                  // distinct funds holding common
+  sharesOut:    doublePrecision('shares_out'),           // snapshot used for the ratio
+  ownershipPct: doublePrecision('ownership_pct'),        // instShares / sharesOut * 100
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ── Shared security-resolution layer (institutions + congress expansion, Phase 1) ──
 // Durable CUSIP → ticker map (promotes the old KV cache to Postgres so it's queryable + reusable).
 export const cusipMap = pgTable('cusip_map', {

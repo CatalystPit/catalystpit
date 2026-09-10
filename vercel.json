@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/institutions-universe",
       "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/institutions-ownership",
+      "schedule": "30 6 * * *"
     }
   ],
   "headers": [
@@ -101,6 +105,9 @@
   "functions": {
     "src/app/api/cron/institutions-universe/route.js": {
       "maxDuration": 300
+    },
+    "src/app/api/cron/institutions-ownership/route.js": {
+      "maxDuration": 120
     },
     "src/app/api/cron/alerts/route.js": {
       "maxDuration": 60
