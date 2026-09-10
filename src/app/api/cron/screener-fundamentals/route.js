@@ -25,9 +25,11 @@ export async function GET(request) {
   if (!authorized) authorized = await isAdmin();
   if (!authorized) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const cap = Math.min(8000, Math.max(100, parseInt(new URL(request.url).searchParams.get('cap') || '3000', 10) || 3000));
+  const sp = new URL(request.url).searchParams;
+  const cap = Math.min(8000, Math.max(100, parseInt(sp.get('cap') || '3000', 10) || 3000));
+  const force = sp.get('force') === '1';   // re-fetch even fresh rows (oldest first) to backfill new fields
   try {
-    const res = await backfillFundamentals({ cap });
+    const res = await backfillFundamentals({ cap, force });
     console.log(`[screener-fund] ${JSON.stringify(res)}`);
     return Response.json({ ok: true, ...res });
   } catch (e) {

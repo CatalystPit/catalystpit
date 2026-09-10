@@ -131,14 +131,18 @@ async function fetchFinancials(t) {
 }
 
 // Populate screener_fundamentals from Polygon Financials. Bounded, prioritized by volume, accumulates.
-export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleDays = 30 } = {}) {
+export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleDays = 30, force = false } = {}) {
   await ensureScreenerTables();
   if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   const uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
   const have = new Map((await db.select({ t: screenerFundamentals.ticker, u: screenerFundamentals.updatedAt }).from(screenerFundamentals)).map((r) => [r.t, r.u]));
   const cutoff = Date.now() - staleDays * 86400000;
-  const need = uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; })
-    .sort((a, b) => (b.vol || 0) - (a.vol || 0)).slice(0, cap).map((r) => r.t);
+  // force = re-fetch everything (to backfill newly-added fields), oldest/never-fetched first so
+  // successive runs advance through the universe. Normal = only stale, prioritized by volume.
+  const need = (force
+    ? uni.slice().sort((a, b) => (have.get(a.t) ? new Date(have.get(a.t)).getTime() : 0) - (have.get(b.t) ? new Date(have.get(b.t)).getTime() : 0))
+    : uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; }).sort((a, b) => (b.vol || 0) - (a.vol || 0))
+  ).slice(0, cap).map((r) => r.t);
 
   const rows = [];
   for (let i = 0; i < need.length; i += concurrency) {
@@ -221,14 +225,18 @@ async function fetchDetail(t) {
 
 // Populate screener_meta from Polygon ticker-details. Bounded per run, prioritized by volume, skips
 // rows refreshed within staleDays — so it accumulates full coverage over a few runs and refreshes.
-export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14 } = {}) {
+export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14, force = false } = {}) {
   await ensureScreenerTables();
   if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   const uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
   const have = new Map((await db.select({ t: screenerMeta.ticker, u: screenerMeta.updatedAt }).from(screenerMeta)).map((r) => [r.t, r.u]));
   const cutoff = Date.now() - staleDays * 86400000;
-  const need = uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; })
-    .sort((a, b) => (b.vol || 0) - (a.vol || 0)).slice(0, cap).map((r) => r.t);
+  // force = re-fetch everything (to backfill newly-added fields), oldest/never-fetched first so
+  // successive runs advance through the universe. Normal = only stale, prioritized by volume.
+  const need = (force
+    ? uni.slice().sort((a, b) => (have.get(a.t) ? new Date(have.get(a.t)).getTime() : 0) - (have.get(b.t) ? new Date(have.get(b.t)).getTime() : 0))
+    : uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; }).sort((a, b) => (b.vol || 0) - (a.vol || 0))
+  ).slice(0, cap).map((r) => r.t);
 
   const rows = [];
   for (let i = 0; i < need.length; i += concurrency) {
