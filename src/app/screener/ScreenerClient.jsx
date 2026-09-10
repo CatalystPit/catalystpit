@@ -140,7 +140,7 @@ function MiniChart({ symbol }) {
     s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
     s.async = true;
     s.innerHTML = JSON.stringify({
-      autosize: true, symbol, interval: 'D', range: '3M', timezone: 'America/New_York', theme: 'light',
+      autosize: true, symbol, interval: 'D', range: '3M', timezone: 'America/New_York', theme: (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light',
       style: '1', locale: 'en', hide_top_toolbar: true, hide_side_toolbar: true, hide_legend: true,
       allow_symbol_change: false, save_image: false, withdateranges: false, support_host: 'https://www.tradingview.com',
     });

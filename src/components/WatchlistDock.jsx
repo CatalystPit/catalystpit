@@ -148,7 +148,7 @@ function Body({ onClose }) {
         <button onClick={onClose} aria-label="Collapse watchlist" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: '0 2px' }}>›</button>
 
         {menu && (
-          <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 8, minWidth: 210, zIndex: 6, background: '#fff', color: C.ink, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 10px 26px rgba(0,0,0,0.18)', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 8, minWidth: 210, zIndex: 6, background: C.white, color: C.ink, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 10px 26px rgba(0,0,0,0.18)', overflow: 'hidden' }}>
             {lists.map((l) => (
               <button key={l.id} onClick={() => switchList(l.id)}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '8px 12px', background: l.id === activeId ? C.greenLight : '#fff', border: 'none', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', fontSize: 12.5, fontWeight: l.id === activeId ? 700 : 500, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
@@ -156,12 +156,12 @@ function Body({ onClose }) {
                 <span style={{ fontSize: 10, color: C.dim }}>{l.count}</span>
               </button>
             ))}
-            <button onClick={newList} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: '#fff', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, color: C.green, fontFamily: "'DM Sans',sans-serif" }}>＋ New list</button>
+            <button onClick={newList} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: C.white, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, color: C.green, fontFamily: "'DM Sans',sans-serif" }}>＋ New list</button>
             {activeList && (
-              <button onClick={() => { setMenu(false); setRenaming(true); setRenameVal(activeName); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: '#fff', border: 'none', borderTop: `1px solid ${C.surface}`, cursor: 'pointer', fontSize: 12, color: C.muted, fontFamily: "'DM Sans',sans-serif" }}>✎ Rename</button>
+              <button onClick={() => { setMenu(false); setRenaming(true); setRenameVal(activeName); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: C.white, border: 'none', borderTop: `1px solid ${C.surface}`, cursor: 'pointer', fontSize: 12, color: C.muted, fontFamily: "'DM Sans',sans-serif" }}>✎ Rename</button>
             )}
             {activeList && !activeList.isDefault && (
-              <button onClick={doDelete} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: '#fff', border: 'none', cursor: 'pointer', fontSize: 12, color: C.red, fontFamily: "'DM Sans',sans-serif" }}>🗑 Delete list</button>
+              <button onClick={doDelete} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: C.white, border: 'none', cursor: 'pointer', fontSize: 12, color: C.red, fontFamily: "'DM Sans',sans-serif" }}>🗑 Delete list</button>
             )}
             {msg && <div style={{ padding: '8px 12px', fontSize: 11, color: C.red, borderTop: `1px solid ${C.surface}` }}>{msg}</div>}
           </div>
@@ -176,10 +176,10 @@ function Body({ onClose }) {
             style={{ width: '100%', height: 30, borderRadius: 6, border: `1px solid ${C.border}`, padding: '0 10px', fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: 'none', boxSizing: 'border-box' }} />
           {msg && <div style={{ fontSize: 11, color: C.red, marginTop: 5 }}>{msg}</div>}
           {sugg.length > 0 && (
-            <div style={{ position: 'absolute', top: 'calc(100% - 2px)', left: 10, right: 10, zIndex: 5, background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 8px 22px rgba(0,0,0,0.14)', overflow: 'hidden', maxHeight: 240, overflowY: 'auto' }}>
+            <div style={{ position: 'absolute', top: 'calc(100% - 2px)', left: 10, right: 10, zIndex: 5, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 8px 22px rgba(0,0,0,0.14)', overflow: 'hidden', maxHeight: 240, overflowY: 'auto' }}>
               {sugg.map((s, i) => (
                 <button key={s.ticker + i} type="button" onMouseDown={(e) => { e.preventDefault(); add(s.ticker); }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 10px', background: '#fff', border: 'none', borderBottom: i < sugg.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: 'pointer' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 10px', background: C.white, border: 'none', borderBottom: i < sugg.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: 'pointer' }}>
                   <TickerLogo symbol={s.ticker} size={18} />
                   <span className="cp-tkr" style={{ fontSize: 12.5, fontWeight: 700, color: C.green }}>{s.ticker}</span>
                   <span style={{ fontSize: 11.5, color: C.muted, fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>

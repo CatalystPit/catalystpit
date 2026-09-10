@@ -33,7 +33,7 @@ export default function TradingViewChart({ ticker }) {
       symbol: ticker,
       interval: 'D',
       timezone: 'America/New_York',
-      theme: 'light',
+      theme: (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light',
       style: '1',
       locale: 'en',
       hide_side_toolbar: false,
