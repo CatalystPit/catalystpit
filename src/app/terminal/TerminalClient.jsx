@@ -555,15 +555,29 @@ function BottomTape() {
 }
 
 // ── Panel chrome ──
-function PanelCard({ def, colorKey, onCycleColor, onMoveStart, onResizeStart, draggable, headerRight, onRemove, children }) {
+function PanelCard({ def, colorKey, onSetColor, onMoveStart, onResizeStart, draggable, headerRight, onRemove, children }) {
+  const [colorMenu, setColorMenu] = useState(false);
   return (
     <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
       <div onPointerDown={draggable ? onMoveStart : undefined}
         style={{ cursor: draggable ? 'move' : 'default', padding: '6px 10px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, touchAction: 'none' }}>
         {draggable && (
-          <button onPointerDown={(e) => e.stopPropagation()} onClick={onCycleColor}
-            title="Link group — panels sharing this color sync (click to change)"
-            style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(0,0,0,0.15)', background: colorOf(colorKey), cursor: 'pointer', padding: 0, flexShrink: 0 }} />
+          <span style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }} onPointerDown={(e) => e.stopPropagation()}>
+            <button onClick={() => setColorMenu((v) => !v)}
+              title="Link-group color — pick a group (panels sharing a color sync)"
+              style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(0,0,0,0.15)', background: colorOf(colorKey), cursor: 'pointer', padding: 0, display: 'block' }} />
+            {colorMenu && (
+              <>
+                <div onClick={() => setColorMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 39 }} />
+                <div style={{ position: 'absolute', top: '150%', left: 0, zIndex: 40, display: 'flex', gap: 5, background: C.white, border: `1px solid ${C.border}`, borderRadius: 6, boxShadow: '0 4px 14px rgba(0,0,0,0.18)', padding: 5 }}>
+                  {LINK_COLORS.map((lc) => (
+                    <button key={lc.key} title={lc.key} onClick={() => { onSetColor && onSetColor(lc.key); setColorMenu(false); }}
+                      style={{ width: 15, height: 15, borderRadius: 3, cursor: 'pointer', padding: 0, background: lc.c, border: lc.key === colorKey ? `2px solid ${C.ink}` : '1px solid rgba(0,0,0,0.2)' }} />
+                  ))}
+                </div>
+              </>
+            )}
+          </span>
         )}
         <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{def.title}</span>
         {def.tag && <span style={{ fontSize: 9, color: C.dim, letterSpacing: 0.5 }}>{def.tag}</span>}
@@ -655,7 +669,7 @@ function Workspace() {
   const linkSymbol = (sourceId, sym) => selectSymbol(sym);
   // Receive selections from globally-mounted tapes (top/bottom ticker tape) via the symbol bus.
   useEffect(() => onTerminalSymbol(selectSymbol), [selectSymbol]);
-  const cycleColor = (id) => { const l = layoutRef.current; const nl = { ...l, [id]: { ...l[id], color: nextColor(l[id].color) } }; setLayout(nl); persist(nl); };
+  const setColor = (id, key) => { const l = layoutRef.current; const nl = { ...l, [id]: { ...l[id], color: key } }; setLayout(nl); persist(nl); };
 
   const bodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={selectedSymbol} />
     : def.id === 'halts' ? <HaltBody onPick={(s) => linkSymbol('halts', s)} />
@@ -718,7 +732,7 @@ function Workspace() {
           if (!def || !p) return null;
           return (
             <div key={id} style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h }}>
-              <PanelCard def={def} draggable colorKey={p.color} onCycleColor={() => cycleColor(id)}
+              <PanelCard def={def} draggable colorKey={p.color} onSetColor={(key) => setColor(id, key)}
                 onMoveStart={(e) => start(id, e, 'move')} onResizeStart={(e) => start(id, e, 'resize')}
                 headerRight={headerRightOf(def)} onRemove={() => removePanel(id)}>{bodyOf(def)}</PanelCard>
             </div>
