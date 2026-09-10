@@ -699,10 +699,12 @@ function FeedBody({ onPick }) {
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
-          <button onClick={() => fileRef.current?.click()} title="Add image" style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, padding: '3px 9px', cursor: 'pointer', fontSize: 14, lineHeight: 1.2 }}>📷</button>
           <input ref={fileRef} type="file" accept="image/*" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) { clearImage(); setImage(f); setPreview(URL.createObjectURL(f)); } }} style={{ display: 'none' }} />
           {notice && <span style={{ fontSize: 10.5, color: C.red }}>{notice}</span>}
-          <button onClick={submit} disabled={(!input.trim() && !image) || posting} style={{ marginLeft: 'auto', background: (input.trim() || image) ? C.green : C.surface, color: (input.trim() || image) ? '#fff' : C.dim, border: 'none', borderRadius: 5, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: (input.trim() || image) ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>{posting ? 'Posting…' : 'Post'}</button>
+          <button onClick={() => fileRef.current?.click()} title="Photo" style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', color: image ? C.green : C.muted, padding: 4 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>
+          </button>
+          <button onClick={submit} disabled={(!input.trim() && !image) || posting} style={{ background: (input.trim() || image) ? C.green : C.surface, color: (input.trim() || image) ? '#fff' : C.dim, border: 'none', borderRadius: 5, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: (input.trim() || image) ? 'pointer' : 'default', fontFamily: "'DM Sans',sans-serif" }}>{posting ? 'Posting…' : 'Post'}</button>
         </div>
       </div>
       <div style={{ overflow: 'auto', flex: 1 }}>
