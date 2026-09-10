@@ -127,8 +127,9 @@ function FilterControl({ def, val, onChange }) {
   );
 }
 
-// Small daily-chart used in the Finviz-style hover preview. TradingView mini-symbol-overview embed —
-// the classNames tradingview-widget-container(__widget) are REQUIRED or it renders blank.
+// Small daily CANDLESTICK chart for the Finviz-style hover preview. Advanced-chart embed (mini widget
+// is line-only), stripped to just the candles. The classNames tradingview-widget-container(__widget)
+// are REQUIRED or it renders blank.
 function MiniChart({ symbol }) {
   const host = useRef(null);
   useEffect(() => {
@@ -136,11 +137,12 @@ function MiniChart({ symbol }) {
     const c = document.createElement('div'); c.className = 'tradingview-widget-container'; c.style.height = '100%'; c.style.width = '100%';
     const w = document.createElement('div'); w.className = 'tradingview-widget-container__widget'; w.style.height = '100%'; w.style.width = '100%'; c.appendChild(w);
     const s = document.createElement('script');
-    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js';
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
     s.async = true;
     s.innerHTML = JSON.stringify({
-      symbol, width: '100%', height: '100%', locale: 'en', dateRange: '3M',
-      colorTheme: 'light', isTransparent: true, autosize: true, chartOnly: false, noTimeScale: false,
+      autosize: true, symbol, interval: 'D', range: '3M', timezone: 'America/New_York', theme: 'light',
+      style: '1', locale: 'en', hide_top_toolbar: true, hide_side_toolbar: true, hide_legend: true,
+      allow_symbol_change: false, save_image: false, withdateranges: false, support_host: 'https://www.tradingview.com',
     });
     c.appendChild(s); h.appendChild(c);
     return () => { h.innerHTML = ''; };
