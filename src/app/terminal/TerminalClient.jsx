@@ -264,6 +264,11 @@ function CustomScannerBody({ onPick }) {
   };
   const loadScan = (s) => { const c = Object.entries(s.filters || {}).map(([key, cond]) => ({ key, cond })); setConds(c); run(c); };
   const delScan = async (id) => { await fetch(`/api/screener/saved?scope=terminal&id=${id}`, { method: 'DELETE' }).catch(() => {}); loadSaved(); };
+  const alertScan = async () => {
+    if (!conds.length) return;
+    const name = window.prompt('Alert me when a NEW ticker matches this scan — name it:'); if (!name) return;
+    try { await fetch('/api/alerts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filters: buildFilters() }) }); window.alert('Alert set — you’ll get a bell notification when a new name enters this scan.'); } catch { /* ignore */ }
+  };
 
   const btn = { fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", border: `1px solid ${C.border}`, background: C.white, color: C.muted };
   const showPrice = w >= 280, showVol = w >= 340, showCompany = w >= 560, showFloat = w >= 460, showMcap = w >= 420;
@@ -275,6 +280,7 @@ function CustomScannerBody({ onPick }) {
           <button onClick={() => setAddOpen((v) => !v)} style={{ ...btn, color: C.green, borderColor: C.greenBorder }}>+ Add Filter</button>
           <button onClick={() => run()} style={{ ...btn, background: C.green, color: '#fff', border: 'none' }}>{running ? 'Running…' : 'Run Scan'}</button>
           <button onClick={save} disabled={!conds.length} style={{ ...btn, opacity: conds.length ? 1 : 0.5 }}>Save</button>
+          <button onClick={alertScan} disabled={!conds.length} title="Alert when a new ticker matches" style={{ ...btn, opacity: conds.length ? 1 : 0.5 }}>🔔 Alert</button>
           {conds.length > 0 && <button onClick={() => { setConds([]); setRows(null); }} style={{ ...btn, border: 'none', background: 'transparent', color: C.dim, textDecoration: 'underline' }}>Clear</button>}
           {addOpen && meta && (
             <div style={{ position: 'absolute', top: '110%', left: 0, zIndex: 30, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', minWidth: 210, maxHeight: 300, overflow: 'auto', padding: '4px 0' }}>
@@ -555,18 +561,22 @@ function AlertsBody({ symbol }) {
             : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <tbody>
-                  {data.alerts.map((a, i) => (
+                  {data.alerts.map((a, i) => { const isScan = a.type === 'scan_new'; return (
                     <tr key={a.id} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none', opacity: a.active ? 1 : 0.55 }}>
-                      <td style={{ padding: '7px 9px', whiteSpace: 'nowrap' }}><span className="cp-tkr" style={{ fontWeight: 700, color: C.ink }}>{a.symbol}</span></td>
-                      <td style={{ padding: '7px 9px', color: C.text }}>{labelOf(a.type)}{a.threshold != null ? ` ${a.threshold}` : ''}</td>
+                      <td style={{ padding: '7px 9px', whiteSpace: 'nowrap', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {isScan ? <span style={{ fontWeight: 700, color: C.ink }}>🔔 {a.note}</span> : <span className="cp-tkr" style={{ fontWeight: 700, color: C.ink }}>{a.symbol}</span>}
+                      </td>
+                      <td style={{ padding: '7px 9px', color: C.text }}>{isScan ? 'New scan match' : `${labelOf(a.type)}${a.threshold != null ? ` ${a.threshold}` : ''}`}</td>
                       <td style={{ padding: '7px 9px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {a.active
-                          ? <span style={{ fontSize: 8.5, fontWeight: 700, color: C.green, background: C.greenLight, borderRadius: 3, padding: '1px 5px' }}>ARMED</span>
-                          : <button onClick={() => toggle(a)} title="Re-arm" style={{ fontSize: 8.5, fontWeight: 700, color: C.muted, background: C.surface, border: 'none', borderRadius: 3, padding: '2px 6px', cursor: 'pointer' }}>TRIGGERED · re-arm</button>}
+                        {isScan
+                          ? <span style={{ fontSize: 8.5, fontWeight: 700, color: C.green, background: C.greenLight, borderRadius: 3, padding: '1px 5px' }}>WATCHING</span>
+                          : a.active
+                            ? <span style={{ fontSize: 8.5, fontWeight: 700, color: C.green, background: C.greenLight, borderRadius: 3, padding: '1px 5px' }}>ARMED</span>
+                            : <button onClick={() => toggle(a)} title="Re-arm" style={{ fontSize: 8.5, fontWeight: 700, color: C.muted, background: C.surface, border: 'none', borderRadius: 3, padding: '2px 6px', cursor: 'pointer' }}>TRIGGERED · re-arm</button>}
                         <button onClick={() => del(a.id)} title="Delete" style={{ marginLeft: 6, background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>×</button>
                       </td>
                     </tr>
-                  ))}
+                  ); })}
                 </tbody>
               </table>
             )}

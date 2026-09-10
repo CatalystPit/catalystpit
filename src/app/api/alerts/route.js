@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { createAlert, listAlerts, deleteAlert, setAlertActive, ALERT_TYPES } from '../../../lib/alerts';
+import { createAlert, createScanAlert, listAlerts, deleteAlert, setAlertActive, ALERT_TYPES } from '../../../lib/alerts';
 
 export const runtime = 'nodejs';
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
@@ -19,7 +19,11 @@ export async function POST(request) {
     const { userId } = await auth();
     if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
     const b = await request.json().catch(() => ({}));
-    return Response.json({ alerts: await createAlert(userId, b) }, { headers: NO_STORE });
+    // A scan alert carries a filters object ("alert when matched"); otherwise it's a symbol alert.
+    const out = (b && b.filters && typeof b.filters === 'object')
+      ? await createScanAlert(userId, b)
+      : await createAlert(userId, b);
+    return Response.json({ alerts: out }, { headers: NO_STORE });
   } catch (e) { return Response.json({ error: e.message }, { status: 400 }); }
 }
 

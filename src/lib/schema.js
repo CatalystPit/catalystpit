@@ -530,9 +530,10 @@ export const alerts = pgTable('alerts', {
   id:             serial('id').primaryKey(),
   userId:         text('user_id').notNull(),
   symbol:         text('symbol'),
-  type:           text('type').notNull(),          // price_above|price_below|change_above|change_below|rvol_above|volume_above|news|halt
+  type:           text('type').notNull(),          // price_above|price_below|change_above|change_below|rvol_above|volume_above|news|halt|scan_new
   threshold:      doublePrecision('threshold'),
   note:           text('note'),
+  config:         text('config'),                  // JSON for scan_new alerts: { filters, seen:[tickers] }
   active:         boolean('active').notNull().default(true),
   lastTriggeredAt: timestamp('last_triggered_at', { withTimezone: true }),
   createdAt:      timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -3,6 +3,7 @@ import { db } from './db';
 import { alerts, screenerStocks, eightkFilings, pitNotifications } from './schema';
 import { getQuotes } from './market-data';
 import { ensureNotifTables } from './notifications';
+import { buildConds } from './screener-filters';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Centralized alert engine. Rules live in `alerts` (per user); a cron calls
@@ -35,6 +36,7 @@ export async function ensureAlertTables() {
   )`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_alerts_user ON alerts (user_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts (active)`);
+  await db.execute(sql`ALTER TABLE alerts ADD COLUMN IF NOT EXISTS config TEXT`);
   _ensured = true;
 }
 
@@ -64,6 +66,26 @@ export async function deleteAlert(userId, id) {
 export async function setAlertActive(userId, id, active) {
   await ensureAlertTables();
   await db.update(alerts).set({ active: !!active, ...(active ? { lastTriggeredAt: null } : {}) }).where(and(eq(alerts.userId, userId), eq(alerts.id, id)));
+  return listAlerts(userId);
+}
+
+// Run a saved-scan's filters against the screener universe → matching tickers (bounded).
+async function runScanTickers(filters) {
+  const conds = buildConds(filters || {});
+  let q = db.select({ t: screenerStocks.ticker }).from(screenerStocks);
+  if (conds.length) q = q.where(and(...conds));
+  const rows = await q.limit(200);
+  return rows.map((r) => r.t).filter(Boolean);
+}
+
+// "Alert when matched" — watch a saved Custom Scanner scan and notify on NEW entrants. Seeds `seen`
+// with the current matches so it only fires on future additions.
+export async function createScanAlert(userId, { name, filters }) {
+  await ensureAlertTables();
+  const nm = String(name || 'Scan').slice(0, 60);
+  let seen = [];
+  try { seen = await runScanTickers(filters); } catch { seen = []; }
+  await db.insert(alerts).values({ userId, type: 'scan_new', note: nm, config: JSON.stringify({ filters: filters || {}, seen }) });
   return listAlerts(userId);
 }
 
@@ -135,9 +157,36 @@ export async function evaluateAlerts() {
   const ctx = { quotes, rvol, halted, news };
   let fired = 0;
   for (const a of rows) {
+    if (a.type === 'scan_new') continue;   // handled below (needs the screener query + seen diff)
     let msg = null;
     try { msg = evalOne(a, ctx); } catch { msg = null; }
     if (msg) { await fire(a, msg); fired++; }
   }
+
+  // scan_new — repeatable: fire on NEW tickers entering a saved scan, refresh `seen`, stay armed.
+  for (const a of rows) {
+    if (a.type !== 'scan_new') continue;
+    try {
+      const cfg = a.config ? JSON.parse(a.config) : { filters: {}, seen: [] };
+      const current = await runScanTickers(cfg.filters);
+      const seen = new Set(cfg.seen || []);
+      const fresh = current.filter((t) => !seen.has(t));
+      if (fresh.length) {
+        const msg = `${fresh.length} new in "${a.note || 'scan'}": ${fresh.slice(0, 6).join(', ')}${fresh.length > 6 ? '…' : ''}`;
+        await fireScan(a, msg, cfg.filters, current);
+        fired++;
+      } else if (current.length !== (cfg.seen || []).length) {
+        await db.update(alerts).set({ config: JSON.stringify({ filters: cfg.filters, seen: current }) }).where(eq(alerts.id, a.id));
+      }
+    } catch { /* skip this alert */ }
+  }
   return { checked: rows.length, fired };
+}
+
+async function fireScan(a, message, filters, current) {
+  try {
+    await ensureNotifTables();
+    await db.insert(pitNotifications).values({ userId: a.userId, actorUserId: 'system', actorName: 'Pit Alerts', type: 'alert', excerpt: message });
+  } catch (e) { console.log(`[alerts] scan notify failed: ${e.message}`); }
+  await db.update(alerts).set({ config: JSON.stringify({ filters, seen: current }), lastTriggeredAt: new Date() }).where(eq(alerts.id, a.id));
 }
