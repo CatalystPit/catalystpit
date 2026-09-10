@@ -19,6 +19,7 @@ const PANELS = [
   { id: 'pitscan',   title: 'Pit Scan',        tag: 'PROPRIETARY' },
   { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
   { id: 'movers',    title: 'Movers',       tag: 'DELAYED' },
+  { id: 'why',       title: 'Why Moving',   tag: 'CATALYST' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
 ];
@@ -56,6 +57,7 @@ function defaultLayout(width) {
     pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'green' },
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     movers:    { x: centerX + 12, y: 402, w: centerW, h: 260, color: 'blue' },
+    why:       { x: centerX + 36, y: 422, w: centerW, h: 220, color: 'green' },
     // right column
     watchlist: { x: rightX, y: 0, w: rightW, h: top, color: 'blue' },
     chat:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
@@ -393,6 +395,60 @@ function MoversBody({ onPick }) {
                 </table>
               )}
       </div>
+    </div>
+  );
+}
+
+// ── WHY MOVING — symbol-aware panel. For the active Terminal symbol, surfaces the grounded catalyst
+// (recent 8-K) + the market reaction context we already track. No AI speculation. ──
+function WhyMovingBody({ symbol }) {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    if (!symbol) { setD(null); return; }
+    let alive = true; setD(null);
+    fetch(`/api/why?symbol=${encodeURIComponent(symbol)}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive) setD(j || {}); }).catch(() => { if (alive) setD({}); });
+    return () => { alive = false; };
+  }, [symbol]);
+
+  if (!symbol) return <div style={{ padding: '24px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>Click any ticker to see why it&apos;s moving.</div>;
+  if (d === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Reading the tape for {symbol}…</div>;
+  const ctx = d.context, cat = d.catalyst;
+  const chip = (label, tone) => <span style={{ fontSize: 10, fontWeight: 700, color: tone ? tone.fg : C.muted, background: tone ? tone.bg : C.surface, borderRadius: 4, padding: '2px 7px' }}>{label}</span>;
+
+  return (
+    <div style={{ padding: 12, overflow: 'auto', flex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <TickerLogo symbol={symbol} size={22} />
+        <span className="cp-tkr" style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>{symbol}</span>
+        {ctx?.changePct != null && <span className="cp-num" style={{ fontSize: 15, fontWeight: 700, color: ctx.changePct >= 0 ? C.green : C.red }}>{ctx.changePct > 0 ? '+' : ''}{fmt2(ctx.changePct)}%</span>}
+        {ctx?.price != null && <span className="cp-num" style={{ fontSize: 12, color: C.muted, marginLeft: 'auto' }}>{fmt2(ctx.price)}</span>}
+      </div>
+
+      <div style={{ fontSize: 9, fontWeight: 800, color: C.dim, letterSpacing: 1, marginBottom: 5 }}>WHY IT&apos;S MOVING</div>
+      {cat ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {chip(cat.type, cat.material ? { fg: '#B45309', bg: '#FEF3C7' } : null)}
+            <span style={{ fontSize: 11, color: C.muted }}>{cat.source} · {cat.agoMin < 60 ? `${cat.agoMin}m ago` : cat.agoMin < 1440 ? `${Math.round(cat.agoMin / 60)}h ago` : `${Math.round(cat.agoMin / 1440)}d ago`}</span>
+            {cat.url && <a href={cat.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: C.green, fontWeight: 600, textDecoration: 'none' }}>View filing ↗</a>}
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
+          {ctx?.breakingToday || ctx?.newsCategory ? `Fresh ${ctx.newsCategory || 'news'} today — check the News Wire.` : 'No fresh SEC catalyst on file (last 7 days). The move may be news-, sector- or flow-driven.'}
+        </div>
+      )}
+
+      <div style={{ fontSize: 9, fontWeight: 800, color: C.dim, letterSpacing: 1, marginBottom: 5 }}>CONTEXT</div>
+      {ctx ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {ctx.relVol != null && chip(`RVOL ${fmt2(ctx.relVol)}×`, ctx.relVol >= 2 ? { fg: '#C2410C', bg: '#FFEDD5' } : null)}
+          {ctx.nearHigh && chip('Near 20D high', { fg: '#1E5C38', bg: '#E8F5EE' })}
+          {ctx.volume != null && chip(`Vol ${fmtVol(ctx.volume)}`)}
+          {ctx.consensusScore != null && chip(`◆ Convergence ${ctx.consensusScore}`, { fg: '#1E5C38', bg: '#E8F5EE' })}
+          {ctx.company && <div style={{ width: '100%', fontSize: 10.5, color: C.dim, marginTop: 4 }}>{ctx.company}</div>}
+        </div>
+      ) : <div style={{ fontSize: 11.5, color: C.dim }}>Not in our covered universe yet — no reaction context.</div>}
     </div>
   );
 }
@@ -760,6 +816,7 @@ function Workspace() {
     : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
     : def.id === 'scanner' ? <CustomScannerBody onPick={(s) => linkSymbol('scanner', s)} />
     : def.id === 'movers' ? <MoversBody onPick={(s) => linkSymbol('movers', s)} />
+    : def.id === 'why' ? <WhyMovingBody symbol={selectedSymbol} />
     : null);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{selectedSymbol}</span> : null);
