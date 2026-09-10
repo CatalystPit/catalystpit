@@ -46,18 +46,21 @@ function Avatar({ url, name, size = 30 }) {
   );
 }
 
-// Render body with $CASHTAGS linked to the ticker page.
-function Body({ text }) {
+// Render body with $CASHTAGS. Default = link to the ticker page; when onSymbol is provided (Terminal),
+// clicking a cashtag sets the Terminal symbol instead of navigating away.
+function Body({ text, onSymbol }) {
   const parts = [];
   let last = 0, m;
   CASHTAG_RE.lastIndex = 0;
   while ((m = CASHTAG_RE.exec(text))) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     const sym = m[0].slice(1).toUpperCase();
-    parts.push(
-      <a key={m.index} href={`/ticker/${sym}`}
-        style={{ color: C.green, fontWeight: 600, textDecoration: 'none' }}>{m[0].toUpperCase()}</a>
-    );
+    const label = m[0].toUpperCase();
+    parts.push(onSymbol
+      ? <button key={m.index} onClick={(e) => { e.preventDefault(); onSymbol(sym); }}
+          style={{ color: C.green, fontWeight: 600, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit' }}>{label}</button>
+      : <a key={m.index} href={`/ticker/${sym}`}
+          style={{ color: C.green, fontWeight: 600, textDecoration: 'none' }}>{label}</a>);
     last = m.index + m[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
@@ -106,7 +109,7 @@ function applyExclusive(m, oldEmoji, newEmoji) {
   return { ...m, reactions: reactionsFromCounts(counts, newEmoji) };
 }
 
-export default function PitChat({ height = 620, onClose, bare = false }) {
+export default function PitChat({ height = 620, onClose, bare = false, onSymbol = null }) {
   const [messages, setMessages] = useState([]);
   const [me, setMe] = useState({ canPost: false, loggedIn: false, admin: false });
   const [online, setOnline] = useState(0);
@@ -322,7 +325,7 @@ export default function PitChat({ height = 620, onClose, bare = false }) {
                 </span>
               </div>
               <div style={{ fontSize: 13, color: C.text, lineHeight: 1.4, wordBreak: 'break-word' }}>
-                <Body text={m.body} />
+                <Body text={m.body} onSymbol={onSymbol} />
               </div>
 
               {/* Facebook-style row: Like (hover/hold → pick reaction) · Reply · summary */}

@@ -5,6 +5,7 @@ import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, to
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
+import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
 
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
@@ -391,12 +392,12 @@ function BottomTape() {
     <div style={{ borderTop: `1px solid ${C.border}`, background: C.white, overflow: 'hidden', padding: '8px 0' }}>
       <div style={{ display: 'inline-flex', whiteSpace: 'nowrap', animation: 'cp-btape 55s linear infinite' }}>
         {items.map((t, i) => (
-          <a key={i} href={`/ticker/${encodeURIComponent(t.sym)}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 16px', textDecoration: 'none' }}>
+          <span key={i} onClick={() => selectTerminalSymbol(t.sym)} title={`Load ${t.sym} in chart`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 16px', cursor: 'pointer' }}>
             <TickerLogo symbol={t.sym} size={15} />
             <span className="cp-tkr" style={{ fontSize: 11, color: C.muted }}>{t.sym}</span>
             <span className="cp-num" style={{ fontSize: 11, color: C.ink, fontWeight: 600 }}>{t.price > 1000 ? (+t.price).toLocaleString() : fmt2(+t.price)}</span>
             <span className="cp-num" style={{ fontSize: 10, color: t.chg >= 0 ? C.green : C.red, fontWeight: 600 }}>{t.chg > 0 ? '+' : ''}{fmt2(t.chg)}%</span>
-          </a>
+          </span>
         ))}
       </div>
       <style>{`@keyframes cp-btape { from { transform: translateX(0); } to { transform: translateX(-50%); } }`}</style>
@@ -443,7 +444,7 @@ function Workspace() {
   const [layout, setLayoutState] = useState(null);
   const [mobile, setMobile] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [chartSymbol, setChartSymbol] = useState('SPY');
+  const [selectedSymbol, setSelectedSymbol] = useState('SPY');   // centralized Terminal symbol
   const [visible, setVisibleState] = useState(DEFAULT_VISIBLE);
   const visibleRef = useRef(DEFAULT_VISIBLE);
   const [addOpen, setAddOpen] = useState(false);
@@ -498,25 +499,26 @@ function Workspace() {
   const removePanel = (id) => { const v = visibleRef.current.filter((x) => x !== id); setVisible(v); persistVisible(v); };
   const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); setVisible(DEFAULT_VISIBLE); persistVisible(DEFAULT_VISIBLE); };
 
-  // Link-group sync: clicking a symbol in a source panel loads it in chart panels sharing its color.
-  const linkSymbol = (sourceId, sym) => {
-    const src = layoutRef.current?.[sourceId]?.color;
-    const chartColor = layoutRef.current?.chart?.color;
-    if (src && src !== 'none' && src === chartColor) setChartSymbol(sym);
-  };
+  // Centralized symbol selection: clicking a ticker ANYWHERE in the Terminal sets the active symbol
+  // (drives the chart + future symbol-aware panels) instead of navigating away. Color link-groups are
+  // retained (chip still cycles) for future multi-chart routing; with a single chart it's global.
+  const selectSymbol = useCallback((sym) => { if (sym) setSelectedSymbol(String(sym).toUpperCase()); }, []);
+  const linkSymbol = (sourceId, sym) => selectSymbol(sym);
+  // Receive selections from globally-mounted tapes (top/bottom ticker tape) via the symbol bus.
+  useEffect(() => onTerminalSymbol(selectSymbol), [selectSymbol]);
   const cycleColor = (id) => { const l = layoutRef.current; const nl = { ...l, [id]: { ...l[id], color: nextColor(l[id].color) } }; setLayout(nl); persist(nl); };
 
-  const bodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={chartSymbol} />
+  const bodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={selectedSymbol} />
     : def.id === 'halts' ? <HaltBody onPick={(s) => linkSymbol('halts', s)} />
     : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
-    : def.id === 'chat' ? <PitChat bare />
+    : def.id === 'chat' ? <PitChat bare onSymbol={selectSymbol} />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
     : def.id === 'scanner' ? <ScanBody mode="custom" onPick={(s) => linkSymbol('scanner', s)} />
     : null);
   const headerRightOf = (def) => (def.id === 'chart'
-    ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{chartSymbol}</span> : null);
+    ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{selectedSymbol}</span> : null);
 
   if (!layout) return <div style={{ color: C.dim, fontSize: 13, padding: 40, textAlign: 'center' }}>Loading workspace…</div>;
 

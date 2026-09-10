@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
+import { selectTerminalSymbol, onTerminalRoute } from './terminalSymbolBus';
 
 // ─── PALETTE ────────────────────────────────────────────────────────────────
 export const C = {
@@ -640,6 +641,7 @@ export function TickerTape({tickers}) {
             );
             return valid ? (
               <a key={i} href={`/ticker/${encodeURIComponent(t.sym)}`} className="hov"
+                onClick={(e) => { if (onTerminalRoute()) { e.preventDefault(); selectTerminalSymbol(t.sym); } }}
                 style={{display:"flex", alignItems:"center", gap:6, padding:"0 16px",
                   borderRight:`1px solid ${C.border}`, textDecoration:"none", color:"inherit", cursor:"pointer"}}>
                 {cell}
