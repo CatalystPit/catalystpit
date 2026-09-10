@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import { C, Dot } from '../lib/cp-shared';
+import { C, Dot, useTheme } from '../lib/cp-shared';
 
 // Production price chart = licensed TradingView Advanced Chart widget (plan A4). The widget
 // fetches its own market data inside its iframe — none of our personal API keys are used.
@@ -8,6 +8,7 @@ import { C, Dot } from '../lib/cp-shared';
 // (100%) → .__widget (100%). autosize needs a resolved parent height or it renders tiny.
 export default function TradingViewChart({ ticker }) {
   const hostRef = useRef(null);
+  const theme = useTheme();
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -33,7 +34,7 @@ export default function TradingViewChart({ ticker }) {
       symbol: ticker,
       interval: 'D',
       timezone: 'America/New_York',
-      theme: (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light',
+      theme,
       style: '1',
       locale: 'en',
       hide_side_toolbar: false,
@@ -44,7 +45,7 @@ export default function TradingViewChart({ ticker }) {
     host.appendChild(container);
 
     return () => { host.innerHTML = ''; };
-  }, [ticker]);
+  }, [ticker, theme]);
 
   return (
     <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>

@@ -211,6 +211,20 @@ export const Skel = ({w="100%", h=14, mb=6}) => (
     backgroundSize:"200% 100%", animation:"cp-shimmer 1.4s infinite"}}/>
 );
 
+// Live theme value ('light'|'dark') — updates when the toggle flips data-theme (via MutationObserver).
+// Use in components that must react to theme changes at runtime (e.g. TradingView embeds).
+export function useTheme() {
+  const [theme, setTheme] = useState("light");
+  useEffect(() => {
+    const read = () => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+    read();
+    const obs = new MutationObserver(read);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => obs.disconnect();
+  }, []);
+  return theme;
+}
+
 // Light/dark theme toggle. Sets data-theme on <html> (CSS variables in BrandStyles do the rest) and
 // persists to localStorage. A no-flash script in the root layout applies the saved theme before paint.
 export function ThemeToggle({ style }) {

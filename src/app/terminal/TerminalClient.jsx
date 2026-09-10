@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
+import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, useTheme } from '../../lib/cp-shared';
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
@@ -111,6 +111,7 @@ const fmtHalt = (t) => (t ? `${String(t).slice(0, 5)} ET` : '—');
 // ── Panel bodies ──
 function ChartBody({ symbol }) {
   const host = useRef(null);
+  const theme = useTheme();
   useEffect(() => {
     const h = host.current; if (!h) return; h.innerHTML = '';
     const c = document.createElement('div'); c.className = 'tradingview-widget-container'; c.style.height = '100%'; c.style.width = '100%';
@@ -119,12 +120,12 @@ function ChartBody({ symbol }) {
     s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
     s.async = true;
     s.innerHTML = JSON.stringify({
-      autosize: true, symbol, interval: 'D', timezone: 'America/New_York', theme: (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light',
+      autosize: true, symbol, interval: 'D', timezone: 'America/New_York', theme,
       style: '1', locale: 'en', hide_side_toolbar: false, allow_symbol_change: true, support_host: 'https://www.tradingview.com',
     });
     c.appendChild(s); h.appendChild(c);
     return () => { h.innerHTML = ''; };
-  }, [symbol]);
+  }, [symbol, theme]);
   // relative wrapper + absolute-fill host so the TradingView autosize widget gets a real height
   return <div style={{ position: 'relative', flex: 1, minHeight: 0 }}><div ref={host} style={{ position: 'absolute', inset: 0 }} /></div>;
 }

@@ -1,17 +1,10 @@
 'use client'
 import { useState, useEffect, useCallback } from "react";
-import { Footer, TopNav, TickerLogo, startCheckout } from '../../lib/cp-shared';
+import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout } from '../../lib/cp-shared';
 import { useRouter } from 'next/navigation';
 
-const C = {
-  bg:"#F5F6F3",white:"#FFFFFF",surface:"#F0F2EE",border:"#E0E2DC",border2:"#C4C8BE",
-  ink:"#0C1410",text:"#1A2018",muted:"#5A6458",dim:"#8A9088",
-  green:"#1E5C38",greenMid:"#2A7848",greenLight:"#E8F5EE",greenBorder:"#A8CEB8",
-  red:"#A83030",redLight:"#FAEAEA",navBg:"#1E5C38",
-};
-
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
-const Skel = ({w="100%",h=14,mb=6}) => <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,background:"linear-gradient(90deg,#E8EAE5 25%,#F0F2EE 50%,#E8EAE5 75%)",backgroundSize:"200% 100%",animation:"cp-shimmer 1.4s infinite"}}/>;
+const Skel = ({w="100%",h=14,mb=6}) => <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,background:"linear-gradient(90deg,var(--cp-surface2,#E8EAE5) 25%,var(--cp-surface,#F0F2EE) 50%,var(--cp-surface2,#E8EAE5) 75%)",backgroundSize:"200% 100%",animation:"cp-shimmer 1.4s infinite"}}/>;
 
 const fmtMoney = (n) => {
   if (!n || isNaN(Number(n))) return '—';
@@ -171,6 +164,7 @@ export default function InsidersPage() {
 
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
+      <BrandStyles/>
       <style>{`
         @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}
         @keyframes cp-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
