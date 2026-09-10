@@ -208,6 +208,134 @@ function ScanBody({ mode, onPick }) {
   );
 }
 
+// ── CUSTOM SCANNER — user-controlled, compact "+ Add Filter" scanner over OUR screener backend
+// (/api/screener → screener_stocks + buildConds). Transparent filters only (no Pit Scan proprietary
+// metrics). Saved scans persist per user (scope='terminal'). Results react to panel width. ──
+const fmtVol = (n) => (n == null || isNaN(n)) ? '—' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(Math.round(n));
+
+function CustomScannerBody({ onPick }) {
+  const [meta, setMeta] = useState(null);        // FILTERS registry from the screener backend
+  const [conds, setConds] = useState([]);        // [{ key, cond }]
+  const [rows, setRows] = useState(null);        // null = not run yet
+  const [running, setRunning] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [saved, setSaved] = useState([]);
+  const [ref, w] = useContainerSize();
+
+  const loadSaved = useCallback(() => {
+    fetch('/api/screener/saved?scope=terminal', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => setSaved(j?.saved || [])).catch(() => {});
+  }, []);
+  useEffect(() => {
+    fetch('/api/screener?meta=1', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => setMeta(j?.filters || {})).catch(() => setMeta({}));
+    loadSaved();
+  }, [loadSaved]);
+
+  const byCat = {};
+  if (meta) for (const [k, f] of Object.entries(meta)) { if (f.available) (byCat[f.category] ||= []).push([k, f]); }
+
+  const addFilter = (key) => { setConds((c) => (c.some((x) => x.key === key) ? c : [...c, { key, cond: meta[key]?.opts?.[0]?.cond || null }])); setAddOpen(false); };
+  const setCond = (i, cond) => setConds((c) => c.map((x, j) => (j === i ? { ...x, cond } : x)));
+  const removeCond = (i) => setConds((c) => c.filter((_, j) => j !== i));
+  const buildFilters = () => { const f = {}; for (const c of conds) if (c.cond) f[c.key] = c.cond; return f; };
+
+  const run = useCallback(async (condList) => {
+    setRunning(true);
+    const list = condList || conds;
+    const filters = {}; for (const c of list) if (c.cond) filters[c.key] = c.cond;
+    try {
+      const r = await fetch(`/api/screener?filters=${encodeURIComponent(JSON.stringify(filters))}&pageSize=100`, { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null; setRows(j?.rows || []);
+    } catch { setRows([]); }
+    setRunning(false);
+  }, [conds]);
+
+  const save = async () => {
+    const name = window.prompt('Save this scan as:'); if (!name) return;
+    await fetch('/api/screener/saved', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filters: buildFilters(), scope: 'terminal' }) }).catch(() => {});
+    loadSaved();
+  };
+  const loadScan = (s) => { const c = Object.entries(s.filters || {}).map(([key, cond]) => ({ key, cond })); setConds(c); run(c); };
+  const delScan = async (id) => { await fetch(`/api/screener/saved?scope=terminal&id=${id}`, { method: 'DELETE' }).catch(() => {}); loadSaved(); };
+
+  const btn = { fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", border: `1px solid ${C.border}`, background: C.white, color: C.muted };
+  const showPrice = w >= 280, showVol = w >= 340, showCompany = w >= 560, showFloat = w >= 460, showMcap = w >= 420;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ padding: 8, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
+          <button onClick={() => setAddOpen((v) => !v)} style={{ ...btn, color: C.green, borderColor: C.greenBorder }}>+ Add Filter</button>
+          <button onClick={() => run()} style={{ ...btn, background: C.green, color: '#fff', border: 'none' }}>{running ? 'Running…' : 'Run Scan'}</button>
+          <button onClick={save} disabled={!conds.length} style={{ ...btn, opacity: conds.length ? 1 : 0.5 }}>Save</button>
+          {conds.length > 0 && <button onClick={() => { setConds([]); setRows(null); }} style={{ ...btn, border: 'none', background: 'transparent', color: C.dim, textDecoration: 'underline' }}>Clear</button>}
+          {addOpen && meta && (
+            <div style={{ position: 'absolute', top: '110%', left: 0, zIndex: 30, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.15)', minWidth: 210, maxHeight: 300, overflow: 'auto', padding: '4px 0' }}>
+              {Object.keys(byCat).length === 0 ? <div style={{ padding: '10px 14px', fontSize: 12, color: C.dim }}>Loading filters…</div>
+                : Object.entries(byCat).map(([cat, list]) => (
+                  <div key={cat}>
+                    <div style={{ fontSize: 9, fontWeight: 700, color: C.dim, letterSpacing: 0.6, padding: '6px 12px 2px' }}>{cat.toUpperCase()}</div>
+                    {list.map(([k, f]) => (
+                      <button key={k} onClick={() => addFilter(k)} disabled={conds.some((x) => x.key === k)}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: conds.some((x) => x.key === k) ? C.hint : C.ink, fontFamily: "'DM Sans',sans-serif" }}>
+                        {f.pit ? '◆ ' : ''}{f.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+        {conds.map((c, i) => { const f = meta?.[c.key]; const opts = f?.opts || []; const idx = opts.findIndex((o) => JSON.stringify(o.cond) === JSON.stringify(c.cond)); return (
+          <div key={c.key} style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+            <span style={{ fontSize: 11, color: f?.pit ? C.green : C.muted, fontWeight: 600, minWidth: 92, flexShrink: 0 }}>{f?.pit ? '◆' : ''}{f?.label || c.key}</span>
+            <select value={idx} onChange={(e) => setCond(i, opts[+e.target.value]?.cond)} style={{ ...scanField, flex: 1 }}>
+              {opts.map((o, j) => <option key={j} value={j}>{o.label}</option>)}
+            </select>
+            <button onClick={() => removeCond(i)} style={{ background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px' }}>×</button>
+          </div>
+        ); })}
+        {saved.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: C.dim }}>Saved:</span>
+            {saved.map((s) => (
+              <span key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, padding: '2px 8px' }}>
+                <button onClick={() => loadScan(s)} style={{ background: 'none', border: 'none', color: C.green, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>{s.name}</button>
+                <button onClick={() => delScan(s.id)} style={{ background: 'none', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 12 }}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
+        {rows === null ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Add filters and Run Scan.</div>
+          : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No matches — widen your filters.</div>
+            : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={r.ticker + i} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
+                      <td style={{ padding: '6px 9px', whiteSpace: 'nowrap' }}>
+                        <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <TickerLogo symbol={r.ticker} size={15} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
+                        </span>
+                      </td>
+                      {showCompany && <td style={{ padding: '6px 9px', color: C.muted, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company || '—'}</td>}
+                      {showPrice && <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: C.ink }}>{r.price != null ? fmt2(r.price) : '—'}</td>}
+                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>{r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}</td>
+                      {showVol && <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: C.text }}>{fmtVol(r.volume)}</td>}
+                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: C.text }}>{r.relVol != null ? `${fmt2(r.relVol)}×` : '—'}</td>
+                      {showFloat && <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: C.muted }}>{fmtVol(r.floatShares)}</td>}
+                      {showMcap && <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', color: C.muted }}>{fmtCap(r.marketCap)}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+      </div>
+    </div>
+  );
+}
+
 // ── PIT SCAN — proprietary engine panel (separate product from the Custom Scanner). Renders ONLY the
 // approved server output; the formula lives server-side in lib/pitscan.js and is never sent here. ──
 const SIG = {
@@ -536,7 +664,7 @@ function Workspace() {
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
-    : def.id === 'scanner' ? <ScanBody mode="custom" onPick={(s) => linkSymbol('scanner', s)} />
+    : def.id === 'scanner' ? <CustomScannerBody onPick={(s) => linkSymbol('scanner', s)} />
     : null);
   const headerRightOf = (def) => (def.id === 'chart'
     ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{selectedSymbol}</span> : null);

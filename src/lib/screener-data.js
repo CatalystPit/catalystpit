@@ -66,6 +66,7 @@ export async function ensureScreenerTables() {
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS breaking_today BOOLEAN DEFAULT FALSE`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS candlestick TEXT`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS pattern TEXT`);
+  await db.execute(sql`ALTER TABLE screener_saved ADD COLUMN IF NOT EXISTS scope TEXT DEFAULT 'screener'`);
   _ensured = true;
 }
 

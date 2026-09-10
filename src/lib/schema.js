@@ -534,6 +534,7 @@ export const screenerSaved = pgTable('screener_saved', {
   sortDir:   text('sort_dir'),
   view:      text('view'),
   columns:   text('columns'),                 // JSON string of custom column keys
+  scope:     text('scope').default('screener'),  // 'screener' (full page) | 'terminal' (Terminal scanner)
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   idxUser: index('idx_screener_saved_user').on(t.userId),
