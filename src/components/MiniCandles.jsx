@@ -17,7 +17,7 @@ export default function MiniCandles({ symbol, height = 150, range = '3M' }) {
     s.innerHTML = JSON.stringify({
       autosize: true, symbol, interval: 'D', range, timezone: 'America/New_York', theme,
       style: '1', locale: 'en', hide_top_toolbar: true, hide_side_toolbar: true, hide_legend: true,
-      allow_symbol_change: false, save_image: false, withdateranges: false, support_host: 'https://www.tradingview.com',
+      hide_volume: true, allow_symbol_change: false, save_image: false, withdateranges: false, support_host: 'https://www.tradingview.com',
     });
     c.appendChild(s); h.appendChild(c);
     return () => { h.innerHTML = ''; };
