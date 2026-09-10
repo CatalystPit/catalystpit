@@ -256,7 +256,7 @@ export default function CatalystPit() {
               <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim, letterSpacing:"0.8px"}}>DAILY</span>
             </div>
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, background:C.border}}>
-              {[["SPX","S&P 500"],["IXIC","Nasdaq"],["DJI","Dow"],["VIX","VIX"]].map(([sym,label]) => (
+              {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["VIX","VIX"]].map(([sym,label]) => (
                 <div key={sym} style={{background:C.white, padding:"8px 10px"}}>
                   <div style={{fontSize:10.5, fontWeight:700, color:C.muted, marginBottom:4, letterSpacing:"0.3px"}}>{label}</div>
                   <MiniCandles symbol={sym} height={150}/>
