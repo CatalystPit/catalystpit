@@ -470,7 +470,7 @@ function ConvergenceBody({ onPick }) {
     load(); const id = setInterval(load, 120000);
     return () => { alive = false; clearInterval(id); };
   }, [dir]);
-  const list = data?.list; const locked = data?.lockedCount || 0;
+  const list = data ? (data.list || []) : null; const locked = data?.lockedCount || 0;
   const showChips = w >= 300;
   const dirBtn = (k, label) => (
     <button key={k} onClick={() => setDir(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', border: 'none', background: dir === k ? (k === 'bull' ? C.green : C.red) : 'transparent', color: dir === k ? '#fff' : C.muted }}>{label}</button>
