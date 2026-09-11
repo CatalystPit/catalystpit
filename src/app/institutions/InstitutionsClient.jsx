@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { C, Dot, Skel, TopNav, Footer, BrandStyles, EntitySearch } from '../../lib/cp-shared';
+import { C, Dot, Skel, TopNav, Footer, BrandStyles, EntitySearch, TickerLogo } from '../../lib/cp-shared';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -35,9 +35,28 @@ function FundCard({ f, onClick }) {
   );
 }
 
+function CorporateCard({ f, onClick }) {
+  return (
+    <div className="card-hov" onClick={onClick}
+      style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '14px 16px', cursor: 'pointer', transition: 'all 0.2s' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <TickerLogo symbol={f.ticker} size={28} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, color: C.ink }}>{f.ticker}</div>
+          <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 150 }}>{f.label}</div>
+        </div>
+        {f.sector && <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.3px', color: C.muted, background: C.surface, padding: '3px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>{f.sector}</span>}
+      </div>
+      <div className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 17, fontWeight: 700, color: C.green }}>{fmtB(f.totalValue)}</div>
+      <div style={{ fontSize: 10, color: C.dim }}>{(f.holdingsCount ?? 0).toLocaleString()} positions · as of {fmtQ(f.quarter)}</div>
+    </div>
+  );
+}
+
 export default function InstitutionsClient() {
   const [featured, setFeatured] = useState(null);
   const [largest, setLargest] = useState([]);
+  const [corporate, setCorporate] = useState([]);
   const [dir, setDir] = useState({ items: [], total: 0, page: 0, pageSize: 48 });
   const [dirLoading, setDirLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -62,6 +81,7 @@ export default function InstitutionsClient() {
   useEffect(() => {
     loadDir('', 0);
     (async () => { try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; setAdmin(!!j?.admin); } catch {} })();
+    (async () => { try { const r = await fetch('/api/institutions?view=corporate'); const j = r.ok ? await r.json() : null; setCorporate(j?.portfolios || []); } catch {} })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced search.
@@ -136,6 +156,19 @@ export default function InstitutionsClient() {
             <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 10 }}>LARGEST MANAGERS</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
               {largest.map((f) => <FundCard key={`lg-${f.slug}`} f={f} onClick={() => router.push(`/institutions/${f.slug}`)} />)}
+            </div>
+          </div>
+        )}
+
+        {/* Corporate Portfolios — public companies (incl. insurers/holdcos) that file their own 13F */}
+        {corporate.length > 0 && (
+          <div style={{ marginBottom: 26 }}>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 4 }}>
+              CORPORATE PORTFOLIOS <span style={{ fontWeight: 400, color: C.muted }}>· public companies&apos; own 13F holdings</span>
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginBottom: 10 }}>Operating companies, insurers &amp; holding companies that disclose an equity portfolio (NVIDIA, Amazon, Berkshire-style insurers…).</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
+              {corporate.map((f) => <CorporateCard key={`cp-${f.slug}`} f={f} onClick={() => router.push(`/institutions/${f.slug}`)} />)}
             </div>
           </div>
         )}

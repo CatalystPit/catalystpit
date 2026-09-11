@@ -117,6 +117,28 @@ async function largestManagers(limit = 24) {
   } catch (e) { console.log(`[institutions_api] largest failed: ${e.message}`); return []; }
 }
 
+// Corporate Portfolios: 13F filers whose CIK maps to a listed stock (operating cos + public
+// financials). Each with its latest filing value/positions + sector chip (from screener_meta).
+async function corporatePortfolios(limit = 300) {
+  try {
+    const res = await db.execute(sql`
+      SELECT i.cik, i.name, i.slug, i.stock_ticker AS "ticker", m.sector,
+             l.quarter, l.filed_date AS "filedDate", l.total_value AS "totalValue", l.holdings_count AS "holdingsCount"
+      FROM (SELECT DISTINCT ON (cik) cik, quarter, filed_date, total_value, holdings_count FROM fund_filings ORDER BY cik, quarter DESC) l
+      JOIN institutions i ON i.cik = l.cik
+      LEFT JOIN screener_meta m ON m.ticker = i.stock_ticker
+      WHERE i.stock_ticker IS NOT NULL AND l.total_value IS NOT NULL
+      ORDER BY l.total_value DESC
+      LIMIT ${limit}
+    `);
+    return (res?.rows || []).map((r) => ({
+      slug: r.slug, ticker: r.ticker, label: r.name, sector: r.sector || null,
+      quarter: r.quarter, filedDate: r.filedDate,
+      totalValue: +r.totalValue || 0, holdingsCount: r.holdingsCount || 0,
+    }));
+  } catch (e) { console.log(`[institutions_api] corporate failed: ${e.message}`); return []; }
+}
+
 // Merged detail for a manager family (e.g. all Vanguard entities): aggregate each entity's LATEST
 // filing into one combined holdings map + total, plus QoQ activity (latest vs prior quarter across
 // the family). Uses row_number per entity so each contributes its own current/prior quarter.
@@ -385,9 +407,11 @@ export async function GET(request) {
     }
     const ticker = sp.get('ticker');
     const slug = sp.get('slug');
+    const view = sp.get('view');
     const q = (sp.get('q') || '').trim().slice(0, 60);
     const page = Math.max(0, parseInt(sp.get('page') || '0', 10) || 0);
     const pageSize = Math.min(100, Math.max(10, parseInt(sp.get('pageSize') || '48', 10) || 48));
+    if (view === 'corporate') return Response.json({ view: 'corporate', portfolios: await corporatePortfolios() }, { headers: CACHE });
     const payload = ticker ? await tickerView(ticker.toUpperCase().trim())
       : slug ? await detailView(slug)
       : await listView(q, page, pageSize);

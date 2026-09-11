@@ -626,6 +626,7 @@ export const institutions = pgTable('institutions', {
   featuredLabel:    text('featured_label'),                 // curated display label when featured, else null
   manager:          text('manager'),
   category:         text('category'),
+  stockTicker:      text('stock_ticker'),                   // set when the filer's CIK = a listed stock → "Corporate Portfolio"
   firstSeenQuarter: date('first_seen_quarter', { mode: 'string' }),
   lastQuarter:      date('last_quarter', { mode: 'string' }),
   filingCount:      integer('filing_count').default(0),
