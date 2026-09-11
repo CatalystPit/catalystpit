@@ -123,16 +123,9 @@ async function listView({ view, chamber, party }) {
 // floor (min priced buys) keeps a lucky single trade from topping the board.
 const LB_WINDOWS = { '3m': '3 months', '6m': '6 months', '1y': '1 year', '2y': '2 years' };  // 'all' → no window
 const LB_WEIGHT_CAP = 0.30;   // no single position counts for >30% of a member's weight (kills 1-trade dominance)
+const isOptionRow = (assetType) => { const s = (assetType || '').toLowerCase(); return s === 'op' || s.includes('option'); };
 async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
-  const conds = [
-    eq(congressTrades.action, 'BUY'),
-    sql`${congressTrades.priceAtTrade} > 0`,
-    sql`${congressTickerPrices.currentPrice} > 0`,
-    // Options EXCLUDED for now: valuing an option at its underlying stock's move is wrong (no leverage).
-    // Proper option-return estimation is a separate build; until then this is a clean stock-buy return.
-    sql`${congressTrades.assetType} not ilike '%option%'`,
-    sql`${congressTrades.assetType} <> 'OP'`,
-  ];
+  const conds = [eq(congressTrades.action, 'BUY')];
   // Time frame: count only buys whose trade date is within the window, so members are compared
   // over the SAME period (not penalizing/rewarding differing holding lengths). 'all' = no filter.
   const interval = window === 'all' ? null : (LB_WINDOWS[window] || '1 year');
@@ -140,11 +133,13 @@ async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
   if (chamber === 'house' || chamber === 'senate') conds.push(eq(congressTrades.chamber, chamber));
   if (party) conds.push(eq(congressTrades.party, party));
 
-  // Per-trade rows → aggregate in JS so we can cap any single position's weight.
+  // Per-trade rows → aggregate in JS so we can cap any single position's weight. Stocks use the stock
+  // price; OPTIONS use the real option-contract price (leveraged return), when we've priced them.
   const rows = await db.select({
     slug: congressTrades.memberSlug, name: congressTrades.representative,
     party: congressTrades.party, state: congressTrades.state, chamber: congressTrades.chamber,
     amt: congressTrades.amountMid, pat: congressTrades.priceAtTrade, cur: congressTickerPrices.currentPrice,
+    assetType: congressTrades.assetType, optPat: congressTrades.optionPriceAtTrade, optCur: congressTrades.optionCurrentPrice,
     date: congressTrades.transactionDate,
   })
     .from(congressTrades)
@@ -152,13 +147,22 @@ async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
     .where(and(...conds));
 
   const byMember = new Map();
-  let oldest = null;
+  let oldest = null, pricedCount = 0;
   for (const r of rows) {
-    const pat = Number(r.pat), cur = Number(r.cur), amt = Number(r.amt) || 0;
-    if (!(pat > 0) || !(cur > 0)) continue;
+    const amt = Number(r.amt) || 0;
+    let ret = null;
+    if (isOptionRow(r.assetType)) {
+      const p0 = Number(r.optPat), p1 = Number(r.optCur);
+      if (p0 > 0 && p1 > 0) ret = (p1 - p0) / p0;          // real option-contract return
+    } else {
+      const p0 = Number(r.pat), p1 = Number(r.cur);
+      if (p0 > 0 && p1 > 0) ret = (p1 - p0) / p0;          // stock return
+    }
+    if (ret == null) continue;                              // unpriceable → skip
+    pricedCount++;
     if (r.date && (!oldest || r.date < oldest)) oldest = r.date;
     const m = byMember.get(r.slug) || { slug: r.slug, name: r.name, party: r.party, state: r.state, chamber: r.chamber, trades: [] };
-    m.trades.push({ amt, ret: (cur - pat) / pat, win: cur > pat });
+    m.trades.push({ amt, ret, win: ret > 0 });
     byMember.set(r.slug, m);
   }
 
@@ -179,7 +183,7 @@ async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
     });
   }
   list.sort((a, b) => b.returnPct - a.returnPct);
-  return { list, meta: { pricedBuys: rows.length, oldest } };
+  return { list, meta: { pricedBuys: pricedCount, oldest } };
 }
 
 // AUTOCOMPLETE: member name typeahead → top matches by trade activity. Public (names only),

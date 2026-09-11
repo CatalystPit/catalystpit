@@ -90,6 +90,12 @@ export const congressTrades = pgTable('congress_trades', {
   priceAtTradeDate: date('price_at_trade_date', { mode: 'string' }),  // actual trading day used
   enrichedAt:       timestamp('enriched_at', { withTimezone: true }),
 
+  // enrichment — OPTION return (real Polygon option-contract prices; leveraged, not the underlying's move)
+  optionOcc:        text('option_occ'),                      // OCC symbol resolved from strike/expiry/type
+  optionPriceAtTrade: doublePrecision('option_price_at_trade'), // option close near txn date
+  optionCurrentPrice: doublePrecision('option_current_price'), // option latest close (or settlement if expired)
+  optionPricedAt:   timestamp('option_priced_at', { withTimezone: true }), // when priced; also set on a miss (occ='' → skip)
+
   insertedAt:       timestamp('inserted_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uqTx:        uniqueIndex('uq_congress_tx').on(t.txHash),
