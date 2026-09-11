@@ -119,7 +119,9 @@ export default function PoliticianDetail({ slug }) {
                             {(() => {
                               const detail = t.optionType
                                 ? [t.contracts && `${Number(t.contracts).toLocaleString()} contracts`, t.strike && `$${t.strike} strike`, t.expiration && `exp ${t.expiration}`]
-                                : [t.shares && `${Number(t.shares).toLocaleString()} shares`];
+                                : [t.shares
+                                    ? `${Number(t.shares).toLocaleString()} shares`
+                                    : t.estShares ? `~${Number(t.estShares).toLocaleString()} shares est.` : null];
                               const line = detail.filter(Boolean).join(' · ');
                               return line ? <div style={{ fontSize: 10, color: C.muted, fontWeight: 300, marginTop: 2, whiteSpace: 'nowrap' }}>{line}</div> : null;
                             })()}

@@ -67,6 +67,10 @@ const shapeTrade = (t) => {
   const contracts = optionType ? gm(/\b([\d,]+)\s*(?:call|put)s?(?:\s*(?:options?|contracts?))?\b/i) : null;
   // Share count for stock trades — "Purchased 10,000 shares" / "Sold 500 shares".
   const shares = !optionType ? gm(/\b([\d,]+(?:\.\d+)?)\s*shares?\b/i) : null;
+  // Filers rarely disclose an exact count, so estimate from the disclosed dollar amount ÷ the
+  // trade-date price (same basis HedgeFollow uses). Stock trades only; never override an exact count.
+  const px = Number(t.priceAtTrade), mid = Number(t.amountMid);
+  const estShares = (!optionType && !shares && px > 0 && mid > 0) ? Math.round(mid / px) : null;
   const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
   return {
     ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice),
@@ -75,6 +79,7 @@ const shapeTrade = (t) => {
     expiration: expiration || null,
     contracts: contracts ? contracts.replace(/,/g, '') : null,
     shares: shares ? shares.replace(/,/g, '') : null,
+    estShares,
   };
 };
 
