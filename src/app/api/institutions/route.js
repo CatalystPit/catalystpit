@@ -117,8 +117,9 @@ async function largestManagers(limit = 24) {
   } catch (e) { console.log(`[institutions_api] largest failed: ${e.message}`); return []; }
 }
 
-// Merged detail for a manager family (e.g. all Vanguard entities): aggregate each entity's latest
-// filing into one combined holdings map + total. QoQ activity is omitted for the merged view.
+// Merged detail for a manager family (e.g. all Vanguard entities): aggregate each entity's LATEST
+// filing into one combined holdings map + total, plus QoQ activity (latest vs prior quarter across
+// the family). Uses row_number per entity so each contributes its own current/prior quarter.
 async function familyDetail(key) {
   const k = String(key || '').toUpperCase();
   const meta = { slug: `family--${key}`, label: properCase(k), manager: null, category: 'Largest Managers' };
@@ -131,18 +132,32 @@ async function familyDetail(key) {
   if (!latest.length) return { fund: meta, hasData: false };
   const totalValue = latest.reduce((s, l) => s + (l.totalValue || 0), 0);
   const asOf = latest.map((l) => l.quarter).filter(Boolean).sort().pop();
-  const res = await db.execute(sql`
-    WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik IN ${ciks} ORDER BY cik, quarter DESC)
-    SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, coalesce(h.put_call,'') AS "putCall",
-           sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
-    FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
-    GROUP BY h.cusip, coalesce(h.put_call,'')
-    ORDER BY sum(h.value) DESC NULLS LAST
-    LIMIT ${HOLDINGS_CAP}
-  `);
-  const holdings = (res?.rows || []).map((r) => ({ ticker: r.ticker, issuer: r.issuer, cusip: r.cusip, shares: r.shares, value: r.value, putCall: r.putCall }));
-  const cnt = (await db.execute(sql`WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik IN ${ciks} ORDER BY cik, quarter DESC) SELECT count(DISTINCT (h.cusip, coalesce(h.put_call,'')))::int AS n FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter`))?.rows?.[0]?.n || holdings.length;
-  return { fund: meta, hasData: true, latest: { quarter: asOf, filedDate: null, totalValue, holdingsCount: cnt }, prior: null, holdings, holdingsShown: holdings.length, totalHoldings: cnt, activity: { new: [], added: [], trimmed: [], exited: [] } };
+
+  // Aggregate the family's rn-th most-recent quarter (1 = current, 2 = prior) by security.
+  const famAgg = async (rn) => {
+    const res = await db.execute(sql`
+      WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks})
+      SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, coalesce(h.put_call,'') AS "putCall",
+             sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
+      FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = ${rn}
+      GROUP BY h.cusip, coalesce(h.put_call,'')
+      ORDER BY sum(h.value) DESC NULLS LAST LIMIT ${DIFF_CAP}`);
+    return (res?.rows || []).map((r) => ({ cusip: r.cusip, ticker: r.ticker, issuer: r.issuer, putCall: r.putCall, shares: r.shares, value: r.value }));
+  };
+  const cur = await famAgg(1), prev = await famAgg(2);
+
+  let activity = { new: [], added: [], trimmed: [], exited: [] };
+  if (prev.length) {
+    const kf = (r) => `${r.cusip}|${r.putCall || ''}`;
+    const prevBy = new Map(prev.map((r) => [kf(r), r])); const curBy = new Map(cur.map((r) => [kf(r), r]));
+    for (const r of cur) { const p = prevBy.get(kf(r)); if (!p) activity.new.push({ ...r, prevShares: 0 }); else if ((r.shares || 0) > (p.shares || 0) * 1.001) activity.added.push({ ...r, prevShares: p.shares }); else if ((r.shares || 0) < (p.shares || 0) * 0.999) activity.trimmed.push({ ...r, prevShares: p.shares }); }
+    for (const p of prev) if (!curBy.has(kf(p))) activity.exited.push({ ...p, prevShares: p.shares, value: 0 });
+    const byVal = (a, b) => (b.value || 0) - (a.value || 0), byPrev = (a, b) => (b.prevShares || 0) - (a.prevShares || 0);
+    activity.new = activity.new.sort(byVal).slice(0, 20); activity.added = activity.added.sort(byVal).slice(0, 20);
+    activity.trimmed = activity.trimmed.sort(byVal).slice(0, 20); activity.exited = activity.exited.sort(byPrev).slice(0, 20);
+  }
+  const cnt = (await db.execute(sql`WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks}) SELECT count(DISTINCT (h.cusip, coalesce(h.put_call,'')))::int AS n FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = 1`))?.rows?.[0]?.n || cur.length;
+  return { fund: meta, hasData: true, latest: { quarter: asOf, filedDate: null, totalValue, holdingsCount: cnt }, prior: prev.length ? { quarter: null } : null, holdings: cur.slice(0, HOLDINGS_CAP), holdingsShown: Math.min(cur.length, HOLDINGS_CAP), totalHoldings: cnt, activity };
 }
 
 // Featured curated funds (top of page) + a searchable, paginated directory of EVERY discovered 13F filer.
