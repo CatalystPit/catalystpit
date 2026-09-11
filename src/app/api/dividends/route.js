@@ -1,19 +1,19 @@
-// Dividends — history + TTM yield from Tiingo EOD /prices (divCash field). Free, commercial-OK,
-// same wiring as our daily candles (see scripts/probe-dividends.mjs). Finnhub /stock/dividend is
-// paywalled (403) on our tier. Tiingo EOD gives ex-date + amount only — no pay/record/declared
-// dates and no explicit frequency (we infer it from the cadence of ex-dates).
+// Dividends — history + TTM yield from POLYGON (/v3/reference/dividends + /v2 prev close). Polygon is
+// unlimited on our plan and covers ETFs (VOO/SPY/…) which SEC/Tiingo miss, and gives explicit
+// frequency + pay dates. (Was Tiingo, whose free 50/hour limit — shared with congress enrichment —
+// kept 429ing and, worse, the empty result got cached for 24h, so "no dividend" stuck for everything.)
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
 
-const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
+const POLYGON_KEY = process.env.POLYGON_KEY;
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 
 const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 const TTL = 24 * 60 * 60;            // 24h — dividend data changes quarterly at most
-const YEARS_BACK = 3;
 const MS_DAY = 86_400_000;
+const FREQ_LABEL = { 0: 'One-time', 1: 'Annual', 2: 'Semi-annual', 4: 'Quarterly', 12: 'Monthly' };
 
 // ── KV (REST), mirrors the other routes ──
 async function kvGet(key) {
@@ -54,43 +54,40 @@ const EMPTY = (ticker) => ({
   mostRecent: null, currentPrice: null, ttmYield: null,
 });
 
-async function buildDividends(ticker) {
-  if (!TIINGO_API_KEY) return EMPTY(ticker);
-
-  const to = new Date();
-  const from = new Date(to.getTime());
-  from.setFullYear(from.getFullYear() - YEARS_BACK);
-  const fmt = (d) => d.toISOString().slice(0, 10);
-
-  // Tiingo uses dashes for class shares (BRK.B → BRK-B).
-  const tiingoSym = ticker.replace(/\./g, '-');
-  const url = `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(tiingoSym)}/prices`
-    + `?startDate=${fmt(from)}&endDate=${fmt(to)}&format=json&token=${TIINGO_API_KEY}`;
-
-  let rows;
+// Previous-day close from Polygon — the price basis for yield.
+async function polyPrice(ticker) {
   try {
-    const r = await fetch(url);
-    if (!r.ok) return EMPTY(ticker);            // 404 unknown ticker / etc. → empty (no crash)
-    rows = await r.json();
-  } catch { return EMPTY(ticker); }
-  if (!Array.isArray(rows) || !rows.length) return EMPTY(ticker);
+    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?adjusted=true&apiKey=${POLYGON_KEY}`);
+    if (!r.ok) return null;
+    const c = Number((await r.json())?.results?.[0]?.c);
+    return Number.isFinite(c) && c > 0 ? c : null;
+  } catch { return null; }
+}
 
-  // latest EOD close = the price basis for yield (same response, no extra call)
-  const sortedByDate = [...rows].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  const lastClose = Number(sortedByDate[sortedByDate.length - 1]?.close);
-  const currentPrice = Number.isFinite(lastClose) && lastClose > 0 ? lastClose : null;
+async function buildDividends(ticker) {
+  if (!POLYGON_KEY) return { ...EMPTY(ticker), error: true };
 
-  const events = rows
-    .filter((d) => Number(d.divCash) > 0)
-    .map((d) => ({ exDate: (d.date || '').slice(0, 10), amount: Number(d.divCash) }))
+  let results;
+  try {
+    const r = await fetch(`https://api.polygon.io/v3/reference/dividends?ticker=${encodeURIComponent(ticker)}&limit=100&order=desc&sort=ex_dividend_date&apiKey=${POLYGON_KEY}`);
+    if (r.status === 429 || r.status >= 500) return { ...EMPTY(ticker), error: true };   // transient → DON'T cache
+    if (!r.ok) { return { ...EMPTY(ticker), currentPrice: await polyPrice(ticker) }; }   // 404 → genuinely no data
+    results = (await r.json())?.results;
+    if (!Array.isArray(results)) results = [];
+  } catch { return { ...EMPTY(ticker), error: true }; }
+
+  const currentPrice = await polyPrice(ticker);
+  const events = results
+    .filter((d) => Number(d.cash_amount) > 0 && d.ex_dividend_date)
+    .map((d) => ({ exDate: d.ex_dividend_date, amount: Number(d.cash_amount), payDate: d.pay_date || null }))
     .sort((a, b) => a.exDate.localeCompare(b.exDate));
 
   if (!events.length) return { ...EMPTY(ticker), currentPrice };   // valid ticker, simply doesn't pay
 
-  const { label: frequency } = inferFrequency(events.map((e) => e.exDate));
+  const freqInt = Number(results[0]?.frequency);
+  const frequency = FREQ_LABEL[freqInt] || inferFrequency(events.map((e) => e.exDate)).label;
 
-  // TTM dividend = sum of amounts with ex-date in the trailing 365 days
-  const cutoff = to.getTime() - 365 * MS_DAY;
+  const cutoff = Date.now() - 365 * MS_DAY;
   const ttmDividend = +events
     .filter((e) => Date.parse(e.exDate) >= cutoff)
     .reduce((s, e) => s + e.amount, 0)
@@ -99,16 +96,7 @@ async function buildDividends(ticker) {
   const ttmYield = (currentPrice && ttmDividend > 0) ? +((ttmDividend / currentPrice) * 100).toFixed(2) : null;
   const mostRecent = events[events.length - 1];
 
-  return {
-    ticker,
-    payer: true,
-    events: events.slice().reverse(),   // most recent first
-    ttmDividend,
-    frequency,
-    mostRecent,
-    currentPrice,
-    ttmYield,
-  };
+  return { ticker, payer: true, events: events.slice().reverse(), ttmDividend, frequency, mostRecent, currentPrice, ttmYield };
 }
 
 export async function GET(request) {
@@ -119,14 +107,14 @@ export async function GET(request) {
     const forceRefresh = searchParams.get('refresh') === '1';
     if (!TICKER_RE.test(ticker)) return Response.json({ error: 'Invalid ticker' }, { status: 400 });
 
-    const cacheKey = `dividends:${ticker}`;
+    const cacheKey = `dividends:v2:${ticker}`;   // v2 → ignore the Tiingo-era poisoned "no dividend" cache
     if (!forceRefresh) {
       const cached = await kvGet(cacheKey);
       if (cached) return Response.json({ ...cached, cached: true });
     }
 
     const fresh = await buildDividends(ticker);
-    await kvSet(cacheKey, fresh, TTL);
+    if (!fresh.error) await kvSet(cacheKey, fresh, TTL);   // never cache a transient failure (429/5xx)
     return Response.json({ ...fresh, cached: false });
   } catch (e) {
     console.log(`[dividends] ${ticker} route error: ${e.message}`);
