@@ -64,6 +64,7 @@ const mapRow = (r) => ({
   ceoCfo:   !!r.ceoCfo,
   firstBuy: !!r.firstOpenMarketBuy,
   monthsSincePriorBuy: r.monthsSincePriorBuy ?? null,
+  conviction: r.conviction ?? null,          // RESERVED — server-computed later; slot rendered when present
   filingUrl: r.filingUrl || null,
   perf1d:   typeof r.perf1d === 'number' ? r.perf1d : null,
   perf1w:   typeof r.perf1w === 'number' ? r.perf1w : null,
@@ -112,6 +113,7 @@ function Badges({ ins }) {
   if (ins.rule10b5_1 === false) b.push({ t: 'DISCRETIONARY', on: false });
   if (ins.type === 'BUY' && ins.monthsSincePriorBuy != null && ins.monthsSincePriorBuy >= 3) b.push({ t: `FIRST BUY IN ${ins.monthsSincePriorBuy}MO`, on: true });
   if (ins.type === 'BUY' && ins.ownChange != null && ins.ownChange >= 20) b.push({ t: `OWNERSHIP +${ins.ownChange}%`, on: true });
+  if (ins.conviction != null) b.push({ t: `CONVICTION ${ins.conviction}`, on: true });   // reserved slot
   if (!b.length) return null;
   return (
     <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
@@ -302,6 +304,9 @@ export default function InsidersPage() {
   const [heatmap, setHeatmap] = useState(null);
   const [notable, setNotable] = useState(null);
   const [heatMode, setHeatMode] = useState('net');
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
+  const [intel, setIntel] = useState({ openMarket: false, ceocfo: false, cluster: false, firstbuy: false, tenb51: false, discretionary: false });
   const [role, setRole] = useState('');         // title bucket
   const [txn, setTxn] = useState('');           // transaction-type bucket
   const [sector, setSector] = useState('');     // sector filter (via screener_meta)
@@ -335,6 +340,9 @@ export default function InsidersPage() {
         if (txn) q.set('txn', txn);
         if (sector) q.set('sector', sector);
         if (dateBasis === 'filing') q.set('dateField', 'filing');
+        for (const k of Object.keys(intel)) if (intel[k]) q.set(k, '1');
+        q.set('page', String(page));
+        q.set('pageSize', String(pageSize));
       }
       const res = await fetch(`/api/insiders?${q.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -348,7 +356,10 @@ export default function InsidersPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, insiderCo]);
+  }, [days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, insiderCo, intel, page, pageSize]);
+
+  // Reset to page 0 whenever the filter set / view / search changes (so we never land on a stale page).
+  useEffect(() => { setPage(0); }, [activeView, days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, debouncedSearch, intel, pageSize]);
 
   // Debounce raw search → debouncedSearch
   useEffect(() => {
@@ -557,6 +568,14 @@ export default function InsidersPage() {
           ))}
         </div>
 
+        {/* Intelligence filters (additive toggles — existing controls above are untouched) */}
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={{...LBL_STYLE,marginLeft:0}}>INTEL</span>
+          {[{k:'openMarket',l:'Open Market'},{k:'ceocfo',l:'CEO / CFO'},{k:'cluster',l:'Cluster Buys'},{k:'firstbuy',l:'First Buy'},{k:'tenb51',l:'10b5-1'},{k:'discretionary',l:'Discretionary'}].map(o=>(
+            <button key={o.k} onClick={()=>setIntel(s=>({...s,[o.k]:!s[o.k]}))} style={bandBtn(intel[o.k])}>{o.l}</button>
+          ))}
+        </div>
+
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:10}}>
           {CATEGORIES.map(cat => {
             const active = !searching && activeView === cat.key;
@@ -725,6 +744,22 @@ export default function InsidersPage() {
                 </div>
               )}
             </div>
+
+            {/* Server-side pagination (Pro; ticker drill-down + free preview excluded) */}
+            {data.view !== 'ticker' && lockedCount === 0 && data.total != null && (
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:14,flexWrap:"wrap",gap:10}}>
+                <div style={{fontSize:12,color:C.muted,fontFamily:"'DM Sans',sans-serif"}}>
+                  {data.total===0?'No results':`Showing ${(page*pageSize+1).toLocaleString()}–${Math.min((page+1)*pageSize,data.total).toLocaleString()} of ${data.total.toLocaleString()}`}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:10,color:C.dim,letterSpacing:"0.5px"}}>ROWS</span>
+                  {[25,50,100].map(n=>(<button key={n} onClick={()=>setPageSize(n)} style={bandBtn(pageSize===n)}>{n}</button>))}
+                  <button onClick={()=>setPage(p=>Math.max(0,p-1))} disabled={page===0} style={{...bandBtn(false),opacity:page===0?0.4:1,cursor:page===0?"default":"pointer"}}>← Prev</button>
+                  <span style={{fontSize:12,color:C.muted,fontFamily:"'DM Sans',sans-serif"}}>Page {page+1} / {Math.max(1,Math.ceil(data.total/pageSize))}</span>
+                  <button onClick={()=>setPage(p=>p+1)} disabled={(page+1)*pageSize>=data.total} style={{...bandBtn(false),opacity:(page+1)*pageSize>=data.total?0.4:1,cursor:(page+1)*pageSize>=data.total?"default":"pointer"}}>Next →</button>
+                </div>
+              </div>
+            )}
           </>
         )}
 
