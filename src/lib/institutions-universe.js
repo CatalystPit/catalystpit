@@ -268,13 +268,16 @@ export async function resolveHoldingTickers({ cap = 500, timeBudgetMs = 200000, 
   return { resolved, checked };
 }
 
-// One-time cleanup for earlier mis-resolutions: null out non-ticker-shaped holding tickers (bond
-// descriptors like "STX 3.5 06/01/28" that came from the old KV cache) and purge unresolved/junk
-// cusip_map rows so the hardened resolver re-attempts them once, cleanly.
+// One-time cleanup for earlier mis-resolutions. NORMALIZE first (recover real symbols) so we don't
+// destroy legit class shares: '/'→'.' (BRK/B → BRK.B), strip '*' (EA* → EA). THEN null only what's
+// still not ticker-shaped (real bonds/preferreds with spaces → show issuer, no fake ticker). For
+// cusip_map, normalize the same way and delete only the still-invalid non-null rows so they re-resolve.
 export async function cleanupBadTickers() {
+  await db.execute(sql`UPDATE fund_holdings SET ticker = replace(replace(upper(ticker), '/', '.'), '*', '') WHERE ticker ~ '[/*]'`);
   const h = await db.execute(sql`UPDATE fund_holdings SET ticker = NULL WHERE ticker IS NOT NULL AND ticker !~ '^[A-Z][A-Z0-9.-]{0,8}$'`);
-  const c = await db.execute(sql`DELETE FROM cusip_map WHERE ticker IS NULL OR ticker !~ '^[A-Z][A-Z0-9.-]{0,8}$'`);
-  return { holdingsCleared: h?.rowCount ?? null, cusipMapPurged: c?.rowCount ?? null };
+  await db.execute(sql`UPDATE cusip_map SET ticker = replace(replace(upper(ticker), '/', '.'), '*', '') WHERE ticker ~ '[/*]'`);
+  const c = await db.execute(sql`DELETE FROM cusip_map WHERE ticker IS NOT NULL AND ticker !~ '^[A-Z][A-Z0-9.-]{0,8}$'`);
+  return { holdingsNulled: h?.rowCount ?? null, cusipMapPurged: c?.rowCount ?? null };
 }
 
 // Orchestrate one run: discover → ingest a bounded batch of not-yet-ingested filers → resolve tickers.

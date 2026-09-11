@@ -59,17 +59,25 @@ export async function recordUnresolved(kind, key, context) {
 // Rejects bond descriptors OpenFIGI returns for note CUSIPs (e.g. "STX 3.5 06/01/28").
 export const isTickerShaped = (t) => /^[A-Z][A-Z0-9.\-]{0,8}$/.test(t || '');
 
+// Normalize provider quirks to a clean symbol: '/' class-share separator → '.' (BRK/B → BRK.B),
+// strip '*' annotations (EA* → EA). Returns the clean ticker, or null if it still isn't
+// ticker-shaped (bonds/preferreds with spaces, foreign codes starting with a digit, etc.).
+export const normalizeTicker = (t) => {
+  const s = String(t || '').toUpperCase().trim().replace(/\//g, '.').replace(/\*/g, '');
+  return isTickerShaped(s) ? s : null;
+};
+
 // From OpenFIGI mapping data, pick the best symbol: a US-listed EQUITY with a clean ticker.
 // Bonds (marketSector 'Corp'/'Govt') and non-ticker-shaped rows are filtered out, so a note
 // CUSIP yields null (→ shows the issuer, no fake ticker) while a stock/ADR CUSIP resolves.
 function pickTicker(data) {
   const cands = (data || [])
     .map((d) => ({
-      t: String(d.ticker || '').toUpperCase().trim(),
+      t: normalizeTicker(d.ticker),
       us: US_EXCH.has(d.exchCode),
       equity: d.marketSector === 'Equity' || /stock|depositary|adr|reit|\bshare|fund|etp|unit/i.test(`${d.securityType2 || ''} ${d.securityType || ''}`),
     }))
-    .filter((c) => isTickerShaped(c.t));
+    .filter((c) => c.t);
   const pick = cands.find((c) => c.us && c.equity) || cands.find((c) => c.us) || cands.find((c) => c.equity) || cands[0];
   return pick ? pick.t : null;
 }
@@ -127,8 +135,8 @@ export async function resolveCusips(cusips, { maxLookups = 500 } = {}) {
     const slice = need.slice(i, i + 50);
     const hits = await Promise.all(slice.map((c) => kvGet(`catalystpit:cusip:${c}`)));
     slice.forEach((c, j) => {
-      const kv = hits[j] ? String(hits[j]).toUpperCase().trim() : null;
-      if (kv && isTickerShaped(kv)) { out.set(c, kv); writes.push({ cusip: c, ticker: kv, status: 'resolved', confidence: 'high', source: 'kv', updatedAt: new Date() }); }
+      const kv = normalizeTicker(hits[j]);
+      if (kv) { out.set(c, kv); writes.push({ cusip: c, ticker: kv, status: 'resolved', confidence: 'high', source: 'kv', updatedAt: new Date() }); }
       else stillNeed.push(c);
     });
   }
