@@ -3,6 +3,7 @@ import { db } from './db';
 import { fundHoldings, fundFilings, institutions } from './schema';
 import { INSTITUTIONS } from './institutions.mjs';
 import { resolveCusips } from './security-resolver';
+import { resolveIssuerNames } from './name-resolver';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  INSTITUTIONS UNIVERSE (Phase 2) — auto-discover EVERY SEC 13F filer from the
@@ -268,6 +269,32 @@ export async function resolveHoldingTickers({ cap = 500, timeBudgetMs = 200000, 
   return { resolved, checked };
 }
 
+// Name-based fallback: for holdings still unresolved after OpenFIGI (foreign CINS OpenFIGI can't map),
+// match the issuer name against SEC's ticker list. Updates fund_holdings + cusip_map (source 'sec-name').
+// Matching is in-memory (cached SEC index, no API) so it's fast + safe to run every cycle.
+export async function resolveHoldingsByName({ cap = 5000 } = {}) {
+  const res = await db.execute(sql`
+    SELECT cusip, max(issuer) AS issuer
+    FROM fund_holdings
+    WHERE ticker IS NULL AND issuer IS NOT NULL
+    GROUP BY cusip
+    LIMIT ${cap}
+  `);
+  const rows = res?.rows || [];
+  if (!rows.length) return { resolved: 0 };
+  const map = await resolveIssuerNames(rows.map((r) => r.issuer));
+  const pairs = rows.map((r) => [r.cusip, map.get(r.issuer)]).filter((p) => p[1]);
+  if (!pairs.length) return { resolved: 0 };
+  for (let i = 0; i < pairs.length; i += 1000) {
+    const b = pairs.slice(i, i + 1000), cs = b.map((p) => p[0]), ts = b.map((p) => p[1]);
+    await db.execute(sql`INSERT INTO cusip_map (cusip, ticker, status, confidence, source, updated_at)
+      SELECT u.cusip, u.t, 'resolved', 'medium', 'sec-name', now() FROM unnest(${cs}::text[], ${ts}::text[]) AS u(cusip, t)
+      ON CONFLICT (cusip) DO UPDATE SET ticker = excluded.ticker, status = 'resolved', confidence = 'medium', source = 'sec-name', updated_at = now()`);
+    await db.execute(sql`UPDATE fund_holdings h SET ticker = m.t FROM unnest(${cs}::text[], ${ts}::text[]) AS m(cusip, t) WHERE h.cusip = m.cusip AND h.ticker IS NULL`);
+  }
+  return { resolved: pairs.length };
+}
+
 // One-time cleanup for earlier mis-resolutions. NORMALIZE first (recover real symbols) so we don't
 // destroy legit class shares: '/'→'.' (BRK/B → BRK.B), strip '*' (EA* → EA). THEN null only what's
 // still not ticker-shaped (real bonds/preferreds with spaces → show issuer, no fake ticker). For
@@ -289,10 +316,12 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
   const out = {};
   if (cleanup) { try { out.cleanup = await cleanupBadTickers(); } catch (e) { out.cleanup = { error: e?.message }; } }
   if (tickerOnly) {
-    let tick = { resolved: 0, checked: 0 };
+    let tick = { resolved: 0, checked: 0 }, named = { resolved: 0 };
     try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
     catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
-    return { ...out, tickerOnly: true, tickersResolved: tick.resolved, tickersChecked: tick.checked, ms: Date.now() - t0 };
+    try { named = await resolveHoldingsByName({ cap: tickerCap }); }
+    catch (e) { console.log(`[institutions-universe] name resolve failed: ${e?.message}`); }
+    return { ...out, tickerOnly: true, tickersResolved: tick.resolved, tickersChecked: tick.checked, namesResolved: named.resolved, ms: Date.now() - t0 };
   }
   const featured = await buildFeaturedMap();
   const disc = await discoverFilers({ indexes, featured });
@@ -322,8 +351,10 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
       if (errorsSample.length < 5) errorsSample.push({ cik: f.cik, error, cause });
     }
   }
-  let tick = { resolved: 0 };
+  let tick = { resolved: 0 }, named = { resolved: 0 };
   try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
   catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
-  return { ...out, cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, failedNow, errorsSample, tickersResolved: tick.resolved, ms: Date.now() - t0 };
+  try { named = await resolveHoldingsByName({ cap: tickerCap }); }
+  catch (e) { console.log(`[institutions-universe] name resolve failed: ${e?.message}`); }
+  return { ...out, cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, failedNow, errorsSample, tickersResolved: tick.resolved, namesResolved: named.resolved, ms: Date.now() - t0 };
 }
