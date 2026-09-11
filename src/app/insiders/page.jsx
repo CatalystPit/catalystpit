@@ -135,6 +135,12 @@ export default function InsidersPage() {
   const [maxDelay, setMaxDelay] = useState(0);  // filing-delay ceiling (days)
   const router = useRouter();
   const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
+  // Click an insider's name → pull up that exact person's trades (name + their company).
+  const openInsider = (ins) => {
+    if (!ins?.name) return;
+    setSearchMode('name'); setSearch(ins.name); setDebouncedSearch(ins.name); setInsiderCo(ins.sym || '');
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const loadData = useCallback(async ({ view, ticker, name }) => {
     setLoading(true);
@@ -225,6 +231,7 @@ export default function InsidersPage() {
         @keyframes cp-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
         .nbtn{text-decoration:none}.nbtn:hover{color:#FFFFFF!important}
         .row-hov:hover{background:${C.surface}!important;cursor:pointer}
+        .ins-name:hover{color:${C.green}!important;text-decoration:underline}
         .cat:hover{border-color:${C.green}!important}
         *{box-sizing:border-box}
       `}</style>
@@ -459,8 +466,8 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
                       <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
                       <td style={{padding:"13px 16px",fontSize:13,color:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
-                      <td style={{padding:"13px 16px",fontSize:13,color:C.text}}>
-                        <div>{ins.name}</div>
+                      <td onClick={(e)=>{ e.stopPropagation(); openInsider(ins); }} style={{padding:"13px 16px",fontSize:13,color:C.text,cursor:"pointer"}}>
+                        <div className="ins-name" style={{fontWeight:500,transition:"color 0.15s"}}>{ins.name || '—'}</div>
                         {ins.role && <div style={{fontSize:11,color:C.muted,fontWeight:300,marginTop:2}}>{ins.role}</div>}
                       </td>
                       <td style={{padding:"13px 16px"}}>
