@@ -31,6 +31,7 @@ const tradeCols = {
   id:               congressTrades.id,
   ticker:           congressTrades.ticker,
   assetDescription: congressTrades.assetDescription,
+  assetType:        congressTrades.assetType,
   owner:            congressTrades.owner,
   type:             congressTrades.type,
   action:           congressTrades.action,
@@ -49,7 +50,16 @@ const tradeCols = {
   chamber:          congressTrades.chamber,
 };
 
-const shapeTrade = (t) => ({ ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice) });
+// Options in congress PTRs come through as asset_type 'Stock Option' + "...Option Type: Put/Call..."
+// in the description. Surface a clean optionType (Put/Call) + a tidy asset name for a badge.
+const OPT_RE = /option\s*type\s*[:\-]?\s*(call|put)/i;
+const shapeTrade = (t) => {
+  const m = OPT_RE.exec(t.assetDescription || '');
+  const isOpt = !!m || /option/i.test(t.assetType || '') || /\boptions?\b/i.test(t.assetDescription || '');
+  const optionType = m ? (m[1].toLowerCase() === 'put' ? 'Put' : 'Call') : (isOpt ? 'Option' : null);
+  const assetName = (t.assetDescription || '').split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || t.assetDescription;
+  return { ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice), optionType, assetName };
+};
 
 const LIST_ORDER = {
   most_active: sql`count(*) desc`,
