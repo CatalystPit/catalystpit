@@ -105,12 +105,39 @@ async function trends() {
   return { view: 'trends', sentiment, trending };
 }
 
+// AUTOCOMPLETE: distinct insiders (person = executive + company) matching the query, most-active
+// first. Public + ungated, returns before auth for a fast typeahead — NOT 50 transaction rows.
+async function searchView(q) {
+  const like = `%${q.replace(/[%_\\]/g, '')}%`;
+  const rows = await db.select({
+    executive: insiderTrades.executive,
+    ticker: insiderTrades.ticker,
+    title: sql`max(${insiderTrades.title})`,
+    company: sql`max(${insiderTrades.company})`,
+    trades: sql`count(*)`.mapWith(Number),
+  }).from(insiderTrades)
+    .where(ilike(insiderTrades.executive, like))
+    .groupBy(insiderTrades.executive, insiderTrades.ticker)
+    .orderBy(sql`count(*) desc`)
+    .limit(12);
+  return rows;
+}
+
 export async function GET(request) {
   try {
+    const { searchParams } = new URL(request.url);
+
+    // Autocomplete — public, before auth (fast typeahead).
+    const ac = searchParams.get('ac');
+    if (ac != null) {
+      const q = ac.trim();
+      if (q.length < 2) return Response.json({ results: [] }, { headers: NO_STORE });
+      return Response.json({ results: await searchView(q) }, { headers: NO_STORE });
+    }
+
     const { userId } = await auth();
     const loggedIn = !!userId;
 
-    const { searchParams } = new URL(request.url);
     const ticker = searchParams.get('ticker')?.toUpperCase().trim() || null;
     const view = searchParams.get('view') || 'buying';
     const limitRaw = parseInt(searchParams.get('limit') ?? '200', 10);
@@ -148,6 +175,7 @@ export async function GET(request) {
     const minPrice = num('minPrice'), maxPrice = num('maxPrice');
     const maxDelay = num('maxDelay');                          // filing delay (days) ceiling
     const name = searchParams.get('name')?.trim() || null;    // insider-name search
+    const co = searchParams.get('co')?.toUpperCase().trim() || null;  // pin to a company (disambiguates same-name people)
     const role = searchParams.get('role')?.trim() || null;    // title bucket
     const txn = searchParams.get('txn')?.trim() || null;      // transaction-type bucket
     const sector = searchParams.get('sector')?.trim() || null; // sector (via screener_meta join)
@@ -179,6 +207,7 @@ export async function GET(request) {
     if (maxPrice && maxPrice > 0) conds.push(sql`${insiderTrades.pricePerShare} <= ${maxPrice}`);
     if (maxDelay && maxDelay > 0) conds.push(sql`(${insiderTrades.filingDate} - ${insiderTrades.transactionDate}) <= ${maxDelay}`);
     if (name) conds.push(ilike(insiderTrades.executive, `%${name.replace(/[%_\\]/g, '')}%`));
+    if (co) conds.push(eq(insiderTrades.ticker, co));
     if (role && ROLE_PATTERNS[role]) conds.push(or(...ROLE_PATTERNS[role].map((p) => ilike(insiderTrades.title, p))));
     if (txn && TXN_CODES[txn]) conds.push(inArray(insiderTrades.transactionCode, TXN_CODES[txn]));
     // Sector via the screener_meta reference (already Polygon-populated) — subquery keeps the flat select.

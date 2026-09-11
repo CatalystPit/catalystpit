@@ -500,7 +500,7 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
 // Debounced autocomplete: hits `${endpoint}<q>` expecting { results: [...] }, shows a
 // dropdown, keyboard-navigable, routes to hrefFor(item) on pick. The caller supplies
 // renderRow(item, isActive) so each page styles its own rows. Mirrors SymbolSearch.
-export function EntitySearch({ endpoint, placeholder = 'Search…', hrefFor, renderRow, minChars = 2, width = 340, autoFocus = false }) {
+export function EntitySearch({ endpoint, placeholder = 'Search…', hrefFor, onSelect, renderRow, minChars = 2, width = 340, autoFocus = false }) {
   const router = useRouter();
   const [v, setV] = useState('');
   const [focused, setFocused] = useState(false);
@@ -513,7 +513,7 @@ export function EntitySearch({ endpoint, placeholder = 'Search…', hrefFor, ren
   const pick = (item) => {
     if (!item) return;
     setV(''); setResults([]); setActive(-1);
-    router.push(hrefFor(item));
+    if (onSelect) onSelect(item); else router.push(hrefFor(item));   // onSelect = filter in place; else navigate
   };
 
   const onChange = (val) => {

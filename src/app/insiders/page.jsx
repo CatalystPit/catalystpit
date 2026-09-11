@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from "react";
-import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout } from '../../lib/cp-shared';
+import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import { useRouter } from 'next/navigation';
 
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
@@ -126,6 +126,7 @@ export default function InsidersPage() {
   const [minValue, setMinValue] = useState(0);  // 0 = any size
   const [lastUp, setLastUp] = useState(null);
   const [searchMode, setSearchMode] = useState('ticker'); // 'ticker' (drill-down) | 'name' (filter view)
+  const [insiderCo, setInsiderCo] = useState('');         // company ticker pinned from the insider autocomplete
   const [role, setRole] = useState('');         // title bucket
   const [txn, setTxn] = useState('');           // transaction-type bucket
   const [sector, setSector] = useState('');     // sector filter (via screener_meta)
@@ -144,6 +145,7 @@ export default function InsidersPage() {
       else {
         q.set('view', view);
         if (name) q.set('name', name);
+        if (name && insiderCo) q.set('co', insiderCo);   // pin to the exact person's company
         if (days > 0) q.set('days', String(days));
         if (minValue > 0) q.set('minValue', String(minValue));
         if (maxPrice > 0) q.set('maxPrice', String(maxPrice));
@@ -165,7 +167,7 @@ export default function InsidersPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis]);
+  }, [days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, insiderCo]);
 
   // Debounce raw search → debouncedSearch
   useEffect(() => {
@@ -180,8 +182,8 @@ export default function InsidersPage() {
     else loadData({ view: activeView });
   }, [debouncedSearch, searchMode, activeView, loadData]);
 
-  const selectView = (key) => { setSearch(''); setDebouncedSearch(''); setActiveView(key); };
-  const clearSearch = () => { setSearch(''); setDebouncedSearch(''); };
+  const selectView = (key) => { setSearch(''); setDebouncedSearch(''); setInsiderCo(''); setActiveView(key); };
+  const clearSearch = () => { setSearch(''); setDebouncedSearch(''); setInsiderCo(''); };
   const refresh = () => {
     if (debouncedSearch && searchMode === 'ticker') loadData({ ticker: debouncedSearch });
     else if (debouncedSearch && searchMode === 'name') loadData({ view: 'latest', name: debouncedSearch });
@@ -267,13 +269,32 @@ export default function InsidersPage() {
           {/* Ticker vs Insider-name search mode */}
           <div style={{display:"inline-flex",border:`1px solid ${C.border}`,borderRadius:5,overflow:"hidden"}}>
             {[{k:'ticker',l:'Ticker'},{k:'name',l:'Insider'}].map(o=>(
-              <button key={o.k} onClick={()=>{ setSearchMode(o.k); setSearch(''); setDebouncedSearch(''); }}
+              <button key={o.k} onClick={()=>{ setSearchMode(o.k); setSearch(''); setDebouncedSearch(''); setInsiderCo(''); }}
                 style={{background:searchMode===o.k?C.green:C.white,color:searchMode===o.k?'#fff':C.muted,border:"none",padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>{o.l}</button>
             ))}
           </div>
-          <input value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={onSearchKeyDown}
-            placeholder={searchMode==='name' ? "Search insider name (e.g., Musk)" : "Search ticker (e.g., AAPL)"}
-            style={{width:"100%",maxWidth:280,background:C.white,border:`1px solid ${C.border}`,color:C.text,padding:"8px 12px",borderRadius:5,fontSize:12,fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
+          {searchMode === 'name' ? (
+            <EntitySearch
+              endpoint="/api/insiders?ac="
+              placeholder="Search insider name (e.g., Huang)…"
+              width={320}
+              onSelect={(m) => { setSearch(m.executive); setDebouncedSearch(m.executive); setInsiderCo(m.ticker || ''); }}
+              renderRow={(m) => (
+                <>
+                  <TickerLogo symbol={m.ticker} size={22} />
+                  <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.executive}</span>
+                    <span style={{ fontSize: 11, color: C.muted, fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.ticker} · {m.title || 'insider'}</span>
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, color: C.dim, flexShrink: 0, whiteSpace: 'nowrap' }}>{m.trades} filings</span>
+                </>
+              )}
+            />
+          ) : (
+            <input value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={onSearchKeyDown}
+              placeholder="Search ticker (e.g., AAPL)"
+              style={{width:"100%",maxWidth:280,background:C.white,border:`1px solid ${C.border}`,color:C.text,padding:"8px 12px",borderRadius:5,fontSize:12,fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
+          )}
           {searching && (
             <span style={{display:"inline-flex",alignItems:"center",gap:8,background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:5,padding:"6px 12px",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.green}}>
               {searchMode === 'name' ? `Insider: ${debouncedSearch}` : debouncedSearch}
