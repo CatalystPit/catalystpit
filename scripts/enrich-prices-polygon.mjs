@@ -29,14 +29,10 @@ for (const { ticker } of tickers) {
     if (!bars.length) { noData++; continue; }
     const updates = [];
     for (const t of trades) { const p = onOrBefore(bars, iso(t.transaction_date)); if (p) updates.push({ id: t.id, price: p.c, date: p.date }); }
-    if (updates.length) {
-      for (let i = 0; i < updates.length; i += 200) {
-        const chunk = updates.slice(i, i + 200);
-        const vals = chunk.map((u) => sql`(${u.id}, ${u.price}, ${u.date}::date)`);
-        await sql`UPDATE congress_trades AS t SET price_at_trade = v.price, price_at_trade_date = v.date, enriched_at = now()
-                  FROM (VALUES ${sql.join(vals, sql`, `)}) AS v(id, price, date) WHERE t.id = v.id::int`;
-      }
-      priced += updates.length;
+    // neon's tagged-template client has no sql.join → per-trade UPDATE (reliable; volume is modest).
+    for (const u of updates) {
+      await sql`UPDATE congress_trades SET price_at_trade = ${u.price}, price_at_trade_date = ${u.date}::date, enriched_at = now() WHERE id = ${u.id}`;
+      priced++;
     }
     const cur = bars[bars.length - 1].c;
     await sql`INSERT INTO congress_ticker_prices (ticker, current_price, updated_at) VALUES (${ticker}, ${cur}, now())
