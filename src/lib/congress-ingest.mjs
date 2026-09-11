@@ -59,7 +59,14 @@ export function txHash({ firstName, lastName, transactionDate, ticker, type, amo
 // the House Clerk, or the Senate eFD hashes IDENTICALLY and collapses to one row.
 // Deliberately excludes disclosureDate (original vs amendment differ) and raw
 // asset/type text (formatting differs per source).
-export function canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin, amountMax }) {
+// A stock buy and an option buy of the SAME ticker/day/amount are distinct trades — the filer
+// discloses them as separate lines ([ST] vs [OP]). Normalize the option-ness across sources
+// (House code 'OP', FMP 'Stock Option') so the discriminator is stable regardless of who reported.
+export function isOptionTrade(assetType) {
+  const s = (assetType || '').trim().toLowerCase();
+  return s === 'op' || s.includes('option');
+}
+export function canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin, amountMax, isOption }) {
   const key = [
     (memberSlug || '').trim().toLowerCase(),
     transactionDate || '',
@@ -67,7 +74,7 @@ export function canonicalHash({ memberSlug, transactionDate, ticker, action, amo
     (action || '').trim().toUpperCase(),
     amountMin == null ? '' : String(amountMin),
     amountMax == null ? '' : String(amountMax),
-  ].join('|');
+  ].join('|') + (isOption ? '|OPT' : '');   // suffix ONLY options → existing stock hashes unchanged (no churn)
   return createHash('sha256').update(key).digest('hex');
 }
 
@@ -92,9 +99,11 @@ export function buildRow(rec, chamber, index) {
   // matched -> bioguide (drives headshot + detail route); else name-slug
   const memberSlug = entry?.bioguide || nameSlug(rec.firstName, rec.lastName);
   const action = mapAction(rec.type);
+  const isOption = isOptionTrade(rec.assetType);
   return {
     // Canonical, source-agnostic identity: same real trade from FMP / House / Senate collapses to one row.
-    txHash: canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin: min, amountMax: max }),
+    // isOption keeps a share buy and an option buy of the same ticker/day/amount as SEPARATE trades.
+    txHash: canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin: min, amountMax: max, isOption }),
     chamber,
     firstName: rec.firstName || null,
     lastName:  rec.lastName  || null,

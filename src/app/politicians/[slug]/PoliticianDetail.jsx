@@ -116,11 +116,13 @@ export default function PoliticianDetail({ slug }) {
                           </td>
                           <td style={{ padding: '12px 14px', fontSize: 13, color: C.text, maxWidth: 280 }}>
                             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.assetName || t.assetDescription || '—'}</div>
-                            {t.optionType && (t.strike || t.expiration || t.contracts) && (
-                              <div style={{ fontSize: 10, color: C.muted, fontWeight: 300, marginTop: 2, whiteSpace: 'nowrap' }}>
-                                {[t.contracts && `${Number(t.contracts).toLocaleString()} contracts`, t.strike && `$${t.strike} strike`, t.expiration && `exp ${t.expiration}`].filter(Boolean).join(' · ')}
-                              </div>
-                            )}
+                            {(() => {
+                              const detail = t.optionType
+                                ? [t.contracts && `${Number(t.contracts).toLocaleString()} contracts`, t.strike && `$${t.strike} strike`, t.expiration && `exp ${t.expiration}`]
+                                : [t.shares && `${Number(t.shares).toLocaleString()} shares`];
+                              const line = detail.filter(Boolean).join(' · ');
+                              return line ? <div style={{ fontSize: 10, color: C.muted, fontWeight: 300, marginTop: 2, whiteSpace: 'nowrap' }}>{line}</div> : null;
+                            })()}
                           </td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.disclosureDate)}</td>

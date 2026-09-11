@@ -65,6 +65,8 @@ const shapeTrade = (t) => {
   const strike = optionType ? gm(/(?:strike\s*(?:price)?\s*(?:of\s*)?|@\s*|\bat\s*)\$?\s*([\d,]+(?:\.\d+)?)/i) : null;
   const expiration = optionType ? gm(/(?:expir\w*|exp\.?)\s*(?:date)?\s*(?:of\s*)?(\d{1,2}\/\d{1,2}\/\d{2,4})/i) : null;
   const contracts = optionType ? gm(/\b([\d,]+)\s*(?:call|put)s?(?:\s*(?:options?|contracts?))?\b/i) : null;
+  // Share count for stock trades — "Purchased 10,000 shares" / "Sold 500 shares".
+  const shares = !optionType ? gm(/\b([\d,]+(?:\.\d+)?)\s*shares?\b/i) : null;
   const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
   return {
     ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice),
@@ -72,6 +74,7 @@ const shapeTrade = (t) => {
     strike: strike ? strike.replace(/,/g, '') : null,
     expiration: expiration || null,
     contracts: contracts ? contracts.replace(/,/g, '') : null,
+    shares: shares ? shares.replace(/,/g, '') : null,
   };
 };
 

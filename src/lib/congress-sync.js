@@ -10,7 +10,7 @@ import { db } from './db';
 import { congressTrades, congressFilings } from './schema';
 import roster from './congress-roster.json';
 import { buildIndex } from './congress-match.mjs';
-import { buildRow, canonicalHash } from './congress-ingest.mjs';
+import { buildRow, canonicalHash, isOptionTrade } from './congress-ingest.mjs';
 import { fetchHouseIndex, fetchHousePtr } from './congress-house.mjs';
 import { fetchSenatePtrIndex, fetchSenatePtr, establishSession } from './congress-senate.mjs';
 
@@ -143,12 +143,13 @@ export async function dedupeCongressCanonical({ apply = true } = {}) {
     id: congressTrades.id, memberSlug: congressTrades.memberSlug, transactionDate: congressTrades.transactionDate,
     ticker: congressTrades.ticker, action: congressTrades.action, amountMin: congressTrades.amountMin,
     amountMax: congressTrades.amountMax, txHash: congressTrades.txHash, priceAtTrade: congressTrades.priceAtTrade,
+    assetType: congressTrades.assetType,
   }).from(congressTrades);
 
-  // Group by canonical hash.
+  // Group by canonical hash. isOption keeps stock/option siblings in SEPARATE groups (no re-collapse).
   const groups = new Map();
   for (const r of rows) {
-    const h = canonicalHash(r);
+    const h = canonicalHash({ ...r, isOption: isOptionTrade(r.assetType) });
     if (!groups.has(h)) groups.set(h, []);
     groups.get(h).push(r);
   }
