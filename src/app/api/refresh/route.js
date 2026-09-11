@@ -540,10 +540,35 @@ function mergeNews(...sources) {
     });
 }
 
+// Insert parsed Form 4 trades (dedup on the natural key). Shared by the full refresh + the fast path.
+async function insertInsiderTrades(insiderTrades) {
+  if (!insiderTrades?.length) return 0;
+  const rows = insiderTrades
+    .map(r => ({ ...r, transactionCode: r.transactionCode || null, transactionDate: normalizeDate(r.transactionDate), filingDate: normalizeDate(r.filingDate) }))
+    .filter(r => r.filingDate);
+  if (!rows.length) return 0;
+  const inserted = await db.insert(insiderTradesTable).values(rows)
+    .onConflictDoNothing({ target: [insiderTradesTable.accession, insiderTradesTable.transactionDate, insiderTradesTable.transactionCode, insiderTradesTable.securityTitle, insiderTradesTable.shares, insiderTradesTable.pricePerShare, insiderTradesTable.sharesOwnedAfter] })
+    .returning({ id: insiderTradesTable.id });
+  return inserted.length;
+}
+
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // FAST PATH (?form4=1): only ingest Form 4s — near-real-time insider feed, every minute,
+  // skipping the heavier price/crypto/news work the full refresh does at 5-min cadence.
+  if (new URL(request.url).searchParams.get('form4') === '1') {
+    try {
+      const insider = await fetchForm4Trades();
+      const inserted = await insertInsiderTrades(insider);
+      return Response.json({ form4: true, parsed: insider.length, inserted, ts: new Date().toISOString() });
+    } catch (e) {
+      return Response.json({ form4: true, error: e.message }, { status: 200 });
+    }
+  }
 
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
   const fail = (k,e) => { results.failed.push({key:k,error:e.message}); console.error(`❌ ${k}:`,e.message); };

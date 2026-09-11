@@ -5,6 +5,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/refresh?form4=1",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/refresh-content",
       "schedule": "0 13-21 * * 1-5"
     },
