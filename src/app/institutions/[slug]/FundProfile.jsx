@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo } from '../../../lib/cp-shared';
+import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo, useLogoBg, LOGO_DARK_BG } from '../../../lib/cp-shared';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -33,12 +33,13 @@ function PC({ pc }) {
 function MapTile({ h, pct, flexGrow, onClick }) {
   const [failed, setFailed] = useState(false);
   const showLogo = h.ticker && !failed;
+  const { bgMode, ref, onLoad } = useLogoBg(h.ticker || '');   // adaptive contrast (same logic as TickerLogo)
   return (
     <div onClick={onClick} title={`${h.ticker || h.issuer} · ${pct.toFixed(1)}%${h.putCall ? ' ' + h.putCall.toUpperCase() : ''}`}
       style={{ flexGrow: Math.max(flexGrow, 1), flexBasis: 120, minWidth: 104, height: 92, borderRadius: 6, overflow: 'hidden',
-        position: 'relative', background: '#fff', border: `1px solid ${C.border}`, cursor: h.ticker ? 'pointer' : 'default' }}>
+        position: 'relative', background: showLogo && bgMode === 'dark' ? LOGO_DARK_BG : '#fff', border: `1px solid ${C.border}`, cursor: h.ticker ? 'pointer' : 'default' }}>
       {showLogo ? (
-        <img src={`/api/logo?ticker=${encodeURIComponent(h.ticker)}`} alt={h.ticker} onError={() => setFailed(true)}
+        <img ref={ref} src={`/api/logo?ticker=${encodeURIComponent(h.ticker)}`} alt={h.ticker} onLoad={onLoad} onError={() => setFailed(true)}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 22, width: '100%', height: 'calc(100% - 22px)', objectFit: 'contain', padding: '12px' }} />
       ) : (
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', textAlign: 'center' }}>

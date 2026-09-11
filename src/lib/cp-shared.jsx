@@ -807,20 +807,86 @@ export function TickerTape({tickers}) {
 }
 
 // ─── TICKER LOGO (img via /api/logo, initials-badge fallback) ────────────────
+// Logos come through our SAME-ORIGIN /api/logo proxy, so we can read their pixels on a
+// canvas (no CORS taint) and give the tile a CONTRASTING backdrop when needed: a transparent
+// logo whose content is light/near-white (e.g. Seagate) would vanish on a white tile, so it
+// gets a dark tile instead; dark or colored logos keep the default light tile. The decision
+// depends ONLY on the logo (never the page theme), so each tile is self-contained and stays
+// correct in BOTH light and dark mode. No invert(), no recolor — object-fit:contain preserved.
+// If the canvas can't be read (blocked/tainted), we fall back to the current light tile.
 const LOGO_PALETTE = ['#1E5C38', '#1A3A78', '#7A5818', '#5A2A98', '#8A2A40', '#1A5A58', '#8A4810'];
+export const LOGO_DARK_BG = '#242B36';          // backdrop that makes light/white logos pop
+const _logoBg = new Map();                      // ticker → 'light' | 'dark' (in-session cache)
+
+function readLogoBg(sym) {
+  if (_logoBg.has(sym)) return _logoBg.get(sym);
+  try { const v = localStorage.getItem(`cp:logobg:v1:${sym}`); if (v === 'light' || v === 'dark') { _logoBg.set(sym, v); return v; } } catch { /* SSR / privacy mode */ }
+  return null;
+}
+function writeLogoBg(sym, mode) {
+  _logoBg.set(sym, mode);
+  try { localStorage.setItem(`cp:logobg:v1:${sym}`, mode); } catch { /* ignore */ }
+}
+// Loaded same-origin logo → 'dark' (needs a dark backdrop) | 'light'. null if unreadable → caller keeps default.
+function analyzeLogo(img) {
+  try {
+    const N = 32;
+    const c = document.createElement('canvas'); c.width = N; c.height = N;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.clearRect(0, 0, N, N);
+    ctx.drawImage(img, 0, 0, N, N);
+    const { data } = ctx.getImageData(0, 0, N, N);
+    let aSum = 0, lumSum = 0, transparent = 0; const total = N * N;
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3] / 255;
+      if (a < 0.1) { transparent++; continue; }
+      const lum = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+      lumSum += lum * a; aSum += a;
+    }
+    if (aSum < 1) return null;                              // effectively empty
+    const contentLum = lumSum / aSum;                      // brightness of the drawn content
+    const transparentFrac = transparent / total;           // transparent PNG vs baked-in background
+    // Fix target: a transparent logo whose content is light/near-white (invisible on white).
+    return (transparentFrac > 0.12 && contentLum > 0.68) ? 'dark' : 'light';
+  } catch { return null; }                                 // tainted/blocked → graceful fallback
+}
+
+// Shared hook: contrast-detection for a same-origin logo. Returns { bgMode, ref, onLoad }.
+// Attach `ref`+`onLoad` to the <img> and use `bgMode` ('dark'|'light'|null) to pick the tile
+// background (LOGO_DARK_BG when 'dark', else your light default). Reuse this in ANY bespoke
+// logo renderer so the fix is consistent everywhere — not just the TickerLogo chip.
+export function useLogoBg(symbol) {
+  const sym = (symbol || '').toUpperCase();
+  const [bgMode, setBgMode] = useState(null);              // set post-mount → no SSR hydration mismatch
+  const ref = useRef(null);
+  const decide = () => {
+    const cached = readLogoBg(sym);
+    if (cached) { setBgMode(cached); return; }
+    if (ref.current && ref.current.complete && ref.current.naturalWidth) {
+      const m = analyzeLogo(ref.current);
+      if (m) { writeLogoBg(sym, m); setBgMode(m); }
+    }
+  };
+  useEffect(() => { if (sym) decide(); }, [sym]);          // eslint-disable-line react-hooks/exhaustive-deps
+  return { bgMode, ref, onLoad: () => { if (sym) decide(); } };
+}
+
 export function TickerLogo({ symbol, size = 18 }) {
   const [failed, setFailed] = useState(false);
   const sym = (symbol || '').toUpperCase();
+  const { bgMode, ref, onLoad } = useLogoBg(sym);
   const initials = sym.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?';
   let h = 0; for (let i = 0; i < sym.length; i++) h = (h * 31 + sym.charCodeAt(i)) >>> 0;
   const bg = LOGO_PALETTE[h % LOGO_PALETTE.length];
 
   if (sym && sym !== '?' && !failed) {
     return (
-      <img src={`/api/logo?ticker=${encodeURIComponent(sym)}&v=3`} alt="" width={size} height={size}
-        onError={() => setFailed(true)}
+      <img ref={ref} src={`/api/logo?ticker=${encodeURIComponent(sym)}&v=3`} alt="" width={size} height={size}
+        onLoad={onLoad} onError={() => setFailed(true)}
         style={{ width: size, height: size, borderRadius: 4, objectFit: 'contain',
-          background: '#fff', border: `1px solid ${C.border}`, flexShrink: 0, display: 'block' }} />
+          background: bgMode === 'dark' ? LOGO_DARK_BG : '#fff', border: `1px solid ${C.border}`,
+          flexShrink: 0, display: 'block' }} />
     );
   }
   return (
