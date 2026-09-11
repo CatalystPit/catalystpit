@@ -175,9 +175,15 @@ async function listView(q, page, pageSize) {
   const ciks = [...new Set([...featuredRows.map((r) => r.cik), ...dirRows.map((r) => r.cik)])];
   const latest = await latestFilingByCik(ciks);
 
-  const featured = featuredRows.map((r) => toCard(r, latest)).sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0));
-  const directory = dirRows.map((r) => toCard(r, latest));
   const largest = q ? [] : await largestManagers();       // auto-featured biggest managers (top of page)
+  // Don't repeat a manager in the curated categories if it's already shown in Largest Managers
+  // (by exact slug, or by family for merged cards like Vanguard).
+  const largeSlugs = new Set(largest.map((l) => l.slug));
+  const largeFams = new Set(largest.filter((l) => l.slug.startsWith('family--')).map((l) => l.slug.slice(8)));
+  const featured = featuredRows
+    .filter((r) => !largeSlugs.has(r.slug) && !largeFams.has((familyKey(r.name) || '__none__')))
+    .map((r) => toCard(r, latest)).sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0));
+  const directory = dirRows.map((r) => toCard(r, latest));
   return { largest, featured, directory, total, page, pageSize };
 }
 
