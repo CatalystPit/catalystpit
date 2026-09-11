@@ -105,10 +105,28 @@ async function trends() {
   return { view: 'trends', sentiment, trending };
 }
 
+// Common/known names → the SEC LEGAL-name fragment (SEC files legal names, not nicknames, so
+// "Jensen" never matches "HUANG JEN HSUN"). Extend freely. Keys matched as substrings, lowercase.
+const NAME_ALIASES = {
+  'jensen': 'huang jen',          // Jensen Huang — NVDA
+  'jamie dimon': 'dimon jam',     // JPMorgan
+  'bill gates': 'gates william',
+  'bob iger': 'iger robert',      // Disney
+  'zuck': 'zuckerberg',
+  'sundar': 'pichai sundar',      // Alphabet
+  'satya': 'nadella satya',       // Microsoft
+};
+
 // AUTOCOMPLETE: distinct insiders (person = executive + company) matching the query, most-active
 // first. Public + ungated, returns before auth for a fast typeahead — NOT 50 transaction rows.
 async function searchView(q) {
-  const like = `%${q.replace(/[%_\\]/g, '')}%`;
+  const clean = q.replace(/[%_\\]/g, '');
+  const lower = clean.toLowerCase();
+  const terms = [clean];
+  for (const [alias, legal] of Object.entries(NAME_ALIASES)) if (lower.includes(alias)) terms.push(legal);
+  const where = terms.length > 1
+    ? or(...terms.map((t) => ilike(insiderTrades.executive, `%${t}%`)))
+    : ilike(insiderTrades.executive, `%${clean}%`);
   const rows = await db.select({
     executive: insiderTrades.executive,
     ticker: insiderTrades.ticker,
@@ -116,7 +134,7 @@ async function searchView(q) {
     company: sql`max(${insiderTrades.company})`,
     trades: sql`count(*)`.mapWith(Number),
   }).from(insiderTrades)
-    .where(ilike(insiderTrades.executive, like))
+    .where(where)
     .groupBy(insiderTrades.executive, insiderTrades.ticker)
     .orderBy(sql`count(*) desc`)
     .limit(12);
