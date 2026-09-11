@@ -28,7 +28,9 @@ export async function GET(request) {
 
   const sp = new URL(request.url).searchParams;
   const indexes = Math.min(8, Math.max(1, parseInt(sp.get('indexes') || '2', 10) || 2));
-  const ingestCap = Math.min(400, Math.max(5, parseInt(sp.get('ingestCap') || '60', 10) || 60));
+  // Default 150 so each run uses its full ~250s budget (time-bounded ~140 filers/run) instead of
+  // stopping early at 60 — clears the ingestion backlog roughly twice as fast.
+  const ingestCap = Math.min(400, Math.max(5, parseInt(sp.get('ingestCap') || '150', 10) || 150));
   const tickerCap = Math.min(20000, Math.max(50, parseInt(sp.get('tickerCap') || '500', 10) || 500));
   const tickerOnly = sp.get('tickerOnly') === '1';   // skip ingest, just drain the ticker→logo backlog
   const cleanup = sp.get('cleanup') === '1';          // one-time purge of junk/bond "tickers"
