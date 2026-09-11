@@ -43,6 +43,7 @@ const tradeCols = {
   filingLagDays:    congressTrades.filingLagDays,
   priceAtTrade:     congressTrades.priceAtTrade,
   currentPrice:     congressTickerPrices.currentPrice,
+  link:             congressTrades.link,   // original filing PDF (source verification)
   // member fields — needed by ticker view, where rows span members
   slug:             congressTrades.memberSlug,
   representative:   congressTrades.representative,

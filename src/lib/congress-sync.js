@@ -16,7 +16,7 @@ import { fetchSenatePtrIndex, fetchSenatePtr, establishSession } from './congres
 
 const index = buildIndex(roster);
 // How many years back to cover. Start small (nightly), raise for a full historical backfill.
-const BACKFILL_YEARS = Math.max(1, parseInt(process.env.CONGRESS_BACKFILL_YEARS || '2', 10) || 2);
+const BACKFILL_YEARS = Math.max(1, parseInt(process.env.CONGRESS_BACKFILL_YEARS || '3', 10) || 3);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let _ensured = false;

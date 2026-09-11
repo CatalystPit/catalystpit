@@ -7,14 +7,16 @@ import {
 } from '../ui';
 
 const COLS = [
-  ['Ticker', 'left'], ['Company / Asset', 'left'], ['Traded', 'left'], ['Filed', 'left'],
-  ['Lag', 'right'], ['Type', 'left'], ['Amount', 'right'], ['Return Since', 'right'],
+  ['Ticker', 'left'], ['Company / Asset', 'left'], ['Owner', 'left'], ['Traded', 'left'], ['Filed', 'left'],
+  ['Lag', 'right'], ['Type', 'left'], ['Amount', 'right'], ['Return Since', 'right'], ['Source', 'center'],
 ];
+const FBTN = { fontSize: 12, fontFamily: "'DM Sans',sans-serif", padding: '6px 12px', borderRadius: 6, cursor: 'pointer' };
 
 export default function PoliticianDetail({ slug }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [flt, setFlt] = useState({ side: 'all', opt: false, min: 0, q: '' });
   const router = useRouter();
   // Inert unless there's a real ticker — some FMP asset types have no symbol (renders "—").
   const goTicker = (sym) => { if (sym && sym !== '—') router.push(`/ticker/${encodeURIComponent(sym)}`); };
@@ -41,6 +43,16 @@ export default function PoliticianDetail({ slug }) {
   const member = data?.member;
   const trades = data?.trades || [];
   const ps = partyStyle(member?.party);
+
+  // Client-side filters (all trades are already loaded).
+  const shown = trades.filter((t) => {
+    if (flt.side === 'buy' && t.action !== 'BUY') return false;
+    if (flt.side === 'sell' && t.action !== 'SELL') return false;
+    if (flt.opt && !t.optionType) return false;
+    if (flt.min && !(Number(t.amountMid) >= flt.min)) return false;
+    if (flt.q) { const q = flt.q.toLowerCase(); if (!((t.ticker || '').toLowerCase().includes(q) || (t.assetName || t.assetDescription || '').toLowerCase().includes(q))) return false; }
+    return true;
+  });
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -89,10 +101,24 @@ export default function PoliticianDetail({ slug }) {
             </div>
 
             {/* TRADE HISTORY TABLE */}
-            <div style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Sans',sans-serif", margin: '18px 0 10px' }}>{trades.length} trades</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '18px 0 10px' }}>
+              {[['all', 'All'], ['buy', 'Buys'], ['sell', 'Sells']].map(([s, lbl]) => (
+                <button key={s} onClick={() => setFlt((f) => ({ ...f, side: s }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: flt.side === s ? C.ink : C.white, color: flt.side === s ? C.white : C.muted }}>{lbl}</button>
+              ))}
+              <button onClick={() => setFlt((f) => ({ ...f, opt: !f.opt }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: flt.opt ? C.ink : C.white, color: flt.opt ? C.white : C.muted }}>Options</button>
+              <select value={flt.min} onChange={(e) => setFlt((f) => ({ ...f, min: Number(e.target.value) }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: C.white, color: C.muted }}>
+                <option value={0}>Any size</option>
+                <option value={50000}>&gt; $50k</option>
+                <option value={100000}>&gt; $100k</option>
+                <option value={500000}>&gt; $500k</option>
+                <option value={1000000}>&gt; $1M</option>
+              </select>
+              <input value={flt.q} onChange={(e) => setFlt((f) => ({ ...f, q: e.target.value }))} placeholder="Filter ticker…" style={{ ...FBTN, border: `1px solid ${C.border}`, background: C.white, color: C.text, minWidth: 120 }} />
+              <span style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Sans',sans-serif", marginLeft: 'auto' }}>{shown.length} of {trades.length} trades</span>
+            </div>
             <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 920 }}>
                   <thead>
                     <tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
                       {COLS.map(([h, al]) => (
@@ -101,13 +127,15 @@ export default function PoliticianDetail({ slug }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {trades.length === 0 ? (
-                      <tr><td colSpan={COLS.length} style={{ padding: '40px 16px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No trades.</td></tr>
-                    ) : trades.map((t, i) => {
+                    {shown.length === 0 ? (
+                      <tr><td colSpan={COLS.length} style={{ padding: '40px 16px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No trades match these filters.</td></tr>
+                    ) : shown.map((t, i) => {
                       const as = actionStyle(t.action);
                       const late = t.filingLagDays != null && t.filingLagDays > 45;
+                      const owner = t.owner && t.owner !== 'Self' ? t.owner : 'Self';
+                      const isSp = /spouse|joint|dependent/i.test(t.owner || '');
                       return (
-                        <tr key={t.id || i} className={t.ticker ? 'hov' : undefined} onClick={t.ticker ? () => goTicker(t.ticker) : undefined} style={{ borderBottom: i < trades.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
+                        <tr key={t.id || i} className={t.ticker ? 'hov' : undefined} onClick={t.ticker ? () => goTicker(t.ticker) : undefined} style={{ borderBottom: i < shown.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
                           <td className="cp-tkr" style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>
                             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               {t.ticker ? <><TickerLogo symbol={t.ticker} size={18} />{t.ticker}</> : '—'}
@@ -126,6 +154,9 @@ export default function PoliticianDetail({ slug }) {
                               return line ? <div style={{ fontSize: 10, color: C.muted, fontWeight: 300, marginTop: 2, whiteSpace: 'nowrap' }}>{line}</div> : null;
                             })()}
                           </td>
+                          <td style={{ padding: '12px 14px', whiteSpace: 'nowrap' }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, fontFamily: "'DM Sans',sans-serif", padding: '2px 7px', borderRadius: 3, background: isSp ? C.surface : 'transparent', color: isSp ? C.ink : C.dim }}>{owner}</span>
+                          </td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.disclosureDate)}</td>
                           <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: late ? C.red : C.muted, whiteSpace: 'nowrap' }}>{t.filingLagDays != null ? `${t.filingLagDays}d` : '—'}</td>
@@ -134,6 +165,9 @@ export default function PoliticianDetail({ slug }) {
                           </td>
                           <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{t.amountRange || '—'}</td>
                           <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: returnColor(t.returnPct), whiteSpace: 'nowrap' }}>{fmtReturn(t.returnPct)}</td>
+                          <td style={{ padding: '12px 14px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+                            {t.link ? <a href={t.link} target="_blank" rel="noopener noreferrer" title="View original filing" style={{ fontSize: 13, color: C.green, textDecoration: 'none' }}>↗</a> : <span style={{ color: C.dim }}>—</span>}
+                          </td>
                         </tr>
                       );
                     })}
