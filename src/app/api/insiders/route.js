@@ -223,6 +223,32 @@ async function notableView(window) {
   return out;
 }
 
+// Add the intelligence layer to a page of rows (bounded to the page — cheap, scales fine).
+// firstOpenMarketBuy / monthsSincePriorBuy are computed from OUR history only — the UI must word
+// them honestly ("in our available history") and never claim multi-year firsts until the backfill.
+async function enrichRows(rows) {
+  const ownPct = (r) => { const a = r.sharesOwnedAfter, s = r.shares; if (a == null || !(s > 0)) return null; const before = r.action === 'BUY' ? a - s : a + s; if (!(before > 0)) return r.action === 'BUY' ? 100 : null; const p = (s / before) * 100; return r.action === 'SELL' ? -p : p; };
+  const shaped = rows.map((r) => ({ ...r,
+    ceoCfo: /chief executive|\bCEO\b|chief financial|\bCFO\b/i.test(r.title || ''),
+    openMarket: r.transactionCode === 'P' || r.transactionCode === 'S',
+    ownershipChangePct: ownPct(r) == null ? null : +ownPct(r).toFixed(0),
+    firstOpenMarketBuy: false, monthsSincePriorBuy: null }));
+  const pRows = shaped.filter((r) => r.transactionCode === 'P');
+  if (pRows.length) {
+    const tks = [...new Set(pRows.map((r) => r.ticker))], exs = [...new Set(pRows.map((r) => r.executive))];
+    const hist = await db.select({ executive: insiderTrades.executive, ticker: insiderTrades.ticker, date: insiderTrades.transactionDate })
+      .from(insiderTrades).where(and(eq(insiderTrades.transactionCode, 'P'), inArray(insiderTrades.ticker, tks), inArray(insiderTrades.executive, exs)));
+    const byKey = new Map();
+    for (const h of hist) { const k = `${h.executive}|${h.ticker}`; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(h.date); }
+    for (const r of pRows) {
+      const prior = (byKey.get(`${r.executive}|${r.ticker}`) || []).filter((d) => d && d < r.transactionDate);
+      r.firstOpenMarketBuy = prior.length === 0;
+      if (prior.length) { const last = prior.sort().pop(); r.monthsSincePriorBuy = Math.max(0, Math.round((new Date(r.transactionDate) - new Date(last)) / (30 * 86400000))); }
+    }
+  }
+  return shaped;
+}
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -284,6 +310,13 @@ export async function GET(request) {
     const txn = searchParams.get('txn')?.trim() || null;      // transaction-type bucket
     const sector = searchParams.get('sector')?.trim() || null; // sector (via screener_meta join)
     const dateField = searchParams.get('dateField') === 'filing' ? insiderTrades.filingDate : insiderTrades.transactionDate;
+    // Intelligence filters (additive — never replace the existing controls).
+    const openMarketF = searchParams.get('openMarket') === '1';
+    const ceocfoF = searchParams.get('ceocfo') === '1';
+    const clusterF = searchParams.get('cluster') === '1';
+    const firstBuyF = searchParams.get('firstbuy') === '1';
+    const tenb51F = searchParams.get('tenb51') === '1';
+    const discretionaryF = searchParams.get('discretionary') === '1';
 
     // Title buckets → ILIKE patterns (a title often lists several roles).
     const ROLE_PATTERNS = {
@@ -316,29 +349,37 @@ export async function GET(request) {
     if (txn && TXN_CODES[txn]) conds.push(inArray(insiderTrades.transactionCode, TXN_CODES[txn]));
     // Sector via the screener_meta reference (already Polygon-populated) — subquery keeps the flat select.
     if (sector) conds.push(sql`${insiderTrades.ticker} IN (SELECT ticker FROM screener_meta WHERE sector = ${sector})`);
-    let q = db.select().from(insiderTrades);
-    if (conds.length) q = q.where(conds.length === 1 ? conds[0] : and(...conds));
-    q = q.orderBy(...cfg.orderBy).limit(limit);
-    const all = await q;
-    // Pro gate (not just sign-in): Free (incl. signed-in) sees a preview; Pro/Elite get the full set.
+    if (openMarketF) conds.push(inArray(insiderTrades.action, ['BUY', 'SELL']));
+    if (ceocfoF) conds.push(CEO_CFO_SQL);
+    if (tenb51F) conds.push(eq(insiderTrades.rule10b5_1, true));
+    if (discretionaryF) conds.push(eq(insiderTrades.rule10b5_1, false));
+    if (clusterF) conds.push(sql`${insiderTrades.ticker} IN (SELECT ticker FROM insider_trades WHERE action='BUY' AND transaction_date >= current_date - interval '90 days' GROUP BY ticker HAVING count(distinct executive) >= 3)`);
+    if (firstBuyF) conds.push(sql`${insiderTrades.transactionCode} = 'P' AND NOT EXISTS (SELECT 1 FROM insider_trades e WHERE e.executive = ${insiderTrades.executive} AND e.ticker = ${insiderTrades.ticker} AND e.transaction_code = 'P' AND e.transaction_date < ${insiderTrades.transactionDate})`);
+
+    const whereClause = conds.length ? (conds.length === 1 ? conds[0] : and(...conds)) : undefined;
     const tier = await resolveUserTier();
     const isPro = tier === 'pro' || tier === 'elite';
-    const trades = isPro ? all : all.slice(0, FREE_PREVIEW_ROWS);
-    let lockedCount = 0;
-    if (!isPro) {
-      // True total for the view (unbounded by the display `limit`) so the upsell count is honest.
-      let fullCount = all.length;
-      try {
-        const cntWhere = conds.length ? (conds.length === 1 ? conds[0] : and(...conds)) : undefined;
-        let cq = db.select({ n: sql`count(*)`.mapWith(Number) }).from(insiderTrades);
-        if (cntWhere) cq = cq.where(cntWhere);
-        const [{ n }] = await cq;
-        fullCount = n;
-      } catch { /* fall back to fetched length */ }
-      lockedCount = Math.max(0, fullCount - FREE_PREVIEW_ROWS);
+
+    // Server-side pagination (Pro). Free tier keeps the 10-row preview + lockedCount (unchanged).
+    const pageSize = [25, 50, 100].includes(num('pageSize')) ? num('pageSize') : 50;
+    const page = Math.max(0, num('page') || 0);
+
+    let base = db.select().from(insiderTrades);
+    if (whereClause) base = base.where(whereClause);
+    let countQ = db.select({ n: sql`count(*)`.mapWith(Number) }).from(insiderTrades);
+    if (whereClause) countQ = countQ.where(whereClause);
+
+    if (isPro) {
+      const rows = await base.orderBy(...cfg.orderBy).limit(pageSize).offset(page * pageSize);
+      const [{ n: total }] = await countQ;
+      const trades = await enrichRows(rows);
+      return Response.json({ view: resolvedView, trades, page, pageSize, total, tier, loggedIn }, { headers: NO_STORE });
     }
-    console.log(`[insiders_api] view=${resolvedView} returned=${trades.length} locked=${lockedCount} tier=${tier}`);
-    return Response.json({ view: resolvedView, count: trades.length, trades, lockedCount, tier, loggedIn }, { headers: NO_STORE });
+    const preview = await base.orderBy(...cfg.orderBy).limit(FREE_PREVIEW_ROWS);
+    let total = preview.length;
+    try { const [{ n }] = await countQ; total = n; } catch { /* fall back */ }
+    const trades = await enrichRows(preview);
+    return Response.json({ view: resolvedView, trades, count: trades.length, lockedCount: Math.max(0, total - FREE_PREVIEW_ROWS), total, page: 0, pageSize: FREE_PREVIEW_ROWS, tier, loggedIn }, { headers: NO_STORE });
   } catch (e) {
     console.log(`[insiders_api] failed: ${e.message}`);
     return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });
