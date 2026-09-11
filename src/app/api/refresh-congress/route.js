@@ -1,55 +1,66 @@
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
-import {
-  fetchTiingoDaily, pickPriceOnOrBefore, fetchFinnhubQuote, throttle,
-} from '../../../lib/congress-ingest.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 // NOTE: trade INGEST now runs in /api/cron/congress-sync (official House Clerk +
-// Senate eFD sources; FMP retired). This cron is enrichment-only: it fills
-// price_at_trade (Tiingo) and rolls current_price (Finnhub) for ingested rows.
-const CRON_SECRET    = process.env.CRON_SECRET;
-const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
-const FINNHUB_KEY    = process.env.FINNHUB_KEY;
+// Senate eFD sources; FMP retired). This cron is enrichment-only. It uses POLYGON
+// (unlimited for stocks on our plan) on ONE consistent split-adjusted basis for
+// BOTH price_at_trade and current_price — no more Tiingo 30/night throttle, no
+// raw-vs-adjusted split mismatch.
+const CRON_SECRET     = process.env.CRON_SECRET;
+const POLYGON_API_KEY = process.env.POLYGON_API_KEY;
 
-// Per-tick caps keep the function inside maxDuration AND under provider limits.
-// price_at_trade is immutable, so over a few nights every ticker gets priced;
-// current_price refreshes the most-stale tickers, cycling all of them in ~3-4
-// nights (rolling) — fresh enough for a since-trade signal spanning weeks.
-const TIINGO_TICKER_CAP   = 30;  // new tickers priced per tick (< Tiingo 50/hr)
-const PRICE_REFRESH_BATCH = 40;  // current-price refreshes per tick (Finnhub ~60/min)
+// Polygon is unlimited for stocks, so caps are bounded only by maxDuration.
+const PRICE_TICKER_CAP    = 150; // new tickers priced per tick
+const PRICE_REFRESH_BATCH = 150; // current-price refreshes per tick (most-stale first)
+const TODAY = () => new Date().toISOString().slice(0, 10);
+const isoDay = (d) => (typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
 
-// ── 1. enrich price_at_trade (Tiingo EOD) for un-priced rows ──
+// Whole-history split-adjusted daily bars for a ticker (asc). One call covers entry + current.
+async function polyBars(ticker) {
+  try {
+    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/2022-01-01/${TODAY()}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_API_KEY}`);
+    if (!r.ok) return [];
+    const j = await r.json();
+    return (j.results || []).map((b) => ({ date: new Date(b.t).toISOString().slice(0, 10), c: b.c }));
+  } catch { return []; }
+}
+const onOrBefore = (bars, target) => { let hit = null; for (const b of bars) { if (b.date <= target) hit = b; else break; } return hit; };
+
+// ── 1. enrich price_at_trade (Polygon adjusted close) for un-priced rows ──
 async function enrichPrices(results) {
   try {
     const tickers = await db.selectDistinct({ ticker: congressTrades.ticker })
       .from(congressTrades)
       .where(and(isNull(congressTrades.priceAtTrade), isNotNull(congressTrades.ticker)))
-      .limit(TIINGO_TICKER_CAP);
+      .limit(PRICE_TICKER_CAP);
     if (!tickers.length) { console.log('[congress] price_at_trade: nothing to enrich'); return; }
 
     let priced = 0;
-    await throttle(tickers, 3, 1500, async ({ ticker }) => {
+    for (const { ticker } of tickers) {
       const rows = await db.select({ id: congressTrades.id, td: congressTrades.transactionDate })
         .from(congressTrades)
         .where(and(eq(congressTrades.ticker, ticker), isNull(congressTrades.priceAtTrade)));
-      const dates = rows.map(r => r.td).filter(Boolean).sort();
-      if (!dates.length) return;
-      const { ok, data } = await fetchTiingoDaily(ticker, dates[0], dates[dates.length - 1], TIINGO_API_KEY);
-      if (!ok || !Array.isArray(data)) { console.log(`[congress] tiingo ${ticker}: miss`); return; }
+      const bars = await polyBars(ticker);
+      if (!bars.length) continue;
       for (const row of rows) {
         if (!row.td) continue;
-        const p = pickPriceOnOrBefore(data, row.td);
+        const p = onOrBefore(bars, isoDay(row.td));
         if (!p) continue;
         await db.update(congressTrades)
-          .set({ priceAtTrade: p.price, priceAtTradeDate: p.priceDate, enrichedAt: new Date() })
+          .set({ priceAtTrade: p.c, priceAtTradeDate: p.date, enrichedAt: new Date() })
           .where(eq(congressTrades.id, row.id));
         priced++;
       }
-    });
+      // fold in the current price from the same bars (avoids a second fetch)
+      const cur = bars[bars.length - 1].c;
+      await db.insert(congressTickerPrices)
+        .values({ ticker, currentPrice: cur, updatedAt: new Date() })
+        .onConflictDoUpdate({ target: congressTickerPrices.ticker, set: { currentPrice: cur, updatedAt: new Date() } });
+    }
     console.log(`[congress] price_at_trade: enriched ${priced} rows across ${tickers.length} tickers`);
     results.refreshed.push(`congress:price_at_trade:rows=${priced}`);
   } catch (e) {
@@ -58,7 +69,7 @@ async function enrichPrices(results) {
   }
 }
 
-// ── 2. rolling current_price refresh (Finnhub /quote, most-stale first) ──
+// ── 2. rolling current_price refresh (Polygon adjusted close, most-stale first) ──
 async function refreshCurrentPrices(results) {
   try {
     const stale = await db
@@ -71,18 +82,15 @@ async function refreshCurrentPrices(results) {
     if (!stale.length) return;
 
     let updated = 0;
-    await throttle(stale, 4, 4000, async ({ ticker }) => {
-      const q = await fetchFinnhubQuote(ticker, FINNHUB_KEY);
-      // Always bump updated_at — even on a null quote (dead/unknown ticker) —
-      // so it rotates to the back of the queue and the rolling cycle progresses.
+    for (const { ticker } of stale) {
+      const bars = await polyBars(ticker);
+      const cur = bars.length ? bars[bars.length - 1].c : null;
+      // Always bump updated_at (even on null) so the ticker rotates to the back of the queue.
       await db.insert(congressTickerPrices)
-        .values({ ticker, currentPrice: q ? q.price : null, asOfDate: q ? q.asOf : null, updatedAt: new Date() })
-        .onConflictDoUpdate({
-          target: congressTickerPrices.ticker,
-          set: { currentPrice: q ? q.price : null, asOfDate: q ? q.asOf : null, updatedAt: new Date() },
-        });
-      if (q) updated++;
-    });
+        .values({ ticker, currentPrice: cur, updatedAt: new Date() })
+        .onConflictDoUpdate({ target: congressTickerPrices.ticker, set: { currentPrice: cur, updatedAt: new Date() } });
+      if (cur != null) updated++;
+    }
     console.log(`[congress] current_price: refreshed ${updated}/${stale.length} tickers`);
     results.refreshed.push(`congress:current_price:ok=${updated}/${stale.length}`);
   } catch (e) {
