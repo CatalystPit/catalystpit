@@ -139,6 +139,37 @@ async function corporatePortfolios(limit = 300) {
   } catch (e) { console.log(`[institutions_api] corporate failed: ${e.message}`); return []; }
 }
 
+// Corporate Buying Activity: market-wide NEW + INCREASED stock positions across corporate filers,
+// newest filings first — "NVIDIA disclosed a new stake in XYZ." Feeds Catalyst Convergence.
+async function corporateActivity(limit = 120) {
+  try {
+    const res = await db.execute(sql`
+      WITH corp AS (SELECT cik, stock_ticker, name, slug FROM institutions WHERE stock_ticker IS NOT NULL),
+      q AS (SELECT cik, quarter, filed_date, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) rn
+            FROM fund_filings WHERE cik IN (SELECT cik FROM corp)),
+      latest AS (SELECT cik, quarter, filed_date FROM q WHERE rn = 1),
+      prior  AS (SELECT cik, quarter FROM q WHERE rn = 2),
+      cur_h AS (SELECT h.cik, h.cusip, h.ticker, h.issuer, h.shares, h.value FROM fund_holdings h
+                JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter WHERE coalesce(h.put_call,'') = ''),
+      prev_h AS (SELECT h.cik, h.cusip, h.shares FROM fund_holdings h
+                 JOIN prior p ON p.cik = h.cik AND p.quarter = h.quarter WHERE coalesce(h.put_call,'') = '')
+      SELECT corp.stock_ticker AS "filerTicker", corp.name AS "filerName", corp.slug AS "filerSlug",
+             l.filed_date AS "filedDate", c.ticker, c.issuer, c.shares, c.value, p.shares AS "prevShares",
+             CASE WHEN p.shares IS NULL THEN 'NEW' ELSE 'ADD' END AS action
+      FROM cur_h c JOIN corp ON corp.cik = c.cik JOIN latest l ON l.cik = c.cik
+      LEFT JOIN prev_h p ON p.cik = c.cik AND p.cusip = c.cusip
+      WHERE (p.shares IS NULL OR c.shares > p.shares * 1.001) AND c.value > 0
+      ORDER BY l.filed_date DESC NULLS LAST, c.value DESC
+      LIMIT ${limit}
+    `);
+    return (res?.rows || []).map((r) => ({
+      filerTicker: r.filerTicker, filerName: r.filerName, filerSlug: r.filerSlug, filedDate: r.filedDate,
+      ticker: r.ticker || null, issuer: r.issuer || null, action: r.action,
+      shares: +r.shares || 0, value: +r.value || 0, prevShares: r.prevShares == null ? null : +r.prevShares,
+    }));
+  } catch (e) { console.log(`[institutions_api] corp-activity failed: ${e.message}`); return []; }
+}
+
 // Merged detail for a manager family (e.g. all Vanguard entities): aggregate each entity's LATEST
 // filing into one combined holdings map + total, plus QoQ activity (latest vs prior quarter across
 // the family). Uses row_number per entity so each contributes its own current/prior quarter.
@@ -412,6 +443,7 @@ export async function GET(request) {
     const page = Math.max(0, parseInt(sp.get('page') || '0', 10) || 0);
     const pageSize = Math.min(100, Math.max(10, parseInt(sp.get('pageSize') || '48', 10) || 48));
     if (view === 'corporate') return Response.json({ view: 'corporate', portfolios: await corporatePortfolios() }, { headers: CACHE });
+    if (view === 'corporate-activity') return Response.json({ view: 'corporate-activity', events: await corporateActivity() }, { headers: CACHE });
     const payload = ticker ? await tickerView(ticker.toUpperCase().trim())
       : slug ? await detailView(slug)
       : await listView(q, page, pageSize);

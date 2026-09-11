@@ -57,6 +57,7 @@ export default function InstitutionsClient() {
   const [featured, setFeatured] = useState(null);
   const [largest, setLargest] = useState([]);
   const [corporate, setCorporate] = useState([]);
+  const [corpActivity, setCorpActivity] = useState([]);
   const [dir, setDir] = useState({ items: [], total: 0, page: 0, pageSize: 48 });
   const [dirLoading, setDirLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -82,6 +83,7 @@ export default function InstitutionsClient() {
     loadDir('', 0);
     (async () => { try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; setAdmin(!!j?.admin); } catch {} })();
     (async () => { try { const r = await fetch('/api/institutions?view=corporate'); const j = r.ok ? await r.json() : null; setCorporate(j?.portfolios || []); } catch {} })();
+    (async () => { try { const r = await fetch('/api/institutions?view=corporate-activity'); const j = r.ok ? await r.json() : null; setCorpActivity(j?.events || []); } catch {} })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced search.
@@ -169,6 +171,32 @@ export default function InstitutionsClient() {
             <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginBottom: 10 }}>Operating companies, insurers &amp; holding companies that disclose an equity portfolio (NVIDIA, Amazon, Berkshire-style insurers…).</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
               {corporate.map((f) => <CorporateCard key={`cp-${f.slug}`} f={f} onClick={() => router.push(`/institutions/${f.slug}`)} />)}
+            </div>
+          </div>
+        )}
+
+        {/* Corporate Buying Activity — market-wide NEW/INCREASED positions across corporate filers */}
+        {corpActivity.length > 0 && (
+          <div style={{ marginBottom: 26 }}>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 4 }}>
+              CORPORATE BUYING ACTIVITY <span style={{ fontWeight: 400, color: C.muted }}>· latest 13F new &amp; increased stakes</span>
+            </div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginBottom: 10 }}>What public companies just bought, from their newest 13F filings — a new stake or an added position.</div>
+            <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+              {corpActivity.slice(0, 40).map((e, i) => (
+                <div key={i} className="card-hov" onClick={() => router.push(`/institutions/${e.filerSlug}`)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderTop: i ? `1px solid ${C.surface}` : 'none', cursor: 'pointer' }}>
+                  <TickerLogo symbol={e.filerTicker} size={22} />
+                  <span style={{ fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: 13, color: C.ink, minWidth: 46 }}>{e.filerTicker}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.3px', padding: '3px 7px', borderRadius: 4, whiteSpace: 'nowrap', background: e.action === 'NEW' ? C.greenLight : C.surface, color: e.action === 'NEW' ? C.green : C.muted }}>{e.action === 'NEW' ? 'NEW POSITION' : 'ADDED'}</span>
+                  <span style={{ color: C.dim, fontSize: 13 }}>→</span>
+                  {e.ticker && <TickerLogo symbol={e.ticker} size={18} />}
+                  <span style={{ fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: 13, color: C.green }}>{e.ticker || '—'}</span>
+                  <span style={{ fontSize: 12, color: C.muted, fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{e.issuer}</span>
+                  <span className="cp-num" style={{ marginLeft: 'auto', fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtB(e.value)}</span>
+                  <span style={{ fontSize: 10, color: C.dim, minWidth: 62, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtQ(e.filedDate)}</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
