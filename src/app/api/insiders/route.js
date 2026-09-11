@@ -15,7 +15,9 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 // Row-views: WHERE + ORDER BY, rendered in the trade table. Keyed by ?view=.
 const ROW_VIEWS = {
   latest: {
-    where: null,
+    // Open-market only (P/S). Awards, gifts, tax-withholding, option exercises etc. are NOT trades —
+    // they only surface in an insider NAME search (labeled), never in the browse categories.
+    where: inArray(insiderTrades.action, ['BUY', 'SELL']),
     orderBy: [desc(insiderTrades.filingDate), desc(insiderTrades.id)],
   },
   buying: {
@@ -167,7 +169,9 @@ export async function GET(request) {
     const cfg = ROW_VIEWS[view] ?? ROW_VIEWS.latest;
     const resolvedView = ROW_VIEWS[view] ? view : 'latest';
     const conds = [];
-    if (cfg.where) conds.push(cfg.where);
+    // Name search shows the insider's FULL history (awards/gifts/tax included, labeled). Browse views
+    // apply their open-market WHERE. So skip the view filter only when searching a specific insider.
+    if (cfg.where && !name) conds.push(cfg.where);
     if (days && days > 0) conds.push(sql`${dateField} >= current_date - make_interval(days => ${days})`);
     if (minValue && minValue > 0) conds.push(gte(insiderTrades.totalValue, minValue));
     if (maxValue && maxValue > 0) conds.push(sql`${insiderTrades.totalValue} <= ${maxValue}`);

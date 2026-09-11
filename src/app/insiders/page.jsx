@@ -30,6 +30,10 @@ const decodeEntities = (s) => {
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 };
+// SEC Form-4 code → human label. Only P/S are open-market trades; the rest are non-trades
+// (award, gift, tax-withholding, option exercise…) shown only in an insider name search.
+const CODE_LABEL = { P: 'BUY', S: 'SELL', A: 'AWARD', G: 'GIFT', F: 'TAX', M: 'OPT EXERCISE', C: 'CONVERT', D: 'DISPOSED', X: 'EXERCISE', W: 'ACQUIRED', J: 'OTHER', U: 'OTHER', L: 'OTHER', I: 'OTHER' };
+const OPEN_MARKET = new Set(['BUY', 'SELL']);
 const ownChangePct = (r) => {
   const after = typeof r.sharesOwnedAfter === 'number' ? r.sharesOwnedAfter : null;
   const sh = typeof r.shares === 'number' ? r.shares : 0;
@@ -54,6 +58,7 @@ const mapRow = (r) => ({
   filed:    r.filingDate || '',
   traded:   r.transactionDate || '',
   code:     r.transactionCode || '',
+  typeLabel: CODE_LABEL[r.transactionCode] || (r.action === 'BUY' ? 'BUY' : r.action === 'SELL' ? 'SELL' : 'OTHER'),
   perf1d:   typeof r.perf1d === 'number' ? r.perf1d : null,
   perf1w:   typeof r.perf1w === 'number' ? r.perf1w : null,
   perf1m:   typeof r.perf1m === 'number' ? r.perf1m : null,
@@ -439,7 +444,9 @@ export default function InsidersPage() {
                         {ins.role && <div style={{fontSize:11,color:C.muted,fontWeight:300,marginTop:2}}>{ins.role}</div>}
                       </td>
                       <td style={{padding:"13px 16px"}}>
-                        <span style={{fontSize:11,padding:"4px 10px",borderRadius:4,fontFamily:"'DM Sans',sans-serif",fontWeight:600,letterSpacing:"0.5px",background:actionStyles(ins.type).bg,color:actionStyles(ins.type).fg}}>{ins.type}</span>
+                        {OPEN_MARKET.has(ins.typeLabel)
+                          ? <span style={{fontSize:11,padding:"4px 10px",borderRadius:4,fontFamily:"'DM Sans',sans-serif",fontWeight:600,letterSpacing:"0.5px",background:actionStyles(ins.type).bg,color:actionStyles(ins.type).fg}}>{ins.typeLabel}</span>
+                          : <span style={{fontSize:10,padding:"4px 9px",borderRadius:4,fontFamily:"'DM Sans',sans-serif",fontWeight:600,letterSpacing:"0.5px",background:C.surface,color:C.muted,whiteSpace:"nowrap"}}>{ins.typeLabel}</span>}
                       </td>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
