@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from "react";
 import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
+import { meaningFor } from '../../lib/insider-meaning';
 import { useRouter } from 'next/navigation';
 
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
@@ -59,6 +60,11 @@ const mapRow = (r) => ({
   traded:   r.transactionDate || '',
   code:     r.transactionCode || '',
   typeLabel: CODE_LABEL[r.transactionCode] || (r.action === 'BUY' ? 'BUY' : r.action === 'SELL' ? 'SELL' : 'OTHER'),
+  rule10b5_1: r.rule10b5_1 ?? null,          // true=plan, false=explicitly not, null=not disclosed
+  ceoCfo:   !!r.ceoCfo,
+  firstBuy: !!r.firstOpenMarketBuy,
+  monthsSincePriorBuy: r.monthsSincePriorBuy ?? null,
+  filingUrl: r.filingUrl || null,
   perf1d:   typeof r.perf1d === 'number' ? r.perf1d : null,
   perf1w:   typeof r.perf1w === 'number' ? r.perf1w : null,
   perf1m:   typeof r.perf1m === 'number' ? r.perf1m : null,
@@ -82,6 +88,40 @@ const VIEW_LABEL = Object.fromEntries(CATEGORIES.map(c => [c.key, c.label]));
 const SEL_STYLE = { background: C.white, border: `1px solid ${C.border}`, color: C.text, padding: '7px 10px', borderRadius: 5, fontSize: 12, fontFamily: "'DM Sans',sans-serif", cursor: 'pointer' };
 const LBL_STYLE = { fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginLeft: 6 };
 const bandBtn = (active) => ({ background: active ? C.green : C.white, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.green : C.border}`, borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" });
+// Clean hover/click tooltip (themed, works light + dark). Not the browser default.
+function InfoTip({ text }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex' }}
+      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}
+      onClick={(e) => { e.stopPropagation(); setShow((s) => !s); }}>
+      <span style={{ fontSize: 9, color: C.dim, cursor: 'help', fontWeight: 700, border: `1px solid ${C.border}`, borderRadius: '50%', width: 14, height: 14, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>i</span>
+      {show && (
+        <span onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)', zIndex: 100, width: 270, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.5, padding: '9px 11px', borderRadius: 7, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', fontWeight: 400, whiteSpace: 'normal', textAlign: 'left' }}>{text}</span>
+      )}
+    </span>
+  );
+}
+
+// Contextual intelligence badges — only shown when the data supports them. Honest wording:
+// we don't claim a multi-year "first buy" until the historical backfill; only "first buy in N months".
+function Badges({ ins }) {
+  const b = [];
+  if (ins.ceoCfo && ins.type === 'BUY') b.push({ t: /CFO|financial/i.test(ins.role) ? 'CFO BUY' : 'CEO BUY', on: true });
+  if (ins.rule10b5_1 === true) b.push({ t: '10b5-1', on: false });
+  if (ins.rule10b5_1 === false) b.push({ t: 'DISCRETIONARY', on: false });
+  if (ins.type === 'BUY' && ins.monthsSincePriorBuy != null && ins.monthsSincePriorBuy >= 3) b.push({ t: `FIRST BUY IN ${ins.monthsSincePriorBuy}MO`, on: true });
+  if (ins.type === 'BUY' && ins.ownChange != null && ins.ownChange >= 20) b.push({ t: `OWNERSHIP +${ins.ownChange}%`, on: true });
+  if (!b.length) return null;
+  return (
+    <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+      {b.map((x, i) => (
+        <span key={i} style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.3px', padding: '2px 6px', borderRadius: 3, whiteSpace: 'nowrap', background: x.on ? C.greenLight : C.surface, color: x.on ? C.green : C.muted }}>{x.t}</span>
+      ))}
+    </span>
+  );
+}
+
 // Subsequent-performance cell (green/red % since the trade; "—" when the horizon hasn't elapsed).
 const perfTd = (v, key) => (
   <td key={key} className="cp-num" style={{ padding: '13px 10px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', color: v == null ? C.dim : v > 0 ? C.green : v < 0 ? C.red : C.muted }}>
@@ -463,18 +503,35 @@ export default function InsidersPage() {
                     <tr><td colSpan={12} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
-                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
+                        {ins.filingUrl
+                          ? <a href={ins.filingUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} title="View SEC filing" style={{color:C.dim,textDecoration:"none"}}>{ins.filed} <span style={{color:C.green}}>↗</span></a>
+                          : ins.filed}
+                      </td>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
                       <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
                       <td style={{padding:"13px 16px",fontSize:13,color:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
                       <td onClick={(e)=>{ e.stopPropagation(); openInsider(ins); }} style={{padding:"13px 16px",fontSize:13,color:C.text,cursor:"pointer"}}>
                         <div className="ins-name" style={{fontWeight:500,transition:"color 0.15s"}}>{ins.name || '—'}</div>
                         {ins.role && <div style={{fontSize:11,color:C.muted,fontWeight:300,marginTop:2}}>{ins.role}</div>}
+                        <Badges ins={ins} />
                       </td>
                       <td style={{padding:"13px 16px"}}>
-                        {OPEN_MARKET.has(ins.typeLabel)
-                          ? <span style={{fontSize:11,padding:"4px 10px",borderRadius:4,fontFamily:"'DM Sans',sans-serif",fontWeight:600,letterSpacing:"0.5px",background:actionStyles(ins.type).bg,color:actionStyles(ins.type).fg}}>{ins.typeLabel}</span>
-                          : <span style={{fontSize:10,padding:"4px 9px",borderRadius:4,fontFamily:"'DM Sans',sans-serif",fontWeight:600,letterSpacing:"0.5px",background:C.surface,color:C.muted,whiteSpace:"nowrap"}}>{ins.typeLabel}</span>}
+                        {(() => {
+                          const m = meaningFor(ins.code);
+                          let label = m.short, tip = m.tip;
+                          if (ins.code === 'S' && ins.rule10b5_1 === true) { label = 'SELL · 10b5-1'; tip = 'Sale reported under a pre-arranged Rule 10b5-1 trading plan. Because the trading instructions may have been established earlier, this should not automatically be read as a new discretionary bearish decision.'; }
+                          else if (ins.code === 'S' && ins.rule10b5_1 === false) { label = 'SELL · DISCRETIONARY'; tip = 'Sale reported as NOT made under a Rule 10b5-1 plan — a discretionary decision to sell in the open market.'; }
+                          else if (ins.code === 'S') tip = m.tip + (ins.rule10b5_1 == null ? ' 10b5-1 status: not disclosed in this filing.' : '');
+                          const om = m.openMarket, buy = ins.type === 'BUY';
+                          const st = om ? { background: buy ? C.greenLight : C.redLight, color: buy ? C.green : C.red } : { background: C.surface, color: C.muted };
+                          return (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.3px', padding: '3px 8px', borderRadius: 4, whiteSpace: 'nowrap', fontFamily: "'DM Sans',sans-serif", ...st }}>{label}</span>
+                              <InfoTip text={tip} />
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
