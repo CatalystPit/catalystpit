@@ -17,6 +17,10 @@ export const insiderTrades = pgTable('insider_trades', {
   filingDate:       date('filing_date',      { mode: 'string' }).notNull(),
   accession:        text('accession').notNull(),
   filingUrl:        text('filing_url'),
+  // Form 4 interpretation layer (raw transaction_code is NEVER replaced — this sits on top):
+  rule10b5_1:       boolean('rule_10b5_1'),                  // true=disclosed 10b5-1 plan, false=explicitly not, null=not disclosed
+  footnotes:        text('footnotes'),                       // filer footnote text (traceability)
+  conviction:       doublePrecision('conviction'),           // RESERVED — server-computed Insider Conviction (formula stays server-side); null for now
   // subsequent stock performance since the trade (% from transaction price to close at +1d/1w/1m/6m).
   // Fixed once each horizon elapses; a horizon still in the future stays null until then.
   perf1d:           doublePrecision('perf_1d'),

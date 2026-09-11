@@ -117,6 +117,14 @@ function parseForm4(xml, filing) {
   else if (isTenPercent)         title = '10% Owner';
   else                           title = 'Other';
 
+  // Footnotes (form-level) — kept for traceability + as a 10b5-1 fallback signal.
+  const fnBlock = xml.match(/<footnotes>([\s\S]*?)<\/footnotes>/i)?.[1] || '';
+  const footnoteTexts = [...fnBlock.matchAll(/<footnote[^>]*>([\s\S]*?)<\/footnote>/gi)].map(m => decodeEntities(m[1].replace(/\s+/g, ' ').trim()));
+  const footnotes = footnoteTexts.join('  |  ') || null;
+  const footnotesMention10b5 = /10b5-?1/i.test(fnBlock);
+  // Rule 10b5-1 (amended Form 4 checkbox element). true=disclosed plan, false=explicitly NOT, null=not disclosed.
+  const affDoc = extractFormText(xml, 'aff10b5One');
+
   // Only parse <nonDerivativeTable> — derivatives belong to /options-flow, not /insiders
   const ndtMatch = xml.match(/<nonDerivativeTable>([\s\S]*?)<\/nonDerivativeTable>/);
   if (!ndtMatch) return [];
@@ -125,6 +133,10 @@ function parseForm4(xml, filing) {
 
   return txns.map(txn => {
     const transactionCode = extractFormText(txn, 'transactionCode') || '';
+    const affTxn = extractFormText(txn, 'aff10b5One') ?? affDoc;
+    let rule10b5_1 = null;
+    if (affTxn != null && affTxn !== '') rule10b5_1 = ['1', 'true'].includes(String(affTxn).toLowerCase());
+    else if (footnotesMention10b5) rule10b5_1 = true;
     const transactionDate = extractFormValue(txn, 'transactionDate') || '';
     const shares          = parseFloat(extractFormValue(txn, 'transactionShares'))        || 0;
     const pricePerShare   = parseFloat(extractFormValue(txn, 'transactionPricePerShare')) || 0;
@@ -148,6 +160,8 @@ function parseForm4(xml, filing) {
       filingDate: filing.filingDate,
       accession:  filing.accession,
       filingUrl:  filing.indexUrl,
+      rule10b5_1,
+      footnotes,
     };
   });
 }
