@@ -57,6 +57,20 @@ const toCard = (r, latest) => {
   };
 };
 
+// AUTOCOMPLETE: fund name typeahead → top matches (featured first, then deepest coverage).
+// Drives the /institutions search box. Lightweight — no filing joins.
+async function searchView(q) {
+  const like = `%${q.replace(/[%_\\]/g, '')}%`;
+  const rows = await db.select({
+    slug: institutions.slug, name: institutions.name, featuredLabel: institutions.featuredLabel,
+    manager: institutions.manager, filingCount: institutions.filingCount,
+  }).from(institutions)
+    .where(or(ilike(institutions.name, like), ilike(institutions.featuredLabel, like)))
+    .orderBy(desc(sql`(${institutions.featuredLabel} is not null)`), desc(sql`coalesce(${institutions.filingCount}, 0)`), institutions.name)
+    .limit(8);
+  return rows.map((r) => ({ slug: r.slug, label: r.featuredLabel || r.name || `CIK ${r.slug}`, manager: r.manager, featured: !!r.featuredLabel }));
+}
+
 // Featured curated funds (top of page) + a searchable, paginated directory of EVERY discovered 13F filer.
 async function listView(q, page, pageSize) {
   // If the registry hasn't been populated yet, fall back to the curated roster so the page still renders.
@@ -227,6 +241,12 @@ async function tickerView(ticker) {
 export async function GET(request) {
   try {
     const sp = new URL(request.url).searchParams;
+    const ac = sp.get('ac');
+    if (ac != null) {
+      const term = ac.trim();
+      if (term.length < 2) return Response.json({ results: [] }, { headers: CACHE });
+      return Response.json({ results: await searchView(term) }, { headers: CACHE });
+    }
     const ticker = sp.get('ticker');
     const slug = sp.get('slug');
     const q = (sp.get('q') || '').trim().slice(0, 60);

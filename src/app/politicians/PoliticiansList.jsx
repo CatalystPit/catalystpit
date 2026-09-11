@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
-import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout } from '../../lib/cp-shared';
+import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat } from './ui';
 
 // ─── filter definitions ──────────────────────────────────────────────────────
@@ -151,7 +151,27 @@ export default function PoliticiansList() {
             <Dot /><span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.muted, letterSpacing: '1px' }}>STOCK ACT · HOUSE + SENATE</span>
           </div>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 32, fontWeight: 600, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.5px' }}>Politicians</h1>
-          <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>Congressional stock trades disclosed under the STOCK Act. See how each trade has performed since.</p>
+          <p style={{ fontSize: 13, color: C.muted, margin: '0 0 14px', fontWeight: 300 }}>Congressional stock trades disclosed under the STOCK Act. See how each trade has performed since.</p>
+          <EntitySearch
+            endpoint="/api/politicians?ac="
+            placeholder="Search a politician by name…"
+            width={420}
+            hrefFor={(m) => `/politicians/${m.slug}`}
+            renderRow={(m) => {
+              const ps = partyStyle(m.party);
+              return (
+                <>
+                  <Avatar photoUrl={m.photoUrl} name={m.name} ps={ps} size={30} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name || 'Unknown'}</span>
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 5, flexShrink: 0 }}>
+                    <Chip bg={ps.bg} fg={ps.fg}>{ps.abbr}</Chip>
+                    {m.state && <Chip bg={C.surface} fg={C.muted}>{m.state}</Chip>}
+                    <Chip bg={C.surface} fg={C.muted}>{chamberLabel(m.chamber)}</Chip>
+                  </span>
+                </>
+              );
+            }}
+          />
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
-import { and, eq, desc, sql } from 'drizzle-orm';
+import { and, eq, desc, sql, or, ilike } from 'drizzle-orm';
 import { resolveUserTier } from '../../../lib/entitlements';
 
 export const runtime = 'nodejs';
@@ -84,6 +84,30 @@ async function listView({ view, chamber, party }) {
   return members.map(m => ({ ...m, photoUrl: photoUrl(m.slug) }));
 }
 
+// AUTOCOMPLETE: member name typeahead → top matches by trade activity. Public (names only),
+// ungated — drives the /politicians search box. Matches full display name + first/last.
+async function searchView(q) {
+  const like = `%${q.replace(/[%_\\]/g, '')}%`;
+  const rows = await db.select({
+    slug:    congressTrades.memberSlug,
+    name:    sql`max(${congressTrades.representative})`,
+    party:   sql`max(${congressTrades.party})`,
+    state:   sql`max(${congressTrades.state})`,
+    chamber: sql`max(${congressTrades.chamber})`,
+    trades:  sql`count(*)`.mapWith(Number),
+  })
+    .from(congressTrades)
+    .where(or(
+      ilike(congressTrades.representative, like),
+      ilike(congressTrades.lastName, like),
+      ilike(congressTrades.firstName, like),
+    ))
+    .groupBy(congressTrades.memberSlug)
+    .orderBy(sql`count(*) desc`)
+    .limit(8);
+  return rows.map((m) => ({ slug: m.slug, name: m.name, party: m.party, state: m.state, chamber: m.chamber, trades: m.trades, photoUrl: photoUrl(m.slug) }));
+}
+
 // DETAIL: header aggregates + full trade history (return-since-trade per row).
 async function detailView(slug) {
   const rows = await db.select(tradeCols)
@@ -145,12 +169,21 @@ async function feedView(limit) {
 
 export async function GET(request) {
   try {
+    const { searchParams } = new URL(request.url);
+
+    // AUTOCOMPLETE (public, ungated) — return before auth/tier work for a fast typeahead.
+    const ac = searchParams.get('ac');
+    if (ac != null) {
+      const q = ac.trim();
+      if (q.length < 2) return Response.json({ results: [] }, { headers: NO_STORE });
+      return Response.json({ results: await searchView(q) }, { headers: NO_STORE });
+    }
+
     const { userId } = await auth();
     const loggedIn = !!userId;
     const tier = await resolveUserTier();
     const isPro = tier === 'pro' || tier === 'elite';   // Pro gate (not just sign-in) for feed + list
 
-    const { searchParams } = new URL(request.url);
     const slug    = searchParams.get('slug')?.trim();
     const ticker  = searchParams.get('ticker')?.toUpperCase().trim();
     const view    = searchParams.get('view') || 'most_active';

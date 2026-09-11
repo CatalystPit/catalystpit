@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { C, Dot, Skel, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
+import { C, Dot, Skel, TopNav, Footer, BrandStyles, EntitySearch } from '../../lib/cp-shared';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -96,9 +96,24 @@ export default function InstitutionsClient() {
             <Dot /><span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.muted, letterSpacing: '1px' }}>FORM 13F-HR · SEC EDGAR</span>
           </div>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 32, fontWeight: 600, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.5px' }}>Institutions</h1>
-          <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>
+          <p style={{ fontSize: 13, color: C.muted, margin: '0 0 14px', fontWeight: 300 }}>
             What the big managers hold, from quarterly 13F filings — every SEC 13F filer, auto-discovered. Positions are reported up to 45 days after quarter-end; as-of dates shown per fund.
           </p>
+          <EntitySearch
+            endpoint="/api/institutions?ac="
+            placeholder="Search an institution by name…"
+            width={420}
+            hrefFor={(f) => `/institutions/${f.slug}`}
+            renderRow={(f) => (
+              <>
+                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.label}</span>
+                  {f.manager && <span style={{ fontSize: 11, color: C.muted, fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.manager}</span>}
+                </span>
+                {f.featured && <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, letterSpacing: '0.5px', color: C.green, background: C.greenLight, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>FEATURED</span>}
+              </>
+            )}
+          />
           {admin && (
             <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <button onClick={runPass} disabled={running}

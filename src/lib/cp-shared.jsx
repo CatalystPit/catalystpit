@@ -496,6 +496,89 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
   );
 }
 
+// ─── ENTITY SEARCH (reusable typeahead — politicians, institutions, …) ───────
+// Debounced autocomplete: hits `${endpoint}<q>` expecting { results: [...] }, shows a
+// dropdown, keyboard-navigable, routes to hrefFor(item) on pick. The caller supplies
+// renderRow(item, isActive) so each page styles its own rows. Mirrors SymbolSearch.
+export function EntitySearch({ endpoint, placeholder = 'Search…', hrefFor, renderRow, minChars = 2, width = 340, autoFocus = false }) {
+  const router = useRouter();
+  const [v, setV] = useState('');
+  const [focused, setFocused] = useState(false);
+  const [results, setResults] = useState([]);
+  const [active, setActive] = useState(-1);
+  const [loading, setLoading] = useState(false);
+  const timer = useRef(null);
+  const blurT = useRef(null);
+
+  const pick = (item) => {
+    if (!item) return;
+    setV(''); setResults([]); setActive(-1);
+    router.push(hrefFor(item));
+  };
+
+  const onChange = (val) => {
+    setV(val); setActive(-1);
+    if (timer.current) clearTimeout(timer.current);
+    if (val.trim().length < minChars) { setResults([]); setLoading(false); return; }
+    setLoading(true);
+    timer.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`${endpoint}${encodeURIComponent(val.trim())}`);
+        const j = r.ok ? await r.json() : null;
+        setResults(Array.isArray(j?.results) ? j.results : []);
+      } catch { setResults([]); }
+      finally { setLoading(false); }
+    }, 140);
+  };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(results.length - 1, i + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(-1, i - 1)); }
+    else if (e.key === 'Enter') { if (active >= 0 && results[active]) { e.preventDefault(); pick(results[active]); } }
+    else if (e.key === 'Escape') { setResults([]); setActive(-1); }
+  };
+
+  const showDrop = focused && v.trim().length >= minChars;
+
+  return (
+    <div style={{ position: 'relative', width, maxWidth: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', height: 40, background: C.white,
+        borderRadius: 999, border: `1px solid ${focused ? C.green : C.border}`, transition: 'border-color 0.15s' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.green} strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 14, flexShrink: 0 }} aria-hidden="true">
+          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input value={v} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown}
+          onFocus={() => { setFocused(true); if (blurT.current) clearTimeout(blurT.current); }}
+          onBlur={() => { blurT.current = setTimeout(() => setFocused(false), 160); }}
+          placeholder={placeholder} aria-label={placeholder} autoFocus={autoFocus}
+          style={{ width: '100%', height: '100%', background: 'transparent', border: 'none', outline: 'none',
+            color: C.text, fontFamily: "'DM Sans',sans-serif", fontSize: 14, padding: '0 14px 0 10px', borderRadius: 999, minWidth: 0 }} />
+      </div>
+      {showDrop && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 200,
+          background: C.white, border: `1px solid ${C.border}`, borderRadius: 10,
+          boxShadow: '0 10px 28px rgba(0,0,0,0.16)', overflow: 'hidden', maxHeight: 380, overflowY: 'auto' }}>
+          {results.length === 0 ? (
+            <div style={{ padding: '12px 14px', fontSize: 13, color: C.muted, fontFamily: "'DM Sans',sans-serif" }}>
+              {loading ? 'Searching…' : 'No matches'}
+            </div>
+          ) : results.map((item, i) => (
+            <button key={(item.slug || '') + i} type="button"
+              onMouseDown={(e) => { e.preventDefault(); pick(item); }}
+              onMouseEnter={() => setActive(i)}
+              style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+                padding: '9px 12px', background: i === active ? C.surface : C.white, border: 'none',
+                borderBottom: i < results.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: 'pointer' }}>
+              {renderRow(item, i === active)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── TOP NAV (sticky) ───────────────────────────────────────────────────────
 // Notification bell for the nav (signed-in). Polls unread count; opening marks all read.
 export function NotificationBell() {
