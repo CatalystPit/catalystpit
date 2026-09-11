@@ -22,6 +22,17 @@ export function parseAmount(raw) {
   return { min, max, mid };
 }
 
+// Standard congressional disclosure amount brackets (lower bounds). An OCR-transcribed amount
+// must land on one of these (or the sub-$1,001 tier) to be trusted — a guard against misread
+// dollar figures. "Over $50,000,000" parses to a 50,000,001 lower bound.
+const BRACKET_LOWERS = new Set([1001, 15001, 50001, 100001, 250001, 500001, 1000001, 5000001, 25000001, 50000001]);
+export function validateBracket(raw) {
+  if (!raw || typeof raw !== 'string') return false;
+  if (/None\b|less than \$?1,?001|^\$?1,?000 or less/i.test(raw)) return true;   // sub-$1,001 tier
+  const { min } = parseAmount(raw);
+  return min != null && BRACKET_LOWERS.has(min);
+}
+
 // FMP "type" -> normalized action.
 export function mapAction(type) {
   const t = (type || '').toLowerCase();
