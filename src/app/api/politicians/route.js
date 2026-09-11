@@ -122,11 +122,16 @@ async function listView({ view, chamber, party }) {
 // and held to today." Weighted by amount so a $1M buy counts more than a $1k one. A sample-size
 // floor (min priced buys) keeps a lucky single trade from topping the board.
 const LB_WINDOWS = { '3m': '3 months', '6m': '6 months', '1y': '1 year', '2y': '2 years' };  // 'all' → no window
+const LB_WEIGHT_CAP = 0.30;   // no single position counts for >30% of a member's weight (kills 1-trade dominance)
 async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
   const conds = [
     eq(congressTrades.action, 'BUY'),
     sql`${congressTrades.priceAtTrade} > 0`,
     sql`${congressTickerPrices.currentPrice} > 0`,
+    // Options EXCLUDED for now: valuing an option at its underlying stock's move is wrong (no leverage).
+    // Proper option-return estimation is a separate build; until then this is a clean stock-buy return.
+    sql`${congressTrades.assetType} not ilike '%option%'`,
+    sql`${congressTrades.assetType} <> 'OP'`,
   ];
   // Time frame: count only buys whose trade date is within the window, so members are compared
   // over the SAME period (not penalizing/rewarding differing holding lengths). 'all' = no filter.
@@ -135,34 +140,46 @@ async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
   if (chamber === 'house' || chamber === 'senate') conds.push(eq(congressTrades.chamber, chamber));
   if (party) conds.push(eq(congressTrades.party, party));
 
+  // Per-trade rows → aggregate in JS so we can cap any single position's weight.
   const rows = await db.select({
-    slug:       congressTrades.memberSlug,
-    name:       sql`max(${congressTrades.representative})`,
-    party:      sql`max(${congressTrades.party})`,
-    state:      sql`max(${congressTrades.state})`,
-    chamber:    sql`max(${congressTrades.chamber})`,
-    pricedBuys: sql`count(*)`.mapWith(Number),
-    weight:     sql`coalesce(sum(${congressTrades.amountMid}), 0)`.mapWith(Number),
-    wret:       sql`coalesce(sum(${congressTrades.amountMid} * (${congressTickerPrices.currentPrice} - ${congressTrades.priceAtTrade}) / ${congressTrades.priceAtTrade}), 0)`.mapWith(Number),
-    wins:       sql`sum(case when ${congressTickerPrices.currentPrice} > ${congressTrades.priceAtTrade} then 1 else 0 end)`.mapWith(Number),
+    slug: congressTrades.memberSlug, name: congressTrades.representative,
+    party: congressTrades.party, state: congressTrades.state, chamber: congressTrades.chamber,
+    amt: congressTrades.amountMid, pat: congressTrades.priceAtTrade, cur: congressTickerPrices.currentPrice,
+    date: congressTrades.transactionDate,
   })
     .from(congressTrades)
     .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
-    .where(and(...conds))
-    .groupBy(congressTrades.memberSlug)
-    .having(sql`count(*) >= ${min}`);
+    .where(and(...conds));
 
-  return rows
-    .map((r) => ({
-      slug: r.slug, name: r.name, party: r.party, state: r.state, chamber: r.chamber,
-      photoUrl: photoUrl(r.slug),
-      pricedBuys: r.pricedBuys,
-      totalVolume: r.weight,
-      returnPct: r.weight > 0 ? +((r.wret / r.weight) * 100).toFixed(1) : null,
-      winRate: r.pricedBuys > 0 ? Math.round((r.wins / r.pricedBuys) * 100) : null,
-    }))
-    .filter((m) => m.returnPct != null)
-    .sort((a, b) => b.returnPct - a.returnPct);
+  const byMember = new Map();
+  let oldest = null;
+  for (const r of rows) {
+    const pat = Number(r.pat), cur = Number(r.cur), amt = Number(r.amt) || 0;
+    if (!(pat > 0) || !(cur > 0)) continue;
+    if (r.date && (!oldest || r.date < oldest)) oldest = r.date;
+    const m = byMember.get(r.slug) || { slug: r.slug, name: r.name, party: r.party, state: r.state, chamber: r.chamber, trades: [] };
+    m.trades.push({ amt, ret: (cur - pat) / pat, win: cur > pat });
+    byMember.set(r.slug, m);
+  }
+
+  const list = [];
+  for (const m of byMember.values()) {
+    const n = m.trades.length;
+    if (n < min) continue;
+    const total = m.trades.reduce((s, t) => s + t.amt, 0);
+    if (!(total > 0)) continue;
+    const capW = LB_WEIGHT_CAP * total;
+    let wsum = 0, wr = 0, wins = 0;
+    for (const t of m.trades) { const w = Math.min(t.amt, capW); wsum += w; wr += w * t.ret; if (t.win) wins++; }
+    list.push({
+      slug: m.slug, name: m.name, party: m.party, state: m.state, chamber: m.chamber,
+      photoUrl: photoUrl(m.slug), pricedBuys: n, totalVolume: total,
+      returnPct: wsum > 0 ? +((wr / wsum) * 100).toFixed(1) : null,
+      winRate: Math.round((wins / n) * 100),
+    });
+  }
+  list.sort((a, b) => b.returnPct - a.returnPct);
+  return { list, meta: { pricedBuys: rows.length, oldest } };
 }
 
 // AUTOCOMPLETE: member name typeahead → top matches by trade activity. Public (names only),
@@ -297,11 +314,11 @@ export async function GET(request) {
     if (view === 'leaderboard') {
       const min = Math.min(Math.max(parseInt(searchParams.get('min') ?? '5', 10) || 5, 1), 50);
       const window = searchParams.get('window') || '1y';
-      const all = await leaderboardView({ chamber, party, min, window });
-      const shown = isPro ? all : all.slice(0, FREE_PREVIEW_ROWS);
-      const lockedCount = isPro ? 0 : Math.max(0, all.length - FREE_PREVIEW_ROWS);
+      const { list, meta } = await leaderboardView({ chamber, party, min, window });
+      const shown = isPro ? list : list.slice(0, FREE_PREVIEW_ROWS);
+      const lockedCount = isPro ? 0 : Math.max(0, list.length - FREE_PREVIEW_ROWS);
       console.log(`[politicians_api] leaderboard members=${shown.length} window=${window} locked=${lockedCount} tier=${tier}`);
-      return Response.json({ view: 'leaderboard', window, count: shown.length, members: shown, lockedCount, tier, loggedIn }, { headers: NO_STORE });
+      return Response.json({ view: 'leaderboard', window, count: shown.length, members: shown, meta, lockedCount, tier, loggedIn }, { headers: NO_STORE });
     }
     // Member list — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
     const members = await listView({ view, chamber, party });

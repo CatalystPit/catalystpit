@@ -167,6 +167,7 @@ function LockedMemberCard() {
 
 export default function PoliticiansList() {
   const [members, setMembers] = useState(null);
+  const [meta, setMeta] = useState(null);
   const [lockedCount, setLockedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -187,6 +188,7 @@ export default function PoliticiansList() {
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       setMembers(json.members || []);
+      setMeta(json.meta || null);
       setLockedCount(json.lockedCount || 0);   // signed-out → >0; signed-in → 0/absent
     } catch (e) {
       setError(e.message); setMembers(null); setLockedCount(0);
@@ -251,7 +253,9 @@ export default function PoliticiansList() {
 
         {view === 'leaderboard' && !loading && !error && (members || []).length > 0 && (
           <div style={{ fontSize: 12, color: C.muted, fontWeight: 300, margin: '-4px 0 12px', lineHeight: 1.5 }}>
-            Size-weighted return on each member&apos;s <strong style={{ fontWeight: 600 }}>purchases</strong> {lbWindow === 'all' ? 'across all disclosed history' : `made in the last ${(WINDOWS.find((w) => w.key === lbWindow) || {}).label}`}, held to today&apos;s price — as if you copied their buys. Minimum 5 priced buys. Not financial advice.
+            Size-weighted return on each member&apos;s <strong style={{ fontWeight: 600 }}>stock purchases</strong> {lbWindow === 'all' ? 'across all disclosed history' : `made in the last ${(WINDOWS.find((w) => w.key === lbWindow) || {}).label}`}, held to today&apos;s price — as if you copied their buys. No single position counts for more than 30%. <strong style={{ fontWeight: 600 }}>Options are excluded for now</strong> (leveraged-return estimation coming). Minimum 5 priced buys.
+            {meta?.pricedBuys != null && <span> Based on {meta.pricedBuys.toLocaleString()} priced buys{meta.oldest ? ` since ${fmtDate(meta.oldest)}` : ''} — expanding as history loads.</span>}
+            {' '}Not financial advice.
           </div>
         )}
 
