@@ -3,7 +3,7 @@ import { db } from './db';
 import { fundHoldings, fundFilings, institutions } from './schema';
 import { INSTITUTIONS } from './institutions.mjs';
 import { resolveCusips } from './security-resolver';
-import { resolveIssuerNames } from './name-resolver';
+import { resolveIssuerItems } from './name-resolver';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  INSTITUTIONS UNIVERSE (Phase 2) — auto-discover EVERY SEC 13F filer from the
@@ -164,7 +164,8 @@ export async function discoverFilers({ indexes = 2, featured } = {}) {
 
 // ── holdings parsing (ported from the curated cron) ──
 function parseInfoTable(xml, wholeDollars) {
-  const tag = (block, name) => { const m = block.match(new RegExp(`<(?:\\w+:)?${name}>([\\s\\S]*?)</(?:\\w+:)?${name}>`, 'i')); return m ? m[1].trim() : ''; };
+  // Strip CDATA wrappers + collapse whitespace so issuer names are clean (drives logo/name resolution).
+  const tag = (block, name) => { const m = block.match(new RegExp(`<(?:\\w+:)?${name}>([\\s\\S]*?)</(?:\\w+:)?${name}>`, 'i')); return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/\s+/g, ' ').trim() : ''; };
   const rows = [];
   const blocks = xml.match(/<(?:\w+:)?infoTable>[\s\S]*?<\/(?:\w+:)?infoTable>/gi) || [];
   for (const b of blocks) {
@@ -272,9 +273,9 @@ export async function resolveHoldingTickers({ cap = 500, timeBudgetMs = 200000, 
 // Name-based fallback: for holdings still unresolved after OpenFIGI (foreign CINS OpenFIGI can't map),
 // match the issuer name against SEC's ticker list. Updates fund_holdings + cusip_map (source 'sec-name').
 // Matching is in-memory (cached SEC index, no API) so it's fast + safe to run every cycle.
-export async function resolveHoldingsByName({ cap = 5000 } = {}) {
+export async function resolveHoldingsByName({ cap = 8000 } = {}) {
   const res = await db.execute(sql`
-    SELECT cusip, max(issuer) AS issuer
+    SELECT cusip, array_agg(DISTINCT issuer) AS issuers
     FROM fund_holdings
     WHERE ticker IS NULL AND issuer IS NOT NULL
     GROUP BY cusip
@@ -282,17 +283,16 @@ export async function resolveHoldingsByName({ cap = 5000 } = {}) {
   `);
   const rows = res?.rows || [];
   if (!rows.length) return { resolved: 0 };
-  const map = await resolveIssuerNames(rows.map((r) => r.issuer));
-  const pairs = rows.map((r) => [r.cusip, map.get(r.issuer)]).filter((p) => p[1]);
-  if (!pairs.length) return { resolved: 0 };
-  for (let i = 0; i < pairs.length; i += 1000) {
-    const b = pairs.slice(i, i + 1000), cs = b.map((p) => p[0]), ts = b.map((p) => p[1]);
+  const matches = await resolveIssuerItems(rows.map((r) => ({ cusip: r.cusip, issuers: r.issuers || [], current: null })));
+  if (!matches.length) return { resolved: 0 };
+  for (let i = 0; i < matches.length; i += 1000) {
+    const b = matches.slice(i, i + 1000), cs = b.map((p) => p.cusip), ts = b.map((p) => p.ticker);
     await db.execute(sql`INSERT INTO cusip_map (cusip, ticker, status, confidence, source, updated_at)
       SELECT u.cusip, u.t, 'resolved', 'medium', 'sec-name', now() FROM unnest(${cs}::text[], ${ts}::text[]) AS u(cusip, t)
       ON CONFLICT (cusip) DO UPDATE SET ticker = excluded.ticker, status = 'resolved', confidence = 'medium', source = 'sec-name', updated_at = now()`);
     await db.execute(sql`UPDATE fund_holdings h SET ticker = m.t FROM unnest(${cs}::text[], ${ts}::text[]) AS m(cusip, t) WHERE h.cusip = m.cusip AND h.ticker IS NULL`);
   }
-  return { resolved: pairs.length };
+  return { resolved: matches.length };
 }
 
 // One-time cleanup for earlier mis-resolutions. NORMALIZE first (recover real symbols) so we don't

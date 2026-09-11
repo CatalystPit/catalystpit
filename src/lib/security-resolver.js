@@ -78,7 +78,9 @@ function pickTicker(data) {
       equity: d.marketSector === 'Equity' || /stock|depositary|adr|reit|\bshare|fund|etp|unit/i.test(`${d.securityType2 || ''} ${d.securityType || ''}`),
     }))
     .filter((c) => c.t);
-  const pick = cands.find((c) => c.us && c.equity) || cands.find((c) => c.us) || cands.find((c) => c.equity) || cands[0];
+  // US-listed only. A foreign-only listing (e.g. a Sandstorm/Brainstorm foreign line) has no US logo
+  // and often isn't the right symbol → return null and let the SEC name-resolver find the US ticker.
+  const pick = cands.find((c) => c.us && c.equity) || cands.find((c) => c.us);
   return pick ? pick.t : null;
 }
 
