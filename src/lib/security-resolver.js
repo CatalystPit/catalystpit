@@ -55,7 +55,26 @@ export async function recordUnresolved(kind, key, context) {
   } catch { /* non-fatal */ }
 }
 
-// Batch OpenFIGI CUSIP→ticker (US-preferred). Returns Map(cusip → ticker) for matches only.
+// A clean, logo-able equity symbol: starts with a letter, ≤9 chars, no spaces/slashes.
+// Rejects bond descriptors OpenFIGI returns for note CUSIPs (e.g. "STX 3.5 06/01/28").
+export const isTickerShaped = (t) => /^[A-Z][A-Z0-9.\-]{0,8}$/.test(t || '');
+
+// From OpenFIGI mapping data, pick the best symbol: a US-listed EQUITY with a clean ticker.
+// Bonds (marketSector 'Corp'/'Govt') and non-ticker-shaped rows are filtered out, so a note
+// CUSIP yields null (→ shows the issuer, no fake ticker) while a stock/ADR CUSIP resolves.
+function pickTicker(data) {
+  const cands = (data || [])
+    .map((d) => ({
+      t: String(d.ticker || '').toUpperCase().trim(),
+      us: US_EXCH.has(d.exchCode),
+      equity: d.marketSector === 'Equity' || /stock|depositary|adr|reit|\bshare|fund|etp|unit/i.test(`${d.securityType2 || ''} ${d.securityType || ''}`),
+    }))
+    .filter((c) => isTickerShaped(c.t));
+  const pick = cands.find((c) => c.us && c.equity) || cands.find((c) => c.us) || cands.find((c) => c.equity) || cands[0];
+  return pick ? pick.t : null;
+}
+
+// Batch OpenFIGI CUSIP→ticker (US-listed equity preferred). Returns Map(cusip → ticker) for matches only.
 async function openfigi(cusips) {
   const out = new Map();
   const batchSize = OPENFIGI_KEY ? 100 : 10;
@@ -70,10 +89,8 @@ async function openfigi(cusips) {
       if (r.ok) {
         const arr = await r.json();
         arr.forEach((res, j) => {
-          const c = batch[j];
-          const pick = (res.data || []).find((d) => US_EXCH.has(d.exchCode)) || (res.data || [])[0];
-          const t = pick?.ticker ? String(pick.ticker).toUpperCase() : null;
-          if (t) out.set(c, t);
+          const t = pickTicker(res.data);
+          if (t) out.set(batch[j], t);
         });
       }
     } catch { /* skip batch */ }

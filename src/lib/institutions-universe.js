@@ -238,22 +238,59 @@ export async function ingestFiler(cik, cutoff) {
   return { cik, quarters, stored };
 }
 
-// Resolve top unresolved CUSIPs → tickers (shared resolver) and write onto fund_holdings.
-export async function resolveHoldingTickers({ cap = 500 } = {}) {
-  const rows = await db.select({ cusip: fundHoldings.cusip, v: sql`max(${fundHoldings.value})`.mapWith(Number) })
-    .from(fundHoldings).where(isNull(fundHoldings.ticker)).groupBy(fundHoldings.cusip).orderBy(desc(sql`max(${fundHoldings.value})`)).limit(cap);
-  const cusips = rows.map((r) => r.cusip);
-  if (!cusips.length) return { resolved: 0 };
-  const map = await resolveCusips(cusips, { maxLookups: cap });
-  let resolved = 0;
-  for (const [cusip, ticker] of map) { await db.update(fundHoldings).set({ ticker }).where(and(eq(fundHoldings.cusip, cusip), isNull(fundHoldings.ticker))); resolved++; }
-  return { resolved, checked: cusips.length };
+// Resolve tickers for holdings, draining the backlog of NEVER-ATTEMPTED CUSIPs (not yet in
+// cusip_map), highest-value first. Excluding CUSIPs already in cusip_map stops the resolver from
+// re-thrashing permanently-unmappable bonds/foreign that clog the top-by-value slots. Chunked +
+// time-bounded so a big cap stays within maxDuration.
+export async function resolveHoldingTickers({ cap = 500, timeBudgetMs = 200000, t0 = Date.now() } = {}) {
+  const res = await db.execute(sql`
+    SELECT h.cusip AS cusip
+    FROM fund_holdings h
+    LEFT JOIN cusip_map m ON m.cusip = h.cusip
+    WHERE h.ticker IS NULL AND m.cusip IS NULL
+    GROUP BY h.cusip
+    ORDER BY max(h.value) DESC NULLS LAST
+    LIMIT ${cap}
+  `);
+  const cusips = (res?.rows || []).map((r) => r.cusip).filter(Boolean);
+  if (!cusips.length) return { resolved: 0, checked: 0 };
+  let resolved = 0, checked = 0;
+  for (let i = 0; i < cusips.length; i += 500) {
+    if (Date.now() - t0 > timeBudgetMs) break;
+    const chunk = cusips.slice(i, i + 500);
+    const map = await resolveCusips(chunk, { maxLookups: 500 });
+    checked += chunk.length;
+    for (const [cusip, ticker] of map) {
+      await db.update(fundHoldings).set({ ticker }).where(and(eq(fundHoldings.cusip, cusip), isNull(fundHoldings.ticker)));
+      resolved++;
+    }
+  }
+  return { resolved, checked };
+}
+
+// One-time cleanup for earlier mis-resolutions: null out non-ticker-shaped holding tickers (bond
+// descriptors like "STX 3.5 06/01/28" that came from the old KV cache) and purge unresolved/junk
+// cusip_map rows so the hardened resolver re-attempts them once, cleanly.
+export async function cleanupBadTickers() {
+  const h = await db.execute(sql`UPDATE fund_holdings SET ticker = NULL WHERE ticker IS NOT NULL AND ticker !~ '^[A-Z][A-Z0-9.-]{0,8}$'`);
+  const c = await db.execute(sql`DELETE FROM cusip_map WHERE ticker IS NULL OR ticker !~ '^[A-Z][A-Z0-9.-]{0,8}$'`);
+  return { holdingsCleared: h?.rowCount ?? null, cusipMapPurged: c?.rowCount ?? null };
 }
 
 // Orchestrate one run: discover → ingest a bounded batch of not-yet-ingested filers → resolve tickers.
-export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tickerCap = 500, timeBudgetMs = 250000 } = {}) {
+// tickerOnly: skip discovery/ingestion and just drain the ticker-resolution backlog (fast logo fill).
+// cleanup: one-time purge of junk tickers before resolving.
+export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tickerCap = 500, timeBudgetMs = 250000, tickerOnly = false, cleanup = false } = {}) {
   await ensureUniverseTables();
   const t0 = Date.now();
+  const out = {};
+  if (cleanup) { try { out.cleanup = await cleanupBadTickers(); } catch (e) { out.cleanup = { error: e?.message }; } }
+  if (tickerOnly) {
+    let tick = { resolved: 0, checked: 0 };
+    try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
+    catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
+    return { ...out, tickerOnly: true, tickersResolved: tick.resolved, tickersChecked: tick.checked, ms: Date.now() - t0 };
+  }
   const featured = await buildFeaturedMap();
   const disc = await discoverFilers({ indexes, featured });
   const cutoff = backfillCutoff();
@@ -283,7 +320,7 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
     }
   }
   let tick = { resolved: 0 };
-  try { tick = await resolveHoldingTickers({ cap: tickerCap }); }
+  try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
   catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
-  return { cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, failedNow, errorsSample, tickersResolved: tick.resolved, ms: Date.now() - t0 };
+  return { ...out, cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, failedNow, errorsSample, tickersResolved: tick.resolved, ms: Date.now() - t0 };
 }

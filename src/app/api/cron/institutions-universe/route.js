@@ -29,9 +29,11 @@ export async function GET(request) {
   const sp = new URL(request.url).searchParams;
   const indexes = Math.min(8, Math.max(1, parseInt(sp.get('indexes') || '2', 10) || 2));
   const ingestCap = Math.min(400, Math.max(5, parseInt(sp.get('ingestCap') || '60', 10) || 60));
-  const tickerCap = Math.min(2000, Math.max(50, parseInt(sp.get('tickerCap') || '500', 10) || 500));
+  const tickerCap = Math.min(20000, Math.max(50, parseInt(sp.get('tickerCap') || '500', 10) || 500));
+  const tickerOnly = sp.get('tickerOnly') === '1';   // skip ingest, just drain the ticker→logo backlog
+  const cleanup = sp.get('cleanup') === '1';          // one-time purge of junk/bond "tickers"
   try {
-    const res = await runInstitutionsUniverse({ indexes, ingestCap, tickerCap });
+    const res = await runInstitutionsUniverse({ indexes, ingestCap, tickerCap, tickerOnly, cleanup });
     console.log(`[institutions-universe] ${JSON.stringify(res)}`);
     return Response.json({ ok: true, ...res });
   } catch (e) {
