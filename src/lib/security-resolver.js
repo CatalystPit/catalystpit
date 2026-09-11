@@ -108,33 +108,46 @@ export async function resolveCusips(cusips, { maxLookups = 500 } = {}) {
   const out = new Map();
   if (!uniq.length) return out;
 
-  // 1) DB
+  // 1) DB cusip_map
   const rows = await db.select().from(cusipMap).where(inArray(cusipMap.cusip, uniq));
   const known = new Map(rows.map((r) => [r.cusip, r]));
   let need = [];
   for (const c of uniq) {
     const r = known.get(c);
-    if (r) { if (r.ticker) out.set(c, r.ticker); }   // unresolved-known → skip
+    if (r) { if (r.ticker) out.set(c, r.ticker); }   // unresolved-known → skip (don't re-query)
     else need.push(c);
   }
   if (!need.length) return out;
 
-  // 2) Promote old KV cache (positive hits only)
+  // 2) Promote old KV cache — PARALLEL (fast) + VALIDATED (only clean ticker-shaped values, so the
+  //    legacy cache's bond descriptors like "STX 3.5 06/01/28" are rejected, not promoted).
   const stillNeed = [];
-  for (const c of need) {
-    const kv = await kvGet(`catalystpit:cusip:${c}`);
-    if (kv) { out.set(c, kv); await upsertMap(c, kv, 'resolved', 'high', 'kv'); }
-    else stillNeed.push(c);
+  const writes = [];   // batched cusip_map upserts (per-row writes were the throughput bottleneck)
+  for (let i = 0; i < need.length; i += 50) {
+    const slice = need.slice(i, i + 50);
+    const hits = await Promise.all(slice.map((c) => kvGet(`catalystpit:cusip:${c}`)));
+    slice.forEach((c, j) => {
+      const kv = hits[j] ? String(hits[j]).toUpperCase().trim() : null;
+      if (kv && isTickerShaped(kv)) { out.set(c, kv); writes.push({ cusip: c, ticker: kv, status: 'resolved', confidence: 'high', source: 'kv', updatedAt: new Date() }); }
+      else stillNeed.push(c);
+    });
   }
-  if (!stillNeed.length) return out;
 
   // 3) OpenFIGI (bounded)
   const toQuery = stillNeed.slice(0, maxLookups);
-  const figi = await openfigi(toQuery);
+  const figi = toQuery.length ? await openfigi(toQuery) : new Map();
   for (const c of toQuery) {
     const t = figi.get(c) || null;
-    if (t) { out.set(c, t); await upsertMap(c, t, 'resolved', 'high', 'openfigi'); }
-    else { await upsertMap(c, null, 'unresolved', null, 'openfigi'); await recordUnresolved('cusip', c, null); }
+    if (t) { out.set(c, t); writes.push({ cusip: c, ticker: t, status: 'resolved', confidence: 'high', source: 'openfigi', updatedAt: new Date() }); }
+    else writes.push({ cusip: c, ticker: null, status: 'unresolved', confidence: null, source: 'openfigi', updatedAt: new Date() });
+  }
+
+  // Bulk-upsert all decisions (resolved + unresolved) — one write per 500, not per CUSIP.
+  for (let i = 0; i < writes.length; i += 500) {
+    await db.insert(cusipMap).values(writes.slice(i, i + 500)).onConflictDoUpdate({
+      target: cusipMap.cusip,
+      set: { ticker: sql`excluded.ticker`, status: sql`excluded.status`, confidence: sql`excluded.confidence`, source: sql`excluded.source`, updatedAt: sql`now()` },
+    });
   }
   return out;
 }
