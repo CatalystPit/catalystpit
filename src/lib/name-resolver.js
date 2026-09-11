@@ -15,7 +15,16 @@ const STOP = new Set(['INC', 'INCORPORATED', 'CORP', 'CORPORATION', 'CO', 'COMPA
 // Condensed core: drop CDATA, punctuation, stopwords + single-letter tokens; join with no spaces.
 const ncore = (s) => String(s || '').toUpperCase().replace(/<!\[CDATA\[|\]\]>/g, ' ').replace(/&/g, ' AND ').replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter((t) => t && t.length > 1 && !STOP.has(t)).join('');
 const isDebtDeriv = (s) => /\d[.,]\d/.test(s) || /\d{1,2}\/\d{2}/.test(s) || /\b(NT|NOTE|NOTES|BOND|BONDS|DEB|DEBENTURE|DUE|MTN|PERP|PERPETUAL|SR|SUBORD|SUB|COUPON|MATURES?|FLT|FLOATING|PFD|PREFERRED|PREF|ETN)\b/.test(String(s).toUpperCase());
-const pickPrimary = (arr) => { const ciks = new Set(arr.map((x) => x.cik)); if (ciks.size !== 1) return null; return arr.map((x) => x.t).sort((a, b) => a.length - b.length || a.localeCompare(b))[0]; };
+// Pick one ticker for a matched name. Requires a single company (CIK). If that company has several
+// tickers, only resolve when they're SHARE-CLASS variants (shortest is a prefix of all — GOOG/GOOGL,
+// ASML/ASMLF). Divergent tickers under one registrant name (an ETF family: VOO/VTI/VUG) → null, so
+// we don't guess the wrong ETF; OpenFIGI's CUSIP mapping handles those.
+const pickPrimary = (arr) => {
+  if (new Set(arr.map((x) => x.cik)).size !== 1) return null;
+  const ts = [...new Set(arr.map((x) => x.t))].sort((a, b) => a.length - b.length || a.localeCompare(b));
+  if (ts.length === 1) return ts[0];
+  return ts.every((t) => t.startsWith(ts[0])) ? ts[0] : null;
+};
 
 let _idx = null, _at = 0;
 async function loadIndex() {

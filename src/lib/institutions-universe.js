@@ -274,16 +274,17 @@ export async function resolveHoldingTickers({ cap = 500, timeBudgetMs = 200000, 
 // match the issuer name against SEC's ticker list. Updates fund_holdings + cusip_map (source 'sec-name').
 // Matching is in-memory (cached SEC index, no API) so it's fast + safe to run every cycle.
 export async function resolveHoldingsByName({ cap = 8000 } = {}) {
+  // Use the DOMINANT (most-common) issuer per CUSIP — a stray mislabeled filing shouldn't drive the
+  // ticker. CUSIP is authoritative; this is only the fallback for CUSIPs OpenFIGI couldn't map.
   const res = await db.execute(sql`
-    SELECT cusip, array_agg(DISTINCT issuer) AS issuers
-    FROM fund_holdings
-    WHERE ticker IS NULL AND issuer IS NOT NULL
+    SELECT cusip, (array_agg(issuer ORDER BY cnt DESC, issuer))[1] AS issuer
+    FROM (SELECT cusip, issuer, count(*)::int AS cnt FROM fund_holdings WHERE ticker IS NULL AND issuer IS NOT NULL GROUP BY cusip, issuer) t
     GROUP BY cusip
     LIMIT ${cap}
   `);
   const rows = res?.rows || [];
   if (!rows.length) return { resolved: 0 };
-  const matches = await resolveIssuerItems(rows.map((r) => ({ cusip: r.cusip, issuers: r.issuers || [], current: null })));
+  const matches = await resolveIssuerItems(rows.map((r) => ({ cusip: r.cusip, issuers: [r.issuer], current: null })));
   if (!matches.length) return { resolved: 0 };
   // ARRAY[...] construction — drizzle expands a bare ${jsArray} to ($1,$2,…), so ${arr}::text[]
   // would wrongly cast a row-list; ARRAY[...] gives a real text[] param for unnest().
