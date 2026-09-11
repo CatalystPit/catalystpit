@@ -205,6 +205,21 @@ function filings13F(sub, cutoff) {
   return [...byQ.values()];
 }
 
+// A large manager reports the SAME security across many sub-accounts (BlackRock lists NVIDIA dozens of
+// times). The filer's true position is the SUM. Our unique key is (cik,quarter,cusip,class,putCall), so
+// we MUST aggregate here — otherwise onConflictDoNothing keeps one arbitrary sub-account and badly
+// undercounts (BlackRock NVIDIA showed $12B vs the real ~$247B). SEC's own total_value sums these too.
+function aggregateHoldings(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const k = `${r.cusip}|${r.cls || ''}|${r.putCall || ''}`;
+    const e = by.get(k);
+    if (e) { e.value += r.value || 0; e.shares += r.shares || 0; }
+    else by.set(k, { ...r, value: r.value || 0, shares: r.shares || 0 });
+  }
+  return [...by.values()];
+}
+
 // Store a filing; supersede any prior accession for the same (cik, quarter) — amendments fully restate.
 async function storeFilingSuperseded(cik, quarter, filedDate, accession, rows) {
   const [existing] = await db.select().from(fundFilings).where(and(eq(fundFilings.cik, cik), eq(fundFilings.quarter, quarter))).limit(1);
@@ -213,10 +228,11 @@ async function storeFilingSuperseded(cik, quarter, filedDate, accession, rows) {
     if (String(existing.filedDate || '') > String(filedDate)) return { older: true };   // keep the newer existing
     await db.delete(fundHoldings).where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, quarter)));
   }
-  const values = rows.map((r) => ({ cik, quarter, cusip: r.cusip, ticker: null, issuer: r.issuer, cls: r.cls, shares: r.shares, value: r.value, putCall: r.putCall, filedDate, accession }));
+  const agg = aggregateHoldings(rows);   // sum sub-account rows → one total position per security
+  const values = agg.map((r) => ({ cik, quarter, cusip: r.cusip, ticker: null, issuer: r.issuer, cls: r.cls, shares: r.shares, value: r.value, putCall: r.putCall, filedDate, accession }));
   for (let i = 0; i < values.length; i += 500) await db.insert(fundHoldings).values(values.slice(i, i + 500)).onConflictDoNothing();
-  const totalValue = rows.reduce((s, r) => s + (r.value || 0), 0);
-  await db.insert(fundFilings).values({ cik, quarter, filedDate, accession, totalValue, holdingsCount: rows.length })
+  const totalValue = agg.reduce((s, r) => s + (r.value || 0), 0);
+  await db.insert(fundFilings).values({ cik, quarter, filedDate, accession, totalValue, holdingsCount: agg.length })
     .onConflictDoUpdate({ target: [fundFilings.cik, fundFilings.quarter], set: { filedDate: sql`excluded.filed_date`, accession: sql`excluded.accession`, totalValue: sql`excluded.total_value`, holdingsCount: sql`excluded.holdings_count` } });
   return { stored: rows.length };
 }
