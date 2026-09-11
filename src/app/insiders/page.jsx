@@ -271,9 +271,9 @@ export default function InsidersPage() {
             style={{width:"100%",maxWidth:280,background:C.white,border:`1px solid ${C.border}`,color:C.text,padding:"8px 12px",borderRadius:5,fontSize:12,fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
           {searching && (
             <span style={{display:"inline-flex",alignItems:"center",gap:8,background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:5,padding:"6px 12px",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.green}}>
-              {debouncedSearch}
+              {searchMode === 'name' ? `Insider: ${debouncedSearch}` : debouncedSearch}
               <button onClick={clearSearch} style={{background:"transparent",border:"none",color:C.green,cursor:"pointer",fontWeight:700}}>✕</button>
-              <span style={{color:C.muted,fontWeight:400}}>back to {VIEW_LABEL[activeView]}</span>
+              <span style={{color:C.muted,fontWeight:400}}>{searchMode === 'name' ? 'all transactions' : `back to ${VIEW_LABEL[activeView]}`}</span>
             </span>
           )}
           {/* Folded-in screener filters: window + min transaction size (apply to trade views) */}
