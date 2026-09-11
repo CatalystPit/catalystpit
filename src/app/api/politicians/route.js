@@ -61,9 +61,10 @@ const shapeTrade = (t) => {
   const cp = /option\s*type\s*[:\-]?\s*(call|put)/i.exec(src) || (isOpt ? /\b(call|put)s?\b/i.exec(src) : null);
   const optionType = cp ? (cp[1].toLowerCase().startsWith('put') ? 'Put' : 'Call') : (isOpt ? 'Option' : null);
   const gm = (re) => (re.exec(src) || [])[1] || null;
-  const strike = gm(/strike\s*(?:price)?\s*(?:of\s*)?\$?\s*([\d,]+(?:\.\d+)?)/i);
-  const expiration = gm(/expir\w*\s*(?:date)?\s*(?:of\s*)?(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
-  const contracts = optionType ? gm(/\b([\d,]+)\s*(?:call|put)?\s*(?:options?|contracts?)\b/i) : null;
+  // Handles "strike price of $50", "at $22.00", "@ 150"; and "200 call options" / "10 puts".
+  const strike = optionType ? gm(/(?:strike\s*(?:price)?\s*(?:of\s*)?|@\s*|\bat\s*)\$?\s*([\d,]+(?:\.\d+)?)/i) : null;
+  const expiration = optionType ? gm(/(?:expir\w*|exp\.?)\s*(?:date)?\s*(?:of\s*)?(\d{1,2}\/\d{1,2}\/\d{2,4})/i) : null;
+  const contracts = optionType ? gm(/\b([\d,]+)\s*(?:call|put)s?(?:\s*(?:options?|contracts?))?\b/i) : null;
   const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
   return {
     ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice),
