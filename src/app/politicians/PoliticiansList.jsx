@@ -1,13 +1,14 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout, EntitySearch } from '../../lib/cp-shared';
-import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat } from './ui';
+import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, fmtReturn, returnColor } from './ui';
 
 // ─── filter definitions ──────────────────────────────────────────────────────
 const SORTS = [
   { key: 'most_active', label: 'Most Active' },
   { key: 'top_volume',  label: 'Top Volume' },
   { key: 'recent',      label: 'Most Recent' },
+  { key: 'leaderboard', label: '🏆 Best Traders' },
 ];
 const CHAMBERS = [
   { key: '',       label: 'All' },
@@ -84,6 +85,54 @@ function MemberCard({ m }) {
         </div>
       </div>
     </a>
+  );
+}
+
+// Ranked "Best Traders" leaderboard — size-weighted return on each member's priced purchases.
+function LeaderboardTable({ members }) {
+  const medal = (i) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`);
+  return (
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+          <thead>
+            <tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+              {[['#', 'center'], ['Member', 'left'], ['Return', 'right'], ['Win rate', 'right'], ['Priced buys', 'right'], ['Volume', 'right']].map(([h, al]) => (
+                <th key={h} style={{ padding: '10px 14px', textAlign: al, fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {members.map((m, i) => {
+              const ps = partyStyle(m.party);
+              return (
+                <tr key={m.slug} className="hov" onClick={() => { window.location.href = `/politicians/${m.slug}`; }}
+                  style={{ borderBottom: i < members.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: 'pointer' }}>
+                  <td style={{ padding: '12px 14px', textAlign: 'center', fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink, whiteSpace: 'nowrap' }}>{medal(i)}</td>
+                  <td style={{ padding: '10px 14px' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <Avatar photoUrl={m.photoUrl} name={m.name} ps={ps} size={32} />
+                      <span style={{ minWidth: 0 }}>
+                        <span style={{ display: 'block', fontSize: 14, fontWeight: 600, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name || 'Unknown'}</span>
+                        <span style={{ display: 'flex', gap: 5, marginTop: 3 }}>
+                          <Chip bg={ps.bg} fg={ps.fg}>{ps.abbr}</Chip>
+                          {m.state && <Chip bg={C.surface} fg={C.muted}>{m.state}</Chip>}
+                          <Chip bg={C.surface} fg={C.muted}>{chamberLabel(m.chamber)}</Chip>
+                        </span>
+                      </span>
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 16, fontWeight: 700, color: returnColor(m.returnPct), whiteSpace: 'nowrap' }}>{fmtReturn(m.returnPct)}</td>
+                  <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>{m.winRate != null ? `${m.winRate}%` : '—'}</td>
+                  <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.muted, whiteSpace: 'nowrap' }}>{m.pricedBuys}</td>
+                  <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: C.text, whiteSpace: 'nowrap' }}>{fmtMoney(m.totalVolume)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -190,27 +239,33 @@ export default function PoliticiansList() {
           {loading ? 'Loading…' : error ? '' : `${members?.length || 0} members`}
         </div>
 
+        {view === 'leaderboard' && !loading && !error && (members || []).length > 0 && (
+          <div style={{ fontSize: 12, color: C.muted, fontWeight: 300, margin: '-4px 0 12px', lineHeight: 1.5 }}>
+            Size-weighted return on each member&apos;s <strong style={{ fontWeight: 600 }}>purchases</strong> we can price — as if you copied their buys and held to today. Minimum 5 priced buys. Not financial advice.
+          </div>
+        )}
+
         {error ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '40px 16px', textAlign: 'center', color: C.red, fontSize: 13 }}>Failed to load: {error}</div>
+        ) : loading ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+            {Array(8).fill(0).map((_, i) => (
+              <div key={i} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14 }}>
+                  <div style={{ width: 52, height: 52, borderRadius: '50%', background: C.surface, flexShrink: 0 }} />
+                  <div style={{ flex: 1 }}><Skel w="70%" h={14} mb={8} /><Skel w="45%" h={10} mb={0} /></div>
+                </div>
+                <Skel h={12} mb={10} /><Skel h={10} mb={0} />
+              </div>
+            ))}
+          </div>
+        ) : (members || []).length === 0 ? (
+          <div style={{ textAlign: 'center', color: C.muted, fontSize: 13, padding: '40px 16px' }}>No members match these filters.</div>
+        ) : view === 'leaderboard' ? (
+          <LeaderboardTable members={members} />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-            {loading
-              ? Array(8).fill(0).map((_, i) => (
-                  <div key={i} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 }}>
-                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14 }}>
-                      <div style={{ width: 52, height: 52, borderRadius: '50%', background: C.surface, flexShrink: 0 }} />
-                      <div style={{ flex: 1 }}><Skel w="70%" h={14} mb={8} /><Skel w="45%" h={10} mb={0} /></div>
-                    </div>
-                    <Skel h={12} mb={10} /><Skel h={10} mb={0} />
-                  </div>
-                ))
-              : (members || []).length === 0
-                ? <div style={{ gridColumn: '1/-1', textAlign: 'center', color: C.muted, fontSize: 13, padding: '40px 16px' }}>No members match these filters.</div>
-                : (
-                  <>
-                    {members.map((m) => <MemberCard key={m.slug} m={m} />)}
-                  </>
-                )}
+            {members.map((m) => <MemberCard key={m.slug} m={m} />)}
           </div>
         )}
 

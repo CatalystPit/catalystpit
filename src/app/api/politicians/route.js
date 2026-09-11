@@ -117,6 +117,49 @@ async function listView({ view, chamber, party }) {
   return members.map(m => ({ ...m, photoUrl: photoUrl(m.slug) }));
 }
 
+// LEADERBOARD: "Best Traders in Congress" — each member's SIZE-WEIGHTED return across their
+// PURCHASES that we can price (priceAtTrade + current_price), i.e. "if you'd copied their buys
+// and held to today." Weighted by amount so a $1M buy counts more than a $1k one. A sample-size
+// floor (min priced buys) keeps a lucky single trade from topping the board.
+async function leaderboardView({ chamber, party, min = 5 }) {
+  const conds = [
+    eq(congressTrades.action, 'BUY'),
+    sql`${congressTrades.priceAtTrade} > 0`,
+    sql`${congressTickerPrices.currentPrice} > 0`,
+  ];
+  if (chamber === 'house' || chamber === 'senate') conds.push(eq(congressTrades.chamber, chamber));
+  if (party) conds.push(eq(congressTrades.party, party));
+
+  const rows = await db.select({
+    slug:       congressTrades.memberSlug,
+    name:       sql`max(${congressTrades.representative})`,
+    party:      sql`max(${congressTrades.party})`,
+    state:      sql`max(${congressTrades.state})`,
+    chamber:    sql`max(${congressTrades.chamber})`,
+    pricedBuys: sql`count(*)`.mapWith(Number),
+    weight:     sql`coalesce(sum(${congressTrades.amountMid}), 0)`.mapWith(Number),
+    wret:       sql`coalesce(sum(${congressTrades.amountMid} * (${congressTickerPrices.currentPrice} - ${congressTrades.priceAtTrade}) / ${congressTrades.priceAtTrade}), 0)`.mapWith(Number),
+    wins:       sql`sum(case when ${congressTickerPrices.currentPrice} > ${congressTrades.priceAtTrade} then 1 else 0 end)`.mapWith(Number),
+  })
+    .from(congressTrades)
+    .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
+    .where(and(...conds))
+    .groupBy(congressTrades.memberSlug)
+    .having(sql`count(*) >= ${min}`);
+
+  return rows
+    .map((r) => ({
+      slug: r.slug, name: r.name, party: r.party, state: r.state, chamber: r.chamber,
+      photoUrl: photoUrl(r.slug),
+      pricedBuys: r.pricedBuys,
+      totalVolume: r.weight,
+      returnPct: r.weight > 0 ? +((r.wret / r.weight) * 100).toFixed(1) : null,
+      winRate: r.pricedBuys > 0 ? Math.round((r.wins / r.pricedBuys) * 100) : null,
+    }))
+    .filter((m) => m.returnPct != null)
+    .sort((a, b) => b.returnPct - a.returnPct);
+}
+
 // AUTOCOMPLETE: member name typeahead → top matches by trade activity. Public (names only),
 // ungated — drives the /politicians search box. Matches full display name + first/last.
 async function searchView(q) {
@@ -244,6 +287,15 @@ export async function GET(request) {
       const lockedCount = isPro ? 0 : Math.max(0, payload.trades.length - FREE_PREVIEW_ROWS);
       console.log(`[politicians_api] feed trades=${trades.length} locked=${lockedCount} tier=${tier}`);
       return Response.json({ view: 'feed', count: trades.length, trades, lockedCount, tier, loggedIn }, { headers: NO_STORE });
+    }
+    // Leaderboard — "Best Traders in Congress". Gated like the list (top preview free).
+    if (view === 'leaderboard') {
+      const min = Math.min(Math.max(parseInt(searchParams.get('min') ?? '5', 10) || 5, 1), 50);
+      const all = await leaderboardView({ chamber, party, min });
+      const shown = isPro ? all : all.slice(0, FREE_PREVIEW_ROWS);
+      const lockedCount = isPro ? 0 : Math.max(0, all.length - FREE_PREVIEW_ROWS);
+      console.log(`[politicians_api] leaderboard members=${shown.length} locked=${lockedCount} tier=${tier}`);
+      return Response.json({ view: 'leaderboard', count: shown.length, members: shown, lockedCount, tier, loggedIn }, { headers: NO_STORE });
     }
     // Member list — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
     const members = await listView({ view, chamber, party });
