@@ -171,7 +171,7 @@ export default function InsidersPage() {
   // Fetch: a TICKER search drills into that symbol; a NAME search filters the active view; else the view.
   useEffect(() => {
     if (debouncedSearch && searchMode === 'ticker') loadData({ ticker: debouncedSearch });
-    else if (debouncedSearch && searchMode === 'name') loadData({ view: activeView, name: debouncedSearch });
+    else if (debouncedSearch && searchMode === 'name') loadData({ view: 'latest', name: debouncedSearch });
     else loadData({ view: activeView });
   }, [debouncedSearch, searchMode, activeView, loadData]);
 
@@ -179,7 +179,7 @@ export default function InsidersPage() {
   const clearSearch = () => { setSearch(''); setDebouncedSearch(''); };
   const refresh = () => {
     if (debouncedSearch && searchMode === 'ticker') loadData({ ticker: debouncedSearch });
-    else if (debouncedSearch && searchMode === 'name') loadData({ view: activeView, name: debouncedSearch });
+    else if (debouncedSearch && searchMode === 'name') loadData({ view: 'latest', name: debouncedSearch });
     else loadData({ view: activeView });
   };
   const onSearchKeyDown = (e) => { if (e.key === 'Enter') setDebouncedSearch(search.trim().toUpperCase()); };
