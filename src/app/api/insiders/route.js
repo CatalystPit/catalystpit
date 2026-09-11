@@ -12,6 +12,16 @@ export const runtime = 'nodejs';
 const FREE_PREVIEW_ROWS = 10;
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
+// ── KV cache for the (heavier) aggregation endpoints — short TTL, they move slowly intra-day ──
+const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
+async function kvGet(k) { if (!KV_URL) return null; try { const r = await fetch(`${KV_URL}/get/${encodeURIComponent(k)}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` } }); if (!r.ok) return null; const { result } = await r.json(); return result ? JSON.parse(result) : null; } catch { return null; } }
+async function kvSet(k, v, ttl) { if (!KV_URL) return; try { await fetch(`${KV_URL}/set/${encodeURIComponent(k)}?EX=${ttl}`, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(v) }); } catch { /* non-fatal */ } }
+const WINDOW_DAYS = { '7d': 7, '30d': 30, '90d': 90 };
+const winDays = (w) => WINDOW_DAYS[w] || 30;
+const CEO_CFO_SQL = sql`(${insiderTrades.title} ilike '%chief executive%' or ${insiderTrades.title} ilike '%CEO%' or ${insiderTrades.title} ilike '%chief financial%' or ${insiderTrades.title} ilike '%CFO%')`;
+// interval literal is from our own whitelist (winDays), never user input
+const sinceWindow = (w) => sql.raw(`current_date - interval '${winDays(w)} days'`);
+
 // Row-views: WHERE + ORDER BY, rendered in the trade table. Keyed by ?view=.
 const ROW_VIEWS = {
   latest: {
@@ -146,6 +156,73 @@ async function searchView(q) {
   return rows;
 }
 
+// ── INSIDER MARKET PULSE — open-market only, cached per window ──
+async function pulseView(window) {
+  const key = `insider:pulse:${window}`;
+  const cached = await kvGet(key); if (cached) return cached;
+  const since = sinceWindow(window);
+  const agg = (await db.execute(sql`
+    SELECT coalesce(sum(total_value) filter (where action='BUY'),0) buy_val, count(*) filter (where action='BUY') buy_ct,
+           coalesce(sum(total_value) filter (where action='SELL'),0) sell_val, count(*) filter (where action='SELL') sell_ct,
+           count(distinct ticker) filter (where action='BUY') companies_buying,
+           count(*) filter (where action='BUY' and (title ilike '%chief executive%' or title ilike '%CEO%' or title ilike '%chief financial%' or title ilike '%CFO%')) ceocfo_buys
+    FROM insider_trades WHERE transaction_date >= ${since}`)).rows?.[0] || {};
+  const clu = (await db.execute(sql`SELECT count(*) n FROM (SELECT ticker FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3) x`)).rows?.[0] || {};
+  const buyVal = +agg.buy_val || 0, sellVal = +agg.sell_val || 0;
+  const out = { window, buyValue: buyVal, buyCount: +agg.buy_ct || 0, sellValue: sellVal, sellCount: +agg.sell_ct || 0,
+    buySellRatio: sellVal > 0 ? +(buyVal / sellVal).toFixed(2) : null, companiesBuying: +agg.companies_buying || 0,
+    ceoCfoBuys: +agg.ceocfo_buys || 0, clusterBuys: +clu.n || 0 };
+  await kvSet(key, out, 300);
+  return out;
+}
+
+// ── INSIDER ACTIVITY HEATMAP — per-ticker net open-market $, sector-grouped, cached ──
+async function heatmapView(window, mode) {
+  const key = `insider:heatmap:${window}`;
+  let cells = await kvGet(key);
+  if (!cells) {
+    const since = sinceWindow(window);
+    const res = await db.execute(sql`
+      SELECT t.ticker, max(t.company) company, m.sector,
+        coalesce(sum(t.total_value) filter (where t.action='BUY'),0) buys,
+        coalesce(sum(t.total_value) filter (where t.action='SELL'),0) sells,
+        count(distinct t.executive) insiders, max(t.total_value) largest
+      FROM insider_trades t LEFT JOIN screener_meta m ON m.ticker = t.ticker
+      WHERE t.action IN ('BUY','SELL') AND t.transaction_date >= ${since} AND t.total_value > 0
+      GROUP BY t.ticker, m.sector HAVING coalesce(sum(t.total_value),0) > 0
+      ORDER BY greatest(coalesce(sum(t.total_value) filter (where t.action='BUY'),0), coalesce(sum(t.total_value) filter (where t.action='SELL'),0)) DESC
+      LIMIT 250`);
+    cells = (res?.rows || []).map(r => ({ ticker: r.ticker, company: r.company, sector: r.sector || 'Other',
+      buys: +r.buys || 0, sells: +r.sells || 0, net: (+r.buys || 0) - (+r.sells || 0), insiders: +r.insiders || 0, largest: +r.largest || 0 }));
+    await kvSet(key, cells, 300);
+  }
+  return { window, mode: mode || 'net', cells };
+}
+
+// ── NOTABLE INSIDER ACTIVITY — highlights, cached per window ──
+async function notableView(window) {
+  const key = `insider:notable:${window}`;
+  const cached = await kvGet(key); if (cached) return cached;
+  const since = sinceWindow(window);
+  const top = async (cond) => (await db.execute(sql`SELECT ticker, company, executive, title, total_value, shares, shares_owned_after, transaction_date FROM insider_trades WHERE ${cond} AND transaction_date >= ${since} ORDER BY total_value DESC LIMIT 1`)).rows?.[0] || null;
+  const [ceoBuy, cfoBuy, bigBuy] = await Promise.all([
+    top(sql`action='BUY' and (title ilike '%chief executive%' or title ilike '%CEO%')`),
+    top(sql`action='BUY' and (title ilike '%chief financial%' or title ilike '%CFO%')`),
+    top(sql`action='BUY'`),
+  ]);
+  const mostBuyers = (await db.execute(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 2 ORDER BY count(distinct executive) DESC, sum(total_value) DESC LIMIT 1`)).rows?.[0] || null;
+  const bigCluster = (await db.execute(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3 ORDER BY sum(total_value) DESC LIMIT 1`)).rows?.[0] || null;
+  const ownInc = (await db.execute(sql`SELECT ticker, company, executive, title, total_value, (shares / nullif(shares_owned_after - shares, 0)) * 100 pct FROM insider_trades WHERE action='BUY' AND shares_owned_after > shares AND total_value > 25000 AND transaction_date >= ${since} ORDER BY pct DESC LIMIT 1`)).rows?.[0] || null;
+  const t = (r, x = {}) => r ? { ticker: r.ticker, company: r.company, executive: r.executive, title: r.title, value: +r.total_value || 0, date: r.transaction_date, ...x } : null;
+  const out = { window,
+    largestCeoBuy: t(ceoBuy), largestCfoBuy: t(cfoBuy), largestPurchase: t(bigBuy),
+    mostInsidersBuying: mostBuyers ? { ticker: mostBuyers.ticker, company: mostBuyers.company, insiders: +mostBuyers.insiders, value: +mostBuyers.total || 0 } : null,
+    largestCluster: bigCluster ? { ticker: bigCluster.ticker, company: bigCluster.company, insiders: +bigCluster.insiders, value: +bigCluster.total || 0 } : null,
+    largestOwnershipIncrease: ownInc ? { ticker: ownInc.ticker, company: ownInc.company, executive: ownInc.executive, value: +ownInc.total_value || 0, pct: ownInc.pct != null ? +(+ownInc.pct).toFixed(0) : null } : null };
+  await kvSet(key, out, 300);
+  return out;
+}
+
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -179,6 +256,10 @@ export async function GET(request) {
     }
 
     // Aggregate/summary views render for everyone so signed-out sees the page working.
+    const window = WINDOW_DAYS[searchParams.get('window')] ? searchParams.get('window') : '30d';
+    if (view === 'pulse')   return Response.json({ ...(await pulseView(window)),   loggedIn }, { headers: NO_STORE });
+    if (view === 'heatmap') return Response.json({ ...(await heatmapView(window, searchParams.get('mode'))), loggedIn }, { headers: NO_STORE });
+    if (view === 'notable') return Response.json({ ...(await notableView(window)), loggedIn }, { headers: NO_STORE });
     if (view === 'cluster_buys') {
       const payload = await clusterBuys();
       console.log(`[insiders_api] view=cluster_buys clusters=${payload.clusters.length} loggedIn=${loggedIn}`);
