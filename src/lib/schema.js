@@ -17,6 +17,13 @@ export const insiderTrades = pgTable('insider_trades', {
   filingDate:       date('filing_date',      { mode: 'string' }).notNull(),
   accession:        text('accession').notNull(),
   filingUrl:        text('filing_url'),
+  // subsequent stock performance since the trade (% from transaction price to close at +1d/1w/1m/6m).
+  // Fixed once each horizon elapses; a horizon still in the future stays null until then.
+  perf1d:           doublePrecision('perf_1d'),
+  perf1w:           doublePrecision('perf_1w'),
+  perf1m:           doublePrecision('perf_1m'),
+  perf6m:           doublePrecision('perf_6m'),
+  perfPricedAt:     timestamp('perf_priced_at', { withTimezone: true }),
   insertedAt:       timestamp('inserted_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   uqTxn: uniqueIndex('uq_insider_txn').on(

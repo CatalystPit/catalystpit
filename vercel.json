@@ -87,6 +87,10 @@
     {
       "path": "/api/cron/enrich-options",
       "schedule": "15,45 * * * *"
+    },
+    {
+      "path": "/api/cron/enrich-insider-perf",
+      "schedule": "20 * * * *"
     }
   ],
   "headers": [
