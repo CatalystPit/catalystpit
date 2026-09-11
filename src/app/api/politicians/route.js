@@ -50,14 +50,15 @@ const tradeCols = {
   chamber:          congressTrades.chamber,
 };
 
-// Options in congress PTRs come through as asset_type 'Stock Option' + "...Option Type: Put/Call..."
-// in the description. Surface a clean optionType (Put/Call) + a tidy asset name for a badge.
-const OPT_RE = /option\s*type\s*[:\-]?\s*(call|put)/i;
+// Options in congress PTRs: Senate filers disclose the type ("Option Type: Put/Call"); House filers
+// only mark it as an option ([OP] → asset_type 'Stock Option') with NO call/put. So we surface Put/Call
+// when disclosed (structured field OR a stray "call"/"put" in the text), else a plain 'Option'.
 const shapeTrade = (t) => {
-  const m = OPT_RE.exec(t.assetDescription || '');
-  const isOpt = !!m || /option/i.test(t.assetType || '') || /\boptions?\b/i.test(t.assetDescription || '');
-  const optionType = m ? (m[1].toLowerCase() === 'put' ? 'Put' : 'Call') : (isOpt ? 'Option' : null);
-  const assetName = (t.assetDescription || '').split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || t.assetDescription;
+  const desc = t.assetDescription || '', atype = t.assetType || '';
+  const isOpt = /option/i.test(atype) || /\boptions?\b/i.test(desc);
+  const cp = /option\s*type\s*[:\-]?\s*(call|put)/i.exec(desc) || (isOpt ? /\b(call|put)s?\b/i.exec(desc) : null);
+  const optionType = cp ? (cp[1].toLowerCase().startsWith('put') ? 'Put' : 'Call') : (isOpt ? 'Option' : null);
+  const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
   return { ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice), optionType, assetName };
 };
 
