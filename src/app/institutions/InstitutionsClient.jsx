@@ -37,6 +37,7 @@ function FundCard({ f, onClick }) {
 
 export default function InstitutionsClient() {
   const [featured, setFeatured] = useState(null);
+  const [largest, setLargest] = useState([]);
   const [dir, setDir] = useState({ items: [], total: 0, page: 0, pageSize: 48 });
   const [dirLoading, setDirLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -52,6 +53,7 @@ export default function InstitutionsClient() {
       const r = await fetch(`/api/institutions?q=${encodeURIComponent(q)}&page=${page}`);
       const j = r.ok ? await r.json() : null;
       setDir({ items: j?.directory || [], total: j?.total || 0, page: j?.page || 0, pageSize: j?.pageSize || 48 });
+      setLargest(j?.largest || []);
       if (featured === null) setFeatured(j?.featured || []);
     } catch { setDir({ items: [], total: 0, page: 0, pageSize: 48 }); }
     setDirLoading(false);
@@ -128,6 +130,16 @@ export default function InstitutionsClient() {
       </div>
 
       <div style={{ maxWidth: 1380, margin: '20px auto', padding: '0 24px 48px' }}>
+        {/* Largest managers by 13F value — auto-featured (BlackRock, Vanguard, State Street, …) */}
+        {largest.length > 0 && (
+          <div style={{ marginBottom: 26 }}>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 10 }}>LARGEST MANAGERS</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+              {largest.map((f) => <FundCard key={`lg-${f.slug}`} f={f} onClick={() => router.push(`/institutions/${f.slug}`)} />)}
+            </div>
+          </div>
+        )}
+
         {/* Featured curated funds, grouped by category */}
         {featured === null ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>

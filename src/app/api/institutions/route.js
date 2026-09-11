@@ -71,6 +71,27 @@ async function searchView(q) {
   return rows.map((r) => ({ slug: r.slug, label: r.featuredLabel || r.name || `CIK ${r.slug}`, manager: r.manager, featured: !!r.featuredLabel }));
 }
 
+// Largest managers by latest 13F value — AUTO-featured (no hand-picked list). BlackRock, Vanguard's
+// sub-entities, State Street, etc. surface automatically as they ingest.
+async function largestManagers(limit = 24) {
+  try {
+    const res = await db.execute(sql`
+      SELECT i.cik, i.name, i.slug, i.featured_label AS "featuredLabel", i.manager,
+             l.quarter, l.filed_date AS "filedDate", l.total_value AS "totalValue", l.holdings_count AS "holdingsCount"
+      FROM (SELECT DISTINCT ON (cik) cik, quarter, filed_date, total_value, holdings_count FROM fund_filings ORDER BY cik, quarter DESC) l
+      JOIN institutions i ON i.cik = l.cik
+      WHERE l.total_value IS NOT NULL
+      ORDER BY l.total_value DESC
+      LIMIT ${limit}
+    `);
+    return (res?.rows || []).map((r) => ({
+      slug: r.slug, label: r.featuredLabel || r.name || `CIK ${r.cik}`, manager: r.manager,
+      category: 'Largest Managers', featured: true, hasData: true,
+      quarter: r.quarter, filedDate: r.filedDate, totalValue: r.totalValue, holdingsCount: r.holdingsCount, filingCount: null,
+    }));
+  } catch (e) { console.log(`[institutions_api] largest failed: ${e.message}`); return []; }
+}
+
 // Featured curated funds (top of page) + a searchable, paginated directory of EVERY discovered 13F filer.
 async function listView(q, page, pageSize) {
   // If the registry hasn't been populated yet, fall back to the curated roster so the page still renders.
@@ -103,7 +124,8 @@ async function listView(q, page, pageSize) {
 
   const featured = featuredRows.map((r) => toCard(r, latest)).sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0));
   const directory = dirRows.map((r) => toCard(r, latest));
-  return { featured, directory, total, page, pageSize };
+  const largest = q ? [] : await largestManagers();       // auto-featured biggest managers (top of page)
+  return { largest, featured, directory, total, page, pageSize };
 }
 
 // Pre-registry fallback: the original curated-roster view (kept for resilience during backfill).
