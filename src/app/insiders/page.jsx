@@ -123,6 +123,7 @@ export default function InsidersPage() {
   const [searchMode, setSearchMode] = useState('ticker'); // 'ticker' (drill-down) | 'name' (filter view)
   const [role, setRole] = useState('');         // title bucket
   const [txn, setTxn] = useState('');           // transaction-type bucket
+  const [sector, setSector] = useState('');     // sector filter (via screener_meta)
   const [maxPrice, setMaxPrice] = useState(0);  // share-price ceiling (penny = 5)
   const [dateBasis, setDateBasis] = useState('trade'); // window applies to trade or filing date
   const [maxDelay, setMaxDelay] = useState(0);  // filing-delay ceiling (days)
@@ -144,6 +145,7 @@ export default function InsidersPage() {
         if (maxDelay > 0) q.set('maxDelay', String(maxDelay));
         if (role) q.set('role', role);
         if (txn) q.set('txn', txn);
+        if (sector) q.set('sector', sector);
         if (dateBasis === 'filing') q.set('dateField', 'filing');
       }
       const res = await fetch(`/api/insiders?${q.toString()}`);
@@ -158,7 +160,7 @@ export default function InsidersPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, minValue, maxPrice, maxDelay, role, txn, dateBasis]);
+  }, [days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis]);
 
   // Debounce raw search → debouncedSearch
   useEffect(() => {
@@ -303,6 +305,12 @@ export default function InsidersPage() {
             <option value="grant">Grant / Award (A)</option><option value="gift">Gift (G)</option>
             <option value="tax">Tax (F)</option><option value="exercise">Option Exercise (M)</option>
             <option value="conversion">Conversion (C)</option>
+          </select>
+          <select value={sector} onChange={(e)=>setSector(e.target.value)} style={SEL_STYLE}>
+            <option value="">All sectors</option>
+            {["Technology","Healthcare","Financial Services","Consumer Cyclical","Consumer Defensive","Industrials","Energy","Basic Materials","Real Estate","Utilities","Communication Services"].map(s=>(
+              <option key={s} value={s}>{s}</option>
+            ))}
           </select>
           <span style={LBL_STYLE}>PRICE</span>
           {[{k:0,l:'Any'},{k:5,l:'Penny <$5'},{k:20,l:'<$20'}].map(o=>(

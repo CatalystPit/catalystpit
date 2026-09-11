@@ -148,6 +148,7 @@ export async function GET(request) {
     const name = searchParams.get('name')?.trim() || null;    // insider-name search
     const role = searchParams.get('role')?.trim() || null;    // title bucket
     const txn = searchParams.get('txn')?.trim() || null;      // transaction-type bucket
+    const sector = searchParams.get('sector')?.trim() || null; // sector (via screener_meta join)
     const dateField = searchParams.get('dateField') === 'filing' ? insiderTrades.filingDate : insiderTrades.transactionDate;
 
     // Title buckets → ILIKE patterns (a title often lists several roles).
@@ -176,6 +177,8 @@ export async function GET(request) {
     if (name) conds.push(ilike(insiderTrades.executive, `%${name.replace(/[%_\\]/g, '')}%`));
     if (role && ROLE_PATTERNS[role]) conds.push(or(...ROLE_PATTERNS[role].map((p) => ilike(insiderTrades.title, p))));
     if (txn && TXN_CODES[txn]) conds.push(inArray(insiderTrades.transactionCode, TXN_CODES[txn]));
+    // Sector via the screener_meta reference (already Polygon-populated) — subquery keeps the flat select.
+    if (sector) conds.push(sql`${insiderTrades.ticker} IN (SELECT ticker FROM screener_meta WHERE sector = ${sector})`);
     let q = db.select().from(insiderTrades);
     if (conds.length) q = q.where(conds.length === 1 ? conds[0] : and(...conds));
     q = q.orderBy(...cfg.orderBy).limit(limit);
