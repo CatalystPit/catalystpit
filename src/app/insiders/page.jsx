@@ -61,13 +61,13 @@ const mapRow = (r) => ({
 });
 
 const CATEGORIES = [
+  { key:'latest',       label:'LATEST FILINGS',  sub:'most recent' },
   { key:'buying',       label:'INSIDER BUYING',  sub:'open-market buys' },
   { key:'selling',      label:'INSIDER SELLING', sub:'open-market sells' },
   { key:'ceo',          label:'CEO PURCHASES',   sub:'chief-exec buys' },
   { key:'cluster_buys', label:'CLUSTER BUYS',    sub:'3+ insiders · 30d' },
   { key:'top',          label:'TOP TRADES',      sub:'largest by value' },
   { key:'significant',  label:'SIGNIFICANT',     sub:'$1M+ · recent' },
-  { key:'latest',       label:'LATEST FILINGS',  sub:'most recent' },
   { key:'trends',       label:'TRENDS',          sub:'90d sentiment' },
 ];
 const VIEW_LABEL = Object.fromEntries(CATEGORIES.map(c => [c.key, c.label]));
