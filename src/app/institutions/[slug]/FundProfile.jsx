@@ -231,8 +231,47 @@ export default function FundProfile({ slug }) {
               </div>
             </div>
 
+            {/* options (puts/calls) — separate from stock holdings */}
+            {(d.options?.length > 0) && (
+              <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <Dot /><span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>Options positions</span>
+                  <span style={{ display: 'flex', gap: 12, marginLeft: 'auto', fontFamily: "'DM Sans',sans-serif", fontSize: 11 }}>
+                    <span style={{ color: C.green }}>{(d.optionsSummary?.callCount || 0).toLocaleString()} calls · {fmtB(d.optionsSummary?.callValue)}</span>
+                    <span style={{ color: C.red }}>{(d.optionsSummary?.putCount || 0).toLocaleString()} puts · {fmtB(d.optionsSummary?.putValue)}</span>
+                  </span>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+                      {[['Ticker'], ['Type'], ['Company'], ['Notional', 'right'], ['Shares', 'right']].map(([h, a]) => (
+                        <th key={h} style={{ padding: '8px 16px', textAlign: a || 'left', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {d.options.map((o, i) => {
+                        const put = /put/i.test(o.putCall || '');
+                        return (
+                          <tr key={i} className={o.ticker ? 'hov' : undefined} onClick={() => go(o.ticker)} style={{ borderBottom: i < d.options.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: o.ticker ? 'pointer' : 'default' }}>
+                            <td style={{ padding: '10px 16px' }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={o.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: o.ticker ? C.green : C.dim }}>{o.ticker || '—'}</span></span></td>
+                            <td style={{ padding: '10px 16px' }}><span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: put ? C.redLight : C.greenLight, color: put ? C.red : C.green }}>{(o.putCall || '').toUpperCase()}</span></td>
+                            <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.issuer}</td>
+                            <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtB(o.value)}</td>
+                            <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtSh(o.shares)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ padding: '10px 16px', fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5, borderTop: `1px solid ${C.surface}` }}>
+                  13F-reported options — <b>notional value of the underlying only</b> (no strike, expiry, or premium is disclosed). These may be directional views <i>or</i> hedges — large multi-strategy and market-making funds report big offsetting options books that aren&apos;t conviction signals.
+                </div>
+              </div>
+            )}
+
             <div style={{ marginTop: 14, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-              13F positions as reported to the SEC (as of {fmtQ(d.latest?.quarter)}, filed {fmtQ(d.latest?.filedDate)}). Includes reported options — <b>PUT</b> = bearish, <b>CALL</b> = bullish (option positions on the underlying, not share ownership). Excludes cash, direct short sales, non-US and non-13F holdings. "% Port." is relative to the positions shown. Not financial advice.
+              13F positions as reported to the SEC (as of {fmtQ(d.latest?.quarter)}, filed {fmtQ(d.latest?.filedDate)}). The map and Holdings table above are <b>stock positions</b>; options are listed separately. Excludes cash, direct short sales, non-US and non-13F holdings. "% Port." is relative to the positions shown. Not financial advice.
             </div>
           </>
         )}

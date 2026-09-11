@@ -1,7 +1,7 @@
 import { db } from '../../../lib/db';
 import { fundHoldings, fundFilings, institutions, tickerInstitutionalOwnership } from '../../../lib/schema';
 import { INSTITUTIONS, INSTITUTION_BY_SLUG } from '../../../lib/institutions.mjs';
-import { and, eq, inArray, desc, sql, isNotNull, ilike, or } from 'drizzle-orm';
+import { and, eq, ne, inArray, desc, sql, isNotNull, ilike, or } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -133,18 +133,38 @@ async function familyDetail(key) {
   const totalValue = latest.reduce((s, l) => s + (l.totalValue || 0), 0);
   const asOf = latest.map((l) => l.quarter).filter(Boolean).sort().pop();
 
-  // Aggregate the family's rn-th most-recent quarter (1 = current, 2 = prior) by security.
+  // Aggregate the family's rn-th most-recent quarter (1 = current, 2 = prior) — STOCK only.
   const famAgg = async (rn) => {
     const res = await db.execute(sql`
       WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks})
-      SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, coalesce(h.put_call,'') AS "putCall",
+      SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer,
              sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
       FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = ${rn}
-      GROUP BY h.cusip, coalesce(h.put_call,'')
+      WHERE coalesce(h.put_call,'') = ''
+      GROUP BY h.cusip
       ORDER BY sum(h.value) DESC NULLS LAST LIMIT ${DIFF_CAP}`);
-    return (res?.rows || []).map((r) => ({ cusip: r.cusip, ticker: r.ticker, issuer: r.issuer, putCall: r.putCall, shares: r.shares, value: r.value }));
+    return (res?.rows || []).map((r) => ({ cusip: r.cusip, ticker: r.ticker, issuer: r.issuer, putCall: '', shares: r.shares, value: r.value }));
   };
   const cur = await famAgg(1), prev = await famAgg(2);
+
+  // Family options (puts/calls), aggregated across entities' latest quarter.
+  const optRes = await db.execute(sql`
+    WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks})
+    SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, h.put_call AS "putCall",
+           sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
+    FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = 1
+    WHERE coalesce(h.put_call,'') <> ''
+    GROUP BY h.cusip, h.put_call
+    ORDER BY sum(h.value) DESC NULLS LAST LIMIT 120`);
+  const options = (optRes?.rows || []).map((r) => ({ cusip: r.cusip, ticker: r.ticker, issuer: r.issuer, putCall: r.putCall, shares: r.shares, value: r.value }));
+  const sumRes = await db.execute(sql`
+    WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks})
+    SELECT coalesce(sum(h.value) filter (where h.put_call='Call'),0)::double precision AS "callValue",
+           coalesce(sum(h.value) filter (where h.put_call='Put'),0)::double precision AS "putValue",
+           count(*) filter (where h.put_call='Call')::int AS "callCount",
+           count(*) filter (where h.put_call='Put')::int AS "putCount"
+    FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = 1`);
+  const optionsSummary = sumRes?.rows?.[0] || { callValue: 0, putValue: 0, callCount: 0, putCount: 0 };
 
   let activity = { new: [], added: [], trimmed: [], exited: [] };
   if (prev.length) {
@@ -157,7 +177,7 @@ async function familyDetail(key) {
     activity.trimmed = activity.trimmed.sort(byVal).slice(0, 20); activity.exited = activity.exited.sort(byPrev).slice(0, 20);
   }
   const cnt = (await db.execute(sql`WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks}) SELECT count(DISTINCT (h.cusip, coalesce(h.put_call,'')))::int AS n FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = 1`))?.rows?.[0]?.n || cur.length;
-  return { fund: meta, hasData: true, latest: { quarter: asOf, filedDate: null, totalValue, holdingsCount: cnt }, prior: prev.length ? { quarter: null } : null, holdings: cur.slice(0, HOLDINGS_CAP), holdingsShown: Math.min(cur.length, HOLDINGS_CAP), totalHoldings: cnt, activity };
+  return { fund: meta, hasData: true, latest: { quarter: asOf, filedDate: null, totalValue, holdingsCount: cnt }, prior: prev.length ? { quarter: null } : null, holdings: cur.slice(0, HOLDINGS_CAP), holdingsShown: Math.min(cur.length, HOLDINGS_CAP), totalHoldings: cnt, activity, options, optionsSummary };
 }
 
 // Featured curated funds (top of page) + a searchable, paginated directory of EVERY discovered 13F filer.
@@ -249,19 +269,34 @@ async function detailView(slug) {
   const latest = quarters[0];
   const prior = quarters[1] || null;
 
-  // Top holdings for the latest quarter.
+  // Top STOCK holdings for the latest quarter (options shown separately, below).
   const holdings = await db.select({
     ticker: fundHoldings.ticker, issuer: fundHoldings.issuer, cusip: fundHoldings.cusip,
     shares: fundHoldings.shares, value: fundHoldings.value, putCall: fundHoldings.putCall,
   }).from(fundHoldings)
-    .where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, latest.quarter)))
+    .where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, latest.quarter), eq(fundHoldings.putCall, '')))
     .orderBy(desc(fundHoldings.value)).limit(HOLDINGS_CAP);
 
-  // QoQ activity — diff top DIFF_CAP positions of each quarter by CUSIP.
+  // Options positions (puts/calls) — 13F reports underlying + NOTIONAL value + put/call only (no strike/
+  // expiry/premium). Kept out of the stock map. For market-makers these are largely hedges, not bets.
+  const options = await db.select({
+    ticker: fundHoldings.ticker, issuer: fundHoldings.issuer, cusip: fundHoldings.cusip,
+    shares: fundHoldings.shares, value: fundHoldings.value, putCall: fundHoldings.putCall,
+  }).from(fundHoldings)
+    .where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, latest.quarter), ne(fundHoldings.putCall, '')))
+    .orderBy(desc(fundHoldings.value)).limit(120);
+  const [optionsSummary] = await db.select({
+    callValue: sql`coalesce(sum(${fundHoldings.value}) filter (where ${fundHoldings.putCall} = 'Call'), 0)`.mapWith(Number),
+    putValue: sql`coalesce(sum(${fundHoldings.value}) filter (where ${fundHoldings.putCall} = 'Put'), 0)`.mapWith(Number),
+    callCount: sql`count(*) filter (where ${fundHoldings.putCall} = 'Call')`.mapWith(Number),
+    putCount: sql`count(*) filter (where ${fundHoldings.putCall} = 'Put')`.mapWith(Number),
+  }).from(fundHoldings).where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, latest.quarter), ne(fundHoldings.putCall, '')));
+
+  // QoQ activity — STOCK only (diff top DIFF_CAP positions of each quarter by CUSIP).
   let activity = { new: [], added: [], trimmed: [], exited: [] };
   if (prior) {
     const load = (q) => db.select({ cusip: fundHoldings.cusip, ticker: fundHoldings.ticker, issuer: fundHoldings.issuer, shares: fundHoldings.shares, value: fundHoldings.value, putCall: fundHoldings.putCall })
-      .from(fundHoldings).where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, q)))
+      .from(fundHoldings).where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, q), eq(fundHoldings.putCall, '')))
       .orderBy(desc(fundHoldings.value)).limit(DIFF_CAP);
     const [cur, prev] = await Promise.all([load(latest.quarter), load(prior.quarter)]);
     const key = (r) => `${r.cusip}|${r.putCall || ''}`;   // a put and the underlying shares are distinct positions
@@ -287,6 +322,7 @@ async function detailView(slug) {
     hasData: true, latest, prior,
     holdings, holdingsShown: holdings.length, totalHoldings: latest.holdingsCount,
     activity,
+    options, optionsSummary: optionsSummary || { callValue: 0, putValue: 0, callCount: 0, putCount: 0 },
   };
 }
 
