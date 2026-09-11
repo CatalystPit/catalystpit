@@ -16,8 +16,13 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 const ROW_VIEWS = {
   latest: {
     // Open-market only (P/S). Awards, gifts, tax-withholding, option exercises etc. are NOT trades —
-    // they only surface in an insider NAME search (labeled), never in the browse categories.
+    // they only surface here as 'all' or in an insider NAME search (labeled).
     where: inArray(insiderTrades.action, ['BUY', 'SELL']),
+    orderBy: [desc(insiderTrades.filingDate), desc(insiderTrades.id)],
+  },
+  all: {
+    // Raw firehose — EVERY Form 4 of every type (award/gift/tax/exercise/buy/sell), newest first.
+    where: null,
     orderBy: [desc(insiderTrades.filingDate), desc(insiderTrades.id)],
   },
   buying: {

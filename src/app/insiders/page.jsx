@@ -66,7 +66,8 @@ const mapRow = (r) => ({
 });
 
 const CATEGORIES = [
-  { key:'latest',       label:'LATEST FILINGS',  sub:'most recent' },
+  { key:'latest',       label:'LATEST FILINGS',  sub:'newest buys & sells' },
+  { key:'all',          label:'ALL FILINGS',     sub:'every Form 4 · live' },
   { key:'buying',       label:'INSIDER BUYING',  sub:'open-market buys' },
   { key:'selling',      label:'INSIDER SELLING', sub:'open-market sells' },
   { key:'ceo',          label:'CEO PURCHASES',   sub:'chief-exec buys' },
