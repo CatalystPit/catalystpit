@@ -86,7 +86,7 @@ export default function InsidersPage() {
   const [data, setData] = useState(null);          // raw API payload (view-shaped)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeView, setActiveView] = useState('buying');
+  const [activeView, setActiveView] = useState('latest');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy,  setSortBy]  = useState(null);
