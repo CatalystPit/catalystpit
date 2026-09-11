@@ -121,12 +121,17 @@ async function listView({ view, chamber, party }) {
 // PURCHASES that we can price (priceAtTrade + current_price), i.e. "if you'd copied their buys
 // and held to today." Weighted by amount so a $1M buy counts more than a $1k one. A sample-size
 // floor (min priced buys) keeps a lucky single trade from topping the board.
-async function leaderboardView({ chamber, party, min = 5 }) {
+const LB_WINDOWS = { '3m': '3 months', '6m': '6 months', '1y': '1 year', '2y': '2 years' };  // 'all' → no window
+async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
   const conds = [
     eq(congressTrades.action, 'BUY'),
     sql`${congressTrades.priceAtTrade} > 0`,
     sql`${congressTickerPrices.currentPrice} > 0`,
   ];
+  // Time frame: count only buys whose trade date is within the window, so members are compared
+  // over the SAME period (not penalizing/rewarding differing holding lengths). 'all' = no filter.
+  const interval = window === 'all' ? null : (LB_WINDOWS[window] || '1 year');
+  if (interval) conds.push(sql`${congressTrades.transactionDate} >= CURRENT_DATE - ${sql.raw(`INTERVAL '${interval}'`)}`);
   if (chamber === 'house' || chamber === 'senate') conds.push(eq(congressTrades.chamber, chamber));
   if (party) conds.push(eq(congressTrades.party, party));
 
@@ -291,11 +296,12 @@ export async function GET(request) {
     // Leaderboard — "Best Traders in Congress". Gated like the list (top preview free).
     if (view === 'leaderboard') {
       const min = Math.min(Math.max(parseInt(searchParams.get('min') ?? '5', 10) || 5, 1), 50);
-      const all = await leaderboardView({ chamber, party, min });
+      const window = searchParams.get('window') || '1y';
+      const all = await leaderboardView({ chamber, party, min, window });
       const shown = isPro ? all : all.slice(0, FREE_PREVIEW_ROWS);
       const lockedCount = isPro ? 0 : Math.max(0, all.length - FREE_PREVIEW_ROWS);
-      console.log(`[politicians_api] leaderboard members=${shown.length} locked=${lockedCount} tier=${tier}`);
-      return Response.json({ view: 'leaderboard', count: shown.length, members: shown, lockedCount, tier, loggedIn }, { headers: NO_STORE });
+      console.log(`[politicians_api] leaderboard members=${shown.length} window=${window} locked=${lockedCount} tier=${tier}`);
+      return Response.json({ view: 'leaderboard', window, count: shown.length, members: shown, lockedCount, tier, loggedIn }, { headers: NO_STORE });
     }
     // Member list — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
     const members = await listView({ view, chamber, party });

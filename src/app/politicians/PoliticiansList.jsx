@@ -21,6 +21,13 @@ const PARTIES = [
   { key: 'Republican',  label: 'Rep' },
   { key: 'Independent', label: 'Ind' },
 ];
+const WINDOWS = [
+  { key: '3m',  label: '3M' },
+  { key: '6m',  label: '6M' },
+  { key: '1y',  label: '1Y' },
+  { key: '2y',  label: '2Y' },
+  { key: 'all', label: 'All-time' },
+];
 
 function PillGroup({ label, options, value, onChange }) {
   return (
@@ -166,6 +173,7 @@ export default function PoliticiansList() {
   const [view, setView] = useState('most_active');
   const [chamber, setChamber] = useState('');
   const [party, setParty] = useState('');
+  const [lbWindow, setLbWindow] = useState('1y');
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -173,6 +181,7 @@ export default function PoliticiansList() {
       const qs = new URLSearchParams({ view });
       if (chamber) qs.set('chamber', chamber);
       if (party) qs.set('party', party);
+      if (view === 'leaderboard') qs.set('window', lbWindow);
       const res = await fetch(`/api/politicians?${qs}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
@@ -184,7 +193,7 @@ export default function PoliticiansList() {
     } finally {
       setLoading(false);
     }
-  }, [view, chamber, party]);
+  }, [view, chamber, party, lbWindow]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -230,6 +239,7 @@ export default function PoliticiansList() {
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
           <PillGroup label="CHAMBER" options={CHAMBERS} value={chamber} onChange={setChamber} />
           <PillGroup label="PARTY"   options={PARTIES}  value={party}   onChange={setParty} />
+          {view === 'leaderboard' && <PillGroup label="PERIOD" options={WINDOWS} value={lbWindow} onChange={setLbWindow} />}
         </div>
       </div>
 
@@ -241,7 +251,7 @@ export default function PoliticiansList() {
 
         {view === 'leaderboard' && !loading && !error && (members || []).length > 0 && (
           <div style={{ fontSize: 12, color: C.muted, fontWeight: 300, margin: '-4px 0 12px', lineHeight: 1.5 }}>
-            Size-weighted return on each member&apos;s <strong style={{ fontWeight: 600 }}>purchases</strong> we can price — as if you copied their buys and held to today. Minimum 5 priced buys. Not financial advice.
+            Size-weighted return on each member&apos;s <strong style={{ fontWeight: 600 }}>purchases</strong> {lbWindow === 'all' ? 'across all disclosed history' : `made in the last ${(WINDOWS.find((w) => w.key === lbWindow) || {}).label}`}, held to today&apos;s price — as if you copied their buys. Minimum 5 priced buys. Not financial advice.
           </div>
         )}
 
