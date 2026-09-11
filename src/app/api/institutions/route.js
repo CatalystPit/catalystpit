@@ -71,8 +71,20 @@ async function searchView(q) {
   return rows.map((r) => ({ slug: r.slug, label: r.featuredLabel || r.name || `CIK ${r.slug}`, manager: r.manager, featured: !!r.featuredLabel }));
 }
 
-// Largest managers by latest 13F value — AUTO-featured (no hand-picked list). BlackRock, Vanguard's
-// sub-entities, State Street, etc. surface automatically as they ingest.
+// Manager-family key from the filer name (auto — no hand-picked list): the leading BRAND token, so a
+// firm that files under many entities (Vanguard Portfolio Mgmt / Capital Mgmt / Fiduciary Trust …)
+// groups under one "Vanguard". Generic/short leading words don't form a family (avoids bad merges).
+const GENERIC_FIRST = new Set(['AMERICAN', 'GLOBAL', 'FIRST', 'CAPITAL', 'NATIONAL', 'UNITED', 'GENERAL', 'PACIFIC', 'NORTHERN', 'SECURITY', 'INVESTMENT', 'INVESTMENTS', 'ASSET', 'WEALTH', 'FINANCIAL', 'ADVISORS', 'ADVISERS', 'MANAGEMENT', 'GROUP', 'PARTNERS', 'TRUST', 'NEW', 'GREAT', 'PRIME', 'CORE', 'NEXT']);
+function familyKey(name) {
+  const toks = String(name || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const first = toks[0] === 'THE' ? toks[1] : toks[0];
+  if (!first || first.length < 5 || GENERIC_FIRST.has(first)) return null;
+  return first;
+}
+const properCase = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
+
+// Largest managers by latest 13F value — AUTO-featured (no hand-picked list), with multi-entity firms
+// (Vanguard, etc.) merged into a single family card. BlackRock, State Street… surface as they ingest.
 async function largestManagers(limit = 24) {
   try {
     const res = await db.execute(sql`
@@ -82,14 +94,55 @@ async function largestManagers(limit = 24) {
       JOIN institutions i ON i.cik = l.cik
       WHERE l.total_value IS NOT NULL
       ORDER BY l.total_value DESC
-      LIMIT ${limit}
+      LIMIT 80
     `);
-    return (res?.rows || []).map((r) => ({
-      slug: r.slug, label: r.featuredLabel || r.name || `CIK ${r.cik}`, manager: r.manager,
-      category: 'Largest Managers', featured: true, hasData: true,
-      quarter: r.quarter, filedDate: r.filedDate, totalValue: r.totalValue, holdingsCount: r.holdingsCount, filingCount: null,
-    }));
+    const rows = res?.rows || [];
+    const card = (r) => ({ slug: r.slug, label: r.featuredLabel || r.name || `CIK ${r.cik}`, manager: r.manager, category: 'Largest Managers', featured: true, hasData: true, quarter: r.quarter, filedDate: r.filedDate, totalValue: +r.totalValue || 0, holdingsCount: r.holdingsCount, filingCount: null });
+    const fam = new Map(), singles = [];
+    for (const r of rows) { const k = familyKey(r.name); if (!k) { singles.push(r); continue; } if (!fam.has(k)) fam.set(k, []); fam.get(k).push(r); }
+    const cards = [];
+    for (const [k, mem] of fam) {
+      if (mem.length === 1) { cards.push(card(mem[0])); continue; }
+      cards.push({
+        slug: `family--${k.toLowerCase()}`, label: properCase(k), manager: `${mem.length} filing entities`,
+        category: 'Largest Managers', featured: true, hasData: true,
+        quarter: mem.map((m) => m.quarter).filter(Boolean).sort().pop(),
+        totalValue: mem.reduce((s, m) => s + (+m.totalValue || 0), 0),
+        holdingsCount: mem.reduce((s, m) => s + (+m.holdingsCount || 0), 0), filingCount: null,
+      });
+    }
+    for (const r of singles) cards.push(card(r));
+    cards.sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0));
+    return cards.slice(0, limit);
   } catch (e) { console.log(`[institutions_api] largest failed: ${e.message}`); return []; }
+}
+
+// Merged detail for a manager family (e.g. all Vanguard entities): aggregate each entity's latest
+// filing into one combined holdings map + total. QoQ activity is omitted for the merged view.
+async function familyDetail(key) {
+  const k = String(key || '').toUpperCase();
+  const meta = { slug: `family--${key}`, label: properCase(k), manager: null, category: 'Largest Managers' };
+  const all = await db.select({ cik: institutions.cik, name: institutions.name }).from(institutions).where(ilike(institutions.name, `${k}%`));
+  const ciks = all.filter((r) => familyKey(r.name) === k).map((r) => r.cik);
+  if (!ciks.length) return { fund: meta, hasData: false };
+  meta.manager = `${ciks.length} filing entities`;
+  const latest = await db.selectDistinctOn([fundFilings.cik], { cik: fundFilings.cik, quarter: fundFilings.quarter, totalValue: fundFilings.totalValue })
+    .from(fundFilings).where(inArray(fundFilings.cik, ciks)).orderBy(fundFilings.cik, desc(fundFilings.quarter));
+  if (!latest.length) return { fund: meta, hasData: false };
+  const totalValue = latest.reduce((s, l) => s + (l.totalValue || 0), 0);
+  const asOf = latest.map((l) => l.quarter).filter(Boolean).sort().pop();
+  const res = await db.execute(sql`
+    WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik = ANY(${ciks}::text[]) ORDER BY cik, quarter DESC)
+    SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, coalesce(h.put_call,'') AS "putCall",
+           sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
+    FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
+    GROUP BY h.cusip, coalesce(h.put_call,'')
+    ORDER BY sum(h.value) DESC NULLS LAST
+    LIMIT ${HOLDINGS_CAP}
+  `);
+  const holdings = (res?.rows || []).map((r) => ({ ticker: r.ticker, issuer: r.issuer, cusip: r.cusip, shares: r.shares, value: r.value, putCall: r.putCall }));
+  const cnt = (await db.execute(sql`WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik = ANY(${ciks}::text[]) ORDER BY cik, quarter DESC) SELECT count(DISTINCT (h.cusip, coalesce(h.put_call,'')))::int AS n FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter`))?.rows?.[0]?.n || holdings.length;
+  return { fund: meta, hasData: true, latest: { quarter: asOf, filedDate: null, totalValue, holdingsCount: cnt }, prior: null, holdings, holdingsShown: holdings.length, totalHoldings: cnt, activity: { new: [], added: [], trimmed: [], exited: [] } };
 }
 
 // Featured curated funds (top of page) + a searchable, paginated directory of EVERY discovered 13F filer.
@@ -145,6 +198,7 @@ async function legacyListView() {
 }
 
 async function detailView(slug) {
+  if (slug && slug.startsWith('family--')) return familyDetail(slug.slice(8));
   // Resolve from the auto-discovered registry first; fall back to the curated config during backfill.
   let cik = null, meta = null;
   try {
