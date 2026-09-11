@@ -132,7 +132,7 @@ async function familyDetail(key) {
   const totalValue = latest.reduce((s, l) => s + (l.totalValue || 0), 0);
   const asOf = latest.map((l) => l.quarter).filter(Boolean).sort().pop();
   const res = await db.execute(sql`
-    WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik = ANY(${ciks}::text[]) ORDER BY cik, quarter DESC)
+    WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik IN ${ciks} ORDER BY cik, quarter DESC)
     SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, coalesce(h.put_call,'') AS "putCall",
            sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
     FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
@@ -141,7 +141,7 @@ async function familyDetail(key) {
     LIMIT ${HOLDINGS_CAP}
   `);
   const holdings = (res?.rows || []).map((r) => ({ ticker: r.ticker, issuer: r.issuer, cusip: r.cusip, shares: r.shares, value: r.value, putCall: r.putCall }));
-  const cnt = (await db.execute(sql`WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik = ANY(${ciks}::text[]) ORDER BY cik, quarter DESC) SELECT count(DISTINCT (h.cusip, coalesce(h.put_call,'')))::int AS n FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter`))?.rows?.[0]?.n || holdings.length;
+  const cnt = (await db.execute(sql`WITH latest AS (SELECT DISTINCT ON (cik) cik, quarter FROM fund_filings WHERE cik IN ${ciks} ORDER BY cik, quarter DESC) SELECT count(DISTINCT (h.cusip, coalesce(h.put_call,'')))::int AS n FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter`))?.rows?.[0]?.n || holdings.length;
   return { fund: meta, hasData: true, latest: { quarter: asOf, filedDate: null, totalValue, holdingsCount: cnt }, prior: null, holdings, holdingsShown: holdings.length, totalHoldings: cnt, activity: { new: [], added: [], trimmed: [], exited: [] } };
 }
 

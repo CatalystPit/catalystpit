@@ -285,12 +285,16 @@ export async function resolveHoldingsByName({ cap = 8000 } = {}) {
   if (!rows.length) return { resolved: 0 };
   const matches = await resolveIssuerItems(rows.map((r) => ({ cusip: r.cusip, issuers: r.issuers || [], current: null })));
   if (!matches.length) return { resolved: 0 };
+  // ARRAY[...] construction — drizzle expands a bare ${jsArray} to ($1,$2,…), so ${arr}::text[]
+  // would wrongly cast a row-list; ARRAY[...] gives a real text[] param for unnest().
+  const arr = (a) => sql`ARRAY[${sql.join(a.map((x) => sql`${x}`), sql`, `)}]::text[]`;
   for (let i = 0; i < matches.length; i += 1000) {
-    const b = matches.slice(i, i + 1000), cs = b.map((p) => p.cusip), ts = b.map((p) => p.ticker);
+    const b = matches.slice(i, i + 1000);
+    const cs = arr(b.map((p) => p.cusip)), ts = arr(b.map((p) => p.ticker));
     await db.execute(sql`INSERT INTO cusip_map (cusip, ticker, status, confidence, source, updated_at)
-      SELECT u.cusip, u.t, 'resolved', 'medium', 'sec-name', now() FROM unnest(${cs}::text[], ${ts}::text[]) AS u(cusip, t)
+      SELECT u.cusip, u.t, 'resolved', 'medium', 'sec-name', now() FROM unnest(${cs}, ${ts}) AS u(cusip, t)
       ON CONFLICT (cusip) DO UPDATE SET ticker = excluded.ticker, status = 'resolved', confidence = 'medium', source = 'sec-name', updated_at = now()`);
-    await db.execute(sql`UPDATE fund_holdings h SET ticker = m.t FROM unnest(${cs}::text[], ${ts}::text[]) AS m(cusip, t) WHERE h.cusip = m.cusip AND h.ticker IS NULL`);
+    await db.execute(sql`UPDATE fund_holdings h SET ticker = m.t FROM unnest(${cs}, ${ts}) AS m(cusip, t) WHERE h.cusip = m.cusip AND h.ticker IS NULL`);
   }
   return { resolved: matches.length };
 }
