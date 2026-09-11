@@ -1,7 +1,8 @@
 'use client'
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import { meaningFor } from '../../lib/insider-meaning';
+import { treemap } from '../../lib/treemap';
 import { useRouter } from 'next/navigation';
 
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
@@ -196,40 +197,48 @@ function MarketPulse({ data, window, onWindow }) {
   );
 }
 
-function HeatTile({ c, mode, max, onPick }) {
-  const [hov, setHov] = useState(false);
-  const val = mode === 'buys' ? c.buys : mode === 'sells' ? c.sells : Math.abs(c.net);
-  const net = mode === 'sells' ? -c.sells : mode === 'buys' ? c.buys : c.net;
-  const buying = net >= 0;
-  const intensity = Math.min(1, val / max);
-  const w = 80 + Math.round(intensity * 90);              // 80–170px by value
-  const bg = buying ? `rgba(45,106,79,${0.14 + intensity * 0.5})` : `rgba(176,58,58,${0.14 + intensity * 0.5})`;
-  return (
-    <span style={{ position: 'relative' }} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
-      <button onClick={() => onPick(c.ticker)} style={{ width: w, textAlign: 'left', background: bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 9px', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.ticker}</div>
-        <div style={{ fontSize: 10, fontWeight: 600, color: buying ? C.green : C.red }}>{buying ? '+' : '−'}{fmtBig(Math.abs(val)).replace('$', '$')}</div>
-      </button>
-      {hov && (
-        <span style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 100, width: 210, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', whiteSpace: 'normal' }}>
-          <b>{c.ticker}</b> · {c.sector}<br />{c.company}<br />
-          Buys: <b style={{ color: C.green }}>{fmtBig(c.buys)}</b> · Sells: <b style={{ color: C.red }}>{fmtBig(c.sells)}</b><br />
-          Net: <b style={{ color: c.net >= 0 ? C.green : C.red }}>{c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(c.net))}</b><br />
-          {c.insiders} insider{c.insiders === 1 ? '' : 's'} · largest {fmtBig(c.largest)}
-        </span>
-      )}
-    </span>
-  );
+// Insider tile color — same diverging ramp family as the homepage heat map, but keyed on insider
+// NET open-market $ (green = buying, red = selling), intensity by magnitude vs the window max.
+function insiderTileColor(c, mode, max) {
+  let net, mag;
+  if (mode === 'buys') { net = 1; mag = c.buys; }
+  else if (mode === 'sells') { net = -1; mag = c.sells; }
+  else { net = c.net; mag = Math.abs(c.net); }
+  const t = Math.max(0.12, Math.min(1, max > 0 ? mag / max : 0));
+  if (net >= 0) return `rgb(${Math.round(58 - 38 * t)},${Math.round(78 + 92 * t)},${Math.round(66 + 18 * t)})`;
+  return `rgb(${Math.round(58 + 150 * t)},${Math.round(78 - 38 * t)},${Math.round(66 - 40 * t)})`;
 }
 
+// Squarified treemap heatmap — same visual architecture as the homepage Market Heat Map
+// (shared ../../lib/treemap), adapted for insider data.
 function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [hover, setHover] = useState(null);
+  const wrap = useRef(null);
+  useEffect(() => {
+    const el = wrap.current; if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((es) => { for (const e of es) setSize({ w: Math.round(e.contentRect.width), h: Math.round(e.contentRect.height) }); });
+    ro.observe(el); return () => ro.disconnect();
+  }, []);
   const cells = data?.cells || [];
   const val = (c) => (mode === 'buys' ? c.buys : mode === 'sells' ? c.sells : Math.abs(c.net));
-  const shown = cells.filter((c) => val(c) > 0).sort((a, b) => val(b) - val(a)).slice(0, 120);
-  const max = Math.max(1, ...shown.map(val));
-  const bySector = {};
-  for (const c of shown) (bySector[c.sector] ||= []).push(c);
-  const sectors = Object.entries(bySector).sort((a, b) => b[1].reduce((s, c) => s + val(c), 0) - a[1].reduce((s, c) => s + val(c), 0));
+  const { list, max } = useMemo(() => {
+    const shown = cells.filter((c) => val(c) > 0);
+    if (!shown.length || size.w < 40 || size.h < 40) return { list: [], max: 1 };
+    const mx = Math.max(1, ...shown.map(val));
+    const bySec = {};
+    for (const c of shown) (bySec[c.sector || 'Other'] ||= []).push(c);
+    const sectors = Object.entries(bySec).map(([name, items]) => ({ name, items, value: items.reduce((a, x) => a + val(x), 0) })).filter((s) => s.value > 0);
+    const out = [];
+    const HEADER = 13;
+    for (const sr of treemap(sectors, 0, 0, size.w, size.h)) {
+      out.push({ kind: 'sector', name: sr.name, x: sr.x, y: sr.y, w: sr.w });
+      const innerY = sr.y + HEADER, innerH = sr.h - HEADER;
+      if (innerH < 8 || sr.w < 8) continue;
+      for (const tr of treemap(sr.items.map((it) => ({ ...it, value: val(it) })), sr.x, innerY, sr.w, innerH)) out.push({ kind: 'tile', ...tr });
+    }
+    return { list: out, max: mx };
+  }, [cells, size, mode]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
@@ -243,15 +252,29 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
           <WindowToggle value={window} onChange={onWindow} />
         </div>
       </div>
-      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 }}>
-        {shown.length === 0 ? <div style={{ color: C.muted, fontSize: 13, textAlign: 'center', padding: 20 }}>No insider activity in this window.</div> : sectors.map(([sector, list]) => (
-          <div key={sector} style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, letterSpacing: '0.5px', marginBottom: 6 }}>{sector.toUpperCase()}</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {list.map((c) => <HeatTile key={c.ticker} c={c} mode={mode} max={max} onPick={onPick} />)}
-            </div>
+      <div ref={wrap} onMouseLeave={() => setHover(null)}
+        style={{ position: 'relative', width: '100%', height: 460, borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}`, background: C.bg }}>
+        {cells.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No insider activity in this window.</div>}
+        {list.map((t, i) => t.kind === 'sector'
+          ? <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: 13, overflow: 'hidden', fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.dim, textTransform: 'uppercase', padding: '2px 4px', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{t.name}</div>
+          : (
+            <button key={`t${i}`} onClick={() => onPick(t.ticker)} onMouseEnter={() => setHover({ c: t, x: t.x + t.w / 2, y: t.y })}
+              style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: insiderTileColor(t, mode, max), border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: 'pointer', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
+              {t.w > 30 && t.h > 18 && <span className="cp-tkr" style={{ fontSize: Math.min(15, Math.max(8, t.w / 5.5)), fontWeight: 700, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>{t.ticker}</span>}
+              {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(val(t))}</span>}
+            </button>
+          ))}
+        {hover && (
+          <div style={{ position: 'absolute', left: Math.max(4, Math.min(hover.x - 111, size.w - 226)), top: Math.max(4, hover.y), transform: 'translateY(-100%)', zIndex: 100, width: 222, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 10px 28px rgba(0,0,0,0.2)', pointerEvents: 'none' }}>
+            <b>{hover.c.ticker}</b> · {hover.c.sector}<br />
+            <span style={{ color: C.muted }}>{hover.c.company || '—'}</span><br />
+            Purchases: <b style={{ color: C.green }}>{fmtBig(hover.c.buys)}</b><br />
+            Sales: <b style={{ color: C.red }}>{fmtBig(hover.c.sells)}</b><br />
+            Net: <b style={{ color: hover.c.net >= 0 ? C.green : C.red }}>{hover.c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(hover.c.net))}</b><br />
+            {hover.c.insiders} insider{hover.c.insiders === 1 ? '' : 's'} · largest {fmtBig(hover.c.largest)}<br />
+            <span style={{ color: C.dim }}>Past {window.toUpperCase()}</span>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
