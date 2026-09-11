@@ -30,6 +30,15 @@ const decodeEntities = (s) => {
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 };
+const ownChangePct = (r) => {
+  const after = typeof r.sharesOwnedAfter === 'number' ? r.sharesOwnedAfter : null;
+  const sh = typeof r.shares === 'number' ? r.shares : 0;
+  if (after == null || !(sh > 0)) return null;
+  const before = r.action === 'BUY' ? after - sh : after + sh;   // holdings just before this trade
+  if (!(before > 0)) return r.action === 'BUY' ? 100 : null;     // bought a brand-new position → "new"
+  const pct = (sh / before) * 100;
+  return r.action === 'SELL' ? -pct : pct;
+};
 const mapRow = (r) => ({
   sym:      r.ticker || '?',
   name:     decodeEntities(r.executive || ''),
@@ -39,6 +48,8 @@ const mapRow = (r) => ({
   valueNum: typeof r.totalValue === 'number' ? r.totalValue : 0,
   shares:   typeof r.shares === 'number' ? r.shares : 0,
   avgPrice: typeof r.pricePerShare === 'number' ? r.pricePerShare : 0,
+  ownedAfter: typeof r.sharesOwnedAfter === 'number' ? r.sharesOwnedAfter : null,
+  ownChange: ownChangePct(r),
   company:  decodeEntities(r.company || ''),
   filed:    r.filingDate || '',
   traded:   r.transactionDate || '',
@@ -56,6 +67,11 @@ const CATEGORIES = [
   { key:'trends',       label:'TRENDS',          sub:'90d sentiment' },
 ];
 const VIEW_LABEL = Object.fromEntries(CATEGORIES.map(c => [c.key, c.label]));
+
+// Shared filter-control styles
+const SEL_STYLE = { background: C.white, border: `1px solid ${C.border}`, color: C.text, padding: '7px 10px', borderRadius: 5, fontSize: 12, fontFamily: "'DM Sans',sans-serif", cursor: 'pointer' };
+const LBL_STYLE = { fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginLeft: 6 };
+const bandBtn = (active) => ({ background: active ? C.green : C.white, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.green : C.border}`, borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" });
 
 // Diverging sentiment bars — buys up/green, sells down/red. No charting lib.
 function SentimentChart({ data }) {
@@ -94,17 +110,32 @@ export default function InsidersPage() {
   const [days, setDays] = useState(0);          // 0 = any window (folded-in screener filter)
   const [minValue, setMinValue] = useState(0);  // 0 = any size
   const [lastUp, setLastUp] = useState(null);
+  const [searchMode, setSearchMode] = useState('ticker'); // 'ticker' (drill-down) | 'name' (filter view)
+  const [role, setRole] = useState('');         // title bucket
+  const [txn, setTxn] = useState('');           // transaction-type bucket
+  const [maxPrice, setMaxPrice] = useState(0);  // share-price ceiling (penny = 5)
+  const [dateBasis, setDateBasis] = useState('trade'); // window applies to trade or filing date
+  const [maxDelay, setMaxDelay] = useState(0);  // filing-delay ceiling (days)
   const router = useRouter();
   const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
 
-  const loadData = useCallback(async ({ view, ticker }) => {
+  const loadData = useCallback(async ({ view, ticker, name }) => {
     setLoading(true);
     setError(null);
     try {
       const q = new URLSearchParams({ limit: '200' });
-      if (ticker) q.set('ticker', ticker); else q.set('view', view);
-      if (days > 0) q.set('days', String(days));
-      if (minValue > 0) q.set('minValue', String(minValue));
+      if (ticker) { q.set('ticker', ticker); }
+      else {
+        q.set('view', view);
+        if (name) q.set('name', name);
+        if (days > 0) q.set('days', String(days));
+        if (minValue > 0) q.set('minValue', String(minValue));
+        if (maxPrice > 0) q.set('maxPrice', String(maxPrice));
+        if (maxDelay > 0) q.set('maxDelay', String(maxDelay));
+        if (role) q.set('role', role);
+        if (txn) q.set('txn', txn);
+        if (dateBasis === 'filing') q.set('dateField', 'filing');
+      }
       const res = await fetch(`/api/insiders?${q.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
@@ -117,7 +148,7 @@ export default function InsidersPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, minValue]);
+  }, [days, minValue, maxPrice, maxDelay, role, txn, dateBasis]);
 
   // Debounce raw search → debouncedSearch
   useEffect(() => {
@@ -125,15 +156,20 @@ export default function InsidersPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Fetch: ticker search overrides the active category view
+  // Fetch: a TICKER search drills into that symbol; a NAME search filters the active view; else the view.
   useEffect(() => {
-    if (debouncedSearch) loadData({ ticker: debouncedSearch });
-    else                 loadData({ view: activeView });
-  }, [debouncedSearch, activeView, loadData]);
+    if (debouncedSearch && searchMode === 'ticker') loadData({ ticker: debouncedSearch });
+    else if (debouncedSearch && searchMode === 'name') loadData({ view: activeView, name: debouncedSearch });
+    else loadData({ view: activeView });
+  }, [debouncedSearch, searchMode, activeView, loadData]);
 
   const selectView = (key) => { setSearch(''); setDebouncedSearch(''); setActiveView(key); };
   const clearSearch = () => { setSearch(''); setDebouncedSearch(''); };
-  const refresh = () => { debouncedSearch ? loadData({ ticker: debouncedSearch }) : loadData({ view: activeView }); };
+  const refresh = () => {
+    if (debouncedSearch && searchMode === 'ticker') loadData({ ticker: debouncedSearch });
+    else if (debouncedSearch && searchMode === 'name') loadData({ view: activeView, name: debouncedSearch });
+    else loadData({ view: activeView });
+  };
   const onSearchKeyDown = (e) => { if (e.key === 'Enter') setDebouncedSearch(search.trim().toUpperCase()); };
   const handleSort = (col) => {
     if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -211,9 +247,16 @@ export default function InsidersPage() {
       {/* CONTROLS: search + category grid */}
       <div style={{maxWidth:1380,margin:"0 auto",padding:"16px 24px 0",display:"flex",flexDirection:"column",gap:14}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          {/* Ticker vs Insider-name search mode */}
+          <div style={{display:"inline-flex",border:`1px solid ${C.border}`,borderRadius:5,overflow:"hidden"}}>
+            {[{k:'ticker',l:'Ticker'},{k:'name',l:'Insider'}].map(o=>(
+              <button key={o.k} onClick={()=>{ setSearchMode(o.k); setSearch(''); setDebouncedSearch(''); }}
+                style={{background:searchMode===o.k?C.green:C.white,color:searchMode===o.k?'#fff':C.muted,border:"none",padding:"8px 12px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>{o.l}</button>
+            ))}
+          </div>
           <input value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={onSearchKeyDown}
-            placeholder="Search ticker (e.g., AAPL)"
-            style={{width:"100%",maxWidth:320,background:C.white,border:`1px solid ${C.border}`,color:C.text,padding:"8px 12px",borderRadius:5,fontSize:12,fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
+            placeholder={searchMode==='name' ? "Search insider name (e.g., Musk)" : "Search ticker (e.g., AAPL)"}
+            style={{width:"100%",maxWidth:280,background:C.white,border:`1px solid ${C.border}`,color:C.text,padding:"8px 12px",borderRadius:5,fontSize:12,fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
           {searching && (
             <span style={{display:"inline-flex",alignItems:"center",gap:8,background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:5,padding:"6px 12px",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.green}}>
               {debouncedSearch}
@@ -234,6 +277,35 @@ export default function InsidersPage() {
               return <button key={o.k} onClick={()=>setMinValue(o.k)} style={{background:active?C.green:C.white,color:active?'#fff':C.muted,border:`1px solid ${active?C.green:C.border}`,borderRadius:5,padding:"5px 9px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>{o.l}</button>;
             })}
           </div>
+        </div>
+
+        {/* Advanced filters: role · transaction type · price · filing delay · date basis */}
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <select value={role} onChange={(e)=>setRole(e.target.value)} style={SEL_STYLE}>
+            <option value="">All roles</option>
+            <option value="ceo">CEO</option><option value="cfo">CFO</option><option value="coo">COO</option>
+            <option value="president">President</option><option value="chairman">Chairman</option>
+            <option value="director">Director</option><option value="vp">VP</option><option value="tenpct">10% Owner</option>
+          </select>
+          <select value={txn} onChange={(e)=>setTxn(e.target.value)} style={SEL_STYLE}>
+            <option value="">All types</option>
+            <option value="purchase">Purchase (P)</option><option value="sale">Sale (S)</option>
+            <option value="grant">Grant / Award (A)</option><option value="gift">Gift (G)</option>
+            <option value="tax">Tax (F)</option><option value="exercise">Option Exercise (M)</option>
+            <option value="conversion">Conversion (C)</option>
+          </select>
+          <span style={LBL_STYLE}>PRICE</span>
+          {[{k:0,l:'Any'},{k:5,l:'Penny <$5'},{k:20,l:'<$20'}].map(o=>(
+            <button key={o.k} onClick={()=>setMaxPrice(o.k)} style={bandBtn(maxPrice===o.k)}>{o.l}</button>
+          ))}
+          <span style={LBL_STYLE}>DELAY</span>
+          {[{k:0,l:'Any'},{k:2,l:'≤2d'},{k:45,l:'≤45d'}].map(o=>(
+            <button key={o.k} onClick={()=>setMaxDelay(o.k)} style={bandBtn(maxDelay===o.k)}>{o.l}</button>
+          ))}
+          <span style={LBL_STYLE}>WINDOW BY</span>
+          {[{k:'trade',l:'Traded'},{k:'filing',l:'Filed'}].map(o=>(
+            <button key={o.k} onClick={()=>setDateBasis(o.k)} style={bandBtn(dateBasis===o.k)}>{o.l}</button>
+          ))}
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:10}}>
@@ -327,6 +399,7 @@ export default function InsidersPage() {
                   {[
                     {label:"Filed",sortKey:"DATE"},{label:"Traded",sortKey:null},{label:"Ticker",sortKey:"TICKER"},{label:"Company",sortKey:null},
                     {label:"Insider",sortKey:null},{label:"Type",sortKey:null},{label:"Code",sortKey:null},{label:"Shares",sortKey:"SHARES",align:"right"},
+                    {label:"Owned",sortKey:null,align:"right"},{label:"ΔOwn",sortKey:null,align:"right"},
                     {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},
                   ].map(h=>{
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
@@ -335,7 +408,7 @@ export default function InsidersPage() {
                 </tr></thead>
                 <tbody>
                   {rows.length===0 ? (
-                    <tr><td colSpan={10} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
+                    <tr><td colSpan={12} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
@@ -351,6 +424,8 @@ export default function InsidersPage() {
                       </td>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{ins.ownedAfter!=null?Math.round(ins.ownedAfter).toLocaleString('en-US'):'—'}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':`${ins.ownChange>0?'+':''}${Math.abs(ins.ownChange)>=999?'>999':ins.ownChange.toFixed(0)}%`}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap"}}>{fmtPrice(ins.avgPrice)}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
                     </tr>

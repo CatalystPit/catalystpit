@@ -139,16 +139,43 @@ export async function GET(request) {
     }
 
     // Row/category views — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
-    // Optional screener params (C3): ?days= (traded within N days) + ?minValue= ($ floor),
-    // layered on top of the selected view's own WHERE.
-    const days = parseInt(searchParams.get('days') ?? '', 10);
-    const minValue = parseInt(searchParams.get('minValue') ?? '', 10);
+    // Screener params layered on top of the selected view's own WHERE.
+    const num = (k) => { const n = parseInt(searchParams.get(k) ?? '', 10); return Number.isFinite(n) ? n : null; };
+    const days = num('days');
+    const minValue = num('minValue'), maxValue = num('maxValue');
+    const minPrice = num('minPrice'), maxPrice = num('maxPrice');
+    const maxDelay = num('maxDelay');                          // filing delay (days) ceiling
+    const name = searchParams.get('name')?.trim() || null;    // insider-name search
+    const role = searchParams.get('role')?.trim() || null;    // title bucket
+    const txn = searchParams.get('txn')?.trim() || null;      // transaction-type bucket
+    const dateField = searchParams.get('dateField') === 'filing' ? insiderTrades.filingDate : insiderTrades.transactionDate;
+
+    // Title buckets → ILIKE patterns (a title often lists several roles).
+    const ROLE_PATTERNS = {
+      ceo: ['%chief executive%', '%CEO%'], cfo: ['%chief financial%', '%CFO%'],
+      coo: ['%chief operating%', '%COO%'], president: ['%president%'],
+      chairman: ['%chair%'], director: ['%director%'], vp: ['%vice president%', '% VP%', '%VP %'],
+      tenpct: ['%10%', '%ten percent%'],
+    };
+    // Transaction-type buckets → SEC Form-4 codes.
+    const TXN_CODES = {
+      purchase: ['P'], sale: ['S'], grant: ['A'], gift: ['G'], tax: ['F'],
+      exercise: ['M'], conversion: ['C'], derivative: ['C', 'M'],
+    };
+
     const cfg = ROW_VIEWS[view] ?? ROW_VIEWS.latest;
     const resolvedView = ROW_VIEWS[view] ? view : 'latest';
     const conds = [];
     if (cfg.where) conds.push(cfg.where);
-    if (Number.isFinite(days) && days > 0) conds.push(sql`${insiderTrades.transactionDate} >= current_date - make_interval(days => ${days})`);
-    if (Number.isFinite(minValue) && minValue > 0) conds.push(gte(insiderTrades.totalValue, minValue));
+    if (days && days > 0) conds.push(sql`${dateField} >= current_date - make_interval(days => ${days})`);
+    if (minValue && minValue > 0) conds.push(gte(insiderTrades.totalValue, minValue));
+    if (maxValue && maxValue > 0) conds.push(sql`${insiderTrades.totalValue} <= ${maxValue}`);
+    if (minPrice && minPrice > 0) conds.push(gte(insiderTrades.pricePerShare, minPrice));
+    if (maxPrice && maxPrice > 0) conds.push(sql`${insiderTrades.pricePerShare} <= ${maxPrice}`);
+    if (maxDelay && maxDelay > 0) conds.push(sql`(${insiderTrades.filingDate} - ${insiderTrades.transactionDate}) <= ${maxDelay}`);
+    if (name) conds.push(ilike(insiderTrades.executive, `%${name.replace(/[%_\\]/g, '')}%`));
+    if (role && ROLE_PATTERNS[role]) conds.push(or(...ROLE_PATTERNS[role].map((p) => ilike(insiderTrades.title, p))));
+    if (txn && TXN_CODES[txn]) conds.push(inArray(insiderTrades.transactionCode, TXN_CODES[txn]));
     let q = db.select().from(insiderTrades);
     if (conds.length) q = q.where(conds.length === 1 ? conds[0] : and(...conds));
     q = q.orderBy(...cfg.orderBy).limit(limit);
