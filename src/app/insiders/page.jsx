@@ -445,7 +445,7 @@ export default function InsidersPage() {
                     {label:"Insider",sortKey:null},{label:"Type",sortKey:null},{label:"Code",sortKey:null},{label:"Shares",sortKey:"SHARES",align:"right"},
                     {label:"Owned",sortKey:null,align:"right"},{label:"ΔOwn",sortKey:null,align:"right"},
                     {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},
-                    {label:"1D",sortKey:null,align:"right"},{label:"1W",sortKey:null,align:"right"},{label:"1M",sortKey:null,align:"right"},{label:"6M",sortKey:null,align:"right"},
+                    {label:"1M",sortKey:null,align:"right"},{label:"6M",sortKey:null,align:"right"},
                   ].map(h=>{
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
                     return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 16px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none"}}>{h.label.toUpperCase()}{arrow}</th>;
@@ -453,7 +453,7 @@ export default function InsidersPage() {
                 </tr></thead>
                 <tbody>
                   {rows.length===0 ? (
-                    <tr><td colSpan={16} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
+                    <tr><td colSpan={14} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.filed}</td>
@@ -475,7 +475,7 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':`${ins.ownChange>0?'+':''}${Math.abs(ins.ownChange)>=999?'>999':ins.ownChange.toFixed(0)}%`}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap"}}>{fmtPrice(ins.avgPrice)}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
-                      {perfTd(ins.perf1d,'p1d')}{perfTd(ins.perf1w,'p1w')}{perfTd(ins.perf1m,'p1m')}{perfTd(ins.perf6m,'p6m')}
+                      {perfTd(ins.perf1m,'p1m')}{perfTd(ins.perf6m,'p6m')}
                     </tr>
                   ))}
                 </tbody>
