@@ -179,6 +179,17 @@ export default function FundProfile({ slug }) {
               <Stat label="HOLDINGS" value={(d.totalHoldings ?? holdings.length).toLocaleString()} />
               <Stat label="AS OF" value={fmtQ(d.latest?.quarter)} />
               <Stat label="FILED" value={fmtQ(d.latest?.filedDate)} />
+              {d.optionsSummary && ((d.optionsSummary.callCount || 0) + (d.optionsSummary.putCount || 0)) > 0 && (
+                <div onClick={() => document.getElementById('fund-options')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                  title="Jump to options positions" style={{ cursor: 'pointer', marginLeft: 'auto', textAlign: 'right' }}>
+                  <div className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: 16, color: C.green }}>
+                    {fmtB((d.optionsSummary.callValue || 0) + (d.optionsSummary.putValue || 0))} ↓
+                  </div>
+                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.6px', marginTop: 2 }}>
+                    OPTIONS · {(d.optionsSummary.callCount || 0).toLocaleString()} CALLS / {(d.optionsSummary.putCount || 0).toLocaleString()} PUTS
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* holding map */}
@@ -203,39 +214,11 @@ export default function FundProfile({ slug }) {
             </div>
             {!d.prior && <div style={{ marginTop: 8, fontSize: 11, color: C.dim, fontWeight: 300 }}>Quarter-over-quarter activity appears once a second quarter is imported.</div>}
 
-            {/* holdings table */}
-            <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-              <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7 }}>
-                <Dot /><span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>Holdings</span>
-                <span style={{ marginLeft: 'auto', fontSize: 11, color: C.dim }}>Top {holdings.length}{d.totalHoldings > holdings.length ? ` of ${d.totalHoldings.toLocaleString()}` : ''}</span>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
-                    {[['Ticker'], ['Company'], ['Shares', 'right'], ['Value', 'right'], ['% Port.', 'right']].map(([h, a]) => (
-                      <th key={h} style={{ padding: '8px 16px', textAlign: a || 'left', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>
-                    {holdings.map((h, i) => (
-                      <tr key={i} className={h.ticker ? 'hov' : undefined} onClick={() => go(h.ticker)} style={{ borderBottom: i < holdings.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: h.ticker ? 'pointer' : 'default' }}>
-                        <td style={{ padding: '10px 16px' }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={h.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: h.ticker ? C.green : C.dim }}>{h.ticker || '—'}</span></span></td>
-                        <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.issuer}<PC pc={h.putCall} /></td>
-                        <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtSh(h.shares)}</td>
-                        <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtB(h.value)}</td>
-                        <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{((h.value || 0) / shownTotal * 100).toFixed(1)}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* options (puts/calls) — separate from stock holdings */}
+            {/* options (puts/calls) — above the long holdings table so it's actually seen */}
             {(d.options?.length > 0) && (
-              <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-                <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <Dot /><span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>Options positions</span>
+              <div id="fund-options" style={{ marginTop: 14, background: C.white, border: `1px solid ${C.greenBorder}`, borderRadius: 10, overflow: 'hidden', scrollMarginTop: 80 }}>
+                <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.greenLight, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>⛓ Options positions</span>
                   <span style={{ display: 'flex', gap: 12, marginLeft: 'auto', fontFamily: "'DM Sans',sans-serif", fontSize: 11 }}>
                     <span style={{ color: C.green }}>{(d.optionsSummary?.callCount || 0).toLocaleString()} calls · {fmtB(d.optionsSummary?.callValue)}</span>
                     <span style={{ color: C.red }}>{(d.optionsSummary?.putCount || 0).toLocaleString()} puts · {fmtB(d.optionsSummary?.putValue)}</span>
@@ -269,6 +252,34 @@ export default function FundProfile({ slug }) {
                 </div>
               </div>
             )}
+
+            {/* holdings table */}
+            <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7 }}>
+                <Dot /><span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>Holdings</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: C.dim }}>Top {holdings.length}{d.totalHoldings > holdings.length ? ` of ${d.totalHoldings.toLocaleString()}` : ''}</span>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ background: C.surface, borderBottom: `1px solid ${C.border}` }}>
+                    {[['Ticker'], ['Company'], ['Shares', 'right'], ['Value', 'right'], ['% Port.', 'right']].map(([h, a]) => (
+                      <th key={h} style={{ padding: '8px 16px', textAlign: a || 'left', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', fontWeight: 400, whiteSpace: 'nowrap' }}>{h.toUpperCase()}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {holdings.map((h, i) => (
+                      <tr key={i} className={h.ticker ? 'hov' : undefined} onClick={() => go(h.ticker)} style={{ borderBottom: i < holdings.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: h.ticker ? 'pointer' : 'default' }}>
+                        <td style={{ padding: '10px 16px' }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={h.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: h.ticker ? C.green : C.dim }}>{h.ticker || '—'}</span></span></td>
+                        <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.issuer}<PC pc={h.putCall} /></td>
+                        <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtSh(h.shares)}</td>
+                        <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtB(h.value)}</td>
+                        <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{((h.value || 0) / shownTotal * 100).toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
 
             <div style={{ marginTop: 14, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
               13F positions as reported to the SEC (as of {fmtQ(d.latest?.quarter)}, filed {fmtQ(d.latest?.filedDate)}). The map and Holdings table above are <b>stock positions</b>; options are listed separately. Excludes cash, direct short sales, non-US and non-13F holdings. "% Port." is relative to the positions shown. Not financial advice.
