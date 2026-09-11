@@ -154,6 +154,135 @@ function SentimentChart({ data }) {
   );
 }
 
+const fmtBig = (n) => { if (n == null || isNaN(n)) return '—'; const a = Math.abs(n); if (a >= 1e9) return `$${(n / 1e9).toFixed(1)}B`; if (a >= 1e6) return `$${(n / 1e6).toFixed(0)}M`; if (a >= 1e3) return `$${(n / 1e3).toFixed(0)}K`; return `$${Math.round(n)}`; };
+
+function WindowToggle({ value, onChange }) {
+  return (
+    <div style={{ display: 'inline-flex', gap: 4 }}>
+      {['7d', '30d', '90d'].map((w) => (
+        <button key={w} onClick={() => onChange(w)} style={{ fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 5, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", border: `1px solid ${value === w ? C.green : C.border}`, background: value === w ? C.green : C.white, color: value === w ? '#fff' : C.muted }}>{w.toUpperCase()}</button>
+      ))}
+    </div>
+  );
+}
+
+function MarketPulse({ data, window, onWindow }) {
+  const cards = [
+    { l: 'OPEN-MARKET BUYS', v: data && fmtBig(data.buyValue), s: data && `${data.buyCount.toLocaleString()} filings`, c: C.green },
+    { l: 'OPEN-MARKET SALES', v: data && fmtBig(data.sellValue), s: data && `${data.sellCount.toLocaleString()} filings`, c: C.red },
+    { l: 'BUY/SELL $ RATIO', v: data && (data.buySellRatio != null ? data.buySellRatio.toFixed(2) : '—'), s: data && (data.buySellRatio >= 1 ? 'net buying' : 'net selling'), c: data && data.buySellRatio >= 1 ? C.green : C.muted },
+    { l: 'COMPANIES BUYING', v: data && data.companiesBuying.toLocaleString(), s: 'distinct tickers', c: C.ink },
+    { l: 'CEO / CFO BUYS', v: data && data.ceoCfoBuys.toLocaleString(), s: 'open-market', c: C.ink },
+    { l: 'CLUSTER BUYS', v: data && data.clusterBuys.toLocaleString(), s: '3+ insiders', c: C.ink },
+  ];
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>INSIDER MARKET PULSE <span style={{ fontWeight: 400, color: C.muted }}>· open-market only</span></div>
+        <WindowToggle value={window} onChange={onWindow} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(148px, 1fr))', gap: 10 }}>
+        {cards.map((c, i) => (
+          <div key={i} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px' }}>
+            <div style={{ fontSize: 9, color: C.dim, letterSpacing: '0.5px', marginBottom: 4 }}>{c.l}</div>
+            <div className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 20, fontWeight: 700, color: c.c || C.ink }}>{data ? (c.v ?? '—') : '—'}</div>
+            <div style={{ fontSize: 10, color: C.muted, fontWeight: 300, marginTop: 2 }}>{c.s || ''}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HeatTile({ c, mode, max, onPick }) {
+  const [hov, setHov] = useState(false);
+  const val = mode === 'buys' ? c.buys : mode === 'sells' ? c.sells : Math.abs(c.net);
+  const net = mode === 'sells' ? -c.sells : mode === 'buys' ? c.buys : c.net;
+  const buying = net >= 0;
+  const intensity = Math.min(1, val / max);
+  const w = 80 + Math.round(intensity * 90);              // 80–170px by value
+  const bg = buying ? `rgba(45,106,79,${0.14 + intensity * 0.5})` : `rgba(176,58,58,${0.14 + intensity * 0.5})`;
+  return (
+    <span style={{ position: 'relative' }} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}>
+      <button onClick={() => onPick(c.ticker)} style={{ width: w, textAlign: 'left', background: bg, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 9px', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.ticker}</div>
+        <div style={{ fontSize: 10, fontWeight: 600, color: buying ? C.green : C.red }}>{buying ? '+' : '−'}{fmtBig(Math.abs(val)).replace('$', '$')}</div>
+      </button>
+      {hov && (
+        <span style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 100, width: 210, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', whiteSpace: 'normal' }}>
+          <b>{c.ticker}</b> · {c.sector}<br />{c.company}<br />
+          Buys: <b style={{ color: C.green }}>{fmtBig(c.buys)}</b> · Sells: <b style={{ color: C.red }}>{fmtBig(c.sells)}</b><br />
+          Net: <b style={{ color: c.net >= 0 ? C.green : C.red }}>{c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(c.net))}</b><br />
+          {c.insiders} insider{c.insiders === 1 ? '' : 's'} · largest {fmtBig(c.largest)}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
+  const cells = data?.cells || [];
+  const val = (c) => (mode === 'buys' ? c.buys : mode === 'sells' ? c.sells : Math.abs(c.net));
+  const shown = cells.filter((c) => val(c) > 0).sort((a, b) => val(b) - val(a)).slice(0, 120);
+  const max = Math.max(1, ...shown.map(val));
+  const bySector = {};
+  for (const c of shown) (bySector[c.sector] ||= []).push(c);
+  const sectors = Object.entries(bySector).sort((a, b) => b[1].reduce((s, c) => s + val(c), 0) - a[1].reduce((s, c) => s + val(c), 0));
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>INSIDER ACTIVITY HEATMAP <span style={{ fontWeight: 400, color: C.muted }}>· green = buying · red = selling · size = $</span></div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', gap: 4 }}>
+            {[['net', 'Net'], ['buys', 'Buys'], ['sells', 'Sells']].map(([k, l]) => (
+              <button key={k} onClick={() => onMode(k)} style={{ fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 5, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", border: `1px solid ${mode === k ? C.green : C.border}`, background: mode === k ? C.green : C.white, color: mode === k ? '#fff' : C.muted }}>{l}</button>
+            ))}
+          </div>
+          <WindowToggle value={window} onChange={onWindow} />
+        </div>
+      </div>
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 16 }}>
+        {shown.length === 0 ? <div style={{ color: C.muted, fontSize: 13, textAlign: 'center', padding: 20 }}>No insider activity in this window.</div> : sectors.map(([sector, list]) => (
+          <div key={sector} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, letterSpacing: '0.5px', marginBottom: 6 }}>{sector.toUpperCase()}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {list.map((c) => <HeatTile key={c.ticker} c={c} mode={mode} max={max} onPick={onPick} />)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NotableActivity({ data, window, onWindow, onPick }) {
+  const items = data ? [
+    { l: 'LARGEST OPEN-MARKET BUY', x: data.largestPurchase, sub: (x) => `${x.executive} · ${x.ticker}` },
+    { l: 'LARGEST CEO BUY', x: data.largestCeoBuy, sub: (x) => `${x.executive} · ${x.ticker}` },
+    { l: 'LARGEST CFO BUY', x: data.largestCfoBuy, sub: (x) => `${x.executive} · ${x.ticker}` },
+    { l: 'MOST INSIDERS BUYING', x: data.mostInsidersBuying, sub: (x) => `${x.insiders} insiders · ${x.ticker}`, val: (x) => `${x.insiders}` },
+    { l: 'LARGEST CLUSTER BUY', x: data.largestCluster, sub: (x) => `${x.insiders} insiders · ${x.ticker}` },
+    { l: 'LARGEST OWNERSHIP INCREASE', x: data.largestOwnershipIncrease, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => (x.pct != null ? `+${x.pct}%` : fmtBig(x.value)) },
+  ].filter((i) => i.x) : [];
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>NOTABLE INSIDER ACTIVITY</div>
+        <WindowToggle value={window} onChange={onWindow} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
+        {items.map((it, i) => (
+          <button key={i} onClick={() => onPick(it.x.ticker)} className="card-hov" style={{ textAlign: 'left', background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '12px 14px', cursor: 'pointer' }}>
+            <div style={{ fontSize: 9, color: C.dim, letterSpacing: '0.5px', marginBottom: 5 }}>{it.l}</div>
+            <div className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 18, fontWeight: 700, color: C.green }}>{it.val ? it.val(it.x) : fmtBig(it.x.value)}</div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.sub(it.x)}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function InsidersPage() {
   const [data, setData] = useState(null);          // raw API payload (view-shaped)
   const [loading, setLoading] = useState(true);
@@ -168,6 +297,11 @@ export default function InsidersPage() {
   const [lastUp, setLastUp] = useState(null);
   const [searchMode, setSearchMode] = useState('ticker'); // 'ticker' (drill-down) | 'name' (filter view)
   const [insiderCo, setInsiderCo] = useState('');         // company ticker pinned from the insider autocomplete
+  const [intelWindow, setIntelWindow] = useState('30d');  // shared window for Pulse/Heatmap/Notable
+  const [pulse, setPulse] = useState(null);
+  const [heatmap, setHeatmap] = useState(null);
+  const [notable, setNotable] = useState(null);
+  const [heatMode, setHeatMode] = useState('net');
   const [role, setRole] = useState('');         // title bucket
   const [txn, setTxn] = useState('');           // transaction-type bucket
   const [sector, setSector] = useState('');     // sector filter (via screener_meta)
@@ -221,6 +355,22 @@ export default function InsidersPage() {
     const t = setTimeout(() => setDebouncedSearch(search.trim().toUpperCase()), 400);
     return () => clearTimeout(t);
   }, [search]);
+
+  // Discovery/intelligence sections (Pulse / Heatmap / Notable) — refetch on window change.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [p, h, n] = await Promise.all([
+          fetch(`/api/insiders?view=pulse&window=${intelWindow}`).then((r) => r.ok ? r.json() : null),
+          fetch(`/api/insiders?view=heatmap&window=${intelWindow}`).then((r) => r.ok ? r.json() : null),
+          fetch(`/api/insiders?view=notable&window=${intelWindow}`).then((r) => r.ok ? r.json() : null),
+        ]);
+        if (alive) { setPulse(p); setHeatmap(h); setNotable(n); }
+      } catch { /* non-fatal */ }
+    })();
+    return () => { alive = false; };
+  }, [intelWindow]);
 
   // Fetch: a TICKER search drills into that symbol; a NAME search filters the active view; else the view.
   useEffect(() => {
@@ -309,6 +459,13 @@ export default function InsidersPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* DISCOVERY → INTELLIGENCE (above the existing research layer) */}
+      <div style={{maxWidth:1380,margin:"0 auto",padding:"18px 24px 0"}}>
+        <MarketPulse data={pulse} window={intelWindow} onWindow={setIntelWindow} />
+        <Heatmap data={heatmap} window={intelWindow} onWindow={setIntelWindow} mode={heatMode} onMode={setHeatMode} onPick={goTicker} />
+        <NotableActivity data={notable} window={intelWindow} onWindow={setIntelWindow} onPick={goTicker} />
       </div>
 
       {/* CONTROLS: search + category grid */}
