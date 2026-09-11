@@ -114,7 +114,14 @@ export default function PoliticianDetail({ slug }) {
                               {t.optionType && <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3, letterSpacing: '0.3px', background: t.optionType === 'Put' ? C.redLight : t.optionType === 'Call' ? C.greenLight : C.surface, color: t.optionType === 'Put' ? C.red : t.optionType === 'Call' ? C.green : C.muted }}>{t.optionType.toUpperCase()}</span>}
                             </span>
                           </td>
-                          <td style={{ padding: '12px 14px', fontSize: 13, color: C.text, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.assetName || t.assetDescription || '—'}</td>
+                          <td style={{ padding: '12px 14px', fontSize: 13, color: C.text, maxWidth: 280 }}>
+                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.assetName || t.assetDescription || '—'}</div>
+                            {t.optionType && (t.strike || t.expiration || t.contracts) && (
+                              <div style={{ fontSize: 10, color: C.muted, fontWeight: 300, marginTop: 2, whiteSpace: 'nowrap' }}>
+                                {[t.contracts && `${Number(t.contracts).toLocaleString()} contracts`, t.strike && `$${t.strike} strike`, t.expiration && `exp ${t.expiration}`].filter(Boolean).join(' · ')}
+                              </div>
+                            )}
+                          </td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.transactionDate)}</td>
                           <td style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.muted, whiteSpace: 'nowrap' }}>{fmtDate(t.disclosureDate)}</td>
                           <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: late ? C.red : C.muted, whiteSpace: 'nowrap' }}>{t.filingLagDays != null ? `${t.filingLagDays}d` : '—'}</td>

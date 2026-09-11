@@ -92,8 +92,12 @@ export function parsePtrTransactions(rawText) {
   const txns = [];
   let prevEnd = 0, m;
   CORE.lastIndex = 0;
+  // "D : <description>" (filer's free-text — holds option call/put, strike, expiry, # contracts) trails
+  // a transaction, so it appears in the NEXT transaction's segment (or the tail for the last one).
+  const grabDesc = (s) => { const d = /\bD\s*:\s*(.+?)(?=\s+(?:SP|JT|DC)\s|$)/i.exec(s); return d ? d[1].replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '') : ''; };
   while ((m = CORE.exec(region))) {
     const seg = region.slice(prevEnd, m.index);
+    if (txns.length) { const d = grabDesc(seg); if (d) txns[txns.length - 1].description = d; }
     prevEnd = CORE.lastIndex;
     const [, assetCode, txTypeRaw, txDate, notifyDate, amount] = m;
     // ticker = last parenthetical token in the preceding segment (skip CUSIPs/junk via buildRow's cleanTicker)
@@ -119,8 +123,10 @@ export function parsePtrTransactions(rawText) {
       transactionDate: toISO(txDate),
       notificationDate: toISO(notifyDate),
       amount: amount.replace(/\s+/g, ' ').trim(),
+      description: '',
     });
   }
+  if (txns.length) { const d = grabDesc(region.slice(prevEnd)); if (d) txns[txns.length - 1].description = d; }
   return { scanned: false, transactions: txns };
 }
 
@@ -156,7 +162,7 @@ export function houseRec(entry, t, url) {
     transactionDate: t.transactionDate || null,
     disclosureDate: entry.filingDate || null,   // PTR filing date from the index
     capitalGainsOver200: null,
-    comment: null,
+    comment: t.description || null,   // filer's free-text: option call/put, strike, expiry, # contracts
     link: url,
   };
 }

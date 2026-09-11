@@ -32,6 +32,7 @@ const tradeCols = {
   ticker:           congressTrades.ticker,
   assetDescription: congressTrades.assetDescription,
   assetType:        congressTrades.assetType,
+  comment:          congressTrades.comment,
   owner:            congressTrades.owner,
   type:             congressTrades.type,
   action:           congressTrades.action,
@@ -50,16 +51,27 @@ const tradeCols = {
   chamber:          congressTrades.chamber,
 };
 
-// Options in congress PTRs: Senate filers disclose the type ("Option Type: Put/Call"); House filers
-// only mark it as an option ([OP] → asset_type 'Stock Option') with NO call/put. So we surface Put/Call
-// when disclosed (structured field OR a stray "call"/"put" in the text), else a plain 'Option'.
+// Option details come from the filer's disclosure text: Senate "Option Type: Put/Call" in the asset
+// name, House "D:" description ("Purchased 200 call options, strike $50, expires 3/19/27"). Parse
+// call/put + strike + expiry + # contracts from both; plain 'Option' when the type isn't disclosed.
 const shapeTrade = (t) => {
-  const desc = t.assetDescription || '', atype = t.assetType || '';
-  const isOpt = /option/i.test(atype) || /\boptions?\b/i.test(desc);
-  const cp = /option\s*type\s*[:\-]?\s*(call|put)/i.exec(desc) || (isOpt ? /\b(call|put)s?\b/i.exec(desc) : null);
+  const desc = t.assetDescription || '', atype = t.assetType || '', cmt = t.comment || '';
+  const src = `${desc} ${cmt}`;
+  const isOpt = /\bOP\b/.test(atype) || /option/i.test(atype) || /\boptions?\b/i.test(src);
+  const cp = /option\s*type\s*[:\-]?\s*(call|put)/i.exec(src) || (isOpt ? /\b(call|put)s?\b/i.exec(src) : null);
   const optionType = cp ? (cp[1].toLowerCase().startsWith('put') ? 'Put' : 'Call') : (isOpt ? 'Option' : null);
+  const gm = (re) => (re.exec(src) || [])[1] || null;
+  const strike = gm(/strike\s*(?:price)?\s*(?:of\s*)?\$?\s*([\d,]+(?:\.\d+)?)/i);
+  const expiration = gm(/expir\w*\s*(?:date)?\s*(?:of\s*)?(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
+  const contracts = optionType ? gm(/\b([\d,]+)\s*(?:call|put)?\s*(?:options?|contracts?)\b/i) : null;
   const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
-  return { ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice), optionType, assetName };
+  return {
+    ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice),
+    optionType, assetName,
+    strike: strike ? strike.replace(/,/g, '') : null,
+    expiration: expiration || null,
+    contracts: contracts ? contracts.replace(/,/g, '') : null,
+  };
 };
 
 const LIST_ORDER = {
