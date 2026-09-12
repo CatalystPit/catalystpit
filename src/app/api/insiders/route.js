@@ -18,6 +18,9 @@ async function kvGet(k) { if (!KV_URL) return null; try { const r = await fetch(
 async function kvSet(k, v, ttl) { if (!KV_URL) return; try { await fetch(`${KV_URL}/set/${encodeURIComponent(k)}?EX=${ttl}`, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(v) }); } catch { /* non-fatal */ } }
 const WINDOW_DAYS = { '7d': 7, '30d': 30, '90d': 90 };
 const winDays = (w) => WINDOW_DAYS[w] || 30;
+// Band NAMES are public (the UI shows them); the score ranges that produce them are not,
+// and live only in lib/conviction.server.js.
+const CONVICTION_BANDS = ['LOW', 'MODERATE', 'HIGH', 'VERY HIGH', 'EXTREME'];
 const CEO_CFO_SQL = sql`(${insiderTrades.title} ilike '%chief executive%' or ${insiderTrades.title} ilike '%CEO%' or ${insiderTrades.title} ilike '%chief financial%' or ${insiderTrades.title} ilike '%CFO%')`;
 // interval literal is from our own whitelist (winDays), never user input
 const sinceWindow = (w) => sql.raw(`current_date - interval '${winDays(w)} days'`);
@@ -213,12 +216,16 @@ async function notableView(window) {
   const mostBuyers = (await db.execute(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 2 ORDER BY count(distinct executive) DESC, sum(total_value) DESC LIMIT 1`)).rows?.[0] || null;
   const bigCluster = (await db.execute(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3 ORDER BY sum(total_value) DESC LIMIT 1`)).rows?.[0] || null;
   const ownInc = (await db.execute(sql`SELECT ticker, company, executive, title, total_value, (shares / nullif(shares_owned_after - shares, 0)) * 100 pct FROM insider_trades WHERE action='BUY' AND shares_owned_after > shares AND total_value > 25000 AND transaction_date >= ${since} ORDER BY pct DESC LIMIT 1`)).rows?.[0] || null;
+  // Highest-conviction purchase in the window. Only score, band and approved tags leave
+  // the server — the engine and its inputs stay in lib/conviction.server.js.
+  const topConv = (await db.execute(sql`SELECT ticker, company, executive, title, total_value, transaction_date, conviction, conviction_band, conviction_tags FROM insider_trades WHERE conviction IS NOT NULL AND transaction_date >= ${since} ORDER BY conviction DESC, total_value DESC LIMIT 1`)).rows?.[0] || null;
   const t = (r, x = {}) => r ? { ticker: r.ticker, company: r.company, executive: r.executive, title: r.title, value: +r.total_value || 0, date: r.transaction_date, ...x } : null;
   const out = { window,
     largestCeoBuy: t(ceoBuy), largestCfoBuy: t(cfoBuy), largestPurchase: t(bigBuy),
     mostInsidersBuying: mostBuyers ? { ticker: mostBuyers.ticker, company: mostBuyers.company, insiders: +mostBuyers.insiders, value: +mostBuyers.total || 0 } : null,
     largestCluster: bigCluster ? { ticker: bigCluster.ticker, company: bigCluster.company, insiders: +bigCluster.insiders, value: +bigCluster.total || 0 } : null,
-    largestOwnershipIncrease: ownInc ? { ticker: ownInc.ticker, company: ownInc.company, executive: ownInc.executive, value: +ownInc.total_value || 0, pct: ownInc.pct != null ? +(+ownInc.pct).toFixed(0) : null } : null };
+    highestConviction: topConv ? { ticker: topConv.ticker, company: topConv.company, executive: topConv.executive, title: topConv.title, value: +topConv.total_value || 0, date: topConv.transaction_date, conviction: Math.round(+topConv.conviction), band: topConv.conviction_band, tags: parseTags(topConv.conviction_tags) } : null,
+        largestOwnershipIncrease: ownInc ? { ticker: ownInc.ticker, company: ownInc.company, executive: ownInc.executive, value: +ownInc.total_value || 0, pct: ownInc.pct != null ? +(+ownInc.pct).toFixed(0) : null } : null };
   await kvSet(key, out, 300);
   return out;
 }
@@ -226,14 +233,32 @@ async function notableView(window) {
 // Add the intelligence layer to a page of rows (bounded to the page — cheap, scales fine).
 // firstOpenMarketBuy / monthsSincePriorBuy are computed from OUR history only — the UI must word
 // them honestly ("in our available history") and never claim multi-year firsts until the backfill.
+// conviction_tags is stored as a JSON array of APPROVED display strings. A malformed
+// value must never break a row, so this degrades to an empty list.
+function parseTags(v) {
+  if (!v) return [];
+  try { const a = JSON.parse(v); return Array.isArray(a) ? a.slice(0, 6) : []; } catch { return []; }
+}
+
 async function enrichRows(rows) {
   const ownPct = (r) => { const a = r.sharesOwnedAfter, s = r.shares; if (a == null || !(s > 0)) return null; const before = r.action === 'BUY' ? a - s : a + s; if (!(before > 0)) return r.action === 'BUY' ? 100 : null; const p = (s / before) * 100; return r.action === 'SELL' ? -p : p; };
   const shaped = rows.map((r) => ({ ...r,
     ceoCfo: /chief executive|\bCEO\b|chief financial|\bCFO\b/i.test(r.title || ''),
     openMarket: r.transactionCode === 'P' || r.transactionCode === 'S',
     ownershipChangePct: ownPct(r) == null ? null : +ownPct(r).toFixed(0),
-    firstOpenMarketBuy: false, monthsSincePriorBuy: null }));
-  const pRows = shaped.filter((r) => r.transactionCode === 'P');
+    // Conviction reaches the client as score + band + approved tags ONLY. The engine,
+    // its weights and every intermediate factor stay server-side (lib/conviction.server.js).
+    conviction: r.conviction == null ? null : Math.round(r.conviction),
+    convictionBand: r.convictionBand ?? null,
+    convictionTags: parseTags(r.convictionTags),
+    // Prefer the precomputed context; these were a per-request history query before,
+    // which is exactly the multi-year lookup that should never run per row.
+    firstOpenMarketBuy: r.isFirstOmBuy === true,
+    monthsSincePriorBuy: r.monthsSincePrevBuy == null ? null : Math.round(r.monthsSincePrevBuy),
+  }));
+  // Fallback only for rows the context job has not reached yet (it runs after each
+  // backfill chunk). Once ctx_computed_at is set everywhere this does no work at all.
+  const pRows = shaped.filter((r) => r.transactionCode === 'P' && r.ctxComputedAt == null);
   if (pRows.length) {
     const tks = [...new Set(pRows.map((r) => r.ticker))], exs = [...new Set(pRows.map((r) => r.executive))];
     const hist = await db.select({ executive: insiderTrades.executive, ticker: insiderTrades.ticker, date: insiderTrades.transactionDate })
@@ -317,6 +342,12 @@ export async function GET(request) {
     const firstBuyF = searchParams.get('firstbuy') === '1';
     const tenb51F = searchParams.get('tenb51') === '1';
     const discretionaryF = searchParams.get('discretionary') === '1';
+    // Conviction filter/sort. The client sends a THRESHOLD or a BAND NAME only — never a
+    // weight, never a factor. Bands are resolved server-side, so the model can be
+    // recalibrated (thresholds moved, weights retuned) with no API or UI change.
+    const minConviction = num('minConviction');
+    const bandF = searchParams.get('band')?.toUpperCase().trim() || null;
+    const sortBy = searchParams.get('sort')?.trim() || null;
 
     // Title buckets → ILIKE patterns (a title often lists several roles).
     const ROLE_PATTERNS = {
@@ -333,6 +364,11 @@ export async function GET(request) {
 
     const cfg = ROW_VIEWS[view] ?? ROW_VIEWS.latest;
     const resolvedView = ROW_VIEWS[view] ? view : 'latest';
+    // Sorting by conviction puts unscored rows LAST rather than dropping them: a grant or an
+    // exercise has no conviction by design, and hiding it would silently change the view.
+    const orderBy = sortBy === 'conviction'
+      ? [sql`${insiderTrades.conviction} DESC NULLS LAST`, desc(insiderTrades.filingDate)]
+      : cfg.orderBy;
     const conds = [];
     // Name search shows the insider's FULL history (awards/gifts/tax included, labeled). Browse views
     // apply their open-market WHERE. So skip the view filter only when searching a specific insider.
@@ -353,7 +389,12 @@ export async function GET(request) {
     if (ceocfoF) conds.push(CEO_CFO_SQL);
     if (tenb51F) conds.push(eq(insiderTrades.rule10b5_1, true));
     if (discretionaryF) conds.push(eq(insiderTrades.rule10b5_1, false));
+    // The client sends a flag, not a cutoff. Which bands count as "high conviction" is
+    // decided here, so retuning the model cannot strand a hardcoded number in the UI.
+    if (searchParams.get('highconv') === '1') conds.push(inArray(insiderTrades.convictionBand, ['HIGH', 'VERY HIGH', 'EXTREME']));
     if (clusterF) conds.push(sql`${insiderTrades.ticker} IN (SELECT ticker FROM insider_trades WHERE action='BUY' AND transaction_date >= current_date - interval '90 days' GROUP BY ticker HAVING count(distinct executive) >= 3)`);
+    if (minConviction != null && minConviction > 0) conds.push(sql`${insiderTrades.conviction} >= ${minConviction}`);
+    if (bandF && CONVICTION_BANDS.includes(bandF)) conds.push(eq(insiderTrades.convictionBand, bandF));
     if (firstBuyF) conds.push(sql`${insiderTrades.transactionCode} = 'P' AND NOT EXISTS (SELECT 1 FROM insider_trades e WHERE e.executive = ${insiderTrades.executive} AND e.ticker = ${insiderTrades.ticker} AND e.transaction_code = 'P' AND e.transaction_date < ${insiderTrades.transactionDate})`);
 
     const whereClause = conds.length ? (conds.length === 1 ? conds[0] : and(...conds)) : undefined;
@@ -370,12 +411,12 @@ export async function GET(request) {
     if (whereClause) countQ = countQ.where(whereClause);
 
     if (isPro) {
-      const rows = await base.orderBy(...cfg.orderBy).limit(pageSize).offset(page * pageSize);
+      const rows = await base.orderBy(...orderBy).limit(pageSize).offset(page * pageSize);
       const [{ n: total }] = await countQ;
       const trades = await enrichRows(rows);
       return Response.json({ view: resolvedView, trades, page, pageSize, total, tier, loggedIn }, { headers: NO_STORE });
     }
-    const preview = await base.orderBy(...cfg.orderBy).limit(FREE_PREVIEW_ROWS);
+    const preview = await base.orderBy(...orderBy).limit(FREE_PREVIEW_ROWS);
     let total = preview.length;
     try { const [{ n }] = await countQ; total = n; } catch { /* fall back */ }
     const trades = await enrichRows(preview);

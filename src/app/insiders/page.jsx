@@ -66,7 +66,12 @@ const mapRow = (r) => ({
   ceoCfo:   !!r.ceoCfo,
   firstBuy: !!r.firstOpenMarketBuy,
   monthsSincePriorBuy: r.monthsSincePriorBuy ?? null,
-  conviction: r.conviction ?? null,          // RESERVED — server-computed later; slot rendered when present
+  // Conviction arrives fully formed from the server: score, band NAME and approved display
+  // tags. The client never sees a weight, threshold or factor and never computes any part
+  // of it, so the model can be recalibrated server-side with no change here.
+  conviction: r.conviction ?? null,
+  convictionBand: r.convictionBand ?? null,
+  convictionTags: Array.isArray(r.convictionTags) ? r.convictionTags : [],
   filingUrl: r.filingUrl || null,
   perf1d:   typeof r.perf1d === 'number' ? r.perf1d : null,
   perf1w:   typeof r.perf1w === 'number' ? r.perf1w : null,
@@ -108,6 +113,29 @@ function InfoTip({ text, below = false, width = 270 }) {
 
 // Contextual intelligence badges — only shown when the data supports them. Honest wording:
 // we don't claim a multi-year "first buy" until the historical backfill; only "first buy in N months".
+// Band name → colour. Presentation only: the score ranges that map a score to a band live
+// server-side in lib/conviction.server.js and are never shipped here.
+const BAND_STYLE = {
+  'EXTREME':   { fg: C.green, bg: C.greenLight, bd: C.green },
+  'VERY HIGH': { fg: C.green, bg: C.greenLight, bd: C.greenBorder },
+  'HIGH':      { fg: C.green, bg: C.greenLight, bd: 'transparent' },
+  'MODERATE':  { fg: C.muted, bg: C.surface,    bd: 'transparent' },
+  'LOW':       { fg: C.dim,   bg: C.surface,    bd: 'transparent' },
+};
+
+function ConvictionCell({ ins }) {
+  // Blank, not zero, when the row is not an eligible open-market purchase (grant,
+  // exercise, gift, tax): "not applicable" is not "no conviction".
+  if (ins.conviction == null) return <span style={{ color: C.hint, fontSize: 11 }}>—</span>;
+  const st = BAND_STYLE[ins.convictionBand] || BAND_STYLE.LOW;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+      <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700, color: st.fg }}>{ins.conviction}</span>
+      <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.3px', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap', background: st.bg, color: st.fg, border: `1px solid ${st.bd}` }}>{ins.convictionBand}</span>
+    </span>
+  );
+}
+
 function Badges({ ins }) {
   const b = [];
   if (ins.ceoCfo && ins.type === 'BUY') b.push({ t: /CFO|financial/i.test(ins.role) ? 'CFO BUY' : 'CEO BUY', on: true });
@@ -115,7 +143,9 @@ function Badges({ ins }) {
   if (ins.rule10b5_1 === false) b.push({ t: 'DISCRETIONARY', on: false });
   if (ins.type === 'BUY' && ins.monthsSincePriorBuy != null && ins.monthsSincePriorBuy >= 3) b.push({ t: `FIRST BUY IN ${ins.monthsSincePriorBuy}MO`, on: true });
   if (ins.type === 'BUY' && ins.ownChange != null && ins.ownChange >= 20) b.push({ t: `OWNERSHIP +${ins.ownChange}%`, on: true });
-  if (ins.conviction != null) b.push({ t: `CONVICTION ${ins.conviction}`, on: true });   // reserved slot
+  // Server-approved conviction tags, rendered verbatim. They explain WHY a score is what
+  // it is without revealing how it is computed; the client never authors them.
+  for (const t of ins.convictionTags || []) b.push({ t, on: true });
   if (!b.length) return null;
   return (
     <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
@@ -512,6 +542,8 @@ function NotableActivity({ data, window, onWindow, onPick }) {
     { l: 'LARGEST CFO BUY', x: data.largestCfoBuy, sub: (x) => `${x.executive} · ${x.ticker}` },
     { l: 'MOST INSIDERS BUYING', x: data.mostInsidersBuying, sub: (x) => `${x.insiders} insiders · ${x.ticker}`, val: (x) => `${x.insiders}` },
     { l: 'LARGEST CLUSTER BUY', x: data.largestCluster, sub: (x) => `${x.insiders} insiders · ${x.ticker}` },
+    // Score + band come straight from the server; the tile never derives either.
+    { l: 'HIGHEST CONVICTION BUY', x: data.highestConviction, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => `${x.conviction} · ${x.band}` },
     { l: 'LARGEST OWNERSHIP INCREASE', x: data.largestOwnershipIncrease, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => (x.pct != null ? `+${x.pct}%` : fmtBig(x.value)) },
   ].filter((i) => i.x) : [];
   return (
@@ -540,6 +572,9 @@ export default function InsidersPage() {
   const [activeView, setActiveView] = useState('latest');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  // Conviction sorts on the SERVER: paging is server-side, so a client-side sort would
+  // only reorder the current page and quietly lie about "highest conviction".
+  const [convSort, setConvSort] = useState(false);
   const [sortBy,  setSortBy]  = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [days, setDays] = useState(0);          // 0 = any window (folded-in screener filter)
@@ -554,7 +589,7 @@ export default function InsidersPage() {
   const [heatMode, setHeatMode] = useState('net');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  const [intel, setIntel] = useState({ openMarket: false, ceocfo: false, cluster: false, firstbuy: false, tenb51: false, discretionary: false });
+  const [intel, setIntel] = useState({ openMarket: false, ceocfo: false, cluster: false, firstbuy: false, tenb51: false, discretionary: false, highconv: false });
   const [role, setRole] = useState('');         // title bucket
   const [txn, setTxn] = useState('');           // transaction-type bucket
   const [sector, setSector] = useState('');     // sector filter (via screener_meta)
@@ -589,6 +624,7 @@ export default function InsidersPage() {
         if (sector) q.set('sector', sector);
         if (dateBasis === 'filing') q.set('dateField', 'filing');
         for (const k of Object.keys(intel)) if (intel[k]) q.set(k, '1');
+        if (convSort) q.set('sort', 'conviction');
         q.set('page', String(page));
         q.set('pageSize', String(pageSize));
       }
@@ -604,10 +640,10 @@ export default function InsidersPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, insiderCo, intel, page, pageSize]);
+  }, [days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, insiderCo, intel, page, pageSize, convSort]);
 
   // Reset to page 0 whenever the filter set / view / search changes (so we never land on a stale page).
-  useEffect(() => { setPage(0); }, [activeView, days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, debouncedSearch, intel, pageSize]);
+  useEffect(() => { setPage(0); }, [activeView, days, minValue, maxPrice, maxDelay, role, txn, sector, dateBasis, debouncedSearch, intel, pageSize, convSort]);
 
   // Debounce raw search → debouncedSearch
   useEffect(() => {
@@ -826,7 +862,7 @@ export default function InsidersPage() {
         {/* Intelligence filters (additive toggles — existing controls above are untouched) */}
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
           <span style={{...LBL_STYLE,marginLeft:0}}>INTEL</span>
-          {[{k:'openMarket',l:'Open Market'},{k:'ceocfo',l:'CEO / CFO'},{k:'cluster',l:'Cluster Buys'},{k:'firstbuy',l:'First Buy'},{k:'tenb51',l:'10b5-1'},{k:'discretionary',l:'Discretionary'}].map(o=>(
+          {[{k:'openMarket',l:'Open Market'},{k:'ceocfo',l:'CEO / CFO'},{k:'cluster',l:'Cluster Buys'},{k:'firstbuy',l:'First Buy'},{k:'tenb51',l:'10b5-1'},{k:'discretionary',l:'Discretionary'},{k:'highconv',l:'High Conviction'}].map(o=>(
             <button key={o.k} onClick={()=>setIntel(s=>({...s,[o.k]:!s[o.k]}))} style={bandBtn(intel[o.k])}>{o.l}</button>
           ))}
         </div>
@@ -923,15 +959,16 @@ export default function InsidersPage() {
                     {label:"Filed",sortKey:"DATE"},{label:"Traded",sortKey:null},{label:"Ticker",sortKey:"TICKER"},{label:"Company",sortKey:null},
                     {label:"Insider",sortKey:null},{label:"Type",sortKey:null},{label:"Code",sortKey:null},{label:"Shares",sortKey:"SHARES",align:"right"},
                     {label:"Owned",sortKey:null,align:"right"},{label:"ΔOwn",sortKey:null,align:"right"},
-                    {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},
+                    {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},{label:"Conviction",sortKey:null,align:"right",server:true},
                   ].map(h=>{
+                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction — click to sort highest first" style={{padding:"10px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>CONVICTION{convSort?' ↓':''}</th>;
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
                     return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 16px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none"}}>{h.label.toUpperCase()}{arrow}</th>;
                   })}
                 </tr></thead>
                 <tbody>
                   {rows.length===0 ? (
-                    <tr><td colSpan={12} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
+                    <tr><td colSpan={13} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
@@ -970,6 +1007,7 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':`${ins.ownChange>0?'+':''}${Math.abs(ins.ownChange)>=999?'>999':ins.ownChange.toFixed(0)}%`}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap"}}>{fmtPrice(ins.avgPrice)}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",whiteSpace:"nowrap"}}><ConvictionCell ins={ins} /></td>
                     </tr>
                   ))}
                 </tbody>

@@ -20,7 +20,33 @@ export const insiderTrades = pgTable('insider_trades', {
   // Form 4 interpretation layer (raw transaction_code is NEVER replaced — this sits on top):
   rule10b5_1:       boolean('rule_10b5_1'),                  // true=disclosed 10b5-1 plan, false=explicitly not, null=not disclosed
   footnotes:        text('footnotes'),                       // filer footnote text (traceability)
-  conviction:       doublePrecision('conviction'),           // RESERVED — server-computed Insider Conviction (formula stays server-side); null for now
+  // Insider Conviction — computed by src/lib/conviction.server.js (server-only). ONLY the
+  // publishable result is stored: score, band, approved tags. No weight, threshold or
+  // intermediate factor is ever persisted, so nothing proprietary can leak via an API row.
+  conviction:       doublePrecision('conviction'),           // 0–100, null when not an eligible open-market purchase
+  convictionBand:   text('conviction_band'),                 // LOW | MODERATE | HIGH | VERY HIGH | EXTREME
+  convictionTags:   text('conviction_tags'),                 // JSON array of approved display tags
+  convictionAt:     timestamp('conviction_at', { withTimezone: true }),
+  // Form 4 provenance captured by lib/form4.mjs (see drizzle/0007).
+  issuerCik:        text('issuer_cik'),
+  ownerCik:         text('owner_cik'),
+  periodOfReport:   date('period_of_report', { mode: 'string' }),
+  formType:         text('form_type'),
+  isAmendment:      boolean('is_amendment').default(false),
+  supersededBy:     text('superseded_by'),
+  ownershipType:    text('ownership_type'),                  // 'D' direct | 'I' indirect
+  isDerivative:     boolean('is_derivative').default(false),
+  // Precomputed historical context (scripts/build-insider-context.mjs). These are FACTS
+  // from the filing history, not model internals — safe to expose.
+  ctxComputedAt:       timestamp('ctx_computed_at', { withTimezone: true }),
+  isFirstOmBuy:        boolean('is_first_om_buy'),
+  prevOmBuyDate:       date('prev_om_buy_date', { mode: 'string' }),
+  monthsSincePrevBuy:  doublePrecision('months_since_prev_buy'),
+  omBuys12m:           integer('om_buys_12m'),
+  omBuysTotal:         integer('om_buys_total'),
+  ownershipIncreasePct: doublePrecision('ownership_increase_pct'),
+  isRepeatBuyer:       boolean('is_repeat_buyer'),
+  clusterInsiders10d:  integer('cluster_insiders_10d'),
   // subsequent stock performance since the trade (% from transaction price to close at +1d/1w/1m/6m).
   // Fixed once each horizon elapses; a horizon still in the future stays null until then.
   perf1d:           doublePrecision('perf_1d'),

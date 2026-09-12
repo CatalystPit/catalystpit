@@ -196,12 +196,6 @@ export function bandFor(score) {
 //
 // `historyLabel` comes from insider_history_meta.covered_from so wording can never
 // outrun the data: with 3 years stored we say "IN 3-YEAR HISTORY", never "EVER".
-const ordinal = (n) => {
-  const t = n % 100;
-  if (t >= 11 && t <= 13) return `${n}TH`;
-  return `${n}${({ 1: 'ST', 2: 'ND', 3: 'RD' })[n % 10] || 'TH'}`;
-};
-
 export function convictionTags(row, person, historyLabel = 'AVAILABLE HISTORY') {
   if (!isConvictionEligible(row)) return [];
   const tags = [];
@@ -231,8 +225,11 @@ export function convictionTags(row, person, historyLabel = 'AVAILABLE HISTORY') 
     tags.push(`UNUSUALLY LARGE VS ${historyLabel}`);
   }
 
+  // Ordinal counts ("13TH BUY IN 12 MONTHS") read as noise on a public board and get
+  // worse the higher they climb, so the public tag stays qualitative. The underlying
+  // counts remain available in om_buys_* for filtering and for the score itself.
   const buys12 = Number(row.om_buys_12m) || 0;
-  if (buys12 >= 3) tags.push(`${ordinal(buys12)} BUY IN 12 MONTHS`);
+  if (buys12 >= 4) tags.push('BUYING REPEATEDLY');
   else if (row.is_repeat_buyer && buys12 >= 2) tags.push('REPEAT BUYER');
 
   if (row.rule_10b5_1 === false) tags.push('DISCRETIONARY');
