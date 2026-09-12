@@ -4,6 +4,7 @@ import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout, EntitySearch 
 import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, fmtReturn, returnColor } from './ui';
 import CongressOverview from './CongressOverview';
 import CongressChartSection from './CongressChartSection';
+import CongressTransactions from './CongressTransactions';
 
 // ─── filter definitions ──────────────────────────────────────────────────────
 const SORTS = [
@@ -254,6 +255,11 @@ export default function PoliticiansList() {
           <PillGroup label="PARTY"   options={PARTIES}  value={party}   onChange={setParty} />
           {view === 'leaderboard' && <PillGroup label="PERIOD" options={WINDOWS} value={lbWindow} onChange={setLbWindow} />}
         </div>
+      </div>
+
+      {/* DEEP RESEARCH */}
+      <div style={{ maxWidth: 1380, margin: '0 auto', padding: '0 24px' }}>
+        <CongressTransactions ticker={selectedTicker} onSelectTicker={setSelectedTicker} />
       </div>
 
       {/* GRID */}
