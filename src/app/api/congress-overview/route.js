@@ -17,10 +17,13 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const window = WINDOWS.has(searchParams.get('window') || '') ? searchParams.get('window') : '30d';
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '10', 10) || 10, 3), 25);
+    // The chart's ticker rail wants a deeper list than the discovery panel shows.
+    const tickerLimit = Math.min(Math.max(parseInt(searchParams.get('tickers') ?? '0', 10) || 0, 0), 40);
+    const sort = ['trades', 'recent', 'value'].includes(searchParams.get('sort')) ? searchParams.get('sort') : 'trades';
 
     const [best, traded, filers] = await Promise.all([
       bestThirtyDayRecord({ min: LB_MIN_TRADES }),
-      mostTradedStocks({ window, limit }),
+      mostTradedStocks({ window, limit: Math.max(limit, tickerLimit), sort }),
       latestFilers({ limit }),
     ]);
 
@@ -41,7 +44,9 @@ export async function GET(request) {
           + 'positions to appear. This is not portfolio performance: filers disclose an amount range rather '
           + 'than a position size, and may have sold since.',
       },
-      mostTraded: traded,
+      mostTraded: traded.slice(0, limit),
+      tickerList: tickerLimit ? traded.slice(0, tickerLimit) : undefined,
+      sort,
       latestFilers: filers,
     }, { headers: CACHE });
   } catch (e) {

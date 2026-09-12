@@ -29,7 +29,13 @@ const isOptionRow = (assetType) => { const s = (assetType || '').toLowerCase(); 
 // a wider window string is ever added to LB_WINDOWS.
 const windowClause = (window) => {
   const interval = window === 'all' ? null : (LB_WINDOWS[window] || '1 year');
-  const capped = sql`${congressTrades.transactionDate} >= CURRENT_DATE - ${sql.raw(`INTERVAL '${MAX_HISTORY_DAYS} days'`)}`;
+  // Also excludes future-dated trades. At least one filing carries a transaction date after its
+  // own disclosure date (a year typo at the source), and without this guard that row sorts to the
+  // top of "most recent" and reads as the newest congressional trade in the country.
+  const capped = and(
+    sql`${congressTrades.transactionDate} >= CURRENT_DATE - ${sql.raw(`INTERVAL '${MAX_HISTORY_DAYS} days'`)}`,
+    sql`${congressTrades.transactionDate} <= CURRENT_DATE`,
+  );
   if (!interval) return capped;
   return and(capped, sql`${congressTrades.transactionDate} >= CURRENT_DATE - ${sql.raw(`INTERVAL '${interval}'`)}`);
 };
@@ -105,7 +111,10 @@ export async function leaderboardView({ chamber, party, min = LB_MIN_TRADES, win
  * because that is what filers actually disclose. The midpoint sum rides along only for sorting and
  * is labelled an estimate wherever it surfaces.
  */
-export async function mostTradedStocks({ window = '30d', limit = 12 } = {}) {
+// sort: 'trades' (most congressional activity), 'recent' (most recently traded), 'value'
+// (largest disclosed activity). The chart's ticker list is meant to surface where Congress is
+// actually active, not act as a ticker directory.
+export async function mostTradedStocks({ window = '30d', limit = 12, sort = 'trades' } = {}) {
   const rows = await db.select({
     ticker: congressTrades.ticker,
     company: sql`max(${congressTrades.assetDescription})`,
@@ -122,7 +131,12 @@ export async function mostTradedStocks({ window = '30d', limit = 12 } = {}) {
     .from(congressTrades)
     .where(and(sql`${congressTrades.ticker} is not null`, windowClause(window)))
     .groupBy(congressTrades.ticker)
-    .orderBy(sql`count(*) desc`, sql`count(distinct ${congressTrades.memberSlug}) desc`)
+    .orderBy(
+      sort === 'recent' ? sql`max(${congressTrades.transactionDate}) desc`
+      : sort === 'value' ? sql`coalesce(sum(${congressTrades.amountMid}),0) desc`
+      : sql`count(*) desc`,
+      sql`count(distinct ${congressTrades.memberSlug}) desc`,
+    )
     .limit(limit);
   return rows;
 }

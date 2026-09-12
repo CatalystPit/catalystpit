@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, fmtReturn, returnColor } from './ui';
 import CongressOverview from './CongressOverview';
+import CongressChartSection from './CongressChartSection';
 
 // ─── filter definitions ──────────────────────────────────────────────────────
 const SORTS = [
@@ -242,6 +243,7 @@ export default function PoliticiansList() {
       {/* DISCOVERY */}
       <div style={{ maxWidth: 1380, margin: '0 auto', padding: '18px 24px 0' }}>
         <CongressOverview onSelectTicker={setSelectedTicker} selectedTicker={selectedTicker} />
+        <CongressChartSection ticker={selectedTicker} onSelectTicker={setSelectedTicker} />
       </div>
 
       {/* CONTROLS */}
