@@ -310,16 +310,31 @@ function HeatmapTooltip({ hover, windowLabel, container }) {
   if (!hover || typeof document === 'undefined') return null;
   const c = hover.c;
   return createPortal(
-    <div ref={box} style={{ position: 'fixed', left: pos ? pos.left : 0, top: pos ? pos.top : 0, visibility: pos ? 'visible' : 'hidden', zIndex: 2147483000, width: 222, fontFamily: "'DM Sans',sans-serif", background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 10px 28px rgba(0,0,0,0.2)', pointerEvents: 'none' }}>
-      <b>{c.ticker}</b> · {c.sector}<br />
-      <span style={{ color: C.muted }}>{c.company || '—'}</span><br />
-      Purchases: <b style={{ color: C.green }}>{fmtBig(c.buys)}</b><br />
-      Sales: <b style={{ color: C.red }}>{fmtBig(c.sells)}</b><br />
-      Net: <b style={{ color: c.net >= 0 ? C.green : C.red }}>{c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(c.net))}</b><br />
-      {c.insiders} insider{c.insiders === 1 ? '' : 's'} · largest {fmtBig(c.largest)}<br />
-      {c.aggNames && <span style={{ display: 'block', color: C.dim, marginTop: 2 }}>{c.aggNames.slice(0, 8).join(', ')}{c.aggNames.length > 8 ? ` +${c.aggNames.length - 8} more` : ''}</span>}
-      {c.foldedNames && <span style={{ display: 'block', color: C.dim, marginTop: 2 }}>+ {c.foldedNames.length} smaller name{c.foldedNames.length === 1 ? '' : 's'} ({fmtBig(c.foldedValue)}): {c.foldedNames.slice(0, 6).join(', ')}{c.foldedNames.length > 6 ? '…' : ''}</span>}
-      <span style={{ color: C.dim }}>Past {String(windowLabel || '').toUpperCase()}</span>
+    // Presentation matched to the Institutions heatmap card: same width, padding, radius, shadow and
+    // label/value row rhythm. The FIELDS are unchanged — this card still reports purchases, sales,
+    // net, insider count and largest trade, because that is what an insider tile means.
+    <div ref={box} style={{ position: 'fixed', left: pos ? pos.left : 0, top: pos ? pos.top : 0, visibility: pos ? 'visible' : 'hidden', zIndex: 2147483000, width: 264, fontFamily: "'DM Sans',sans-serif", background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '10px 12px', borderRadius: 8, boxShadow: '0 10px 30px rgba(0,0,0,0.22)', pointerEvents: 'none' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 2 }}>
+        <span className="cp-tkr" style={{ fontSize: 14, fontWeight: 700, color: C.green }}>{c.ticker}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, marginLeft: 'auto', color: c.net >= 0 ? C.green : C.red }}>
+          {c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(c.net))}
+        </span>
+      </div>
+      <div style={{ color: C.muted, fontSize: 10.5, marginBottom: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {c.company || c.ticker} {'·'} {c.sector}
+      </div>
+      {[['Purchases', fmtBig(c.buys), C.green],
+        ['Sales', fmtBig(c.sells), C.red],
+        ['Insiders', String(c.insiders), C.ink],
+        ['Largest trade', fmtBig(c.largest), C.ink]].map(([k, v, col]) => (
+        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+          <span style={{ color: C.dim }}>{k}</span>
+          <span className="cp-num" style={{ fontWeight: 600, color: col }}>{v}</span>
+        </div>
+      ))}
+      {c.aggNames && <span style={{ display: 'block', color: C.dim, marginTop: 5 }}>{c.aggNames.slice(0, 8).join(', ')}{c.aggNames.length > 8 ? ` +${c.aggNames.length - 8} more` : ''}</span>}
+      {c.foldedNames && <span style={{ display: 'block', color: C.dim, marginTop: 5 }}>+ {c.foldedNames.length} smaller name{c.foldedNames.length === 1 ? '' : 's'} ({fmtBig(c.foldedValue)}): {c.foldedNames.slice(0, 6).join(', ')}{c.foldedNames.length > 6 ? '…' : ''}</span>}
+      <div style={{ color: C.dim, marginTop: 5, fontSize: 10 }}>Past {String(windowLabel || '').toUpperCase()}</div>
     </div>,
     document.body,
   );
@@ -496,40 +511,51 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
   }, [cells, size, mode]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setHover(null); }, [list]);   // tiles moved → the hovered rect is stale
   return (
-    <div style={{ marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
-          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', whiteSpace: 'nowrap' }}>INSIDER ACTIVITY HEATMAP</span>
+    // Card shell, header bar and board styling matched to the Institutions heatmap. The controls,
+    // the legend, the colour meaning and every value below are unchanged.
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px',
+        borderBottom: `1px solid ${C.border}`, background: C.surface, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Insider Activity</span>
+        <span style={{ fontSize: 10.5, color: C.muted }}>
+          past {String(window || '').toUpperCase()} {'·'} size = dollar value {'·'} colour = {mode === 'net' ? 'net buying or selling' : mode === 'buys' ? 'purchases' : 'sales'}
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <HeatmapLegend />
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ display: 'inline-flex', gap: 4 }}>
+          <span style={{ display: 'inline-flex', gap: 4 }}>
             {[['net', 'Net'], ['buys', 'Buys'], ['sells', 'Sells']].map(([k, l]) => (
               <button key={k} onClick={() => onMode(k)} style={{ fontSize: 11, fontWeight: 600, padding: '5px 10px', borderRadius: 5, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", border: `1px solid ${mode === k ? C.green : C.border}`, background: mode === k ? C.green : C.white, color: mode === k ? '#fff' : C.muted }}>{l}</button>
             ))}
-          </div>
+          </span>
           <WindowToggle value={window} onChange={onWindow} />
-        </div>
+        </span>
       </div>
       <div ref={wrap} onMouseLeave={() => setHover(null)}
-        style={{ position: 'relative', width: '100%', height: 460, borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}`, background: C.bg }}>
+        style={{ position: 'relative', width: '100%', height: 460, overflow: 'hidden', background: C.surface }}>
         {cells.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No insider activity in this window.</div>}
         {list.map((t, i) => {
           if (t.kind === 'sector') return (
-            <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, boxSizing: 'border-box', overflow: 'hidden', pointerEvents: 'none' }}>
-              <div className="cp-sec-hd" style={{ height: HEADER, lineHeight: `${HEADER}px`, fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', padding: '0 5px', whiteSpace: 'nowrap', overflow: 'hidden' }}>{t.name}</div>
+            // Sector strip matched to the Institutions map: a solid brand-green bar in BOTH themes,
+            // replacing the light-mode-only .cp-sec-hd treatment.
+            <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: 'transparent', boxSizing: 'border-box', overflow: 'hidden', pointerEvents: 'none' }}>
+              <div style={{ height: HEADER, lineHeight: `${HEADER}px`, background: C.green, color: '#fff', fontSize: 9, fontWeight: 700, letterSpacing: '0.4px', textTransform: 'uppercase', padding: '0 5px', whiteSpace: 'nowrap', overflow: 'hidden', fontFamily: "'DM Sans',sans-serif" }}>{t.name}</div>
             </div>
           );
           const bg = insiderTileColor(t, mode, max);
           const ink = tileInk(bg);                                  // white on deep shades, near-black on pale
           return (
             <button key={`t${i}`} onClick={() => { if (!t.aggNames) onPick(t.ticker); }} onMouseEnter={(e) => setHover({ c: t, el: e.currentTarget })}
-              style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: bg, border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: t.aggNames ? 'default' : 'pointer', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
+              style={{ position: 'absolute', left: t.x, top: t.y, width: Math.max(0, t.w - 1), height: Math.max(0, t.h - 1), background: bg, border: 'none', boxSizing: 'border-box', cursor: t.aggNames ? 'default' : 'pointer', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
               {fitsTicker(t) && <span className="cp-tkr" style={{ fontSize: tkSize(t), fontWeight: 700, whiteSpace: 'nowrap', textShadow: ink === '#FFFFFF' ? '0 1px 2px rgba(0,0,0,0.3)' : 'none' }}>{t.ticker}</span>}
               {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(t.displayValue != null ? t.displayValue : t.value)}</span>}
             </button>
           );
         })}
+      </div>
+      {/* Footer strip, matching the Institutions card. States what the map is built from. */}
+      <div style={{ padding: '8px 13px', fontSize: 10, color: C.dim, lineHeight: 1.55, borderTop: `1px solid ${C.border}` }}>
+        Open-market insider transactions reported on SEC Form 4 over the past {String(window || '').toUpperCase()}.
+        Tile size is the dollar value of activity; colour is {mode === 'net' ? 'net buying against selling' : mode === 'buys' ? 'purchase value' : 'sale value'}.
       </div>
       <HeatmapTooltip hover={hover} windowLabel={window} container={wrap} />
     </div>
