@@ -213,7 +213,7 @@ function insiderTileColor(c, mode, max) {
 // Heatmap hover card. Rendered through a portal to <body> at FIXED viewport coordinates so the treemap
 // wrapper's overflow:hidden (it needs that for the rounded corners + tile clipping) can never cut the card
 // off, and flipped above/below — and shifted horizontally — to whichever side actually has room.
-function HeatmapTooltip({ hover, windowLabel }) {
+function HeatmapTooltip({ hover, windowLabel, container }) {
   const box = useRef(null);
   const [pos, setPos] = useState(null);
 
@@ -227,12 +227,14 @@ function HeatmapTooltip({ hover, windowLabel }) {
       const vw = document.documentElement.clientWidth;
       const vh = document.documentElement.clientHeight;
       const r = tile.getBoundingClientRect();
+      const cr = container?.current?.getBoundingClientRect?.();
+      const ceiling = Math.max(EDGE, cr ? cr.top : EDGE);         // never drift up over Market Pulse
       const above = r.top - GAP - th;                            // top if placed ABOVE the tile
       const below = r.bottom + GAP;                              // top if placed BELOW the tile
       let top;
-      if (above >= EDGE) top = above;                            // prefer above (as before)
-      else if (below + th <= vh - EDGE) top = below;             // no room above → flip below
-      else top = (vh - r.bottom) > r.top ? below : above;        // neither fits → the roomier side
+      if (above >= ceiling) top = above;                         // clearly room above, inside the heatmap
+      else if (below + th <= vh - EDGE) top = below;             // top-row tiles → open downward
+      else top = (vh - r.bottom) > (r.top - ceiling) ? below : above;   // neither fits → roomier side
       top = Math.max(EDGE, Math.min(top, vh - th - EDGE));       // never past the top/bottom edge
       let left = r.left + r.width / 2 - tw / 2;                  // centred on the tile…
       left = Math.max(EDGE, Math.min(left, vw - tw - EDGE));     // …then shifted in at either side
@@ -247,7 +249,7 @@ function HeatmapTooltip({ hover, windowLabel }) {
   if (!hover || typeof document === 'undefined') return null;
   const c = hover.c;
   return createPortal(
-    <div ref={box} style={{ position: 'fixed', left: pos ? pos.left : 0, top: pos ? pos.top : 0, visibility: pos ? 'visible' : 'hidden', zIndex: 2147483000, width: 222, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 10px 28px rgba(0,0,0,0.2)', pointerEvents: 'none' }}>
+    <div ref={box} style={{ position: 'fixed', left: pos ? pos.left : 0, top: pos ? pos.top : 0, visibility: pos ? 'visible' : 'hidden', zIndex: 2147483000, width: 222, fontFamily: "'DM Sans',sans-serif", background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 10px 28px rgba(0,0,0,0.2)', pointerEvents: 'none' }}>
       <b>{c.ticker}</b> · {c.sector}<br />
       <span style={{ color: C.muted }}>{c.company || '—'}</span><br />
       Purchases: <b style={{ color: C.green }}>{fmtBig(c.buys)}</b><br />
@@ -317,7 +319,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
             </button>
           ))}
       </div>
-      <HeatmapTooltip hover={hover} windowLabel={window} />
+      <HeatmapTooltip hover={hover} windowLabel={window} container={wrap} />
     </div>
   );
 }
