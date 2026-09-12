@@ -77,6 +77,9 @@ export const QUARANTINE_REASONS = {
   NO_TICKER: 'NO_TICKER',
 };
 
+// Values filers use to mean "this issuer has no trading symbol". Not tickers.
+const PLACEHOLDER_SYMBOLS = new Set(['N/A', 'NA', 'NONE', 'NULL', '-', '--', '', 'N.A.']);
+
 // SEC Form 4 Table I/II transaction codes. Anything outside this set is quarantined
 // rather than guessed at — an unrecognised code means our understanding is stale.
 const KNOWN_CODES = new Set(['P', 'S', 'A', 'D', 'F', 'I', 'M', 'C', 'E', 'H', 'O', 'X', 'G', 'L', 'W', 'Z', 'J', 'K', 'U', 'V']);
@@ -150,7 +153,11 @@ export function parseForm4(xml, filing) {
   if (documentType !== '4' && documentType !== '4/A') return out;
   const isAmendment = documentType === '4/A';
 
-  const ticker = extractText(xml, 'issuerTradingSymbol')?.toUpperCase();
+  // Non-listed filers (funds, operating partnerships) file Form 4 with a placeholder
+  // symbol. Treating those as a real ticker put 835 rows worth $29.8B under a literal
+  // "N/A" ticker in production, which flowed straight into heatmap and pulse totals.
+  const rawSymbol = extractText(xml, 'issuerTradingSymbol')?.toUpperCase().trim();
+  const ticker = PLACEHOLDER_SYMBOLS.has(rawSymbol) ? null : rawSymbol;
   const company = decodeEntities(extractText(xml, 'issuerName'));
   const issuerCik = extractText(xml, 'issuerCik')?.replace(/^0+/, '') || null;
   const ownerCik = extractText(xml, 'rptOwnerCik')?.replace(/^0+/, '') || null;

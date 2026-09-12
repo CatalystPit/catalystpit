@@ -127,6 +127,7 @@ const toTuple = (r) => [
   r.isTenPctOwner, r.isOtherRelation,
 ];
 
+let enriched = 0;
 async function insertRows(rows) {
   if (!rows.length) return 0;
   if (DRY) return rows.length;   // report what WOULD be written
@@ -141,13 +142,36 @@ async function insertRows(rows) {
       params.push(...t);
       return `(${t.map((_, j) => `$${base + j + 1}`).join(',')})`;
     }).join(',');
-    // Idempotent: uq_insider_txn already covers (accession, txn date, code, security,
-    // shares, price, owned-after), so replaying a day inserts nothing new.
+    // Idempotent on the trade itself, but NOT a no-op: the 145k rows ingested before
+    // this migration have NULL issuer_cik/owner_cik, and every historical-context query
+    // keys on CIK — DO NOTHING would leave them permanently invisible. So a conflict
+    // ENRICHES the existing row with the provenance we previously dropped, while never
+    // touching the original trade economics (shares, price, value, dates, code).
+    // COALESCE keeps whatever is already there if SEC now returns null.
     const res = await sql.query(
       `INSERT INTO insider_trades (${COLS.join(',')}) VALUES ${values}
-       ON CONFLICT DO NOTHING RETURNING 1`, params,
+       ON CONFLICT (accession, transaction_date, transaction_code, security_title, shares, price_per_share, shares_owned_after)
+       DO UPDATE SET
+         issuer_cik        = COALESCE(insider_trades.issuer_cik,        EXCLUDED.issuer_cik),
+         owner_cik         = COALESCE(insider_trades.owner_cik,         EXCLUDED.owner_cik),
+         period_of_report  = COALESCE(insider_trades.period_of_report,  EXCLUDED.period_of_report),
+         form_type         = COALESCE(insider_trades.form_type,         EXCLUDED.form_type),
+         is_amendment      = insider_trades.is_amendment OR EXCLUDED.is_amendment,
+         amends_accession  = COALESCE(insider_trades.amends_accession,  EXCLUDED.amends_accession),
+         acquired_disposed = COALESCE(insider_trades.acquired_disposed, EXCLUDED.acquired_disposed),
+         ownership_type    = COALESCE(insider_trades.ownership_type,    EXCLUDED.ownership_type),
+         ownership_nature  = COALESCE(insider_trades.ownership_nature,  EXCLUDED.ownership_nature),
+         is_derivative     = insider_trades.is_derivative OR EXCLUDED.is_derivative,
+         is_officer        = COALESCE(insider_trades.is_officer,        EXCLUDED.is_officer),
+         is_director       = COALESCE(insider_trades.is_director,       EXCLUDED.is_director),
+         is_ten_pct_owner  = COALESCE(insider_trades.is_ten_pct_owner,  EXCLUDED.is_ten_pct_owner),
+         is_other_relation = COALESCE(insider_trades.is_other_relation, EXCLUDED.is_other_relation),
+         rule_10b5_1       = COALESCE(insider_trades.rule_10b5_1,       EXCLUDED.rule_10b5_1),
+         footnotes         = COALESCE(insider_trades.footnotes,         EXCLUDED.footnotes)
+       RETURNING (xmax = 0) AS inserted`, params,
     );
-    written += res.length;
+    written += res.filter((r) => r.inserted).length;
+    enriched += res.length - res.filter((r) => r.inserted).length;
   }
   return written;
 }
@@ -265,7 +289,7 @@ async function applyAmendments(amendments) {
   }
 
   console.log(`\n[backfill] days ${daysDone}  filings seen ${tally.filingsSeen}  parsed ${tally.filingsParsed}`);
-  console.log(`[backfill] rows written ${tally.rowsWritten}  quarantined ${tally.rowsQuarantined}  skipped-by-code ${skippedByCode}`);
+  console.log(`[backfill] rows written ${tally.rowsWritten}  enriched-existing ${enriched}  quarantined ${tally.rowsQuarantined}  skipped-by-code ${skippedByCode}`);
   console.log(`[backfill] amendments ${amendmentsSeen}  originals marked superseded ${superseded}`);
   console.log(`[backfill] elapsed ${((Date.now() - t0) / 60000).toFixed(1)} min`);
 })();
