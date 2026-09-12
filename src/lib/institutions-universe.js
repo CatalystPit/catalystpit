@@ -226,8 +226,13 @@ async function amendmentInfo(cik, accession) {
 // A single filing needs no cover-page fetch, which is the overwhelming majority of quarters.
 async function resolveQuarter(cik, list) {
   if (list.length === 1) return { base: list[0], additive: [] };
+  // Only an amendment can BE additive, and the form type already tells us which filings are
+  // amendments. Fetching the cover page for originals too cost ~26 extra seconds per filer and
+  // dropped the backfill from ~126 filers an hour to under 13. A 13F-HR is a restatement by
+  // definition, so it needs no cover-page lookup.
   const marked = [];
   for (const f of list) {
+    if (!f.form.endsWith('/A')) { marked.push({ ...f, isAmendment: false, amendmentType: null }); continue; }
     marked.push({ ...f, ...(await amendmentInfo(cik, f.accession)) });
     await sleep(80);
   }
@@ -414,23 +419,31 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
 
   let ingestedNow = 0, storedNow = 0, failedNow = 0;
   const errorsSample = [];
-  for (const f of todo) {
-    if (Date.now() - t0 > timeBudgetMs) break;
-    // Per-filer isolation: a single filer's failure (e.g. a concurrent-run duplicate-key
-    // race that ON CONFLICT DO NOTHING can't swallow across uncommitted transactions, or
-    // a transient DB error) must NOT abort the whole run. Skip it; it's retried next run
-    // (ingestion is idempotent). Surface e.cause so the real Postgres reason is visible.
-    try {
-      const res = await ingestFiler(f.cik, cutoff);
-      if (res.stored) { ingestedNow++; storedNow += res.stored; }
-    } catch (e) {
-      failedNow++;
-      const error = `${e?.message || e}`.slice(0, 180);
-      const cause = `${e?.cause?.message || ''}`.slice(0, 180);
-      console.log(`[institutions-universe] filer ${f.cik} failed: ${error} | cause: ${cause}`);
-      if (errorsSample.length < 5) errorsSample.push({ cik: f.cik, error, cause });
+  // Filers run CONCURRENTLY. One filer is mostly waiting on SEC: a submissions fetch, then an index
+  // and an information table per quarter, each with a politeness sleep. Sequentially that spent a run
+  // at roughly 0.3 requests per second against a 10/s allowance, which is why a pass moved ~8 filers.
+  // A small pool keeps us well inside SEC's limit while using the budget properly. Per-filer error
+  // isolation is unchanged: one failure is skipped and retried next run, never aborting the pass.
+  const POOL = Number(process.env.INSTITUTIONS_POOL || 5);
+  const queue = [...todo];
+  const worker = async () => {
+    for (;;) {
+      if (Date.now() - t0 > timeBudgetMs) return;
+      const f = queue.shift();
+      if (!f) return;
+      try {
+        const res = await ingestFiler(f.cik, cutoff);
+        if (res.stored) { ingestedNow++; storedNow += res.stored; }
+      } catch (e) {
+        failedNow++;
+        const error = `${e?.message || e}`.slice(0, 180);
+        const cause = `${e?.cause?.message || ''}`.slice(0, 180);
+        console.log(`[institutions-universe] filer ${f.cik} failed: ${error} | cause: ${cause}`);
+        if (errorsSample.length < 5) errorsSample.push({ cik: f.cik, error, cause });
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, POOL) }, worker));
   let tick = { resolved: 0 }, named = { resolved: 0 };
   try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
   catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
