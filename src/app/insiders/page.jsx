@@ -198,27 +198,47 @@ function MarketPulse({ data, window, onWindow }) {
   );
 }
 
-// Insider tile color — keyed on insider open-market $ (green = buying, red = selling), intensity by
-// magnitude vs the window max. Two INDEPENDENT hue-anchored ramps: the old version ran both directions
-// off one shared neutral base, so weak selling landed on rgb(76,73,61) — R≈G≈B, i.e. mud. Each ramp now
-// starts dark but unmistakably in its own hue, so direction reads at every intensity.
-const RAMP_GREEN = [[34, 68, 50], [16, 170, 86]];   // soft dark green → vivid green (buying)
-const RAMP_RED   = [[74, 38, 40], [210, 44, 38]];   // soft dark red   → vivid red   (selling)
-const FLAT_GRAY  = 'rgb(46,52,50)';                 // net ≈ 0: buying and selling cancel, no direction
-const rampAt = ([lo, hi], t) => `rgb(${Math.round(lo[0] + (hi[0] - lo[0]) * t)},${Math.round(lo[1] + (hi[1] - lo[1]) * t)},${Math.round(lo[2] + (hi[2] - lo[2]) * t)})`;
+// Insider tile color. Direction picks the hue family and never leaves it; MAGNITUDE drives lightness,
+// pale → deep, so a huge sale reads as dark red and a small one as pink (same idea in green for buys).
+// Four stops per family rather than two, so "light / normal / deep" are distinct bands, not one blur.
+const RAMP_GREEN = [[221, 244, 226], [138, 212, 158], [45, 152, 82], [14, 82, 44]];   // pale → deep
+const RAMP_RED   = [[252, 216, 216], [244, 150, 150], [212, 66, 66], [124, 20, 24]];  // pale → deep
+
+const rampAt = (stops, t) => {
+  const segs = stops.length - 1;
+  const i = Math.min(segs - 1, Math.max(0, Math.floor(t * segs)));
+  const f = Math.max(0, Math.min(1, t * segs - i));
+  const a = stops[i], b = stops[i + 1];
+  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * f)},${Math.round(a[1] + (b[1] - a[1]) * f)},${Math.round(a[2] + (b[2] - a[2]) * f)})`;
+};
+
+// Share of the window/mode max, log-compressed. Insider $ is heavily outlier-driven — one nine-figure
+// filing sets `max` and a linear (or even sqrt) ramp then crushes every other tile into the pale end.
+// log1p spreads the small and mid filings across the ramp instead: 5% of max lands ~39% along it.
+const LOG_K = 99;
+const intensity = (mag, max) => {
+  const x = max > 0 ? Math.max(0, Math.min(1, mag / max)) : 0;
+  return Math.log1p(LOG_K * x) / Math.log1p(LOG_K);
+};
 
 function insiderTileColor(c, mode, max) {
   let dir, mag;
-  if (mode === 'buys') { dir = 1; mag = c.buys; }            // Buys view → green shades only
-  else if (mode === 'sells') { dir = -1; mag = c.sells; }    // Sells view → red shades only
-  else {
-    dir = c.net >= 0 ? 1 : -1; mag = Math.abs(c.net);        // Net view → never crosses the hue divide
-    const gross = (c.buys || 0) + (c.sells || 0);
-    if (gross > 0 && mag / gross < 0.06) return FLAT_GRAY;   // near-zero net reads neutral, not faint red
-  }
-  const t = Math.sqrt(Math.max(0.1, Math.min(1, max > 0 ? mag / max : 0)));  // eased: mid-size tiles keep colour
-  return rampAt(dir >= 0 ? RAMP_GREEN : RAMP_RED, t);
+  if (mode === 'buys') { dir = 1; mag = c.buys; }            // Buys view → green family only
+  else if (mode === 'sells') { dir = -1; mag = c.sells; }    // Sells view → red family only
+  else { dir = c.net >= 0 ? 1 : -1; mag = Math.abs(c.net); } // Net view → never crosses the hue divide
+  return rampAt(dir >= 0 ? RAMP_GREEN : RAMP_RED, intensity(mag, max));
 }
+
+// Tiles carry semantic colour in both themes, so a fixed white label stops working once the pale end of
+// the ramp exists. Pick whichever ink actually contrasts better: sRGB relative luminance, flipping at the
+// point where white-on-tile and ink-on-tile are equal (L ≈ 0.207). A brightness eyeball instead of this
+// left white text on mid-green at 2.6:1.
+const TILE_INK_DARK = '#14201C';
+const srgbL = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+const tileInk = (rgb) => {
+  const [r, g, b] = rgb.match(/\d+/g).map(Number);
+  return (0.2126 * srgbL(r) + 0.7152 * srgbL(g) + 0.0722 * srgbL(b)) > 0.207 ? TILE_INK_DARK : '#FFFFFF';
+};
 
 // Heatmap hover card. Rendered through a portal to <body> at FIXED viewport coordinates so the treemap
 // wrapper's overflow:hidden (it needs that for the rounded corners + tile clipping) can never cut the card
@@ -330,15 +350,18 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
       <div ref={wrap} onMouseLeave={() => setHover(null)}
         style={{ position: 'relative', width: '100%', height: 460, borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}`, background: C.bg }}>
         {cells.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No insider activity in this window.</div>}
-        {list.map((t, i) => t.kind === 'sector'
-          ? <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: 13, overflow: 'hidden', fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.dim, textTransform: 'uppercase', padding: '2px 4px', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{t.name}</div>
-          : (
+        {list.map((t, i) => {
+          if (t.kind === 'sector') return <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: 13, overflow: 'hidden', fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.dim, textTransform: 'uppercase', padding: '2px 4px', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{t.name}</div>;
+          const bg = insiderTileColor(t, mode, max);
+          const ink = tileInk(bg);                                  // white on deep shades, near-black on pale
+          return (
             <button key={`t${i}`} onClick={() => onPick(t.ticker)} onMouseEnter={(e) => setHover({ c: t, el: e.currentTarget })}
-              style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: insiderTileColor(t, mode, max), border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: 'pointer', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
-              {fitsTicker(t) && <span className="cp-tkr" style={{ fontSize: tkSize(t), fontWeight: 700, whiteSpace: 'nowrap', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>{t.ticker}</span>}
+              style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: bg, border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: 'pointer', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
+              {fitsTicker(t) && <span className="cp-tkr" style={{ fontSize: tkSize(t), fontWeight: 700, whiteSpace: 'nowrap', textShadow: ink === '#FFFFFF' ? '0 1px 2px rgba(0,0,0,0.3)' : 'none' }}>{t.ticker}</span>}
               {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(val(t))}</span>}
             </button>
-          ))}
+          );
+        })}
       </div>
       <HeatmapTooltip hover={hover} windowLabel={window} container={wrap} />
     </div>
