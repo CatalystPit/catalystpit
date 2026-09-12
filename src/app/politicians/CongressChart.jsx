@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { C } from '../../lib/cp-shared';
+import { C, useTheme } from '../../lib/cp-shared';
 import { partyStyle, chamberLabel, fmtDate } from './ui';
 import { formatDisclosureDelay, formatDisclosedAmount, formatSeat, tradeDirection } from '../../lib/disclosure';
 
@@ -13,6 +13,28 @@ import { formatDisclosureDelay, formatDisclosedAmount, formatSeat, tradeDirectio
 // timeKey to trades map so a hover can resolve which disclosures sit under a marker.
 
 const RANGES = ['1M', '3M', '6M', '1Y', '3Y'];
+const CHART_HEIGHT = 460;   // a primary focal point of this section, not a strip
+
+// lightweight-charts draws to a CANVAS, which cannot resolve CSS variables. Passing C.muted
+// hands it the literal string "var(--cp-muted,#5A6458)", so axis text and grid lines fall back to
+// a default that is wrong against the dark theme. These read the computed value instead, and are
+// re-read whenever the theme flips.
+function themeColors() {
+  const fallback = { text: '#5A6458', grid: 'rgba(0,0,0,0.06)', bg: '#FFFFFF', line: '#1E5C38', fill: 'rgba(30,92,56,0.18)' };
+  if (typeof window === 'undefined') return fallback;
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name, f) => (cs.getPropertyValue(name) || '').trim() || f;
+  const dark = document.documentElement.dataset.theme === 'dark';
+  return {
+    text: v('--cp-muted', fallback.text),
+    grid: dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)',
+    // Solid, never transparent: a see-through canvas lets whatever sits behind it bleed into the
+    // plot area, which is how the green header appeared to cut through the chart in dark mode.
+    bg: v('--cp-white', fallback.bg),
+    line: dark ? '#4FB37C' : v('--cp-green', fallback.line),
+    fill: dark ? 'rgba(79,179,124,0.16)' : 'rgba(30,92,56,0.18)',
+  };
+}
 const DEFAULT_RANGE = '6M';
 const GREEN = '#1E5C38', RED = '#A83030', NEUTRAL = '#7A7F86';
 
@@ -117,6 +139,7 @@ function TradeCard({ trades, onClose, pinned }) {
 }
 
 export default function CongressChart({ ticker, onSelectTicker }) {
+  const theme = useTheme();
   const [range, setRange] = useState(DEFAULT_RANGE);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -146,17 +169,18 @@ export default function CongressChart({ ticker, onSelectTicker }) {
       const lwc = await import('lightweight-charts');
       if (disposed || !wrapRef.current || chartRef.current) return;
       lwcRef.current = lwc;
+      const tc = themeColors();
       const chart = lwc.createChart(wrapRef.current, {
         autoSize: true,
-        layout: { background: { type: lwc.ColorType.Solid, color: 'transparent' }, textColor: C.muted, fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
-        grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(0,0,0,0.04)' } },
+        layout: { background: { type: lwc.ColorType.Solid, color: tc.bg }, textColor: tc.text, fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
+        grid: { vertLines: { visible: false }, horzLines: { color: tc.grid } },
         rightPriceScale: { borderVisible: false },
         timeScale: { borderVisible: false },
         crosshair: { mode: lwc.CrosshairMode.Magnet, vertLine: { color: 'rgba(0,0,0,0.12)', width: 1 }, horzLine: { visible: false } },
       });
       chartRef.current = chart;
       seriesRef.current = chart.addSeries(lwc.AreaSeries, {
-        lineColor: C.green, topColor: 'rgba(30, 92, 56, 0.18)', bottomColor: 'rgba(30, 92, 56, 0)',
+        lineColor: tc.line, topColor: tc.fill, bottomColor: 'rgba(0,0,0,0)',
         lineWidth: 2, priceLineVisible: false,
       });
       chart.subscribeCrosshairMove((p) => {
@@ -175,6 +199,20 @@ export default function CongressChart({ ticker, onSelectTicker }) {
       if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; seriesRef.current = null; markersRef.current = null; }
     };
   }, []);
+
+  // The chart is created once, so a theme flip has to be pushed into it. Without this the axis
+  // text and plot background keep the colours captured at mount and the chart stays light after
+  // switching to dark.
+  useEffect(() => {
+    const chart = chartRef.current, s2 = seriesRef.current;
+    if (!chart || !s2) return;
+    const tc = themeColors();
+    chart.applyOptions({
+      layout: { background: { type: 'solid', color: tc.bg }, textColor: tc.text },
+      grid: { vertLines: { visible: false }, horzLines: { color: tc.grid } },
+    });
+    s2.applyOptions({ lineColor: tc.line, topColor: tc.fill, bottomColor: 'rgba(0,0,0,0)' });
+  }, [theme, data]);
 
   // Push data + markers whenever the payload changes.
   useEffect(() => {
@@ -223,7 +261,7 @@ export default function CongressChart({ ticker, onSelectTicker }) {
         </span>
       </div>
 
-      <div style={{ position: 'relative', height: 340 }} onClick={() => { if (pinned) setPinned(null); }}>
+      <div style={{ position: 'relative', height: CHART_HEIGHT }} onClick={() => { if (pinned) setPinned(null); }}>
         <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }} />
         {!ticker && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
