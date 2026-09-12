@@ -1,5 +1,5 @@
 import { db } from '../../../lib/db';
-import { congressTrades, tickerDailyCandles } from '../../../lib/schema';
+import { congressTrades, tickerDailyCandles, tickerPriceQuality } from '../../../lib/schema';
 import { and, eq, gte, lte, sql, asc } from 'drizzle-orm';
 import {
   resolveRange, startDateFor, isoDate, fetchPolygonDaily, spanToFetch, DEFAULT_RANGE, RANGES,
@@ -39,8 +39,20 @@ export async function GET(request) {
     const range = resolved.range;
 
     const now = new Date();
-    const startDate = startDateFor(range, now);
+    const requestedStart = startDateFor(range, now);
     const endDate = isoDate(now);
+
+    // A charted line must describe ONE security. Where the history breaks (a symbol retired and
+    // reassigned, a reverse split applied to only part of the series) the window starts at the
+    // break instead, so the chart shows the current segment rather than two companies spliced
+    // together with a cliff between them. Nothing is smoothed or adjusted, only excluded.
+    const [pq] = await db
+      .select({ usable: tickerPriceQuality.usable, reason: tickerPriceQuality.reason, lastBreak: tickerPriceQuality.lastBreak })
+      .from(tickerPriceQuality)
+      .where(eq(tickerPriceQuality.ticker, ticker));
+    const lastBreak = pq?.lastBreak ? String(pq.lastBreak).slice(0, 10) : null;
+    const seriesTrimmed = !!(lastBreak && lastBreak > requestedStart);
+    const startDate = seriesTrimmed ? lastBreak : requestedStart;
 
     // What do we already hold for this ticker?
     const [cov] = await db
@@ -121,6 +133,12 @@ export async function GET(request) {
     return Response.json({
       ticker, range, startDate, endDate,
       rangeClamped: resolved.clamped,   // lets the UI say the window was capped at 3 years
+      // Set when the window was cut short at a break in the price history, so the UI can say why
+      // the line starts later than the range asked for.
+      seriesTrimmed,
+      seriesBreak: seriesTrimmed ? lastBreak : null,
+      priceUsable: pq ? pq.usable !== false : true,
+      priceReason: pq?.reason || null,
       candles, trades,
       counts: {
         candles: candles.length,

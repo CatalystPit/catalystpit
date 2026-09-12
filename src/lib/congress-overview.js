@@ -10,9 +10,10 @@
 // Every window is bounded by the 3-year cap from lib/congress-chart.mjs.
 
 import { db } from './db';
-import { congressTrades, congressTickerPrices } from './schema';
+import { congressTrades, congressTickerPrices, tickerPriceQuality } from './schema';
 import { and, eq, sql, desc } from 'drizzle-orm';
 import { MAX_HISTORY_DAYS } from './congress-chart.mjs';
+import { returnBlocked, BLOCK_COPY } from './price-continuity.mjs';
 
 export const LB_WINDOWS = { '30d': '30 days', '3m': '3 months', '6m': '6 months', '1y': '1 year', '2y': '2 years', '3y': '3 years' };
 export const LB_WEIGHT_CAP = 0.30;   // no single position counts for more than 30% of a member's weight
@@ -57,9 +58,13 @@ export async function leaderboardView({ chamber, party, min = LB_MIN_TRADES, win
     amt: congressTrades.amountMid, pat: congressTrades.priceAtTrade, cur: congressTickerPrices.currentPrice,
     assetType: congressTrades.assetType, optPat: congressTrades.optionPriceAtTrade, optCur: congressTrades.optionCurrentPrice,
     date: congressTrades.transactionDate,
+    patDate: congressTrades.priceAtTradeDate,
+    priceUsable: tickerPriceQuality.usable, priceReason: tickerPriceQuality.reason,
+    priceLastBreak: tickerPriceQuality.lastBreak,
   })
     .from(congressTrades)
     .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
+    .leftJoin(tickerPriceQuality, eq(tickerPriceQuality.ticker, congressTrades.ticker))
     .where(and(...conds));
 
   const byMember = new Map();
@@ -71,8 +76,12 @@ export async function leaderboardView({ chamber, party, min = LB_MIN_TRADES, win
       const p0 = Number(r.optPat), p1 = Number(r.optCur);
       if (p0 > 0 && p1 > 0) ret = (p1 - p0) / p0;
     } else {
+      // A stock whose price history breaks between the anchor and today is skipped the same way an
+      // unpriceable one is: dropped from the member's sample, never assumed flat and never counted
+      // with a return computed across the break. LAZR alone would otherwise contribute +23,169%.
+      const broken = returnBlocked({ usable: r.priceUsable, reason: r.priceReason, lastBreak: r.priceLastBreak }, r.patDate || r.date);
       const p0 = Number(r.pat), p1 = Number(r.cur);
-      if (p0 > 0 && p1 > 0) ret = (p1 - p0) / p0;
+      if (!broken && p0 > 0 && p1 > 0) ret = (p1 - p0) / p0;
     }
     if (ret == null) continue;
     pricedCount++;
@@ -214,7 +223,13 @@ export async function bestThirtyDayRecord({ min = LB_MIN_TRADES, days = 30 } = {
       SELECT b.member_slug, b.representative, b.party, b.state, b.chamber, b.amount_mid,
              (p.now_px - p.then_px) / NULLIF(p.then_px, 0) AS move
       FROM buys b JOIN px p ON p.ticker = b.ticker
+      LEFT JOIN ticker_price_quality q ON q.ticker = b.ticker
       WHERE p.then_px > 0 AND p.now_px > 0
+        -- Both ends of this move must describe the same security. A break inside the 30-day window
+        -- (a reused symbol, an unadjusted reverse split) would be read as performance, so the
+        -- position is dropped from the member's sample rather than measured across it.
+        AND COALESCE(q.usable, true) = true
+        AND (q.last_break IS NULL OR q.last_break <= CURRENT_DATE - ${sql.raw(String(days))})
     ),
     tot AS (SELECT member_slug, sum(amount_mid) total, count(*) n FROM joined GROUP BY 1),
     w AS (
@@ -244,6 +259,10 @@ export async function bestThirtyDayRecord({ min = LB_MIN_TRADES, days = 30 } = {
 // ─── Trade shaping ──────────────────────────────────────────────────────────
 // Moved here from the politicians route so every surface that renders a congressional trade
 // derives option type, strike, expiry, contracts and share counts the same way.
+// Every query selecting tradeCols must add this join, or the continuity columns come back
+// undefined and the guard silently passes. Exported as one value so it cannot drift per caller.
+export const priceQualityJoin = (q) => q.leftJoin(tickerPriceQuality, eq(tickerPriceQuality.ticker, congressTrades.ticker));
+
 export const computeReturn = (priceAtTrade, currentPrice) =>
   (priceAtTrade != null && currentPrice != null && priceAtTrade > 0)
     ? +(((currentPrice - priceAtTrade) / priceAtTrade) * 100).toFixed(1)
@@ -265,7 +284,13 @@ export const tradeCols = {
   disclosureDate:   congressTrades.disclosureDate,
   filingLagDays:    congressTrades.filingLagDays,
   priceAtTrade:     congressTrades.priceAtTrade,
+  priceAtTradeDate: congressTrades.priceAtTradeDate,   // the bar the return is anchored on
   currentPrice:     congressTickerPrices.currentPrice,
+  // Continuity verdict for the symbol. A return is refused when the series breaks between the
+  // anchor and today; see priceQualityJoin below for the join every caller must add.
+  priceUsable:      tickerPriceQuality.usable,
+  priceReason:      tickerPriceQuality.reason,
+  priceLastBreak:   tickerPriceQuality.lastBreak,
   link:             congressTrades.link,   // original filing PDF (source verification)
   // member fields — needed by ticker view, where rows span members
   slug:             congressTrades.memberSlug,
@@ -296,8 +321,18 @@ export const shapeTrade = (t) => {
   const px = Number(t.priceAtTrade), mid = Number(t.amountMid);
   const estShares = (!optionType && !shares && px > 0 && mid > 0) ? Math.round(mid / px) : null;
   const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
+  // Return Since is refused, not estimated, when the symbol's price history breaks between the
+  // anchor bar and today. Options are priced from the option contract's own series, so a break in
+  // the underlying's history does not apply to them.
+  const blocked = optionType ? null : returnBlocked(
+    { usable: t.priceUsable, reason: t.priceReason, lastBreak: t.priceLastBreak },
+    t.priceAtTradeDate || t.transactionDate,
+  );
   return {
-    ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice),
+    ...t,
+    returnPct: blocked ? null : computeReturn(t.priceAtTrade, t.currentPrice),
+    returnUnavailable: blocked || null,
+    returnNote: blocked ? BLOCK_COPY[blocked] : null,
     optionType, assetName,
     strike: strike ? strike.replace(/,/g, '') : null,
     expiration: expiration || null,

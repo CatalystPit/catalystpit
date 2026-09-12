@@ -48,6 +48,22 @@ export const actionStyle = (a) => {
 export const fmtReturn = (r) => (r == null ? '—' : `${r > 0 ? '+' : ''}${r.toFixed(1)}%`);
 export const returnColor = (r) => (r == null ? C.dim : r > 0 ? C.green : r < 0 ? C.red : C.muted);
 
+// Three distinct states, and collapsing them would mislead. A percentage means we measured it.
+// "—" means we have no price for one end. "Unavailable" means we have both prices but the
+// symbol's history breaks between them, so the percentage would be arithmetic on two different
+// securities: a reused ticker, or a reverse split applied to only part of the series.
+export function ReturnCell({ trade }) {
+  if (trade?.returnUnavailable) {
+    return (
+      <span title={trade.returnNote || 'Return unavailable for this symbol.'}
+        style={{ fontSize: 11, fontWeight: 500, color: C.muted, borderBottom: `1px dotted ${C.dim}`, cursor: 'help' }}>
+        Unavailable
+      </span>
+    );
+  }
+  return <span style={{ color: returnColor(trade?.returnPct) }}>{fmtReturn(trade?.returnPct)}</span>;
+}
+
 export function Chip({ children, bg, fg }) {
   return (
     <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 600, letterSpacing: '0.4px',

@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
-import { congressTrades, congressTickerPrices } from '../../../lib/schema';
+import { congressTrades, congressTickerPrices, tickerPriceQuality } from '../../../lib/schema';
 import { and, eq, gte, lte, or, ilike, sql, desc, asc, inArray } from 'drizzle-orm';
 import { resolveUserTier } from '../../../lib/entitlements';
 import { MAX_HISTORY_DAYS } from '../../../lib/congress-chart.mjs';
@@ -123,7 +123,13 @@ export async function GET(request) {
       comment: congressTrades.comment,
       amountMid: congressTrades.amountMid,
       priceAtTrade: congressTrades.priceAtTrade,
+      priceAtTradeDate: congressTrades.priceAtTradeDate,
       currentPrice: congressTickerPrices.currentPrice,
+      // Continuity verdict for the symbol. shapeTrade refuses Return Since when the price history
+      // breaks between the anchor bar and today, so these three must be selected wherever it runs.
+      priceUsable: tickerPriceQuality.usable,
+      priceReason: tickerPriceQuality.reason,
+      priceLastBreak: tickerPriceQuality.lastBreak,
     };
 
     const [{ n: total }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(congressTrades).where(where);
@@ -140,6 +146,7 @@ export async function GET(request) {
     const skip = loggedIn ? page * pageSize : 0;
     const raw = await db.select(cols).from(congressTrades)
       .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
+      .leftJoin(tickerPriceQuality, eq(tickerPriceQuality.ticker, congressTrades.ticker))
       .where(where).orderBy(...orderBy).limit(take).offset(skip);
     const trades = raw.map(shapeTrade);
 

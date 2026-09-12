@@ -3,7 +3,7 @@ import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, desc, sql, or, ilike } from 'drizzle-orm';
 import { resolveUserTier } from '../../../lib/entitlements';
-import { leaderboardView, photoUrl, LB_WINDOWS, shapeTrade, computeReturn, tradeCols } from '../../../lib/congress-overview';
+import { leaderboardView, photoUrl, LB_WINDOWS, shapeTrade, computeReturn, tradeCols, priceQualityJoin } from '../../../lib/congress-overview';
 
 export const runtime = 'nodejs';
 
@@ -110,9 +110,9 @@ async function detailView(slug, { withTrades = true } = {}) {
 }
 
 async function detailViewFull(slug) {
-  const rows = await db.select(tradeCols)
+  const rows = await priceQualityJoin(db.select(tradeCols)
     .from(congressTrades)
-    .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
+    .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker)))
     .where(eq(congressTrades.memberSlug, slug))
     .orderBy(desc(congressTrades.transactionDate), desc(congressTrades.id))
     .limit(2000);
@@ -138,9 +138,9 @@ async function detailViewFull(slug) {
 
 // TICKER drill-down: every member who traded a given ticker (mirrors /insiders).
 async function tickerView(ticker) {
-  const rows = await db.select(tradeCols)
+  const rows = await priceQualityJoin(db.select(tradeCols)
     .from(congressTrades)
-    .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
+    .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker)))
     .where(eq(congressTrades.ticker, ticker))
     .orderBy(desc(congressTrades.disclosureDate), desc(congressTrades.id))
     .limit(500);

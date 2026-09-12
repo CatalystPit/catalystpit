@@ -1,6 +1,7 @@
 import { db } from '../../../lib/db';
-import { congressTrades, congressTickerPrices } from '../../../lib/schema';
+import { congressTrades, congressTickerPrices, tickerPriceQuality } from '../../../lib/schema';
 import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
+import { analyzeSeries } from '../../../lib/price-continuity.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -90,6 +91,19 @@ async function refreshCurrentPrices(results) {
         .values({ ticker, currentPrice: cur, updatedAt: new Date() })
         .onConflictDoUpdate({ target: congressTickerPrices.ticker, set: { currentPrice: cur, updatedAt: new Date() } });
       if (cur != null) updated++;
+
+      // The continuity verdict is refreshed from the SAME bars, so the protection maintains itself.
+      // A symbol reassigned next month would otherwise keep producing returns across the break until
+      // someone remembered to run scripts/scan-price-breaks.mjs by hand.
+      if (bars.length) {
+        const a = analyzeSeries(bars.map((b) => ({ date: b.date, close: b.c })));
+        await db.insert(tickerPriceQuality)
+          .values({ ticker, usable: a.usable, reason: a.reason, lastBreak: a.lastBreak,
+            breakCount: a.breaks.length, bars: a.bars, level: a.level, scannedAt: new Date() })
+          .onConflictDoUpdate({ target: tickerPriceQuality.ticker,
+            set: { usable: a.usable, reason: a.reason, lastBreak: a.lastBreak,
+              breakCount: a.breaks.length, bars: a.bars, level: a.level, scannedAt: new Date() } });
+      }
     }
     console.log(`[congress] current_price: refreshed ${updated}/${stale.length} tickers`);
     results.refreshed.push(`congress:current_price:ok=${updated}/${stale.length}`);

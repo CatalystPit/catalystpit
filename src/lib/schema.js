@@ -192,6 +192,21 @@ export const tickerDailyCandles = pgTable('ticker_daily_candles', {
   pk: primaryKey({ columns: [t.ticker, t.date] }),
 }));
 
+// Verdict on whether a ticker's daily series is continuous enough to measure a return across.
+// Written by scripts/scan-price-breaks.mjs; see src/lib/price-continuity.mjs for what counts as a
+// break and why. `lastBreak` is the whole rule at query time: a return anchored on or before it
+// spans a break (a reused symbol, an unadjusted reverse split) and must be shown as unavailable.
+export const tickerPriceQuality = pgTable('ticker_price_quality', {
+  ticker:     text('ticker').primaryKey(),
+  usable:     boolean('usable').notNull().default(true),
+  reason:     text('reason'),                                 // null | 'sub_penny' | 'too_many_breaks'
+  lastBreak:  date('last_break', { mode: 'string' }),
+  breakCount: integer('break_count').notNull().default(0),
+  bars:       integer('bars'),
+  level:      doublePrecision('level'),
+  scannedAt:  timestamp('scanned_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // FINRA bi-monthly consolidated short interest (consolidatedShortInterest API).
 // One row per (settlement_date, ticker). changePercent + prevShortIntShares come
 // straight from the feed, so the tab's "change from prior period" needs no compute.

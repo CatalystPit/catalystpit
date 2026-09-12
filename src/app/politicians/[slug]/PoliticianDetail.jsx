@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Skel, TopNav, Footer, BrandStyles, TickerLogo } from '../../../lib/cp-shared';
 import {
-  fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, actionStyle, fmtReturn, returnColor,
+  fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, actionStyle, fmtReturn, returnColor, ReturnCell,
 } from '../ui';
 
 const COLS = [
@@ -186,7 +186,7 @@ export default function PoliticianDetail({ slug }) {
                             <span style={{ fontSize: 11, padding: '3px 9px', borderRadius: 4, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, background: as.bg, color: as.fg }}>{t.action}</span>
                           </td>
                           <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.text, whiteSpace: 'nowrap' }}>{t.amountRange || '—'}</td>
-                          <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: returnColor(t.returnPct), whiteSpace: 'nowrap' }}>{fmtReturn(t.returnPct)}</td>
+                          <td className="cp-num" style={{ padding: '12px 14px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: returnColor(t.returnPct), whiteSpace: 'nowrap' }}><ReturnCell trade={t} /></td>
                           <td style={{ padding: '12px 14px', textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
                             {t.link ? <a href={t.link} target="_blank" rel="noopener noreferrer" title="View original filing" style={{ fontSize: 13, color: C.green, textDecoration: 'none' }}>↗</a> : <span style={{ color: C.dim }}>—</span>}
                           </td>

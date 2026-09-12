@@ -321,6 +321,16 @@ export default function CongressChart({ ticker, onSelectTicker }) {
         </span>
       </div>
 
+      {/* Says why the line starts later than the period asked for. Without this a trimmed chart
+          reads as missing data rather than as history we decline to splice onto the current one. */}
+      {data?.seriesTrimmed && (
+        <div style={{ padding: '7px 12px', borderBottom: `1px solid ${C.border}`, background: C.surface,
+          fontSize: 11, color: C.muted, lineHeight: 1.45 }}>
+          Price history for {ticker} before {fmtDate(data.seriesBreak)} belongs to a different security or a
+          different share basis, so this chart starts there. Disclosures before that date are not plotted.
+        </div>
+      )}
+
       <div style={{ position: 'relative', height: CHART_HEIGHT }}>
         <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }} />
         {!ticker && (
