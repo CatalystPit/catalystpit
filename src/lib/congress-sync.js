@@ -11,12 +11,15 @@ import { congressTrades, congressFilings } from './schema';
 import roster from './congress-roster.json';
 import { buildIndex } from './congress-match.mjs';
 import { buildRow, canonicalHash, isOptionTrade } from './congress-ingest.mjs';
+import { historyFloor, MAX_HISTORY_DAYS } from './congress-chart.mjs';
 import { fetchHouseIndex, fetchHousePtr } from './congress-house.mjs';
 import { fetchSenatePtrIndex, fetchSenatePtr, establishSession } from './congress-senate.mjs';
 
 const index = buildIndex(roster);
 // How many years back to cover. Start small (nightly), raise for a full historical backfill.
-const BACKFILL_YEARS = Math.max(1, parseInt(process.env.CONGRESS_BACKFILL_YEARS || '3', 10) || 3);
+// Hard-capped at 3. Congressional history for this product is deliberately bounded at three
+// years, so the env var can lower the window but never widen it past the cap.
+const BACKFILL_YEARS = Math.min(3, Math.max(1, parseInt(process.env.CONGRESS_BACKFILL_YEARS || '3', 10) || 3));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let _ensured = false;
@@ -57,7 +60,13 @@ async function recordFiling(chamber, { docId, year, filerName, filingType, filin
 // Insert one document's transactions (FMP-shaped recs) → congress_trades, deduped on tx_hash.
 async function insertRecs(recs, chamber) {
   if (!recs.length) return 0;
-  const rows = recs.map((rec) => buildRow(rec, chamber, index)).filter((r) => r.disclosureDate);
+  // The 3-year cap applies to the TRANSACTION date, not the filing date. Bounding the filing
+  // window alone still lets old trades in: a 2024 filing can disclose a 2019 purchase, which is
+  // how 82 pre-cap rows reached the table. Anything dated before the floor is dropped here.
+  const floor = historyFloor();
+  const rows = recs.map((rec) => buildRow(rec, chamber, index))
+    .filter((r) => r.disclosureDate)
+    .filter((r) => !r.transactionDate || r.transactionDate >= floor);
   if (!rows.length) return 0;
   const inserted = await db.insert(congressTrades).values(rows)
     .onConflictDoNothing({ target: congressTrades.txHash })
