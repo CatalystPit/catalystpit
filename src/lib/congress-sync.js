@@ -143,13 +143,13 @@ export async function dedupeCongressCanonical({ apply = true } = {}) {
     id: congressTrades.id, memberSlug: congressTrades.memberSlug, transactionDate: congressTrades.transactionDate,
     ticker: congressTrades.ticker, action: congressTrades.action, amountMin: congressTrades.amountMin,
     amountMax: congressTrades.amountMax, txHash: congressTrades.txHash, priceAtTrade: congressTrades.priceAtTrade,
-    assetType: congressTrades.assetType,
+    assetType: congressTrades.assetType, assetDescription: congressTrades.assetDescription,
   }).from(congressTrades);
 
   // Group by canonical hash. isOption keeps stock/option siblings in SEPARATE groups (no re-collapse).
   const groups = new Map();
   for (const r of rows) {
-    const h = canonicalHash({ ...r, isOption: isOptionTrade(r.assetType) });
+    const h = canonicalHash({ ...r, isOption: isOptionTrade(r.assetType), assetDescription: r.assetDescription });
     if (!groups.has(h)) groups.set(h, []);
     groups.get(h).push(r);
   }

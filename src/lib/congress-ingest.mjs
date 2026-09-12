@@ -77,7 +77,7 @@ export function isOptionTrade(assetType) {
   const s = (assetType || '').trim().toLowerCase();
   return s === 'op' || s.includes('option');
 }
-export function canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin, amountMax, isOption }) {
+export function canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin, amountMax, isOption, assetDescription }) {
   const key = [
     (memberSlug || '').trim().toLowerCase(),
     transactionDate || '',
@@ -85,7 +85,13 @@ export function canonicalHash({ memberSlug, transactionDate, ticker, action, amo
     (action || '').trim().toUpperCase(),
     amountMin == null ? '' : String(amountMin),
     amountMax == null ? '' : String(amountMax),
-  ].join('|') + (isOption ? '|OPT' : '');   // suffix ONLY options → existing stock hashes unchanged (no churn)
+    // The security itself. Without this every line sharing a member, date, action and amount
+    // bracket collapsed into ONE row, and because roughly half of Senate PTR lines carry no
+    // ticker at all (bonds, funds, notes) distinct securities became indistinguishable: one
+    // 703-transaction filing stored 373 rows. Normalised so trivial case/whitespace drift
+    // between filings does not split a genuine cross-source duplicate back apart.
+    (assetDescription || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 160),
+  ].join('|') + (isOption ? '|OPT' : '');   // option suffix keeps a stock and option sibling separate
   return createHash('sha256').update(key).digest('hex');
 }
 
@@ -114,7 +120,7 @@ export function buildRow(rec, chamber, index) {
   return {
     // Canonical, source-agnostic identity: same real trade from FMP / House / Senate collapses to one row.
     // isOption keeps a share buy and an option buy of the same ticker/day/amount as SEPARATE trades.
-    txHash: canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin: min, amountMax: max, isOption }),
+    txHash: canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin: min, amountMax: max, isOption, assetDescription: rec.assetDescription }),
     chamber,
     firstName: rec.firstName || null,
     lastName:  rec.lastName  || null,
