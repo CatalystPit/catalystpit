@@ -23,6 +23,19 @@ const LIST_URL = process.env.NEXT_PUBLIC_X_LIST_URL || 'https://x.com/i/lists/20
 const LIST_ID = (LIST_URL.match(/lists\/(\d+)/) || [])[1] || null;
 const WIDGETS_SRC = 'https://platform.twitter.com/widgets.js';
 const RETRY_DELAYS = [3000, 8000, 20000]; // backoff for transient 429s / slow syndication
+const CREATE_TIMEOUT = 15000;             // createTimeline must settle or we treat it as a failure
+
+// createTimeline returns X's own promise. It normally resolves (with the element, or with undefined
+// when X declines), but a hung syndication request can leave it pending forever, and a promise that
+// never settles means the catch that schedules the retry never runs: the box sits on "Loading tape
+// from X…" until the page is reloaded. Racing it against a deadline makes every outcome reachable.
+const withDeadline = (p, ms) => new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(new Error('createTimeline timed out')), ms);
+  Promise.resolve(p).then(
+    (v) => { clearTimeout(t); resolve(v); },
+    (e) => { clearTimeout(t); reject(e); },
+  );
+});
 
 // Load platform.twitter.com/widgets.js exactly once; resolve with window.twttr when ready.
 let widgetsPromise = null;
@@ -56,26 +69,50 @@ export default function XTape({ height = 620, onClose, bare = false }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
 
+  // The embed lives in a CROSS-ORIGIN iframe, so its text colour is fixed at creation and cannot be
+  // restyled afterwards. It therefore has to be built with the theme that is actually active, and
+  // rebuilt when the user toggles. `null` until measured on the client, deliberately: the shared
+  // useTheme() starts at "light" and corrects after mount, which would build the widget twice on
+  // every dark-mode load and burn two syndication requests against X's per-visitor rate limit.
+  const [theme, setTheme] = useState(null);
+  // Height tracks the window and changes on every resize event. It is read at build time rather than
+  // being a dependency, because rebuilding the widget mid-drag of a window edge would fire a
+  // syndication request per resize tick and get the visitor rate-limited.
+  const heightRef = useRef(height);
+  heightRef.current = height;
+
+  useEffect(() => {
+    const read = () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+    read();
+    const obs = new MutationObserver(read);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => obs.disconnect();
+  }, []);
+
   useEffect(() => {
     if (!LIST_ID) { setStatus('error'); return; }
+    if (!theme) return;                 // not measured yet; never build with a guessed theme
     let cancelled = false;
     let timer;
+    setStatus('loading');               // every build starts from the intentional loading state
 
     const attempt = (i) => {
       if (cancelled) return;
       loadWidgets()
         .then((twttr) => {
           if (cancelled || !ref.current) return;
-          ref.current.innerHTML = ''; // clear any prior (failed) render before re-inserting
-          return twttr.widgets.createTimeline(
+          ref.current.innerHTML = ''; // clear any prior (failed or stale-theme) render
+          return withDeadline(twttr.widgets.createTimeline(
             { sourceType: 'list', id: LIST_ID },
             ref.current,
-            { theme: 'light', chrome: 'noheader nofooter transparent', height },
-          );
+            { theme, chrome: 'noheader nofooter transparent', height: heightRef.current },
+          ), CREATE_TIMEOUT);
         })
         .then((el) => {
           if (cancelled) return;
-          if (el) { setStatus('ready'); return; }        // el === undefined means X declined (429/etc.)
+          // Trust what is actually in the DOM over the promise's word. X resolves with undefined when
+          // it declines (429), and has also been seen to resolve oddly while the iframe did paint.
+          if (el || ref.current?.querySelector('iframe')) { setStatus('ready'); return; }
           throw new Error('timeline not created');
         })
         .catch(() => {
@@ -86,8 +123,14 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     };
     attempt(0);
 
-    return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, []);
+    // Drop the old widget on teardown. Without this a theme rebuild stacks a second iframe under the
+    // first, and the abandoned one keeps its old colours.
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      if (ref.current) ref.current.innerHTML = '';
+    };
+  }, [theme]);
 
   if (!LIST_ID) return null;
 

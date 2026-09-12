@@ -1186,11 +1186,21 @@ function Workspace() {
       setLayout({ ...layoutRef.current, [id]: next });
     };
     const up = () => {
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      // pointerup is not guaranteed. A cancelled gesture (touch turning into a scroll, a context
+      // menu, the pointer released over another window) fires pointercancel or nothing at all, and
+      // the full-screen drag overlay below would then stay mounted swallowing every click until the
+      // page was reloaded. Every path that can end a drag clears it.
+      window.removeEventListener('pointercancel', up);
+      window.removeEventListener('blur', up);
       setDragging(false);
       persist(layoutRef.current);
     };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    window.addEventListener('blur', up);
   };
 
   const persistVisible = (v) => { try { localStorage.setItem('cp_terminal_visible', JSON.stringify(v)); } catch { /* ignore */ } };
