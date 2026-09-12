@@ -954,7 +954,8 @@ export default function InsidersPage() {
             </div>
             <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
               <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <table style={{width:"100%",minWidth:1180,borderCollapse:"collapse",tableLayout:"fixed"}}>
+                <colgroup><col style={{width:96}} /><col style={{width:88}} /><col style={{width:92}} /><col style={{width:128}} /><col style={{width:164}} /><col style={{width:150}} /><col style={{width:44}} /><col style={{width:92}} /><col style={{width:92}} /><col style={{width:80}} /><col style={{width:96}} /><col style={{width:92}} /><col style={{width:110}} /></colgroup>
                 <thead><tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
                   {[
                     {label:"Filed",sortKey:"DATE"},{label:"Traded",sortKey:null},{label:"Ticker",sortKey:"TICKER"},{label:"Company",sortKey:null},
@@ -962,9 +963,9 @@ export default function InsidersPage() {
                     {label:"Owned",sortKey:null,align:"right"},{label:"ΔOwn",sortKey:null,align:"right"},
                     {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},{label:"Conviction",sortKey:null,align:"right",server:true},
                   ].map(h=>{
-                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>CONVICTION{convSort?' ↓':''}</th>;
+                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>CONVICTION{convSort?' ↓':''}</th>;
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
-                    return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 16px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none"}}>{h.label.toUpperCase()}{arrow}</th>;
+                    return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 10px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{h.label.toUpperCase()}{arrow}</th>;
                   })}
                 </tr></thead>
                 <tbody>
@@ -972,20 +973,20 @@ export default function InsidersPage() {
                     <tr><td colSpan={13} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
-                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
+                      <td className="cp-num" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
                         {ins.filingUrl
                           ? <a href={ins.filingUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} title="View SEC filing" style={{color:C.dim,textDecoration:"none"}}>{ins.filed} <span style={{color:C.green}}>↗</span></a>
                           : ins.filed}
                       </td>
-                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
-                      <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
-                      <td style={{padding:"13px 16px",fontSize:13,color:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
-                      <td onClick={(e)=>{ e.stopPropagation(); openInsider(ins); }} style={{padding:"13px 16px",fontSize:13,color:C.text,cursor:"pointer"}}>
-                        <div className="ins-name" style={{fontWeight:500,transition:"color 0.15s"}}>{ins.name || '—'}</div>
-                        {ins.role && <div style={{fontSize:11,color:C.muted,fontWeight:300,marginTop:2}}>{ins.role}</div>}
+                      <td className="cp-num" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
+                      <td className="cp-tkr" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
+                      <td title={ins.company} style={{padding:"13px 10px",fontSize:13,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
+                      <td onClick={(e)=>{ e.stopPropagation(); openInsider(ins); }} style={{padding:"13px 10px",fontSize:13,color:C.text,cursor:"pointer",overflow:"hidden"}}>
+                        <div className="ins-name" title={ins.name || ''} style={{fontWeight:500,transition:"color 0.15s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.name || '—'}</div>
+                        {ins.role && <div title={ins.role} style={{fontSize:11,color:C.muted,fontWeight:300,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.role}</div>}
                         <Badges ins={ins} />
                       </td>
-                      <td style={{padding:"13px 16px"}}>
+                      <td style={{padding:"13px 10px"}}>
                         {(() => {
                           const m = meaningFor(ins.code);
                           let label = m.short, tip = m.tip;
@@ -995,20 +996,20 @@ export default function InsidersPage() {
                           const om = m.openMarket, buy = ins.type === 'BUY';
                           const st = om ? { background: buy ? C.greenLight : C.redLight, color: buy ? C.green : C.red } : { background: C.surface, color: C.muted };
                           return (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.3px', padding: '3px 8px', borderRadius: 4, whiteSpace: 'nowrap', fontFamily: "'DM Sans',sans-serif", ...st }}>{label}</span>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', maxWidth: '100%' }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.3px', padding: '3px 8px', borderRadius: 4, whiteSpace: 'normal', fontFamily: "'DM Sans',sans-serif", ...st }}>{label}</span>
                               <InfoTip text={tip} />
                             </span>
                           );
                         })()}
                       </td>
-                      <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
-                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
-                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{ins.ownedAfter!=null?Math.round(ins.ownedAfter).toLocaleString('en-US'):'—'}</td>
-                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':fmtOwnershipPct(ins.ownChange)}</td>
-                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap"}}>{fmtPrice(ins.avgPrice)}</td>
-                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
-                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",whiteSpace:"nowrap"}}><ConvictionCell ins={ins} /></td>
+                      <td className="cp-num" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
+                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
+                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.ownedAfter!=null?Math.round(ins.ownedAfter).toLocaleString('en-US'):'—'}</td>
+                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':fmtOwnershipPct(ins.ownChange)}</td>
+                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fmtPrice(ins.avgPrice)}</td>
+                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
+                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}><ConvictionCell ins={ins} /></td>
                     </tr>
                   ))}
                 </tbody>
