@@ -287,6 +287,7 @@ function HeatmapTooltip({ hover, windowLabel, container }) {
       Net: <b style={{ color: c.net >= 0 ? C.green : C.red }}>{c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(c.net))}</b><br />
       {c.insiders} insider{c.insiders === 1 ? '' : 's'} · largest {fmtBig(c.largest)}<br />
       {c.aggNames && <span style={{ display: 'block', color: C.dim, marginTop: 2 }}>{c.aggNames.slice(0, 8).join(', ')}{c.aggNames.length > 8 ? ` +${c.aggNames.length - 8} more` : ''}</span>}
+      {c.foldedNames && <span style={{ display: 'block', color: C.dim, marginTop: 2 }}>+ {c.foldedNames.length} smaller name{c.foldedNames.length === 1 ? '' : 's'} ({fmtBig(c.foldedValue)}): {c.foldedNames.slice(0, 6).join(', ')}{c.foldedNames.length > 6 ? '…' : ''}</span>}
       <span style={{ color: C.dim }}>Past {String(windowLabel || '').toUpperCase()}</span>
     </div>,
     document.body,
@@ -346,6 +347,7 @@ function HeatmapLegend() {
 
 // Minimum usable tile, and the aspect past which a tile reads as a sliver rather than a box.
 const MIN_TILE_W = 14, MIN_TILE_H = 11, MAX_TILE_AR = 4;
+const FOLD_MAX_SHARE = 0.10;   // above this, the remainder gets a real tile rather than a tooltip note
 const isSliver = (r) => r.w < MIN_TILE_W || r.h < MIN_TILE_H || Math.max(r.w / r.h, r.h / r.w) > MAX_TILE_AR;
 
 // The OTHER tile carries real summed figures, so its colour and tooltip stay honest, plus the names it
@@ -374,8 +376,27 @@ function packSector(items, valOf, x, y, w, h) {
     const nodes = keep.map((n) => ({ ...n, value: valOf(n) }));
     if (bucket.length) nodes.push(aggregateTile(bucket, valOf));
     const rects = treemap(nodes, x, y, w, h);
-    if (keep.length <= 1 || !rects.some(isSliver)) return rects;
-    bucket.push(keep.pop());
+    if (!rects.some(isSliver)) return rects;
+    if (keep.length > 1) { bucket.push(keep.pop()); continue; }   // fold the SMALLEST name, never a big one
+    // Terminal case: one real name left, and even the fully-combined OTHER can't be given a usable
+    // rectangle. That is geometrically forced — splitting a rectangle in two always makes the smaller
+    // part span a full side, so a 5% remainder of a 164x124 sector is 8x124 or 164x6 either way. Rather
+    // than ship the sliver, drop OTHER from the LAYOUT and disclose it on the surviving tile's tooltip,
+    // which keeps the combined dollar value and the underlying names reachable.
+    if (!bucket.length) return rects;                             // nothing folded: the sector itself is tiny
+    const soloV = valOf(keep[0]);
+    const foldV = bucket.reduce((a, b) => a + valOf(b), 0);
+    // A trivial remainder is disclosed on the surviving tile's tooltip. A MATERIAL one is not allowed to
+    // vanish: give OTHER the smallest area that clears the geometry instead, which costs the dominant
+    // tile some area but keeps both names on the map. Both tiles still LABEL their true dollar value.
+    if (foldV / (soloV + foldV) > FOLD_MAX_SHARE) {
+      const agg = aggregateTile(bucket, valOf);
+      for (let bump = foldV, k = 0; k < 28; k++, bump *= 1.2) {
+        const rects2 = treemap([{ ...keep[0], value: soloV }, { ...agg, value: bump, displayValue: foldV }], x, y, w, h);
+        if (!rects2.some(isSliver)) return rects2;
+      }
+    }
+    return treemap([{ ...keep[0], value: soloV, foldedNames: bucket.map((b) => b.ticker), foldedValue: foldV }], x, y, w, h);
   }
   return [];
 }
@@ -474,7 +495,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
             <button key={`t${i}`} onClick={() => { if (!t.aggNames) onPick(t.ticker); }} onMouseEnter={(e) => setHover({ c: t, el: e.currentTarget })}
               style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: bg, border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: t.aggNames ? 'default' : 'pointer', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
               {fitsTicker(t) && <span className="cp-tkr" style={{ fontSize: tkSize(t), fontWeight: 700, whiteSpace: 'nowrap', textShadow: ink === '#FFFFFF' ? '0 1px 2px rgba(0,0,0,0.3)' : 'none' }}>{t.ticker}</span>}
-              {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(t.value)}</span>}
+              {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(t.displayValue != null ? t.displayValue : t.value)}</span>}
             </button>
           );
         })}
