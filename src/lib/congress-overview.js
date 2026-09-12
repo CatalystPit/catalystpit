@@ -239,3 +239,70 @@ export async function bestThirtyDayRecord({ min = LB_MIN_TRADES, days = 30 } = {
     winRate: Number(r.positions) ? Math.round((Number(r.winners) / Number(r.positions)) * 100) : null,
   }));
 }
+
+
+// ─── Trade shaping ──────────────────────────────────────────────────────────
+// Moved here from the politicians route so every surface that renders a congressional trade
+// derives option type, strike, expiry, contracts and share counts the same way.
+export const computeReturn = (priceAtTrade, currentPrice) =>
+  (priceAtTrade != null && currentPrice != null && priceAtTrade > 0)
+    ? +(((currentPrice - priceAtTrade) / priceAtTrade) * 100).toFixed(1)
+    : null;
+
+// Columns shared by the detail + ticker trade tables (joined to current price).
+export const tradeCols = {
+  id:               congressTrades.id,
+  ticker:           congressTrades.ticker,
+  assetDescription: congressTrades.assetDescription,
+  assetType:        congressTrades.assetType,
+  comment:          congressTrades.comment,
+  owner:            congressTrades.owner,
+  type:             congressTrades.type,
+  action:           congressTrades.action,
+  amountRange:      congressTrades.amountRange,
+  amountMid:        congressTrades.amountMid,
+  transactionDate:  congressTrades.transactionDate,
+  disclosureDate:   congressTrades.disclosureDate,
+  filingLagDays:    congressTrades.filingLagDays,
+  priceAtTrade:     congressTrades.priceAtTrade,
+  currentPrice:     congressTickerPrices.currentPrice,
+  link:             congressTrades.link,   // original filing PDF (source verification)
+  // member fields — needed by ticker view, where rows span members
+  slug:             congressTrades.memberSlug,
+  representative:   congressTrades.representative,
+  party:            congressTrades.party,
+  state:            congressTrades.state,
+  chamber:          congressTrades.chamber,
+};
+
+// Option details come from the filer's disclosure text: Senate "Option Type: Put/Call" in the asset
+// name, House "D:" description ("Purchased 200 call options, strike $50, expires 3/19/27"). Parse
+// call/put + strike + expiry + # contracts from both; plain 'Option' when the type isn't disclosed.
+export const shapeTrade = (t) => {
+  const desc = t.assetDescription || '', atype = t.assetType || '', cmt = t.comment || '';
+  const src = `${desc} ${cmt}`;
+  const isOpt = /\bOP\b/.test(atype) || /option/i.test(atype) || /\boptions?\b/i.test(src);
+  const cp = /option\s*type\s*[:\-]?\s*(call|put)/i.exec(src) || (isOpt ? /\b(call|put)s?\b/i.exec(src) : null);
+  const optionType = cp ? (cp[1].toLowerCase().startsWith('put') ? 'Put' : 'Call') : (isOpt ? 'Option' : null);
+  const gm = (re) => (re.exec(src) || [])[1] || null;
+  // Handles "strike price of $50", "at $22.00", "@ 150"; and "200 call options" / "10 puts".
+  const strike = optionType ? gm(/(?:strike\s*(?:price)?\s*(?:of\s*)?|@\s*|\bat\s*)\$?\s*([\d,]+(?:\.\d+)?)/i) : null;
+  const expiration = optionType ? gm(/(?:expir\w*|exp\.?)\s*(?:date)?\s*(?:of\s*)?(\d{1,2}\/\d{1,2}\/\d{2,4})/i) : null;
+  const contracts = optionType ? gm(/\b([\d,]+)\s*(?:call|put)s?(?:\s*(?:options?|contracts?))?\b/i) : null;
+  // Share count for stock trades — "Purchased 10,000 shares" / "Sold 500 shares".
+  const shares = !optionType ? gm(/\b([\d,]+(?:\.\d+)?)\s*shares?\b/i) : null;
+  // Filers rarely disclose an exact count, so estimate from the disclosed dollar amount ÷ the
+  // trade-date price (same basis HedgeFollow uses). Stock trades only; never override an exact count.
+  const px = Number(t.priceAtTrade), mid = Number(t.amountMid);
+  const estShares = (!optionType && !shares && px > 0 && mid > 0) ? Math.round(mid / px) : null;
+  const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
+  return {
+    ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice),
+    optionType, assetName,
+    strike: strike ? strike.replace(/,/g, '') : null,
+    expiration: expiration || null,
+    contracts: contracts ? contracts.replace(/,/g, '') : null,
+    shares: shares ? shares.replace(/,/g, '') : null,
+    estShares,
+  };
+};

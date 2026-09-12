@@ -17,6 +17,10 @@ export default function PoliticianDetail({ slug }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [flt, setFlt] = useState({ side: 'all', opt: false, min: 0, q: '' });
+  const [page, setPage] = useState(0);
+  const [tradeData, setTradeData] = useState(null);
+  const [tradesLoading, setTradesLoading] = useState(true);
+  const PAGE_SIZE = 25;
   const router = useRouter();
   // Inert unless there's a real ticker — some FMP asset types have no symbol (renders "—").
   const goTicker = (sym) => { if (sym && sym !== '—') router.push(`/ticker/${encodeURIComponent(sym)}`); };
@@ -26,7 +30,7 @@ export default function PoliticianDetail({ slug }) {
     (async () => {
       setLoading(true); setError(null);
       try {
-        const res = await fetch(`/api/politicians?slug=${encodeURIComponent(slug)}`);
+        const res = await fetch(`/api/politicians?slug=${encodeURIComponent(slug)}&trades=0`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = await res.json();
         if (json.error) throw new Error(json.error);
@@ -41,18 +45,34 @@ export default function PoliticianDetail({ slug }) {
   }, [slug]);
 
   const member = data?.member;
-  const trades = data?.trades || [];
   const ps = partyStyle(member?.party);
 
-  // Client-side filters (all trades are already loaded).
-  const shown = trades.filter((t) => {
-    if (flt.side === 'buy' && t.action !== 'BUY') return false;
-    if (flt.side === 'sell' && t.action !== 'SELL') return false;
-    if (flt.opt && !t.optionType) return false;
-    if (flt.min && !(Number(t.amountMid) >= flt.min)) return false;
-    if (flt.q) { const q = flt.q.toLowerCase(); if (!((t.ticker || '').toLowerCase().includes(q) || (t.assetName || t.assetDescription || '').toLowerCase().includes(q))) return false; }
-    return true;
-  });
+  // Trades are fetched ONE PAGE AT A TIME with every filter applied in SQL. The previous version
+  // pulled the member's entire history and filtered in the browser, so a heavy filer shipped 700+
+  // rows and the "x of y" count only described what had already been downloaded.
+  useEffect(() => {
+    let alive = true;
+    setTradesLoading(true);
+    const qs = new URLSearchParams({ slug, page: String(page), pageSize: String(PAGE_SIZE), sort: 'transaction', dir: 'desc' });
+    if (flt.side !== 'all') qs.set('action', flt.side);
+    if (flt.opt) qs.set('options', '1');
+    if (flt.min) qs.set('minValue', String(flt.min));
+    if (flt.q) qs.set('q', flt.q);
+    fetch(`/api/congress-trades?${qs}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive) { setTradeData(j && !j.error ? j : null); setTradesLoading(false); } })
+      .catch(() => { if (alive) { setTradeData(null); setTradesLoading(false); } });
+    return () => { alive = false; };
+  }, [slug, flt, page]);
+
+  // Changing a filter invalidates the current page number.
+  useEffect(() => { setPage(0); }, [flt]);
+
+  const shown = tradeData?.trades || [];
+  const matching = tradeData?.total || 0;
+  const pages = tradeData?.pages || 0;
+  const lockedTrades = tradeData?.lockedCount || 0;
+
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -114,7 +134,7 @@ export default function PoliticianDetail({ slug }) {
                 <option value={1000000}>&gt; $1M</option>
               </select>
               <input value={flt.q} onChange={(e) => setFlt((f) => ({ ...f, q: e.target.value }))} placeholder="Filter ticker…" style={{ ...FBTN, border: `1px solid ${C.border}`, background: C.white, color: C.text, minWidth: 120 }} />
-              <span style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Sans',sans-serif", marginLeft: 'auto' }}>{shown.length} of {trades.length} trades</span>
+              <span style={{ fontSize: 12, color: C.dim, fontFamily: "'DM Sans',sans-serif", marginLeft: 'auto' }}>{tradesLoading ? 'Loading.' : `${matching.toLocaleString('en-US')} matching ${matching === 1 ? 'trade' : 'trades'}`}</span>
             </div>
             <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ overflowX: 'auto' }}>
@@ -127,7 +147,9 @@ export default function PoliticianDetail({ slug }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {shown.length === 0 ? (
+                    {tradesLoading && shown.length === 0 ? (
+                      <tr><td colSpan={COLS.length} style={{ padding: '40px 16px', textAlign: 'center', color: C.muted, fontSize: 13 }}>Loading.</td></tr>
+                    ) : shown.length === 0 ? (
                       <tr><td colSpan={COLS.length} style={{ padding: '40px 16px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No trades match these filters.</td></tr>
                     ) : shown.map((t, i) => {
                       const as = actionStyle(t.action);
@@ -174,6 +196,22 @@ export default function PoliticianDetail({ slug }) {
                   </tbody>
                 </table>
               </div>
+              {pages > 1 && !lockedTrades && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 14px', borderTop: `1px solid ${C.border}`, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11.5, color: C.muted }}>Page {page + 1} of {pages.toLocaleString('en-US')}</span>
+                  <span style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" disabled={page === 0} onClick={() => setPage((v) => Math.max(0, v - 1))}
+                      style={{ ...FBTN, border: `1px solid ${C.border}`, background: C.white, color: C.muted, opacity: page === 0 ? 0.4 : 1 }}>Previous</button>
+                    <button type="button" disabled={page + 1 >= pages} onClick={() => setPage((v) => v + 1)}
+                      style={{ ...FBTN, border: `1px solid ${C.border}`, background: C.white, color: C.muted, opacity: page + 1 >= pages ? 0.4 : 1 }}>Next</button>
+                  </span>
+                </div>
+              )}
+              {lockedTrades > 0 && (
+                <div style={{ padding: '14px', borderTop: `1px solid ${C.border}`, background: C.surface, textAlign: 'center', fontSize: 12.5, color: C.text }}>
+                  {lockedTrades.toLocaleString('en-US')} more trades. Sign in to see the full record.
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: 16, fontSize: 11, color: C.dim, fontFamily: "'DM Sans',sans-serif", lineHeight: 1.6 }}>

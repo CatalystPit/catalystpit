@@ -3,7 +3,7 @@ import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, desc, sql, or, ilike } from 'drizzle-orm';
 import { resolveUserTier } from '../../../lib/entitlements';
-import { leaderboardView, photoUrl, LB_WINDOWS } from '../../../lib/congress-overview';
+import { leaderboardView, photoUrl, LB_WINDOWS, shapeTrade, computeReturn, tradeCols } from '../../../lib/congress-overview';
 
 export const runtime = 'nodejs';
 
@@ -18,68 +18,8 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 // returnPct is null (NOT 0) unless BOTH prices exist — so a missing price renders
 // "—" on the page and never collapses into a false "0.0%". A genuinely unchanged
 // price yields a real 0. (null vs number keeps the two cases distinct.)
-const computeReturn = (priceAtTrade, currentPrice) =>
-  (priceAtTrade != null && currentPrice != null && priceAtTrade > 0)
-    ? +(((currentPrice - priceAtTrade) / priceAtTrade) * 100).toFixed(1)
-    : null;
-
-// Columns shared by the detail + ticker trade tables (joined to current price).
-const tradeCols = {
-  id:               congressTrades.id,
-  ticker:           congressTrades.ticker,
-  assetDescription: congressTrades.assetDescription,
-  assetType:        congressTrades.assetType,
-  comment:          congressTrades.comment,
-  owner:            congressTrades.owner,
-  type:             congressTrades.type,
-  action:           congressTrades.action,
-  amountRange:      congressTrades.amountRange,
-  amountMid:        congressTrades.amountMid,
-  transactionDate:  congressTrades.transactionDate,
-  disclosureDate:   congressTrades.disclosureDate,
-  filingLagDays:    congressTrades.filingLagDays,
-  priceAtTrade:     congressTrades.priceAtTrade,
-  currentPrice:     congressTickerPrices.currentPrice,
-  link:             congressTrades.link,   // original filing PDF (source verification)
-  // member fields — needed by ticker view, where rows span members
-  slug:             congressTrades.memberSlug,
-  representative:   congressTrades.representative,
-  party:            congressTrades.party,
-  state:            congressTrades.state,
-  chamber:          congressTrades.chamber,
-};
-
-// Option details come from the filer's disclosure text: Senate "Option Type: Put/Call" in the asset
-// name, House "D:" description ("Purchased 200 call options, strike $50, expires 3/19/27"). Parse
-// call/put + strike + expiry + # contracts from both; plain 'Option' when the type isn't disclosed.
-const shapeTrade = (t) => {
-  const desc = t.assetDescription || '', atype = t.assetType || '', cmt = t.comment || '';
-  const src = `${desc} ${cmt}`;
-  const isOpt = /\bOP\b/.test(atype) || /option/i.test(atype) || /\boptions?\b/i.test(src);
-  const cp = /option\s*type\s*[:\-]?\s*(call|put)/i.exec(src) || (isOpt ? /\b(call|put)s?\b/i.exec(src) : null);
-  const optionType = cp ? (cp[1].toLowerCase().startsWith('put') ? 'Put' : 'Call') : (isOpt ? 'Option' : null);
-  const gm = (re) => (re.exec(src) || [])[1] || null;
-  // Handles "strike price of $50", "at $22.00", "@ 150"; and "200 call options" / "10 puts".
-  const strike = optionType ? gm(/(?:strike\s*(?:price)?\s*(?:of\s*)?|@\s*|\bat\s*)\$?\s*([\d,]+(?:\.\d+)?)/i) : null;
-  const expiration = optionType ? gm(/(?:expir\w*|exp\.?)\s*(?:date)?\s*(?:of\s*)?(\d{1,2}\/\d{1,2}\/\d{2,4})/i) : null;
-  const contracts = optionType ? gm(/\b([\d,]+)\s*(?:call|put)s?(?:\s*(?:options?|contracts?))?\b/i) : null;
-  // Share count for stock trades — "Purchased 10,000 shares" / "Sold 500 shares".
-  const shares = !optionType ? gm(/\b([\d,]+(?:\.\d+)?)\s*shares?\b/i) : null;
-  // Filers rarely disclose an exact count, so estimate from the disclosed dollar amount ÷ the
-  // trade-date price (same basis HedgeFollow uses). Stock trades only; never override an exact count.
-  const px = Number(t.priceAtTrade), mid = Number(t.amountMid);
-  const estShares = (!optionType && !shares && px > 0 && mid > 0) ? Math.round(mid / px) : null;
-  const assetName = desc.split(/\s*[-–—]?\s*option\s*type\s*[:\-]/i)[0].trim() || desc;
-  return {
-    ...t, returnPct: computeReturn(t.priceAtTrade, t.currentPrice),
-    optionType, assetName,
-    strike: strike ? strike.replace(/,/g, '') : null,
-    expiration: expiration || null,
-    contracts: contracts ? contracts.replace(/,/g, '') : null,
-    shares: shares ? shares.replace(/,/g, '') : null,
-    estShares,
-  };
-};
+// computeReturn + shapeTrade now live in lib/congress-overview so the detail page, the ticker
+// view and the new transactions API all derive option and share fields identically.
 
 const LIST_ORDER = {
   most_active: sql`count(*) desc`,
@@ -147,7 +87,29 @@ async function searchView(q) {
 }
 
 // DETAIL: header aggregates + full trade history (return-since-trade per row).
-async function detailView(slug) {
+// withTrades:false returns ONLY the member header, computed as SQL aggregates. The detail page
+// now pages its trades through /api/congress-trades, so pulling up to 2,000 rows here purely to
+// count them and average a lag was the last place a heavy filer's history hit the server in bulk.
+async function detailView(slug, { withTrades = true } = {}) {
+  if (!withTrades) {
+    const [agg] = await db.select({
+      name: sql`max(${congressTrades.representative})`,
+      party: sql`max(${congressTrades.party})`,
+      state: sql`max(${congressTrades.state})`,
+      chamber: sql`max(${congressTrades.chamber})`,
+      tradeCount: sql`count(*)`.mapWith(Number),
+      totalVolume: sql`coalesce(sum(${congressTrades.amountMid}), 0)`.mapWith(Number),
+      lastTraded: sql`max(${congressTrades.transactionDate})`,
+      distinctTickers: sql`count(distinct ${congressTrades.ticker})`.mapWith(Number),
+      avgFilingLag: sql`round(avg(${congressTrades.filingLagDays}))`.mapWith(Number),
+    }).from(congressTrades).where(eq(congressTrades.memberSlug, slug));
+    if (!agg || !agg.tradeCount) return { view: 'detail', slug, member: null, trades: [] };
+    return { view: 'detail', slug, member: { slug, photoUrl: photoUrl(slug), ...agg }, trades: [] };
+  }
+  return detailViewFull(slug);
+}
+
+async function detailViewFull(slug) {
   const rows = await db.select(tradeCols)
     .from(congressTrades)
     .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
@@ -232,7 +194,7 @@ export async function GET(request) {
     // Member detail — LEFT UNGATED. The /politicians/[slug] page shows a member's
     // full history with no sign-in CTA; capping would silently truncate it. (Flagged.)
     if (slug) {
-      const payload = await detailView(slug);
+      const payload = await detailView(slug, { withTrades: searchParams.get('trades') !== '0' });
       console.log(`[politicians_api] detail slug=${slug} trades=${payload.trades.length} loggedIn=${loggedIn}`);
       return Response.json({ ...payload, loggedIn }, { headers: NO_STORE });
     }

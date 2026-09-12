@@ -1,9 +1,10 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
-import { congressTrades } from '../../../lib/schema';
+import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, gte, lte, or, ilike, sql, desc, asc, inArray } from 'drizzle-orm';
 import { resolveUserTier } from '../../../lib/entitlements';
 import { MAX_HISTORY_DAYS } from '../../../lib/congress-chart.mjs';
+import { shapeTrade } from '../../../lib/congress-overview';
 
 export const runtime = 'nodejs';
 
@@ -57,6 +58,15 @@ export async function GET(request) {
     const party = p('party');     if (party) conds.push(ilike(congressTrades.party, `${party}%`));
     const owner = p('owner');     if (owner) conds.push(ilike(congressTrades.owner, `${owner}%`));
 
+    // Options are identified from the filer's own text, the same signals shapeTrade reads.
+    if (searchParams.get('options') === '1') {
+      conds.push(or(
+        sql`${congressTrades.assetType} ~* 'op'`,
+        sql`${congressTrades.assetDescription} ~* 'option'`,
+        sql`${congressTrades.comment} ~* 'option'`,
+      ));
+    }
+
     const action = p('action');
     if (action === 'buy') conds.push(eq(congressTrades.action, 'BUY'));
     else if (action === 'sell') conds.push(eq(congressTrades.action, 'SELL'));
@@ -108,17 +118,35 @@ export async function GET(request) {
       disclosureDate: congressTrades.disclosureDate,
       filingLagDays: congressTrades.filingLagDays,
       link: congressTrades.link,
+      // Needed by the politician detail table: option details and share counts are derived from
+      // these by shapeTrade, and Return Since needs both prices.
+      comment: congressTrades.comment,
+      amountMid: congressTrades.amountMid,
+      priceAtTrade: congressTrades.priceAtTrade,
+      currentPrice: congressTickerPrices.currentPrice,
     };
 
     const [{ n: total }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(congressTrades).where(where);
+    // Aggregates describe the WHOLE matching set, not the page, so the detail page can show
+    // honest totals without downloading everything.
+    const [totals] = await db.select({
+      buys: sql`count(*) filter (where ${congressTrades.action} = 'BUY')`.mapWith(Number),
+      sells: sql`count(*) filter (where ${congressTrades.action} = 'SELL')`.mapWith(Number),
+      volumeMin: sql`coalesce(sum(${congressTrades.amountMin}), 0)`.mapWith(Number),
+      volumeMax: sql`coalesce(sum(${congressTrades.amountMax}), 0)`.mapWith(Number),
+    }).from(congressTrades).where(where);
 
     const take = loggedIn ? pageSize : FREE_PREVIEW_ROWS;
     const skip = loggedIn ? page * pageSize : 0;
-    const trades = await db.select(cols).from(congressTrades).where(where).orderBy(...orderBy).limit(take).offset(skip);
+    const raw = await db.select(cols).from(congressTrades)
+      .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
+      .where(where).orderBy(...orderBy).limit(take).offset(skip);
+    const trades = raw.map(shapeTrade);
 
     return Response.json({
       trades,
       total,
+      totals,
       page: loggedIn ? page : 0,
       pageSize: take,
       pages: Math.ceil(total / (loggedIn ? pageSize : FREE_PREVIEW_ROWS)),
