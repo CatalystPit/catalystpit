@@ -3,6 +3,7 @@ import { db } from '../../../lib/db';
 import { insiderTrades } from '../../../lib/schema';
 import { and, or, eq, gt, gte, ilike, inArray, desc, sql } from 'drizzle-orm';
 import { resolveUserTier } from '../../../lib/entitlements';
+import { ownershipChangePct as ownPctShared } from '../../../lib/insider-format';
 
 export const runtime = 'nodejs';
 
@@ -225,7 +226,7 @@ async function notableView(window) {
     mostInsidersBuying: mostBuyers ? { ticker: mostBuyers.ticker, company: mostBuyers.company, insiders: +mostBuyers.insiders, value: +mostBuyers.total || 0 } : null,
     largestCluster: bigCluster ? { ticker: bigCluster.ticker, company: bigCluster.company, insiders: +bigCluster.insiders, value: +bigCluster.total || 0 } : null,
     highestConviction: topConv ? { ticker: topConv.ticker, company: topConv.company, executive: topConv.executive, title: topConv.title, value: +topConv.total_value || 0, date: topConv.transaction_date, conviction: Math.round(+topConv.conviction), band: topConv.conviction_band, tags: parseTags(topConv.conviction_tags) } : null,
-        largestOwnershipIncrease: ownInc ? { ticker: ownInc.ticker, company: ownInc.company, executive: ownInc.executive, value: +ownInc.total_value || 0, pct: ownInc.pct != null ? +(+ownInc.pct).toFixed(0) : null } : null };
+        largestOwnershipIncrease: ownInc ? { ticker: ownInc.ticker, company: ownInc.company, executive: ownInc.executive, value: +ownInc.total_value || 0, pct: ownInc.pct != null ? +ownInc.pct : null } : null };
   await kvSet(key, out, 300);
   return out;
 }
@@ -241,11 +242,13 @@ function parseTags(v) {
 }
 
 async function enrichRows(rows) {
-  const ownPct = (r) => { const a = r.sharesOwnedAfter, s = r.shares; if (a == null || !(s > 0)) return null; const before = r.action === 'BUY' ? a - s : a + s; if (!(before > 0)) return r.action === 'BUY' ? 100 : null; const p = (s / before) * 100; return r.action === 'SELL' ? -p : p; };
+  // Canonical calc lives in lib/insider-format; this route no longer keeps its own copy.
   const shaped = rows.map((r) => ({ ...r,
     ceoCfo: /chief executive|\bCEO\b|chief financial|\bCFO\b/i.test(r.title || ''),
     openMarket: r.transactionCode === 'P' || r.transactionCode === 'S',
-    ownershipChangePct: ownPct(r) == null ? null : +ownPct(r).toFixed(0),
+    // Unrounded on the wire. Rounding here threw away the sub-1% precision the shared
+    // formatter needs, and left every consumer to invent its own rounding.
+    ownershipChangePct: ownPctShared(r),
     // Conviction reaches the client as score + band + approved tags ONLY. The engine,
     // its weights and every intermediate factor stay server-side (lib/conviction.server.js).
     conviction: r.conviction == null ? null : Math.round(r.conviction),

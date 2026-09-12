@@ -3,6 +3,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } fr
 import { createPortal } from "react-dom";
 import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import { meaningFor } from '../../lib/insider-meaning';
+import { ownershipChangePct, fmtOwnershipPct } from '../../lib/insider-format';
 import { treemap } from '../../lib/treemap';
 import { useRouter } from 'next/navigation';
 
@@ -37,15 +38,9 @@ const decodeEntities = (s) => {
 // (award, gift, tax-withholding, option exercise…) shown only in an insider name search.
 const CODE_LABEL = { P: 'BUY', S: 'SELL', A: 'AWARD', G: 'GIFT', F: 'TAX', M: 'OPT EXERCISE', C: 'CONVERT', D: 'DISPOSED', X: 'EXERCISE', W: 'ACQUIRED', J: 'OTHER', U: 'OTHER', L: 'OTHER', I: 'OTHER' };
 const OPEN_MARKET = new Set(['BUY', 'SELL']);
-const ownChangePct = (r) => {
-  const after = typeof r.sharesOwnedAfter === 'number' ? r.sharesOwnedAfter : null;
-  const sh = typeof r.shares === 'number' ? r.shares : 0;
-  if (after == null || !(sh > 0)) return null;
-  const before = r.action === 'BUY' ? after - sh : after + sh;   // holdings just before this trade
-  if (!(before > 0)) return r.action === 'BUY' ? 100 : null;     // bought a brand-new position → "new"
-  const pct = (sh / before) * 100;
-  return r.action === 'SELL' ? -pct : pct;
-};
+// Ownership change comes from lib/insider-format so the badge, the ΔOWN column, Notable
+// Activity and the Conviction tags cannot drift apart. It used to be computed here AND in
+// the API AND in SQL, which is how one row showed "+35.20681508102892%" beside "+35%".
 const mapRow = (r) => ({
   sym:      r.ticker || '?',
   name:     decodeEntities(r.executive || ''),
@@ -56,7 +51,7 @@ const mapRow = (r) => ({
   shares:   typeof r.shares === 'number' ? r.shares : 0,
   avgPrice: typeof r.pricePerShare === 'number' ? r.pricePerShare : 0,
   ownedAfter: typeof r.sharesOwnedAfter === 'number' ? r.sharesOwnedAfter : null,
-  ownChange: ownChangePct(r),
+  ownChange: ownershipChangePct(r),
   company:  decodeEntities(r.company || ''),
   filed:    r.filingDate || '',
   traded:   r.transactionDate || '',
@@ -142,7 +137,13 @@ function Badges({ ins }) {
   if (ins.rule10b5_1 === true) b.push({ t: '10b5-1', on: false });
   if (ins.rule10b5_1 === false) b.push({ t: 'DISCRETIONARY', on: false });
   if (ins.type === 'BUY' && ins.monthsSincePriorBuy != null && ins.monthsSincePriorBuy >= 3) b.push({ t: `FIRST BUY IN ${ins.monthsSincePriorBuy}MO`, on: true });
-  if (ins.type === 'BUY' && ins.ownChange != null && ins.ownChange >= 20) b.push({ t: `OWNERSHIP +${ins.ownChange}%`, on: true });
+  // Only ONE ownership badge per row. The Conviction tags already carry an OWNERSHIP tag
+  // for scored purchases, so this legacy badge fills in for rows that have no score
+  // (unscored buys) instead of printing a second, differently-rounded copy next to it.
+  const hasConvictionOwnership = (ins.convictionTags || []).some((t) => t.startsWith('OWNERSHIP'));
+  if (ins.type === 'BUY' && !hasConvictionOwnership && ins.ownChange != null && ins.ownChange >= 20) {
+    b.push({ t: `OWNERSHIP ${fmtOwnershipPct(ins.ownChange)}`, on: true });
+  }
   // Server-approved conviction tags, rendered verbatim. They explain WHY a score is what
   // it is without revealing how it is computed; the client never authors them.
   for (const t of ins.convictionTags || []) b.push({ t, on: true });
@@ -544,7 +545,7 @@ function NotableActivity({ data, window, onWindow, onPick }) {
     { l: 'LARGEST CLUSTER BUY', x: data.largestCluster, sub: (x) => `${x.insiders} insiders · ${x.ticker}` },
     // Score + band come straight from the server; the tile never derives either.
     { l: 'HIGHEST CONVICTION BUY', x: data.highestConviction, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => `${x.conviction} · ${x.band}` },
-    { l: 'LARGEST OWNERSHIP INCREASE', x: data.largestOwnershipIncrease, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => (x.pct != null ? `+${x.pct}%` : fmtBig(x.value)) },
+    { l: 'LARGEST OWNERSHIP INCREASE', x: data.largestOwnershipIncrease, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => (x.pct != null ? fmtOwnershipPct(x.pct) : fmtBig(x.value)) },
   ].filter((i) => i.x) : [];
   return (
     <div style={{ marginBottom: 20 }}>
@@ -1004,7 +1005,7 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>{ins.ownedAfter!=null?Math.round(ins.ownedAfter).toLocaleString('en-US'):'—'}</td>
-                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':`${ins.ownChange>0?'+':''}${Math.abs(ins.ownChange)>=999?'>999':ins.ownChange.toFixed(0)}%`}</td>
+                      <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':fmtOwnershipPct(ins.ownChange)}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap"}}>{fmtPrice(ins.avgPrice)}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
                       <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",whiteSpace:"nowrap"}}><ConvictionCell ins={ins} /></td>

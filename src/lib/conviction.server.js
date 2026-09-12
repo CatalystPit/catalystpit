@@ -1,4 +1,5 @@
 import 'server-only';
+import { fmtOwnershipPct } from './insider-format.js';   // extension required: node scripts import this directly
 // ─────────────────────────────────────────────────────────────────────────────
 //  CATALYST PIT INSIDER CONVICTION — proprietary scoring engine.
 //
@@ -211,7 +212,7 @@ export function convictionTags(row, person, historyLabel = 'AVAILABLE HISTORY') 
 
   const ownPct = Number(row.ownership_increase_pct);
   if (Number.isFinite(ownPct) && ownPct >= 5) {
-    tags.push(`OWNERSHIP +${ownPct >= 100 ? Math.round(ownPct) : ownPct.toFixed(ownPct < 10 ? 1 : 0)}%`);
+    tags.push(`OWNERSHIP ${fmtOwnershipPct(ownPct)}`);
   }
 
   const cluster = Number(row.cluster_insiders_10d) || 0;
