@@ -98,12 +98,21 @@ function buildMarkers(candles, trades, pal) {
   return { markers: [...outlines, ...fills], map };
 }
 
-function TradeCard({ trades, onClose, pinned }) {
+function TradeCard({ trades, onClose, pinned, side = 'right' }) {
   if (!trades?.length) return null;
   const many = trades.length > 1;
   return (
     <div style={{
-      position: 'absolute', zIndex: 40, top: 10, right: 10, width: 268, maxWidth: 'calc(100% - 20px)',
+      position: 'absolute', zIndex: 40, top: 10, width: 268, maxWidth: 'calc(100% - 20px)',
+      ...(side === 'left' ? { left: 10 } : { right: 10 }),
+      // THE FLICKER FIX. A hover card sits inside the chart container, so when the pointer is over
+      // the region the card occupies, the card swallows the mousemove. lightweight-charts then sees
+      // the pointer leave the canvas, fires crosshairMove with no time, hover clears, the card
+      // unmounts, the pointer is over the canvas again, hover re-fires, and the card remounts. That
+      // self-retriggering loop is the flicker. A hover card is purely informational, so it takes no
+      // pointer events at all and cannot start the loop. A PINNED card does accept them, which is
+      // what makes View Official Disclosure clickable.
+      pointerEvents: pinned ? 'auto' : 'none',
       background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px',
       boxShadow: '0 10px 28px rgba(0,0,0,0.18)', fontFamily: "'DM Sans',sans-serif",
       maxHeight: 300, overflowY: 'auto',
@@ -116,6 +125,13 @@ function TradeCard({ trades, onClose, pinned }) {
       {many && (
         <div style={{ fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginBottom: 6, fontWeight: 700 }}>
           {trades.length} DISCLOSURES THIS DAY
+        </div>
+      )}
+      {!pinned && (
+        // A hover card takes no pointer events, so its link is not clickable yet. Say so, rather
+        // than showing a link that silently ignores the pointer.
+        <div style={{ fontSize: 9.5, color: C.dim, marginBottom: 6, letterSpacing: '0.3px' }}>
+          Click the marker to keep this open
         </div>
       )}
       {trades.map((t, i) => {
@@ -163,6 +179,7 @@ export default function CongressChart({ ticker, onSelectTicker }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [hover, setHover] = useState(null);     // trades under the crosshair
+  const [side, setSide] = useState('right');    // card sits opposite the cursor
   const [pinned, setPinned] = useState(null);   // tapped/clicked, survives pointer leaving
 
   const wrapRef = useRef(null);
@@ -204,13 +221,22 @@ export default function CongressChart({ ticker, onSelectTicker }) {
       });
       chart.subscribeCrosshairMove((p) => {
         const key = typeof p?.time === 'string' ? p.time : null;
-        setHover(key ? (mapRef.current.get(key) || null) : null);
+        const hit = key ? (mapRef.current.get(key) || null) : null;
+        setHover(hit);
+        // Put the card on the far side of the chart from the cursor so it never covers the marker
+        // being read. setState with an unchanged value is a no-op, so this does not add renders.
+        if (hit && p?.point && wrapRef.current) {
+          setSide(p.point.x > wrapRef.current.clientWidth / 2 ? 'left' : 'right');
+        }
       });
       // Click pins the card so it survives the pointer leaving, which is also how a tap works.
+      // This is the ONLY place pinning changes. A container-level onClick used to run on the same
+      // click and cleared the pin, so clicking a second marker while one was pinned dismissed the
+      // card instead of switching to it.
       chart.subscribeClick((p) => {
         const key = typeof p?.time === 'string' ? p.time : null;
         const hit = key ? mapRef.current.get(key) : null;
-        setPinned(hit || null);
+        setPinned(hit || null);      // clicking empty chart space clears the pin
       });
     })();
     return () => {
@@ -283,7 +309,7 @@ export default function CongressChart({ ticker, onSelectTicker }) {
         </span>
       </div>
 
-      <div style={{ position: 'relative', height: CHART_HEIGHT }} onClick={() => { if (pinned) setPinned(null); }}>
+      <div style={{ position: 'relative', height: CHART_HEIGHT }}>
         <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }} />
         {!ticker && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -300,7 +326,7 @@ export default function CongressChart({ ticker, onSelectTicker }) {
             No price history available for {ticker} in this period.
           </div>
         )}
-        <TradeCard trades={shown} pinned={!!pinned} onClose={() => setPinned(null)} />
+        <TradeCard trades={shown} pinned={!!pinned} side={side} onClose={() => setPinned(null)} />
       </div>
 
       <div style={{ padding: '7px 12px', borderTop: `1px solid ${C.surface}`, fontSize: 10, color: C.dim,
