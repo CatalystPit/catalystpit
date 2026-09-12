@@ -92,7 +92,7 @@ const SEL_STYLE = { background: C.white, border: `1px solid ${C.border}`, color:
 const LBL_STYLE = { fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginLeft: 6 };
 const bandBtn = (active) => ({ background: active ? C.green : C.white, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.green : C.border}`, borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" });
 // Clean hover/click tooltip (themed, works light + dark). Not the browser default.
-function InfoTip({ text }) {
+function InfoTip({ text, below = false, width = 270 }) {
   const [show, setShow] = useState(false);
   return (
     <span style={{ position: 'relative', display: 'inline-flex' }}
@@ -100,7 +100,7 @@ function InfoTip({ text }) {
       onClick={(e) => { e.stopPropagation(); setShow((s) => !s); }}>
       <span style={{ fontSize: 9, color: C.dim, cursor: 'help', fontWeight: 700, border: `1px solid ${C.border}`, borderRadius: '50%', width: 14, height: 14, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>i</span>
       {show && (
-        <span onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%', transform: 'translateX(-50%)', zIndex: 100, width: 270, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.5, padding: '9px 11px', borderRadius: 7, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', fontWeight: 400, whiteSpace: 'normal', textAlign: 'left' }}>{text}</span>
+        <span onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', ...(below ? { top: 'calc(100% + 6px)' } : { bottom: 'calc(100% + 6px)' }), left: '50%', transform: 'translateX(-50%)', zIndex: 100, width, maxWidth: '86vw', background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.5, padding: '9px 11px', borderRadius: 7, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', fontWeight: 400, whiteSpace: 'normal', textAlign: 'left' }}>{text}</span>
       )}
     </span>
   );
@@ -292,6 +292,57 @@ function HeatmapTooltip({ hover, windowLabel, container }) {
   );
 }
 
+// Heatmap legend. Every swatch is generated from RAMP_RED / RAMP_GREEN — the same arrays
+// insiderTileColor() paints tiles from — so the legend cannot drift out of sync with the map.
+const rampCss = (stops) => `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(',')})`;
+const LEG_CAP = { fontSize: 9, fontWeight: 700, color: C.dim, letterSpacing: '0.5px' };
+const LEG_TXT = { fontSize: 10, color: C.muted };
+const legGroup = { display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' };
+const legSq = (bg, px) => ({ display: 'inline-block', width: px, height: px, borderRadius: 2, background: bg, flexShrink: 0 });
+
+const LEGEND_HELP = (
+  <>
+    <span style={{ display: 'block', fontWeight: 700, marginBottom: 5 }}>Reading this heatmap</span>
+    {[
+      ['Red', 'net open-market selling'],
+      ['Green', 'net open-market buying'],
+      ['Colour intensity', 'magnitude of the activity'],
+      ['Tile size', 'dollar value of insider activity'],
+      ['Grouping', 'companies are grouped by sector'],
+    ].map(([k, v]) => <span key={k} style={{ display: 'block' }}><b>{k}</b> — {v}</span>)}
+    <span style={{ display: 'block', marginTop: 6 }}>Insider selling happens for many reasons — diversification, taxes, scheduled 10b5-1 plans — and should not automatically be read as bearish.</span>
+    <span style={{ display: 'block', marginTop: 6 }}>Individual transactions and their SEC filings are listed below.</span>
+  </>
+);
+
+function HeatmapLegend() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', fontFamily: "'DM Sans',sans-serif" }}>
+      <span style={legGroup}>
+        <span style={LEG_CAP}>DIRECTION</span>
+        <span style={legSq(rampAt(RAMP_RED, 0.78), 9)} />
+        <span style={LEG_TXT}>Sale</span>
+        <span style={legSq(rampAt(RAMP_GREEN, 0.78), 9)} />
+        <span style={LEG_TXT}>Purchase</span>
+      </span>
+      <span style={legGroup}>
+        <span style={LEG_CAP}>INTENSITY</span>
+        <span style={{ display: 'inline-block', width: 34, height: 9, borderRadius: 2, background: rampCss(RAMP_RED) }} />
+        <span style={{ display: 'inline-block', width: 34, height: 9, borderRadius: 2, background: rampCss(RAMP_GREEN) }} />
+        <span style={LEG_TXT}>deeper = more</span>
+      </span>
+      <span style={legGroup}>
+        <span style={LEG_CAP}>SIZE</span>
+        <span style={legSq(C.dim, 5)} />
+        <span style={legSq(C.dim, 8)} />
+        <span style={legSq(C.dim, 11)} />
+        <span style={LEG_TXT}>$ value</span>
+      </span>
+      <InfoTip below width={320} text={LEGEND_HELP} />
+    </div>
+  );
+}
+
 // Sector container geometry. The layout was ALREADY two-level (sectors squarified first, then each
 // sector's tickers squarified inside its own rect) — what it lacked was a visible container and any
 // check on how lopsided the sector areas get.
@@ -358,7 +409,10 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>INSIDER ACTIVITY HEATMAP <span style={{ fontWeight: 400, color: C.muted }}>· green = buying · red = selling · size = $</span></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
+          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', whiteSpace: 'nowrap' }}>INSIDER ACTIVITY HEATMAP</span>
+          <HeatmapLegend />
+        </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'inline-flex', gap: 4 }}>
             {[['net', 'Net'], ['buys', 'Buys'], ['sells', 'Sells']].map(([k, l]) => (
