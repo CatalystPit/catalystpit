@@ -105,7 +105,15 @@ export default function XTape({ height = 620, onClose, bare = false }) {
           return withDeadline(twttr.widgets.createTimeline(
             { sourceType: 'list', id: LIST_ID },
             ref.current,
-            { theme, chrome: 'noheader nofooter transparent', height: heightRef.current },
+            // `transparent` is deliberately NOT in this list. It tells X to drop its own background
+            // so the host page shows through, but X still emits the DARK theme's light-grey text
+            // while the iframe canvas paints white, so usernames, tweet text, timestamps, the X
+            // glyphs and the interaction counts all land at roughly 1.3:1 on white. Links and
+            // avatars keep their own colours, which is why only part of the feed looked washed out.
+            // Letting X paint its own background costs nothing (its light background matches our
+            // light card exactly, and its dark background sits inside our dark panel) and is the
+            // only way the embed renders its own theme consistently.
+            { theme, chrome: 'noheader nofooter', height: heightRef.current },
           ), CREATE_TIMEOUT);
         })
         .then((el) => {
