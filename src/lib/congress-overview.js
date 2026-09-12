@@ -166,13 +166,13 @@ export async function mostTradedStocks({ window = '30d', limit = 12, sort = 'tra
  */
 export async function lateFilings({ limit = 12, threshold = STOCK_ACT_DEADLINE_DAYS } = {}) {
   const rows = await db.select({
-    slug: congressTrades.memberSlug,
+    slug: sql`max(${congressTrades.memberSlug})`,
     name: sql`max(${congressTrades.representative})`,
     chamber: sql`max(${congressTrades.chamber})`,
     party: sql`max(${congressTrades.party})`,
     state: sql`max(${congressTrades.state})`,
     district: sql`max(${congressTrades.district})`,
-    disclosureDate: congressTrades.disclosureDate,
+    disclosureDate: sql`max(${congressTrades.disclosureDate})`,
     transactions: sql`count(*)`.mapWith(Number),
     buys: sql`count(*) filter (where ${congressTrades.action} = 'BUY')`.mapWith(Number),
     sells: sql`count(*) filter (where ${congressTrades.action} = 'SELL')`.mapWith(Number),
@@ -180,11 +180,16 @@ export async function lateFilings({ limit = 12, threshold = STOCK_ACT_DEADLINE_D
     latestTrade: sql`max(${congressTrades.transactionDate})`,
     maxDelay: sql`max(${congressTrades.filingLagDays})`.mapWith(Number),
     minDelay: sql`min(${congressTrades.filingLagDays})`.mapWith(Number),
-    link: sql`max(${congressTrades.link})`,
+    link: congressTrades.link,
   })
     .from(congressTrades)
     .where(and(windowClause('3y'), sql`${congressTrades.filingLagDays} > ${threshold}`))
-    .groupBy(congressTrades.memberSlug, congressTrades.disclosureDate)
+    // Grouped by the DOCUMENT, not by member plus disclosure date. Members file more than one
+    // report on the same day, and the old grouping merged them: Tracey Mann's 2026-08-14 row read
+    // "21 trades, 724 days late" when it was actually two filings, one badly late with 10 trades
+    // and one filed on time with 11. Tuberville's worst row merged EIGHT documents with delays
+    // spanning 231 to 880 days. Every count and delay here now describes one filing.
+    .groupBy(congressTrades.link)
     // Worst delay first. Ranking by disclosure date answered "what landed most recently", which is
     // a different and much less interesting question than "who is furthest past the deadline".
     .orderBy(sql`max(${congressTrades.filingLagDays}) desc`, sql`count(*) desc`)

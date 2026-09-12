@@ -14,7 +14,7 @@
 import { neon } from '@neondatabase/serverless';
 import { fetchHousePtr } from '../src/lib/congress-house.mjs';
 import { fetchSenatePtr, establishSession } from '../src/lib/congress-senate.mjs';
-import { buildRow } from '../src/lib/congress-ingest.mjs';
+import { buildRow, canonicalHash, isOptionTrade } from '../src/lib/congress-ingest.mjs';
 import { buildIndex } from '../src/lib/congress-match.mjs';
 import roster from '../src/lib/congress-roster.json' with { type: 'json' };
 
@@ -72,7 +72,7 @@ const gaps = await sql.query(`
   ORDER BY (f.txn_count - COALESCE(s.n, 0)) DESC`);
 
 console.log(`${gaps.length} filings with a gap${DRY ? '  [DRY RUN]' : ''}`);
-let cookies = null, recovered = 0, done = 0, failed = 0;
+let cookies = null, recovered = 0, done = 0, failed = 0, mismatched = 0, unanchored = 0;
 
 for (const g of gaps.slice(0, LIMIT === Infinity ? gaps.length : LIMIT)) {
   const [first, ...rest] = String(g.filer_name || '').split(' ');
@@ -87,6 +87,35 @@ for (const g of gaps.slice(0, LIMIT === Infinity ? gaps.length : LIMIT)) {
     }
     if (res.status !== 'parsed' || !res.recs?.length) { failed++; continue; }
     const rows = res.recs.map((rec) => buildRow(rec, g.chamber, index)).filter((r) => r.txHash);
+
+    // member_slug is part of the canonical hash, and matchMember only resolves a bioguide when the
+    // filer_name string matches the roster. Re-deriving it here can land on a name-slug where the
+    // stored rows carry a bioguide, and every recovered hash would then miss the conflict check and
+    // insert a DUPLICATE of a trade we already hold, under a second identity for the same person.
+    // Anchor to the identity the document's existing rows already use. Documents with no stored
+    // rows keep the derived slug and are reported, since there is nothing to anchor to.
+    const [anchor] = await sql`
+      SELECT member_slug, representative, first_name, last_name, party, state, district
+        FROM congress_trades WHERE link LIKE ${'%' + g.doc_id + '%'} LIMIT 1`;
+    if (anchor?.member_slug) {
+      for (const r of rows) {
+        if (r.memberSlug === anchor.member_slug) continue;
+        mismatched++;
+        r.memberSlug = anchor.member_slug;
+        r.representative = anchor.representative ?? r.representative;
+        r.firstName = anchor.first_name ?? r.firstName;
+        r.lastName = anchor.last_name ?? r.lastName;
+        r.party = anchor.party ?? r.party;
+        r.state = anchor.state ?? r.state;
+        r.district = anchor.district ?? r.district;
+        r.txHash = canonicalHash({
+          memberSlug: r.memberSlug, transactionDate: r.transactionDate, ticker: r.ticker,
+          action: r.action, amountMin: r.amountMin, amountMax: r.amountMax,
+          isOption: isOptionTrade(r.assetType), assetDescription: r.assetDescription,
+        });
+      }
+    } else { unanchored++; }
+
     const n = await insertRows(rows);
     recovered += n; done++;
     if (n) console.log(`  ${String(g.filer_name).slice(0, 22).padEnd(23)} ${g.chamber.padEnd(7)} parsed ${String(res.recs.length).padStart(4)}  recovered ${String(n).padStart(4)}`);
@@ -94,3 +123,5 @@ for (const g of gaps.slice(0, LIMIT === Infinity ? gaps.length : LIMIT)) {
   await sleep(g.chamber === 'senate' ? 1200 : 400);
 }
 console.log(`\ndone. filings processed ${done}, failed ${failed}, transactions recovered ${recovered}`);
+console.log(`identity: ${mismatched} parsed rows re-anchored to the member their document already uses, `
+  + `${unanchored} filings had no stored rows to anchor to`);
