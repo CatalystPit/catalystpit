@@ -233,7 +233,10 @@ function MarketPulse({ data, window, onWindow }) {
 // pale → deep, so a huge sale reads as dark red and a small one as pink (same idea in green for buys).
 // Four stops per family rather than two, so "light / normal / deep" are distinct bands, not one blur.
 const RAMP_GREEN = [[221, 244, 226], [138, 212, 158], [45, 152, 82], [14, 82, 44]];   // pale → deep
-const RAMP_RED   = [[252, 216, 216], [244, 150, 150], [212, 66, 66], [124, 20, 24]];  // pale → deep
+// Pale → deep. The first stop was 252,216,216, which on a white card read as barely tinted, so small
+// sell tiles were indistinguishable from no data. Raised the floor saturation; the other three stops,
+// and the whole green ramp, are untouched.
+const RAMP_RED   = [[247, 193, 193], [244, 150, 150], [212, 66, 66], [124, 20, 24]];  // pale → deep
 
 const rampAt = (stops, t) => {
   const segs = stops.length - 1;
@@ -398,14 +401,15 @@ const isSliver = (r) => r.w < MIN_TILE_W || r.h < MIN_TILE_H || Math.max(r.w / r
 
 // The OTHER tile carries real summed figures, so its colour and tooltip stay honest, plus the names it
 // stands for. `value` is the summed layout magnitude for whichever mode is active.
-function aggregateTile(bucket, valOf) {
+function aggregateTile(bucket, areaOf, displayOf) {
   const sum = (k) => bucket.reduce((a, b) => a + (Number(b[k]) || 0), 0);
   return {
     ticker: 'OTHER', aggNames: bucket.map((b) => b.ticker), sector: bucket[0] && bucket[0].sector,
     company: `${bucket.length} smaller names`,
     buys: sum('buys'), sells: sum('sells'), net: sum('net'), insiders: sum('insiders'),
     largest: Math.max(0, ...bucket.map((b) => Number(b.largest) || 0)),
-    value: bucket.reduce((a, b) => a + valOf(b), 0),
+    value: bucket.reduce((a, b) => a + areaOf(b), 0),
+    displayValue: bucket.reduce((a, b) => a + displayOf(b), 0),
   };
 }
 
@@ -415,12 +419,15 @@ function aggregateTile(bucket, valOf) {
 // the ACTUAL geometry, and while anything is unusable fold the smallest remaining name into an OTHER
 // tile and lay out again — predicted area alone misses the stranded-column case. Areas are never
 // rescaled, so dominant holdings keep their exact share.
-function packSector(items, valOf, x, y, w, h) {
-  const sorted = [...items].sort((a, b) => valOf(b) - valOf(a));
+// areaOf drives GEOMETRY, displayOf drives every number a reader sees. They are the same function
+// everywhere except the outlier compression applied by the caller.
+function packSector(items, areaOf, displayOf, x, y, w, h) {
+  const valOf = areaOf;
+  const sorted = [...items].sort((a, b) => displayOf(b) - displayOf(a));
   const keep = sorted.slice(), bucket = [];
   for (let guard = 0; guard <= sorted.length; guard++) {
-    const nodes = keep.map((n) => ({ ...n, value: valOf(n) }));
-    if (bucket.length) nodes.push(aggregateTile(bucket, valOf));
+    const nodes = keep.map((n) => ({ ...n, value: areaOf(n), displayValue: displayOf(n) }));
+    if (bucket.length) nodes.push(aggregateTile(bucket, areaOf, displayOf));
     const rects = treemap(nodes, x, y, w, h);
     if (!rects.some(isSliver)) return rects;
     if (keep.length > 1) { bucket.push(keep.pop()); continue; }   // fold the SMALLEST name, never a big one
@@ -430,19 +437,19 @@ function packSector(items, valOf, x, y, w, h) {
     // than ship the sliver, drop OTHER from the LAYOUT and disclose it on the surviving tile's tooltip,
     // which keeps the combined dollar value and the underlying names reachable.
     if (!bucket.length) return rects;                             // nothing folded: the sector itself is tiny
-    const soloV = valOf(keep[0]);
-    const foldV = bucket.reduce((a, b) => a + valOf(b), 0);
+    const soloV = displayOf(keep[0]);                              // the material-remainder test is
+    const foldV = bucket.reduce((a, b) => a + displayOf(b), 0);    // about DOLLARS, not tile area
     // A trivial remainder is disclosed on the surviving tile's tooltip. A MATERIAL one is not allowed to
     // vanish: give OTHER the smallest area that clears the geometry instead, which costs the dominant
     // tile some area but keeps both names on the map. Both tiles still LABEL their true dollar value.
     if (foldV / (soloV + foldV) > FOLD_MAX_SHARE) {
-      const agg = aggregateTile(bucket, valOf);
-      for (let bump = foldV, k = 0; k < 28; k++, bump *= 1.2) {
-        const rects2 = treemap([{ ...keep[0], value: soloV }, { ...agg, value: bump, displayValue: foldV }], x, y, w, h);
+      const agg = aggregateTile(bucket, areaOf, displayOf);
+      for (let bump = areaOf(keep[0]) * 0.06, k = 0; k < 28; k++, bump *= 1.2) {
+        const rects2 = treemap([{ ...keep[0], value: areaOf(keep[0]), displayValue: soloV }, { ...agg, value: bump, displayValue: foldV }], x, y, w, h);
         if (!rects2.some(isSliver)) return rects2;
       }
     }
-    return treemap([{ ...keep[0], value: soloV, foldedNames: bucket.map((b) => b.ticker), foldedValue: foldV }], x, y, w, h);
+    return treemap([{ ...keep[0], value: areaOf(keep[0]), displayValue: soloV, foldedNames: bucket.map((b) => b.ticker), foldedValue: foldV }], x, y, w, h);
   }
   return [];
 }
@@ -450,9 +457,13 @@ function packSector(items, valOf, x, y, w, h) {
 // Sector container geometry. The layout was ALREADY two-level (sectors squarified first, then each
 // sector's tickers squarified inside its own rect) — what it lacked was a visible container and any
 // check on how lopsided the sector areas get.
-const HEADER = 13;                // sector title strip, reserved out of the container's top
+const HEADER = 16;                // sector title strip, reserved out of the container's top (raised
+                                  // from 13 for clearer separation between sector bands)
 const SECTOR_GAP = 2;             // → 4px gutter between neighbours, 2px at the board edge
 const SECTOR_EXP = 0.65;          // sector area compression (see the memo below)
+const TILE_EXP = 0.62;            // TILE area compression within a sector, for the same reason: one
+                                  // $236B position was claiming most of the board. Monotonic, so the
+                                  // ranking of tiles is unchanged and only their area is damped.
 const SECTOR_MIN_SHARE = 0.025;   // no sector gets less than 2.5% of the board
 
 // Tile label fit. Same responsive font curve as before (so big tiles are unchanged) — what moved is the
@@ -479,6 +490,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
   }, []);
   const cells = data?.cells || [];
   const val = (c) => (mode === 'buys' ? c.buys : mode === 'sells' ? c.sells : Math.abs(c.net));
+  const tileArea = (c) => Math.pow(val(c), TILE_EXP);   // geometry only; every displayed number uses val
   const { list, max } = useMemo(() => {
     const shown = cells.filter((c) => val(c) > 0);
     if (!shown.length || size.w < 40 || size.h < 40) return { list: [], max: 1 };
@@ -505,7 +517,11 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
       // its 1px border (the header is reserved here rather than overdrawn, so no sector renders empty).
       const ix = bx + 1, iw = bw - 2, iy = by + HEADER, ih = bh - HEADER - 1;
       if (ih < 8 || iw < 8) continue;
-      for (const tr of packSector(sr.items, val, ix, iy, iw, ih)) out.push({ kind: 'tile', ...tr });
+      // Tile AREA is compressed the same way sector area is. One extreme position (CRWV at $236B, 63x
+      // the next name) otherwise takes almost the whole board and flattens every other tile into an
+      // unreadable strip. ^0.62 is monotonic, so the ORDER is untouched: the biggest tile is still the
+      // biggest. Only how much room it claims changes. Labels and the hover card keep the real dollars.
+      for (const tr of packSector(sr.items, tileArea, val, ix, iy, iw, ih)) out.push({ kind: 'tile', ...tr });
     }
     return { list: out, max: mx };
   }, [cells, size, mode]); // eslint-disable-line react-hooks/exhaustive-deps
