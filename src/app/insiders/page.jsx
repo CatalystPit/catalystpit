@@ -292,6 +292,14 @@ function HeatmapTooltip({ hover, windowLabel, container }) {
   );
 }
 
+// Sector container geometry. The layout was ALREADY two-level (sectors squarified first, then each
+// sector's tickers squarified inside its own rect) — what it lacked was a visible container and any
+// check on how lopsided the sector areas get.
+const HEADER = 13;                // sector title strip, reserved out of the container's top
+const SECTOR_GAP = 2;             // → 4px gutter between neighbours, 2px at the board edge
+const SECTOR_EXP = 0.65;          // sector area compression (see the memo below)
+const SECTOR_MIN_SHARE = 0.025;   // no sector gets less than 2.5% of the board
+
 // Tile label fit. Same responsive font curve as before (so big tiles are unchanged) — what moved is the
 // VISIBILITY test: instead of a flat w>30/h>18 cutoff that blanked plenty of tiles with room to spare, a
 // ticker shows whenever it measurably fits at that size. ~0.64em per uppercase DM Sans char.
@@ -323,13 +331,26 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
     const bySec = {};
     for (const c of shown) (bySec[c.sector || 'Other'] ||= []).push(c);
     const sectors = Object.entries(bySec).map(([name, items]) => ({ name, items, value: items.reduce((a, x) => a + val(x), 0) })).filter((s) => s.value > 0);
+    // LEVEL 1 — sector containers. Area is compressed, not raw: raw insider $ runs ~84:1 between the
+    // biggest and smallest sector, and while that still produces decent sector RECTANGLES (worst aspect
+    // ~1.8), it starves the small ones — their tickers come out as slivers too small to label. ^0.65 with
+    // a floor keeps the ordering and the sense of weight but pulls the spread to ~13:1, which lifts
+    // labelled tiles from 66% to 75% and removes sub-10px tiles entirely. Tile areas WITHIN a sector stay
+    // raw $, so relative insider activity inside a sector is untouched.
+    const comp = sectors.map((sc) => Math.pow(sc.value, SECTOR_EXP));
+    const floor = comp.reduce((a, b) => a + b, 0) * SECTOR_MIN_SHARE;
+    const weighted = sectors.map((sc, i) => ({ ...sc, value: Math.max(comp[i], floor) }));
     const out = [];
-    const HEADER = 13;
-    for (const sr of treemap(sectors, 0, 0, size.w, size.h)) {
-      out.push({ kind: 'sector', name: sr.name, x: sr.x, y: sr.y, w: sr.w });
-      const innerY = sr.y + HEADER, innerH = sr.h - HEADER;
-      if (innerH < 8 || sr.w < 8) continue;
-      for (const tr of treemap(sr.items.map((it) => ({ ...it, value: val(it) })), sr.x, innerY, sr.w, innerH)) out.push({ kind: 'tile', ...tr });
+    for (const sr of treemap(weighted, 0, 0, size.w, size.h)) {
+      const bx = sr.x + SECTOR_GAP, by = sr.y + SECTOR_GAP;          // gutter → visible sector boundary
+      const bw = sr.w - SECTOR_GAP * 2, bh = sr.h - SECTOR_GAP * 2;
+      if (bw < 6 || bh < 6) continue;
+      out.push({ kind: 'sector', name: sr.name, x: bx, y: by, w: bw, h: bh });
+      // LEVEL 2 — tickers, squarified inside this sector's container, below its header strip and inside
+      // its 1px border (the header is reserved here rather than overdrawn, so no sector renders empty).
+      const ix = bx + 1, iw = bw - 2, iy = by + HEADER, ih = bh - HEADER - 1;
+      if (ih < 8 || iw < 8) continue;
+      for (const tr of treemap(sr.items.map((it) => ({ ...it, value: val(it) })), ix, iy, iw, ih)) out.push({ kind: 'tile', ...tr });
     }
     return { list: out, max: mx };
   }, [cells, size, mode]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -351,7 +372,11 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
         style={{ position: 'relative', width: '100%', height: 460, borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}`, background: C.bg }}>
         {cells.length === 0 && <div style={{ padding: 20, textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No insider activity in this window.</div>}
         {list.map((t, i) => {
-          if (t.kind === 'sector') return <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: 13, overflow: 'hidden', fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.dim, textTransform: 'uppercase', padding: '2px 4px', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{t.name}</div>;
+          if (t.kind === 'sector') return (
+            <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, boxSizing: 'border-box', overflow: 'hidden', pointerEvents: 'none' }}>
+              <div style={{ height: HEADER, lineHeight: `${HEADER}px`, fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.dim, textTransform: 'uppercase', padding: '0 5px', whiteSpace: 'nowrap', overflow: 'hidden' }}>{t.name}</div>
+            </div>
+          );
           const bg = insiderTileColor(t, mode, max);
           const ink = tileInk(bg);                                  // white on deep shades, near-black on pale
           return (
