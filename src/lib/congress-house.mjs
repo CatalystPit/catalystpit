@@ -14,6 +14,7 @@
 //  - No robots.txt, no terms gate, no session. Static GETs; be a polite citizen.
 
 import { unzipSync, strFromU8 } from 'fflate';
+import { isSymbolLike } from './congress-ingest.mjs';
 // PDF text is extracted with `unpdf` (ships a serverless pdfjs build — no DOMMatrix/DOM deps,
 // unlike pdf-parse which crashes in Vercel's Node runtime). Loaded LAZILY inside extractPdfText
 // so this module imports cleanly everywhere and the dedupe / Senate paths never load it.
@@ -100,9 +101,14 @@ export function parsePtrTransactions(rawText) {
     if (txns.length) { const d = grabDesc(seg); if (d) txns[txns.length - 1].description = d; }
     prevEnd = CORE.lastIndex;
     const [, assetCode, txTypeRaw, txDate, notifyDate, amount] = m;
-    // ticker = last parenthetical token in the preceding segment (skip CUSIPs/junk via buildRow's cleanTicker)
-    const parens = [...seg.matchAll(/\(([A-Za-z0-9.\-]{1,10})\)/g)];
-    const ticker = parens.length ? parens[parens.length - 1][1] : null;
+    // ticker = last parenthetical token in the preceding segment that is symbol-shaped. Taking the
+    // last parenthetical unconditionally captured the venue or a qualifier whenever the filer wrote
+    // one after the symbol: "200? FIG (NYSE)" yielded NYSE, "U.S Treasury Bills (partial)" yielded
+    // PARTIAL, "200? BTC (Bitcoin)" yielded BITCOIN. Rejecting outright rather than falling back to
+    // a bare word: if nothing qualifies we record no ticker instead of guessing which loose token
+    // was the symbol.
+    const parens = [...seg.matchAll(/\(([A-Za-z0-9.\-]{1,10})\)/g)].map((p) => p[1]);
+    const ticker = parens.filter(isSymbolLike).pop() || null;
     // owner = last standalone SP/JT/DC token in the segment (else filer/Self)
     const owns = [...seg.matchAll(/\b(SP|JT|DC)\b/g)];
     const ownerCode = owns.length ? owns[owns.length - 1][1] : '';

@@ -109,7 +109,12 @@ export function parseSenatePtrHtml(html) {
     const cells = (tr.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || []).map((td) => decode(td));
     if (cells.length < 8) continue;
     // [0]# [1]TxDate [2]Owner [3]Ticker [4]AssetName [5]AssetType [6]TxType [7]Amount [8]Comment
-    const rawTicker = (cells[3] || '').replace(/[^A-Za-z0-9.\-]/g, '').toUpperCase();
+    // Stripping every separator fused a two-leg corporate action into a symbol that does not exist:
+    // a cell reading "CEQP ET" became CEQPET, "ETRN EQT" became ETRNEQT, "LSXMK SIRI" became
+    // LSXMKSIRI. Split instead, and when there are two legs record none. One column cannot hold
+    // both, and the description ("X (Exchanged) Y (Received)") keeps the detail either way.
+    const legs = (cells[3] || '').split(/[^A-Za-z0-9.\-]+/).filter(Boolean);
+    const rawTicker = legs.length === 1 ? legs[0].toUpperCase() : '';
     txns.push({
       transactionDate: toISO(cells[1]),
       owner: cells[2] && cells[2] !== '--' ? cells[2] : 'Self',

@@ -99,9 +99,29 @@ export function canonicalHash({ memberSlug, transactionDate, ticker, action, amo
   return createHash('sha256').update(key).digest('hex');
 }
 
+// Tokens that show up exactly where a symbol belongs but are not symbols. Filers put the
+// EXCHANGE, a settlement qualifier, or the asset's plain-English name inside the same
+// parentheses a ticker normally occupies, and every entry below reached the ticker column at
+// least once: "200? FIG (NYSE)" stored NYSE, "U.S Treasury Bills (partial)" stored PARTIAL,
+// "200? BTC (Bitcoin)" stored BITCOIN. Real symbols that merely look like these stay out of
+// the list on purpose, CBOE, NDAQ and OTCM among them.
+export const NON_SYMBOL_TOKENS = new Set([
+  'NYSE', 'NASDAQ', 'NSDQ', 'AMEX', 'ARCA', 'NYSEARCA', 'BATS', 'OTCBB', 'OTC', 'TSX', 'TSXV', 'LSE', 'ASX',
+  'PARTIAL', 'EXCHANGED', 'RECEIVED', 'VARIOUS', 'MULTIPLE', 'NONE', 'UNKNOWN', 'PENDING', 'NA',
+  'BITCOIN', 'ETHEREUM', 'RIPPLE', 'SOLANA', 'DOGECOIN', 'CARDANO', 'LITECOIN', 'POLKADOT',
+  'CHAINLINK', 'AVALANCHE', 'CRYPTO',
+]);
+
+// Shape test only. A symbol this accepts may still be a fund, a bond or a foreign listing we
+// hold no price history for; that is a coverage question, not a parsing one.
+export function isSymbolLike(s) {
+  const t = (s || '').trim().toUpperCase();
+  return !!t && /^[A-Z][A-Z0-9.\-]{0,9}$/.test(t) && !NON_SYMBOL_TOKENS.has(t);
+}
+
 const cleanTicker = (s) => {
   const t = (s || '').trim().toUpperCase();
-  return t && /^[A-Z][A-Z0-9.\-]*$/.test(t) ? t : null;   // null for blank / non-equity
+  return isSymbolLike(t) ? t : null;   // null for blank / non-equity / not a symbol at all
 };
 
 const nameSlug = (first, last) =>
