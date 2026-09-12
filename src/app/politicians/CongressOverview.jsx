@@ -64,22 +64,44 @@ const Empty = ({ children }) => (
   <div style={{ padding: '18px 12px', textAlign: 'center', color: C.muted, fontSize: 12 }}>{children}</div>
 );
 
+// Most Traded ranges. Values are the window strings /api/congress-overview already accepts, and
+// every one of them is floored at the 3 year cap server-side.
+const TRADED_RANGES = [['3m', '3M'], ['6m', '6M'], ['1y', '1Y'], ['3y', '3Y']];
+const TRADED_DEFAULT = '3m';
+
 export default function CongressOverview({ onSelectTicker, selectedTicker }) {
   const [data, setData] = useState(null);
   const [failed, setFailed] = useState(false);
+  const [tradedRange, setTradedRange] = useState(TRADED_DEFAULT);
+  const [traded, setTraded] = useState(null);       // overrides data.mostTraded once a range is picked
+  const [tradedLoading, setTradedLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/congress-overview?window=3m&limit=6')
+    fetch(`/api/congress-overview?window=${TRADED_DEFAULT}&limit=6`)
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (alive) { if (j && !j.error) setData(j); else setFailed(true); } })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, []);
 
+  // Range changes fetch ONLY the Most Traded section. The default range is already in the first
+  // response, so selecting it again costs nothing.
+  useEffect(() => {
+    if (tradedRange === TRADED_DEFAULT) { setTraded(null); return; }
+    let alive = true;
+    setTradedLoading(true);
+    fetch(`/api/congress-overview?section=traded&window=${tradedRange}&limit=6`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive) { setTraded(j && !j.error ? j.mostTraded : []); setTradedLoading(false); } })
+      .catch(() => { if (alive) { setTraded([]); setTradedLoading(false); } });
+    return () => { alive = false; };
+  }, [tradedRange]);
+
   if (failed) return null;                      // discovery is additive; never block the page
   const best = data?.bestRecord;
   const late = data?.lateFilings;
+  const tradedList = traded ?? data?.mostTraded;
 
   return (
     <div style={{ display: 'grid', gap: 12, marginBottom: 18,
@@ -153,17 +175,36 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
       <div style={panel}>
         <div style={head}>
           <span style={headText}>Most Traded Stocks</span>
+          {/* Compact range pills. Sized to the 10px header text so the card keeps its height. */}
+          <span style={{ display: 'flex', gap: 3, marginLeft: 'auto' }}>
+            {TRADED_RANGES.map(([val, label]) => {
+              const on = tradedRange === val;
+              return (
+                <button key={val} type="button" onClick={() => setTradedRange(val)}
+                  aria-pressed={on} title={`Most traded over the last ${label}`}
+                  style={{ background: on ? C.green : 'transparent', color: on ? '#fff' : C.muted,
+                    border: `1px solid ${on ? C.green : C.border}`, borderRadius: 4,
+                    padding: '1px 5px', fontSize: 9, fontWeight: 700, letterSpacing: '0.3px',
+                    cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", lineHeight: 1.5 }}>
+                  {label}
+                </button>
+              );
+            })}
+          </span>
           <Explain text={
             <>
               <b style={{ display: 'block', marginBottom: 4 }}>Disclosed activity</b>
-              Congressional trades over the last 3 months. The dollar figure is the range members
-              actually disclosed, added up. Filers report a bracket such as $1,001 to $15,000, never an
-              exact amount, so this is a range and not a precise total.
+              Congressional trades over the selected window, counted by transaction date. The dollar
+              figure is the range members actually disclosed, added up. Filers report a bracket such as
+              $1,001 to $15,000, never an exact amount, so this is a range and not a precise total.
+              <span style={{ display: 'block', marginTop: 6, color: C.dim }}>
+                Every window is capped at 3 years, the limit of the history we hold.
+              </span>
             </>
           } />
         </div>
-        {!data ? <Empty>Loading.</Empty> : !data.mostTraded?.length ? <Empty>No congressional trading in this period.</Empty> : (
-          data.mostTraded.map((t) => {
+        {!data || tradedLoading ? <Empty>Loading.</Empty> : !tradedList?.length ? <Empty>No congressional trading in this period.</Empty> : (
+          tradedList.map((t) => {
             const on = selectedTicker === t.ticker;
             return (
               <button key={t.ticker} type="button" onClick={() => onSelectTicker?.(t.ticker)}

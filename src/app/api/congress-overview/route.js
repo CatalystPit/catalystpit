@@ -22,11 +22,24 @@ export async function GET(request) {
     const tickerLimit = Math.min(Math.max(parseInt(searchParams.get('tickers') ?? '0', 10) || 0, 0), 40);
     const sort = ['trades', 'recent', 'value'].includes(searchParams.get('sort')) ? searchParams.get('sort') : 'trades';
 
+    // Most Traded has its own range selector, and changing it must not re-run the other two.
+    // Best 30-Day walks every priced trade with a LATERAL price lookup, which is not work worth
+    // repeating because someone clicked 6M on a different card.
+    const tradedOnly = searchParams.get('section') === 'traded';
+
     const [best, traded, filers] = await Promise.all([
-      bestThirtyDayRecord(),
+      tradedOnly ? null : bestThirtyDayRecord(),
       mostTradedStocks({ window, limit: Math.max(limit, tickerLimit), sort }),
-      lateFilings({ limit }),
+      tradedOnly ? null : lateFilings({ limit }),
     ]);
+
+    if (tradedOnly) {
+      return Response.json({
+        window, sort,
+        mostTraded: traded.slice(0, limit),
+        tickerList: tickerLimit ? traded.slice(0, tickerLimit) : undefined,
+      }, { headers: CACHE });
+    }
 
     return Response.json({
       window,
