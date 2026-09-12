@@ -1,4 +1,5 @@
-import { bestThirtyDayRecord, mostTradedStocks, latestFilers, LB_MIN_TRADES } from '../../../lib/congress-overview';
+import { bestThirtyDayRecord, mostTradedStocks, lateFilings, LB_MIN_TRADES } from '../../../lib/congress-overview';
+import { STOCK_ACT_DEADLINE_DAYS } from '../../../lib/disclosure';
 
 export const runtime = 'nodejs';
 
@@ -24,7 +25,7 @@ export async function GET(request) {
     const [best, traded, filers] = await Promise.all([
       bestThirtyDayRecord({ min: LB_MIN_TRADES }),
       mostTradedStocks({ window, limit: Math.max(limit, tickerLimit), sort }),
-      latestFilers({ limit }),
+      lateFilings({ limit }),
     ]);
 
     return Response.json({
@@ -47,7 +48,15 @@ export async function GET(request) {
       mostTraded: traded.slice(0, limit),
       tickerList: tickerLimit ? traded.slice(0, tickerLimit) : undefined,
       sort,
-      latestFilers: filers,
+      lateFilings: {
+        list: filers,
+        threshold: STOCK_ACT_DEADLINE_DAYS,
+        headline: `Disclosures filed past the ${STOCK_ACT_DEADLINE_DAYS} day STOCK Act deadline`,
+        methodology: `The STOCK Act gives members ${STOCK_ACT_DEADLINE_DAYS} days from a transaction to disclose it. `
+          + 'These are the filings that ran past that, worst first. The delay is measured from the OLDEST '
+          + 'trade in the filing, because that is the transaction that waited longest. A late filing is a '
+          + 'reporting failure, not evidence of anything about the trade itself.',
+      },
     }, { headers: CACHE });
   } catch (e) {
     console.error('[congress_overview]', e);

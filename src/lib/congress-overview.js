@@ -14,6 +14,7 @@ import { congressTrades, congressTickerPrices, tickerPriceQuality } from './sche
 import { and, eq, sql, desc } from 'drizzle-orm';
 import { MAX_HISTORY_DAYS } from './congress-chart.mjs';
 import { returnBlocked, BLOCK_COPY } from './price-continuity.mjs';
+import { STOCK_ACT_DEADLINE_DAYS } from './disclosure';
 
 export const LB_WINDOWS = { '30d': '30 days', '3m': '3 months', '6m': '6 months', '1y': '1 year', '2y': '2 years', '3y': '3 years' };
 export const LB_WEIGHT_CAP = 0.30;   // no single position counts for more than 30% of a member's weight
@@ -151,13 +152,19 @@ export async function mostTradedStocks({ window = '30d', limit = 12, sort = 'tra
 }
 
 /**
- * Latest filers: one row per disclosure a member made, newest first.
+ * Late filings: the disclosures that broke the STOCK Act's 45 day deadline, worst delay first.
+ *
+ * This replaced a "latest filers" list that ranked by disclosure date. The two answer different
+ * questions and only one of them is intelligence: "what landed today" is a feed, while "who is 880
+ * days past a statutory deadline" is a finding. 19.6 percent of the rows we hold were filed late,
+ * so there is a real signal here rather than a handful of stragglers.
  *
  * Grouped by member and disclosure date so a single filing reporting 40 transactions reads as one
  * filing, not 40 rows. maxDelay is the oldest trade in that filing, which is the honest headline
- * for how late a disclosure ran.
+ * for how late a disclosure ran: the deadline runs from the transaction, so the earliest trade in
+ * the filing is the one that waited longest.
  */
-export async function latestFilers({ limit = 12 } = {}) {
+export async function lateFilings({ limit = 12, threshold = STOCK_ACT_DEADLINE_DAYS } = {}) {
   const rows = await db.select({
     slug: congressTrades.memberSlug,
     name: sql`max(${congressTrades.representative})`,
@@ -176,11 +183,19 @@ export async function latestFilers({ limit = 12 } = {}) {
     link: sql`max(${congressTrades.link})`,
   })
     .from(congressTrades)
-    .where(windowClause('3y'))
+    .where(and(windowClause('3y'), sql`${congressTrades.filingLagDays} > ${threshold}`))
     .groupBy(congressTrades.memberSlug, congressTrades.disclosureDate)
-    .orderBy(desc(congressTrades.disclosureDate), sql`count(*) desc`)
+    // Worst delay first. Ranking by disclosure date answered "what landed most recently", which is
+    // a different and much less interesting question than "who is furthest past the deadline".
+    .orderBy(sql`max(${congressTrades.filingLagDays}) desc`, sql`count(*) desc`)
     .limit(limit);
-  return rows.map((r) => ({ ...r, photoUrl: photoUrl(r.slug) }));
+  return rows.map((r) => ({
+    ...r,
+    photoUrl: photoUrl(r.slug),
+    // Days past the statutory deadline, which is the number the module is actually about.
+    daysLate: r.maxDelay == null ? null : r.maxDelay - threshold,
+    threshold,
+  }));
 }
 
 // ─── Best 30-Day Record ─────────────────────────────────────────────────────

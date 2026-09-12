@@ -79,6 +79,7 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
 
   if (failed) return null;                      // discovery is additive; never block the page
   const best = data?.bestRecord;
+  const late = data?.lateFilings;
 
   return (
     <div style={{ display: 'grid', gap: 12, marginBottom: 18,
@@ -176,24 +177,32 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
         )}
       </div>
 
-      {/* ── Latest Filers ──────────────────────────────────────────────── */}
+      {/* ── Late Filings ───────────────────────────────────────────────── */}
       <div style={panel}>
         <div style={head}>
-          <span style={headText}>Latest Filers</span>
-          <Explain text={
-            <>
-              <b style={{ display: 'block', marginBottom: 4 }}>Traded versus disclosed</b>
-              The newest disclosures we hold, one row per filing. The delay is the gap between when a
-              trade happened and when it was reported. Members have 45 days to disclose under the
-              STOCK Act, so a filing can cover trades made weeks earlier.
-            </>
-          } />
+          <span style={headText}>Late Filings</span>
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {/* The threshold is the whole point of the module, so it is stated on the panel itself
+                rather than hidden behind the explainer. */}
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.4px', color: C.red,
+              background: C.redLight, padding: '2px 6px', borderRadius: 3, whiteSpace: 'nowrap' }}>
+              PAST {late?.threshold ?? 45}-DAY DEADLINE
+            </span>
+            <Explain text={
+              <>
+                <b style={{ display: 'block', marginBottom: 4 }}>The {late?.threshold ?? 45} day rule</b>
+                The STOCK Act gives members {late?.threshold ?? 45} days from a transaction to disclose it.
+                These are the filings that ran past that, worst first. The delay is measured from the
+                oldest trade in the filing, because that is the transaction that waited longest. A late
+                filing is a reporting failure, not evidence of anything about the trade itself.
+              </>
+            } />
+          </span>
         </div>
-        {!data ? <Empty>Loading.</Empty> : !data.latestFilers?.length ? <Empty>No recent disclosures.</Empty> : (
-          data.latestFilers.map((f, i) => {
+        {!data ? <Empty>Loading.</Empty> : !late?.list?.length ? <Empty>No late filings on record.</Empty> : (
+          late.list.map((f, i) => {
             const ps = partyStyle(f.party);
-            const delay = formatDisclosureDelay({ filingLagDays: f.maxDelay }, { short: true });
-            const late = Number(f.maxDelay) > 45;
+            const over = Number(f.daysLate);
             return (
               <a key={`${f.slug}-${f.disclosureDate}-${i}`} href={`/politicians/${f.slug}`} className="row-hov"
                 style={{ ...row, textDecoration: 'none', color: 'inherit' }}>
@@ -202,14 +211,17 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
                   <span style={{ display: 'block', fontSize: 12.5, color: C.text, fontWeight: 500,
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</span>
                   <span style={{ fontSize: 10, color: C.muted }}>
-                    {chamberLabel(f.chamber)} {'·'} filed {fmtDate(f.disclosureDate)}
+                    {chamberLabel(f.chamber)} {'·'} {f.transactions} {f.transactions === 1 ? 'trade' : 'trades'}
+                    {' · '}filed {fmtDate(f.disclosureDate)}
                   </span>
                 </span>
                 <span style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <span style={{ ...num, display: 'block', fontSize: 12, fontWeight: 600, color: C.ink }}>
-                    {f.transactions} {f.transactions === 1 ? 'trade' : 'trades'}
+                  <span style={{ ...num, display: 'block', fontSize: 12.5, fontWeight: 700, color: C.red }}>
+                    {over.toLocaleString('en-US')}d late
                   </span>
-                  <span style={{ fontSize: 10, color: late ? C.red : C.dim, whiteSpace: 'nowrap' }}>{delay}</span>
+                  <span style={{ fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>
+                    {formatDisclosureDelay({ filingLagDays: f.maxDelay }, { short: true })}
+                  </span>
                 </span>
               </a>
             );
