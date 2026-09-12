@@ -90,7 +90,11 @@ export function canonicalHash({ memberSlug, transactionDate, ticker, action, amo
     // ticker at all (bonds, funds, notes) distinct securities became indistinguishable: one
     // 703-transaction filing stored 373 rows. Normalised so trivial case/whitespace drift
     // between filings does not split a genuine cross-source duplicate back apart.
-    (assetDescription || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 160),
+    // ONLY when there is no ticker. With a ticker the symbol already identifies the security,
+    // and folding the description in there re-split genuine cross-source duplicates: the same
+    // trade arrives as 'Cadence Design Systems Inc' from one feed and 'Cadence Design Systems,
+    // Inc. - Common Stock (CDNS)' from another, which must still collapse to one row.
+    ticker ? '' : (assetDescription || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 160),
   ].join('|') + (isOption ? '|OPT' : '');   // option suffix keeps a stock and option sibling separate
   return createHash('sha256').update(key).digest('hex');
 }

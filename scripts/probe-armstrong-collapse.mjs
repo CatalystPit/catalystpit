@@ -26,7 +26,7 @@ for (const t of res.transactions) {
   if (!t.ticker) nullTicker++;
   cur.add(canonicalHash(base));
   const k = (extra) => createHash('sha256').update(canonicalHash(base) + '|' + extra).digest('hex');
-  withOwner.add(k(t.owner || ''));
+  withOwner.add(k(t.ticker ? '' : (t.assetDescription||'').trim().toLowerCase()));  // desc ONLY when no ticker
   withAsset.add(k((t.assetDescription || '').trim().toLowerCase()));
   full.add(k((t.owner || '') + '|' + (t.assetDescription || '').trim().toLowerCase()));
 }
