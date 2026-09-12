@@ -36,13 +36,30 @@ function themeColors() {
   };
 }
 const DEFAULT_RANGE = '6M';
-const GREEN = '#1E5C38', RED = '#A83030', NEUTRAL = '#7A7F86';
 
-// Purchases green, sales red, anything else (exchanges) neutral rather than mislabelled as either.
-const styleFor = (dir) => (
-  dir === 'buy' ? { position: 'belowBar', color: GREEN, shape: 'arrowUp' }
-  : dir === 'sell' ? { position: 'aboveBar', color: RED, shape: 'arrowDown' }
-  : { position: 'aboveBar', color: NEUTRAL, shape: 'circle' }
+// Marker palette, per theme. Purchase markers must NOT reuse the price line's forest green: at
+// #1E5C38 both were the same hex, so buy arrows disappeared into the line they sat on. These are
+// brighter and more saturated than the line in light mode, and mint against the dark surface.
+//
+// lightweight-charts markers have no border property (SeriesMarkerBase is time, position, shape,
+// color, id, text, size only), so the outline is drawn as a larger marker of the outline colour
+// underneath the fill marker. Same shape, same point, bigger size: the result reads as a rim.
+// Chosen against the price line each theme actually draws, not in the abstract. The first dark
+// pick (#34D399) sat 1.35 contrast and 11 degrees of hue from the dark line #4FB37C, which would
+// have reproduced the same blending problem the light theme had. Teal moves the hue 25 degrees
+// away and lifts contrast against the line to 1.76 while reading 11.4 against the surface.
+const MARKERS = {
+  //                                                    vs its own price line
+  light: { buy: '#22C55E', sell: '#DC2626', other: '#6B7280', outline: '#FFFDF7' },   // buy 3.49
+  dark:  { buy: '#5EEAD4', sell: '#F87171', other: '#9AA3AE', outline: 'rgba(14,21,18,0.92)' }, // buy 1.76 + 25 deg hue
+};
+const FILL_SIZE = 1.3;      // slightly larger than default so direction reads at a glance
+const OUTLINE_SIZE = 1.95;  // the rim sitting behind the fill
+
+const shapeFor = (dir) => (
+  dir === 'buy' ? { position: 'belowBar', shape: 'arrowUp' }
+  : dir === 'sell' ? { position: 'aboveBar', shape: 'arrowDown' }
+  : { position: 'aboveBar', shape: 'circle' }
 );
 
 /**
@@ -53,7 +70,7 @@ const styleFor = (dir) => (
  * Trades are snapped forward to the first trading day on or after the transaction date, so a trade
  * dated on a weekend or holiday still lands on a bar.
  */
-function buildMarkers(candles, trades) {
+function buildMarkers(candles, trades, pal) {
   if (!candles?.length || !trades?.length) return { markers: [], map: new Map() };
   const dates = candles.map((c) => c.date);
   const first = dates[0], last = dates[dates.length - 1];
@@ -73,10 +90,12 @@ function buildMarkers(candles, trades) {
     if (!map.has(time)) map.set(time, []);
     map.get(time).push(t);
   }
-  const markers = [...groups.values()]
-    .map((g) => ({ time: g.time, ...styleFor(g.dir), text: g.n > 1 ? String(g.n) : '' }))
-    .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-  return { markers, map };
+  // Outline pass first so every rim is painted before any fill, otherwise a neighbouring marker's
+  // rim could overdraw the fill of the one next to it. Only the fill carries the count text.
+  const ordered = [...groups.values()].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+  const outlines = ordered.map((g) => ({ time: g.time, ...shapeFor(g.dir), color: pal.outline, size: OUTLINE_SIZE, text: '' }));
+  const fills = ordered.map((g) => ({ time: g.time, ...shapeFor(g.dir), color: pal[g.dir] || pal.other, size: FILL_SIZE, text: g.n > 1 ? String(g.n) : '' }));
+  return { markers: [...outlines, ...fills], map };
 }
 
 function TradeCard({ trades, onClose, pinned }) {
@@ -220,15 +239,18 @@ export default function CongressChart({ ticker, onSelectTicker }) {
     if (!lwc || !s || !chart) return;
     const candles = data?.candles || [];
     s.setData(candles.map((c) => ({ time: c.date, value: c.close })));
-    const { markers, map } = buildMarkers(candles, data?.trades || []);
+    const pal = document.documentElement.dataset.theme === 'dark' ? MARKERS.dark : MARKERS.light;
+    const { markers, map } = buildMarkers(candles, data?.trades || [], pal);
     mapRef.current = map;
     if (markersRef.current) markersRef.current.setMarkers(markers);
     else markersRef.current = lwc.createSeriesMarkers(s, markers);
     chart.timeScale().fitContent();
-  }, [data]);
+  }, [data, theme]);
 
   const shown = pinned || hover;
   const counts = data?.counts;
+  // Same palette the canvas markers use, so the legend can never drift from the chart.
+  const pal = theme === 'dark' ? MARKERS.dark : MARKERS.light;
 
   const rangeBtn = (r) => ({
     background: range === r ? C.green : C.white, color: range === r ? '#fff' : C.muted,
@@ -283,9 +305,9 @@ export default function CongressChart({ ticker, onSelectTicker }) {
 
       <div style={{ padding: '7px 12px', borderTop: `1px solid ${C.surface}`, fontSize: 10, color: C.dim,
         display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <span><span style={{ color: GREEN, fontWeight: 700 }}>&#9650;</span> purchase</span>
-        <span><span style={{ color: RED, fontWeight: 700 }}>&#9660;</span> sale</span>
-        <span><span style={{ color: NEUTRAL, fontWeight: 700 }}>&#9679;</span> other</span>
+        <span><span style={{ color: pal.buy, fontWeight: 700 }}>&#9650;</span> purchase</span>
+        <span><span style={{ color: pal.sell, fontWeight: 700 }}>&#9660;</span> sale</span>
+        <span><span style={{ color: pal.other, fontWeight: 700 }}>&#9679;</span> other</span>
         <span>A number on a marker means several disclosures that day. Hover or tap for detail.</span>
       </div>
     </div>
