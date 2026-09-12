@@ -2,8 +2,8 @@ import { db } from '../../../lib/db';
 import { congressTrades, tickerDailyCandles } from '../../../lib/schema';
 import { and, eq, gte, lte, sql, asc } from 'drizzle-orm';
 import {
-  clampRange, startDateFor, isoDate, fetchPolygonDaily, spanToFetch, DEFAULT_RANGE, RANGES,
-  lastFetchableDay,
+  resolveRange, startDateFor, isoDate, fetchPolygonDaily, spanToFetch, DEFAULT_RANGE, RANGES,
+  lastFetchableDay, MAX_RANGE,
 } from '../../../lib/congress-chart.mjs';
 
 export const runtime = 'nodejs';
@@ -25,11 +25,18 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const ticker = searchParams.get('ticker')?.toUpperCase().trim() || '';
-    const range = clampRange(searchParams.get('range') || DEFAULT_RANGE);
+    // Over-max requests clamp DOWN to 3Y rather than falling back to the default: asking for
+    // 5Y and receiving 6M would hand back less history than asking for nothing. Only genuinely
+    // malformed input is rejected.
+    const resolved = resolveRange(searchParams.get('range'));
 
     if (!TICKER_RE.test(ticker)) {
       return Response.json({ error: 'invalid ticker', ranges: RANGES }, { status: 400 });
     }
+    if (resolved.invalid) {
+      return Response.json({ error: 'invalid range', ranges: RANGES, max: MAX_RANGE }, { status: 400 });
+    }
+    const range = resolved.range;
 
     const now = new Date();
     const startDate = startDateFor(range, now);
@@ -113,6 +120,7 @@ export async function GET(request) {
 
     return Response.json({
       ticker, range, startDate, endDate,
+      rangeClamped: resolved.clamped,   // lets the UI say the window was capped at 3 years
       candles, trades,
       counts: {
         candles: candles.length,

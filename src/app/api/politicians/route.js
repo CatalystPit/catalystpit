@@ -3,6 +3,7 @@ import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, desc, sql, or, ilike } from 'drizzle-orm';
 import { resolveUserTier } from '../../../lib/entitlements';
+import { leaderboardView, photoUrl, LB_WINDOWS } from '../../../lib/congress-overview';
 
 export const runtime = 'nodejs';
 
@@ -13,10 +14,6 @@ const FREE_PREVIEW_ROWS = 10;
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 // bioguide slug -> headshot; name-slug (unmatched member) -> null (initials avatar)
-const photoUrl = (slug) =>
-  /^[A-Z]\d{6}$/.test(slug || '')
-    ? `https://unitedstates.github.io/images/congress/225x275/${slug}.jpg`
-    : null;
 
 // returnPct is null (NOT 0) unless BOTH prices exist — so a missing price renders
 // "—" on the page and never collapses into a false "0.0%". A genuinely unchanged
@@ -121,70 +118,9 @@ async function listView({ view, chamber, party }) {
 // PURCHASES that we can price (priceAtTrade + current_price), i.e. "if you'd copied their buys
 // and held to today." Weighted by amount so a $1M buy counts more than a $1k one. A sample-size
 // floor (min priced buys) keeps a lucky single trade from topping the board.
-const LB_WINDOWS = { '3m': '3 months', '6m': '6 months', '1y': '1 year', '2y': '2 years' };  // 'all' → no window
-const LB_WEIGHT_CAP = 0.30;   // no single position counts for >30% of a member's weight (kills 1-trade dominance)
-const isOptionRow = (assetType) => { const s = (assetType || '').toLowerCase(); return s === 'op' || s.includes('option'); };
-async function leaderboardView({ chamber, party, min = 5, window = '1y' }) {
-  const conds = [eq(congressTrades.action, 'BUY')];
-  // Time frame: count only buys whose trade date is within the window, so members are compared
-  // over the SAME period (not penalizing/rewarding differing holding lengths). 'all' = no filter.
-  const interval = window === 'all' ? null : (LB_WINDOWS[window] || '1 year');
-  if (interval) conds.push(sql`${congressTrades.transactionDate} >= CURRENT_DATE - ${sql.raw(`INTERVAL '${interval}'`)}`);
-  if (chamber === 'house' || chamber === 'senate') conds.push(eq(congressTrades.chamber, chamber));
-  if (party) conds.push(eq(congressTrades.party, party));
-
-  // Per-trade rows → aggregate in JS so we can cap any single position's weight. Stocks use the stock
-  // price; OPTIONS use the real option-contract price (leveraged return), when we've priced them.
-  const rows = await db.select({
-    slug: congressTrades.memberSlug, name: congressTrades.representative,
-    party: congressTrades.party, state: congressTrades.state, chamber: congressTrades.chamber,
-    amt: congressTrades.amountMid, pat: congressTrades.priceAtTrade, cur: congressTickerPrices.currentPrice,
-    assetType: congressTrades.assetType, optPat: congressTrades.optionPriceAtTrade, optCur: congressTrades.optionCurrentPrice,
-    date: congressTrades.transactionDate,
-  })
-    .from(congressTrades)
-    .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker))
-    .where(and(...conds));
-
-  const byMember = new Map();
-  let oldest = null, pricedCount = 0;
-  for (const r of rows) {
-    const amt = Number(r.amt) || 0;
-    let ret = null;
-    if (isOptionRow(r.assetType)) {
-      const p0 = Number(r.optPat), p1 = Number(r.optCur);
-      if (p0 > 0 && p1 > 0) ret = (p1 - p0) / p0;          // real option-contract return
-    } else {
-      const p0 = Number(r.pat), p1 = Number(r.cur);
-      if (p0 > 0 && p1 > 0) ret = (p1 - p0) / p0;          // stock return
-    }
-    if (ret == null) continue;                              // unpriceable → skip
-    pricedCount++;
-    if (r.date && (!oldest || r.date < oldest)) oldest = r.date;
-    const m = byMember.get(r.slug) || { slug: r.slug, name: r.name, party: r.party, state: r.state, chamber: r.chamber, trades: [] };
-    m.trades.push({ amt, ret, win: ret > 0 });
-    byMember.set(r.slug, m);
-  }
-
-  const list = [];
-  for (const m of byMember.values()) {
-    const n = m.trades.length;
-    if (n < min) continue;
-    const total = m.trades.reduce((s, t) => s + t.amt, 0);
-    if (!(total > 0)) continue;
-    const capW = LB_WEIGHT_CAP * total;
-    let wsum = 0, wr = 0, wins = 0;
-    for (const t of m.trades) { const w = Math.min(t.amt, capW); wsum += w; wr += w * t.ret; if (t.win) wins++; }
-    list.push({
-      slug: m.slug, name: m.name, party: m.party, state: m.state, chamber: m.chamber,
-      photoUrl: photoUrl(m.slug), pricedBuys: n, totalVolume: total,
-      returnPct: wsum > 0 ? +((wr / wsum) * 100).toFixed(1) : null,
-      winRate: Math.round((wins / n) * 100),
-    });
-  }
-  list.sort((a, b) => b.returnPct - a.returnPct);
-  return { list, meta: { pricedBuys: pricedCount, oldest } };
-}
+// leaderboardView now lives in lib/congress-overview so the Politicians page and the Congress
+// overview cannot drift apart. Two copies of a ranking method is how the Form 4 parser ended up
+// with two divergent implementations.
 
 // AUTOCOMPLETE: member name typeahead → top matches by trade activity. Public (names only),
 // ungated — drives the /politicians search box. Matches full display name + first/last.

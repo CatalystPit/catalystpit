@@ -20,7 +20,44 @@ export const MAX_HISTORY_DAYS = 1095;
 
 const RANGE_DAYS = { '1M': 31, '3M': 92, '6M': 183, '1Y': 366, '3Y': MAX_HISTORY_DAYS };
 
-export const clampRange = (r) => (RANGES.includes(String(r || '').toUpperCase()) ? String(r).toUpperCase() : DEFAULT_RANGE);
+/**
+ * Resolve a requested range.
+ *
+ *   absent                  -> the 6M default
+ *   a supported range       -> itself
+ *   a real period ABOVE 3Y  -> clamped DOWN to 3Y  (5Y, 10Y, MAX, ALL)
+ *   a real period below 3Y  -> the nearest supported range
+ *   anything unparseable    -> invalid, for the caller to reject
+ *
+ * Asking for 5Y and silently receiving 6M is worse than receiving 3Y: the caller wanted MORE
+ * history and would quietly get less than the default. So an over-max request is clamped to the
+ * cap, and only genuinely malformed input is rejected.
+ */
+export function resolveRange(input) {
+  if (input == null || String(input).trim() === '') return { range: DEFAULT_RANGE, clamped: false, invalid: false };
+  const s = String(input).toUpperCase().trim();
+  if (RANGES.includes(s)) return { range: s, clamped: false, invalid: false };
+  if (s === 'MAX' || s === 'ALL') return { range: MAX_RANGE, clamped: true, invalid: false };
+
+  const m = s.match(/^(\d{1,4})\s*([DWMY])$/);
+  if (!m) return { range: null, clamped: false, invalid: true };
+  const per = { D: 1, W: 7, M: 30.44, Y: 365.25 }[m[2]];
+  const days = Number(m[1]) * per;
+  if (!Number.isFinite(days) || days <= 0) return { range: null, clamped: false, invalid: true };
+  if (days > MAX_HISTORY_DAYS) return { range: MAX_RANGE, clamped: true, invalid: false };
+
+  // Below the cap but not one of our buttons (e.g. 2Y, 9M): snap to the nearest supported range
+  // rather than rejecting a period we can legitimately serve.
+  let best = RANGES[0], bestGap = Infinity;
+  for (const r of RANGES) {
+    const gap = Math.abs(RANGE_DAYS[r] - days);
+    if (gap < bestGap) { bestGap = gap; best = r; }
+  }
+  return { range: best, clamped: true, invalid: false };
+}
+
+// Retained for callers that just want a usable range and never surface an error.
+export const clampRange = (r) => resolveRange(r).range || DEFAULT_RANGE;
 
 export const isoDate = (d) => new Date(d).toISOString().slice(0, 10);
 
