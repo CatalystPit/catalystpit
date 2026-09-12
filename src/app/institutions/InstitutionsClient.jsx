@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, EntitySearch, TickerLogo } from '../../lib/cp-shared';
+import InstitutionsHeatmap from './InstitutionsHeatmap';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -152,6 +153,9 @@ export default function InstitutionsClient() {
       </div>
 
       <div style={{ maxWidth: 1380, margin: '20px auto', padding: '0 24px 48px' }}>
+        {/* Signature visual: where institutions actually moved this quarter, before the fund lists. */}
+        <InstitutionsHeatmap />
+
         {/* Largest managers by 13F value — auto-featured (BlackRock, Vanguard, State Street, …) */}
         {largest.length > 0 && (
           <div style={{ marginBottom: 26 }}>
