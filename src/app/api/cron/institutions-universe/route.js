@@ -1,5 +1,5 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
-import { runInstitutionsUniverse } from '../../../../lib/institutions-universe';
+import { runInstitutionsUniverse, ingestFiler } from '../../../../lib/institutions-universe';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -34,6 +34,20 @@ export async function GET(request) {
   const tickerCap = Math.min(20000, Math.max(50, parseInt(sp.get('tickerCap') || '500', 10) || 500));
   const tickerOnly = sp.get('tickerOnly') === '1';   // skip ingest, just drain the ticker→logo backlog
   const cleanup = sp.get('cleanup') === '1';          // one-time purge of junk/bond "tickers"
+
+  // Re-ingest specific filers. Needed for repairs: a standalone node script cannot import this
+  // module (it reaches lib/db, whose extensionless imports only resolve under Next), so targeted
+  // re-ingestion runs through the same authorized entry point the cron uses.
+  const only = sp.get('cik');
+  if (only) {
+    const from = sp.get('from') || '2025-09-30';
+    const out = [];
+    for (const c of only.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 50)) {
+      out.push({ cik: c, ...(await ingestFiler(c, from)) });
+    }
+    return Response.json({ ok: true, reingested: out });
+  }
+
   try {
     const res = await runInstitutionsUniverse({ indexes, ingestCap, tickerCap, tickerOnly, cleanup });
     console.log(`[institutions-universe] ${JSON.stringify(res)}`);

@@ -191,18 +191,57 @@ async function fetchHoldings(cik, accession, filedDate) {
   return [];
 }
 
-// Authoritative (latest-filed) 13F per report-quarter within the backfill window — amendments win.
+// EVERY 13F-HR filing per report-quarter, oldest first. Which ones actually count is decided by
+// resolveQuarter() below, because "latest filed wins" is wrong for 13F.
 function filings13F(sub, cutoff) {
   const R = sub.filings?.recent || {};
   const byQ = new Map();
   for (let i = 0; i < (R.form || []).length; i++) {
-    if (!String(R.form[i]).startsWith('13F-HR')) continue;
+    const form = String(R.form[i]);
+    if (!form.startsWith('13F-HR')) continue;
     const q = R.reportDate?.[i]; if (!q || q < cutoff) continue;
-    const filedDate = R.filingDate[i], accession = R.accessionNumber[i];
-    const ex = byQ.get(q);
-    if (!ex || String(filedDate) > String(ex.filedDate)) byQ.set(q, { accession, filedDate, quarter: q });
+    if (!byQ.has(q)) byQ.set(q, []);
+    byQ.get(q).push({ quarter: q, form, accession: R.accessionNumber[i], filedDate: R.filingDate[i] });
   }
-  return [...byQ.values()];
+  for (const list of byQ.values()) {
+    list.sort((a, b) => (a.filedDate === b.filedDate ? (a.accession < b.accession ? -1 : 1) : (a.filedDate < b.filedDate ? -1 : 1)));
+  }
+  return [...byQ.entries()].map(([quarter, list]) => ({ quarter, list }));
+}
+
+// The amendment type lives on the COVER PAGE, in primary_doc.xml, which the holdings parser skips.
+// The SEC defines exactly two, and they mean opposite things:
+//   RESTATEMENT   this filing replaces the original holdings in full
+//   NEW HOLDINGS  this filing carries ONLY positions being ADDED to what was already reported
+// Treating the second as the first discards the original filing. Measured on live data: ExodusPoint's
+// Q1 2026 went from 1,454 positions to 41, Nomura's from 1,714 to 1.
+async function amendmentInfo(cik, accession) {
+  const xml = await secText(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accession.replace(/-/g, '')}/primary_doc.xml`);
+  if (!xml) return { isAmendment: null, amendmentType: null };     // unknown: treated conservatively below
+  const pick = (n) => { const m = xml.match(new RegExp(`<(?:\\w+:)?${n}>([\\s\\S]*?)</(?:\\w+:)?${n}>`, 'i')); return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').trim() : ''; };
+  return { isAmendment: /true/i.test(pick('isAmendment')), amendmentType: pick('amendmentType') || null };
+}
+
+// Decide which filings compose a quarter: one BASE plus any additive amendments layered on top.
+// A single filing needs no cover-page fetch, which is the overwhelming majority of quarters.
+async function resolveQuarter(cik, list) {
+  if (list.length === 1) return { base: list[0], additive: [] };
+  const marked = [];
+  for (const f of list) {
+    marked.push({ ...f, ...(await amendmentInfo(cik, f.accession)) });
+    await sleep(80);
+  }
+  const isAdditive = (f) => /NEW\s*HOLDINGS/i.test(f.amendmentType || '');
+  // Base = the last filing that restates the whole portfolio: an original, or an explicit
+  // RESTATEMENT. An amendment whose type we could not read is treated as a restatement, which is
+  // the conservative reading: it keeps today's behaviour rather than silently layering.
+  let baseIdx = -1;
+  for (let i = marked.length - 1; i >= 0; i--) { if (!isAdditive(marked[i])) { baseIdx = i; break; } }
+  if (baseIdx === -1) baseIdx = 0;                    // every filing is additive: layer onto the first
+  const base = marked[baseIdx];
+  // Only additive amendments filed AFTER the base apply; anything before it was superseded by it.
+  const additive = marked.slice(baseIdx + 1).filter(isAdditive);
+  return { base, additive };
 }
 
 // A large manager reports the SAME security across many sub-accounts (BlackRock lists NVIDIA dozens of
@@ -214,7 +253,10 @@ function aggregateHoldings(rows) {
   for (const r of rows) {
     const k = `${r.cusip}|${r.cls || ''}|${r.putCall || ''}`;
     const e = by.get(k);
-    if (e) { e.value += r.value || 0; e.shares += r.shares || 0; }
+    // Sub-accounts WITHIN a filing sum. A position restated by a LATER filing replaces rather than
+    // adds, or an additive amendment correcting a position would double it.
+    if (e && e.accession === r.accession) { e.value += r.value || 0; e.shares += r.shares || 0; }
+    else if (e) { by.set(k, { ...r, value: r.value || 0, shares: r.shares || 0 }); }
     else by.set(k, { ...r, value: r.value || 0, shares: r.shares || 0 });
   }
   return [...by.values()];
@@ -222,14 +264,20 @@ function aggregateHoldings(rows) {
 
 // Store a filing; supersede any prior accession for the same (cik, quarter) — amendments fully restate.
 async function storeFilingSuperseded(cik, quarter, filedDate, accession, rows) {
+  const agg = aggregateHoldings(rows);   // sum sub-account rows → one total position per security
   const [existing] = await db.select().from(fundFilings).where(and(eq(fundFilings.cik, cik), eq(fundFilings.quarter, quarter))).limit(1);
   if (existing) {
-    if (existing.accession === accession) return { skipped: true };
+    // A quarter is now composed of a base filing PLUS any additive amendments, so the head accession
+    // alone no longer identifies what is stored. Comparing the position count as well makes the
+    // ingest self-healing: a quarter written by the old restatement-only logic has the same head
+    // accession but far fewer positions, and gets rewritten instead of skipped.
+    if (existing.accession === accession && existing.holdingsCount === agg.length) return { skipped: true };
     if (String(existing.filedDate || '') > String(filedDate)) return { older: true };   // keep the newer existing
     await db.delete(fundHoldings).where(and(eq(fundHoldings.cik, cik), eq(fundHoldings.quarter, quarter)));
   }
-  const agg = aggregateHoldings(rows);   // sum sub-account rows → one total position per security
-  const values = agg.map((r) => ({ cik, quarter, cusip: r.cusip, ticker: null, issuer: r.issuer, cls: r.cls, shares: r.shares, value: r.value, putCall: r.putCall, filedDate, accession }));
+  // Each row keeps the accession it actually came from, so a quarter composed of an original plus an
+  // additive amendment stays traceable position by position to the SEC document that reported it.
+  const values = agg.map((r) => ({ cik, quarter, cusip: r.cusip, ticker: null, issuer: r.issuer, cls: r.cls, shares: r.shares, value: r.value, putCall: r.putCall, filedDate: r.filedDate || filedDate, accession: r.accession || accession }));
   for (let i = 0; i < values.length; i += 500) await db.insert(fundHoldings).values(values.slice(i, i + 500)).onConflictDoNothing();
   const totalValue = agg.reduce((s, r) => s + (r.value || 0), 0);
   await db.insert(fundFilings).values({ cik, quarter, filedDate, accession, totalValue, holdingsCount: agg.length })
@@ -243,10 +291,21 @@ export async function ingestFiler(cik, cutoff) {
   if (!sub) return { cik, error: 'no-submissions' };
   const filings = filings13F(sub, cutoff);
   let stored = 0, quarters = 0;
-  for (const f of filings) {
-    const rows = await fetchHoldings(cik, f.accession, f.filedDate);
-    if (rows.length) { const res = await storeFilingSuperseded(cik, f.quarter, f.filedDate, f.accession, rows); if (res.stored) { stored += res.stored; quarters++; } }
-    await sleep(80);
+  for (const { quarter, list } of filings) {
+    const { base, additive } = await resolveQuarter(cik, list);
+    // Compose the quarter: the restating filing, then any additive amendments layered on top in the
+    // order they were filed. Every row carries its own accession.
+    const parts = [base, ...additive];
+    let rows = [];
+    for (const p of parts) {
+      const got = await fetchHoldings(cik, p.accession, p.filedDate);
+      for (const r of got) rows.push({ ...r, accession: p.accession, filedDate: p.filedDate });
+      await sleep(80);
+    }
+    if (!rows.length) continue;
+    const head = parts[parts.length - 1];   // newest accession represents the quarter in fund_filings
+    const res = await storeFilingSuperseded(cik, quarter, head.filedDate, head.accession, rows);
+    if (res.stored) { stored += res.stored; quarters++; }
   }
   // update registry summary
   try {
