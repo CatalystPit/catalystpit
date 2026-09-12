@@ -124,7 +124,14 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
                     <span style={{ display: 'block', fontSize: 12.5, color: C.text, fontWeight: 500,
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</span>
                     <span style={{ fontSize: 10, color: C.muted }}>
-                      {ps.abbr} {'·'} {chamberLabel(m.chamber)} {'·'} {m.trades} trades in {m.tickers} stocks {'·'} {m.winRate}% up
+                      {ps.abbr} {'·'} {chamberLabel(m.chamber)} {'·'} {m.winRate}% up
+                    </span>
+                    {/* The sample gets its own line rather than being appended to the party and
+                        chamber run, which overflowed the 310px panel and truncated the very
+                        numbers a reader needs to judge the score. */}
+                    <span style={{ display: 'block', fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>
+                      <b style={{ fontWeight: 600, color: C.muted }}>{m.trades}</b> {m.trades === 1 ? 'trade' : 'trades'}
+                      {' · '}<b style={{ fontWeight: 600, color: C.muted }}>{m.tickers}</b> {m.tickers === 1 ? 'stock' : 'stocks'}
                     </span>
                   </span>
                   <span style={{ ...num, fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap',
@@ -135,7 +142,8 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
               );
             })}
             <div style={{ padding: '7px 12px', fontSize: 10, color: C.dim, lineHeight: 1.5 }}>
-              30 days after each trade. Each stock counts once. Not portfolio performance.
+              Average 30-day return after disclosed trades. Each stock counts once. Minimum 5 trades
+              across 5 stocks. Not portfolio performance.
             </div>
           </>
         )}
