@@ -130,10 +130,15 @@ export function validateRow(row, { today = new Date() } = {}) {
   if (!KNOWN_CODES.has(transactionCode)) {
     return { reason: QUARANTINE_REASONS.UNKNOWN_TXN_CODE, detail: `code "${transactionCode}"` };
   }
-  // A P or S at $0 is either a data error or not really open-market. Either way it
-  // must not reach the heatmap, where it would distort dollar totals.
-  if ((transactionCode === 'P' || transactionCode === 'S') && shares > 0 && pricePerShare === 0) {
-    return { reason: QUARANTINE_REASONS.ZERO_PRICE_OPEN_MARKET, detail: `${transactionCode} at $0 for ${shares} shares` };
+  // A P/S whose price the filer DISCLOSED as zero is a data error. A P/S whose price simply
+  // was not disclosed numerically is a REAL transaction - filers routinely footnote it instead
+  // ("purchased for $0.80 per Unit", "in lieu of cash compensation"). Discarding those threw away
+  // genuine purchases that had perfectly valid share counts. So only a disclosed zero is
+  // quarantined. An undisclosed price stores as 0, contributes nothing to any dollar sum, and is
+  // excluded from Conviction (which requires total_value > 0), so it cannot distort a total.
+  if ((transactionCode === 'P' || transactionCode === 'S') && shares > 0
+      && pricePerShare === 0 && row.priceDisclosed) {
+    return { reason: QUARANTINE_REASONS.ZERO_PRICE_OPEN_MARKET, detail: `${transactionCode} disclosed at $0 for ${shares} shares` };
   }
   return null;
 }
@@ -222,7 +227,10 @@ export function parseForm4(xml, filing) {
 
       // A footnoted (non-numeric) price is absent, not zero.
       const shares = rawShares == null || rawShares === '' ? NaN : parseFloat(rawShares);
-      const pricePerShare = rawPrice == null || rawPrice === '' ? 0 : parseFloat(rawPrice);
+      // Distinguish "filer stated a price" from "filer footnoted it". Both land as 0, but only
+      // the first can be a genuine zero-price error.
+      const priceDisclosed = rawPrice != null && rawPrice !== '';
+      const pricePerShare = priceDisclosed ? parseFloat(rawPrice) : 0;
       const sharesOwnedAfter = rawSOA == null || rawSOA === '' ? null : parseFloat(rawSOA);
 
       const row = {
@@ -250,7 +258,7 @@ export function parseForm4(xml, filing) {
         isOfficer, isDirector, isTenPctOwner: isTenPercent, isOtherRelation: isOther,
         rule10b5_1,
         footnotes,
-        rawShares, rawPrice,
+        rawShares, rawPrice, priceDisclosed,
       };
 
       const bad = validateRow(row);
@@ -262,7 +270,7 @@ export function parseForm4(xml, filing) {
         });
         continue;
       }
-      delete row.rawShares; delete row.rawPrice;
+      delete row.rawShares; delete row.rawPrice; delete row.priceDisclosed;
       out.rows.push(row);
     }
   }
