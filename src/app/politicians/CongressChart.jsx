@@ -182,6 +182,11 @@ export default function CongressChart({ ticker, onSelectTicker }) {
   const [side, setSide] = useState('right');    // card sits opposite the cursor
   const [pinned, setPinned] = useState(null);   // tapped/clicked, survives pointer leaving
 
+  // The crosshair subscription is registered once, so it closes over the first render's state.
+  // A ref is how it reads the CURRENT pin without being torn down and rebuilt on every change.
+  const pinnedRef = useRef(null);
+  pinnedRef.current = pinned;
+
   const wrapRef = useRef(null);
   const lwcRef = useRef(null), chartRef = useRef(null), seriesRef = useRef(null), markersRef = useRef(null);
   const mapRef = useRef(new Map());
@@ -220,6 +225,11 @@ export default function CongressChart({ ticker, onSelectTicker }) {
         lineWidth: 2, priceLineVisible: false,
       });
       chart.subscribeCrosshairMove((p) => {
+        // A pinned card is frozen. Without this, moving the pointer toward the card keeps firing
+        // the crosshair, side keeps recomputing from the cursor, and the card jumps left and right
+        // as you reach for it. Hover also stops mattering while pinned, since pinned wins for
+        // display, so skipping the whole handler avoids pointless re-renders too.
+        if (pinnedRef.current) return;
         const key = typeof p?.time === 'string' ? p.time : null;
         const hit = key ? (mapRef.current.get(key) || null) : null;
         setHover(hit);
@@ -237,6 +247,8 @@ export default function CongressChart({ ticker, onSelectTicker }) {
         const key = typeof p?.time === 'string' ? p.time : null;
         const hit = key ? mapRef.current.get(key) : null;
         setPinned(hit || null);      // clicking empty chart space clears the pin
+        // Drop the stale hover captured before the pin, so unpinning cannot flash an old card.
+        setHover(null);
       });
     })();
     return () => {
