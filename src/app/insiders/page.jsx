@@ -428,7 +428,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
         {list.map((t, i) => {
           if (t.kind === 'sector') return (
             <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, boxSizing: 'border-box', overflow: 'hidden', pointerEvents: 'none' }}>
-              <div style={{ height: HEADER, lineHeight: `${HEADER}px`, fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.dim, textTransform: 'uppercase', padding: '0 5px', whiteSpace: 'nowrap', overflow: 'hidden' }}>{t.name}</div>
+              <div className="cp-sec-hd" style={{ height: HEADER, lineHeight: `${HEADER}px`, fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', padding: '0 5px', whiteSpace: 'nowrap', overflow: 'hidden' }}>{t.name}</div>
             </div>
           );
           const bg = insiderTileColor(t, mode, max);
@@ -625,6 +625,13 @@ export default function InsidersPage() {
         .row-hov:hover{background:${C.surface}!important;cursor:pointer}
         .ins-name:hover{color:${C.green}!important;text-decoration:underline}
         .cat:hover{border-color:${C.green}!important}
+        /* Sector header strip. Base rule = the existing treatment, which is what DARK mode keeps.
+           The app stamps data-theme only for an explicit choice and has no prefers-color-scheme rules,
+           so :not([data-theme="dark"]) is exactly light mode — and it out-specifies the base rule.
+           Done in CSS, not via useTheme(), because that hook initialises to "light" and syncs in an
+           effect, which would flash this strip dark-green for a frame in dark mode. */
+        .cp-sec-hd{background:${C.surface};color:${C.dim}}
+        :root:not([data-theme="dark"]) .cp-sec-hd{background:#0D1512;color:#FFFFFF}
         *{box-sizing:border-box}
       `}</style>
 
