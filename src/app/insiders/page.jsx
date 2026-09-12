@@ -286,6 +286,7 @@ function HeatmapTooltip({ hover, windowLabel, container }) {
       Sales: <b style={{ color: C.red }}>{fmtBig(c.sells)}</b><br />
       Net: <b style={{ color: c.net >= 0 ? C.green : C.red }}>{c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(c.net))}</b><br />
       {c.insiders} insider{c.insiders === 1 ? '' : 's'} · largest {fmtBig(c.largest)}<br />
+      {c.aggNames && <span style={{ display: 'block', color: C.dim, marginTop: 2 }}>{c.aggNames.slice(0, 8).join(', ')}{c.aggNames.length > 8 ? ` +${c.aggNames.length - 8} more` : ''}</span>}
       <span style={{ color: C.dim }}>Past {String(windowLabel || '').toUpperCase()}</span>
     </div>,
     document.body,
@@ -341,6 +342,42 @@ function HeatmapLegend() {
       <InfoTip below width={320} text={LEGEND_HELP} />
     </div>
   );
+}
+
+// Minimum usable tile, and the aspect past which a tile reads as a sliver rather than a box.
+const MIN_TILE_W = 14, MIN_TILE_H = 11, MAX_TILE_AR = 4;
+const isSliver = (r) => r.w < MIN_TILE_W || r.h < MIN_TILE_H || Math.max(r.w / r.h, r.h / r.w) > MAX_TILE_AR;
+
+// The OTHER tile carries real summed figures, so its colour and tooltip stay honest, plus the names it
+// stands for. `value` is the summed layout magnitude for whichever mode is active.
+function aggregateTile(bucket, valOf) {
+  const sum = (k) => bucket.reduce((a, b) => a + (Number(b[k]) || 0), 0);
+  return {
+    ticker: 'OTHER', aggNames: bucket.map((b) => b.ticker), sector: bucket[0] && bucket[0].sector,
+    company: `${bucket.length} smaller names`,
+    buys: sum('buys'), sells: sum('sells'), net: sum('net'), insiders: sum('insiders'),
+    largest: Math.max(0, ...bucket.map((b) => Number(b.largest) || 0)),
+    value: bucket.reduce((a, b) => a + valOf(b), 0),
+  };
+}
+
+// Pack one sector's tickers. The squarifier is NOT the problem — measured aspect on real sector shapes
+// is 1.0–1.9. Slivers come from absolute area: a name worth 0.5% of its sector can't be a usable box,
+// and neither can one stranded in the thin column left beside a dominant holding. So lay out, inspect
+// the ACTUAL geometry, and while anything is unusable fold the smallest remaining name into an OTHER
+// tile and lay out again — predicted area alone misses the stranded-column case. Areas are never
+// rescaled, so dominant holdings keep their exact share.
+function packSector(items, valOf, x, y, w, h) {
+  const sorted = [...items].sort((a, b) => valOf(b) - valOf(a));
+  const keep = sorted.slice(), bucket = [];
+  for (let guard = 0; guard <= sorted.length; guard++) {
+    const nodes = keep.map((n) => ({ ...n, value: valOf(n) }));
+    if (bucket.length) nodes.push(aggregateTile(bucket, valOf));
+    const rects = treemap(nodes, x, y, w, h);
+    if (keep.length <= 1 || !rects.some(isSliver)) return rects;
+    bucket.push(keep.pop());
+  }
+  return [];
 }
 
 // Sector container geometry. The layout was ALREADY two-level (sectors squarified first, then each
@@ -401,7 +438,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
       // its 1px border (the header is reserved here rather than overdrawn, so no sector renders empty).
       const ix = bx + 1, iw = bw - 2, iy = by + HEADER, ih = bh - HEADER - 1;
       if (ih < 8 || iw < 8) continue;
-      for (const tr of treemap(sr.items.map((it) => ({ ...it, value: val(it) })), ix, iy, iw, ih)) out.push({ kind: 'tile', ...tr });
+      for (const tr of packSector(sr.items, val, ix, iy, iw, ih)) out.push({ kind: 'tile', ...tr });
     }
     return { list: out, max: mx };
   }, [cells, size, mode]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -434,10 +471,10 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
           const bg = insiderTileColor(t, mode, max);
           const ink = tileInk(bg);                                  // white on deep shades, near-black on pale
           return (
-            <button key={`t${i}`} onClick={() => onPick(t.ticker)} onMouseEnter={(e) => setHover({ c: t, el: e.currentTarget })}
-              style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: bg, border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: 'pointer', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
+            <button key={`t${i}`} onClick={() => { if (!t.aggNames) onPick(t.ticker); }} onMouseEnter={(e) => setHover({ c: t, el: e.currentTarget })}
+              style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: bg, border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: t.aggNames ? 'default' : 'pointer', color: ink, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
               {fitsTicker(t) && <span className="cp-tkr" style={{ fontSize: tkSize(t), fontWeight: 700, whiteSpace: 'nowrap', textShadow: ink === '#FFFFFF' ? '0 1px 2px rgba(0,0,0,0.3)' : 'none' }}>{t.ticker}</span>}
-              {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(val(t))}</span>}
+              {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(t.value)}</span>}
             </button>
           );
         })}
@@ -631,7 +668,7 @@ export default function InsidersPage() {
            Done in CSS, not via useTheme(), because that hook initialises to "light" and syncs in an
            effect, which would flash this strip dark-green for a frame in dark mode. */
         .cp-sec-hd{background:${C.surface};color:${C.dim}}
-        :root:not([data-theme="dark"]) .cp-sec-hd{background:#0D1512;color:#FFFFFF}
+        :root:not([data-theme="dark"]) .cp-sec-hd{background:#1E5C38;color:#FFFFFF}
         *{box-sizing:border-box}
       `}</style>
 
