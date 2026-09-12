@@ -19,7 +19,7 @@ export async function GET(request) {
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '10', 10) || 10, 3), 25);
 
     const [best, traded, filers] = await Promise.all([
-      bestThirtyDayRecord({ min: LB_MIN_TRADES, limit }),
+      bestThirtyDayRecord({ min: LB_MIN_TRADES }),
       mostTradedStocks({ window, limit }),
       latestFilers({ limit }),
     ]);
@@ -27,8 +27,8 @@ export async function GET(request) {
     return Response.json({
       window,
       bestRecord: {
-        list: best,
-        qualified: best.length,
+        list: best.slice(0, limit),
+        qualified: best.length,   // total qualifying members, not the page size
         minPositions: LB_MIN_TRADES,
         days: 30,
         // Shown in the UI. This measures how disclosed holdings MOVED over the last 30 days. It is

@@ -1,0 +1,221 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { C } from '../../lib/cp-shared';
+import { fmtDate, partyStyle, chamberLabel, Avatar } from './ui';
+import { formatDisclosureDelay } from '../../lib/disclosure';
+
+// Congress discovery modules: Best 30-Day Record, Most Traded Stocks, Latest Filers.
+// Compact by design. These sit above the deep research table and exist to start a search, not to
+// be a dashboard. Built from the shared Catalyst Pit palette and the primitives already used by
+// the politician cards, so nothing here introduces a second visual vocabulary.
+//
+// onSelectTicker is how Phase 3 hooks the chart up: clicking a ticker selects it.
+
+const money = (n) => {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${Math.round(v / 1_000)}K`;
+  return `$${Math.round(v)}`;
+};
+
+const panel = {
+  background: C.white, border: `1px solid ${C.border}`, borderRadius: 10,
+  display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0,
+};
+const head = {
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+  padding: '10px 12px', borderBottom: `1px solid ${C.border}`, background: C.surface,
+};
+const headText = {
+  fontFamily: "'DM Sans',sans-serif", fontSize: 10, fontWeight: 700,
+  letterSpacing: '0.8px', color: C.dim, textTransform: 'uppercase', whiteSpace: 'nowrap',
+};
+const row = {
+  display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+  borderBottom: `1px solid ${C.surface}`, minWidth: 0,
+};
+const num = { fontFamily: "'DM Sans',sans-serif", fontVariantNumeric: 'tabular-nums' };
+
+// Small explainer. Opens on hover and on tap, so the methodology is reachable on mobile too.
+function Explain({ text, label = 'i' }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex' }}
+      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-label="How this is calculated"
+        style={{ width: 15, height: 15, borderRadius: '50%', border: `1px solid ${C.border}`,
+          background: C.white, color: C.dim, fontSize: 9, fontWeight: 700, lineHeight: 1,
+          cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: "'DM Sans',sans-serif", padding: 0 }}>{label}</button>
+      {open && (
+        <span onClick={(e) => e.stopPropagation()}
+          style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 60, width: 290,
+            maxWidth: '80vw', background: C.white, border: `1px solid ${C.border}`, color: C.text,
+            fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, fontWeight: 400,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)', textAlign: 'left', whiteSpace: 'normal' }}>
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+const Empty = ({ children }) => (
+  <div style={{ padding: '18px 12px', textAlign: 'center', color: C.muted, fontSize: 12 }}>{children}</div>
+);
+
+export default function CongressOverview({ onSelectTicker, selectedTicker }) {
+  const [data, setData] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/congress-overview?window=3m&limit=6')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive) { if (j && !j.error) setData(j); else setFailed(true); } })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, []);
+
+  if (failed) return null;                      // discovery is additive; never block the page
+  const best = data?.bestRecord;
+
+  return (
+    <div style={{ display: 'grid', gap: 12, marginBottom: 18,
+      gridTemplateColumns: 'repeat(auto-fit, minmax(310px, 1fr))' }}>
+
+      {/* ── Best 30-Day Record ─────────────────────────────────────────── */}
+      <div style={panel}>
+        <div style={head}>
+          <span style={headText}>Best 30 Day Record</span>
+          <Explain text={
+            <>
+              <b style={{ display: 'block', marginBottom: 4 }}>What this measures</b>
+              Size weighted 30 day price move of the securities each member disclosed buying within our
+              3 year history. Weighted by the midpoint of the disclosed amount range, with no single
+              position counting for more than 30 percent.
+              <span style={{ display: 'block', marginTop: 6, color: C.muted }}>
+                It shows how disclosed holdings moved recently. It is not a member who necessarily traded
+                in the last 30 days, and it is not portfolio performance: filers disclose an amount range
+                rather than a position size, and may have sold since.
+              </span>
+              <span style={{ display: 'block', marginTop: 6, color: C.dim }}>
+                Minimum {best?.minPositions ?? 5} priced positions to qualify.
+              </span>
+            </>
+          } />
+        </div>
+        {!data ? <Empty>Loading.</Empty> : !best?.list?.length ? <Empty>Not enough priced positions yet.</Empty> : (
+          <>
+            {best.list.map((m) => {
+              const ps = partyStyle(m.party);
+              const up = m.movePct > 0, flat = m.movePct === 0;
+              return (
+                <a key={m.slug} href={`/politicians/${m.slug}`} className="row-hov"
+                  style={{ ...row, textDecoration: 'none', color: 'inherit' }}>
+                  <Avatar photoUrl={m.photoUrl} name={m.name} ps={ps} size={26} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 12.5, color: C.text, fontWeight: 500,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</span>
+                    <span style={{ fontSize: 10, color: C.muted }}>
+                      {ps.abbr} {'·'} {chamberLabel(m.chamber)} {'·'} {m.positions} positions {'·'} {m.winRate}% up
+                    </span>
+                  </span>
+                  <span style={{ ...num, fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap',
+                    color: flat ? C.muted : up ? C.green : C.red }}>
+                    {up ? '+' : ''}{Number(m.movePct).toFixed(1)}%
+                  </span>
+                </a>
+              );
+            })}
+            <div style={{ padding: '7px 12px', fontSize: 10, color: C.dim, lineHeight: 1.5 }}>
+              Recent move of disclosed holdings. Not portfolio performance.
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Most Traded Stocks ─────────────────────────────────────────── */}
+      <div style={panel}>
+        <div style={head}>
+          <span style={headText}>Most Traded Stocks</span>
+          <Explain text={
+            <>
+              <b style={{ display: 'block', marginBottom: 4 }}>Disclosed activity</b>
+              Congressional trades over the last 3 months. The dollar figure is the range members
+              actually disclosed, added up. Filers report a bracket such as $1,001 to $15,000, never an
+              exact amount, so this is a range and not a precise total.
+            </>
+          } />
+        </div>
+        {!data ? <Empty>Loading.</Empty> : !data.mostTraded?.length ? <Empty>No congressional trading in this period.</Empty> : (
+          data.mostTraded.map((t) => {
+            const on = selectedTicker === t.ticker;
+            return (
+              <button key={t.ticker} type="button" onClick={() => onSelectTicker?.(t.ticker)}
+                className="row-hov"
+                style={{ ...row, width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
+                  background: on ? C.greenLight : 'transparent', font: 'inherit' }}>
+                <span style={{ ...num, fontSize: 13, fontWeight: 700, color: C.green, width: 58, flexShrink: 0 }}>
+                  {t.ticker}
+                </span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 10.5, color: C.muted }}>
+                  {t.trades} trades {'·'} {t.politicians} {t.politicians === 1 ? 'member' : 'members'}
+                  <span style={{ display: 'block', color: C.dim }}>
+                    {money(t.disclosedMin)} to {money(t.disclosedMax)} disclosed
+                  </span>
+                </span>
+                <span style={{ ...num, fontSize: 11, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  <span style={{ color: C.green, fontWeight: 600 }}>{t.buys}B</span>
+                  <span style={{ color: C.dim }}> / </span>
+                  <span style={{ color: C.red, fontWeight: 600 }}>{t.sells}S</span>
+                </span>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {/* ── Latest Filers ──────────────────────────────────────────────── */}
+      <div style={panel}>
+        <div style={head}>
+          <span style={headText}>Latest Filers</span>
+          <Explain text={
+            <>
+              <b style={{ display: 'block', marginBottom: 4 }}>Traded versus disclosed</b>
+              The newest disclosures we hold, one row per filing. The delay is the gap between when a
+              trade happened and when it was reported. Members have 45 days to disclose under the
+              STOCK Act, so a filing can cover trades made weeks earlier.
+            </>
+          } />
+        </div>
+        {!data ? <Empty>Loading.</Empty> : !data.latestFilers?.length ? <Empty>No recent disclosures.</Empty> : (
+          data.latestFilers.map((f, i) => {
+            const ps = partyStyle(f.party);
+            const delay = formatDisclosureDelay({ filingLagDays: f.maxDelay }, { short: true });
+            const late = Number(f.maxDelay) > 45;
+            return (
+              <a key={`${f.slug}-${f.disclosureDate}-${i}`} href={`/politicians/${f.slug}`} className="row-hov"
+                style={{ ...row, textDecoration: 'none', color: 'inherit' }}>
+                <Avatar photoUrl={f.photoUrl} name={f.name} ps={ps} size={26} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 12.5, color: C.text, fontWeight: 500,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</span>
+                  <span style={{ fontSize: 10, color: C.muted }}>
+                    {chamberLabel(f.chamber)} {'·'} filed {fmtDate(f.disclosureDate)}
+                  </span>
+                </span>
+                <span style={{ textAlign: 'right', flexShrink: 0 }}>
+                  <span style={{ ...num, display: 'block', fontSize: 12, fontWeight: 600, color: C.ink }}>
+                    {f.transactions} {f.transactions === 1 ? 'trade' : 'trades'}
+                  </span>
+                  <span style={{ fontSize: 10, color: late ? C.red : C.dim, whiteSpace: 'nowrap' }}>{delay}</span>
+                </span>
+              </a>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}

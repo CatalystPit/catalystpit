@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, fmtReturn, returnColor } from './ui';
+import CongressOverview from './CongressOverview';
 
 // ─── filter definitions ──────────────────────────────────────────────────────
 const SORTS = [
@@ -175,6 +176,9 @@ export default function PoliticiansList() {
   const [chamber, setChamber] = useState('');
   const [party, setParty] = useState('');
   const [lbWindow, setLbWindow] = useState('1y');
+  // Ticker chosen from Most Traded Stocks. Phase 3's chart reads this; until then it simply
+  // highlights the selected row, so the interaction is already wired and testable.
+  const [selectedTicker, setSelectedTicker] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -233,6 +237,11 @@ export default function PoliticiansList() {
             }}
           />
         </div>
+      </div>
+
+      {/* DISCOVERY */}
+      <div style={{ maxWidth: 1380, margin: '0 auto', padding: '18px 24px 0' }}>
+        <CongressOverview onSelectTicker={setSelectedTicker} selectedTicker={selectedTicker} />
       </div>
 
       {/* CONTROLS */}

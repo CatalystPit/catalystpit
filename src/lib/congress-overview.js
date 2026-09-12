@@ -173,7 +173,7 @@ export async function latestFilers({ limit = 12 } = {}) {
 //
 // Both prices come from the SAME daily series (ticker_daily_candles) so the move is not an
 // artifact of mixing sources or of adjusted-vs-raw pricing.
-export async function bestThirtyDayRecord({ min = LB_MIN_TRADES, limit = 10, days = 30 } = {}) {
+export async function bestThirtyDayRecord({ min = LB_MIN_TRADES, days = 30 } = {}) {
   // Postgres rejects a window function nested inside an aggregate, so the per-member total is
   // computed in its own CTE and the 30 percent cap applied against it afterwards.
   const res = await db.execute(sql`
@@ -215,7 +215,6 @@ export async function bestThirtyDayRecord({ min = LB_MIN_TRADES, limit = 10, day
            count(*) FILTER (WHERE move > 0)::int AS winners
     FROM w GROUP BY member_slug
     ORDER BY sum(wt * move) / NULLIF(sum(wt), 0) DESC
-    LIMIT ${sql.raw(String(limit))}
   `);
   const rows = res.rows ?? res;
   return rows.map((r) => ({
