@@ -198,16 +198,26 @@ function MarketPulse({ data, window, onWindow }) {
   );
 }
 
-// Insider tile color — same diverging ramp family as the homepage heat map, but keyed on insider
-// NET open-market $ (green = buying, red = selling), intensity by magnitude vs the window max.
+// Insider tile color — keyed on insider open-market $ (green = buying, red = selling), intensity by
+// magnitude vs the window max. Two INDEPENDENT hue-anchored ramps: the old version ran both directions
+// off one shared neutral base, so weak selling landed on rgb(76,73,61) — R≈G≈B, i.e. mud. Each ramp now
+// starts dark but unmistakably in its own hue, so direction reads at every intensity.
+const RAMP_GREEN = [[34, 68, 50], [16, 170, 86]];   // soft dark green → vivid green (buying)
+const RAMP_RED   = [[74, 38, 40], [210, 44, 38]];   // soft dark red   → vivid red   (selling)
+const FLAT_GRAY  = 'rgb(46,52,50)';                 // net ≈ 0: buying and selling cancel, no direction
+const rampAt = ([lo, hi], t) => `rgb(${Math.round(lo[0] + (hi[0] - lo[0]) * t)},${Math.round(lo[1] + (hi[1] - lo[1]) * t)},${Math.round(lo[2] + (hi[2] - lo[2]) * t)})`;
+
 function insiderTileColor(c, mode, max) {
-  let net, mag;
-  if (mode === 'buys') { net = 1; mag = c.buys; }
-  else if (mode === 'sells') { net = -1; mag = c.sells; }
-  else { net = c.net; mag = Math.abs(c.net); }
-  const t = Math.max(0.12, Math.min(1, max > 0 ? mag / max : 0));
-  if (net >= 0) return `rgb(${Math.round(58 - 38 * t)},${Math.round(78 + 92 * t)},${Math.round(66 + 18 * t)})`;
-  return `rgb(${Math.round(58 + 150 * t)},${Math.round(78 - 38 * t)},${Math.round(66 - 40 * t)})`;
+  let dir, mag;
+  if (mode === 'buys') { dir = 1; mag = c.buys; }            // Buys view → green shades only
+  else if (mode === 'sells') { dir = -1; mag = c.sells; }    // Sells view → red shades only
+  else {
+    dir = c.net >= 0 ? 1 : -1; mag = Math.abs(c.net);        // Net view → never crosses the hue divide
+    const gross = (c.buys || 0) + (c.sells || 0);
+    if (gross > 0 && mag / gross < 0.06) return FLAT_GRAY;   // near-zero net reads neutral, not faint red
+  }
+  const t = Math.sqrt(Math.max(0.1, Math.min(1, max > 0 ? mag / max : 0)));  // eased: mid-size tiles keep colour
+  return rampAt(dir >= 0 ? RAMP_GREEN : RAMP_RED, t);
 }
 
 // Heatmap hover card. Rendered through a portal to <body> at FIXED viewport coordinates so the treemap
@@ -262,6 +272,17 @@ function HeatmapTooltip({ hover, windowLabel, container }) {
   );
 }
 
+// Tile label fit. Same responsive font curve as before (so big tiles are unchanged) — what moved is the
+// VISIBILITY test: instead of a flat w>30/h>18 cutoff that blanked plenty of tiles with room to spare, a
+// ticker shows whenever it measurably fits at that size. ~0.64em per uppercase DM Sans char.
+const tkSize = (t) => Math.min(15, Math.max(8, t.w / 5.5));
+const fitsTicker = (t) => {
+  const len = (t.ticker || '').length;
+  if (!len) return false;
+  const px = tkSize(t);
+  return (t.w - 4) >= px * 0.64 * len && (t.h - 2) >= px;   // hide only when it genuinely can't fit
+};
+
 // Squarified treemap heatmap — same visual architecture as the homepage Market Heat Map
 // (shared ../../lib/treemap), adapted for insider data.
 function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
@@ -314,7 +335,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
           : (
             <button key={`t${i}`} onClick={() => onPick(t.ticker)} onMouseEnter={(e) => setHover({ c: t, el: e.currentTarget })}
               style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: insiderTileColor(t, mode, max), border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: 'pointer', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
-              {t.w > 30 && t.h > 18 && <span className="cp-tkr" style={{ fontSize: Math.min(15, Math.max(8, t.w / 5.5)), fontWeight: 700, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>{t.ticker}</span>}
+              {fitsTicker(t) && <span className="cp-tkr" style={{ fontSize: tkSize(t), fontWeight: 700, whiteSpace: 'nowrap', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>{t.ticker}</span>}
               {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(val(t))}</span>}
             </button>
           ))}
