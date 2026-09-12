@@ -2,7 +2,7 @@ import { SignUp } from '@clerk/nextjs';
 import { Logo } from '../../../lib/cp-shared';
 
 export const metadata = {
-  title: 'Sign Up — CatalystPit',
+  title: 'Sign Up · CatalystPit',
 };
 
 export default function SignUpPage() {

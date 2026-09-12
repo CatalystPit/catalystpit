@@ -98,7 +98,7 @@ export async function GET(request) {
   console.log(`🤖 Enriching: ${newsArr.length} news articles`);
 
   if (newsArr.length === 0) {
-    results.failed.push({ key:'catalystpit:top_stories', error:'No raw news in cache — run /api/refresh first' });
+    results.failed.push({ key:'catalystpit:top_stories', error:'No raw news in cache. Run /api/refresh first' });
     console.error('❌ catalystpit:top_stories: No raw news in cache');
   } else {
     try {

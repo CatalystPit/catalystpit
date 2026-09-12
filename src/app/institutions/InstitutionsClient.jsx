@@ -100,9 +100,9 @@ export default function InstitutionsClient() {
     try {
       const r = await fetch('/api/cron/institutions-universe?indexes=2&ingestCap=200');
       const j = await r.json().catch(() => ({}));
-      setProgress(j?.ok ? `Registered ${(j.registered || 0).toLocaleString()} filers · ingested ${j.ingestedNow || 0} this pass · ${(j.storedNow || 0).toLocaleString()} holdings stored` : 'Pass failed — check logs.');
+      setProgress(j?.ok ? `Registered ${(j.registered || 0).toLocaleString()} filers · ingested ${j.ingestedNow || 0} this pass · ${(j.storedNow || 0).toLocaleString()} holdings stored` : 'Pass failed. Check logs.');
       loadDir(query.trim(), dir.page);
-    } catch { setProgress('Pass failed — check logs.'); }
+    } catch { setProgress('Pass failed. Check logs.'); }
     setRunning(false);
   }
 
@@ -121,7 +121,7 @@ export default function InstitutionsClient() {
           </div>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 32, fontWeight: 600, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.5px' }}>Institutions</h1>
           <p style={{ fontSize: 13, color: C.muted, margin: '0 0 14px', fontWeight: 300 }}>
-            What the big managers hold, from quarterly 13F filings — every SEC 13F filer, auto-discovered. Positions are reported up to 45 days after quarter-end; as-of dates shown per fund.
+            What the big managers hold, from quarterly 13F filings, covering every SEC 13F filer, auto-discovered. Positions are reported up to 45 days after quarter-end; as-of dates shown per fund.
           </p>
           <EntitySearch
             endpoint="/api/institutions?ac="
@@ -181,7 +181,7 @@ export default function InstitutionsClient() {
             <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 4 }}>
               CORPORATE BUYING ACTIVITY <span style={{ fontWeight: 400, color: C.muted }}>· latest 13F new &amp; increased stakes</span>
             </div>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginBottom: 10 }}>What public companies just bought, from their newest 13F filings — a new stake or an added position.</div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginBottom: 10 }}>What public companies just bought, from their newest 13F filings: a new stake or an added position.</div>
             <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
               {corpActivity.slice(0, 40).map((e, i) => (
                 <div key={i} className="card-hov" onClick={() => router.push(`/institutions/${e.filerSlug}`)}
@@ -234,7 +234,7 @@ export default function InstitutionsClient() {
             </div>
           ) : dir.items.length === 0 ? (
             <div style={{ padding: '28px 4px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
-              {query ? `No managers match “${query}”.` : 'Directory is populating from SEC filings — check back shortly.'}
+              {query ? `No managers match “${query}”.` : 'Directory is populating from SEC filings. Check back shortly.'}
             </div>
           ) : (
             <>
@@ -255,7 +255,7 @@ export default function InstitutionsClient() {
         </div>
 
         <div style={{ marginTop: 26, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-          "13F AUM" = long US-listed positions reported on Form 13F (excludes cash, shorts, bonds, and non-US holdings — not total firm AUM). Source: SEC EDGAR. Not financial advice.
+          "13F AUM" = long US-listed positions reported on Form 13F (excludes cash, shorts, bonds, and non-US holdings, so it is not total firm AUM). Source: SEC EDGAR. Not financial advice.
         </div>
       </div>
 

@@ -162,7 +162,7 @@ function HaltBody({ onPick }) {
     return () => { alive = false; clearInterval(id); };
   }, []);
   if (halts === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading halts…</div>;
-  if (halts.length === 0) return <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No halts reported yet today — this lights up the moment a stock halts.</div>;
+  if (halts.length === 0) return <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No halts reported yet today. This lights up the moment a stock halts.</div>;
   return (
     <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -216,7 +216,7 @@ function ScanBody({ mode, onPick }) {
   const results = (
     rows === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Scanning…</div>
       : !configured ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Scanner needs a market-data feed. Add <b>FMP_API_KEY</b> to enable live movers.</div>
-      : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>{mode === 'custom' ? 'No matches — adjust your filters and Run.' : 'No results.'}</div>
+      : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>{mode === 'custom' ? 'No matches. Adjust your filters and Run.' : 'No results.'}</div>
       : (
         <div style={{ overflow: 'auto', flex: 1 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -310,8 +310,8 @@ function CustomScannerBody({ onPick }) {
   const delScan = async (id) => { await fetch(`/api/screener/saved?scope=terminal&id=${id}`, { method: 'DELETE' }).catch(() => {}); loadSaved(); };
   const alertScan = async () => {
     if (!conds.length) return;
-    const name = window.prompt('Alert me when a NEW ticker matches this scan — name it:'); if (!name) return;
-    try { await fetch('/api/alerts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filters: buildFilters() }) }); window.alert('Alert set — you’ll get a bell notification when a new name enters this scan.'); } catch { /* ignore */ }
+    const name = window.prompt('Alert me when a NEW ticker matches this scan. Name it:'); if (!name) return;
+    try { await fetch('/api/alerts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, filters: buildFilters() }) }); window.alert('Alert set. You’ll get a bell notification when a new name enters this scan.'); } catch { /* ignore */ }
   };
 
   const btn = { fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", border: `1px solid ${C.border}`, background: C.white, color: C.muted };
@@ -366,7 +366,7 @@ function CustomScannerBody({ onPick }) {
       </div>
       <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
         {rows === null ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Add filters and Run Scan.</div>
-          : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No matches — widen your filters.</div>
+          : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No matches. Widen your filters.</div>
             : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <tbody>
@@ -489,7 +489,7 @@ function WhyMovingBody({ symbol }) {
         </div>
       ) : (
         <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
-          {ctx?.breakingToday || ctx?.newsCategory ? `Fresh ${ctx.newsCategory || 'news'} today — check the News Wire.` : 'No fresh SEC catalyst on file (last 7 days). The move may be news-, sector- or flow-driven.'}
+          {ctx?.breakingToday || ctx?.newsCategory ? `Fresh ${ctx.newsCategory || 'news'} today. Check the News Wire.` : 'No fresh SEC catalyst on file (last 7 days). The move may be news-, sector- or flow-driven.'}
         </div>
       )}
 
@@ -502,7 +502,7 @@ function WhyMovingBody({ symbol }) {
           {ctx.consensusScore != null && chip(`◆ Convergence ${ctx.consensusScore}`, { fg: '#1E5C38', bg: '#E8F5EE' })}
           {ctx.company && <div style={{ width: '100%', fontSize: 10.5, color: C.dim, marginTop: 4 }}>{ctx.company}</div>}
         </div>
-      ) : <div style={{ fontSize: 11.5, color: C.dim }}>Not in our covered universe yet — no reaction context.</div>}
+      ) : <div style={{ fontSize: 11.5, color: C.dim }}>Not in our covered universe yet, so there is no reaction context.</div>}
     </div>
   );
 }
@@ -559,7 +559,7 @@ function ConvergenceBody({ onPick }) {
             )}
         {locked > 0 && (
           <a href="/consensus" style={{ display: 'block', padding: '10px 12px', textAlign: 'center', fontSize: 11.5, fontWeight: 600, color: C.green, textDecoration: 'none', borderTop: `1px solid ${C.surface}`, background: C.greenLight }}>
-            🔒 +{locked} more names — unlock the full board with Pro ↗
+            🔒 +{locked} more names. Unlock the full board with Pro ↗
           </a>
         )}
       </div>
@@ -601,7 +601,7 @@ function AlertsBody({ symbol }) {
       </div>
       <div style={{ overflow: 'auto', flex: 1 }}>
         {data === null ? <div style={{ padding: 18, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading…</div>
-          : (data.alerts || []).length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>No alerts yet. Set one above — you&apos;ll get a bell notification when it triggers.</div>
+          : (data.alerts || []).length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>No alerts yet. Set one above and you&apos;ll get a bell notification when it triggers.</div>
             : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                 <tbody>
@@ -972,7 +972,7 @@ function WatchlistBody({ onPick }) {
                 <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
                 </span>
-                {badgesFor(r.ticker).map((k) => { const b = WL_BADGE[k]; return <span key={k} title={`${b.label} — live`} style={{ marginLeft: 4, fontSize: 8, fontWeight: 800, color: b.fg, background: b.bg, borderRadius: 3, padding: '1px 4px', verticalAlign: 'middle' }}>{b.label}</span>; })}
+                {badgesFor(r.ticker).map((k) => { const b = WL_BADGE[k]; return <span key={k} title={`${b.label} · live`} style={{ marginLeft: 4, fontSize: 8, fontWeight: 800, color: b.fg, background: b.bg, borderRadius: 3, padding: '1px 4px', verticalAlign: 'middle' }}>{b.label}</span>; })}
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
               </td>
               {showPrice && <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</td>}
@@ -1035,7 +1035,7 @@ function PanelCard({ def, colorKey, onSetColor, onMoveStart, onResizeStart, drag
         {draggable && (
           <span style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }} onPointerDown={(e) => e.stopPropagation()}>
             <button onClick={() => setColorMenu((v) => !v)}
-              title="Link-group color — pick a group (panels sharing a color sync)"
+              title="Link-group color. Pick a group (panels sharing a color sync)."
               style={{ width: 12, height: 12, borderRadius: 3, border: '1px solid rgba(0,0,0,0.15)', background: colorOf(colorKey), cursor: 'pointer', padding: 0, display: 'block' }} />
             {colorMenu && (
               <>
@@ -1398,8 +1398,8 @@ export default function TerminalClient() {
         ) : !isPro ? (
           <div style={{ background: C.white, border: `1px solid ${C.greenBorder}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center' }}>
             <div style={{ fontSize: 18, fontWeight: 700, color: C.ink, marginBottom: 8 }}>The Terminal is a Pro feature</div>
-            <div style={{ fontSize: 14, color: C.muted, maxWidth: 440, margin: '0 auto 18px' }}>A movable trading workspace — live halt scanner, chart, movers and catalysts, arranged your way.</div>
-            <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '12px 26px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Start Pro — $12/mo</button>
+            <div style={{ fontSize: 14, color: C.muted, maxWidth: 440, margin: '0 auto 18px' }}>A movable trading workspace with a live halt scanner, chart, movers and catalysts, arranged your way.</div>
+            <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '12px 26px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Start Pro · $12/mo</button>
           </div>
         ) : (
           <Workspace />

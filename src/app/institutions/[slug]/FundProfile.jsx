@@ -102,7 +102,7 @@ export default function FundProfile({ slug }) {
   async function runImport() {
     if (importing) return;
     setImporting(true);
-    setImportMsg('Importing from SEC EDGAR — this can take up to a minute…');
+    setImportMsg('Importing from SEC EDGAR. This can take up to a minute…');
     try {
       const r = await fetch(`/api/cron/institutions?fund=${encodeURIComponent(slug)}`);
       const j = await r.json().catch(() => ({}));
@@ -113,8 +113,8 @@ export default function FundProfile({ slug }) {
       const tr = j.tickersResolved;
       if (dd?.hasData) {
         setD(dd);
-        setImportMsg(tr === 0 ? 'Imported ✓ — but 0 tickers resolved. Set OPENFIGI_API_KEY (free) in Vercel + re-import to get logos/links.' : `Imported ✓ — ${tr ?? '?'} tickers resolved.`);
-      } else { if (dd) setD(dd); setImportMsg(`Import ran but no holdings landed — ${JSON.stringify(j)}`); }
+        setImportMsg(tr === 0 ? 'Imported ✓, but 0 tickers resolved. Set OPENFIGI_API_KEY (free) in Vercel + re-import to get logos/links.' : `Imported ✓. ${tr ?? '?'} tickers resolved.`);
+      } else { if (dd) setD(dd); setImportMsg(`Import ran but no holdings landed. ${JSON.stringify(j)}`); }
     } catch (e) {
       setImportMsg(`Failed: ${e.message}`);
     } finally {
@@ -248,7 +248,7 @@ export default function FundProfile({ slug }) {
                   </table>
                 </div>
                 <div style={{ padding: '10px 16px', fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5, borderTop: `1px solid ${C.surface}` }}>
-                  13F-reported options — <b>notional value of the underlying only</b> (no strike, expiry, or premium is disclosed). These may be directional views <i>or</i> hedges — large multi-strategy and market-making funds report big offsetting options books that aren&apos;t conviction signals.
+                  13F-reported options, shown as <b>notional value of the underlying only</b> (no strike, expiry, or premium is disclosed). These may be directional views <i>or</i> hedges. Large multi-strategy and market-making funds report big offsetting options books that aren&apos;t conviction signals.
                 </div>
               </div>
             )}

@@ -121,7 +121,7 @@ function insiderSection(trades, labeled) {
     const col = t.action === 'BUY' ? GREEN : RED;
     return `<div style="font-size:10px;margin-top:2px"><span style="color:${col};font-weight:600">${t.action}</span> ${esc(t.executive)} · ${fmtVal(t.totalValue)}</div>`;
   }).join('');
-  const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more — click for all</div>` : '';
+  const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more, click for all</div>` : '';
   return head + `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} insider trades</div>${rows}${more}`;
 }
 function congressSection(trades, labeled) {
@@ -138,7 +138,7 @@ function congressSection(trades, labeled) {
     const col = t.action === 'BUY' ? GREEN : RED;
     return `<div style="font-size:10px;margin-top:2px"><span style="color:${col};font-weight:600">${t.action}</span> ${esc(t.representative)} (${partyAbbr(t.party)} ${esc(t.state || '')}) · ${fmtVal(t.amountMid)}</div>`;
   }).join('');
-  const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more — click for all</div>` : '';
+  const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more, click for all</div>` : '';
   return head + `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} congress trades</div>${rows}${more}`;
 }
 

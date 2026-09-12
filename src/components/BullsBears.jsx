@@ -88,7 +88,7 @@ export default function BullsBears({ ticker }) {
       const r = await fetch(url);
       const j = await r.json();
       if (j.error) { if (!refresh) setError(true); }
-      else if (j.refreshed_recently) { setRefreshNote('Refreshed recently — try again in a few min'); setTimeout(() => setRefreshNote(''), 6000); if (j.bulls) setData(j); }
+      else if (j.refreshed_recently) { setRefreshNote('Refreshed recently. Try again in a few min'); setTimeout(() => setRefreshNote(''), 6000); if (j.bulls) setData(j); }
       else { setData(j); setError(false); }
     } catch { if (!refresh) setError(true); }
     finally { setRefreshing(false); }

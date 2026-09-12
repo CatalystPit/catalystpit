@@ -261,7 +261,7 @@ function TabPlaceholder({ label, copy }) {
 function BuildingStub({ label }) {
   return (
     <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center', color: C.dim, fontSize: 13 }}>
-      {label} — building in the next step.
+      {label} is building in the next step.
     </div>
   );
 }
@@ -353,7 +353,7 @@ function LockedRows({ what, remaining }) {
           </div>
           <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap',
             padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-            Unlock Pro — $12/mo
+            Unlock Pro · $12/mo
           </button>
         </div>
       </div>
@@ -1019,7 +1019,7 @@ function InstitutionsTab({ symbol }) {
             </div>
             <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
               {count > funds.length && <>Showing the top {funds.length.toLocaleString()} of {count.toLocaleString()} filers by position size. </>}
-              Every SEC 13F filer — each fund&apos;s latest 13F (reported up to 45 days after quarter-end). Ownership % = long common shares ÷ shares outstanding; it excludes shorts, options, and non-13F holders, so it is a reported floor, not total ownership. PUT/CALL rows are options positions (bearish/bullish), not share ownership. Source: <a href="/institutions" style={{ color: C.green, textDecoration: 'none' }}>SEC EDGAR</a>. Not financial advice.
+              Every SEC 13F filer, showing each fund&apos;s latest 13F (reported up to 45 days after quarter-end). Ownership % = long common shares ÷ shares outstanding; it excludes shorts, options, and non-13F holders, so it is a reported floor, not total ownership. PUT/CALL rows are options positions (bearish/bullish), not share ownership. Source: <a href="/institutions" style={{ color: C.green, textDecoration: 'none' }}>SEC EDGAR</a>. Not financial advice.
             </div>
           </>
         )}

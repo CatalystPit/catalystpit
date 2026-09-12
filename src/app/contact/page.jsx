@@ -24,7 +24,7 @@ export default function ContactPage() {
           Contact us
         </h1>
         <p style={{ fontSize: 15, color: C.muted, margin: "0 0 24px", fontWeight: 300, lineHeight: 1.5 }}>
-          Questions, feedback, press inquiries, or partnership ideas — drop us a message and we'll respond within 1-2 business days.
+          Questions, feedback, press inquiries, or partnership ideas. Drop us a message and we'll respond within 1-2 business days.
         </p>
       </div>
 

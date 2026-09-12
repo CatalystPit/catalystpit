@@ -75,9 +75,9 @@ export default function PrivacyPage() {
                 <li>Beehiiv (newsletter delivery)</li>
                 <li>Vercel (website hosting and infrastructure)</li>
                 <li>Upstash (data caching)</li>
-                <li>Anthropic (AI-powered content enrichment — no personal data is sent)</li>
+                <li>Anthropic (AI-powered content enrichment; no personal data is sent)</li>
                 <li>Stripe (payment processing, when paid tiers launch)</li>
-                <li>Finnhub, SEC EDGAR, CoinGecko, and news feeds from The Wall Street Journal, MarketWatch and Bloomberg (market data sources — no personal data is sent)</li>
+                <li>Finnhub, SEC EDGAR, CoinGecko, and news feeds from The Wall Street Journal, MarketWatch and Bloomberg (market data sources; no personal data is sent)</li>
               </ul>
             </li>
             <li><strong>Legal requirements:</strong> We may disclose information if required by law, subpoena, court order, or similar legal process, or if we believe disclosure is necessary to protect our rights, your safety, or the safety of others.</li>

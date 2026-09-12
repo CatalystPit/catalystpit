@@ -341,8 +341,8 @@ const LEGEND_HELP = (
       ['Colour intensity', 'magnitude of the activity'],
       ['Tile size', 'dollar value of insider activity'],
       ['Grouping', 'companies are grouped by sector'],
-    ].map(([k, v]) => <span key={k} style={{ display: 'block' }}><b>{k}</b> — {v}</span>)}
-    <span style={{ display: 'block', marginTop: 6 }}>Insider selling happens for many reasons — diversification, taxes, scheduled 10b5-1 plans — and should not automatically be read as bearish.</span>
+    ].map(([k, v]) => <span key={k} style={{ display: 'block' }}><b>{k}</b>: {v}</span>)}
+    <span style={{ display: 'block', marginTop: 6 }}>Insider selling happens for many reasons, including diversification, taxes and scheduled 10b5-1 plans. It should not automatically be read as bearish.</span>
     <span style={{ display: 'block', marginTop: 6 }}>Individual transactions and their SEC filings are listed below.</span>
   </>
 );
@@ -961,7 +961,7 @@ export default function InsidersPage() {
                     {label:"Owned",sortKey:null,align:"right"},{label:"ΔOwn",sortKey:null,align:"right"},
                     {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},{label:"Conviction",sortKey:null,align:"right",server:true},
                   ].map(h=>{
-                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction — click to sort highest first" style={{padding:"10px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>CONVICTION{convSort?' ↓':''}</th>;
+                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>CONVICTION{convSort?' ↓':''}</th>;
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
                     return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 16px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none"}}>{h.label.toUpperCase()}{arrow}</th>;
                   })}
@@ -989,7 +989,7 @@ export default function InsidersPage() {
                           const m = meaningFor(ins.code);
                           let label = m.short, tip = m.tip;
                           if (ins.code === 'S' && ins.rule10b5_1 === true) { label = 'SELL · 10b5-1'; tip = 'Sale reported under a pre-arranged Rule 10b5-1 trading plan. Because the trading instructions may have been established earlier, this should not automatically be read as a new discretionary bearish decision.'; }
-                          else if (ins.code === 'S' && ins.rule10b5_1 === false) { label = 'SELL · DISCRETIONARY'; tip = 'Sale reported as NOT made under a Rule 10b5-1 plan — a discretionary decision to sell in the open market.'; }
+                          else if (ins.code === 'S' && ins.rule10b5_1 === false) { label = 'SELL · DISCRETIONARY'; tip = 'Sale reported as NOT made under a Rule 10b5-1 plan. This indicates a discretionary decision to sell in the open market.'; }
                           else if (ins.code === 'S') tip = m.tip + (ins.rule10b5_1 == null ? ' 10b5-1 status: not disclosed in this filing.' : '');
                           const om = m.openMarket, buy = ins.type === 'BUY';
                           const st = om ? { background: buy ? C.greenLight : C.redLight, color: buy ? C.green : C.red } : { background: C.surface, color: C.muted };
@@ -1031,7 +1031,7 @@ export default function InsidersPage() {
                         <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:14, fontWeight:700, color:C.ink}}>{lockedCount.toLocaleString()} more insider trades</div>
                         <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Unlock the full history with Pro</div>
                       </div>
-                      <button onClick={() => startCheckout()} style={{background:C.green, color:"#fff", border:"none", whiteSpace:"nowrap", padding:"10px 18px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif"}}>Unlock Pro — $12/mo</button>
+                      <button onClick={() => startCheckout()} style={{background:C.green, color:"#fff", border:"none", whiteSpace:"nowrap", padding:"10px 18px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif"}}>Unlock Pro · $12/mo</button>
                     </div>
                   </div>
                 </div>

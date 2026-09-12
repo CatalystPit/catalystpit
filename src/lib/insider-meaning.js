@@ -5,9 +5,9 @@
 
 export const TXN_MEANING = {
   P: { label: 'Purchase',        short: 'BUY',          kind: 'buy',      openMarket: true,
-       tip: 'Open-market or private purchase. The insider acquired shares using their own capital rather than receiving them as compensation — a discretionary investment decision.' },
+       tip: 'Open-market or private purchase. The insider acquired shares using their own capital rather than receiving them as compensation. This represents a discretionary investment decision.' },
   S: { label: 'Sale',            short: 'SELL',         kind: 'sell',     openMarket: true,
-       tip: 'Open-market or private sale. If a Rule 10b5-1 plan is disclosed, the trade may have been scheduled in advance — check that before reading it as a new discretionary decision.' },
+       tip: 'Open-market or private sale. If a Rule 10b5-1 plan is disclosed, the trade may have been scheduled in advance. Check that before reading it as a new discretionary decision.' },
   A: { label: 'Award / Grant',   short: 'AWARD',        kind: 'grant',    openMarket: false,
        tip: 'Shares received through a compensation or equity award. This is not an open-market purchase and does not necessarily reflect a discretionary investment decision.' },
   M: { label: 'Option Exercise', short: 'OPT EXERCISE', kind: 'exercise', openMarket: false,

@@ -57,7 +57,7 @@ export default function MarketsClient() {
             <Dot /><span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.muted, letterSpacing: '1px' }}>CATALYSTS · FILINGS · CONGRESS</span>
           </div>
           <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 32, fontWeight: 600, color: C.ink, margin: '0 0 4px', letterSpacing: '-0.5px' }}>Markets</h1>
-          <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>What&apos;s moving by catalyst today — the names with fresh filings, Congress trades, and headlines.</p>
+          <p style={{ fontSize: 13, color: C.muted, margin: 0, fontWeight: 300 }}>What&apos;s moving by catalyst today: the names with fresh filings, Congress trades, and headlines.</p>
         </div>
       </div>
 
@@ -70,7 +70,7 @@ export default function MarketsClient() {
                 {Array(4).fill(0).map((_, i) => <div key={i} style={{ background: C.surface, borderRadius: 7, padding: 14, border: `1px solid ${C.border}` }}><Skel w="60%" h={10} mb={8} /><Skel h={18} mb={6} /><Skel w="70%" h={11} mb={0} /></div>)}
               </div>
             ) : catalysts.length === 0 ? (
-              <div style={{ padding: '20px 8px', textAlign: 'center', fontSize: 12, color: C.muted, fontWeight: 300 }}>No catalysts to show yet — filings land here through the session.</div>
+              <div style={{ padding: '20px 8px', textAlign: 'center', fontSize: 12, color: C.muted, fontWeight: 300 }}>No catalysts to show yet. Filings land here through the session.</div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                 {catalysts.map((c, i) => (
@@ -135,7 +135,7 @@ export default function MarketsClient() {
         )}
 
         <div style={{ fontSize: 11, color: C.dim, fontWeight: 300 }}>
-          Catalyst board — sourced from SEC filings and STOCK Act disclosures. No last-sale prices. Not financial advice.
+          Catalyst board, sourced from SEC filings and STOCK Act disclosures. No last-sale prices. Not financial advice.
         </div>
       </div>
 

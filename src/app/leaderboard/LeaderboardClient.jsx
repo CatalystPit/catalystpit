@@ -65,7 +65,7 @@ export default function LeaderboardClient() {
           <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: 'center' }}>Loading…</div>
         ) : leaders.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
-            No activity yet — start posting and chatting to climb the board.
+            No activity yet. Start posting and chatting to climb the board.
           </div>
         ) : (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>

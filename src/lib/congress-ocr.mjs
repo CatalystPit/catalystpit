@@ -15,7 +15,7 @@ const TXTYPE = { P: 'Purchase', S: 'Sale', E: 'Exchange' };
 const OWNER = { SP: 'Spouse', JT: 'Joint', DC: 'Dependent Child' };
 const toISO = (mdy) => { const m = String(mdy || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/); if (!m) return null; let y = m[3]; if (y.length === 2) y = '20' + y; return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; };
 
-const PROMPT = `You are transcribing a U.S. House Periodic Transaction Report (PTR). Read the transaction table and output ONLY a JSON object of the form {"transactions":[ ... ]} — no prose, no markdown.
+const PROMPT = `You are transcribing a U.S. House Periodic Transaction Report (PTR). Read the transaction table and output ONLY a JSON object of the form {"transactions":[ ... ]} with no prose and no markdown.
 
 For EVERY transaction row, output an object with these fields:
 - owner: one of "SP" (spouse), "JT" (joint), "DC" (dependent child), or "" (the filer). Use "" if not marked.
@@ -31,7 +31,7 @@ For EVERY transaction row, output an object with these fields:
 - strike: option strike price number ONLY if explicitly written, else null.
 - expiration: option expiration date "MM/DD/YYYY" ONLY if explicitly written, else null.
 
-ACCURACY RULES — follow exactly:
+ACCURACY RULES, follow exactly:
 - Transcribe ONLY what is clearly legible. If any field is uncertain or illegible, use null. NEVER guess, infer, approximate, or compute a value.
 - Do not derive shares from the dollar amount. Only report shares/contracts if the filer literally wrote that number.
 - If the page is blank or entirely illegible, return {"transactions":[]}.`;

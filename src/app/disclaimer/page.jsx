@@ -36,7 +36,7 @@ export default function DisclaimerPage() {
         </div>
 
         <Section title="1. Not Investment Advice">
-          <p>All content on CatalystPit — including market data, news summaries, AI-generated analysis, insider trading filings, congressional trading disclosures, options flow, short interest, and any commentary — is provided for informational and educational purposes only.</p>
+          <p>All content on CatalystPit, including market data, news summaries, AI-generated analysis, insider trading filings, congressional trading disclosures, options flow, short interest, and any commentary, is provided for informational and educational purposes only.</p>
           <p>Nothing on CatalystPit constitutes:</p>
           <ul style={list}>
             <li>Investment advice or a recommendation to buy, sell, or hold any security, derivative, cryptocurrency, or other asset</li>
@@ -77,7 +77,7 @@ export default function DisclaimerPage() {
         </Section>
 
         <Section title="5. No Guarantee of Results">
-          <p>No statement on CatalystPit — explicit or implied — is a guarantee of any trading, investment, or financial result. Hypothetical or historical examples are not predictions of future outcomes. Any reference to past gains, returns, or successful trades does not imply that similar results will occur in the future or for any individual user.</p>
+          <p>No statement on CatalystPit, explicit or implied, is a guarantee of any trading, investment, or financial result. Hypothetical or historical examples are not predictions of future outcomes. Any reference to past gains, returns, or successful trades does not imply that similar results will occur in the future or for any individual user.</p>
         </Section>
 
         <Section title="6. Conflicts of Interest">

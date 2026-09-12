@@ -1,6 +1,6 @@
 import 'server-only';
 // ─────────────────────────────────────────────────────────────────────────────
-//  PIT SCAN — CatalystPit proprietary momentum / abnormal-activity engine.
+//  PIT SCAN · CatalystPit proprietary momentum / abnormal-activity engine.
 //  PRIVATE. This module is server-only (the `server-only` import above makes any
 //  client import a BUILD ERROR). Weights, thresholds, normalization curves and
 //  qualification rules live here and MUST NOT be returned to the client. The API

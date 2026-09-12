@@ -3,8 +3,8 @@ import ProfileView from './ProfileView';
 export async function generateMetadata({ params }) {
   const { handle } = await params;
   return {
-    title: `@${handle} — CatalystPit`,
-    description: `${handle}'s profile on CatalystPit — The Pit community.`,
+    title: `@${handle} · CatalystPit`,
+    description: `${handle}'s profile on CatalystPit, in The Pit community.`,
   };
 }
 

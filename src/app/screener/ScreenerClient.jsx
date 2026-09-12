@@ -294,7 +294,7 @@ export default function ScreenerClient() {
               if (!fs.length) return null;
               return (
                 <div key={cat} style={{ marginBottom: 8 }}>
-                  {activeCat === 'All' && <div style={{ fontSize: 9.5, fontWeight: 700, color: C.dim, letterSpacing: '1px', margin: '2px 0 4px' }}>— {cat.toUpperCase()} —</div>}
+                  {activeCat === 'All' && <div style={{ fontSize: 9.5, fontWeight: 700, color: C.dim, letterSpacing: '1px', margin: '2px 0 4px' }}>· {cat.toUpperCase()} ·</div>}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '4px 16px' }}>
                     {fs.map(([key, def]) => <FilterControl key={key} fkey={key} def={def} val={filters[key]} onChange={(v) => setFilter(key, v)} />)}
                   </div>

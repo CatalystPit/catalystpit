@@ -1,7 +1,7 @@
 import LeaderboardClient from './LeaderboardClient';
 
 export const metadata = {
-  title: 'Leaderboard — CatalystPit',
+  title: 'Leaderboard · CatalystPit',
   description: 'The most active and influential traders in The Pit community.',
 };
 

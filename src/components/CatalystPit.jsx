@@ -248,7 +248,7 @@ export default function CatalystPit() {
               Every catalyst. <span style={{color:C.green}}>Before the bell.</span>
             </h1>
             <p style={{fontSize:13, color:C.muted, margin:0, fontWeight:300}}>
-              Insider trades, market data, and breaking news — every catalyst, before the bell.
+              Insider trades, market data, and breaking news. Every catalyst, before the bell.
             </p>
           </div>
         </div>
@@ -302,7 +302,7 @@ export default function CatalystPit() {
                 </div>
               ) : catalysts.length === 0 ? (
                 <div style={{padding:"20px 8px", textAlign:"center", fontSize:12, color:C.muted, fontWeight:300}}>
-                  No catalysts to show yet — filings land here through the session.
+                  No catalysts to show yet. Filings land here through the session.
                 </div>
               ) : (
                 <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:12}}>
@@ -395,7 +395,7 @@ export default function CatalystPit() {
                     cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
                     onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Unlock Pro — $12/mo
+                    Unlock Pro · $12/mo
                   </button>
                 </div>
               )}
@@ -544,7 +544,7 @@ export default function CatalystPit() {
             </table>
             </div>
             <div style={{padding:"8px 16px", fontSize:10, color:C.dim, fontWeight:300, borderTop:`1px solid ${C.surface}`}}>
-              Disclosed under the STOCK Act — trades may be reported up to ~45 days after execution.
+              Disclosed under the STOCK Act. Trades may be reported up to ~45 days after execution.
             </div>
             <div style={{position:"relative", overflow:"hidden"}}>
               {[1,2,3].map(i => (
@@ -603,7 +603,7 @@ export default function CatalystPit() {
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,
             borderRadius:8, padding:"16px"}}>
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
-              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO — $12/MO</div>
+              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO · $12/MO</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
               {["Full real-time news feed","All insider filings · live",
                 "Full screener · 12 filters","Live charts · all timeframes","Options flow & dark pool",
@@ -619,7 +619,7 @@ export default function CatalystPit() {
               fontFamily:"'DM Sans',sans-serif"}}
               onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
               onMouseLeave={e => e.currentTarget.style.background = C.green}>
-              Start Pro — $12/mo
+              Start Pro · $12/mo
             </button>
             <button onClick={() => startCheckout('annual')} style={{width:"100%", background:"transparent",
               border:"none", color:C.green, marginTop:8, cursor:"pointer", fontSize:12, fontWeight:600,

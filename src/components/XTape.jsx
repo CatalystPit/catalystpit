@@ -111,7 +111,7 @@ export default function XTape({ height = 620, onClose, bare = false }) {
         </div>
       )}
       <div style={{ padding: '8px 14px', fontSize: 11, fontWeight: 300, color: C.muted, lineHeight: 1.4, borderBottom: `1px solid ${C.border}` }}>
-        Unverified social tape — mixes official prints and rumors. Not investment advice.
+        Unverified social tape that mixes official prints and rumors. Not investment advice.
       </div>
 
       {/* Timeline mounts here. Kept in the DOM across states so createTimeline always has its target. */}

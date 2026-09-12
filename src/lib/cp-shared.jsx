@@ -160,7 +160,7 @@ export async function startCheckout(interval) {
     if (r.status === 401) { window.location.href = '/sign-in'; return; }
     const j = await r.json().catch(() => ({}));
     if (j.url) { window.location.href = j.url; return; }
-    alert(j.error === 'not_configured' ? 'Pro isn’t available just yet — check back soon.' : 'Could not start checkout. Please try again.');
+    alert(j.error === 'not_configured' ? 'Pro isn’t available just yet. Check back soon.' : 'Could not start checkout. Please try again.');
   } catch {
     alert('Could not start checkout. Please try again.');
   }
@@ -1130,7 +1130,7 @@ export function WatchlistHomeCard() {
             onChange={e => { setEntry(e.target.value.toUpperCase()); if (err) setErr(null); }}
             onKeyDown={e => { if (e.key === 'Escape') toggleAdd(); }}
             disabled={submitting}
-            placeholder="Add symbol — e.g. AAPL"
+            placeholder="Add symbol, e.g. AAPL"
             aria-label="Add a ticker to your watchlist"
             maxLength={10}
             style={{width:"100%", boxSizing:"border-box", height:32, background:C.white,
@@ -1165,12 +1165,12 @@ export function CatalystBriefCard() {
         body: JSON.stringify({ email: e }),
       });
       const j = await r.json().catch(() => ({}));
-      if (r.ok && j.ok) { setEmail(""); setStatus("success"); setMsg("You're on the list — we'll send the first brief soon."); }
-      else if (j.error === "not_configured") { setStatus("error"); setMsg("Signups open soon — check back shortly."); }
+      if (r.ok && j.ok) { setEmail(""); setStatus("success"); setMsg("You're on the list. We'll send the first brief soon."); }
+      else if (j.error === "not_configured") { setStatus("error"); setMsg("Signups open soon. Check back shortly."); }
       else if (j.error === "invalid email") { setStatus("error"); setMsg("That email doesn't look right."); }
-      else { setStatus("error"); setMsg("Couldn't sign you up — try again in a moment."); }
+      else { setStatus("error"); setMsg("Couldn't sign you up. Try again in a moment."); }
     } catch {
-      setStatus("error"); setMsg("Couldn't sign you up — try again in a moment.");
+      setStatus("error"); setMsg("Couldn't sign you up. Try again in a moment.");
     }
   };
   const busy = status === "submitting";

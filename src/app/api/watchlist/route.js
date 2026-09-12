@@ -222,7 +222,7 @@ export async function POST(request) {
     const limit = WATCHLIST_LIMIT[tier] ?? WATCHLIST_LIMIT.free;
     const already = current.some(r => r.ticker === v.ticker);
     if (!already && current.length >= limit) {
-      return Response.json({ error: `List full — your plan allows ${limit} tickers per list.`, limit }, { status: 403 });
+      return Response.json({ error: `List full. Your plan allows ${limit} tickers per list.`, limit }, { status: 403 });
     }
 
     // New/moved tickers land at the TOP of the list (position = current min − 1).

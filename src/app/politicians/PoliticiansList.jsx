@@ -253,8 +253,8 @@ export default function PoliticiansList() {
 
         {view === 'leaderboard' && !loading && !error && (members || []).length > 0 && (
           <div style={{ fontSize: 12, color: C.muted, fontWeight: 300, margin: '-4px 0 12px', lineHeight: 1.5 }}>
-            Size-weighted return on each member&apos;s <strong style={{ fontWeight: 600 }}>purchases</strong> {lbWindow === 'all' ? 'across all disclosed history' : `made in the last ${(WINDOWS.find((w) => w.key === lbWindow) || {}).label}`}, held to today — as if you copied their buys. <strong style={{ fontWeight: 600 }}>Options use real option-contract prices</strong> (leveraged return, when disclosed with a strike). No single position counts for more than 30%. Minimum 5 priced buys.
-            {meta?.pricedBuys != null && <span> Based on {meta.pricedBuys.toLocaleString()} priced buys{meta.oldest ? ` since ${fmtDate(meta.oldest)}` : ''} — expanding as history loads.</span>}
+            Size-weighted return on each member&apos;s <strong style={{ fontWeight: 600 }}>purchases</strong> {lbWindow === 'all' ? 'across all disclosed history' : `made in the last ${(WINDOWS.find((w) => w.key === lbWindow) || {}).label}`}, held to today, as if you copied their buys. <strong style={{ fontWeight: 600 }}>Options use real option-contract prices</strong> (leveraged return, when disclosed with a strike). No single position counts for more than 30%. Minimum 5 priced buys.
+            {meta?.pricedBuys != null && <span> Based on {meta.pricedBuys.toLocaleString()} priced buys{meta.oldest ? ` since ${fmtDate(meta.oldest)}` : ''}. This expands as history loads.</span>}
             {' '}Not financial advice.
           </div>
         )}
@@ -297,7 +297,7 @@ export default function PoliticiansList() {
                   <div style={{ fontSize: 12, color: C.muted, fontWeight: 300 }}>Unlock every member&apos;s trades with Pro</div>
                 </div>
                 <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap', padding: '10px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-                  Unlock Pro — $12/mo
+                  Unlock Pro · $12/mo
                 </button>
               </div>
             </div>

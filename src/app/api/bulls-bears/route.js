@@ -19,7 +19,7 @@ const TTL_OK = 6 * 60 * 60;          // 6h for a good synthesis
 const TTL_EMPTY = 15 * 60;           // 15m negative-cache for junk/dead/failed tickers
 const TTL_LASTREFRESH = 30 * 60;     // 30m per-ticker manual-refresh throttle
 
-const SYSTEM = 'You are a balanced financial analyst writing for retail traders. You synthesize bull and bear cases from REAL provided data. You NEVER invent numbers, never speculate beyond what the data supports, and you cite the source of every claim. If data is insufficient for either side, you provide fewer bullets rather than padding. Every bullet must rest on a concrete fact — a number, a named/dated event, or a dated filing — never a vague or hedging statement. Write the summary_line LAST, AFTER the bullets, and derive it ONLY from the bullets you actually generated: it must never assert a direction or claim (e.g. "insider confidence") that no bullet supports.';
+const SYSTEM = 'You are a balanced financial analyst writing for retail traders. You synthesize bull and bear cases from REAL provided data. You NEVER invent numbers, never speculate beyond what the data supports, and you cite the source of every claim. If data is insufficient for either side, you provide fewer bullets rather than padding. Every bullet must rest on a concrete fact: a number, a named/dated event, or a dated filing. Never write a vague or hedging statement. Write the summary_line LAST, AFTER the bullets, and derive it ONLY from the bullets you actually generated: it must never assert a direction or claim (e.g. "insider confidence") that no bullet supports.';
 
 // ── KV (REST), mirrors the other routes ──
 async function kvGet(key) {
@@ -170,7 +170,7 @@ const fmtCapStr = (millions) => {
 function buildUserMessage(c) {
   const money = (n) => (typeof n === 'number' ? `$${n.toLocaleString('en-US')}` : (n ?? 'n/a'));
   const L = [];
-  L.push(`COMPANY: ${c.ticker} — ${c.companyName}${c.industry ? ` | Industry: ${c.industry}` : ''}`);
+  L.push(`COMPANY: ${c.ticker} | ${c.companyName}${c.industry ? ` | Industry: ${c.industry}` : ''}`);
   L.push('');
   L.push('=== LAST 4 QUARTERS (source: 10-Q / 10-K) ===');
   if (c.last4Quarters.length) for (const q of c.last4Quarters) L.push(`- ${q.quarter} (filed ${q.reportDate || 'n/a'}, ${q.form || '10-Q'}): revenue ${money(q.revenue)}, EPS ${q.eps != null ? '$' + q.eps : 'n/a'}`);
@@ -180,7 +180,7 @@ function buildUserMessage(c) {
   if (c.recent8K.length) for (const f of c.recent8K) L.push(`- ${f.date}: ${f.headline}`);
   else L.push('- (no 8-K data available)');
   L.push('');
-  L.push('=== INSIDER ACTIVITY — Form 4 (last 90 days, source: Form 4) ===');
+  L.push('=== INSIDER ACTIVITY (Form 4, last 90 days, source: Form 4) ===');
   L.push(`- Total insider buys: ${money(c.form4Activity.totalBuyUSD)}`);
   L.push(`- Total insider sells: ${money(c.form4Activity.totalSellUSD)}`);
   L.push(`- ${c.form4Activity.clusterNote}`);
@@ -192,7 +192,7 @@ function buildUserMessage(c) {
     const s = c.finraShortInterest;
     const dir = s.ppChangeVsPrior == null ? '' : s.ppChangeVsPrior > 0 ? 'up' : s.ppChangeVsPrior < 0 ? 'down' : 'flat';
     const changeStr = s.ppChangeVsPrior != null
-      ? ` (prior period ${s.prevPctOfFloat}% of float — ${dir} ${Math.abs(s.ppChangeVsPrior)} percentage points)` : '';
+      ? ` (prior period ${s.prevPctOfFloat}% of float, ${dir} ${Math.abs(s.ppChangeVsPrior)} percentage points)` : '';
     L.push(`- As of ${s.settlementDate || 'n/a'}: short interest is ${s.pctOfFloat != null ? s.pctOfFloat + '% of float' : 'n/a'}${changeStr}; days to cover ${s.daysToCover ?? 'n/a'}.`);
     L.push('  NOTE: short interest is ONE data point. Do not present a bull claim and a bear claim that imply different short-interest magnitudes; the % of float and its percentage-point change above are the only valid short-interest figures.');
   } else L.push('- (no short interest data available)');
@@ -210,11 +210,12 @@ function buildUserMessage(c) {
   L.push(`- P/E (TTM): ${h.peTTM ?? 'n/a'} | EPS (TTM): ${h.epsTTM != null ? '$' + h.epsTTM : 'n/a'} | Beta: ${h.beta ?? 'n/a'} | 50-day MA: ${h.ma50 != null ? '$' + h.ma50 : 'n/a'} | Market cap: ${fmtCapStr(h.marketCap)} | Day range: ${h.dayRange ?? 'n/a'} | 52-wk range: ${h.week52Range ?? 'n/a'}`);
   L.push('');
   L.push('=== INSTRUCTIONS ===');
-  L.push('Synthesize the bull and bear case from ONLY the data above. Return ONLY valid JSON — no preamble, no markdown code fences — in EXACTLY this shape:');
+  L.push('Synthesize the bull and bear case from ONLY the data above. Return ONLY valid JSON, with no preamble and no markdown code fences, in EXACTLY this shape:');
   L.push('{ "summary_line": "one sentence capturing the bull-bear tension", "bulls": [ { "text": "...", "source": "10-Q", "date": "YYYY-MM-DD" } ], "bears": [ { "text": "...", "source": "Form 4", "date": "YYYY-MM-DD" } ], "generated_at": "<ISO timestamp>" }');
-  L.push('Up to 5 bulls and 5 bears. Every bullet\'s source AND date MUST correspond to a real item in the data above. Fewer bullets is correct if the data is thin — do NOT pad to 5.');
-  L.push('RULES: (1) Every bullet must contain a concrete fact — a specific number, a named event, or a dated filing. Drop a data item rather than writing a vague or hedging bullet (e.g. do NOT write "emerging AI potential as a possible tailwind"). (2) Use ALL relevant data above: if a side has real signal, surface it — do not under-fill the bull or bear side, and do not pad either. (3) Write summary_line LAST, derived ONLY from the bullets you generated; it must not assert any direction or claim that no bullet supports.');
-  L.push('FORMATTING: (a) Dollar figures must be clean currency — abbreviate large amounts ($5.56M, $111.7M, $4.58T) and write smaller amounts as whole dollars with commas ($369,500). NEVER raw floats or fractional cents (write $5.56M, never $5,564,884.625). (b) When citing multiple transactions/filings, dedupe dates — list each DISTINCT date once (e.g. "across May 6 and May 27"), never repeat a date. (c) All dates in bullet text must read in short form ("May 27", not "2026-05-27"), matching the source pills.');
+  L.push('Up to 5 bulls and 5 bears. Every bullet\'s source AND date MUST correspond to a real item in the data above. Fewer bullets is correct if the data is thin. Do NOT pad to 5.');
+  L.push('RULES: (1) Every bullet must contain a concrete fact: a specific number, a named event, or a dated filing. Drop a data item rather than writing a vague or hedging bullet (e.g. do NOT write "emerging AI potential as a possible tailwind"). (2) Use ALL relevant data above: if a side has real signal, surface it. Do not under-fill the bull or bear side, and do not pad either. (3) Write summary_line LAST, derived ONLY from the bullets you generated; it must not assert any direction or claim that no bullet supports.');
+  L.push('STYLE: never use em dashes (—) anywhere in your output. Use periods, commas, colons or parentheses instead.');
+  L.push('FORMATTING: (a) Dollar figures must be clean currency. Abbreviate large amounts ($5.56M, $111.7M, $4.58T) and write smaller amounts as whole dollars with commas ($369,500). NEVER raw floats or fractional cents (write $5.56M, never $5,564,884.625). (b) When citing multiple transactions/filings, dedupe dates and list each DISTINCT date once (e.g. "across May 6 and May 27"), never repeat a date. (c) All dates in bullet text must read in short form ("May 27", not "2026-05-27"), matching the source pills.');
   return L.join('\n');
 }
 

@@ -355,7 +355,7 @@ export default function FeedClient() {
                 style={{ width: '100%', resize: 'vertical', border: 'none', outline: 'none', fontSize: 15, fontFamily: "'DM Sans',sans-serif", color: C.ink, boxSizing: 'border-box' }} />
               {imagePreview && (
                 <div style={{ marginTop: 8 }}>
-                  <div style={{ fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginBottom: 4 }}>PREVIEW — not posted yet</div>
+                  <div style={{ fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginBottom: 4 }}>PREVIEW · not posted yet</div>
                   <div style={{ position: 'relative', display: 'inline-block' }}>
                     <img src={imagePreview} alt="" style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 8, border: `1px solid ${C.border}`, display: 'block' }} />
                     <button onClick={clearImage} aria-label="Remove image"

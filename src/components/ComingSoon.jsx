@@ -83,7 +83,7 @@ export default function ComingSoon({title, tagline, description, features=[]}) {
           </div>
           <p style={{fontSize:14, color:"rgba(255,255,255,0.6)", fontWeight:300,
             lineHeight:1.6, margin:"0 0 20px"}}>
-            Subscribe to The Catalyst Brief — daily 6 AM intelligence for active traders.
+            Subscribe to The Catalyst Brief: daily 6 AM intelligence for active traders.
             Get notified the moment {title} launches.
           </p>
           <a href="https://newsletter.catalystpit.com" target="_blank" rel="noopener noreferrer"

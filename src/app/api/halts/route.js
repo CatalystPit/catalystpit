@@ -16,7 +16,7 @@ const REASONS = {
   T6: 'Extraordinary market activity', T7: 'Single-stock trading pause', T8: 'ETF halt',
   T12: 'Additional info requested', H4: 'Non-compliance', H9: 'Not current in filings',
   H10: 'SEC trading suspension', H11: 'Regulatory concern', O1: 'Operational halt',
-  IPO1: 'IPO — not yet trading', IPOQ: 'IPO — quotation', M1: 'Corporate action', M2: 'Quote not available',
+  IPO1: 'IPO, not yet trading', IPOQ: 'IPO, quotation', M1: 'Corporate action', M2: 'Quote not available',
   LUDP: 'Volatility pause (LULD)', LUDS: 'Volatility pause (straddle)', MWC1: 'Circuit breaker · Level 1',
   MWC2: 'Circuit breaker · Level 2', MWC3: 'Circuit breaker · Level 3', MWCQ: 'Circuit breaker resume',
   P1: 'Volatility trading pause', D: 'Delisting',

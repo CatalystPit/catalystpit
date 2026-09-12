@@ -4,11 +4,11 @@ import PitDock from '../components/PitDock';
 import WatchlistDock from '../components/WatchlistDock';
 
 export const metadata = {
-  title: 'CatalystPit — Live Market Intelligence',
+  title: 'CatalystPit · Live Market Intelligence',
   description: 'Every catalyst. Before the bell. Real-time charts, insider trades, politician buys, AI-powered news and your morning brief.',
   keywords: 'market intelligence, insider trading, politician trades, stock screener, options flow, financial news',
   openGraph: {
-    title: 'CatalystPit — Live Market Intelligence',
+    title: 'CatalystPit · Live Market Intelligence',
     description: 'Every catalyst. Before the bell.',
     url: 'https://catalystpit.com',
     siteName: 'CatalystPit',
@@ -16,7 +16,7 @@ export const metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'CatalystPit — Live Market Intelligence',
+    title: 'CatalystPit · Live Market Intelligence',
     description: 'Every catalyst. Before the bell.',
     creator: '@CatalystPit',
   },

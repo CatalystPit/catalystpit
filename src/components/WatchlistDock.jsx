@@ -172,7 +172,7 @@ function Body({ onClose }) {
         <div style={{ position: 'relative', padding: '8px 10px', borderBottom: `1px solid ${C.border}`, background: C.surface, flexShrink: 0 }}>
           <input autoFocus value={q} onChange={(e) => onQ(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') add(sugg[0]?.ticker || q); if (e.key === 'Escape') setAdding(false); }}
-            placeholder="Add ticker — e.g. NVDA"
+            placeholder="Add ticker, e.g. NVDA"
             style={{ width: '100%', height: 30, borderRadius: 6, border: `1px solid ${C.border}`, padding: '0 10px', fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: 'none', boxSizing: 'border-box' }} />
           {msg && <div style={{ fontSize: 11, color: C.red, marginTop: 5 }}>{msg}</div>}
           {sugg.length > 0 && (

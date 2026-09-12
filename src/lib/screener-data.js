@@ -263,7 +263,7 @@ export async function backfillTechnicals({ days = 200 } = {}) {
   await ensureScreenerTables();
   if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   const uni = new Set((await db.select({ t: screenerStocks.ticker }).from(screenerStocks)).map((r) => r.t));
-  if (!uni.size) return { error: 'empty universe — run the main rebuild first' };
+  if (!uni.size) return { error: 'empty universe. Run the main rebuild first' };
 
   const now = new Date();
   const series = new Map();   // ticker -> chronological [{close,high,low,date}]

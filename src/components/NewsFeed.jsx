@@ -147,7 +147,7 @@ function TickerSearchCard({query, onQueryChange, trending}) {
       <input
         value={query}
         onChange={e => onQueryChange(e.target.value.toUpperCase())}
-        placeholder="Filter by ticker — e.g. NVDA"
+        placeholder="Filter by ticker, e.g. NVDA"
         className="cp-tkr"
         style={{width:"100%", background:C.white, border:`1px solid ${C.border2}`,
           color:C.text, padding:"9px 12px", borderRadius:6, fontSize:12,
@@ -286,7 +286,7 @@ export default function NewsFeed() {
             News
           </h1>
           <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.muted}}>
-            {loading ? '— loading —' : `${filtered.length} ${filtered.length === 1 ? 'story' : 'stories'}`}
+            {loading ? 'loading…' : `${filtered.length} ${filtered.length === 1 ? 'story' : 'stories'}`}
             {filtered.length !== articles.length && articles.length > 0 && (
               <span style={{color:C.dim}}> of {articles.length}</span>
             )}

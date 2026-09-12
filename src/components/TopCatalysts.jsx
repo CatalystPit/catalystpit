@@ -34,7 +34,7 @@ export default function TopCatalysts({ limit = 6 }) {
         for (const f of (ekRes?.list || [])) {
           pool.push({
             kind: '8-K',
-            title: `${f.ticker} — ${f.primaryLabel}`,
+            title: `${f.ticker} · ${f.primaryLabel}`,
             ticker: f.ticker,
             source: '8-K',
             url: f.url || null,

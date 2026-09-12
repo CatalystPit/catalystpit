@@ -54,7 +54,7 @@ export default function ConsensusTeaser() {
           <div style={{ padding: 8 }}>{[0, 1, 2].map((i) => <Skel key={i} h={40} mb={i < 2 ? 8 : 0} />)}</div>
         ) : rows.length === 0 ? (
           <div style={{ padding: '18px 8px', textAlign: 'center', fontSize: 12, color: C.muted, fontWeight: 300 }}>
-            No confluence right now — this lights up when insiders, Congress, and funds line up on the same name.
+            No confluence right now. This lights up when insiders, Congress, and funds line up on the same name.
           </div>
         ) : (
           rows.map((r, i) => (

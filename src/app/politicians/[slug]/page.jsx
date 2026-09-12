@@ -1,7 +1,7 @@
 import PoliticianDetail from './PoliticianDetail';
 
 export const metadata = {
-  title: 'Politician — CatalystPit',
+  title: 'Politician · CatalystPit',
   description: 'Congressional trade history and return-since-trade performance, disclosed under the STOCK Act.',
 };
 

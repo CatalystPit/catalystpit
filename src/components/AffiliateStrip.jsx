@@ -9,7 +9,7 @@ import { C } from '../lib/cp-shared';
 const OFFERS = [
   { key: 'tradingview', label: 'Advanced charts on TradingView', cta: 'Open TradingView',  url: process.env.NEXT_PUBLIC_AFF_TRADINGVIEW },
   { key: 'broker',      label: 'Fund a brokerage account',        cta: 'See broker offer',   url: process.env.NEXT_PUBLIC_AFF_BROKER },
-  { key: 'uw',          label: 'Options flow — Unusual Whales',    cta: 'Try Unusual Whales', url: process.env.NEXT_PUBLIC_AFF_UNUSUAL_WHALES },
+  { key: 'uw',          label: 'Options flow · Unusual Whales',    cta: 'Try Unusual Whales', url: process.env.NEXT_PUBLIC_AFF_UNUSUAL_WHALES },
 ];
 
 export default function AffiliateStrip({ compact = false }) {
@@ -46,7 +46,7 @@ export default function AffiliateStrip({ compact = false }) {
         ))}
       </div>
       <div style={{ padding: '0 16px 12px', fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-        Some links are affiliate links — CatalystPit may earn a commission at no cost to you. Not financial advice.
+        Some links are affiliate links · CatalystPit may earn a commission at no cost to you. Not financial advice.
       </div>
     </div>
   );

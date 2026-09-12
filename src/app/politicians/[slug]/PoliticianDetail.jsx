@@ -177,7 +177,7 @@ export default function PoliticianDetail({ slug }) {
             </div>
 
             <div style={{ marginTop: 16, fontSize: 11, color: C.dim, fontFamily: "'DM Sans',sans-serif", lineHeight: 1.6 }}>
-              <strong style={{ color: C.muted }}>Return Since</strong> = change from the trade date&apos;s closing price to the latest price. &quot;—&quot; means price unavailable (not yet enriched, or a delisted/unlisted ticker) — never a substitute for a real 0%. Filing lag turns red when &gt; 45 days (STOCK Act deadline). Not financial advice.
+              <strong style={{ color: C.muted }}>Return Since</strong> = change from the trade date&apos;s closing price to the latest price. &quot;—&quot; means price unavailable (not yet enriched, or a delisted/unlisted ticker). It is never a substitute for a real 0%. Filing lag turns red when &gt; 45 days (STOCK Act deadline). Not financial advice.
             </div>
           </>
         )}

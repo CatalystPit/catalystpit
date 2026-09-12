@@ -75,7 +75,7 @@ export default function ConsensusClient() {
       <div style={{ maxWidth: 820, margin: '22px auto', padding: '0 20px 48px' }}>
         <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 600, color: C.ink, margin: '0 0 2px' }}>Pit Consensus</h1>
         <p style={{ fontSize: 13, color: C.muted, margin: '0 0 14px', fontWeight: 300 }}>
-          Where smart money stacks — names insiders, Congress, and hedge funds are {dir === 'bear' ? 'all selling' : 'all buying'} at once. Two or more aligned signals to make the board.
+          Where smart money stacks. These are names insiders, Congress, and hedge funds are {dir === 'bear' ? 'all selling' : 'all buying'} at once. Two or more aligned signals to make the board.
         </p>
 
         <div style={{ display: 'flex', gap: 20, borderBottom: `1px solid ${C.border}`, marginBottom: 16 }}>
@@ -87,7 +87,7 @@ export default function ConsensusClient() {
           <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: 'center' }}>Scanning insiders · Congress · 13F…</div>
         ) : list.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
-            No confluence right now — no names have two or more aligned {dir === 'bear' ? 'selling' : 'buying'} signals in the last 90 days.
+            No confluence right now. No names have two or more aligned {dir === 'bear' ? 'selling' : 'buying'} signals in the last 90 days.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -108,7 +108,7 @@ export default function ConsensusClient() {
                   <div style={{ background: C.white, border: `1px solid ${C.greenBorder}`, borderRadius: 10, padding: '20px 26px', textAlign: 'center', boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: C.ink, marginBottom: 6 }}>🔒 {locked} more confluence {locked === 1 ? 'name' : 'names'}</div>
                     <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 14 }}>Unlock the full board with Pro.</div>
-                    <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '10px 22px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Unlock Pro — $12/mo</button>
+                    <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '10px 22px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Unlock Pro · $12/mo</button>
                   </div>
                 </div>
               </div>

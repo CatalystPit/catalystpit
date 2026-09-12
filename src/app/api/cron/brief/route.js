@@ -40,12 +40,12 @@ function compose(snap, dateStr) {
   const topBuy = insiders[0];
   const cong = congress[0];
 
-  const catLines = catalysts.slice(0, 5).map(c => `${c.sym} — ${c.line} ${c.value}${c.date ? ` (${c.date})` : ''}`);
+  const catLines = catalysts.slice(0, 5).map(c => `${c.sym}: ${c.line} ${c.value}${c.date ? ` (${c.date})` : ''}`);
   const headLines = stories.slice(0, 3).map(s => (s.title || s.headline || '').trim()).filter(Boolean);
 
   // Plain-text draft
   const text = [
-    `THE CATALYST BRIEF — ${dateStr}`,
+    `THE CATALYST BRIEF · ${dateStr}`,
     ``,
     `1) TAPE READ`,
     `[Write 2–3 sentences on overnight / pre-market context.]`,
@@ -54,7 +54,7 @@ function compose(snap, dateStr) {
     ...(catLines.length ? catLines.map(l => `• ${l}`) : ['• (no catalysts in snapshot)']),
     ``,
     `3) INSIDER SPOTLIGHT`,
-    topBuy ? `• ${topBuy.ticker}: ${topBuy.executive || 'Insider'} bought — ${topBuy.title || ''}`.trim() : `• (no open-market buys in snapshot)`,
+    topBuy ? `• ${topBuy.ticker}: ${topBuy.executive || 'Insider'} bought · ${topBuy.title || ''}`.trim() : `• (no open-market buys in snapshot)`,
     ``,
     `4) CONGRESS PRINT`,
     cong ? `• ${cong.ticker || '—'}: ${cong.representative} ${cong.action}` : `• (no Congress trades in snapshot)`,
@@ -65,14 +65,14 @@ function compose(snap, dateStr) {
     `5) ONE RISK`,
     `[Write 1–2 sentences on a risk to watch.]`,
     ``,
-    `— catalystpit.com · filings as reported to the SEC · not financial advice`,
+    `catalystpit.com · filings as reported to the SEC · not financial advice`,
   ].join('\n');
 
   // X-ready snippet (<= ~270 chars)
   const xBits = [];
   if (topBuy) xBits.push(`insider buy: $${topBuy.ticker}`);
   if (cong) xBits.push(`Congress: $${cong.ticker || ''} ${cong.action}`.trim());
-  const xPost = `Before the bell — ${xBits.join(' · ') || 'today’s catalysts'}${catalysts.length ? ` · ${catalysts.length} catalysts` : ''}. Full brief → catalystpit.com`.slice(0, 270);
+  const xPost = `Before the bell · ${xBits.join(' · ') || 'today’s catalysts'}${catalysts.length ? ` · ${catalysts.length} catalysts` : ''}. Full brief → catalystpit.com`.slice(0, 270);
 
   // HTML draft (for the review email — copy/paste into Beehiiv)
   const li = (s) => `<li style="margin:4px 0;">${esc(s)}</li>`;
@@ -87,10 +87,10 @@ function compose(snap, dateStr) {
     <ul style="font-size:14px;color:#1A2018;padding-left:18px;margin:6px 0;">${(catLines.length ? catLines : ['(no catalysts in snapshot)']).map(li).join('')}</ul>
 
     <div style="font-size:13px;font-weight:700;color:#1E5C38;margin-top:16px;">3 · Insider spotlight</div>
-    <div style="font-size:14px;margin:6px 0;">${topBuy ? `<b>${esc(topBuy.ticker)}</b> — ${esc(topBuy.executive || 'Insider')} bought${topBuy.title ? ` · ${esc(topBuy.title)}` : ''}` : '(no open-market buys in snapshot)'}</div>
+    <div style="font-size:14px;margin:6px 0;">${topBuy ? `<b>${esc(topBuy.ticker)}</b> · ${esc(topBuy.executive || 'Insider')} bought${topBuy.title ? ` · ${esc(topBuy.title)}` : ''}` : '(no open-market buys in snapshot)'}</div>
 
     <div style="font-size:13px;font-weight:700;color:#1E5C38;margin-top:16px;">4 · Congress print</div>
-    <div style="font-size:14px;margin:6px 0;">${cong ? `<b>${esc(cong.ticker || '—')}</b> — ${esc(cong.representative)} ${esc(cong.action)}` : '(no Congress trades in snapshot)'}</div>
+    <div style="font-size:14px;margin:6px 0;">${cong ? `<b>${esc(cong.ticker || '—')}</b> · ${esc(cong.representative)} ${esc(cong.action)}` : '(no Congress trades in snapshot)'}</div>
 
     <div style="font-size:13px;font-weight:700;color:#1E5C38;margin-top:16px;">Headlines</div>
     <ul style="font-size:14px;color:#1A2018;padding-left:18px;margin:6px 0;">${(headLines.length ? headLines : ['(no headlines)']).map(li).join('')}</ul>
@@ -130,7 +130,7 @@ export async function GET(request) {
 
   let emailed = false;
   if (RESEND_API_KEY && FROM && REVIEW_TO) {
-    try { emailed = await sendEmail(REVIEW_TO, `Catalyst Brief draft — ${dateStr}`, html); }
+    try { emailed = await sendEmail(REVIEW_TO, `Catalyst Brief draft · ${dateStr}`, html); }
     catch (e) { console.log(`[brief] email failed: ${e.message}`); }
   }
 

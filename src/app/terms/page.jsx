@@ -34,7 +34,7 @@ export default function TermsPage() {
         </div>
 
         <Section title="1. Acceptance of Terms">
-          <p>These Terms of Service ("Terms") are a binding agreement between you and CatalystPit (operated by Benjamin Coghill in Edgewater, Florida — referred to as "CatalystPit," "we," "us," or "our"). By accessing or using catalystpit.com, our newsletter "The Catalyst Brief," or any related services (collectively, the "Service"), you agree to be bound by these Terms and our <a href="/privacy" style={linkStyle}>Privacy Policy</a> and <a href="/disclaimer" style={linkStyle}>Financial Disclaimer</a>.</p>
+          <p>These Terms of Service ("Terms") are a binding agreement between you and CatalystPit (operated by Benjamin Coghill in Edgewater, Florida, referred to as "CatalystPit," "we," "us," or "our"). By accessing or using catalystpit.com, our newsletter "The Catalyst Brief," or any related services (collectively, the "Service"), you agree to be bound by these Terms and our <a href="/privacy" style={linkStyle}>Privacy Policy</a> and <a href="/disclaimer" style={linkStyle}>Financial Disclaimer</a>.</p>
           <p>If you do not agree, do not use the Service.</p>
         </Section>
 
@@ -124,7 +124,7 @@ export default function TermsPage() {
         </Section>
 
         <Section title="14. Dispute Resolution and Arbitration">
-          <p><strong>Please read carefully — this section affects your legal rights.</strong></p>
+          <p><strong>Please read carefully. This section affects your legal rights.</strong></p>
           <p>Any dispute arising from these Terms or the Service will be resolved through binding individual arbitration administered by the American Arbitration Association under its Consumer Arbitration Rules, except that you may bring claims in small-claims court if eligible.</p>
           <p><strong>Class-action waiver:</strong> You and CatalystPit agree to bring disputes only on an individual basis and waive the right to participate in any class, collective, or representative action.</p>
           <p><strong>Opt-out:</strong> You may opt out of this arbitration agreement within 30 days of first accepting these Terms by emailing us at <a href="mailto:legal@catalystpit.com" style={linkStyle}>legal@catalystpit.com</a> with the subject line "Arbitration Opt-Out."</p>

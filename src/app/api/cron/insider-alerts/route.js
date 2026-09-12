@@ -52,7 +52,7 @@ function buildEmail(items, tickers) {
     const verb = f.action === 'BUY' ? 'bought' : 'sold';
     return `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">
       <a href="${SITE}/ticker/${encodeURIComponent(f.ticker)}" style="color:#1E5C38;font-weight:700;text-decoration:none;">${esc(f.ticker)}</a>
-      <span style="color:#555;"> — ${esc(f.executive || 'Insider')} ${verb}</span>
+      <span style="color:#555;"> · ${esc(f.executive || 'Insider')} ${verb}</span>
       <span style="color:${color};font-weight:700;"> ${fmtVal(f.totalValue)}</span>
       <span style="color:#999;font-size:12px;"> · ${esc(f.filingDate || '')}${f.code ? ' · ' + esc(f.code) : ''}</span>
     </td></tr>`;
@@ -66,7 +66,7 @@ function buildEmail(items, tickers) {
     </div>
     <div style="margin-top:20px;font-size:11px;color:#8A9088;line-height:1.5;">
       You're receiving this because these tickers are on your CatalystPit watchlist. Manage your list at
-      <a href="${SITE}/watchlist" style="color:#1E5C38;">catalystpit.com/watchlist</a>. Filings as reported to the SEC — not financial advice.
+      <a href="${SITE}/watchlist" style="color:#1E5C38;">catalystpit.com/watchlist</a>. Filings as reported to the SEC. Not financial advice.
     </div>
   </div>`;
   return { subject, html };

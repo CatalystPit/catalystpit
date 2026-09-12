@@ -68,7 +68,7 @@ export default function ProfileEditor() {
         {state === 'ready' && (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
-              <label style={label}>Username — this is your profile link</label>
+              <label style={label}>Username (this is your profile link)</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 14, color: C.dim }}>@</span>
                 <input value={form.handle} onChange={set('handle')} maxLength={HANDLE_MAX} placeholder="yourusername" style={field} />
@@ -81,7 +81,7 @@ export default function ProfileEditor() {
             </div>
 
             <div>
-              <label style={label}>Display name — how your name shows on posts (not your link)</label>
+              <label style={label}>Display name (how your name shows on posts, not your link)</label>
               <input value={form.displayName} onChange={set('displayName')} maxLength={60} placeholder="e.g. The Pit" style={field} />
             </div>
 

@@ -46,7 +46,7 @@ export default function AccountBilling() {
           </span>
         </div>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, fontWeight: 300, marginTop: 6 }}>
-          {isPro ? 'Thanks for supporting CatalystPit — manage or cancel anytime.' : 'Upgrade for insider-alert depth, full Bulls & Bears, and more.'}
+          {isPro ? 'Thanks for supporting CatalystPit. Manage or cancel anytime.' : 'Upgrade for insider-alert depth, full Bulls & Bears, and more.'}
         </div>
       </div>
       {tier != null && (isPro ? (
@@ -59,7 +59,7 @@ export default function AccountBilling() {
         <button onClick={() => startCheckout()}
           style={{ background: C.green, border: 'none', color: '#fff', borderRadius: 6, padding: '9px 16px',
             fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-          Upgrade to Pro — $12/mo
+          Upgrade to Pro · $12/mo
         </button>
       ))}
     </div>
