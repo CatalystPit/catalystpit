@@ -1,5 +1,6 @@
 'use client'
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import { meaningFor } from '../../lib/insider-meaning';
 import { treemap } from '../../lib/treemap';
@@ -209,6 +210,56 @@ function insiderTileColor(c, mode, max) {
   return `rgb(${Math.round(58 + 150 * t)},${Math.round(78 - 38 * t)},${Math.round(66 - 40 * t)})`;
 }
 
+// Heatmap hover card. Rendered through a portal to <body> at FIXED viewport coordinates so the treemap
+// wrapper's overflow:hidden (it needs that for the rounded corners + tile clipping) can never cut the card
+// off, and flipped above/below — and shifted horizontally — to whichever side actually has room.
+function HeatmapTooltip({ hover, windowLabel }) {
+  const box = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!hover) return;
+    const place = () => {
+      const node = box.current, tile = hover.el;
+      if (!node || !tile || !tile.isConnected) return;
+      const GAP = 10, EDGE = 8;                                 // gap to the tile / min margin to the viewport
+      const { width: tw, height: th } = node.getBoundingClientRect();
+      const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
+      const r = tile.getBoundingClientRect();
+      const above = r.top - GAP - th;                            // top if placed ABOVE the tile
+      const below = r.bottom + GAP;                              // top if placed BELOW the tile
+      let top;
+      if (above >= EDGE) top = above;                            // prefer above (as before)
+      else if (below + th <= vh - EDGE) top = below;             // no room above → flip below
+      else top = (vh - r.bottom) > r.top ? below : above;        // neither fits → the roomier side
+      top = Math.max(EDGE, Math.min(top, vh - th - EDGE));       // never past the top/bottom edge
+      let left = r.left + r.width / 2 - tw / 2;                  // centred on the tile…
+      left = Math.max(EDGE, Math.min(left, vw - tw - EDGE));     // …then shifted in at either side
+      setPos({ left: Math.round(left), top: Math.round(top) });
+    };
+    place();                                                     // runs pre-paint, so no flicker on tile→tile
+    globalThis.addEventListener('scroll', place, true);          // re-place (not dismiss) as the page moves
+    globalThis.addEventListener('resize', place);
+    return () => { globalThis.removeEventListener('scroll', place, true); globalThis.removeEventListener('resize', place); };
+  }, [hover]);
+
+  if (!hover || typeof document === 'undefined') return null;
+  const c = hover.c;
+  return createPortal(
+    <div ref={box} style={{ position: 'fixed', left: pos ? pos.left : 0, top: pos ? pos.top : 0, visibility: pos ? 'visible' : 'hidden', zIndex: 2147483000, width: 222, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 10px 28px rgba(0,0,0,0.2)', pointerEvents: 'none' }}>
+      <b>{c.ticker}</b> · {c.sector}<br />
+      <span style={{ color: C.muted }}>{c.company || '—'}</span><br />
+      Purchases: <b style={{ color: C.green }}>{fmtBig(c.buys)}</b><br />
+      Sales: <b style={{ color: C.red }}>{fmtBig(c.sells)}</b><br />
+      Net: <b style={{ color: c.net >= 0 ? C.green : C.red }}>{c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(c.net))}</b><br />
+      {c.insiders} insider{c.insiders === 1 ? '' : 's'} · largest {fmtBig(c.largest)}<br />
+      <span style={{ color: C.dim }}>Past {String(windowLabel || '').toUpperCase()}</span>
+    </div>,
+    document.body,
+  );
+}
+
 // Squarified treemap heatmap — same visual architecture as the homepage Market Heat Map
 // (shared ../../lib/treemap), adapted for insider data.
 function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
@@ -239,6 +290,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
     }
     return { list: out, max: mx };
   }, [cells, size, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setHover(null); }, [list]);   // tiles moved → the hovered rect is stale
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
@@ -258,24 +310,14 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
         {list.map((t, i) => t.kind === 'sector'
           ? <div key={`s${i}`} style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: 13, overflow: 'hidden', fontSize: 8.5, fontWeight: 800, letterSpacing: 0.4, color: C.dim, textTransform: 'uppercase', padding: '2px 4px', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{t.name}</div>
           : (
-            <button key={`t${i}`} onClick={() => onPick(t.ticker)} onMouseEnter={() => setHover({ c: t, x: t.x + t.w / 2, y: t.y })}
+            <button key={`t${i}`} onClick={() => onPick(t.ticker)} onMouseEnter={(e) => setHover({ c: t, el: e.currentTarget })}
               style={{ position: 'absolute', left: t.x, top: t.y, width: t.w, height: t.h, background: insiderTileColor(t, mode, max), border: `1px solid ${C.bg}`, boxSizing: 'border-box', cursor: 'pointer', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 0, lineHeight: 1.05 }}>
               {t.w > 30 && t.h > 18 && <span className="cp-tkr" style={{ fontSize: Math.min(15, Math.max(8, t.w / 5.5)), fontWeight: 700, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>{t.ticker}</span>}
               {t.w > 50 && t.h > 34 && <span className="cp-num" style={{ fontSize: Math.min(11, Math.max(7.5, t.w / 8)), opacity: 0.95 }}>{fmtBig(val(t))}</span>}
             </button>
           ))}
-        {hover && (
-          <div style={{ position: 'absolute', left: Math.max(4, Math.min(hover.x - 111, size.w - 226)), top: Math.max(4, hover.y), transform: 'translateY(-100%)', zIndex: 100, width: 222, background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.55, padding: '9px 11px', borderRadius: 7, boxShadow: '0 10px 28px rgba(0,0,0,0.2)', pointerEvents: 'none' }}>
-            <b>{hover.c.ticker}</b> · {hover.c.sector}<br />
-            <span style={{ color: C.muted }}>{hover.c.company || '—'}</span><br />
-            Purchases: <b style={{ color: C.green }}>{fmtBig(hover.c.buys)}</b><br />
-            Sales: <b style={{ color: C.red }}>{fmtBig(hover.c.sells)}</b><br />
-            Net: <b style={{ color: hover.c.net >= 0 ? C.green : C.red }}>{hover.c.net >= 0 ? '+' : '−'}{fmtBig(Math.abs(hover.c.net))}</b><br />
-            {hover.c.insiders} insider{hover.c.insiders === 1 ? '' : 's'} · largest {fmtBig(hover.c.largest)}<br />
-            <span style={{ color: C.dim }}>Past {window.toUpperCase()}</span>
-          </div>
-        )}
       </div>
+      <HeatmapTooltip hover={hover} windowLabel={window} />
     </div>
   );
 }
