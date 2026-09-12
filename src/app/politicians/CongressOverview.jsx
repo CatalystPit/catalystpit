@@ -92,25 +92,30 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
           <Explain text={
             <>
               <b style={{ display: 'block', marginBottom: 4 }}>What this measures</b>
-              Size weighted 30 day price move of the securities each member disclosed buying within our
-              3 year history. Weighted by the midpoint of the disclosed amount range, with no single
-              position counting for more than 30 percent.
+              The average 30 day return of each member{'’'}s disclosed trades, measured from the
+              transaction date to 30 calendar days later.
+              <span style={{ display: 'block', marginTop: 6 }}>
+                Purchases score the price move. Sales score its inverse, so a sale ahead of a decline reads
+                positively. That convention is applied mechanically and is not a claim about intent: many
+                sales are rebalancing, tax or liquidity driven.
+              </span>
               <span style={{ display: 'block', marginTop: 6, color: C.muted }}>
-                It shows how disclosed holdings moved recently. It is not a member who necessarily traded
-                in the last 30 days, and it is not portfolio performance: filers disclose an amount range
-                rather than a position size, and may have sold since.
+                Each stock counts once no matter how many times it was traded, so repeated purchases of one
+                name cannot carry a ranking. Options are excluded, and a trade is skipped rather than scored
+                when a price is missing or the price history breaks inside its 30 day window.
               </span>
               <span style={{ display: 'block', marginTop: 6, color: C.dim }}>
-                Minimum {best?.minPositions ?? 5} priced positions to qualify.
+                Minimum {best?.minTrades ?? 5} priced trades across at least {best?.minTickers ?? 5} stocks.
+                A trade timing record, not portfolio performance.
               </span>
             </>
           } />
         </div>
-        {!data ? <Empty>Loading.</Empty> : !best?.list?.length ? <Empty>Not enough priced positions yet.</Empty> : (
+        {!data ? <Empty>Loading.</Empty> : !best?.list?.length ? <Empty>Not enough priced trades yet.</Empty> : (
           <>
             {best.list.map((m) => {
               const ps = partyStyle(m.party);
-              const up = m.movePct > 0, flat = m.movePct === 0;
+              const up = m.returnPct > 0, flat = m.returnPct === 0;
               return (
                 <a key={m.slug} href={`/politicians/${m.slug}`} className="row-hov"
                   style={{ ...row, textDecoration: 'none', color: 'inherit' }}>
@@ -119,18 +124,18 @@ export default function CongressOverview({ onSelectTicker, selectedTicker }) {
                     <span style={{ display: 'block', fontSize: 12.5, color: C.text, fontWeight: 500,
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</span>
                     <span style={{ fontSize: 10, color: C.muted }}>
-                      {ps.abbr} {'·'} {chamberLabel(m.chamber)} {'·'} {m.positions} positions {'·'} {m.winRate}% up
+                      {ps.abbr} {'·'} {chamberLabel(m.chamber)} {'·'} {m.trades} trades in {m.tickers} stocks {'·'} {m.winRate}% up
                     </span>
                   </span>
                   <span style={{ ...num, fontSize: 13.5, fontWeight: 700, whiteSpace: 'nowrap',
                     color: flat ? C.muted : up ? C.green : C.red }}>
-                    {up ? '+' : ''}{Number(m.movePct).toFixed(1)}%
+                    {up ? '+' : ''}{Number(m.returnPct).toFixed(1)}%
                   </span>
                 </a>
               );
             })}
             <div style={{ padding: '7px 12px', fontSize: 10, color: C.dim, lineHeight: 1.5 }}>
-              Recent move of disclosed holdings. Not portfolio performance.
+              30 days after each trade. Each stock counts once. Not portfolio performance.
             </div>
           </>
         )}

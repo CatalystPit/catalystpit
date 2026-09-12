@@ -1,4 +1,4 @@
-import { bestThirtyDayRecord, mostTradedStocks, lateFilings, LB_MIN_TRADES } from '../../../lib/congress-overview';
+import { bestThirtyDayRecord, mostTradedStocks, lateFilings, BEST30_MIN_TRADES, BEST30_MIN_TICKERS } from '../../../lib/congress-overview';
 import { STOCK_ACT_DEADLINE_DAYS } from '../../../lib/disclosure';
 
 export const runtime = 'nodejs';
@@ -23,7 +23,7 @@ export async function GET(request) {
     const sort = ['trades', 'recent', 'value'].includes(searchParams.get('sort')) ? searchParams.get('sort') : 'trades';
 
     const [best, traded, filers] = await Promise.all([
-      bestThirtyDayRecord({ min: LB_MIN_TRADES }),
+      bestThirtyDayRecord(),
       mostTradedStocks({ window, limit: Math.max(limit, tickerLimit), sort }),
       lateFilings({ limit }),
     ]);
@@ -33,17 +33,19 @@ export async function GET(request) {
       bestRecord: {
         list: best.slice(0, limit),
         qualified: best.length,   // total qualifying members, not the page size
-        minPositions: LB_MIN_TRADES,
+        minTrades: BEST30_MIN_TRADES,
+        minTickers: BEST30_MIN_TICKERS,
         days: 30,
-        // Shown in the UI. This measures how disclosed holdings MOVED over the last 30 days. It is
-        // not portfolio performance: filers disclose an amount range rather than a position size,
-        // they may have sold since, and we only ever see what was disclosed.
-        headline: `How each member’s disclosed holdings moved over the last 30 days`,
-        methodology: 'Size-weighted 30 day price move of the securities each member disclosed buying '
-          + `within our 3 year history. Weighted by the disclosed amount range midpoint, with no single `
-          + `position counting for more than 30 percent. A member needs at least ${LB_MIN_TRADES} priced `
-          + 'positions to appear. This is not portfolio performance: filers disclose an amount range rather '
-          + 'than a position size, and may have sold since.',
+        // Shown in the UI. This is a per-trade TIMING record, not portfolio performance.
+        headline: 'How each member’s disclosed trades performed over the 30 days after they were made',
+        methodology: 'Average 30 day return of each member’s disclosed trades, measured from the transaction '
+          + 'date to 30 calendar days later. Purchases score the price move and sales score its inverse, so a '
+          + 'sale ahead of a decline reads positively. That convention is applied mechanically and is not a '
+          + 'claim about intent: many sales are rebalancing, tax or liquidity driven. Each stock counts once '
+          + `no matter how many times it was traded, and a member needs at least ${BEST30_MIN_TRADES} priced `
+          + `trades across at least ${BEST30_MIN_TICKERS} stocks. Options are excluded, and a trade is skipped `
+          + 'rather than scored when a price is missing or the price history breaks inside its 30 day window. '
+          + 'This is a trade timing record, not portfolio performance.',
       },
       mostTraded: traded.slice(0, limit),
       tickerList: tickerLimit ? traded.slice(0, tickerLimit) : undefined,

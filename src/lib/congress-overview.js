@@ -200,73 +200,99 @@ export async function lateFilings({ limit = 12, threshold = STOCK_ACT_DEADLINE_D
 
 // ─── Best 30-Day Record ─────────────────────────────────────────────────────
 //
-// Measures how each member's DISCLOSED POSITIONS moved over the last 30 days. It does NOT mean
-// they traded in the last 30 days: congressional trades are disclosed up to 45 days late, so a
-// window of "purchases made in the last 30 days" is nearly empty by construction (32 priced buys
-// across the whole chamber, only 2 members reaching a 5-trade minimum).
+// The 30-day POST-TRADE record: for each disclosed transaction, the security's move from the trade
+// date to 30 calendar days later. It measures the timing of the trades a member actually made.
 //
-// This is NOT portfolio performance and must never be presented as one. Filers disclose an amount
-// RANGE, not a position size; they may have sold since; and we only see what was disclosed. It is
-// the size-weighted 30-day price move of the securities a member disclosed buying, nothing more.
+// This replaced a "30-day move of disclosed holdings" reading, which measured the last 30 days of
+// everything a member had ever bought. That version was topped by a member whose nine qualifying
+// "positions" were nine recurring AAPL purchases, so his record was simply AAPL's last month.
 //
-// Both prices come from the SAME daily series (ticker_daily_candles) so the move is not an
-// artifact of mixing sources or of adjusted-vs-raw pricing.
-export async function bestThirtyDayRecord({ min = LB_MIN_TRADES, days = 30 } = {}) {
-  // Postgres rejects a window function nested inside an aggregate, so the per-member total is
-  // computed in its own CTE and the 30 percent cap applied against it afterwards.
+// The rules, all of which exist to stop a number from being more confident than the data:
+//
+//   DIRECTION   A purchase scores the price move; a sale scores its INVERSE, so a sale ahead of a
+//               decline reads positively. The convention is mechanical and says nothing about the
+//               filer's intent: plenty of sales are rebalancing, tax or liquidity driven, and the
+//               UI copy must never present a sale as a bearish prediction.
+//   PER TICKER  Each ticker contributes ONE observation, the mean of that member's returns in it,
+//               no matter how many times they traded it. This is the concentration safeguard.
+//   SAMPLE      At least 5 qualifying trades AND at least 5 distinct tickers. Combined with the
+//               per-ticker collapse this caps any single security at 20% of the score, so no
+//               separate position cap is needed.
+//   WEIGHTING   A simple equal-weight mean across ticker observations. Size weighting would lean
+//               on disclosed-range midpoints, and a midpoint is not an amount anyone disclosed.
+//   OPTIONS     Excluded. An option's return is its contract's, not the underlying's, and we hold
+//               no option price 30 days out.
+//   MISSING     A trade with no usable price at either end is SKIPPED, never scored as flat.
+//   CONTINUITY  A trade whose 30-day window spans a break in the price history (a reused symbol,
+//               an unadjusted reverse split) is skipped. See lib/price-continuity.mjs.
+//
+// Both prices come from the same daily series, so a return is never an artifact of mixing sources
+// or of adjusted-versus-raw pricing.
+export const BEST30_MIN_TRADES = 5;
+export const BEST30_MIN_TICKERS = 5;
+
+export async function bestThirtyDayRecord({
+  minTrades = BEST30_MIN_TRADES, minTickers = BEST30_MIN_TICKERS, days = 30,
+} = {}) {
   const res = await db.execute(sql`
-    WITH buys AS (
-      SELECT t.member_slug, t.representative, t.party, t.state, t.chamber, t.ticker, t.amount_mid
+    WITH scored AS (
+      SELECT t.member_slug, t.representative, t.party, t.state, t.chamber, t.ticker,
+             CASE WHEN t.action = 'SELL' THEN -1 ELSE 1 END
+               * ((p.close - t.price_at_trade) / t.price_at_trade) * 100 AS ret
       FROM congress_trades t
-      WHERE t.action = 'BUY' AND t.ticker IS NOT NULL AND t.amount_mid > 0
+      LEFT JOIN ticker_price_quality q ON q.ticker = t.ticker
+      -- LATERAL rather than a subquery so the bar's DATE is available to the continuity check.
+      -- The join also drops trades whose 30-day window has not elapsed yet, which is the intended
+      -- skip: an unfinished window is not a flat return.
+      CROSS JOIN LATERAL (
+        SELECT x.close, x.date FROM ticker_daily_candles x
+         WHERE x.ticker = t.ticker AND x.date >= t.transaction_date + ${sql.raw(String(days))}
+         ORDER BY x.date ASC LIMIT 1
+      ) p
+      WHERE t.action IN ('BUY', 'SELL')
+        AND t.ticker IS NOT NULL
+        AND t.price_at_trade > 0
+        AND p.close > 0
+        AND t.transaction_date <= CURRENT_DATE - ${sql.raw(String(days))}
         AND t.transaction_date >= CURRENT_DATE - ${sql.raw(String(MAX_HISTORY_DAYS))}
-    ),
-    px AS (
-      -- Anchored rather than "earliest bar in the window": the close on or before the cutoff, and
-      -- the most recent close. Taking whatever bar happened to be oldest in a padded window would
-      -- silently measure 42 days for a thinly traded name and 30 for a liquid one.
-      SELECT c.ticker,
-        (SELECT close FROM ticker_daily_candles x
-          WHERE x.ticker = c.ticker AND x.date <= CURRENT_DATE - ${sql.raw(String(days))}
-          ORDER BY x.date DESC LIMIT 1) AS then_px,
-        (SELECT close FROM ticker_daily_candles x
-          WHERE x.ticker = c.ticker AND x.date >= CURRENT_DATE - 10
-          ORDER BY x.date DESC LIMIT 1) AS now_px
-      FROM (SELECT DISTINCT ticker FROM buys) c
-    ),
-    joined AS (
-      SELECT b.member_slug, b.representative, b.party, b.state, b.chamber, b.amount_mid,
-             (p.now_px - p.then_px) / NULLIF(p.then_px, 0) AS move
-      FROM buys b JOIN px p ON p.ticker = b.ticker
-      LEFT JOIN ticker_price_quality q ON q.ticker = b.ticker
-      WHERE p.then_px > 0 AND p.now_px > 0
-        -- Both ends of this move must describe the same security. A break inside the 30-day window
-        -- (a reused symbol, an unadjusted reverse split) would be read as performance, so the
-        -- position is dropped from the member's sample rather than measured across it.
+        -- Options are identified from the filer's own text, the same signals shapeTrade reads.
+        AND NOT (COALESCE(t.asset_type, '') ~* 'op'
+                 OR COALESCE(t.asset_description, '') ~* 'option'
+                 OR COALESCE(t.comment, '') ~* 'option')
         AND COALESCE(q.usable, true) = true
-        AND (q.last_break IS NULL OR q.last_break <= CURRENT_DATE - ${sql.raw(String(days))})
+        -- A break strictly INSIDE this trade's own window. A break after the +30d bar is irrelevant
+        -- to a return measured entirely before it, so last_break alone would over-reject.
+        AND NOT EXISTS (
+          SELECT 1 FROM ticker_price_breaks b
+           WHERE b.ticker = t.ticker
+             AND b.break_date > t.transaction_date
+             AND b.break_date <= p.date
+        )
     ),
-    tot AS (SELECT member_slug, sum(amount_mid) total, count(*) n FROM joined GROUP BY 1),
-    w AS (
-      SELECT j.*, LEAST(j.amount_mid, ${sql.raw(String(LB_WEIGHT_CAP))} * t.total) AS wt
-      FROM joined j JOIN tot t ON t.member_slug = j.member_slug
-      WHERE t.n >= ${sql.raw(String(min))}
+    per_ticker AS (
+      SELECT member_slug, max(representative) AS name, max(party) AS party, max(state) AS state,
+             max(chamber) AS chamber, ticker, avg(ret) AS ticker_ret, count(*)::int AS trades
+      FROM scored GROUP BY member_slug, ticker
     )
-    SELECT member_slug AS slug, max(representative) AS name, max(party) AS party,
-           max(state) AS state, max(chamber) AS chamber,
-           count(*)::int AS positions,
-           sum(wt * move) / NULLIF(sum(wt), 0) * 100 AS move_pct,
-           count(*) FILTER (WHERE move > 0)::int AS winners
-    FROM w GROUP BY member_slug
-    ORDER BY sum(wt * move) / NULLIF(sum(wt), 0) DESC
+    SELECT member_slug AS slug, max(name) AS name, max(party) AS party, max(state) AS state,
+           max(chamber) AS chamber,
+           sum(trades)::int AS trades,
+           count(*)::int AS tickers,
+           avg(ticker_ret) AS score,
+           count(*) FILTER (WHERE ticker_ret > 0)::int AS winners
+    FROM per_ticker
+    GROUP BY member_slug
+    HAVING sum(trades) >= ${sql.raw(String(minTrades))} AND count(*) >= ${sql.raw(String(minTickers))}
+    ORDER BY avg(ticker_ret) DESC
   `);
   const rows = res.rows ?? res;
   return rows.map((r) => ({
     slug: r.slug, name: r.name, party: r.party, state: r.state, chamber: r.chamber,
     photoUrl: photoUrl(r.slug),
-    positions: Number(r.positions),                        // sample size, shown with every row
-    movePct: r.move_pct == null ? null : +Number(r.move_pct).toFixed(2),
-    winRate: Number(r.positions) ? Math.round((Number(r.winners) / Number(r.positions)) * 100) : null,
+    trades: Number(r.trades),        // qualifying transactions behind the score
+    tickers: Number(r.tickers),      // distinct securities, the number the score is averaged over
+    returnPct: r.score == null ? null : +Number(r.score).toFixed(2),
+    winRate: Number(r.tickers) ? Math.round((Number(r.winners) / Number(r.tickers)) * 100) : null,
   }));
 }
 
