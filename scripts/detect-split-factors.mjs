@@ -26,14 +26,24 @@ const sql = neon(process.env.DATABASE_URL);
 const DRY = process.argv.includes('--dry');
 
 const MIN_SAMPLES = 4;      // filers on BOTH sides; below this the medians are not evidence
-const TOLERANCE = 0.06;     // how close the divergence must sit to a candidate ratio (6%)
+// RELATIVE tolerance against the candidate ratio. A real split lands on its ratio almost exactly,
+// because both sides of the divergence are mechanical: shares multiply and per-share value divides
+// by the same integer. The observed hits sit within a fraction of a percent (25.0000, 19.9996,
+// 0.2000, 10.0000). An absolute band let 0.7569 pass as a 5-for-4, which is just a price move
+// wearing a split's clothes, so anything that does not land ON the ratio stays undetermined.
+const TOLERANCE = 0.03;
 const FLAT_BAND = 0.15;     // divergence within 15% of 1.0 is simply "no split"
 // Ratios actually used by listed companies. Expressed as the factor applied to PRIOR-quarter shares.
 const CANDIDATES = [
   ['2-for-1', 2], ['3-for-1', 3], ['4-for-1', 4], ['5-for-1', 5], ['10-for-1', 10], ['20-for-1', 20],
   ['3-for-2', 1.5], ['5-for-4', 1.25],
   ['1-for-2', 0.5], ['1-for-3', 1 / 3], ['1-for-4', 0.25], ['1-for-5', 0.2],
-  ['1-for-10', 0.1], ['1-for-15', 1 / 15], ['1-for-20', 0.05], ['1-for-25', 0.04], ['1-for-50', 0.02],
+  ['1-for-10', 0.1], ['1-for-15', 1 / 15], ['1-for-20', 0.05], ['1-for-25', 0.04],
+  // Deep reverse splits, the kind a sub-dollar listing does to keep its exchange listing. Omitting
+  // them left 31 tickers 'undetermined' whose divergence sat on 40.000 and 60.000 exactly, which is
+  // a split by any reading. Ratios a company would actually declare, not arbitrary numbers.
+  ['1-for-30', 1 / 30], ['1-for-40', 0.025], ['1-for-50', 0.02], ['1-for-60', 1 / 60],
+  ['1-for-75', 1 / 75], ['1-for-100', 0.01], ['1-for-150', 1 / 150], ['1-for-200', 0.005],
 ];
 
 const qs = [];
@@ -96,7 +106,7 @@ for (const r of rows) {
       status = 'none'; factor = 1; confidence = 'high';
     } else {
       // A forward split divides the implied per-share value, so divergence ~ 1/factor.
-      const hit = CANDIDATES.find(([, f]) => Math.abs(divergence - 1 / f) <= TOLERANCE / f);
+      const hit = CANDIDATES.find(([, f]) => Math.abs(divergence - 1 / f) <= (1 / f) * TOLERANCE);
       if (hit) { status = 'split'; factor = hit[1]; confidence = 'high'; found.push([r.ticker, hit[0], divergence]); }
     }
   }

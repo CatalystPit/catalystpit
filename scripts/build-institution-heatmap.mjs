@@ -59,11 +59,23 @@ const rows = await sql`
        and (h.value * s.scale_factor) / h.shares between p.close * 0.2 and p.close * 5
      group by h.ticker)
   select c.ticker, c.issuer, m.sector,
-         c.sh::float cur_sh, coalesce(p.sh, 0)::float prev_sh, c.val::float val, c.funds
+         c.sh::float cur_sh,
+         -- SPLIT ADJUSTMENT. 13F share counts are as filed, so a 10-for-1 split between quarters
+         -- looks like a tenfold purchase nobody made. Prior-quarter shares are restated onto the
+         -- current basis before differencing. fund_holdings is untouched: the factor is applied
+         -- here, at read time, from ticker_split_factor.
+         (coalesce(p.sh, 0) * coalesce(sf.factor, 1))::float prev_sh,
+         c.val::float val, c.funds,
+         coalesce(sf.status, 'unscanned') split_status, sf.factor split_factor
     from cur c
     left join prv p on p.ticker = c.ticker
     left join screener_meta m on m.ticker = c.ticker
-   where c.val > 0`;
+    left join ticker_split_factor sf on sf.ticker = c.ticker and sf.quarter = ${quarter}::date
+   where c.val > 0
+     -- A ticker we hold in BOTH quarters but whose split status we could not establish is excluded
+     -- from the map rather than shown with a delta that might be a corporate action. A ticker that
+     -- is new this quarter has no prior shares to restate, so it is unaffected.
+     and (p.sh is null or coalesce(sf.status, 'unscanned') in ('none', 'split'))`;
 
 console.log(`tickers: ${rows.length.toLocaleString()}`);
 
