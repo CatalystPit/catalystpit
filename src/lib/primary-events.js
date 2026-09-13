@@ -155,6 +155,10 @@ async function resolveTickers(events) {
 // filing the same story seconds apart collapse to one canonical event on arrival, not later.
 const CLUSTER_WINDOW_HOURS = 48;
 
+// How many GENUINE rewrite attempts an event gets. Only a real model judgement consumes one; an
+// infrastructure outage never does — see the `available` handling in runEnrichment.
+const MAX_REWRITE_ATTEMPTS = 3;
+
 async function clusterCandidates() {
   const res = await db.execute(sql`
     select seq, cluster_id, event_key, fact_key, fact_sig, norm_hash, entity, headline,
@@ -380,9 +384,13 @@ async function claimPending(limit) {
            original_url, tickers, entity, fact_sig, category, importance, enrich_attempts, cluster_id,
            headline_status
       from primary_events
-     where pipeline_status = 'pending'
+     -- headline_status is the AUTHORITATIVE eligibility signal. It used to be pipeline_status, and
+     -- the two drifted apart: enrichment runs during the credit outage marked rows 'ready' while
+     -- their headline was still the publisher's, stranding 1,468 events that no worker would ever
+     -- look at again. A row needing Catalyst Pit wording says so in one place now.
+     where headline_status = 'rewrite_pending'
        and source_kind <> 'sec'
-       and enrich_attempts < 3
+       and enrich_attempts < ${MAX_REWRITE_ATTEMPTS}
      order by seq desc
      limit ${Math.max(1, Math.min(60, limit))}`);
   return res.rows ?? res;
@@ -402,12 +410,30 @@ export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generat
   await resolveTickers(pend);
   rows.forEach((r, i) => { r.tickers = pend[i].tickers; });
 
-  // 2) Headline + facts, in batches. A failed call yields an empty map and every row in it keeps
-  //    its source headline — capture already happened, so nothing is at risk.
+  // 2) Headline + facts, in batches.
+  //
+  // `available` separates an INFRASTRUCTURE failure (no credits, API down, timeout, rate limit)
+  // from the model genuinely judging an item. An outage must not burn the item's retry budget or
+  // mark it finished — otherwise a billing lapse silently retires the whole backlog, which is
+  // exactly how 1,468 events were stranded. A Map return is still accepted so older callers and
+  // test stubs keep working.
   const generated = new Map();
+  let modelAvailable = true;
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const res = await generate(rows.slice(i, i + BATCH_SIZE));
-    for (const [idx, val] of res) generated.set(i + idx, val);
+    const map = res instanceof Map ? res : (res?.results ?? new Map());
+    if (!(res instanceof Map) && res?.available === false) {
+      modelAvailable = false;
+      stats.unavailable = String(res.error || 'model unavailable').slice(0, 80);
+      break;                                   // no point asking again this pass
+    }
+    for (const [idx, val] of map) generated.set(i + idx, val);
+  }
+
+  // Nothing to apply and nothing was the item's fault: leave every claimed row exactly as it is,
+  // still rewrite_pending, attempts untouched, so the next run with credits picks all of them up.
+  if (!modelAvailable && !generated.size) {
+    return { ...stats, ready: 0, skipped: rows.length, modelAvailable: false, ms: Date.now() - t0 };
   }
 
   // 3) Validate and persist. Clustering already happened at ingest; enrichment only updates the
@@ -417,12 +443,14 @@ export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generat
     const sourceText = `HEADLINE: ${r.source_headline || r.headline}\n${r.summary || ''}`;
     const gen = generated.get(i);
 
-    // The row is ALREADY displaying a deterministically normalised headline. If the model fails or
-    // its output cannot be grounded, we keep that — never regress to the raw source string, and
-    // never blank the event. AI here is strictly an upgrade path.
+    // The model never reached this row because the API was down. Leave it completely untouched —
+    // no write, no attempt consumed — so an outage costs nothing but time.
+    if (!gen && !modelAvailable) { stats.skipped = (stats.skipped || 0) + 1; continue; }
+
     // A row arrives here already displaying either a composed Catalyst Pit sentence or the
-    // source's wording marked rewrite_pending. If the model is unavailable or its output cannot be
-    // grounded, that status is PRESERVED — a pending rewrite is never quietly relabelled as ours.
+    // source's wording marked rewrite_pending. If the model's output cannot be grounded, that
+    // status is PRESERVED — a pending rewrite is never quietly relabelled as ours, and the row
+    // stays eligible for another attempt.
     let headline = r.headline || canonicalHeadline(r.source_headline, r.tickers || []);
     let headlineStatus = r.headline_status === 'composed' ? 'composed' : 'rewrite_pending';
     let facts = null;
@@ -475,7 +503,22 @@ export async function parkExhausted() {
   const res = await db.execute(sql`
     update primary_events
        set pipeline_status = 'ready'
-     where pipeline_status = 'pending' and enrich_attempts >= 3
+     where pipeline_status = 'pending'
+       and enrich_attempts >= ${MAX_REWRITE_ATTEMPTS}
+    returning seq`);
+  return (res.rows ?? res)?.length || 0;
+}
+
+// Returns every rewrite_pending event to the queue and clears attempts that were consumed by an
+// outage rather than by a real model judgement. Safe to run repeatedly; never touches SEC, never
+// touches a headline, never touches a raw source field.
+export async function requeueRewrites({ resetAttempts = true } = {}) {
+  const res = await db.execute(sql`
+    update primary_events
+       set pipeline_status = 'pending',
+           enrich_attempts = ${resetAttempts ? 0 : sql`enrich_attempts`}
+     where headline_status = 'rewrite_pending'
+       and source_kind <> 'sec'
     returning seq`);
   return (res.rows ?? res)?.length || 0;
 }

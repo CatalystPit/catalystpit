@@ -13,6 +13,7 @@
 // SEC never reaches this file. See runEnrichment() in primary-events.js.
 
 import { valuesIn, validateBullet } from './grounding.mjs';
+import { validatePredicate } from './predicate-grounding.mjs';
 
 export const MODEL = 'claude-haiku-4-5-20251001';   // same model the rest of the app uses
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
@@ -93,6 +94,12 @@ export function validateHeadline(candidate, sourceText, allowedTickers = []) {
   // scripts/verify-grounding.mjs), so both surfaces enforce one standard.
   const v = validateBullet({ text: h, source: '' }, '', valuesIn(src), src.toLowerCase(), new Set());
   if (!v.ok) return v;
+
+  // Nouns and numbers are not the whole sentence. This checks what the rewrite ASSERTS: a reversed
+  // direction ("raises" -> "cuts"), a swapped event type ("guidance" -> "bankruptcy") or an added
+  // reason the source never gave all invent a fact while using only real names and real figures.
+  const p = validatePredicate(h, src);
+  if (!p.ok) return p;
   return { ok: true };
 }
 
@@ -118,11 +125,15 @@ export function validateFacts(facts, sourceText) {
 }
 
 // ── model call ───────────────────────────────────────────────────────────────
-// Returns a Map of index → { headline, facts }. A failed call returns an empty Map, and every item
-// then falls back to its source headline; nothing is lost and nothing is invented.
+// Returns { results, available }. `available: false` means the MODEL never spoke — no key, no
+// credits, HTTP error, timeout, rate limit, unparseable response. That is an infrastructure outage,
+// not a judgement about the item, so the caller must not spend the item's retry budget on it.
+// `available: true` with a missing entry means the model genuinely returned nothing for that row.
 export async function generateBatch(items, { apiKey = process.env.ANTHROPIC_API_KEY, signal } = {}) {
   const out = new Map();
-  if (!apiKey || !items.length) return out;
+  const unavailable = (error) => ({ results: out, available: false, error });
+  if (!apiKey) return unavailable('no ANTHROPIC_API_KEY');
+  if (!items.length) return { results: out, available: true };
 
   let text = '';
   try {
@@ -141,19 +152,19 @@ export async function generateBatch(items, { apiKey = process.env.ANTHROPIC_API_
         ],
       }),
     });
-    if (!r.ok) return out;
+    if (!r.ok) return unavailable('HTTP ' + r.status);
     const data = await r.json();
     text = '[' + (data?.content?.[0]?.text || '');
-  } catch { return out; }
+  } catch (e) { return unavailable(String(e?.message || e).slice(0, 80)); }
 
   let parsed;
-  try { parsed = JSON.parse(stripFences(text)); } catch { return out; }
-  if (!Array.isArray(parsed)) return out;
+  try { parsed = JSON.parse(stripFences(text)); } catch { return unavailable('unparseable response'); }
+  if (!Array.isArray(parsed)) return unavailable('unexpected response shape');
 
   for (const row of parsed) {
     const i = Number(row?.i);
     if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
     out.set(i, { headline: String(row.headline || '').trim(), facts: row.facts ?? null });
   }
-  return out;
+  return { results: out, available: true };
 }
