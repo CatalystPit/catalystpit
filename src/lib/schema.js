@@ -675,6 +675,7 @@ export const institutions = pgTable('institutions', {
   firstSeenQuarter: date('first_seen_quarter', { mode: 'string' }),
   lastQuarter:      date('last_quarter', { mode: 'string' }),
   filingCount:      integer('filing_count').default(0),
+  lastAttemptAt:    timestamp('last_attempt_at', { withTimezone: true }),   // ingest attempted, success or not
   updatedAt:        timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   idxInstSlug: index('idx_institutions_slug').on(t.slug),

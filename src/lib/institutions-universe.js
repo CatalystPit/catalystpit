@@ -25,8 +25,27 @@ const unpad = (c) => String(Number(String(c).replace(/\D/g, '')));
 const slugify = (s) => String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
 const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-async function secJson(url) { try { const r = await fetch(url, { headers: SEC_HEADERS, cache: 'no-store' }); return r.ok ? await r.json() : null; } catch { return null; } }
-async function secText(url) { try { const r = await fetch(url, { headers: SEC_HEADERS, cache: 'no-store' }); return r.ok ? await r.text() : null; } catch { return null; } }
+// SEC enforces fair access by BLOCKING the IP with 403, not by returning 429, and a blocked host
+// keeps burning through filers finding nothing, which looks exactly like "the backfill is done".
+// One 403 stops the whole run: there is no point issuing another request, and continuing to hammer
+// a blocked endpoint is what extends the block.
+let _secBlockedUntil = 0;
+export const secBlocked = () => Date.now() < _secBlockedUntil;
+const SEC_COOLDOWN_MS = 15 * 60 * 1000;
+async function secFetch(url) {
+  if (secBlocked()) return null;
+  try {
+    const r = await fetch(url, { headers: SEC_HEADERS, cache: 'no-store' });
+    if (r.status === 403) {
+      _secBlockedUntil = Date.now() + SEC_COOLDOWN_MS;
+      console.log('[institutions-universe] SEC returned 403 Access Denied: backing off for 15 minutes');
+      return null;
+    }
+    return r.ok ? r : null;
+  } catch { return null; }
+}
+async function secJson(url) { const r = await secFetch(url); if (!r) return null; try { return await r.json(); } catch { return null; } }
+async function secText(url) { const r = await secFetch(url); if (!r) return null; try { return await r.text(); } catch { return null; } }
 async function kvGet(k) { if (!KV_URL || !KV_TOKEN) return null; try { const r = await fetch(`${KV_URL}/get/${encodeURIComponent(k)}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` } }); if (!r.ok) return null; return (await r.json())?.result ?? null; } catch { return null; } }
 
 let _ensured = false;
@@ -414,8 +433,19 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
 
   // Filers already ingested for the current window (have a fund_filings row at/after cutoff).
   const ingested = new Set((await db.selectDistinct({ cik: fundFilings.cik }).from(fundFilings).where(gte(fundFilings.quarter, cutoff))).map((r) => r.cik));
-  const all = await db.select({ cik: institutions.cik, featured: institutions.featuredLabel }).from(institutions);
-  const todo = all.filter((i) => !ingested.has(i.cik)).sort((a, b) => (a.featured ? 0 : 1) - (b.featured ? 0 : 1)).slice(0, ingestCap);
+  const all = await db.select({ cik: institutions.cik, featured: institutions.featuredLabel, attempted: institutions.lastAttemptAt }).from(institutions);
+  // LEAST-RECENTLY-ATTEMPTED first, never-attempted before that. Selecting the same head of the list
+  // every pass meant a filer with nothing to ingest blocked its slot permanently: a 2,000-pass run
+  // worked the same 120 CIKs and never reached the other 2,444. Featured filers still jump the queue,
+  // but only among equals.
+  const todo = all.filter((i) => !ingested.has(i.cik))
+    .sort((a, b) => {
+      if (!!a.featured !== !!b.featured) return a.featured ? -1 : 1;
+      const av = a.attempted ? new Date(a.attempted).getTime() : 0;
+      const bv = b.attempted ? new Date(b.attempted).getTime() : 0;
+      return av - bv;
+    })
+    .slice(0, ingestCap);
 
   let ingestedNow = 0, storedNow = 0, failedNow = 0;
   const errorsSample = [];
@@ -424,11 +454,11 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
   // at roughly 0.3 requests per second against a 10/s allowance, which is why a pass moved ~8 filers.
   // A small pool keeps us well inside SEC's limit while using the budget properly. Per-filer error
   // isolation is unchanged: one failure is skipped and retried next run, never aborting the pass.
-  const POOL = Number(process.env.INSTITUTIONS_POOL || 5);
+  const POOL = Number(process.env.INSTITUTIONS_POOL || 3);
   const queue = [...todo];
   const worker = async () => {
     for (;;) {
-      if (Date.now() - t0 > timeBudgetMs) return;
+      if (Date.now() - t0 > timeBudgetMs || secBlocked()) return;
       const f = queue.shift();
       if (!f) return;
       try {
@@ -440,6 +470,10 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
         const cause = `${e?.cause?.message || ''}`.slice(0, 180);
         console.log(`[institutions-universe] filer ${f.cik} failed: ${error} | cause: ${cause}`);
         if (errorsSample.length < 5) errorsSample.push({ cik: f.cik, error, cause });
+      } finally {
+        // Mark the ATTEMPT whatever the outcome. A filer with nothing to ingest then rotates to the
+        // back of the queue instead of holding its slot in the slice forever.
+        try { await db.update(institutions).set({ lastAttemptAt: new Date() }).where(eq(institutions.cik, f.cik)); } catch { /* non-fatal */ }
       }
     }
   };
