@@ -1,3 +1,6 @@
+import { after } from 'next/server';
+import { projectHalts } from '../../../lib/primary-events';
+
 export const runtime = 'nodejs';
 
 // Live US trading-halt scanner — sourced from Nasdaq Trader's free, official consolidated halt feed
@@ -79,6 +82,14 @@ export async function GET() {
     halts.reverse();
     const payload = { halts, asOf: new Date().toISOString() };
     await kvSet('halts:v1', payload, TTL);
+
+    // Mirror into the primary-event stream. This runs only on a cache MISS, so it is bounded by the
+    // 45s TTL and costs no extra request to nasdaqtrader.com; after() defers it past the response so
+    // the user-facing latency is unchanged, and a DB failure here can never affect this payload.
+    after(async () => {
+      try { await projectHalts(halts); } catch (e) { console.log(`[halts] project failed: ${e.message}`); }
+    });
+
     return Response.json({ ...payload, cached: false }, { headers: NO_STORE });
   } catch (e) {
     console.log(`[halts] ${e.message}`);

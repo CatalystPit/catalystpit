@@ -1,0 +1,238 @@
+// Deterministic normalisation. PURE: no DB, no network, no AI.
+//
+// This module is what lets a Catalyst Pit event appear the instant it is captured. Everything here
+// is rule-based and runs in microseconds, so an event never waits on a model to become displayable.
+// Haiku enrichment refines the SAME canonical event afterwards; it is an upgrade, never a gate.
+//
+// Nothing here invents content. The canonical headline is a CLEANED form of a real source headline:
+// wire prefixes, channel handles, trailing attributions and shouting are removed, and a resolved
+// ticker is prefixed. No fact is added that the source did not state.
+
+// ── headline cleaning ────────────────────────────────────────────────────────
+const ENTITIES = [
+  [/&amp;/g, '&'], [/&lt;/g, '<'], [/&gt;/g, '>'], [/&quot;/g, '"'],
+  [/&#0?39;|&apos;|&rsquo;|&#8217;/g, "'"], [/&nbsp;|&#160;/g, ' '],
+  [/&mdash;|&#8212;/g, '—'], [/&ndash;|&#8211;/g, '–'], [/&hellip;/g, '…'],
+  [/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))],
+  [/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))],
+];
+
+// Wire operators stamp their own name on the front or back of a headline. That is branding, not
+// fact, and it is exactly what makes the same story look different across sources.
+const LEAD_JUNK = /^(?:financialjuice|breaking|breaking news|just in|update|alert|exclusive|live|watch|video|report)\s*[:\-–—]\s*/i;
+const TRAIL_JUNK = [
+  /\s*\(@[A-Za-z0-9_]+\)\s*$/,                       // telegram channel handle
+  /\s*[-–—|]\s*(?:reuters|bloomberg|cnbc|marketwatch|yahoo finance|barron'?s|the wall street journal|wsj|financial times|ft|seeking alpha|investing\.com|globenewswire|pr newswire|prnewswire|business wire|ein presswire)\s*$/i,
+  /\s*\|\s*[A-Za-z .]{2,28}\s*$/,                    // "... | Some Outlet"
+  /\s*\.{3}\s*$/,
+];
+
+const deEntity = (s) => { let t = String(s || ''); for (const [re, to] of ENTITIES) t = t.replace(re, to); return t; };
+
+// A headline in block capitals is a press-release formatting habit, not emphasis worth carrying.
+// Converted to title case, with short all-caps tokens left alone because those are overwhelmingly
+// tickers, exchanges and acronyms (ISS, FDA, CEO, NYSE) rather than shouting.
+const TITLE_SMALL = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'nor', 'for', 'of', 'to', 'in',
+  'on', 'at', 'by', 'as', 'from', 'into', 'with', 'over', 'per', 'via', 'vs']);
+// In a shouting headline every token is capitals, so "FDA" and "RARE" are indistinguishable by
+// shape. An allowlist is used rather than a guess: these stay upper, everything else is title-cased.
+// The failure mode is cosmetic in both directions, and this one is at least predictable.
+const KEEP_CAPS = new Set(['FDA', 'SEC', 'FTC', 'DOJ', 'CFTC', 'FCC', 'EPA', 'IRS', 'DOE', 'DOT',
+  'CEO', 'CFO', 'COO', 'CTO', 'CIO', 'CMO', 'CRO', 'EVP', 'SVP', 'IPO', 'ETF', 'REIT', 'SPAC',
+  'GDP', 'CPI', 'PPI', 'PCE', 'FOMC', 'ECB', 'BOE', 'BOJ', 'IMF', 'OPEC', 'NATO', 'EPS', 'EBIT',
+  'NYSE', 'AMEX', 'OTC', 'TSX', 'LSE', 'ASX', 'ISS', 'AI', 'EV', 'ESG', 'API', 'SaaS', 'IoT',
+  'US', 'UK', 'EU', 'UAE', 'USA', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'FY', 'YOY', 'QOQ', 'M&A',
+  'Q1', 'Q2', 'Q3', 'Q4', 'H1', 'H2', 'LNG', 'OEM', 'R&D', 'IP', 'PC', 'TV', 'HR', 'IT']);
+function unshout(s) {
+  const letters = s.replace(/[^A-Za-z]/g, '');
+  if (letters.length < 12) return s;
+  if ((s.match(/[A-Z]/g) || []).length / letters.length < 0.85) return s;
+  let i = 0;
+  return s.replace(/[A-Za-z][A-Za-z'’]*/g, (w) => {
+    i++;
+    const lower = w.toLowerCase();
+    if (KEEP_CAPS.has(w)) return w;
+    if (i > 1 && TITLE_SMALL.has(lower)) return lower;
+    return lower[0].toUpperCase() + lower.slice(1);
+  });
+}
+
+export function cleanHeadline(raw) {
+  let s = deEntity(raw).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  let prev;
+  do { prev = s; s = s.replace(LEAD_JUNK, ''); } while (s !== prev);
+  for (const re of TRAIL_JUNK) s = s.replace(re, '');
+  s = unshout(s).replace(/\s+/g, ' ').replace(/\s+([,.;:])/g, '$1').trim();
+  s = s.replace(/[\s\-–—:|]+$/, '').trim();
+  return s;
+}
+
+// The canonical headline shown to users: a cleaned real headline, prefixed with the ticker when one
+// was conservatively resolved. Truncation is on a word boundary so a headline is never cut mid-word.
+export const MAX_DISPLAY = 140;
+export function canonicalHeadline(rawHeadline, tickers = []) {
+  let s = cleanHeadline(rawHeadline);
+  if (!s) return '';
+  if (s.length > MAX_DISPLAY) {
+    s = s.slice(0, MAX_DISPLAY).replace(/\s+\S*$/, '').replace(/[\s,;:–—-]+$/, '') + '…';
+  }
+  const sym = (tickers || [])[0];
+  // Only prefix when the headline does not already lead with that symbol.
+  if (sym && !new RegExp(`^\\$?${sym}\\b`, 'i').test(s)) return `${sym}: ${s}`;
+  return s;
+}
+
+// Enough factual substance to be worth showing. Deliberately permissive — the bar is "this says
+// something", not "this is important". Importance ranks it; this only rejects empty shells.
+export function isDisplayable(headline) {
+  const s = cleanHeadline(headline);
+  if (s.length < 12) return false;
+  const words = s.split(/\s+/).filter((w) => /[a-z]/i.test(w));
+  if (words.length < 3) return false;
+  if (/^(?:photo|video|image|podcast|newsletter|correction|test)\b/i.test(s)) return false;
+  return true;
+}
+
+// ── numeric facts ────────────────────────────────────────────────────────────
+// The figures that distinguish one event from another. "$500M buyback" and "$750M acquisition" are
+// different events even though both concern the same company, and this is what proves it.
+const SCALE = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, mn: 1e6, bn: 1e9, b: 1e9,
+  billion: 1e9, t: 1e12, tn: 1e12, trillion: 1e12 };
+
+export function numericFacts(text) {
+  const s = deEntity(text || '').replace(/,/g, '');
+  const out = new Set();
+
+  // Money, with or without a written scale word: "$500 million", "$4.9bn", "$1,200", "USD 500M".
+  for (const m of s.matchAll(/(?:\$|usd\s*|eur\s*|€|£)\s*(\d+(?:\.\d+)?)\s*(k|mm?|mn|bn?|tn?|thousand|million|billion|trillion)?\b/gi)) {
+    const mult = SCALE[String(m[2] || '').toLowerCase()] || 1;
+    out.add(`m${Math.round(Number(m[1]) * mult)}`);
+  }
+  // Scale words attached to a bare number near a money noun, e.g. "500 million share repurchase".
+  for (const m of s.matchAll(/\b(\d+(?:\.\d+)?)\s*(million|billion|trillion|bn|mn)\b/gi)) {
+    const mult = SCALE[String(m[2]).toLowerCase()] || 1;
+    out.add(`m${Math.round(Number(m[1]) * mult)}`);
+  }
+  for (const m of s.matchAll(/(\d+(?:\.\d+)?)\s*%/g)) out.add(`p${Number(m[1])}`);
+  for (const m of s.matchAll(/(\d+(?:\.\d+)?)\s*(?:bps|basis points?)\b/gi)) out.add(`b${Number(m[1])}`);
+  return [...out].sort();
+}
+
+// A stable signature of the two largest magnitudes. Two reports of the same deal agree on the head
+// figure even when one of them also mentions a secondary number the other omits.
+export function factSignature(text) {
+  const money = numericFacts(text).filter((f) => f.startsWith('m'))
+    .map((f) => Number(f.slice(1))).sort((a, b) => b - a);
+  if (money.length) return money.slice(0, 2).sort((a, b) => a - b).join('_');
+  const rest = numericFacts(text);
+  return rest.length ? rest.slice(0, 2).join('_') : '';
+}
+
+// ── stated tickers ───────────────────────────────────────────────────────────
+// Symbols the SOURCE ITSELF prints, which press-release wires do constantly:
+//   "Acme Corp (NASDAQ: ACME) announces..."   "Experian plc (EXPGY) presents..."   "$TSLA"
+//
+// This is reading, not inferring, so it needs no registrant lookup — but only EXCHANGE-QUALIFIED
+// forms and cashtags are accepted. A bare "(EXPGY)" is left to the conservative SEC resolver,
+// because bare parentheses also wrap things like "(AI)" and "(Q3)" and guessing there would be
+// exactly the hallucinated ticker we refuse to produce.
+const EXCHANGES = String.raw`NASDAQ|NYSE(?:\s*American|\s*Arca)?|NYSEAMERICAN|AMEX|OTC(?:QB|QX|MKTS)?|CBOE|TSX(?:-?V)?|LSE|ASX|Euronext|XETRA|FSE|BSE|NSE|SIX|JSE|HKEX|SGX|KRX|TASE|B3`;
+const TICKER_STATED = new RegExp(String.raw`\(\s*(?:${EXCHANGES})\s*[:\-–]\s*([A-Z][A-Z0-9.\-]{0,6})\s*\)`, 'gi');
+const CASHTAG = /(?:^|[\s(\[])\$([A-Z]{1,5})(?![A-Za-z0-9.])/g;
+// Words that look like symbols but are not, so a cashtag-like token never becomes a ticker.
+const NOT_TICKERS = new Set(['CEO', 'CFO', 'COO', 'CTO', 'USA', 'USD', 'EUR', 'GBP', 'JPY', 'CNY',
+  'GDP', 'CPI', 'PPI', 'FED', 'FOMC', 'ECB', 'IMF', 'OPEC', 'EPS', 'IPO', 'ETF', 'SEC', 'FDA',
+  'FTC', 'DOJ', 'AI', 'EV', 'ESG', 'API', 'CEOS', 'Q1', 'Q2', 'Q3', 'Q4', 'FY', 'YOY', 'NYSE']);
+
+export function statedTickersIn(text) {
+  const s = String(text || '');
+  const out = [];
+  for (const re of [TICKER_STATED, CASHTAG]) {
+    re.lastIndex = 0;
+    for (const m of s.matchAll(re)) {
+      const sym = String(m[1] || '').toUpperCase();
+      if (sym && !NOT_TICKERS.has(sym) && !out.includes(sym)) out.push(sym);
+    }
+  }
+  return out.slice(0, 4);
+}
+
+// ── entity ───────────────────────────────────────────────────────────────────
+// A normalized company token, used when no ticker has been resolved yet. Deliberately crude: it is
+// a dedupe hint, never a displayed fact and never a ticker.
+const CORP_TAIL = /\b(inc|incorporated|corp|corporation|co|company|llc|ltd|limited|plc|lp|nv|sa|ag|gmbh|ab|asa|holdings?|group|plc's|sa's)\b\.?/gi;
+// A generic leading word is not an entity. Measured on live data, "Updates to the Data Download
+// Program…" yielded the token "updates", which then matched 65 unrelated Fed notices that shared
+// boilerplate figures. An entity token must name something, or it is worse than nothing.
+const ENTITY_STOP = new Set(['the', 'a', 'an', 'us', 'u.s.', 'new', 'breaking', 'update', 'updates',
+  'report', 'reports', 'exclusive', 'stock', 'stocks', 'shares', 'market', 'markets', 'wall',
+  'street', 'notice', 'upcoming', 'changes', 'improved', 'data', 'final', 'latest', 'live', 'watch',
+  'video', 'why', 'how', 'what', 'when', 'where', 'who', 'top', 'best', 'worst', 'first', 'last',
+  'more', 'danger', 'alert', 'warning', 'statement', 'remarks', 'speech', 'minutes', 'summary',
+  'agencies', 'federal', 'government', 'president', 'chairman', 'governor', 'secretary']);
+
+export function entityToken(headline, tickers = []) {
+  if ((tickers || []).length) return String(tickers[0]).toUpperCase();
+  const s = cleanHeadline(headline);
+  const m = s.match(/^((?:[A-Z][A-Za-z0-9&.'\-]*)(?:\s+[A-Z][A-Za-z0-9&.'\-]*){0,3})/);
+  if (!m) return '';
+  const tok = m[1].replace(CORP_TAIL, ' ').replace(/[^A-Za-z0-9 ]/g, ' ')
+    .split(/\s+/).map((w) => w.toLowerCase())
+    .filter((w) => w.length >= 2 && !ENTITY_STOP.has(w));
+  return tok.slice(0, 2).join('-');
+}
+
+// ── importance ───────────────────────────────────────────────────────────────
+// 3 CRITICAL · 2 HIGH · 1 MEDIUM · 0 LOW. Rule-based on purpose: importance drives ranking, and a
+// model that can silently promote a routine item is a model that can distort the product.
+export const IMPORTANCE_LABEL = { 3: 'CRITICAL', 2: 'HIGH', 1: 'MEDIUM', 0: 'LOW' };
+
+const CRITICAL = [
+  /\b(?:trading )?halt(?:ed|s)?\b/i, /\bcircuit breaker\b/i,
+  /\bchapter (?:7|11)\b/i, /\bbankrupt\w*/i, /\bgoing concern\b/i, /\bdelist\w*/i, /\bdefaults?\b/i,
+  /\bfda (?:approv|clear|authoriz|reject|declin)\w*/i, /complete response letter/i,
+  /\bbreakthrough therapy\b/i, /\b(?:phase (?:3|iii)) (?:results|data|trial)\b/i,
+  /\bfomc\b/i, /federal open market committee/i, /\brate (?:cut|hike|decision)\b/i,
+  /\bemergency (?:meeting|rate|action)\b/i,
+  /\bacquir\w+|\bmerger\b|\bto buy\b|\btakeover\b|\bbuyout\b/i,
+  /\bindict\w*/i, /\bfraud charges\b/i, /\bsec charges\b/i,
+];
+const HIGH = [
+  /\bearnings\b/i, /\bguidance\b/i, /\bquarterly results\b/i, /\bpreliminary results\b/i,
+  /\boutlook\b/i, /\bprofit warning\b/i, /\brevenue\b/i, /\beps\b/i,
+  /\boffering\b/i, /\bpricing of\b/i, /\bdilut\w*/i, /\bipo\b/i, /\bdirect listing\b/i,
+  /\bbuyback\b/i, /\bshare repurchase\b/i, /\brepurchase program\b/i,
+  /\bdividend\b/i, /\bstock split\b/i, /\bspin-?off\b/i,
+  /\b(?:ceo|cfo|coo|chief executive|chief financial)\b.*\b(?:resign|depart|step|appoint|name)\w*/i,
+  /\b(?:resign|depart|step down)\w*\b.*\b(?:ceo|cfo|chief executive)\b/i,
+  /\bupgrade[sd]?\b|\bdowngrade[sd]?\b|\bprice target\b|\binitiat\w+ coverage\b/i,
+  /\bdoj\b|\bftc\b|\bantitrust\b|\bconsent (?:order|decree)\b|\bsettle\w*/i,
+  /\bactivist\b|\bstake\b|\b13d\b/i, /\brestructur\w*/i, /\blayoffs?\b/i,
+  /\bcontract award\b|\bwins? (?:a )?contract\b|\bsigns? (?:a )?(?:deal|agreement)\b/i,
+  /\brecall\w*/i, /\bcyber ?attack\b|\bdata breach\b/i,
+  /\bclinical (?:trial|study|data|results)\b/i, /\btopline\b/i,
+];
+const MEDIUM = [
+  /\bspeech\b|\btestimony\b|\bremarks\b/i, /\bproposed rule\b|\bcomment period\b|\bguidance note\b/i,
+  /\bconference call\b|\bwebcast\b|\bpresent(?:s|ation)\b/i, /\bjoint venture\b|\bpartnership\b/i,
+  /\bappoint\w*|\bnames?\b.*\b(?:president|director|officer)\b/i, /\bpatent\b/i,
+];
+// Never let promotional noise outrank real news, whatever words it happens to contain.
+const NOISE = [
+  /\binvestors? (?:who|have) (?:suffered )?(?:losses|opportunity to lead)\b/i,
+  /\bclass action\b.*\bdeadline\b/i, /\blaw (?:firm|offices)\b/i, /\breminds? investors\b/i,
+  /\bmarket (?:research )?report\b|\bmarket size\b|\bcagr\b|\bforecast to 20\d\d\b/i,
+  /\bwebinar\b|\btrade (?:show|fair)\b|\bexpo\b|\baward[s]?\b|\bnominated\b/i,
+  /\bhoroscope\b|\brecipe\b|\bgift guide\b|\bdeals? of the day\b/i,
+];
+
+export function scoreImportance({ headline, summary = '', source = '', sourceType = '', tickers = [] }) {
+  const hay = `${headline} ${summary || ''}`;
+  if (NOISE.some((re) => re.test(hay))) return 0;
+  if (sourceType === 'halt') return 3;
+  if (CRITICAL.some((re) => re.test(hay))) return 3;
+  if (HIGH.some((re) => re.test(hay))) return 2;
+  if (MEDIUM.some((re) => re.test(hay))) return 1;
+  // A confidently resolved ticker means it is at least about a specific listed company.
+  return (tickers || []).length ? 1 : 0;
+}

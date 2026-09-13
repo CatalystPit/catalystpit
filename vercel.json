@@ -95,6 +95,14 @@
     {
       "path": "/api/cron/enrich-insider-perf",
       "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/primary-sources",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/news-enrich",
+      "schedule": "* * * * *"
     }
   ],
   "headers": [
@@ -178,6 +186,12 @@
     },
     "src/app/api/cron/screener-fundamentals/route.js": {
       "maxDuration": 300
+    },
+    "src/app/api/cron/primary-sources/route.js": {
+      "maxDuration": 120
+    },
+    "src/app/api/cron/news-enrich/route.js": {
+      "maxDuration": 60
     }
   }
 }
