@@ -421,7 +421,11 @@ function MoversBody({ onPick }) {
   const rows = data ? (data[tab] || []) : null;
   const showPrice = w >= 260, showVol = w >= 340;
   const tabBtn = (k, label) => (
-    <button key={k} onClick={() => setTab(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', border: 'none', background: tab === k ? C.ink : 'transparent', color: tab === k ? '#fff' : C.muted }}>{label}</button>
+    // Selected uses C.white rather than a hardcoded #fff: C.ink inverts to near-white (#EEF3EF) in
+    // dark mode, so #fff put white text on a white pill at 1.06:1. C.white inverts with it, keeping
+    // the fill and the label opposite in both themes. Inactive moves muted → text so the unselected
+    // labels stay legible next to that high-contrast pill.
+    <button key={k} onClick={() => setTab(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', border: 'none', background: tab === k ? C.ink : 'transparent', color: tab === k ? C.white : C.text }}>{label}</button>
   );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
