@@ -333,7 +333,7 @@ export default function NewsFeed() {
                   // C.ink is near-BLACK in light and near-WHITE in dark, so a literal #fff here
                   // rendered white-on-white at 1.12:1 in dark mode. C.bg is ink's opposite in both
                   // themes: 18.7:1 in light, 16.5:1 in dark, and the pill keeps its look either way.
-                  color: active ? C.bg : (cat === 'ALL' ? C.white : tc.c),
+                  color: active ? C.bg : (cat === 'ALL' ? C.ink : tc.c),
                   cursor:"pointer", transition:"all 0.15s"}}>
                 {cat}
               </button>
