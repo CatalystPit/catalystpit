@@ -7,12 +7,14 @@ import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
 import HeatMap from '../../components/HeatMap';
+import PitWire from '../../components/PitWire';
 
 // Custom movable/resizable workspace (React-19-safe — react-grid-layout depends on findDOMNode,
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
 // saved to localStorage. Chart center, halt scanner + movers around it.
 // Full widget registry — users add/remove any of these (Benzinga-style).
 const PANELS = [
+  { id: 'pitwire',   title: 'Pit Wire',     tag: 'LIVE · CANONICAL' },
   { id: 'tape',      title: 'Tape · X',     tag: 'SOCIAL' },
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
   { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
@@ -30,7 +32,7 @@ const PANELS = [
   { id: 'earnings',  title: 'Earnings',     tag: 'CALENDAR' },
 ];
 const PANEL_BY_ID = Object.fromEntries(PANELS.map((p) => [p.id, p]));
-const DEFAULT_VISIBLE = ['tape', 'halts', 'chart', 'newswire', 'watchlist', 'chat'];
+const DEFAULT_VISIBLE = ['pitwire', 'tape', 'halts', 'chart', 'newswire', 'watchlist', 'chat'];
 const MIN_W = 240, MIN_H = 220;
 
 // Link groups (Benzinga-style): panels sharing a color sync — click a symbol in one and it loads
@@ -59,6 +61,7 @@ function defaultLayout(width) {
     // center column
     chart:     { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
     newswire:  { x: centerX, y: 392, w: centerW, h: 220, color: 'orange' },
+    pitwire:   { x: centerX, y: 624, w: centerW, h: 300, color: 'orange' },
     // add-only panels default to the center-bottom area (overlap until arranged)
     pitscan:   { x: centerX, y: 392, w: centerW, h: 220, color: 'green' },
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
@@ -76,18 +79,18 @@ function defaultLayout(width) {
 }
 
 // Category color per panel id (used when a station preset auto-arranges panels).
-const COLOR_BY_ID = { tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', alerts: 'blue', watchlist: 'blue', chat: 'green' };
+const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', alerts: 'blue', watchlist: 'blue', chat: 'green' };
 
 // Built-in Station presets — starting layouts only (code config, not stored per user). Panels that
 // don't exist yet are simply skipped; add more panel ids as future panels land. After loading a
 // preset the user can rearrange and Save As their own custom station.
 const STATION_PRESETS = [
-  { key: 'day',      name: 'Day Trader', visible: ['chart', 'pitscan', 'scanner', 'watchlist', 'newswire', 'halts'] },
+  { key: 'day',      name: 'Day Trader', visible: ['chart', 'pitwire', 'scanner', 'watchlist', 'pitscan', 'halts'] },
   { key: 'smallcap', name: 'Small Cap',  visible: ['pitscan', 'newswire', 'halts', 'watchlist', 'scanner', 'chat', 'chart'] },
   { key: 'macro',    name: 'Macro',      visible: ['chart', 'newswire', 'tape', 'watchlist'] },
   { key: 'investor', name: 'Investor',   visible: ['chart', 'watchlist', 'convergence', 'newswire'] },
   { key: 'minimal',  name: 'Minimal',    visible: ['chart', 'watchlist', 'newswire'] },
-  { key: 'newsdesk', name: 'News Desk',  visible: ['newswire', 'tape', 'pitscan', 'halts', 'watchlist', 'chart'] },
+  { key: 'newsdesk', name: 'News Desk',  visible: ['pitwire', 'newswire', 'tape', 'halts', 'watchlist', 'chart'] },
   { key: 'custom',   name: 'Custom',     visible: [] },   // blank canvas — add panels from scratch
 ];
 const presetVisible = (p) => p.visible.filter((id) => PANEL_BY_ID[id]);
@@ -1266,6 +1269,7 @@ function Workspace() {
     : def.id === 'feed' ? <FeedBody onPick={(s) => linkSymbol('feed', s)} />
     : def.id === 'heatmap' ? <HeatMapBody onPick={(s) => linkSymbol('heatmap', s)} />
     : def.id === 'earnings' ? <EarningsBody onPick={(s) => linkSymbol('earnings', s)} />
+    : def.id === 'pitwire' ? <PitWire onPick={(sym) => linkSymbol('pitwire', sym)} />
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <PitScanBody onPick={(s) => linkSymbol('pitscan', s)} />
@@ -1285,7 +1289,7 @@ function Workspace() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {visible.map((id) => { const def = PANEL_BY_ID[id]; if (!def) return null; return (
-          <div key={id} style={{ position: 'relative', height: id === 'chart' ? 420 : id === 'chat' ? 460 : id === 'tape' ? 500 : 320 }}>
+          <div key={id} style={{ position: 'relative', height: id === 'chart' ? 420 : id === 'chat' ? 460 : id === 'tape' ? 500 : id === 'pitwire' ? 520 : 320 }}>
             <PanelCard def={def} draggable={false} colorKey={layout[id]?.color} headerRight={headerRightOf(def)} onRemove={() => removePanel(id)}>{bodyOf(def)}</PanelCard>
           </div>
         ); })}
