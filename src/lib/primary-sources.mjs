@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { canonicalHeadline, isDisplayable, entityToken, factSignature, scoreImportance, statedTickersIn } from './news-normalize.mjs';
 import { normHash } from './event-cluster.mjs';
+import { composeHeadline } from './headline-compose.mjs';
 
 export const UA = { 'User-Agent': 'CatalystPit contact@catalystpit.com', 'Accept-Encoding': 'gzip, deflate' };
 
@@ -493,7 +494,14 @@ export function normalize(feed, item) {
     ? []
     : [...new Set([...(item.tickers || []), ...statedTickersIn(`${item.title} ${item.summary || ''}`)])].slice(0, 4);
   // Deterministic, instant, no AI: the event is displayable the moment it is captured.
-  const display = canonicalHeadline(item.title, tickers);
+  //
+  // Two outcomes, and the difference is recorded honestly in headline_status:
+  //   composed        — an unambiguous factual assertion was found and restated in our own wording
+  //   rewrite_pending — no assertion could be extracted without inventing one, so the source's
+  //                     wording stands in (attributed on screen) until the model rewrites it.
+  // The source wording is NEVER relabelled as Catalyst Pit's own work just because it was cleaned.
+  const built = composeHeadline({ headline: item.title, summary: item.summary, tickers });
+  const display = built ? canonicalHeadline(built.headline, tickers) : canonicalHeadline(item.title, tickers);
   const factSig = factSignature(`${item.title} ${item.summary || ''}`);
   return {
     source: feed.source,
@@ -519,7 +527,7 @@ export function normalize(feed, item) {
     content_hash: contentHash({ source: feed.source, title: item.title, publishedAt: item.publishedAt }),
     display_ready: isDisplayable(item.title),
     // A feed marked rewrite:false keeps the source headline forever, so it is already final.
-    headline_status: feed.rewrite === false ? 'not_required' : 'normalized',
+    headline_status: feed.rewrite === false ? 'not_required' : (built ? 'composed' : 'rewrite_pending'),
     pipeline_status: feed.rewrite === false ? 'ready' : 'pending',
     raw: { feed: feed.key, adapter: feed.adapter || 'rss', ...item },
   };

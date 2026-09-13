@@ -377,7 +377,8 @@ async function claimPending(limit) {
   // Newest first: a breaking item is enriched before any backlog drains.
   const res = await db.execute(sql`
     select seq, source, source_name, source_type, headline, source_headline, summary, published_at,
-           original_url, tickers, entity, fact_sig, category, importance, enrich_attempts, cluster_id
+           original_url, tickers, entity, fact_sig, category, importance, enrich_attempts, cluster_id,
+           headline_status
       from primary_events
      where pipeline_status = 'pending'
        and source_kind <> 'sec'
@@ -419,8 +420,11 @@ export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generat
     // The row is ALREADY displaying a deterministically normalised headline. If the model fails or
     // its output cannot be grounded, we keep that — never regress to the raw source string, and
     // never blank the event. AI here is strictly an upgrade path.
+    // A row arrives here already displaying either a composed Catalyst Pit sentence or the
+    // source's wording marked rewrite_pending. If the model is unavailable or its output cannot be
+    // grounded, that status is PRESERVED — a pending rewrite is never quietly relabelled as ours.
     let headline = r.headline || canonicalHeadline(r.source_headline, r.tickers || []);
-    let headlineStatus = 'normalized';
+    let headlineStatus = r.headline_status === 'composed' ? 'composed' : 'rewrite_pending';
     let facts = null;
     if (gen?.headline) {
       const v = validateHeadline(gen.headline, sourceText, r.tickers || []);
@@ -470,7 +474,7 @@ export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generat
 export async function parkExhausted() {
   const res = await db.execute(sql`
     update primary_events
-       set pipeline_status = 'ready', headline_status = 'normalized'
+       set pipeline_status = 'ready'
      where pipeline_status = 'pending' and enrich_attempts >= 3
     returning seq`);
   return (res.rows ?? res)?.length || 0;
