@@ -43,9 +43,26 @@ async function kvSet(key, value, ttlSec) {
   } catch { /* cache-write failure is non-fatal */ }
 }
 
-// check KV → hit returns parsed value; miss runs fetcher, writes KV, returns live
-async function cached(key, ttlSec, fetcher) {
-  const hit = await kvGet(key);
+// ONE Redis command for many keys. Upstash bills per COMMAND, so seven independent GETs cost seven
+// while a single MGET of the same seven costs one. Pipelining would not have helped: it saves round
+// trips, not commands. Returns values positionally, null where the key is absent, and null for
+// everything if the call fails so callers fall through to their own fetch exactly as before.
+async function kvMGet(keys) {
+  if (!KV_URL || !KV_TOKEN || !keys.length) return keys.map(() => null);
+  try {
+    const path = keys.map((k) => encodeURIComponent(k)).join('/');
+    const r = await fetch(`${KV_URL}/mget/${path}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` } });
+    if (!r.ok) return keys.map(() => null);
+    const d = await r.json();
+    return Array.isArray(d.result) ? d.result.map((v) => v ?? null) : keys.map(() => null);
+  } catch { return keys.map(() => null); }
+}
+
+// check KV → hit returns parsed value; miss runs fetcher, writes KV, returns live.
+// `preloaded` lets a caller that already fetched this key via kvMGet skip the individual GET. The
+// semantics are unchanged: same key, same value, same TTL on write.
+async function cached(key, ttlSec, fetcher, preloaded) {
+  const hit = preloaded !== undefined ? preloaded : await kvGet(key);
   if (hit != null) {
     try { return { value: JSON.parse(hit), source: 'cache' }; }
     catch { return { value: hit, source: 'cache' }; }
@@ -205,9 +222,9 @@ const fetchNews = async (sym) => {
 };
 
 // News cache with dynamic TTL (Polygon-fail fallback caches briefly). Mirrors cached()'s shape.
-async function cachedNews(sym) {
+async function cachedNews(sym, preloaded) {
   const key = `${PFX}${sym}:news`;
-  const hit = await kvGet(key);
+  const hit = preloaded !== undefined ? preloaded : await kvGet(key);
   if (hit != null) { try { return { value: JSON.parse(hit), source: 'cache' }; } catch { /* refetch */ } }
   const { items, degraded } = await fetchNews(sym);
   if (items != null) await kvSet(key, JSON.stringify(items), degraded ? TTL.newsFallback : TTL.news);
@@ -263,8 +280,15 @@ export async function GET(request) {
       return Response.json({ symbol: sym, valid: false, reason: 'format' });
     }
 
+    // Every cache key this request can read, fetched in ONE Redis command instead of seven. The
+    // negative-cache short-circuit still happens first and still costs nothing extra: its value
+    // arrives in the same MGET.
+    const KEYS = ['notfound', 'profile', 'quote', 'metric', 'news', 'ma50', 'shortint'];
+    const [nf, pProfile, pQuote, pMetric, pNews, pMa50, pShortInt] =
+      await kvMGet(KEYS.map((k) => `${PFX}${sym}:${k}`));
+
     // negative cache — recently-confirmed not-found symbols short-circuit here
-    if (await kvGet(`${PFX}${sym}:notfound`) != null) {
+    if (nf != null) {
       return Response.json({ symbol: sym, valid: false, reason: 'not_found', meta: { cache: { notfound: 'cache' } } });
     }
 
@@ -273,12 +297,12 @@ export async function GET(request) {
     // (Trade-off: a format-valid-but-nonexistent symbol costs a few extra calls once, then it's
     //  negative-cached — junk is rare and the format gate + notfound cache absorb the common case.)
     const [prof, quote, metric, news, ma50, shortInt] = await Promise.all([
-      cached(`${PFX}${sym}:profile`, TTL.profile, () => fetchProfile(sym)),
-      cached(`${PFX}${sym}:quote`,   TTL.quote,   () => fetchQuote(sym)),
-      cached(`${PFX}${sym}:metric`,  TTL.metric,  () => fetchMetric(sym)),
-      cachedNews(sym),
-      cached(`${PFX}${sym}:ma50`,    TTL.ma50,     () => computeFiftyDayMA(sym)),
-      cached(`${PFX}${sym}:shortint`, TTL.shortint, () => fetchHeroShortInterest(sym)),
+      cached(`${PFX}${sym}:profile`, TTL.profile, () => fetchProfile(sym), pProfile),
+      cached(`${PFX}${sym}:quote`,   TTL.quote,   () => fetchQuote(sym), pQuote),
+      cached(`${PFX}${sym}:metric`,  TTL.metric,  () => fetchMetric(sym), pMetric),
+      cachedNews(sym, pNews),
+      cached(`${PFX}${sym}:ma50`,    TTL.ma50,     () => computeFiftyDayMA(sym), pMa50),
+      cached(`${PFX}${sym}:shortint`, TTL.shortint, () => fetchHeroShortInterest(sym), pShortInt),
     ]);
 
     const v = await resolveValidity(sym, prof.value || {}, quote.value);
