@@ -1211,7 +1211,30 @@ function Workspace() {
   };
 
   const persistVisible = (v) => { try { localStorage.setItem('cp_terminal_visible', JSON.stringify(v)); } catch { /* ignore */ } };
-  const addPanel = (id) => { if (visibleRef.current.includes(id)) return; const v = [...visibleRef.current, id]; setVisible(v); persistVisible(v); setAddOpen(false); };
+  // ── panel stacking ──
+  // Each panel wrapper carries an explicit z-index. That does two things: it makes the front/back
+  // order deterministic instead of DOM order, and — because a positioned element with a numeric
+  // z-index starts its own stacking context — it CONTAINS each panel's internal z-indexes (the
+  // resize grip, the colour menu) inside that panel. Without it those escaped into the shared
+  // container and painted over every other panel.
+  //
+  // Values are renormalised to 1..N on every raise, so they stay well under the drag overlay at 50
+  // and never grow unbounded. A saved layout with no `z` falls back to its position in `visible`,
+  // so existing stations keep working untouched.
+  const zOf = (id) => layout?.[id]?.z ?? (visible.indexOf(id) + 1);
+  const bringToFront = (id) => {
+    const l = layoutRef.current, vis = visibleRef.current;
+    if (!l || !vis.includes(id)) return;
+    const zed = (v) => l[v]?.z ?? (vis.indexOf(v) + 1);
+    // Already on top: skip, so an ordinary click inside a panel costs no state update.
+    if (vis.every((v) => v === id || zed(v) < zed(id))) return;
+    const order = vis.filter((v) => v !== id).sort((a, b) => zed(a) - zed(b)).concat(id);
+    const nl = { ...l };
+    order.forEach((v, i) => { if (nl[v]) nl[v] = { ...nl[v], z: i + 1 }; });
+    setLayout(nl); persist(nl);
+  };
+
+  const addPanel = (id) => { if (visibleRef.current.includes(id)) return; const v = [...visibleRef.current, id]; setVisible(v); persistVisible(v); setAddOpen(false); bringToFront(id); };
   const removePanel = (id) => { const v = visibleRef.current.filter((x) => x !== id); setVisible(v); persistVisible(v); };
   const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); setVisible(DEFAULT_VISIBLE); persistVisible(DEFAULT_VISIBLE); };
 
@@ -1374,7 +1397,10 @@ function Workspace() {
           const def = PANEL_BY_ID[id]; const p = layout[id];
           if (!def || !p) return null;
           return (
-            <div key={id} style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h }}>
+            // Capture phase: raising happens before the drag/resize handlers run, so grabbing a
+            // background panel by its header or corner brings it forward on the same gesture.
+            <div key={id} onPointerDownCapture={() => bringToFront(id)}
+              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, zIndex: zOf(id) }}>
               <PanelCard def={def} draggable colorKey={p.color} onSetColor={(key) => setColor(id, key)}
                 onMoveStart={(e) => start(id, e, 'move')} onResizeStart={(e) => start(id, e, 'resize')}
                 headerRight={headerRightOf(def)} onRemove={() => removePanel(id)}>{bodyOf(def)}</PanelCard>
