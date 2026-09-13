@@ -85,7 +85,7 @@ function NewsRowCard({n, idx}) {
             </span>
           )}
           <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif",
-            fontSize:10, color:C.dim, whiteSpace:"nowrap"}}>
+            fontSize:10, color:C.muted, whiteSpace:"nowrap"}}>
             {n.source}
             {n.mins != null && <span className="cp-num"> · {timeAgo(n.mins)}</span>}
           </span>
@@ -155,7 +155,7 @@ function TickerSearchCard({query, onQueryChange, trending}) {
           letterSpacing:"0.5px", marginBottom:12}}/>
       {trending.length > 0 && (
         <>
-          <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim,
+          <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.muted,
             letterSpacing:"1px", marginBottom:6}}>TRENDING</div>
           <div style={{display:"flex", gap:5, flexWrap:"wrap"}}>
             {trending.map(sym => {
@@ -164,7 +164,10 @@ function TickerSearchCard({query, onQueryChange, trending}) {
                 <button key={sym} onClick={() => onQueryChange(active ? '' : sym)}
                   className="chip-hov cp-tkr"
                   style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, fontWeight:600,
-                    color: active ? "#fff" : C.green,
+                    // White on C.green is 2.95:1 once C.green lightens for dark mode. C.bg is the
+                    // page ground in each theme, so it lands near-white on dark green in light and
+                    // near-black on light green in dark. The chip stays green either way.
+                    color: active ? C.bg : C.green,
                     background: active ? C.green : C.greenLight,
                     border:"none", padding:"4px 9px", borderRadius:4, cursor:"pointer",
                     transition:"all 0.15s"}}>
@@ -288,11 +291,11 @@ export default function NewsFeed() {
           <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.muted}}>
             {loading ? 'loading…' : `${filtered.length} ${filtered.length === 1 ? 'story' : 'stories'}`}
             {filtered.length !== articles.length && articles.length > 0 && (
-              <span style={{color:C.dim}}> of {articles.length}</span>
+              <span style={{color:C.muted}}> of {articles.length}</span>
             )}
           </span>
           <div className="cp-num" style={{display:"flex", alignItems:"center", gap:8, marginLeft:"auto",
-            fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.dim}}>
+            fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.muted}}>
             <Dot/>Updated {timeStr} ET
             <button onClick={loadData} style={{background:"transparent", border:`1px solid ${C.border}`,
               color:C.muted, cursor:"pointer", fontSize:12, padding:"4px 10px",
@@ -313,7 +316,9 @@ export default function NewsFeed() {
               padding:"6px 12px", borderRadius:14, cursor:"pointer", transition:"all 0.15s",
               border:`1px solid ${impactOnly ? '#B23B2E' : C.border}`,
               background: impactOnly ? '#B23B2E' : C.white,
-              color: impactOnly ? '#fff' : '#B23B2E'}}>
+              // Unselected, this literal red sat at 2.86:1 on the dark card. C.red themes: 5.21:1
+              // in dark, unchanged in light. Selected stays white on solid red, which reads in both.
+              color: impactOnly ? '#fff' : C.red}}>
             ⚡ High impact
           </button>
           {['ALL', ...availableCategories].map(cat => {
@@ -325,7 +330,10 @@ export default function NewsFeed() {
                   letterSpacing:"0.5px", padding:"6px 12px", borderRadius:14,
                   border: active ? `1px solid ${C.ink}` : `1px solid ${C.border}`,
                   background: active ? C.ink : (cat === 'ALL' ? C.white : tc.bg),
-                  color: active ? "#fff" : (cat === 'ALL' ? C.ink : tc.c),
+                  // C.ink is near-BLACK in light and near-WHITE in dark, so a literal #fff here
+                  // rendered white-on-white at 1.12:1 in dark mode. C.bg is ink's opposite in both
+                  // themes: 18.7:1 in light, 16.5:1 in dark, and the pill keeps its look either way.
+                  color: active ? C.bg : (cat === 'ALL' ? C.white : tc.c),
                   cursor:"pointer", transition:"all 0.15s"}}>
                 {cat}
               </button>
@@ -347,7 +355,7 @@ export default function NewsFeed() {
       {availableSources.length > 1 && (
         <div style={{background:C.surface, borderBottom:`1px solid ${C.border}`, padding:"8px 24px"}}>
           <div style={{maxWidth:1380, margin:"0 auto", display:"flex", gap:6, flexWrap:"wrap", alignItems:"center"}}>
-            <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.dim, letterSpacing:"0.5px", marginRight:4}}>SOURCES</span>
+            <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.muted, letterSpacing:"0.5px", marginRight:4}}>SOURCES</span>
             {availableSources.map(src => {
               const hidden = hiddenSources.has(src);
               return (

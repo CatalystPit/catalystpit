@@ -73,11 +73,11 @@ export default function TopCatalysts({ limit = 6 }) {
       <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface, display: 'flex', alignItems: 'center', gap: 7 }}>
         <Dot />
         <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>TOP CATALYSTS</span>
-        <span style={{ fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginLeft: 'auto' }}>WHAT MATTERS NOW</span>
+        <span style={{ fontSize: 9, color: C.muted, letterSpacing: '0.8px', marginLeft: 'auto' }}>WHAT MATTERS NOW</span>
       </div>
       <div style={{ padding: 8 }}>
         {items == null ? (
-          <div style={{ padding: '18px 8px', textAlign: 'center', color: C.dim, fontSize: 12 }}>Scanning catalysts…</div>
+          <div style={{ padding: '18px 8px', textAlign: 'center', color: C.muted, fontSize: 12 }}>Scanning catalysts…</div>
         ) : (
           items.map((it, i) => {
             const st = IMPACT_STYLE[it.tier];
@@ -91,7 +91,7 @@ export default function TopCatalysts({ limit = 6 }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                     {st && <span style={{ fontSize: 9, fontWeight: 700, color: st.fg, background: st.bg, borderRadius: 3, padding: '1px 6px' }}>{st.label}</span>}
                     {hasTicker && <span className="cp-tkr" style={{ fontSize: 12, fontWeight: 700, color: C.green }}>{it.ticker}</span>}
-                    <span style={{ marginLeft: 'auto', fontSize: 10, color: C.dim, whiteSpace: 'nowrap' }}>
+                    <span style={{ marginLeft: 'auto', fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>
                       {it.source}{it.published ? <span className="cp-num"> · {timeAgo(minsSince(it.published))}</span> : null}
                     </span>
                   </div>

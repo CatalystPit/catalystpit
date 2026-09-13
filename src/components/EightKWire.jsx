@@ -19,7 +19,7 @@ function Row({ f, onPick }) {
   return (
     <div className="hov" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
       borderLeft: `3px solid ${mat ? '#D9A441' : C.border}`, borderBottom: `1px solid ${C.surface}` }}>
-      <span className="cp-num" style={{ width: 34, fontSize: 10, color: C.dim, flexShrink: 0 }}>
+      <span className="cp-num" style={{ width: 34, fontSize: 10, color: C.muted, flexShrink: 0 }}>
         {timeAgo(minsSince(f.filedAt))}
       </span>
       {onPick ? (
@@ -37,14 +37,14 @@ function Row({ f, onPick }) {
         <span style={{ fontSize: 10, fontWeight: 600, background: chipBg, color: chipFg, borderRadius: 3, padding: '2px 7px', whiteSpace: 'nowrap' }}>
           {f.primaryLabel}
         </span>
-        {extra > 0 && <span style={{ fontSize: 10, color: C.dim }}>+{extra}</span>}
+        {extra > 0 && <span style={{ fontSize: 10, color: C.muted }}>+{extra}</span>}
         <span style={{ fontSize: 11, color: C.muted, fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {f.company}
         </span>
       </div>
       {f.url && (
-        <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: C.dim, textDecoration: 'none', flexShrink: 0 }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = C.green)} onMouseLeave={(e) => (e.currentTarget.style.color = C.dim)}>
+        <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: C.muted, textDecoration: 'none', flexShrink: 0 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = C.green)} onMouseLeave={(e) => (e.currentTarget.style.color = C.muted)}>
           SEC ↗
         </a>
       )}
@@ -70,7 +70,7 @@ export default function EightKWire({ bare = false, limit = 30, onPick = null }) 
     <div style={{ display: 'inline-flex', border: `1px solid ${C.border}`, borderRadius: 5, overflow: 'hidden' }}>
       {[['Material', false], ['All', true]].map(([label, v]) => (
         <button key={label} onClick={() => setAll(v)} style={{
-          background: all === v ? C.green : C.white, color: all === v ? '#fff' : C.muted,
+          background: all === v ? C.green : C.white, color: all === v ? C.bg : C.muted,
           border: 'none', cursor: 'pointer', fontSize: 10, fontWeight: 600, padding: '3px 9px',
           fontFamily: "'DM Sans',sans-serif" }}>{label}</button>
       ))}
@@ -80,7 +80,7 @@ export default function EightKWire({ bare = false, limit = 30, onPick = null }) 
   const body = (
     <div style={{ overflowY: 'auto', flex: bare ? 1 : undefined, maxHeight: bare ? undefined : 420 }}>
       {list == null ? (
-        <div style={{ padding: '24px 12px', textAlign: 'center', color: C.dim, fontSize: 12 }}>Loading the wire…</div>
+        <div style={{ padding: '24px 12px', textAlign: 'center', color: C.muted, fontSize: 12 }}>Loading the wire…</div>
       ) : list.length === 0 ? (
         <div style={{ padding: '24px 12px', textAlign: 'center', color: C.muted, fontSize: 12, fontWeight: 300 }}>
           No {all ? '' : 'material '}8-K filings in the last few days.

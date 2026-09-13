@@ -799,8 +799,10 @@ export function TickerTape({tickers}) {
       )}
       <div style={{position:"absolute", right:0, top:0, bottom:0, display:"flex",
         alignItems:"center", padding:"0 12px 0 32px",
-        background:"linear-gradient(to right, rgba(255,255,255,0) 0%, #FFFFFF 35%)",
-        fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim,
+        // The fade must match the tape it sits on. Hardcoded #FFFFFF painted a white smear across
+        // the dark tape; C.white is #FFFFFF in light, so light mode renders identically.
+        background:`linear-gradient(to right, rgba(255,255,255,0) 0%, ${C.white} 35%)`,
+        fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.muted,
         letterSpacing:"0.8px", pointerEvents:"none"}}>DELAYED</div>
     </div>
   );
@@ -909,7 +911,7 @@ export function MarketSnapshotCard({tickers, loading=false}) {
         <Dot/>
         <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET SNAPSHOT</span>
         <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9,
-          color:C.dim, letterSpacing:"0.8px"}}>DELAYED</span>
+          color:C.muted, letterSpacing:"0.8px"}}>DELAYED</span>
       </div>
       {loading || !hasData ? Array(6).fill(0).map((_, i) => (
         <div key={i} style={{padding:"9px 14px", borderBottom:`1px solid ${C.surface}`}}>
