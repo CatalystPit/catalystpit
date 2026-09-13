@@ -113,12 +113,20 @@ export async function runOwnershipAggregate() {
 
 // Map unpadded CIK → curated featured info (slug/label/manager/category) so featured funds keep their
 // pages. Seeded CIKs come from the config; the rest reuse the CIK the curated cron cached in KV.
+// MEMOISED. This issues one KV read per curated fund that lacks a hard-coded CIK, and it is called
+// twice per ingest pass. A long-running driver loop therefore turned a static lookup into tens of
+// thousands of Redis commands and helped exhaust the Upstash request quota, which takes the news
+// page and every other KV-cached route down with it. The curated list is a constant within a
+// process, so reading it once is enough.
+let _featuredMap = null;
 export async function buildFeaturedMap() {
+  if (_featuredMap) return _featuredMap;
   const map = new Map();
   for (const f of INSTITUTIONS) {
     let cik = f.cik ? unpad(f.cik) : await kvGet(`catalystpit:inst:cik:${f.slug}`);
     if (cik) map.set(unpad(cik), { slug: f.slug, label: f.label, manager: f.manager, category: f.category });
   }
+  _featuredMap = map;
   return map;
 }
 
