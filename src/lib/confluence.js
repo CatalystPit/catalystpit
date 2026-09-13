@@ -9,7 +9,25 @@ import { insiderTrades, congressTrades, fundHoldings, fundFilings } from './sche
 // Sub-scores are rough-but-monotonic for v1 — ranking matters more than absolute values; tune later.
 const WINDOW_DAYS = 90;
 
+// The board is IDENTICAL for every viewer: only how much of it a tier may see differs, and the
+// route slices that after the fact. So the expensive part is computed once per direction and held
+// briefly, instead of re-running a two-quarter 13F roll-up on every request. The response itself
+// stays no-store, because what a given user is allowed to see is not cacheable.
+//
+// The inputs move on cron cadences (insider ingest, congress sync, 13F backfill), so a few minutes
+// of staleness costs nothing and the page stops timing out under load.
+const BOARD_TTL_MS = 10 * 60 * 1000;
+const _boardCache = new Map();   // dir -> { at, value }
+
 export async function computeConfluence(dir = 'bull') {
+  const hit = _boardCache.get(dir);
+  if (hit && Date.now() - hit.at < BOARD_TTL_MS) return hit.value;
+  const value = await computeConfluenceUncached(dir);
+  _boardCache.set(dir, { at: Date.now(), value });
+  return value;
+}
+
+async function computeConfluenceUncached(dir = 'bull') {
   const bull = dir !== 'bear';
   const action = bull ? 'BUY' : 'SELL';
   const since = sql`current_date - make_interval(days => ${WINDOW_DAYS})`;
@@ -40,23 +58,26 @@ export async function computeConfluence(dir = 'bull') {
   const [q0, q1] = qRows.map((r) => r.q);
   const fund = new Map(); // ticker -> { acc, red }
   if (q0) {
-    const holds = await db.select({ ticker: fundHoldings.ticker, cik: fundHoldings.cik, quarter: fundHoldings.quarter, shares: fundHoldings.shares })
-      .from(fundHoldings)
-      .where(and(inArray(fundHoldings.quarter, [q0, q1].filter(Boolean)), isNotNull(fundHoldings.ticker), eq(fundHoldings.putCall, '')));
-    const byKey = new Map(); // `${ticker}|${cik}` -> { cur, prev }
-    for (const h of holds) {
-      const k = `${h.ticker}|${h.cik}`;
-      const e = byKey.get(k) || { cur: 0, prev: 0 };
-      if (h.quarter === q0) e.cur = h.shares || 0; else e.prev = h.shares || 0;
-      byKey.set(k, e);
-    }
-    for (const [k, e] of byKey) {
-      const ticker = k.split('|')[0];
-      const f = fund.get(ticker) || { acc: 0, red: 0 };
-      if (e.cur > e.prev) f.acc += 1;          // new or increased
-      else if (e.cur < e.prev) f.red += 1;     // reduced or closed
-      fund.set(ticker, f);
-    }
+    // Counted IN POSTGRES, not in Node. This used to select every holding row for both quarters and
+    // fold them in JavaScript. That was tolerable at ~500k rows; the full-universe backfill took the
+    // two quarters past 2.7 MILLION, so the route was shipping and parsing all of it on every
+    // request and Pit Consensus slowed to a crawl and then stopped loading. The grouping is
+    // identical, it just happens where the data already is, and returns one row per ticker.
+    const res = await db.execute(sql`
+      with per_fund as (
+        select ticker, cik,
+               sum(case when quarter = ${q0} then shares else 0 end) cur,
+               sum(case when quarter = ${q1 ?? q0} then shares else 0 end) prev
+          from fund_holdings
+         where quarter in (${q0}, ${q1 ?? q0})
+           and ticker is not null and put_call = ''
+         group by ticker, cik
+      )
+      select ticker,
+             count(*) filter (where cur > prev)::int acc,
+             count(*) filter (where cur < prev)::int red
+        from per_fund group by ticker`);
+    for (const r of (res.rows ?? res)) fund.set(r.ticker, { acc: Number(r.acc) || 0, red: Number(r.red) || 0 });
   }
 
   // ── Merge + score ──
