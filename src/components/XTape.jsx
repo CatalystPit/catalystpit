@@ -29,11 +29,22 @@ const CREATE_TIMEOUT = 15000;             // createTimeline must settle or we tr
 // all session showed whatever existed when the Terminal was opened. The only way to get new posts
 // out of an embed we cannot read into is to rebuild it.
 //
-// Five minutes, not seconds: X's syndication endpoint rate-limits PER VISITOR IP and answers 429,
-// and a rebuild is a fresh syndication request. A trader with the Terminal open all day makes ~96
-// requests, which is comfortably inside the allowance the existing retry/backoff was written for.
-const REFRESH_MS = 5 * 60 * 1000;
+// Cadence follows the trading week, read from the VIEWER's own clock: 30s Monday-Friday when the
+// market is the point of the panel, 60s at the weekend when it is not.
+//
+// Each rebuild is a fresh syndication request and X rate-limits per visitor IP with 429s, so this
+// leans on the existing retry/backoff: a refused build backs off 3s/8s/20s and, if it still cannot
+// paint, leaves the tape that is already on screen untouched.
+const WEEKDAY_REFRESH_MS = 30 * 1000;
+const WEEKEND_REFRESH_MS = 60 * 1000;
 const HIDDEN_REFRESH_MS = 30 * 60 * 1000; // backgrounded: keep it alive, stop spending requests
+// Polled finer than the shortest cadence, so a 30s target actually lands near 30s rather than 60.
+const TICK_MS = 5000;
+// getDay() reads the viewer's own timezone, which is what "their Saturday" means.
+const visibleRefreshMs = () => {
+  const d = new Date().getDay();
+  return (d === 0 || d === 6) ? WEEKEND_REFRESH_MS : WEEKDAY_REFRESH_MS;
+};
 
 // createTimeline returns X's own promise. It normally resolves (with the element, or with undefined
 // when X declines), but a hung syndication request can leave it pending forever, and a promise that
@@ -191,16 +202,16 @@ export default function XTape({ height = 620, onClose, bare = false }) {
   useEffect(() => {
     if (!LIST_ID) return;
     let timer;
-    const due = () => Date.now() - builtAtRef.current >= (document.hidden ? HIDDEN_REFRESH_MS : REFRESH_MS);
+    const due = () => Date.now() - builtAtRef.current >= (document.hidden ? HIDDEN_REFRESH_MS : visibleRefreshMs());
 
     const tick = () => {
       // Never rebuild under the trader's cursor. The embed is cross-origin, so its internal scroll
       // position cannot be restored across a rebuild — the fix is to not rebuild while they are
       // reading it. The next tick picks it up as soon as they move away.
       if (!hoverRef.current && due()) setNonce((n) => n + 1);
-      timer = setTimeout(tick, 30000);      // cheap poll; the real cadence is the due() check
+      timer = setTimeout(tick, TICK_MS);    // cheap poll; the real cadence is the due() check
     };
-    timer = setTimeout(tick, 30000);
+    timer = setTimeout(tick, TICK_MS);
 
     // Coming back to a backgrounded tab checks for missed posts immediately instead of waiting.
     const wake = () => { if (!document.hidden && !hoverRef.current && due()) setNonce((n) => n + 1); };
