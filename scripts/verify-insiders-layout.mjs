@@ -113,9 +113,15 @@ const tbl = page.slice(page.indexOf('minWidth:INSIDER_TX_MIN_WIDTH'));
 ok('header and rows share ONE table element',
   tbl.indexOf('<thead>') < tbl.indexOf('<tbody>') && tbl.indexOf('<tbody>') < tbl.indexOf('</table>'));
 ok('the scroll container wraps the whole table',
-  /ref=\{txScrollRef\}[\s\S]{0,400}<table style=\{\{width:"100%",minWidth:INSIDER_TX_MIN_WIDTH/.test(page));
+  /ref={setTxBox}[\s\S]{0,400}<table style=\{\{width:"100%",minWidth:INSIDER_TX_MIN_WIDTH/.test(page));
 ok('the card still clips, so the page grows no scrollbar of its own',
-  /borderRadius:8,overflow:"hidden"\}\}>\s*<div style=\{\{overflowX:"auto"/.test(page));
+  /borderRadius:8,overflow:"hidden"\}\}>\s*<div ref=\{setTxBox\}/.test(page));
+// The defect that made the first bounded-viewport attempt a no-op in production: the hook was keyed
+// on a ref whose .current is null on mount, because the table renders only after the filings load.
+ok('overflow is measured from the NODE, not a ref that is null on mount',
+  /function useHOverflow\(node\)/.test(page) && /\}, \[node\]\);/.test(page));
+ok('...attached with a callback ref so the effect runs when the box appears',
+  /ref=\{setTxBox\}/.test(page) && /useState\(null\)/.test(page));
 ok('the shell is inset by the open dock, so the table cannot sit under it',
   /margin-right: max\(var\(--cp-pit, 0px\), var\(--cp-watch, 0px\)\)/.test(layout));
 ok('the inset is CSS, so collapsing a dock recalculates on the same frame',

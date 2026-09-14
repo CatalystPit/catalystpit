@@ -106,6 +106,16 @@ try {
   const g = await ev(GEOM);
   console.log('\n-- geometry, docks open, scrolled into the list --');
   console.log(JSON.stringify(g, null, 1));
+  console.log('\n-- computed on the scroll box --');
+  console.log(await ev(`(() => {
+    const t=[...document.querySelectorAll('table')].find(t=>[...t.querySelectorAll('thead th')].some(th=>th.textContent.trim().startsWith('VALUE')));
+    const s=t.parentElement, cs=getComputedStyle(s), th=t.querySelector('thead th');
+    const r=s.getBoundingClientRect();
+    return JSON.stringify({cls:s.className, overflowX:cs.overflowX, overflowY:cs.overflowY, maxHeight:cs.maxHeight,
+      boxTop:Math.round(r.top), boxBottom:Math.round(r.bottom), viewportH:window.innerHeight,
+      scrollbarH:s.offsetHeight-s.clientHeight, thPosition:getComputedStyle(th).position,
+      barOnScreen: r.bottom <= window.innerHeight + 1});
+  })()`));
   await shot('insiders-docks-open-scrolled');
 
   // And at the very bottom of the page, where the old scrollbar lived.

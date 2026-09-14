@@ -11,19 +11,22 @@ import { useRouter } from 'next/navigation';
 // Does this scroll box currently overflow horizontally? Recomputed by ResizeObserver, so opening or
 // collapsing a dock re-answers it on the frame the layout changes — no measuring code, no listeners
 // to keep in step with the CSS that actually moves the shell.
-function useHOverflow(ref) {
+// Takes the NODE, not a ref. A ref would be null when this first runs: the table is rendered only
+// after the filings arrive, so an effect keyed on the ref object measures nothing and never runs
+// again — which is exactly how the first version of this shipped doing nothing at all. A callback
+// ref re-runs the effect at the moment the box actually attaches.
+function useHOverflow(node) {
   const [over, setOver] = useState(false);
   useEffect(() => {
-    const box = ref.current;
-    if (!box || typeof ResizeObserver === 'undefined') return undefined;
-    const measure = () => setOver(box.scrollWidth > box.clientWidth + 1);
+    if (!node || typeof ResizeObserver === 'undefined') { setOver(false); return undefined; }
+    const measure = () => setOver(node.scrollWidth > node.clientWidth + 1);
     measure();
     const ro = new ResizeObserver(measure);
-    ro.observe(box);
-    if (box.firstElementChild) ro.observe(box.firstElementChild);   // the table itself
+    ro.observe(node);
+    if (node.firstElementChild) ro.observe(node.firstElementChild);   // the table itself
     window.addEventListener('resize', measure);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [ref]);
+  }, [node]);
   return over;
 }
 
@@ -639,8 +642,8 @@ export default function InsidersPage() {
   // only reorder the current page and quietly lie about "highest conviction".
   const [convSort, setConvSort] = useState(false);
   // The transactions table's scroll box, and whether it currently overflows sideways.
-  const txScrollRef = useRef(null);
-  const txOverflows = useHOverflow(txScrollRef);
+  const [txBox, setTxBox] = useState(null);
+  const txOverflows = useHOverflow(txBox);
   const [sortBy,  setSortBy]  = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [days, setDays] = useState(0);          // 0 = any window (folded-in screener filter)
@@ -1042,7 +1045,7 @@ export default function InsidersPage() {
                 All of this applies ONLY while the table actually overflows. With the docks closed it
                 fits (1330px of workspace), nothing is bounded, and the page is exactly as before. */}
             <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-              <div ref={txScrollRef} className={txOverflows ? "cp-tscroll" : undefined}
+              <div ref={setTxBox} className={txOverflows ? "cp-tscroll" : undefined}
                 style={{overflow:txOverflows?"auto":"visible",overflowX:"auto",maxWidth:"100%",
                   maxHeight:txOverflows?"calc(100vh - 150px)":undefined,
                   minHeight:txOverflows?360:undefined}}>
