@@ -5,7 +5,64 @@ import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch
 import { meaningFor } from '../../lib/insider-meaning';
 import { ownershipChangePct, fmtOwnershipPct } from '../../lib/insider-format';
 import { treemap } from '../../lib/treemap';
+import { INSIDER_TX_COLUMNS, INSIDER_TX_MIN_WIDTH } from '../../lib/insider-columns.mjs';
 import { useRouter } from 'next/navigation';
+
+// A horizontal scrollbar for `targetRef`, pinned to the bottom of the viewport.
+//
+// WHY THIS EXISTS. The transactions table is 1326px of declared columns. With both shared docks
+// closed the workspace is 1330px and it fits exactly; open the Watchlist or The Pit and the shell
+// gives up 330px, leaving 1128px, so VALUE begins at x=1124 inside a 1128px box and CONVICTION is
+// past the edge. The box has always been able to scroll — but its scrollbar lives on ITS bottom
+// edge, and with a page of filings that edge is ~1400px below the fold. Measured on production:
+// boxW 1128, scrollWidth 1326, box bottom 1438px below the viewport. So the columns were reachable
+// only by a trackpad gesture nobody advertises. This renders the same scroll position as a bar the
+// trader can actually see and drag, and only when the table really does overflow.
+//
+// It sits OUTSIDE the table card on purpose: the card is `overflow:hidden`, which would make it the
+// sticky containing block and nail the bar to the card's bottom, exactly where it already was.
+function HScrollBar({ targetRef }) {
+  const barRef = useRef(null);
+  const [width, setWidth] = useState(0);   // the scrollable width, or 0 when nothing overflows
+
+  // Re-measure whenever the usable width changes. ResizeObserver on the scroll box covers a dock
+  // expanding or collapsing, a window resize and a sidebar animating, all through one path — and it
+  // fires on the frame the layout actually changes, so there is nothing to keep in sync by hand.
+  useEffect(() => {
+    const box = targetRef.current;
+    if (!box || typeof ResizeObserver === 'undefined') return undefined;
+    const measure = () => setWidth(box.scrollWidth > box.clientWidth + 1 ? box.scrollWidth : 0);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    if (box.firstElementChild) ro.observe(box.firstElementChild);   // the table itself
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [targetRef]);
+
+  // Two-way, with a lock so one element's scroll event cannot bounce off the other.
+  useEffect(() => {
+    const box = targetRef.current, bar = barRef.current;
+    if (!box || !bar) return undefined;
+    let lock = false;
+    const fromBox = () => { if (lock) return; lock = true; bar.scrollLeft = box.scrollLeft; lock = false; };
+    const fromBar = () => { if (lock) return; lock = true; box.scrollLeft = bar.scrollLeft; lock = false; };
+    box.addEventListener('scroll', fromBox, { passive: true });
+    bar.addEventListener('scroll', fromBar, { passive: true });
+    bar.scrollLeft = box.scrollLeft;
+    return () => { box.removeEventListener('scroll', fromBox); bar.removeEventListener('scroll', fromBar); };
+  }, [targetRef, width]);
+
+  if (!width) return null;   // full-width layout: nothing overflows, so nothing is added
+  return (
+    <div ref={barRef} className="cp-hbar" aria-hidden="true"
+      style={{position:"sticky",bottom:0,zIndex:5,overflowX:"auto",overflowY:"hidden",
+        height:12,background:C.white,borderTop:`1px solid ${C.border}`,
+        borderRadius:"0 0 8px 8px",marginTop:-1}}>
+      <div style={{width,height:1}} />
+    </div>
+  );
+}
 
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
 const Skel = ({w="100%",h=14,mb=6}) => <div style={{width:w,height:h,borderRadius:3,marginBottom:mb,background:"linear-gradient(90deg,var(--cp-surface2,#E8EAE5) 25%,var(--cp-surface,#F0F2EE) 50%,var(--cp-surface2,#E8EAE5) 75%)",backgroundSize:"200% 100%",animation:"cp-shimmer 1.4s infinite"}}/>;
@@ -618,6 +675,8 @@ export default function InsidersPage() {
   // Conviction sorts on the SERVER: paging is server-side, so a client-side sort would
   // only reorder the current page and quietly lie about "highest conviction".
   const [convSort, setConvSort] = useState(false);
+  // The transactions table's horizontal scroll box, so the sticky scrollbar can drive it.
+  const txScrollRef = useRef(null);
   const [sortBy,  setSortBy]  = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [days, setDays] = useState(0);          // 0 = any window (folded-in screener filter)
@@ -769,6 +828,16 @@ export default function InsidersPage() {
            effect, which would flash this strip dark-green for a frame in dark mode. */
         .cp-sec-hd{background:${C.surface};color:${C.dim}}
         :root:not([data-theme="dark"]) .cp-sec-hd{background:#1E5C38;color:#FFFFFF}
+        /* The table's own horizontal scrollbar sits at the bottom edge of a card that is over a
+           thousand pixels tall, so it is off screen and unusable. This is the same scrollbar,
+           pinned to the bottom of the viewport for as long as the table is in view. Always drawn
+           rather than overlay-auto-hidden, because it is the affordance that tells the trader the
+           table continues to the right. */
+        .cp-hbar{scrollbar-width:thin;scrollbar-color:${C.border2||C.dim} transparent}
+        .cp-hbar::-webkit-scrollbar{height:10px}
+        .cp-hbar::-webkit-scrollbar-track{background:${C.surface};border-radius:5px}
+        .cp-hbar::-webkit-scrollbar-thumb{background:${C.dim};border-radius:5px}
+        .cp-hbar::-webkit-scrollbar-thumb:hover{background:${C.green}}
         *{box-sizing:border-box}
       `}</style>
 
@@ -994,17 +1063,22 @@ export default function InsidersPage() {
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,fontSize:12,color:C.dim,fontFamily:"'DM Sans',sans-serif"}}>
               {searching ? `${rows.length} filings for ${debouncedSearch}` : `${VIEW_LABEL[activeView]} · ${rows.length} filings`}
             </div>
+            {/* The table keeps its declared column layout at every workspace width. When the
+                Watchlist or Pit dock takes 330px out of the shell, this box scrolls horizontally
+                instead of the columns being compressed — so VALUE and CONVICTION stay reachable and
+                readable, and because the header lives in the same <table> as the rows it scrolls
+                with them and cannot fall out of alignment. The card clips, so the PAGE never grows
+                a horizontal scrollbar of its own, and the docks are fixed-position siblings of the
+                shell, which is margin-inset by exactly their width: nothing renders underneath
+                them. No JS measures anything — the shell margin is CSS, so collapsing a dock
+                recalculates the usable width on the same frame the layout changes. */}
+            <div style={{position:"relative"}}>
             <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-              <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",minWidth:1180,borderCollapse:"collapse",tableLayout:"fixed"}}>
-                <colgroup><col style={{width:96}} /><col style={{width:88}} /><col style={{width:92}} /><col style={{width:128}} /><col style={{width:164}} /><col style={{width:150}} /><col style={{width:44}} /><col style={{width:92}} /><col style={{width:92}} /><col style={{width:80}} /><col style={{width:96}} /><col style={{width:92}} /><col style={{width:110}} /></colgroup>
+              <div ref={txScrollRef} style={{overflowX:"auto",maxWidth:"100%"}}>
+              <table style={{width:"100%",minWidth:INSIDER_TX_MIN_WIDTH,borderCollapse:"collapse",tableLayout:"fixed"}}>
+                <colgroup>{INSIDER_TX_COLUMNS.map(c=><col key={c.label} style={{width:c.width}} />)}</colgroup>
                 <thead><tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
-                  {[
-                    {label:"Filed",sortKey:"DATE"},{label:"Traded",sortKey:null},{label:"Ticker",sortKey:"TICKER"},{label:"Company",sortKey:null},
-                    {label:"Insider",sortKey:null},{label:"Type",sortKey:null},{label:"Code",sortKey:null},{label:"Shares",sortKey:"SHARES",align:"right"},
-                    {label:"Owned",sortKey:null,align:"right"},{label:"ΔOwn",sortKey:null,align:"right"},
-                    {label:"Avg Price",sortKey:null,align:"right"},{label:"Value",sortKey:"VALUE",align:"right"},{label:"Conviction",sortKey:null,align:"right",server:true},
-                  ].map(h=>{
+                  {INSIDER_TX_COLUMNS.map(h=>{
                     if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>CONVICTION{convSort?' ↓':''}</th>;
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
                     return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 10px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{h.label.toUpperCase()}{arrow}</th>;
@@ -1012,7 +1086,7 @@ export default function InsidersPage() {
                 </tr></thead>
                 <tbody>
                   {rows.length===0 ? (
-                    <tr><td colSpan={13} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
+                    <tr><td colSpan={INSIDER_TX_COLUMNS.length} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                       <td className="cp-num" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
@@ -1050,7 +1124,10 @@ export default function InsidersPage() {
                       <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.ownedAfter!=null?Math.round(ins.ownedAfter).toLocaleString('en-US'):'—'}</td>
                       <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':fmtOwnershipPct(ins.ownChange)}</td>
                       <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fmtPrice(ins.avgPrice)}</td>
-                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:actionStyles(ins.type).fg}}>{ins.value}</td>
+                      {/* nowrap like every other figure on the row. Without it this was the one
+                          numeric cell that could break inside its fixed-width box, which is why
+                          VALUE was the column that visibly broke first. */}
+                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,whiteSpace:"nowrap",color:actionStyles(ins.type).fg}}>{ins.value}</td>
                       <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}><ConvictionCell ins={ins} /></td>
                     </tr>
                   ))}
@@ -1080,6 +1157,8 @@ export default function InsidersPage() {
                   </div>
                 </div>
               )}
+            </div>
+            <HScrollBar targetRef={txScrollRef} />
             </div>
 
             {/* Server-side pagination (Pro; ticker drill-down + free preview excluded) */}
