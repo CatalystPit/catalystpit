@@ -14,6 +14,7 @@
 import { macroImpact, criticalPredicate, isCompletePhrase } from './news-normalize.mjs';
 import { materiallyNonEnglish } from './language.mjs';
 import { isPricePrint } from './x-story.mjs';
+import { classifyCatalyst, refusalReason } from './x-relevance.mjs';
 
 // ── how old is too old to call it breaking market information ────────────────
 export const MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -250,9 +251,25 @@ export function publicationVerdict(ev, now = Date.now()) {
     if (words(headline) <= 7 && TRAILING_FRAGMENT.test(headline) && !/[.%$\d]/.test(headline)) {
       return no('incomplete or fragmentary wording');
     }
+
+    // ── RELEVANCE: the event must be a catalyst somebody can trade ───────────
+    // HIGH used to be the whole test, on the reasoning that Pit Wire had already judged the event
+    // and the account held no second vote. Measured on the live account that did not hold up: the
+    // score is saturated — 60 of 61 posted events came back category MARKETS at importance HIGH,
+    // the same score carried by "Fireplace expert discusses how remodeling can upgrade a home".
+    // A threshold on a number that says HIGH about both a lifestyle PR piece and an FDA approval
+    // cannot separate them.
+    //
+    // So the question changed from "how important is this" to "WHAT KIND OF EVENT IS THIS", which
+    // is answered deterministically from fields the pipeline already produces — no extra model
+    // call, and nothing read that Pit Wire did not already compute.
+    const catalyst = classifyCatalyst(ev);
+    if (!catalyst) return no(refusalReason(ev));
+
     return {
       publish: true,
       reason: null,
+      catalyst,
       breaking: computeBreaking({
         headline,
         macro: macroImpact(headline),

@@ -40,8 +40,11 @@ for (const [label, extra] of [
 ok('a news-pending halt never posts either', !build(halt).publishable);
 ok('a large-cap pause never posts either',
   !build({ ...halt, headline: 'AAPL halted, volatility pause', tickers: ['AAPL'], market_cap: 3.2e12 }).publishable);
+// A production halt is an OPERATIONS catalyst, not an exchange halt — the exclusion above must not
+// reach it. It is company-scoped, so it carries a symbol like any other company event.
 ok('a non-halt event that merely uses the word is unaffected',
-  build({ headline: 'Company halts production at its main plant after fire', importance: 3 }).publishable);
+  build({ headline: 'Company halts production at its main plant after fire', importance: 3, tickers: ['ACME'] }).publishable,
+  build({ headline: 'Company halts production at its main plant after fire', importance: 3, tickers: ['ACME'] }).suppressed);
 
 console.log('\n=== 3. facts the event holds are not thrown away ===');
 const saudi = { headline: 'Saudi Arabia shuts East-West pipeline after drone damage',

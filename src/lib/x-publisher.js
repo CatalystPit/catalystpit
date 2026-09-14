@@ -9,6 +9,7 @@ import { sql } from 'drizzle-orm';
 import { createHmac, randomBytes } from 'node:crypto';
 import { buildCandidate, resolveMode, canPublish, cashtags } from './x-autopost.mjs';
 import { backfillTickers } from './primary-events';
+import { catalystKey, classifyCatalyst, SAME_EVENT_WINDOW_MS } from './x-relevance.mjs';
 
 export const mode = () => resolveMode(process.env.X_AUTOPOST_MODE);
 
@@ -21,7 +22,7 @@ export const mode = () => resolveMode(process.env.X_AUTOPOST_MODE);
 async function eligibleEvents(sinceHours, limit) {
   const res = await db.execute(sql`
     select e.seq, e.headline, e.summary, e.headline_status, e.importance, e.tickers, e.source_kind,
-           e.source_type, e.category, e.source_headline, e.published_at,
+           e.source_type, e.category, e.source_headline, e.published_at, e.facts, e.entity,
            array(
              select distinct m.source from primary_events m
               where m.seq = e.seq or m.cluster_id = e.seq
@@ -73,6 +74,28 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
        and created_at > now() - interval '24 hours'
      order by created_at desc limit 200`)).rows ?? [];
 
+  // ── one post per underlying event ──────────────────────────────────────────
+  // A THIRD dedupe layer, narrower than the two that already exist and replacing neither. Canonical
+  // clustering collapses two reports of one event into one row, and UNIQUE(event_seq) means a
+  // canonical event yields exactly one candidate. What neither can see is two reports worded so
+  // differently that clustering kept them apart — measured live, Seeking Alpha's "High Tide reports
+  // non-GAAP EPS of C$0.12 and revenue of C$198.82M" and PR Newswire's "High Tide reports third
+  // quarter 2026 revenue of $199 million" were two canonical events for one earnings report.
+  //
+  // Keyed on subject + catalyst type, which is what the two share, and applied only to types where
+  // a repeat inside the window IS the same event. Two banks downgrading one stock stay two posts.
+  const recent = (await db.execute(sql`
+    select e.seq, e.headline, e.tickers, e.entity, e.facts, c.created_at
+      from x_post_candidates c join primary_events e on e.seq = c.event_seq
+     where c.status in ('dry_run', 'pending', 'posted')
+       and c.created_at > now() - ${Math.round(SAME_EVENT_WINDOW_MS / 1000)} * interval '1 second'
+     order by c.created_at desc limit 400`)).rows ?? [];
+  const told = new Set();
+  for (const p of recent) {
+    const k = catalystKey(p, classifyCatalyst(p));
+    if (k) told.add(k);
+  }
+
   for (const ev of rows) {
     // No market-reaction reading is passed. The only change figure we hold is a daily screener
     // value that is hours to days old, and presenting that as the reaction to a breaking event
@@ -103,6 +126,22 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
       continue;
     }
 
+    // Already told, as a different canonical event. Recorded like any other suppression so the
+    // decision is auditable, and recorded against event_seq so it is judged once, not on a loop.
+    const key = catalystKey(ev, c.catalyst);
+    if (key && told.has(key)) {
+      out.suppressed++;
+      out.reasons['same event already posted'] = (out.reasons['same event already posted'] || 0) + 1;
+      await db.execute(sql`
+        insert into x_post_candidates
+          (event_seq, reason, post_text, char_count, shape, ticker, impact, mode, status, failure_reason)
+        values (${ev.seq}, ${c.reason}, ${ev.headline ?? ''}, 0, 'suppressed',
+                ${cashtags(ev)[0] ?? null}, ${ev.importance ?? null}, ${m},
+                'suppressed', ${`same event already posted (${key})`})
+        on conflict (event_seq) do nothing`);
+      continue;
+    }
+
     // ON CONFLICT DO NOTHING on the unique event_seq: the duplicate guard is the schema's, so a
     // concurrent pass or a later merge cannot produce a second row for one event.
     const ins = await db.execute(sql`
@@ -116,6 +155,7 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
     if ((ins.rows ?? ins)?.length) {
       out.created++;
       // Appended so a later event in THIS SAME pass sees it as a prior post.
+      if (key) told.add(key);
       priors.unshift({ headline: ev.headline, story_key: c.storyKey, post_facts: c.facts, created_at: new Date().toISOString() });
     }
   }
@@ -125,7 +165,7 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
 // ── publishing a pass ────────────────────────────────────────────────────────
 // At most this many posts per cron run, so a backlog can never empty itself onto the timeline in
 // one burst. The story guard already limits repetition; this limits VOLUME.
-export const MAX_PER_RUN = 3;
+export const MAX_PER_RUN = 12;
 
 /**
  * Publish the candidates waiting in `pending`, oldest first. In any mode but `live` this returns

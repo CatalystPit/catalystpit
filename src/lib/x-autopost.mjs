@@ -10,6 +10,7 @@
 import { publicationVerdict } from './x-quality.mjs';
 import { isTaxonomyLabel } from './news-normalize.mjs';
 import { storyVerdict, factsOf } from './x-story.mjs';
+import { groundedFigures, subjectTickers } from './x-relevance.mjs';
 
 export const MODES = ['off', 'dry_run', 'live'];
 
@@ -263,11 +264,11 @@ export function cashtags(ev) {
 //   macro / geopolitical        BREAKING: <event>
 //   ticker-specific             $TICKER: <event>
 //   exceptional ticker event    BREAKING: $TICKER <event>   (exceptional = CRITICAL)
-export function formatPost(ev, reading = null, now = Date.now(), breaking = null) {
+export function formatPost(ev, reading = null, now = Date.now(), breaking = null, catalyst = null) {
   // Every public company the canonical event resolved, not just the first. A two-company event —
   // an acquisition, a supply deal, a licensing agreement — is about both of them, and tagging only
   // the acquirer leaves the other side silently untagged.
-  const tags = cashtags(ev);
+  const tags = cashtags(catalyst ? { ...ev, tickers: subjectTickers(ev, catalyst) } : ev);
   const ticker = tags[0] || null;
   let body = sanitize(ev?.headline);
   if (!body) return { ok: false, error: 'no headline' };
@@ -308,8 +309,20 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   const tagStr = tags.map((t) => `$${t}`).join(' ');
   const prefix = tagStr ? (brk ? `BREAKING: ${tagStr} ` : `${tagStr}: `) : (brk ? 'BREAKING: ' : '');
 
-  // Add back a fact the event holds and the headline dropped, in the source's own words.
-  const extra = supportingClause(body, ev?.summary);
+  // THE NUMBERS THAT MATTER, first. "$BUR: Burford Capital prices share offering" says a financing
+  // happened; the size, the coupon and the proceeds say what it costs, and those are what a trader
+  // reads. They are copied verbatim out of the event's own summary — see groundedFigures, which
+  // does no arithmetic of any kind — and only figures the headline does not already print are
+  // added, so nothing is ever repeated or invented.
+  const figures = catalyst ? groundedFigures(ev, catalyst) : [];
+  if (figures.length) {
+    const merged = `${body.replace(/[.\s]+$/, '')}; ${figures.join(', ')}`;
+    if (merged.length <= MAX_POST - 24) body = merged;
+  }
+
+  // Failing that, a fact the event holds and the headline dropped, in the source's own words. The
+  // general clause only runs when no typed figure was found, so the two cannot both append.
+  const extra = figures.length ? null : supportingClause(body, ev?.summary);
   if (extra) {
     const merged = `${body.replace(/[.\s]+$/, '')}; ${extra}`;
     if (merged.length <= MAX_POST - 24) body = merged;
@@ -354,7 +367,10 @@ export function buildCandidate(ev, reading = null, now = Date.now(), priorPosts 
       suppressed: quality.reason, terminal: quality.terminal };
   }
 
-  const post = formatPost(ev, reading, now, quality.breaking);
+  // The catalyst the gate identified is passed to the formatter, which uses it to decide WHICH
+  // grounded number the post should carry — an offering's size reads differently from an earnings
+  // surprise — and is handed back to the caller for the same-event dedupe key.
+  const post = formatPost(ev, reading, now, quality.breaking, quality.catalyst);
   if (!post.ok) return { eligible: true, publishable: false, reason: verdict.reason,
     suppressed: post.error, terminal: true };
 
@@ -366,5 +382,6 @@ export function buildCandidate(ev, reading = null, now = Date.now(), priorPosts 
   }
 
   return { eligible: true, publishable: true, reason: verdict.reason, breaking: quality.breaking,
+    catalyst: quality.catalyst ?? null,
     storyKey: story.storyKey, facts: [...factsOf(ev.headline)].join(','), ...post };
 }

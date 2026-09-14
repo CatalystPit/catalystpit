@@ -23,7 +23,7 @@ ok('a BREAKING company event carries the cashtag after the label',
   /^BREAKING: \$KD /.test(text({ headline: 'Kyndryl to acquire Healthcare IT Leaders', tickers: ['KD'], importance: 3 })),
   text({ headline: 'Kyndryl to acquire Healthcare IT Leaders', tickers: ['KD'], importance: 3 }));
 ok('a non-breaking company event leads with the cashtag',
-  /^\$COST: /.test(text({ headline: 'Costco raises motor oil prices and limits purchases to 2 cases',
+  /^\$COST: /.test(text({ headline: 'Costco reports Q4 EPS of $5.87 and revenue of $79.7 billion',
     tickers: ['COST'], importance: 2, sources: ['SEEKINGALPHA'] })));
 
 console.log('\n=== multiple companies ===');
@@ -52,14 +52,14 @@ console.log('\n=== share classes survive exactly ===');
 ok('a dotted class is kept', cashtags({ tickers: ['BRK.B'] }).join(',') === 'BRK.B');
 ok('a hyphenated class is kept', cashtags({ tickers: ['BF-B'] }).join(',') === 'BF-B');
 ok('a dotted class is not widened or trimmed',
-  /\$BRK\.B:/.test(text({ headline: 'Berkshire Hathaway Class B discloses a new stake', tickers: ['BRK.B'], importance: 2 })),
-  text({ headline: 'Berkshire Hathaway Class B discloses a new stake', tickers: ['BRK.B'], importance: 2 }));
+  /\$BRK\.B:/.test(text({ headline: 'Berkshire Hathaway Class B discloses a 5.2% stake', tickers: ['BRK.B'], importance: 2 })),
+  text({ headline: 'Berkshire Hathaway Class B discloses a 5.2% stake', tickers: ['BRK.B'], importance: 2 }));
 ok('GOOG is not widened to GOOGL', cashtags({ tickers: ['GOOG'] }).join(',') === 'GOOG');
 // The dot in a class is a regex metacharacter. Unescaped, the prefix-strip would match "BRKXB " and
 // eat a real character off the front of the sentence.
 ok('the prefix strip does not eat a character on a dotted class',
-  /Berkshire/.test(text({ headline: 'BRK.B: Berkshire Hathaway discloses a new stake', tickers: ['BRK.B'], importance: 2 })),
-  text({ headline: 'BRK.B: Berkshire Hathaway discloses a new stake', tickers: ['BRK.B'], importance: 2 }));
+  /Berkshire/.test(text({ headline: 'BRK.B: Berkshire Hathaway discloses a 5.2% stake', tickers: ['BRK.B'], importance: 2 })),
+  text({ headline: 'BRK.B: Berkshire Hathaway discloses a 5.2% stake', tickers: ['BRK.B'], importance: 2 }));
 
 console.log('\n=== the symbol is never printed twice ===');
 ok('a symbol-prefixed canonical headline is de-duplicated',
@@ -80,10 +80,10 @@ const idx = buildIndex([
   { ticker: 'KD', company: 'Kyndryl Holdings Inc' },
 ]);
 ok('Costco resolves through the shared resolver',
-  resolveCompanies('Costco raises motor oil prices and limits purchases', idx).join(',') === 'COST');
-const resolved = resolveCompanies('Costco raises motor oil prices and limits purchases', idx);
+  resolveCompanies('Costco reports Q4 EPS of $5.87 and revenue of $79.7 billion', idx).join(',') === 'COST');
+const resolved = resolveCompanies('Costco reports Q4 EPS of $5.87 and revenue of $79.7 billion', idx);
 ok('...and that is exactly what the post tags',
-  /^\$COST: /.test(text({ headline: 'Costco raises motor oil prices and limits purchases to 2 cases',
+  /^\$COST: /.test(text({ headline: 'Costco reports Q4 EPS of $5.87 and revenue of $79.7 billion',
     tickers: resolved, importance: 2 })));
 ok('an unresolvable name yields no cashtag at all',
   resolveCompanies('Saudi Arabia shuts East-West pipeline', idx).length === 0);

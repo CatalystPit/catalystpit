@@ -135,9 +135,15 @@ ok('a real energy-infrastructure event publishes as BREAKING',
 // established public company is suppressed, fail closed. That is the specified behaviour, and it
 // means most FDA news waits on the ticker resolver rather than going out unattributed.
 ok('an FDA approval clears the substance test', gate('Nasus Pharma wins FDA approval').reason !== 'no concrete substance');
-// A missing ticker is no longer a reason to suppress a HIGH/CRITICAL event.
-ok('without a resolved ticker a CRITICAL approval still publishes',
-  gate('Nasus Pharma wins FDA approval', { importance: 3 }).publish);
+// POLICY, revised after the account went live: a COMPANY-specific catalyst needs a resolved ticker.
+// For a period a missing ticker was not a reason to suppress a HIGH/CRITICAL event, and the result
+// was a feed of company news nobody could act on — an approval, an offering or a CFO change with no
+// symbol tells a reader neither who nor whether it is investable. Market-wide catalysts are
+// unaffected and still publish with no symbol at all; see the macro-flash section below.
+ok('without a resolved ticker a company catalyst does NOT publish',
+  !gate('Nasus Pharma wins FDA approval', { importance: 3 }).publish);
+ok('...and says why', gate('Nasus Pharma wins FDA approval', { importance: 3 }).reason === 'fda with no listed company',
+  gate('Nasus Pharma wins FDA approval', { importance: 3 }).reason);
 ok('WITH a resolved ticker the same approval publishes as BREAKING',
   (() => { const v = gate('Nasus Pharma wins FDA approval', { tickers: ['NSPH'] }); return v.publish && v.breaking; })());
 ok('a named-drug approval with a ticker publishes',
