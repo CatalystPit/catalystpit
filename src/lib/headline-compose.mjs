@@ -181,6 +181,15 @@ const NO_SUBJECT_NEEDED = new Set(['approval_agency', 'rates', 'enforcement']);
 // ── entry point ──────────────────────────────────────────────────────────────
 // { headline, type } when an unambiguous factual assertion was found, else null.
 // null is NORMAL and means "hand this to the model as rewrite_pending".
+// A headline that ends on a connector, an article, or a bare infinitive ("… to Create", "… and",
+// "… for the") was cut off mid-phrase. Checked on the OUTPUT only, so no pattern changes behaviour;
+// the worst it can do is send an event to the model that would otherwise have shipped broken.
+const DANGLING = [
+  /\s(?:to|for|with|and|or|of|in|on|at|by|from|as|the|a|an|its|their|into|over|after|that)$/i,
+  /\bto\s+[A-Za-z]+$/,   // a bare infinitive with nothing to act on: "… to Create"
+];
+const isDangling = (s) => DANGLING.some((re) => re.test(s));
+
 export function composeHeadline({ headline, summary = '', tickers = [] } = {}) {
   const src = cleanHeadline(headline);
   if (!src) return null;
@@ -209,6 +218,13 @@ export function composeHeadline({ headline, summary = '', tickers = [] } = {}) {
     const flat = (x) => x.toLowerCase().replace(/[^a-z0-9]+/g, '');
     if (flat(out) === flat(src)) continue;
     if (similarity(out, src) >= REWRITE_MAX_SIMILARITY) continue;
+    // A composition that stops mid-phrase is not a headline. Trimming a long object can leave the
+    // sentence hanging on a connector or a bare infinitive — "Single Cell Discoveries Acquires TATAA
+    // Biocenter to Create an End-to-End Precision Biology CRO" came out as "Single Cell Discoveries
+    // to acquire TATAA Biocenter to Create", which reads as truncated because it is. Rejecting it
+    // costs nothing: the event simply goes to the model as rewrite_pending, which is where anything
+    // we cannot state cleanly and deterministically is supposed to go.
+    if (isDangling(out)) continue;
     return { headline: out, type };
   }
   return null;

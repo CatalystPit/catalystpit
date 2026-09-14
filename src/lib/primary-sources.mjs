@@ -352,6 +352,25 @@ export const FEEDS = [
     everySec: TIER.SLOW, category: 'PHARMA', tickerable: true,
     url: 'https://www.biospace.com/all-news.rss' }),
 
+  // Biotech Newswire. The newsroom page is a 450KB HTML app, but it DECLARES two real RSS feeds in
+  // its <head> — no HTML parsing is involved. The headline feed is taken rather than the full-text
+  // one: both carry the same 15 items and the same summaries, and it is 25KB against 142KB.
+  // It is the originating wire for the releases it carries, so it is polled at company-release speed
+  // rather than at the editorial cadence BioSpace above gets. No ETag/Last-Modified, so every poll
+  // transfers the body; at 25KB that is ~35MB/day and it answered 200 to six polls at 15s.
+  feed({ key: 'biotechnewswire', source: 'BIOTECHNEWSWIRE', sourceName: 'Biotech Newswire', type: 'press_release',
+    everySec: TIER.FAST, category: 'PHARMA', tickerable: true,
+    url: 'https://www.biotechnewswire.ai/b3c-newswire-i.html?format=feed' }),
+
+  // PR.com, Medical & Health category (103). A public RSS endpoint, handled by the generic adapter.
+  // NORMAL rather than FAST on volume, not on capability: it answered 200 to six polls at 15s, but
+  // the body is 72KB and most of what it carries is local-practice PR — "Welcoming Urologist, Dr.
+  // Jude Appiah" — which lands at importance 0 and is already suppressed from the useful presets by
+  // the existing low-impact-PR noise class. The biotech releases worth having are a minority of it.
+  feed({ key: 'prcom_health', source: 'PRCOM', sourceName: 'PR.com', type: 'press_release',
+    everySec: TIER.NORMAL, category: 'PHARMA', tickerable: true,
+    url: 'https://www.pr.com/rss/news-by-category/103.xml' }),
+
   // ══ NEWS APIs (quota-limited) ═════════════════════════════════════════════
   // Paused automatically until the key exists, so a missing key is never a failing poll. Cadence is
   // sized to the free daily allowance, NOT to how fast we would like the data: at 100 calls/day a
