@@ -382,6 +382,30 @@ export const FEEDS = [
     everySec: TIER.NORMAL, category: 'PHARMA', tickerable: true,
     url: 'https://www.pr.com/rss/news-by-category/103.xml' }),
 
+  // ══ BARCHART ══════════════════════════════════════════════════════════════
+  // BARCHART PUBLISHES NO USABLE RSS. Every feed-shaped path — /news/rss, /rss/news, /feeds/news
+  // and the per-category variants — answers HTTP 202 with a ZERO-BYTE body from CloudFront, which
+  // is a bot challenge rather than a 404: paths that certainly do not exist answer identically, and
+  // a browser User-Agent gets the same 202 carrying a 2KB JS challenge instead of content. The
+  // homepage declares no feed in its <head>, and robots.txt names no feed either — only sitemaps.
+  //
+  // The Google News sitemap IS public, is served from origin rather than through the challenge, and
+  // carries the same newsroom: 101 stories with canonical URLs, titles and real ISO publication
+  // dates. So that is what is registered, through the sitemap adapter.
+  //
+  // ONE feed, not the per-category set. Barchart exposes no category feeds to register, and this
+  // single file already carries every desk — equities, options, futures, FX, energy, metals and
+  // crypto all appear in it — so splitting it would mean registering the same URL repeatedly, which
+  // is exactly the duplication to avoid. It gets no special standing: ordinary cadence, ordinary
+  // dedupe, ordinary scoring.
+  //
+  // It sends Cache-Control s-maxage=300 but NO ETag and NO Last-Modified, so every poll transfers
+  // the body (~72KB). NORMAL matches the 300s the origin itself declares as its freshness window;
+  // polling faster would re-transfer an unchanged file.
+  feed({ key: 'barchart_news', source: 'BARCHART', sourceName: 'Barchart', type: 'article',
+    adapter: 'sitemap', everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    url: 'https://www.barchart.com/news/google-sitemap.xml' }),
+
   // ══ NEWS APIs (quota-limited) ═════════════════════════════════════════════
   // Paused automatically until the key exists, so a missing key is never a failing poll. Cadence is
   // sized to the free daily allowance, NOT to how fast we would like the data: at 100 calls/day a

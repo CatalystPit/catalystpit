@@ -149,7 +149,47 @@ function telegramAdapter(body, feed) {
   return out;
 }
 
-export const ADAPTERS = { rss: rssAdapter, atom: rssAdapter, json: jsonAdapter, api: jsonAdapter, telegram: telegramAdapter };
+// ── Google News sitemap ──────────────────────────────────────────────────────
+// A news sitemap is <url> blocks carrying a <news:news> record, not <item> blocks, so the RSS
+// reader sees nothing in one. It exists here because some publishers no longer expose RSS at all:
+// Barchart serves every feed-shaped path through a CloudFront bot challenge that answers 202 with
+// an empty body, while this file is served straight from origin and carries the same newsroom.
+//
+// The format gives exactly what an item needs — canonical URL, title and a real ISO publication
+// date — and one thing that is deliberately NOT taken. <news:stock_tickers> is present, but on a
+// commodities story it reads "HEZ26,HEV26,HEG27": lean-hogs futures contracts, not equities.
+// Importing those would put contract codes in the ticker field and, downstream, cashtags for
+// securities that do not trade under those symbols. The canonical resolver reads the headline
+// instead, and refuses what it cannot place — no ticker beats a wrong ticker.
+function sitemapAdapter(body, feed) {
+  const blocks = String(body || '').match(/<url\b[\s\S]*?<\/url>/gi) || [];
+  const out = [];
+  for (const b of blocks) {
+    // Namespaced tags are matched with an optional prefix so a feed that drops the "news:" prefix,
+    // or uses another one, still reads.
+    const tag = (name) => {
+      const m = b.match(new RegExp(`<(?:\\w+:)?${name}[^>]*>([\\s\\S]*?)</(?:\\w+:)?${name}>`, 'i'));
+      return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/<[^>]+>/g, ' ')
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+        .replace(/\s+/g, ' ').trim() : '';
+    };
+    const url = tag('loc');
+    const title = tag('title');
+    if (!url || !title) continue;
+    out.push({
+      title,
+      url,
+      uid: url,
+      publishedAt: parseDate(tag('publication_date') || tag('lastmod')),
+      summary: null,               // a sitemap carries no body text
+      tickers: [],                 // see above: never imported
+    });
+  }
+  return out;
+}
+
+export const ADAPTERS = { rss: rssAdapter, atom: rssAdapter, json: jsonAdapter, api: jsonAdapter, telegram: telegramAdapter, sitemap: sitemapAdapter };
 
 // Some wires sign every line: FinancialJuice ends each post "|FJ", Walter Bloomberg appends
 // "(@WalterBloomberg)". That is the channel's watermark, not part of the event, and leaving it in
