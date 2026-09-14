@@ -152,6 +152,31 @@ export const FEEDS = [
     adapter: 'telegram', everySec: TIER.FLASH, category: 'MARKETS', tickerable: true,
     strip: [/^\s*FinancialJuice\s*:\s*/i, /\s*\|\s*FJ\s*$/i],
     url: 'https://t.me/s/financialjuice' }),
+  // First Squawk, through X's public embedded-list syndication document — the same one the
+  // Terminal's X Tape already loads in every visitor's browser, answered to our own User-Agent with
+  // no authentication and nothing spoofed.
+  //
+  // This account has NO other public distribution. Its website carries a WordPress blog with one
+  // post from 2019; its Telegram channel has 19 subscribers and zero posts; eight other plausible
+  // Telegram handles are empty; and reading its timeline through X's own API needs a paid tier. The
+  // profile syndication endpoint exists but rate-limits per IP hard enough to be useless for
+  // polling — 429 to thirteen consecutive requests here across several hours, while this list
+  // endpoint answered 200 throughout.
+  //
+  // It earns its place: measured against everything else the engine captured in the same 2h43m
+  // window, 20 of its 38 posts were NOT covered by any other source — Canada CPI, Canada
+  // manufacturing sales, a Citigroup BoE call, Boeing engine-supply comments, Nasdaq futures moves.
+  //
+  // CAVEAT worth stating plainly: this is X's embed infrastructure, not a data API with a contract.
+  // X can change or withdraw it without notice, and reading it server-side to republish is a
+  // different use from rendering the embed. It is one registry entry and removing it is one line.
+  feed({ key: 'x_list_firstsquawk', source: 'FIRSTSQUAWK', sourceName: 'First Squawk', type: 'wire',
+    adapter: 'xlist', screenName: 'FirstSquawk', everySec: TIER.FAST,
+    category: 'MARKETS', tickerable: true, trusted: true,
+    url: 'https://syndication.twitter.com/srv/timeline-list/list-id/2096931068477620423'
+       + '?dnt=false&frame=false&hideFooter=true&hideHeader=true&lang=en&maxHeight=560'
+       + '&origin=https%3A%2F%2Fcatalystpit.com%2Fterminal&theme=light&embedId=twitter-widget-0' }),
+
   // Telegram's own public channel preview page. Public content, no authentication.
   // Signs every line "(@BreakingMarketNews)". Left in, that watermark changed the normalised text
   // enough that its copy of a headline would not collapse against FinancialJuice's copy of the same

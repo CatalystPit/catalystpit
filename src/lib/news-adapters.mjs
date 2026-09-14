@@ -149,7 +149,48 @@ function telegramAdapter(body, feed) {
   return out;
 }
 
-export const ADAPTERS = { rss: rssAdapter, atom: rssAdapter, json: jsonAdapter, api: jsonAdapter, telegram: telegramAdapter };
+// X's public syndication document for an EMBEDDED LIST TIMELINE — the same URL platform's
+// widgets.js builds, and the same document the Terminal's X Tape already loads in every visitor's
+// browser. No authentication, no token, no paid API; it answers our own User-Agent, so nothing is
+// spoofed to obtain it.
+//
+// The LIST rather than the profile timeline, for a measured reason: the profile endpoint
+// (/timeline-profile/screen-name/…) rate-limits per IP so aggressively that it answered 429 to 13
+// consecutive requests here over several hours, while the list endpoint answered 200 throughout the
+// same period. One list read also covers every account on the list at once instead of one request
+// per account, and the operator can change list membership with no code change.
+//
+// `screenName` filters the payload to one author. Only the accounts that have no first-party feed
+// of their own need to come through here; FinancialJuice and Walter Bloomberg are on this same list
+// but are ingested from their own Telegram channels, which is a better provenance.
+function xListAdapter(body, feed) {
+  const m = String(body || '').match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!m) return [];
+  let entries;
+  try { entries = JSON.parse(m[1])?.props?.pageProps?.timeline?.entries || []; } catch { return []; }
+  const want = String(feed.screenName || '').toLowerCase();
+  const out = [];
+  for (const e of entries) {
+    const t = e?.content?.tweet;
+    if (!t?.id_str || !t.created_at || !t.user?.screen_name) continue;
+    if (want && t.user.screen_name.toLowerCase() !== want) continue;
+    // The post's own t.co shortener is not part of the sentence, and left in it changes every text
+    // comparison dedupe makes.
+    const title = text(String(t.full_text || t.text || '').replace(/https?:\/\/t\.co\/\S+/g, ' '));
+    if (!title) continue;
+    out.push({
+      title,
+      url: `https://x.com/${t.user.screen_name}/status/${t.id_str}`,
+      uid: `${t.user.screen_name}/${t.id_str}`,
+      publishedAt: parseDate(t.created_at),
+      summary: null,
+      tickers: [],                    // never inferred here; the resolver decides
+    });
+  }
+  return out;
+}
+
+export const ADAPTERS = { rss: rssAdapter, atom: rssAdapter, json: jsonAdapter, api: jsonAdapter, telegram: telegramAdapter, xlist: xListAdapter };
 
 // Some wires sign every line: FinancialJuice ends each post "|FJ", Walter Bloomberg appends
 // "(@WalterBloomberg)". That is the channel's watermark, not part of the event, and leaving it in

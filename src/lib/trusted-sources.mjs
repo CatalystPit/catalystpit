@@ -23,7 +23,7 @@
 // taxonomy can read one list. wire-taxonomy.mjs ships to the client; pulling in primary-sources.mjs
 // there would bundle the whole 84-feed registry and node:crypto with it.
 
-export const TRUSTED_SOURCES = new Set(['WALTERBLOOMBERG']);
+export const TRUSTED_SOURCES = new Set(['WALTERBLOOMBERG', 'FIRSTSQUAWK']);
 
 export const isTrustedSource = (source) => TRUSTED_SOURCES.has(String(source || '').toUpperCase());
 
