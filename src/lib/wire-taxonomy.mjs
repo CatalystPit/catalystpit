@@ -140,7 +140,41 @@ export function capBucketOf(marketCap) {
 const CRYPTO = /\b(bitcoin|btc|ethereum|eth|crypto|blockchain|token|stablecoin|defi|nft|altcoin|binance|coinbase)\b/i;
 const FOREIGN = /\b(nikkei|hang seng|shanghai composite|ftse|dax|cac 40|ibex|sensex|nifty|kospi|asx 200|tadawul|bovespa|tsx|euro stoxx|shenzhen)\b/i;
 
+// Evergreen advice, listicles and price-target fantasy — "Which Monthly Dividend Stock Should
+// Retirees Own?", "Gold Miners Set Up Well Into Q4", "What Will XRP Be Worth By 2028?".
+//
+// The engine's own importance scorer already zeroes most of this, but not all: a dividend-advice
+// column carrying real dividend language scores 2 and lands in Market Moving next to an actual
+// declaration. These patterns are matched on the SHAPE of an opinion headline — a question, a
+// second-person address, a ranked list, a dated price guess — never on subject matter, so a real
+// event about dividends or gold miners is untouched. Read-side only: nothing is un-ingested, and
+// the row stays visible in Everything.
+const ADVICE = [
+  /\?\s*$/,                                                        // a news headline states; it does not ask
+  /\b(?:should|shouldn't|can|could|do|does|will|is|are)\s+you\b/i,
+  /\byour\s+(?:portfolio|retirement|money|savings|401\s?\(?k\)?|nest egg)\b/i,
+  /^\s*(?:forget|here'?s why|here is why|why i\b|my top|the case (?:for|against)|is it time|time to buy)/i,
+  // A COUNT of things, not a money amount. The lookbehind is load-bearing: without it "Amerigo
+  // declares CAD 0.21 dividend" and "Trump's $5,000 dividend checks" read as listicles and seven
+  // real dividend declarations vanished from Market Moving in testing.
+  /(?<![\d.,$])(?:[1-9]|10|three|five|seven|ten)\s+(?:best|top|great|cheap|reasons?|stocks|etfs|dividend)\b/i,
+  // Plural only. "Piper Sandler names Q2 Holdings top pick" is an analyst call, not a listicle.
+  /\b(?:best|top)\s+\d*\s*(?:stocks|etfs|picks|ideas|buys)\b/i,
+  /\bworth\s+(?:by|in)\s+20\d\d\b/i,
+  /\bprice (?:prediction|target for 20\d\d)\b/i,
+  /\b(?:set(?:ting)? up well|looks? (?:attractive|cheap)|screaming buy|still a buy|buy or sell)\b/i,
+  /\b(?:retirees?|retirement)\b[^.]*\b(?:should|own|buy|need)\b/i,
+];
+const isAdvice = (e) => {
+  // Anything the engine itself called a primary record cannot be a column. This keeps the shape
+  // patterns away from filings, halts and wire flashes entirely.
+  if (e.source_kind === 'sec' || e.source_type === 'halt' || e.source_type === 'wire') return false;
+  const h = String(e.headline || '');
+  return ADVICE.some((re) => re.test(h));
+};
+
 export const NOISE_FILTERS = [
+  { key: 'advice',      label: 'Opinion & advice',     test: isAdvice },
   { key: 'lowPr',       label: 'Low-impact PR',        test: (e) => e.source_type === 'press_release' && (e.importance ?? 0) <= 1 },
   { key: 'transcripts', label: 'Transcripts',          test: (e) => e.source_type === 'transcript' },
   { key: 'commentary',  label: 'General commentary',   test: (e) => e.source_type === 'analysis' && (e.importance ?? 0) <= 1 },

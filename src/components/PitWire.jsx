@@ -16,6 +16,15 @@
 //
 // AI NEVER GATES DISPLAY. Events arrive already normalised and displayable; when Haiku later
 // improves one, it arrives on the update channel and is merged onto the SAME row by seq.
+//
+// A ROW IS A CATALYST PIT EVENT, not a republished headline. No upstream publisher is named and no
+// headline leaves the product: /api/wire has already stripped source, source_name, source_headline
+// and original_url from every non-SEC row, so there is nothing here to render even by accident. All
+// of it is still on primary_events, untouched, for the engine and for us. What the trader gets in
+// its place is what they actually asked of the tape — time, impact, ticker, headline, category, and
+// a "·3" when three independent sources reported the same thing.
+//
+// SEC is the single exception, by design: a filing says SEC and links to the filing.
 
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { C } from '../lib/cp-shared';
@@ -24,9 +33,12 @@ import { EVENT_TYPES, CATEGORIES, SOURCE_GROUPS, CAP_BUCKETS, NOISE_FILTERS, IMP
 const PREF_KEY = 'cp_pitwire_v1';
 const MAX_EVENTS = 2000;      // hard ceiling on retained history — bounds memory and DOM
 const PAGE = 120;             // rows rendered initially; grows as the trader scrolls
-const POLL_ACTIVE = 4000;     // tab visible
+const POLL_ACTIVE = 3000;     // tab visible — an event is on screen within ~3s of becoming canonical
 const POLL_HIDDEN = 30000;    // tab backgrounded — stay live, stop spending requests
 const UPDATE_EVERY = 3;       // enrichment sweep runs every Nth poll, not every poll
+// A tape that says LIVE while nothing is arriving is worse than one that admits it. Two successive
+// missed polls is the line: normal jitter stays LIVE, a genuinely dead loop does not.
+const STALE_AFTER_MS = POLL_ACTIVE * 3 + 2000;
 
 // ── time ─────────────────────────────────────────────────────────────────────
 // ET with seconds, as a trading tape requires. Formatter built once, not per row.
@@ -71,11 +83,13 @@ const PRESETS = {
   everything: { label: 'Everything', patch: () => ({ ...DEFAULTS, preset: 'everything' }) },
   moving: {
     label: 'Market Moving',
-    patch: () => ({ ...DEFAULTS, preset: 'moving', impact: [3, 2], noise: ['lowPr', 'transcripts', 'commentary', 'papers', 'govRoutine'] }),
+    // No ticker or cap condition anywhere in here, deliberately: an FOMC decision, a Treasury
+    // announcement or a Hormuz escalation moves the whole tape and carries no equity symbol.
+    patch: () => ({ ...DEFAULTS, preset: 'moving', impact: [3, 2], noise: ['advice', 'lowPr', 'transcripts', 'commentary', 'papers', 'govRoutine'] }),
   },
   smallcap: {
     label: 'Small Cap',
-    patch: () => ({ ...DEFAULTS, preset: 'smallcap', impact: [3, 2, 1], caps: ['small', 'micro'], capUnknown: false, noise: ['transcripts', 'papers', 'commentary'] }),
+    patch: () => ({ ...DEFAULTS, preset: 'smallcap', impact: [3, 2, 1], caps: ['small', 'micro'], capUnknown: false, noise: ['advice', 'transcripts', 'papers', 'commentary'] }),
   },
   watchlist: { label: 'My Watchlist', patch: () => ({ ...DEFAULTS, preset: 'watchlist', tickerMode: 'watchlist' }) },
 };
@@ -133,11 +147,33 @@ function Section({ title, right, children }) {
   );
 }
 
+// ── connection state ─────────────────────────────────────────────────────────
+// LIVE has to mean something, so it is claimed only while the wire is actually answering. STALE and
+// RECONNECTING are stated in words rather than left as a differently-coloured dot nobody decodes;
+// the cursor makes recovery automatic in every case, which is what the tooltip says.
+const CONN_UI = {
+  live:       { label: 'LIVE',   tone: null,        title: 'Receiving canonical events' },
+  stale:      { label: 'STALE',  tone: 'gold',      title: 'No update received recently — retrying; nothing will be missed' },
+  retrying:   { label: 'RETRY',  tone: 'gold',      title: 'Reconnecting — the cursor resumes from the last event received' },
+  connecting: { label: '…',      tone: 'dim',       title: 'Connecting to the wire' },
+};
+function ConnDot({ conn }) {
+  const ui = CONN_UI[conn] || CONN_UI.connecting;
+  const color = ui.tone === 'gold' ? C.gold : ui.tone === 'dim' ? C.dim : C.greenMid;
+  return (
+    <span title={ui.title} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
+      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.5, color }}>{ui.label}</span>
+    </span>
+  );
+}
+
 // ── one tape row ─────────────────────────────────────────────────────────────
 // Memoised: a poll that appends one event must not re-render the other 1,999.
 const Row = memo(function Row({ ev, onPick }) {
   const ui = IMPACT_UI[ev.importance ?? 0] || IMPACT_UI[0];
   const t = ev.published_at || ev.first_seen_at || ev.received_at;
+  const sec = ev.source_kind === 'sec';
   return (
     <div style={{
       display: 'flex', gap: 8, padding: '5px 9px 5px 7px', alignItems: 'baseline',
@@ -157,26 +193,35 @@ const Row = memo(function Row({ ev, onPick }) {
       )}
 
       {!!(ev.tickers || []).length && (
-        <span style={{ flexShrink: 0, display: 'inline-flex', gap: 4 }}>
+        <span style={{ flexShrink: 0, display: 'inline-flex', gap: 5 }}>
           {ev.tickers.slice(0, 3).map((tk) => (
-            <button key={tk} type="button" onClick={() => onPick?.(tk)}
-              style={{ fontSize: 10.5, fontWeight: 800, color: C.green, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
-              ${tk}
+            <button key={tk} type="button" onClick={() => onPick?.(tk)} title={`Load ${tk}`}
+              style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.2, color: C.green, background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
+              {tk}
             </button>
           ))}
         </span>
       )}
 
-      <a href={ev.original_url} target="_blank" rel="noopener noreferrer"
-        style={{ fontSize: 12, color: C.text, textDecoration: 'none', flex: 1, minWidth: 0, fontWeight: ev.importance >= 2 ? 600 : 400 }}>
-        {ev.headline}
-      </a>
+      {/* The headline is Catalyst Pit's own wording and leads nowhere off-site. A filing is the one
+          exception: an 8-K has to be readable AT the SEC, so those keep their direct filing link. */}
+      {sec ? (
+        <a href={ev.original_url} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 12, color: C.text, textDecoration: 'none', flex: 1, minWidth: 0, fontWeight: ev.importance >= 2 ? 600 : 400 }}>
+          {ev.headline}
+        </a>
+      ) : (
+        <span style={{ fontSize: 12, color: C.text, flex: 1, minWidth: 0, fontWeight: ev.importance >= 2 ? 600 : 400 }}>
+          {ev.headline}
+        </span>
+      )}
 
       <span style={{ fontSize: 9, color: C.hint, flexShrink: 0, whiteSpace: 'nowrap' }}>
         {ev.wireCategory}
-        <span style={{ color: C.border2 }}> · </span>
-        {ev.source_name}
-        {ev.source_count > 1 && <span style={{ color: C.dim, fontWeight: 700 }}> +{ev.source_count - 1}</span>}
+        {/* How many independent sources folded into this one event. It is corroboration, not a
+            byline — the trader learns the event was confirmed without being handed a publisher. */}
+        {ev.source_count > 1 && <span style={{ color: C.dim, fontWeight: 700 }}> ·{ev.source_count}</span>}
+        {sec && <span style={{ color: C.border2 }}> · SEC</span>}
       </span>
     </div>
   );
@@ -270,6 +315,7 @@ export default function PitWire({ onPick }) {
   const seenRef = useRef(new Set());                 // seq set — the reconnect duplicate guard
   const lastUpdateRef = useRef(null);
   const pollRef = useRef(null);
+  const lastOkRef = useRef(0);       // when the wire last actually answered
 
   // Restore saved configuration before the first paint of rows.
   useEffect(() => { setFilters(loadPrefs()); setReady(true); }, []);
@@ -340,6 +386,7 @@ export default function PitWire({ onPick }) {
         if (!alive) return;
         merge(j.events, { live: !first });
         if (first) lastUpdateRef.current = j.serverTime;
+        lastOkRef.current = Date.now();
         setConn('live');
 
         // Enrichment sweep: rows we already hold whose headline/ticker/importance improved.
@@ -365,6 +412,19 @@ export default function PitWire({ onPick }) {
     window.addEventListener('online', wake);
     return () => { alive = false; clearTimeout(pollRef.current); document.removeEventListener('visibilitychange', wake); window.removeEventListener('online', wake); };
   }, [merge]);
+
+  // Staleness watchdog. The poll loop can only report a failure it observes; a suspended laptop, a
+  // throttled background timer or a fetch that never settles leaves it silent, and the indicator
+  // would sit on LIVE forever. This watches the clock instead of the loop. It never fires while the
+  // tab is hidden, where a 30s cadence is the intended behaviour rather than a fault.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (!lastOkRef.current) return;
+      if (Date.now() - lastOkRef.current > STALE_AFTER_MS) setConn((c) => (c === 'retrying' ? c : 'stale'));
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -420,8 +480,7 @@ export default function PitWire({ onPick }) {
             cursor: 'pointer', border: `1px solid ${showFilters ? C.green : C.border2}`,
             background: showFilters ? C.green : 'transparent', color: showFilters ? '#fff' : C.muted,
           }}>FILTERS</button>
-        <span title={conn === 'live' ? 'Live' : 'Reconnecting — missed events will be recovered'}
-          style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: conn === 'live' ? C.greenMid : conn === 'retrying' ? C.gold : C.border2 }} />
+        <ConnDot conn={conn} />
       </div>
 
       {showFilters && <Filters f={filters} set={(v) => { setFilters(v); setVisibleCount(PAGE); }} watchCount={watch.size} onClose={() => setShowFilters(false)} />}
@@ -457,6 +516,11 @@ export default function PitWire({ onPick }) {
         <span>{shown.length.toLocaleString()} shown · {events.length.toLocaleString()} held</span>
         <span>Catalyst Pit canonical events</span>
       </div>
+      {conn === 'retrying' && !!events.length && (
+        <div style={{ padding: '3px 9px', borderTop: `1px solid ${C.border}`, fontSize: 9.5, color: C.gold, flexShrink: 0 }}>
+          Reconnecting — events published while disconnected will be recovered.
+        </div>
+      )}
     </div>
   );
 }

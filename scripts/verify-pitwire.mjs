@@ -79,6 +79,26 @@ ok('crypto', noiseOf({ headline: 'Bitcoin rallies past resistance' }).includes('
 ok('foreign markets', noiseOf({ headline: 'Nikkei closes higher' }).includes('foreign'));
 ok('ordinary news is not noise', noiseOf({ headline: 'Acme raises guidance', source_type: 'article', importance: 2 }).length === 0);
 
+// Opinion and advice. Matched on the SHAPE of a column — a question, a second-person address, a
+// ranked list, a dated price guess — never on subject matter, because a dividend column and a
+// dividend declaration are about the same thing and only one of them is an event.
+const advice = (h, extra = {}) => noiseOf({ headline: h, source_type: 'article', importance: 2, ...extra }).includes('advice');
+ok('question headline', advice('Which Monthly Dividend Stock Should Retirees Own?'));
+ok('setup commentary', advice('Gold Miners Set Up Well Into Q4'));
+ok('first-person method piece', advice("Forget Screeners and Hot Tips: Here's How I Actually Research a Stock"));
+ok('dated price guess', advice('What Will XRP Be Worth By 2028?'));
+ok('ranked listicle', advice('5 Dividend Powerhouses Yielding Above 5%'));
+ok('second-person address', advice('Debt settlement vs consolidation: which is right for you?'));
+// The guards. Each of these was a live false positive during development; a decimal dividend and a
+// "$5,000 dividend" both read as listicles until the count pattern learned to reject money.
+ok('real dividend declaration survives', !advice('Amerigo Resources declares CAD 0.21 dividend'));
+ok('dollar-amount dividend news survives', !advice("Trump's $5,000 dividend checks require congressional approval"));
+ok('singular analyst top pick survives', !advice('Piper Sandler names Q2 Holdings top pick for Q2'));
+ok('FDA approval survives', !advice('Nasus Pharma wins FDA approval'));
+ok('macro flash survives', !advice('Goldman Sachs and JPMorgan expect 25bp Fed hike this week'));
+ok('wire flashes are never advice', !advice('Is the ECB done hiking?', { source_type: 'wire' }));
+ok('SEC filings are never advice', !advice('Acme Corp files 8-K', { source_kind: 'sec' }));
+
 // ── filter engine (mirrors the component's pure `passes`) ────────────────────
 sec('FILTER COMPOSITION');
 const D = {
@@ -140,8 +160,22 @@ try {
   ok('no duplicate seq in one page', new Set(first.events.map((e) => e.seq)).size === first.events.length);
   ok('canonical only — no folded members', first.events.every((e) => e.cluster_id === undefined || e.cluster_id === null));
   ok('every row is display_ready (AI never gates)', first.events.every((e) => e.headline && e.headline.length > 0));
-  ok('source attribution present', first.events.every((e) => e.source_name));
-  ok('original source link present', first.events.every((e) => /^https:\/\//.test(e.original_url)));
+  // A Pit Wire row is a Catalyst Pit event. The upstream publisher's identity never reaches the
+  // browser, so there is nothing to render by accident — and nothing to read in devtools either.
+  // These assertions used to say the opposite; the product contract changed, so they changed with
+  // it. All of these fields are still on primary_events, which the provenance test below proves.
+  const ordinary = first.events.filter((e) => e.source_kind !== 'sec');
+  const filings = first.events.filter((e) => e.source_kind === 'sec');
+  ok('ordinary rows name no publisher',
+    ordinary.every((e) => e.source === undefined && e.source_name === undefined), `checked ${ordinary.length}`);
+  ok('ordinary rows carry no upstream link or publisher wording',
+    ordinary.every((e) => e.original_url === undefined && e.source_headline === undefined && e.summary === undefined));
+  ok('ordinary rows keep the source GROUP, which is a category not an outlet',
+    ordinary.every((e) => typeof e.wireGroup === 'string' && e.wireGroup.length > 0));
+  // SEC is the exception and must stay one: a filing says SEC and links to the filing.
+  ok('SEC filings keep their attribution and direct filing link',
+    filings.every((e) => e.source_name && /^https:\/\/(www\.)?sec\.gov\//.test(e.original_url || '')),
+    filings.length ? `checked ${filings.length}` : 'no SEC rows in this page');
   ok('multi-source events expose a count', first.events.every((e) => Number(e.source_count) >= 1));
 
   // Cursor paging: asking for what came after the newest must not re-deliver anything.
@@ -181,6 +215,42 @@ try {
   ok('no duplicates at volume', new Set(big.events.map((e) => e.seq)).size === big.events.length);
   const caps = big.events.filter((e) => e.wireCap).length;
   console.log(`  market-cap resolved on ${caps}/${big.events.length} of a 300-event page`);
+
+  // ── provenance ─────────────────────────────────────────────────────────────
+  // The publisher is absent from the RESPONSE, not from the record. This takes the exact seqs the
+  // wire just served and proves every one of them still has its full provenance in storage — which
+  // is the whole claim: strip the presentation, never the evidence.
+  if (process.env.DATABASE_URL) {
+    sec('PROVENANCE — stripped from the response, intact in storage');
+    const { default: postgres } = await import('postgres');
+    const sql = postgres(process.env.DATABASE_URL, { max: 1 });
+    try {
+      const seqs = big.events.slice(0, 200).map((e) => Number(e.seq));
+      const rows = await sql`select seq, source, source_name, source_uid, source_headline, original_url,
+          raw, published_at, received_at, source_count
+        from primary_events where seq = any(${seqs})`;
+      ok('every served event is still on primary_events', rows.length === seqs.length, `${rows.length}/${seqs.length}`);
+      for (const f of ['source', 'source_name', 'source_uid', 'source_headline', 'original_url', 'raw', 'published_at', 'received_at']) {
+        ok(`provenance field kept: ${f}`, rows.every((r) => r[f] !== null && r[f] !== undefined),
+          `${rows.filter((r) => r[f] === null || r[f] === undefined).length} missing`);
+      }
+      // Folded members are the other half of provenance: a merged record is kept and attached, not
+      // discarded, so a "·3" row can still be traced back to all three reports.
+      const merged = await sql`select count(*) n from primary_events
+        where cluster_id = any(${seqs})`;
+      console.log(`  folded source records attached to this page's events: ${merged[0].n}`);
+      // SEC must be exactly as it was: never rewritten, never clustered.
+      const secRows = await sql`select count(*) n,
+          count(*) filter (where headline <> source_headline) altered,
+          count(*) filter (where cluster_id is not null) clustered
+        from primary_events where source_kind = 'sec'`;
+      ok('SEC headlines never rewritten', Number(secRows[0].altered) === 0, `altered=${secRows[0].altered}`);
+      ok('SEC rows never clustered', Number(secRows[0].clustered) === 0, `clustered=${secRows[0].clustered}`);
+      console.log(`  SEC rows checked: ${secRows[0].n}`);
+    } finally { await sql.end(); }
+  } else {
+    console.log('\n  (provenance check skipped — run with --env-file=.env.local for DATABASE_URL)');
+  }
 } catch (e) {
   fail++; console.error('  FAIL live API —', e.message);
 }
