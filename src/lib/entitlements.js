@@ -24,8 +24,20 @@ export function isRealtime(tier) { return marketDataAccess(tier) === 'realtime';
 // 'free' | 'pro' | 'elite'. Signed-out callers (userId null) resolve cleanly to
 // 'free' — auth() does not throw — so callers never special-case the anonymous case.
 export async function resolveUserTier() {
+  return (await resolveUserAccess()).tier;
+}
+
+/**
+ * The same resolution, with the reason attached. `beta` is true only for a manually flagged tester,
+ * and it is what lets a caller treat a beta user differently from a paying one WITHOUT changing the
+ * tier they get. Today that matters in exactly one place: real-time market data is a licensed
+ * entitlement, so a beta tester gets Pro's features on delayed data.
+ *
+ * @returns {{ tier: 'free'|'pro'|'elite', beta: boolean }}
+ */
+export async function resolveUserAccess() {
   const { userId } = await auth();   // no-throw when signed out
-  if (!userId) return 'free';
+  if (!userId) return { tier: 'free', beta: false };
   // Plan lives in Clerk publicMetadata.plan, stamped by the Stripe webhook (C5).
   try {
     const client = await clerkClient();
@@ -33,10 +45,22 @@ export async function resolveUserTier() {
     // Admin (ADMIN_EMAIL) always resolves to the top tier — full entitlements without a Stripe plan.
     const email = user?.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)?.emailAddress
       || user?.emailAddresses?.[0]?.emailAddress;
-    if (email && process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase()) return 'elite';
+    if (email && process.env.ADMIN_EMAIL && email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase()) {
+      return { tier: 'elite', beta: false };
+    }
     const plan = user?.publicMetadata?.plan;
-    return plan === 'pro' || plan === 'elite' ? plan : 'free';
+    if (plan === 'pro' || plan === 'elite') return { tier: plan, beta: false };
+    // MANUAL BETA ACCESS. A flag set by hand on one Clerk user, read here and nowhere else.
+    //
+    // It deliberately does NOT touch publicMetadata.plan: a beta tester has no Stripe subscription
+    // and must never appear as one in a member count or a revenue report, which is exactly what
+    // setting `plan` would have done. Revoking is deleting the key in Clerk — it takes effect on
+    // their next request, with no deploy.
+    //
+    // Strict `=== true`, so a stray "true", 1 or "yes" grants nothing.
+    if (user?.publicMetadata?.beta === true) return { tier: 'pro', beta: true };
+    return { tier: 'free', beta: false };
   } catch {
-    return 'free';   // Clerk hiccup → fail safe to Free
+    return { tier: 'free', beta: false };   // Clerk hiccup → fail safe to Free
   }
 }

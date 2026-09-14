@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { resolveUserTier, isRealtime } from '../../../lib/entitlements';
+import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
 import { getQuotes } from '../../../lib/market-data';
 
 export const runtime = 'nodejs';
@@ -15,8 +15,14 @@ export async function GET(request) {
   const syms = [...new Set(raw.split(',').map((s) => s.trim()).filter((s) => TICKER_RE.test(s)))].slice(0, 100);
   if (!syms.length) return Response.json({}, { headers: { 'Cache-Control': 'private, no-store' } });
 
+  // Real-time is a LICENSED entitlement, so it follows the subscription rather than the tier alone:
+  // a manually flagged beta tester gets every Pro feature on delayed data, and is not counted
+  // against the provider's entitled-user terms.
   let realtime = false;
-  try { const { userId } = await auth(); if (userId) realtime = isRealtime(await resolveUserTier()); } catch { /* signed-out → delayed */ }
+  try {
+    const { userId } = await auth();
+    if (userId) { const { tier, beta } = await resolveUserAccess(); realtime = isRealtime(tier) && !beta; }
+  } catch { /* signed-out → delayed */ }
 
   try {
     const quotes = await getQuotes(syms, { realtime });
