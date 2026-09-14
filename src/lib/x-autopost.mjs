@@ -7,6 +7,8 @@
 // from a canonical event's own Catalyst Pit wording and its own resolved ticker, and nothing else.
 // No implications, no context, no prices we did not measure, no "investors are watching closely".
 
+import { publicationVerdict } from './x-quality.mjs';
+
 export const MODES = ['off', 'dry_run', 'live'];
 
 // Fail closed, and STRICTLY. An exact match against the three declared values — no trimming, no
@@ -119,7 +121,7 @@ export function reactionLine(reading, now = Date.now()) {
 //   macro / geopolitical        BREAKING: <event>
 //   ticker-specific             $TICKER: <event>
 //   exceptional ticker event    BREAKING: $TICKER <event>   (exceptional = CRITICAL)
-export function formatPost(ev, reading = null, now = Date.now()) {
+export function formatPost(ev, reading = null, now = Date.now(), breaking = null) {
   const ticker = (ev?.tickers || [])[0] ? String(ev.tickers[0]).toUpperCase() : null;
   let body = sanitize(ev?.headline);
   if (!body) return { ok: false, error: 'no headline' };
@@ -130,8 +132,10 @@ export function formatPost(ev, reading = null, now = Date.now()) {
   body = body.replace(/^breaking\s*[:\-]\s*/i, '').trim();
   if (!body) return { ok: false, error: 'nothing left after sanitising' };
 
-  const critical = Number(ev?.importance) === CRITICAL;
-  const prefix = ticker ? (critical ? `BREAKING: $${ticker} ` : `$${ticker}: `) : 'BREAKING: ';
+  // BREAKING is decided by the publication gate, not by the impact score. Passing null keeps the
+  // old score-based behaviour for direct callers and tests that predate the gate.
+  const brk = breaking === null ? Number(ev?.importance) === CRITICAL : !!breaking;
+  const prefix = ticker ? (brk ? `BREAKING: $${ticker} ` : `$${ticker}: `) : 'BREAKING: ';
 
   const reaction = reactionLine(reading, now);
   const tail = reaction ? `\n${reaction}` : '';
@@ -141,14 +145,27 @@ export function formatPost(ev, reading = null, now = Date.now()) {
   if (text.length > MAX_POST) return { ok: false, error: `too long (${text.length})` };
   if (/#[A-Za-z0-9_]/.test(text)) return { ok: false, error: 'hashtag survived sanitising' };
   if (URL.test(text)) return { ok: false, error: 'url survived sanitising' };
-  return { ok: true, text, chars: text.length, shape: ticker ? (critical ? 'breaking_ticker' : 'ticker') : 'breaking' };
+  return { ok: true, text, chars: text.length, shape: ticker ? (brk ? 'breaking_ticker' : 'ticker') : 'breaking' };
 }
 
-// One call for the caller: decide, format, and say plainly why not when the answer is no.
+// The whole decision in one call: eligible, then PUBLISHABLE, then formatted.
+//
+// Eligibility and publication are separate on purpose. Eligibility answers "may Catalyst Pit post
+// this", publication answers "should it", and only the second one knows what the account is for.
+// A `suppressed` result is terminal and carries an auditable reason; a `blocked` result beginning
+// "awaiting" is transient and the event is reconsidered on the next pass.
 export function buildCandidate(ev, reading = null, now = Date.now()) {
   const verdict = evaluate(ev);
   if (!verdict.eligible) return { eligible: false, reason: null, blocked: verdict.blocked };
-  const post = formatPost(ev, reading, now);
-  if (!post.ok) return { eligible: false, reason: verdict.reason, blocked: post.error };
-  return { eligible: true, reason: verdict.reason, ...post };
+
+  const quality = publicationVerdict(ev, now);
+  if (!quality.publish) {
+    return { eligible: true, publishable: false, reason: verdict.reason,
+      suppressed: quality.reason, terminal: quality.terminal };
+  }
+
+  const post = formatPost(ev, reading, now, quality.breaking);
+  if (!post.ok) return { eligible: true, publishable: false, reason: verdict.reason,
+    suppressed: post.error, terminal: true };
+  return { eligible: true, publishable: true, reason: verdict.reason, breaking: quality.breaking, ...post };
 }

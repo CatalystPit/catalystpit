@@ -45,7 +45,7 @@ async function eligibleEvents(sinceHours, limit) {
  */
 export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) {
   const m = mode();
-  const out = { mode: m, examined: 0, created: 0, waiting: 0, skipped: 0, blocked: {} };
+  const out = { mode: m, examined: 0, created: 0, suppressed: 0, waiting: 0, skipped: 0, blocked: {}, reasons: {} };
   if (m === 'off') return out;
 
   const rows = await eligibleEvents(sinceHours, limit);
@@ -56,12 +56,31 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
     // value that is hours to days old, and presenting that as the reaction to a breaking event
     // would be inventing a fact. One line now beats two lines that are wrong.
     const c = buildCandidate(ev, null);
+
+    // Not eligible at all, or still waiting for Catalyst wording: nothing is persisted, because the
+    // event must be reconsidered on a later pass once the rewrite queue reaches it.
     if (!c.eligible) {
       out.waiting += c.blocked?.startsWith('awaiting') ? 1 : 0;
       out.skipped += c.blocked?.startsWith('awaiting') ? 0 : 1;
       out.blocked[c.blocked || 'unknown'] = (out.blocked[c.blocked || 'unknown'] || 0) + 1;
       continue;
     }
+
+    // Eligible but NOT publishable. Recorded with its specific reason so every rejection is
+    // auditable, and recorded against the same unique event_seq so it is judged once, not on a loop.
+    if (!c.publishable) {
+      out.suppressed++;
+      out.reasons[c.suppressed] = (out.reasons[c.suppressed] || 0) + 1;
+      await db.execute(sql`
+        insert into x_post_candidates
+          (event_seq, reason, post_text, char_count, shape, ticker, impact, mode, status, failure_reason)
+        values (${ev.seq}, ${c.reason}, ${ev.headline ?? ''}, 0, 'suppressed',
+                ${(ev.tickers || [])[0] ?? null}, ${ev.importance ?? null}, ${m},
+                'suppressed', ${c.suppressed})
+        on conflict (event_seq) do nothing`);
+      continue;
+    }
+
     // ON CONFLICT DO NOTHING on the unique event_seq: the duplicate guard is the schema's, so a
     // concurrent pass or a later merge cannot produce a second row for one event.
     const ins = await db.execute(sql`

@@ -187,16 +187,98 @@ export function entityToken(headline, tickers = []) {
 // model that can silently promote a routine item is a model that can distort the product.
 export const IMPORTANCE_LABEL = { 3: 'CRITICAL', 2: 'HIGH', 1: 'MEDIUM', 0: 'LOW' };
 
-const CRITICAL = [
-  /\b(?:trading )?halt(?:ed|s)?\b/i, /\bcircuit breaker\b/i,
-  /\bchapter (?:7|11)\b/i, /\bbankrupt\w*/i, /\bgoing concern\b/i, /\bdelist\w*/i, /\bdefaults?\b/i,
-  /\bfda (?:approv|clear|authoriz|reject|declin)\w*/i, /complete response letter/i,
-  /\bbreakthrough therapy\b/i, /\b(?:phase (?:3|iii)) (?:results|data|trial)\b/i,
-  /\bfomc\b/i, /federal open market committee/i, /\brate (?:cut|hike|decision)\b/i,
-  /\bemergency (?:meeting|rate|action)\b/i,
-  /\bacquir\w+|\bmerger\b|\bto buy\b|\btakeover\b|\bbuyout\b/i,
-  /\bindict\w*/i, /\bfraud charges\b/i, /\bsec charges\b/i,
+// Named so that a consumer can ask WHICH rule fired, not merely whether one did. The patterns and
+// their order are unchanged — CRITICAL below is derived from this list, so scoring behaviour is
+// identical and the names are purely for introspection and auditing.
+export const CRITICAL_PREDICATES = [
+  { name: 'halt', re: /\b(?:trading )?halt(?:ed|s)?\b/i },
+  { name: 'circuit_breaker', re: /\bcircuit breaker\b/i },
+  { name: 'chapter_7_11', re: /\bchapter (?:7|11)\b/i },
+  { name: 'bankruptcy', re: /\bbankrupt\w*/i },
+  { name: 'going_concern', re: /\bgoing concern\b/i },
+  { name: 'delisting', re: /\bdelist\w*/i },
+  { name: 'default', re: /\bdefaults?\b/i },
+  { name: 'fda_decision', re: /\bfda (?:approv|clear|authoriz|reject|declin)\w*/i },
+  { name: 'crl', re: /complete response letter/i },
+  { name: 'breakthrough_therapy', re: /\bbreakthrough therapy\b/i },
+  { name: 'phase3', re: /\b(?:phase (?:3|iii)) (?:results|data|trial)\b/i },
+  { name: 'fomc', re: /\bfomc\b/i },
+  { name: 'fomc_long', re: /federal open market committee/i },
+  { name: 'rate_decision', re: /\brate (?:cut|hike|decision)\b/i },
+  { name: 'emergency_action', re: /\bemergency (?:meeting|rate|action)\b/i },
+  { name: 'ma', re: /\bacquir\w+|\bmerger\b|\bto buy\b|\btakeover\b|\bbuyout\b/i },
+  { name: 'indictment', re: /\bindict\w*/i },
+  { name: 'fraud_charges', re: /\bfraud charges\b/i },
+  { name: 'sec_charges', re: /\bsec charges\b/i },
 ];
+const CRITICAL = CRITICAL_PREDICATES.map((p) => p.re);
+
+// Which CRITICAL rule a headline trips, for auditing. Read-only; changes no score.
+export const criticalPredicate = (text) =>
+  CRITICAL_PREDICATES.find((p) => p.re.test(String(text || '')))?.name ?? null;
+
+// ── M&A significance ─────────────────────────────────────────────────────────
+// CRITICAL has to mean immediate major market significance, and acquisition LANGUAGE is not that.
+// Measured over 14 days: the bare `ma` predicate produced 95 of 276 CRITICAL events — 34% of the
+// entire tier — and only 16% of them carried a resolved ticker. The rest were private-to-private
+// deals, own-share buyback mechanics, real-estate purchases, lease announcements and survey
+// headlines: "Tristela Capital Partners acquires Pediatric Group of Acadiana", "Machine Investment
+// Group Acquires 490-Unit Multifamily Community in North Dallas", "71% of Advisers Plan to Buy More
+// Active ETFs Within 2 Years, MSCI Survey Finds".
+//
+// So M&A now has to EARN the tier on evidence of public-market involvement, and where that evidence
+// is absent it fails DOWNWARD. No ticker is ever guessed: the only accepted proofs are a symbol the
+// conservative resolver already established, or one the source itself printed exchange-qualified.
+const MA_LANGUAGE = /\bacquir\w+|\bmerger\b|\bmerge[sd]?\b|\bmerging\b|\bto buy\b|\btakeover\b|\bbuyout\b|\btender offer\b/i;
+
+// Acquisition words that describe no transaction between companies.
+const MA_NOT_A_DEAL = [
+  // Treasury mechanics: "Coop Pank AS own shares acquisition transactions", "Schouw & Co. share
+  // buy-back programme, week 37 2026", "Marimekko to start acquiring the company's own shares".
+  /\bown shares?\b|\btreasury shares?\b|\bshare buy-?back\b|\bbuy-?back programme\b|\brepurchase programme\b/i,
+  // Research and marketing: "71% of Advisers Plan to Buy More Active ETFs, MSCI Survey Finds".
+  /\bsurvey\b|\bpoll\b|\bstudy finds\b|\breport finds\b|\bplan to buy\b|\bbest time to buy\b/i,
+  // Analyst language that trips "to buy": "Straumann rises after Goldman Sachs upgrades to buy".
+  /\bupgrad\w+ to buy\b|\bbuy rating\b|\breiterates? buy\b|\bto buy from (?:hold|neutral|sell)\b/i,
+  // Property and premises, not corporate control.
+  /\bmultifamily\b|\bsquare (?:feet|foot|metres|meters)\b|\bretail leases?\b|\bproperty portfolio\b|\bunit community\b/i,
+  // A bond sale that merely funds a deal is not the deal.
+  /\bbond sale\b|\bnotes offering\b|\bfinancing for\b/i,
+];
+
+// Talk is not a transaction. These stay out of CRITICAL whatever the companies involved.
+const MA_UNCONFIRMED = /\b(?:in (?:advanced )?talks|nears? (?:a )?deal|consider(?:s|ing)|explor(?:es|ing)|weigh(?:s|ing)|mulls?|reportedly|rumou?r\w*|said to be|approach(?:es|ed)|potential(?:ly)? (?:acquisition|merger|takeover)|non-?binding|letter of intent)\b/i;
+
+// Public-company identity, established rather than guessed:
+//   - a symbol the conservative resolver already attached to the event, or
+//   - one the source printed exchange-qualified, which is a statement of fact not an inference.
+const EXCHANGE_QUALIFIED = /\((?:NASDAQ|NYSE|NYSE American|AMEX|OTC|LSE|TSX|TSXV|ASX|Euronext|XETRA|FRA|SIX|JSE|HKEX|SGX|BSE|NSE)\s*:\s*[A-Z0-9.\-]{1,6}\)/i;
+
+// A deal big enough to matter to the market even when we cannot pin the symbol.
+const MATERIAL_DEAL_USD = 1e9;
+
+/**
+ * How significant is an M&A headline?
+ * @returns {'critical'|'high'|null} null means "no M&A boost at all".
+ */
+export function maSignificance({ headline = '', summary = '', tickers = [] } = {}) {
+  const hay = `${headline} ${summary || ''}`;
+  if (!MA_LANGUAGE.test(hay)) return null;
+  for (const re of MA_NOT_A_DEAL) if (re.test(hay)) return null;
+
+  const publicCompany = (tickers || []).length > 0 || EXCHANGE_QUALIFIED.test(hay);
+  const unconfirmed = MA_UNCONFIRMED.test(hay);
+  const value = numericFacts(hay).filter((f) => f.startsWith('m'))
+    .map((f) => Number(f.slice(1))).reduce((a, b) => Math.max(a, b), 0);
+
+  // CRITICAL: a confirmed transaction with an established public company in it.
+  if (publicCompany && !unconfirmed) return 'critical';
+  // HIGH: a public company but only reported talks, or a confirmed deal of material size whose
+  // participants we cannot confidently identify. Visible, not shouted.
+  if (publicCompany || value >= MATERIAL_DEAL_USD) return 'high';
+  // Everything else — a private-to-private acquisition — gets no boost whatsoever.
+  return null;
+}
 const HIGH = [
   /\bearnings\b/i, /\bguidance\b/i, /\bquarterly results\b/i, /\bpreliminary results\b/i,
   /\boutlook\b/i, /\bprofit warning\b/i, /\brevenue\b/i, /\beps\b/i,
@@ -310,8 +392,14 @@ export function scoreImportance({ headline, summary = '', source = '', sourceTyp
   // Event-based, publisher-independent. Checked alongside the corporate tiers rather than instead
   // of them, so a headline that is both stays at the higher of the two.
   const macro = macroEnabled ? macroImpact(headline) : 0;
-  if (CRITICAL.some((re) => re.test(hay))) return 3;
+  // Every CRITICAL predicate EXCEPT M&A is decisive on its own. A halt is a halt.
+  if (CRITICAL_PREDICATES.some((p) => p.name !== 'ma' && p.re.test(hay))) return 3;
   if (macro === 3) return 3;
+  // M&A must earn the tier on evidence of public-market involvement, and falls downward when that
+  // evidence is missing rather than upward on acquisition vocabulary alone.
+  const ma = maSignificance({ headline, summary, tickers });
+  if (ma === 'critical') return 3;
+  if (ma === 'high') return 2;
   if (HIGH.some((re) => re.test(hay))) return 2;
   if (macro === 2) return 2;
   if (MEDIUM.some((re) => re.test(hay))) return 1;
