@@ -482,7 +482,15 @@ async function claimPending(limit) {
        -- like an Anthropic problem: ingest kept running, enrich_attempts never moved, and
        -- enriched_at simply stopped. A bare comparison to one parameter infers from the column and
        -- is fine; a CASE is not.
-       and enrich_attempts < (case when source = any(${TRUSTED}::text[]) then ${TRUSTED_REWRITE_ATTEMPTS}
+       -- The budget follows the CLUSTER, not the row that happened to arrive first. A trusted flash
+       -- that merges into an earlier wire story inherits that story's three attempts and strands at
+       -- rewrite_pending forever, which takes the whole event out of X eligibility even though the
+       -- trusted source is right there in the cluster.
+       and enrich_attempts < (case when source = any(${TRUSTED}::text[])
+                                     or exists (select 1 from primary_events m
+                                                 where m.cluster_id = primary_events.seq
+                                                   and m.source = any(${TRUSTED}::text[]))
+                                   then ${TRUSTED_REWRITE_ATTEMPTS}
                                    else ${MAX_REWRITE_ATTEMPTS} end)::int
      -- Trusted first, then newest. A breaking flash is rewritten before anything else waiting.
      order by (source = any(${TRUSTED}::text[])) desc, seq desc
@@ -654,6 +662,40 @@ async function foldOnDisplayHeadline(seq, headline, publishedAt) {
 // Rows that exhausted their retries are parked rather than retried forever. They keep their source
 // headline and stay visible; only the Catalyst Pit rewrite is abandoned.
 //
+// CANONICALISATION DOES NOT WAIT ON THE MODEL.
+//
+// A trusted flash routinely arrives seconds after a wire story about the same event and merges into
+// it, so the canonical row is the wire's and carries the wire's shorter sentence. When that row
+// cannot be reworded, Pit Wire shows the weaker line and the event never becomes X-eligible — while
+// the trusted member sitting inside the same cluster already HAS finished Catalyst wording.
+//
+// Observed live: WSJ's "OpenAI Buys Startup Developing Smartphone Camera" became canonical 41
+// seconds before Walter Bloomberg's post merged into it. Walter's row was rewritten successfully to
+// "OpenAI buys Glass Imaging startup for above $300 million" — the company and the price, both
+// missing from the canonical line — and that wording was never used for anything.
+//
+// This adopts it. The headline moves; nothing else does. source, source_headline, original_url, raw
+// and cluster membership are all untouched, so provenance still says the canonical row is the
+// wire's. The adopted text has already passed the same grounding gate as any other rewrite, so this
+// publishes nothing that was not already validated.
+export async function adoptTrustedWording() {
+  const res = await db.execute(sql`
+    update primary_events c
+       set headline = m.headline,
+           headline_status = m.headline_status,
+           display_hash = m.display_hash,
+           enriched_at = now()
+      from primary_events m
+     where c.cluster_id is null
+       and c.headline_status = 'rewrite_pending'
+       and m.cluster_id = c.seq
+       and m.source = any(${TRUSTED}::text[])
+       and m.headline_status in ('original', 'composed')
+       and coalesce(m.headline, '') <> ''
+    returning c.seq`);
+  return (res.rows ?? res)?.length || 0;
+}
+
 // A TRUSTED source is never parked. Parking is the moment the publisher's wording becomes the final
 // answer, and for a trusted source that outcome is not allowed — it keeps its place in the queue
 // under the larger budget above instead.

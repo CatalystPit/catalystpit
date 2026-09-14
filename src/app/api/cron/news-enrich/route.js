@@ -1,4 +1,4 @@
-import { runEnrichment, parkExhausted } from '../../../../lib/primary-events';
+import { runEnrichment, parkExhausted, adoptTrustedWording } from '../../../../lib/primary-events';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -20,8 +20,9 @@ export async function GET(request) {
     const limit = Number(new URL(request.url).searchParams.get('limit') || 30);
     const res = await runEnrichment({ limit });
     const parked = await parkExhausted();
+    const adopted = await adoptTrustedWording();
     if (res.claimed || res.claimError || res.unavailable) console.log(`[news-enrich] ${JSON.stringify(res)}`);
-    return Response.json({ ok: true, ...res, parked }, { headers: { 'Cache-Control': 'private, no-store' } });
+    return Response.json({ ok: true, ...res, parked, adopted }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     console.error('[news-enrich]', e);
     return Response.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 });
