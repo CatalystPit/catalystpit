@@ -139,6 +139,12 @@ const AMBIGUOUS_WORD = new Set([
   // the live account. A one-word name that is also an ordinary English word cannot be told apart
   // from the word itself, so it is refused — see the index guard below, which now also refuses to
   // store such a name at all.
+  // 'Track Group, Inc.' reduces to TRACK, which put  on 'Rising oil prices put Fed on
+  // track for September rate hike' and on a math-tutoring press release. Same class as BEYOND.
+  'TRACK', 'TRACKING', 'BRIDGE', 'SIGNAL', 'MOTION', 'MOMENT', 'MARKER', 'MATTER', 'MATTERS',
+  'MEASURE', 'MONITOR', 'MODERN', 'NATURAL', 'NOBLE', 'ORDER', 'PATTERN', 'PHASE', 'PLANET',
+  'PROCESS', 'PROFILE', 'RECORD', 'REGION', 'REPORT', 'SAMPLE', 'SCALE', 'SECTOR', 'SEGMENT',
+  'SERIES', 'SHIELD', 'SPHERE', 'STAGE', 'STREAM', 'STRUCTURE', 'SUMMIT', 'SURFACE', 'TARGET',
   'ANSWER', 'BEYOND', 'WORKSHOP', 'STRIKE', 'LAUNCH', 'REVENUE', 'RANK', 'CONNECTED', 'BUSINESS',
   'BUSINESSES', 'STRATEGIC', 'STRATEGICALLY', 'PARTNER', 'PROGRAM', 'MODEL', 'PLATFORM', 'NETWORK',
   'SYSTEM', 'SYSTEMS', 'SOLUTION', 'SOLUTIONS', 'SERVICE', 'SERVICES', 'PRODUCT', 'PRODUCTS',

@@ -14,7 +14,7 @@
 import { macroImpact, criticalPredicate, isCompletePhrase } from './news-normalize.mjs';
 import { materiallyNonEnglish } from './language.mjs';
 import { isPricePrint } from './x-story.mjs';
-import { classifyCatalyst, refusalReason } from './x-relevance.mjs';
+import { classifyCatalyst, refusalReason, isMaterial } from './x-relevance.mjs';
 
 // ── how old is too old to call it breaking market information ────────────────
 export const MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -232,6 +232,41 @@ export function publicationVerdict(ev, now = Date.now()) {
   if (!Number.isFinite(at)) return no('no timestamp');
   if (now - at > MAX_AGE_MS) return no('stale');
 
+  // ── WALTER BLOOMBERG ───────────────────────────────────────────────────────
+  // A DEDICATED publication source. Every event Catalyst Pit successfully ingests from him is
+  // eligible, and neither the importance threshold below nor the materiality bar applies. That is a
+  // deliberate editorial decision about ONE source, and it is placed here — above the importance
+  // gate — because a threshold he was meant to bypass cannot be allowed to reach him first.
+  //
+  // He bypasses the THRESHOLD and nothing else. Everything ABOVE this line still holds: a Walter
+  // event must be a real headline, in English, complete rather than truncated, current, and not a
+  // halt. The wording gate ran earlier still, so `original` means the model already rewrote it and
+  // what goes out is Catalyst Pit's sentence, never his verbatim. The duplicate guards downstream —
+  // canonical clustering, UNIQUE(event_seq), the subject+type key and the story guard — apply to him
+  // exactly as they apply to everyone, so an event another source already published is not repeated.
+  if ((ev?.sources || []).map((s) => String(s || '').toUpperCase()).includes('WALTERBLOOMBERG')) {
+    if (!isCompletePhrase(headline)) return no('incomplete or fragmentary wording');
+    return {
+      publish: true,
+      reason: null,
+      // His event still classifies where it can, so it dedupes against other sources by subject and
+      // type. Where it classifies as nothing it carries a `walter` catalyst and is posted anyway.
+      catalyst: classifyCatalyst(ev) ?? {
+        type: 'walter', scope: 'market',
+        hasTicker: (ev?.tickers || []).filter(Boolean).length > 0, figure: false,
+      },
+      breaking: computeBreaking({
+        headline,
+        macro: macroImpact(headline),
+        predicate: criticalPredicate(hay),
+        hasTicker: (ev?.tickers || []).filter(Boolean).length > 0,
+        maWorded: MA_WORDED.test(headline),
+        storyHasPriors: !!ev?.storyHasPriors,
+      }),
+      terminal: false,
+    };
+  }
+
   // ── HIGH and CRITICAL publish ──────────────────────────────────────────────
   // Everything ABOVE this line is an INTEGRITY check and still applies to every event: a headline
   // must exist, be English, be complete, be current, and not be a halt. Everything BELOW is
@@ -265,6 +300,9 @@ export function publicationVerdict(ev, now = Date.now()) {
     // call, and nothing read that Pit Wire did not already compute.
     const catalyst = classifyCatalyst(ev);
     if (!catalyst) return no(refusalReason(ev));
+    // KIND is not enough; SIZE decides. See isMaterial — the test is whether a trader would
+    // reposition on this right now, answered with the magnitude the event itself states.
+    if (!isMaterial(ev, catalyst)) return no(`${catalyst.type} below the materiality bar`);
 
     return {
       publish: true,

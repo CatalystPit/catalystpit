@@ -2,7 +2,7 @@
 // 24-hour sample of what the previous gate would have posted.
 // Run: node scripts/verify-x-relevance.mjs
 
-import { classifyCatalyst, refusalReason, catalystKey, groundedFigures, subjectTickers, ONE_PER_EVENT } from '../src/lib/x-relevance.mjs';
+import { classifyCatalyst, refusalReason, catalystKey, groundedFigures, subjectTickers, largestAmount, isMaterial, ONE_PER_EVENT } from '../src/lib/x-relevance.mjs';
 import { buildCandidate } from '../src/lib/x-autopost.mjs';
 
 let pass = 0, fail = 0;
@@ -150,6 +150,79 @@ sec('expectations are not decisions');
 ok('Fed expectations building is not a monetary event',
   type('August mortgage lock volume falls as Fed rate hike expectations build') === null);
 ok('an actual cut is', type('Fed cuts rates by 25 basis points') === 'monetary');
+
+sec('WALTER BLOOMBERG — a dedicated publication source');
+const WNOW = Date.parse('2026-09-14T05:10:00Z');
+const walter = (h, o = {}) => buildCandidate({ headline: h, headline_status: 'original',
+  sources: ['WALTERBLOOMBERG'], published_at: '2026-09-14T05:00:00Z', tickers: [], importance: 1,
+  summary: '', facts: null, ...o }, null, WNOW, []);
+const plain = (h, o = {}) => buildCandidate({ headline: h, headline_status: 'original',
+  sources: ['FINANCIALJUICE'], published_at: '2026-09-14T05:00:00Z', tickers: [], importance: 2,
+  summary: '', facts: null, ...o }, null, WNOW, []);
+
+// He bypasses the MATERIALITY threshold, and only that. Each of these is refused from any other
+// source and publishes from him.
+for (const h of [
+  'Trump says Iran wants to reach a deal quickly',
+  "Iran's foreign ministry says Saudi Arabia blocked Tehran-Gulf meeting in Oman",
+  'Kalshi puts Democrats at 51% in Senate race odds',
+  'U.S. data centers could add 15 Bcf/d natural gas demand by 2035',
+]) {
+  ok(`Walter publishes: ${h.slice(0, 48)}`, walter(h).publishable, walter(h).suppressed);
+  ok('...and the same line from a wire does not', !plain(h).publishable, plain(h).text);
+}
+// A line that IS a macro print stands on its own from any source — the exception is about lowering
+// the bar for him, not about raising it for everyone else.
+ok('a real macro print posts from a wire too',
+  plain("China's Jan-Aug new yuan loans reach CNY10.44T; M2 rises 7.5% y/y").publishable);
+ok('a Walter event below HIGH still publishes', walter('Trump comments on tariffs', { importance: 0 }).publishable);
+
+// What he does NOT bypass.
+ok('Walter does not bypass the wording gate',
+  !walter('WALTER\'S OWN VERBATIM LINE', { headline_status: 'rewrite_pending' }).eligible);
+ok('...so his verbatim wording can never be the post',
+  walter('x', { headline_status: 'rewrite_pending' }).blocked.startsWith('awaiting Catalyst wording'));
+ok('Walter does not bypass staleness',
+  buildCandidate({ headline: 'Trump says something', headline_status: 'original', sources: ['WALTERBLOOMBERG'],
+    published_at: '2026-09-14T00:00:00Z', tickers: [], importance: 2 }, null, WNOW, []).suppressed === 'stale');
+ok('Walter does not bypass the non-English gate',
+  !walter('SÍL 2 hs. - ákvörðun vaxta og almenn upplýsingagjöf').publishable);
+ok('Walter does not bypass truncated wording',
+  !walter('Trump agrees to acquire something for…').publishable);
+ok('Walter does not bypass the halt exclusion',
+  !walter('AAPL halted, volatility pause', { source_type: 'halt', category: 'HALT', tickers: ['AAPL'] }).publishable);
+// Dedupe: his events key the same way as anyone else's, so a story already told is not retold.
+const wEv = { headline: 'Acme agrees to acquire Beta for $2 billion', tickers: ['ACME'], facts: null };
+ok('a Walter event still produces a dedupe key',
+  catalystKey(wEv, classifyCatalyst({ ...wEv, summary: '' })) === 'ACME|ma');
+
+sec('MATERIALITY — kind is not enough, size decides');
+ok('a $1M buyback does not post',
+  !plain('Solidion Technology announces $1M stock buyback plan', { tickers: ['STI'] }).publishable);
+ok('a $250M buyback does',
+  plain('Ferrari announces $250 million buyback programme', { tickers: ['RACE'] }).publishable);
+ok('a $2.8M warrant offering does not post',
+  !plain('Tenon Medical closes warrant offering for approximately $2,872,338', { tickers: ['TNON'] }).publishable);
+ok('a $1 billion offering does', plain('Sysco announces $1.0 billion common stock offering', { tickers: ['SYY'] }).publishable);
+ok('a micro-cap earnings print does not post',
+  !plain('Starcore International Mines reports GAAP EPS of C$0.03 and revenue of C$10.5M', { tickers: ['SAM'] }).publishable);
+ok('...but a BEAT or MISS does, at any size',
+  plain('Hain Celestial non-GAAP EPS of -$0.05 misses consensus, revenue $263.07M misses estimate', { tickers: ['HAIN'] }).publishable);
+ok('a deal with no disclosed price still posts when it is definitive and identified',
+  plain('Kyndryl to acquire Healthcare IT Leaders', { tickers: ['KD'] }).publishable,
+  plain('Kyndryl to acquire Healthcare IT Leaders', { tickers: ['KD'] }).suppressed);
+ok('largestAmount parses units, never estimates', largestAmount('raised $1.1B and $300 million') === 1.1e9);
+ok('an EPS figure is not a material sum', largestAmount('EPS of $0.03') === 0.03);
+
+sec('classification bugs the live feed exposed');
+ok('"expected to raise" is anticipation, not an occurrence',
+  type('FOMC expected to raise rates 25 basis points this week') === null);
+ok('...but a struck pipeline expected offline is still an event',
+  type('Saudi oil pipeline struck, expected out of service for several weeks') === 'geopolitical');
+ok('"upgrades to buy" is an analyst action, not M&A',
+  type('Straumann rises after Goldman Sachs upgrades to buy', { tickers: ['GS'] }) === 'analyst');
+ok('"reaffirms merger timeline" is a restatement, not a deal',
+  type('NextEra Energy reaffirms 2026 earnings guidance and merger timeline', { tickers: ['NEE'] }) === 'guidance');
 
 sec('halts stay excluded');
 const halt = { headline: 'AAPL halted, volatility pause', headline_status: 'not_required', source_type: 'halt',

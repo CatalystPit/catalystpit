@@ -96,7 +96,15 @@ const FUTURE_MARKER = /\b(?:expected|due|scheduled|set|slated|forecast)\s+(?:thi
 
 // Applied separately from the list above because it only disqualifies when NOTHING has actually
 // happened in the same sentence.
-const anticipatedOnly = (h) => FUTURE_MARKER.test(h) || (ANTICIPATION.test(h) && !OCCURRED.test(h));
+const anticipatedOnly = (h) => {
+  const s = String(h || '');
+  if (FUTURE_MARKER.test(s)) return true;
+  if (!ANTICIPATION.test(s)) return false;
+  // "expected to raise", "forecast to cut", "poised to hold" — the verb belongs to the expectation,
+  // not to anything that happened. Removed before asking whether the sentence reports an occurrence.
+  const stripped = s.replace(/\b(?:expect\w*|anticipat\w*|forecast\w*|poised|set|due|projected|seen|likely)\s+to\s+\w+/gi, ' ');
+  return !OCCURRED.test(stripped);
+};
 
 // ── grounded figures ─────────────────────────────────────────────────────────
 // A money amount, a share count, a percentage, a per-share price. Used both to require substance on
@@ -160,7 +168,10 @@ export const CATALYSTS = [
     re: /\b(?:stock|share|reverse)\s+split\b|\bsplit-?adjusted\b/i },
 
   // ── ownership and control ─────────────────────────────────────────────────
+  // A rating phrase and a restatement both wear M&A vocabulary. "upgrades to buy" is an analyst
+  // action and "reaffirms the merger timeline" is a company repeating itself; neither is a deal.
   { type: 'ma', scope: COMPANY, figure: false,
+    not: /\bupgrad\w+ to buy\b|\bto buy (?:rating|home|house|a home|shares? of)\b|\bbuy rating\b|\breaffirm\w*|\breiterat\w*|\bon track\b|\btimeline\b|\bbest time to buy\b/i,
     re: /\bacquir\w+|\bmerger\b|\bmerges? with\b|\bto buy\b|\btakeover\b|\bbuyout\b|\bgoing private\b|\btake-?private\b|\bdefinitive (?:merger |purchase )?agreement\b|\bdivest\w+|\bspin-?off\b|\bcarve-?out\b|\bsells? (?:its |the )?(?:stake|division|unit|business|subsidiary)\b/i },
   { type: 'activist', scope: COMPANY,
     re: /\bactivist\b|\b13-?d\b|\bschedule 13d\b|\bproxy (?:fight|contest|battle)\b|\bboard seats?\b|\bnominat\w+(?:[^.]|\.\d){0,30}\bdirectors?\b|\bstake in\b(?:[^.]|\.\d){0,30}\b(?:urges?|pushes?|demands?)|\bbuilds? (?:a )?stake\b|\bdiscloses? (?:a )?\d+(?:\.\d+)?% stake\b/i },
@@ -598,6 +609,102 @@ export function subjectTickers(ev, catalyst) {
   // If every symbol on the event is a research firm, the resolver never found the rated company.
   // Keeping the firm would be worse than posting untagged, so the post goes out with no cashtag.
   return kept;
+}
+
+// ── materiality ──────────────────────────────────────────────────────────────
+// Being a catalyst of the right KIND is not enough. "Starcore International Mines reports GAAP EPS
+// of C$0.03 and revenue of C$10.5M" is a real earnings print and no trader is repositioning on it;
+// "Tenon Medical closes warrant offering for approximately $2,872,338" is a real financing and it
+// moves nothing. The account is meant to read as a desk, so the test is the one a desk applies:
+//
+//   would an active trader reasonably care about this RIGHT NOW, because it could move price,
+//   volume, positioning or expectations?
+//
+// Answered with SIZE, because size is the part of that question the row can actually answer. Each
+// threshold below is the point at which an event stops being housekeeping for the company and
+// starts being information for the market.
+
+const MULT = { k: 1e3, thousand: 1e3, m: 1e6, mn: 1e6, million: 1e6, bn: 1e9, b: 1e9, billion: 1e9, tn: 1e12, trillion: 1e12 };
+const AMOUNT = /\$\s?([\d,]+(?:\.\d+)?)\s*(k|thousand|m|mn|million|bn|b|billion|tn|trillion)?\b/gi;
+
+/**
+ * The largest dollar amount the text states, in dollars. PARSING ONLY — the figure must be written
+ * in the event; nothing is estimated, converted between currencies or inferred. A bare "$0.03" (an
+ * EPS) parses to 0.03, which is exactly right: it is not a material sum.
+ */
+export function largestAmount(text) {
+  let max = null;
+  AMOUNT.lastIndex = 0;
+  for (const m of String(text || '').matchAll(AMOUNT)) {
+    const n = Number(String(m[1]).replace(/,/g, ''));
+    if (!Number.isFinite(n)) continue;
+    const v = n * (m[2] ? (MULT[m[2].toLowerCase()] ?? 1) : 1);
+    if (max === null || v > max) max = v;
+  }
+  return max;
+}
+
+// A result that beat or missed is news whatever the company's size — the surprise IS the event.
+const SURPRISE = /\b(?:beats?|misses?|tops?|exceeds?|falls? short|below (?:consensus|estimates?)|above (?:consensus|estimates?)|surprise)\b/i;
+// A disruption that needs no price tag: the fact itself is the materiality.
+const HARD_DISRUPTION = /\b(?:fire|explosion|cyber(?:attack)?|ransomware|data breach|force majeure|strike|walkout|recall|shutdown|halts? production|evacuat\w+)\b/i;
+
+// Minimum dollar size, by catalyst type. Below these an event is company housekeeping.
+const MIN_AMOUNT = {
+  offering: 50e6,        // a raise smaller than this does not move a listed company
+  contract: 50e6,
+  ma: 100e6,
+  legal: 25e6,
+  insider: 5e6,
+  institutional: 50e6,
+  operations: 50e6,
+  buyback: 25e6,         // "Solidion Technology announces $1M stock buyback plan" is not a signal
+};
+
+// A DEFINITIVE transaction by an identified listed company, whether or not the price was disclosed.
+// Plenty of real deals never publish terms, and holding M&A to a dollar floor alone dropped
+// "Kyndryl to acquire Healthcare IT Leaders" and Medtronic's MiniMed exchange offer — both exactly
+// the kind of event the account exists for. Speculation is already refused upstream, so what
+// reaches here has actually been agreed.
+const DEFINITIVE_DEAL = /\b(?:to acquire|acquires?|acquired|agreed to (?:be )?acquir\w+|agrees? to acquire|definitive (?:merger |purchase )?agreement|completes? (?:the )?acquisition|merger agreement|exchange offer|tender offer|to merge with|spin-?off|take-?private|going private)\b/i;
+
+/**
+ * Whether a classified catalyst is big enough to belong on the account.
+ * Reads only the event's own text and its already-extracted facts.
+ */
+export function isMaterial(ev, catalyst) {
+  const type = catalyst?.type;
+  if (!type) return false;
+  const headline = String(ev?.headline || '');
+  const f = ev?.facts || {};
+  const text = `${headline} ${ev?.summary || ''} ${f.value || ''}`;
+  const amount = largestAmount(text);
+
+  // Types whose materiality is inherent: they are consequential at any size.
+  if (type === 'bankruptcy' || type === 'fda' || type === 'clinical' || type === 'recall'
+      || type === 'activist' || type === 'congress' || type === 'geopolitical'
+      || type === 'monetary' || type === 'macro_data' || type === 'rates_credit'
+      || type === 'market_structure' || type === 'exec' || type === 'guidance') return true;
+
+  // A beat or a miss is the event; otherwise the company has to be big enough for the print to
+  // matter, and revenue scale is the proxy the row actually carries.
+  if (type === 'earnings') return SURPRISE.test(text) || (amount !== null && amount >= 100e6);
+
+  // An operating disruption either names a hard event or carries a cost.
+  if (type === 'operations') return HARD_DISRUPTION.test(headline) || (amount !== null && amount >= MIN_AMOUNT.operations);
+
+  // A rating action has to be ABOUT an identified listed company, or a reader cannot act on it.
+  if (type === 'analyst' || type === 'credit_rating') return subjectTickers(ev, catalyst).length > 0;
+
+  // An agreed deal by an identified company counts even with terms undisclosed.
+  if (type === 'ma') {
+    if (amount !== null && amount >= MIN_AMOUNT.ma) return true;
+    return DEFINITIVE_DEAL.test(headline) && (ev?.tickers || []).filter(Boolean).length > 0;
+  }
+
+  const floor = MIN_AMOUNT[type];
+  if (floor !== undefined) return amount !== null && amount >= floor;
+  return true;
 }
 
 /** The auditable reason an event was refused, for the candidate record. */

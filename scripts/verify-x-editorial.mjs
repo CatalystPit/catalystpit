@@ -122,9 +122,11 @@ ok('a halt is never called featureless', !tooVagueToPost('$XYZ halted', { isHalt
 console.log('\n=== gates that must NOT have loosened ===');
 // POLICY: at HIGH or CRITICAL, speculation is no longer a blocker — Pit Wire already scored the
 // event and the account does not hold a second vote. The rule still applies below that bar.
+// Walter is now a dedicated source that bypasses the threshold, so this case is tested from an
+// ordinary wire — which is what it was ever about. Speculation from a normal source stays suppressed.
 ok('speculation is suppressed below HIGH',
   !build({ headline: 'Acme considers acquiring Beta', tickers: ['ACM'], importance: 1,
-    sources: ['WALTERBLOOMBERG'] }).publishable);
+    sources: ['FINANCIALJUICE'] }).publishable);
 ok('truncated wording still suppressed', !build({ headline: 'Acme agrees to acquire Beta for…', tickers: ['ACM'] }).publishable);
 ok('non-English still suppressed', !build({ headline: 'SÍL 2 hs. - ákvörðun vaxta og almenn upplýsingagjöf' }).publishable);
 ok('a taxonomy label is never a cashtag',
