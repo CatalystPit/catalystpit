@@ -19,7 +19,7 @@
 // Run: node --env-file=.env.local scripts/backfill-display-dedupe.mjs [--apply]
 
 import postgres from 'postgres';
-import { normHash, PROXIMITY_MS } from '../src/lib/event-cluster.mjs';
+import { normHash, PROXIMITY_MS, RELAY_WINDOW_MS, wordContainment, citedOutlet, sharedCore, actionClass } from '../src/lib/event-cluster.mjs';
 
 const APPLY = process.argv.includes('--apply');
 const sql = postgres(process.env.DATABASE_URL, { max: 1 });
@@ -82,15 +82,9 @@ for (const p of plan.slice(0, 15)) {
 }
 if (plan.length > 15) console.log(`   … and ${plan.length - 15} more`);
 
-if (!APPLY) {
-  console.log('\n  DRY RUN — nothing written. Re-run with --apply to collapse these.');
-  await sql.end();
-  process.exit(0);
-}
-
 // ── 3. attach ───────────────────────────────────────────────────────────────
 let merged = 0;
-for (const p of plan) {
+for (const p of (APPLY ? plan : [])) {
   // Any row already pointing at a member must be re-pointed at the head, so clusters stay exactly
   // one level deep and no row is orphaned behind a row that is no longer canonical.
   await sql`update primary_events set cluster_id = ${p.head} where cluster_id = any(${p.members})`;
@@ -135,6 +129,61 @@ for (const g of rel) {
 }
 console.log(`  shared wire release id: ${relSets} sets, ${relMerged} rows attached`);
 
+// ── 3c. relay re-wordings ───────────────────────────────────────────────────
+// A wire re-sending one upstream story with the wording evolving. Neither the display headline nor
+// the release id can see these — the text genuinely differs each time. Applies the same two
+// deterministic tests findCluster now uses at ingest, over the same 30-minute window.
+const recent = await sql`select seq, source, tickers, entity, headline, source_headline, fact_sig,
+    coalesce(published_at, received_at) at
+  from primary_events
+ where cluster_id is null and source_kind <> 'sec'
+   and coalesce(published_at, received_at) > now() - interval '7 days'
+ order by coalesce(published_at, received_at)`;
+
+const relayPlan = new Map();   // member seq -> head seq
+const headOf = (s) => { let h = s; while (relayPlan.has(h)) h = relayPlan.get(h); return h; };
+for (let i = 0; i < recent.length; i++) {
+  for (let j = i + 1; j < recent.length; j++) {
+    const a = recent[i], b = recent[j];
+    if (new Date(b.at) - new Date(a.at) > RELAY_WINDOW_MS) break;
+    if (relayPlan.has(b.seq)) continue;
+    if (a.fact_sig && b.fact_sig && a.fact_sig !== b.fact_sig) continue;
+    let hit = wordContainment(a.headline, b.headline);
+    if (!hit) {
+      const oa = citedOutlet(`${a.source_headline || ''} ${a.headline || ''}`);
+      const ob = citedOutlet(`${b.source_headline || ''} ${b.headline || ''}`);
+      const ta = new Set(a.tickers || []), tb = new Set(b.tickers || []);
+      const sameCo = [...ta].some((t) => tb.has(t)) || (a.entity && a.entity === b.entity);
+      const ca = actionClass(a.headline), cb = actionClass(b.headline);
+      hit = !!oa && oa === ob && sameCo && !(ca && cb && ca !== cb)
+        && sharedCore(a.headline, b.headline, [...ta, a.entity]) >= 2;
+    }
+    if (hit) relayPlan.set(b.seq, headOf(a.seq));
+  }
+}
+console.log(`\n  relay re-wordings to collapse: ${relayPlan.size}`);
+const byHead = new Map();
+for (const [m, h] of relayPlan) { if (!byHead.has(h)) byHead.set(h, []); byHead.get(h).push(m); }
+const title = (s) => recent.find((r) => Number(r.seq) === Number(s))?.headline || '?';
+for (const [h, ms] of [...byHead].slice(0, 12)) {
+  console.log(`   head ${h}: ${JSON.stringify(title(h)).slice(0, 78)}`);
+  for (const m of ms) console.log(`      <- ${m}: ${JSON.stringify(title(m)).slice(0, 74)}`);
+}
+if (byHead.size > 12) console.log(`   … and ${byHead.size - 12} more`);
+
+if (APPLY) {
+  let n = 0;
+  for (const [h, ms] of byHead) {
+    await sql`update primary_events set cluster_id = ${h} where cluster_id = any(${ms})`;
+    await sql`update primary_events set cluster_id = ${h} where seq = any(${ms})`;
+    await sql`update primary_events
+       set source_count = (select count(*) + 1 from primary_events where cluster_id = ${h})
+     where seq = ${h}`;
+    n += ms.length;
+  }
+  console.log(`  attached ${n} relay re-wordings to ${byHead.size} canonical events`);
+}
+
 // ── 4. prove it ─────────────────────────────────────────────────────────────
 const left = await sql`
   select count(*) n from (
@@ -151,3 +200,5 @@ console.log(`  canonical display-headline collisions remaining: ${left[0].n} (re
 console.log(`  folded source records preserved in total        : ${kept[0].n}`);
 console.log(`  SEC: ${sec[0].n} rows, ${sec[0].altered} altered, ${sec[0].clustered} clustered`);
 await sql.end();
+
+if (!APPLY) console.log('\n  DRY RUN — nothing written. Re-run with --apply to collapse these.');

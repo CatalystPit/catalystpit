@@ -125,6 +125,63 @@ export function normHash(headline) {
   return norm.length >= 12 ? norm : '';
 }
 
+// ── relay layers ─────────────────────────────────────────────────────────────
+// Two deterministic tests for the case shingle similarity is structurally bad at: a wire relaying
+// one upstream story several times in a couple of minutes, re-wording the headline as it goes. Live
+// example — four canonical rows for one CNBC piece:
+//
+//   "Microsoft sets limits for future AI models - CNBC $MSFT"
+//   "Microsoft issues code of conduct to restrict AI models - CNBC $MSFT"
+//   "Microsoft sets limits for future AI models as industry throttles frontier development - CNBC"
+//
+// Their pairwise shingle scores are 0.32, 0.49 and 0.19 against a 0.60 bar. Lowering that bar is not
+// the answer — it would start merging genuinely different announcements about the same company.
+// Both tests below are exact matches on structured facts, not fuzzier text matching.
+//
+// The window is deliberately MUCH tighter than the 36h used elsewhere. Over a long window these
+// would merge things that recur: "Saudi civil defense issues early warning in Khamis Mushait" is a
+// real event on more than one day.
+export const RELAY_WINDOW_MS = 30 * 60 * 1000;
+
+// One headline's content words entirely inside the other's. A relay re-sending the same line with
+// more of the upstream headline attached — "Sweden's Social Democrats forecast 28.4% of votes in
+// election" inside "…forecast to receive 28.4% of votes in election" — is the same event by
+// construction, with no similarity threshold involved. Four-word floor so a stub cannot swallow a
+// longer unrelated headline.
+export function wordContainment(a, b) {
+  const A = new Set(normWords(a)), B = new Set(normWords(b));
+  if (A.size < 4 || B.size < 4) return false;
+  const [small, big] = A.size <= B.size ? [A, B] : [B, A];
+  for (const w of small) if (!big.has(w)) return false;
+  return true;
+}
+
+// The upstream outlet a wire flash credits. Relays name where the story came from — "… - CNBC",
+// "…: CNBC", "… (Reuters)" — and two flashes about the same company crediting the same outlet
+// within half an hour are the same story being re-worded, not two announcements.
+const OUTLET = /(?:[-–—:]\s*|\()\s*(CNBC|Reuters|Bloomberg|BBG|WSJ|FT|Axios|Politico|AP|AFP|Nikkei|CNN|BBC|Semafor|NYT|New York Times|Washington Post|Barron'?s|Fox Business|Sky News|Handelsblatt)\b/i;
+export function citedOutlet(text) {
+  const m = OUTLET.exec(String(text || ''));
+  if (!m) return null;
+  const o = m[1].toUpperCase();
+  return o === 'BBG' ? 'BLOOMBERG' : o === 'NEW YORK TIMES' ? 'NYT' : o;
+}
+
+// Content words two headlines share once the company and the outlet are taken out — what is left is
+// the EVENT. Two flashes that share only "Microsoft" and "CNBC" have nothing in common but the
+// company and who reported it, which is not evidence they describe one announcement.
+const OUTLET_WORDS = new Set(['cnbc', 'reuters', 'bloomberg', 'bbg', 'wsj', 'ft', 'axios', 'politico',
+  'ap', 'afp', 'nikkei', 'cnn', 'bbc', 'semafor', 'nyt', 'times', 'post', 'barron', 'barrons', 'fox', 'sky']);
+export function sharedCore(a, b, entityTokens = []) {
+  const strip = new Set(OUTLET_WORDS);
+  for (const t of entityTokens) for (const w of normWords(t)) strip.add(w);
+  const A = new Set(normWords(a).filter((w) => !strip.has(w)));
+  const B = new Set(normWords(b).filter((w) => !strip.has(w)));
+  let n = 0;
+  for (const w of A) if (B.has(w)) n++;
+  return n;
+}
+
 // Character-level 4-grams over the normalized word stream. Robust to different phrasings of the
 // same fact in a way word-set overlap alone is not.
 export function shingles(text, n = 4) {
@@ -221,6 +278,50 @@ export function findCluster(item, candidates) {
   const mine = shingles(`${item.headline} ${item.summary || ''}`);
   const myTickers = new Set((item.tickers || []).map((t) => String(t).toUpperCase()));
   const myEntity = String(item.entity || '').toLowerCase();
+
+  // ── relay layers, before similarity ──
+  const withinRelay = (c) => {
+    const ta = Date.parse(item.published_at ?? item.received_at ?? NaN);
+    const tb = Date.parse(c.published_at ?? c.received_at ?? NaN);
+    return Number.isFinite(ta) && Number.isFinite(tb) && Math.abs(ta - tb) <= RELAY_WINDOW_MS;
+  };
+  const figuresConflict = (c) => item.fact_sig && c.fact_sig && item.fact_sig !== c.fact_sig;
+
+  // CONTAINMENT. One headline's content words entirely inside the other's, inside half an hour.
+  // No company test: measured over three days of live data this fires on 41 pairs and every one is
+  // the same event, and 20 of them are pairs the company test would have WRONGLY rejected because
+  // one side resolved a ticker and the other did not — "Amazon suspends operations with 21 Air
+  // following Miami runway crash" against "Amazon suspends operations with 21 Air". A four-word
+  // floor plus a 30-minute window is what makes that safe; over a long window it would not be.
+  for (const c of candidates) {
+    if (!withinRelay(c) || figuresConflict(c)) continue;
+    if (wordContainment(item.headline, c.headline)) return { match: c, tier: 'containment' };
+  }
+
+  // CITED OUTLET. A relay crediting the same upstream outlet about the same company inside half an
+  // hour is re-wording one story. This one DOES need the company test, and two more besides — on
+  // its own it merged "Microsoft raises quarterly dividend by 10% - CNBC" into "Microsoft names new
+  // CFO effective October - CNBC", which is exactly the failure that must not happen:
+  //   * event types must not contradict, where the classifier can read them at all
+  //   * at least two shared content words BEYOND the company and the outlet, so the merge rests on
+  //     the event itself rather than on "Microsoft" and "CNBC" appearing in both. The MSFT AI pair
+  //     shares {ai, models}; the dividend/CFO pair shares nothing.
+  const myOutlet = citedOutlet(`${item.source_headline || ''} ${item.headline || ''}`);
+  if (myOutlet) {
+    const myClass = actionClass(item.headline);
+    for (const c of candidates) {
+      if (!withinRelay(c) || figuresConflict(c)) continue;
+      const theirs = new Set((c.tickers || []).map((t) => String(t).toUpperCase()));
+      const sharedTicker = [...myTickers].some((t) => theirs.has(t));
+      const sharedEntity = myEntity && String(c.entity || '').toLowerCase() === myEntity;
+      if (!sharedTicker && !sharedEntity) continue;
+      if (citedOutlet(`${c.source_headline || ''} ${c.headline || ''}`) !== myOutlet) continue;
+      const theirClass = actionClass(c.headline);
+      if (myClass && theirClass && myClass !== theirClass) continue;
+      if (sharedCore(item.headline, c.headline, [...myTickers, myEntity]) < 2) continue;
+      return { match: c, tier: 'relay_outlet' };
+    }
+  }
   let best = null, bestScore = 0, bestNeeded = 1;
   for (const c of candidates) {
     const theirs = new Set((c.tickers || []).map((t) => String(t).toUpperCase()));

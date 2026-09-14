@@ -93,6 +93,53 @@ ok('the 36h gate still applies to display headlines — a recurring notice stays
   findCluster({ display_hash: 'federal reserve issues fomc statement', published_at: '2026-09-14T12:00:00Z', headline: 'x' },
     [dh(1, 'federal reserve issues fomc statement', { published_at: '2026-07-30T12:00:00Z' })]) === null);
 
+// ── relay layers ────────────────────────────────────────────────────────────
+// A wire re-sending one upstream story with the wording evolving. Four canonical rows for a single
+// CNBC piece reached production; their pairwise shingle scores were 0.32, 0.49 and 0.19 against a
+// 0.60 bar, so similarity could never have caught them and lowering that bar is not the answer.
+const rel = (min) => new Date(Date.parse('2026-09-14T13:00:00Z') + min * 60000).toISOString();
+const msft = (o) => ({ tickers: ['MSFT'], entity: 'MSFT', fact_sig: '', summary: '', ...o });
+const msftHead = { seq: 1, cluster_id: null, canonical_url: 'https://x/1', ...msft({
+  headline: 'MSFT: Microsoft sets limits for future AI models - CNBC $MSFT',
+  source_headline: 'Microsoft sets limits for future AI models - CNBC $MSFT|FJ', published_at: rel(0) }) };
+
+ok('a longer re-send of the same line merges (containment)',
+  findCluster(msft({ original_url: 'https://x/2', published_at: rel(5),
+    headline: 'MSFT: Microsoft sets limits for future AI models as industry throttles frontier development - CNBC $MSFT',
+    source_headline: 'x - CNBC|FJ' }), [msftHead])?.tier === 'containment');
+ok('a paraphrase of the same story merges (cited outlet)',
+  findCluster(msft({ original_url: 'https://x/3', published_at: rel(1),
+    headline: 'MSFT: Microsoft issues code of conduct to restrict AI models - CNBC $MSFT',
+    source_headline: 'Microsoft issues code of conduct to restrict AI models - CNBC $MSFT|FJ' }), [msftHead])?.tier === 'relay_outlet');
+ok('a relay with no ticker resolved still merges on containment',
+  findCluster(msft({ original_url: 'https://x/4', published_at: rel(2), tickers: [], entity: 'microsoft-sets',
+    headline: 'Microsoft Sets Limits for Future AI Models: Cnbc',
+    source_headline: '*MICROSOFT SETS LIMITS FOR FUTURE AI MODELS: CNBC (@WalterBloomberg)' }), [msftHead])?.tier === 'containment');
+
+// The guards. Each of these merged during development and each must not.
+ok('TWO DIFFERENT announcements, same company, same outlet, same minute stay separate',
+  findCluster(msft({ original_url: 'https://x/9', published_at: rel(1),
+    headline: 'Microsoft raises quarterly dividend by 10% - CNBC $MSFT',
+    source_headline: 'Microsoft raises quarterly dividend by 10% - CNBC $MSFT|FJ' }),
+    [{ seq: 2, cluster_id: null, canonical_url: 'https://x/8', ...msft({
+      headline: 'Microsoft names new CFO effective October - CNBC $MSFT',
+      source_headline: 'Microsoft names new CFO effective October - CNBC $MSFT|FJ', published_at: rel(0) }) }]) === null);
+ok('same outlet but a different company stays separate',
+  findCluster(msft({ original_url: 'https://x/10', published_at: rel(1), tickers: ['AAPL'], entity: 'AAPL',
+    headline: 'Apple sets limits for future AI models - CNBC $AAPL', source_headline: 'Apple - CNBC' }), [msftHead]) === null);
+ok('containment three hours apart stays separate — recurring notices are real events',
+  findCluster(msft({ original_url: 'https://x/11', published_at: rel(180),
+    headline: 'MSFT: Microsoft sets limits for future AI models - CNBC $MSFT', source_headline: 'x' }),
+    [{ ...msftHead, headline: 'MSFT: Microsoft sets limits for future AI models as industry throttles frontier development - CNBC $MSFT' }]) === null);
+ok('containment with conflicting figures stays separate',
+  findCluster(msft({ original_url: 'https://x/12', published_at: rel(2), fact_sig: '750000000',
+    headline: 'Microsoft announces buyback program', source_headline: 'z' }),
+    [{ seq: 3, cluster_id: null, canonical_url: 'https://x/7', ...msft({ fact_sig: '500000000',
+      headline: 'Microsoft announces buyback program worth billions', source_headline: 'z', published_at: rel(0) }) }]) === null);
+ok('a stub under the four-word floor cannot swallow a longer headline',
+  findCluster(msft({ original_url: 'https://x/13', published_at: rel(1),
+    headline: 'Microsoft update', source_headline: 'q' }), [msftHead]) === null);
+
 ok('actionClass finds merger', actionClass('Acme to buy Beta') === 'merger');
 ok('actionClass finds approval', actionClass('FDA approves drug') === 'approval');
 ok('actionClass unknown → null', actionClass('weather is nice today') === null);
