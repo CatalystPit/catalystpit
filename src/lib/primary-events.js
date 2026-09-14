@@ -5,6 +5,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { FEEDS, PENDING, activeFeeds, fetchFeed, normalize, TICKERABLE, categoryOf, importanceOf, contentHash, companyPhrases, isTickerableSource } from './primary-sources.mjs';
 import { resolveIssuerItems } from './name-resolver';
+import { buildIndex, resolveCompanies } from './company-symbols.mjs';
 import { canonicalUrl, eventKey, factKey, findCluster, normHash, PROXIMITY_MS } from './event-cluster.mjs';
 import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDisplayable } from './news-normalize.mjs';
 import { isNonEnglish } from './language.mjs';
@@ -142,9 +143,43 @@ function isDue(feed, state) {
 // Tickers a source did not state. Two independent gates: the headline must yield a company-shaped
 // phrase, and that phrase must then map to exactly one SEC registrant. Either failing means none.
 // A ticker the SOURCE itself published is a stated fact and is left exactly as it arrived.
+// Catalyst Pit's own symbol reference: SEC registrant names keyed by ticker from insider_trades,
+// supplemented by screener_stocks where its company column holds a real name. Cached, because it is
+// ~5,500 rows that change daily at most and is read on every ingest pass.
+let _symIdx = null, _symAt = 0;
+const SYMBOL_TTL_MS = 6 * 60 * 60 * 1000;
+
+async function symbolIndex() {
+  if (_symIdx && Date.now() - _symAt < SYMBOL_TTL_MS) return _symIdx;
+  try {
+    const a = await db.execute(sql`
+      select distinct on (ticker) ticker, company from insider_trades
+       where company is not null and company <> '' order by ticker, filing_date desc`);
+    const b = await db.execute(sql`
+      select ticker, company from screener_stocks where company is not null and company <> ''`);
+    _symIdx = buildIndex([...(a.rows ?? a), ...(b.rows ?? b)]);
+    _symAt = Date.now();
+  } catch { /* keep whatever index we had; no index simply means no name resolution */ }
+  return _symIdx;
+}
+
 async function resolveTickers(events) {
   const candidates = events.filter((e) => isTickerableSource(e.source) && !(e.tickers || []).length);
   if (!candidates.length) return;
+
+  // NAME RESOLUTION FIRST. The registrant path below only ever fires when the headline prints a
+  // legal suffix, which headlines almost never do: "Amgen Inc. wins approval" resolved while
+  // "Costco raises motor oil prices" and "Nvidia beats Q3 estimates" did not, and 3,137 of 3,482
+  // canonical events in 24 hours carried no ticker at all. This reads the company by name.
+  try {
+    const idx = await symbolIndex();
+    if (idx) {
+      for (const e of candidates) {
+        const hits = resolveCompanies(e.source_headline || e.headline, idx);
+        if (hits.length) e.tickers = hits;
+      }
+    }
+  } catch { /* best effort; no ticker is always an acceptable outcome */ }
   const items = candidates.map((e, i) => ({
     cusip: String(i),
     issuers: companyPhrases(e.source_headline || e.headline),
