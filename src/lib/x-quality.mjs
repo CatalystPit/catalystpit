@@ -13,9 +13,22 @@
 
 import { macroImpact, criticalPredicate, isCompletePhrase } from './news-normalize.mjs';
 import { materiallyNonEnglish } from './language.mjs';
+import { isPricePrint } from './x-story.mjs';
 
 // ── how old is too old to call it breaking market information ────────────────
 export const MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+// ── halts ────────────────────────────────────────────────────────────────────
+// LULD is the exchange's automatic circuit breaker: it fires on any security that moves fast, which
+// on a micro-cap is most days. A halt pending news, or a regulatory suspension, is a decision
+// somebody made about that company, and that is the one worth an account's attention.
+const ROUTINE_HALT = /\bvolatility pause\b|\bLULD\b|\bcode\s*M\b/i;
+const NEWS_HALT = /\bnews (?:pending|dissemination)\b|\bT1\b|\bregulatory\b|\bSEC (?:trading )?suspension\b|\bhalted pending\b/i;
+// Size is read from the market cap the engine already holds for the symbol. It is never guessed: a
+// symbol with no cap on file is treated as too small to override a routine pause, which is the
+// fail-closed direction.
+export const HALT_CAP_FLOOR = 2e9;
+const bigEnoughToMatter = (ev) => Number(ev?.market_cap) >= HALT_CAP_FLOOR;
 
 // ── speculation and commentary ───────────────────────────────────────────────
 // A deal that might happen is not a deal. From the sample: "Salesforce considers acquiring Listen
@@ -51,7 +64,7 @@ const PR_NOISE = [
 const VAGUE = /^(?:[A-Z][\w.&'-]*(?:\s+[A-Z][\w.&'-]*){0,4}\s+)?(?:announces?|unveils?|reveals?|reports?|provides?|issues?)\s+(?:a\s+|its\s+|new\s+|an\s+)?(?:strategic\s+)?(?:transaction|update|agreement|milestone|initiative|partnership|collaboration|progress|results)\b\s*\.?$/i;
 
 // Concrete substance: a figure, a percentage, a price, a named drug or programme, a definitive verb.
-const HAS_SUBSTANCE = /\$[\d.,]+|\b\d+(?:\.\d+)?\s?(?:%|bps|basis points|million|billion|m\b|bn\b)|\b\d{2,}\b|\b(?:approves?|approved|rejects?|halted|files? for chapter|delisted|defaults?|resigns?|acquires?|agreed to (?:be )?acquir|to be acquired|definitive (?:merger )?agreement|cuts? rates?|raises? rates?|hikes? rates?)\b/i;
+const HAS_SUBSTANCE = /\$[\d.,]+|\b\d+(?:\.\d+)?\s?(?:%|bps|basis points|million|billion|m\b|bn\b)|\b\d{2,}\b|\b(?:approves?|approved|rejects?|halted|files? for chapter|delisted|delisting|deregistration|defaults?|resigns?|acquires?|agreed to (?:be )?acquir|to be acquired|definitive (?:merger )?agreement|tender offer|exchange offer|going private|take-?private|breakthrough therapy|fast track|orphan drug|priority review|cuts? rates?|raises? rates?|hikes? rates?)\b/i;
 
 // ── anticipation ─────────────────────────────────────────────────────────────
 // A scheduled meeting that has not happened is not breaking market information, and the sample was
@@ -72,12 +85,24 @@ const hasFigure = (s) => /\d/.test(s);
 // An actual decision, as opposed to a meeting on the calendar.
 const DECIDED = /\b(?:cuts?|cut|raises?|raised|hikes?|hiked|holds?|held|leaves?|left|lowers?|lowered|announces?|announced|delivers?|delivered|votes?|voted)\b/i;
 
+// ── what BREAKING is not ─────────────────────────────────────────────────────
+// A consequence or a hedge. The event already happened, or has not happened at all: "Saudi pipeline
+// outage THREATENS to raise gas prices further" is a 43-hour-old shutdown being re-described, and
+// "could", "may" and "risks" are outcomes nobody has observed.
+const CONSEQUENCE = /\b(?:threatens?|threatening|could|may|might|risks?|set to|poised|likely to|expected to|seen \w+ing|deepens?|worsens?|adds? to|fuels?|raises? (?:fears|concerns)|weighs? on|puts? pressure|casts? doubt)\b/i;
+// Restating a position already held is not new. "NextEra Energy reaffirms 2026 earnings guidance
+// and merger timeline" was labelled BREAKING purely because the word "merger" appeared in it.
+const RESTATEMENT = /\b(?:reaffirms?|reaffirmed|reiterates?|reiterated|affirms?|affirmed|maintains?|maintained|confirms? (?:its|the|prior|previous)|on track|unchanged|no change)\b/i;
+
 // ── does it read like a professional wire line ───────────────────────────────
 // A canonical headline is sometimes a press-release fragment. "FDA approves Reduced Monitoring
 // Time" is grammatical but says nothing about whose drug or for what, and published under the
 // account's name it reads as a machine emptying a queue. Where the facts are too thin to form a
 // sentence a professional would write, the instruction is to suppress rather than publish awkwardly.
-const FINITE_VERB = /\b(?:is|are|was|were|has|have|had|says?|said|will|shuts?|closes?|opens?|cuts?|raises?|holds?|hits?|falls?|rises?|climbs?|drops?|gains?|slides?|jumps?|sinks?|surges?|plunges?|approves?|rejects?|clears?|halts?|halted|files?|filed|wins?|won|loses?|lost|acquires?|acquired|agrees?|agreed|announces?|announced|reports?|reported|launches?|launched|plans?|seizes?|seized|strikes?|struck|attacks?|attacked|warns?|warned|expects?|reaches?|reached|remains?|blocks?|blocked|suspends?|suspended|resigns?|resigned|names?|named|raises?|issues?|adds?|expands?|begins?|starts?|ends?|delivers?|leaves?|left|votes?|voted|denies?|denied|confirms?|confirmed|declares?|declared|takes? effect|to take effect|comes? into force|enters? into force|signs?|signed|sets?|set|receives?|received|grants?|granted|secures?|secured|posts?|posted)\b/i;
+const FINITE_VERB = /\b(?:is|are|was|were|has|have|had|says?|said|will|shuts?|closes?|opens?|cuts?|raises?|holds?|hits?|falls?|rises?|climbs?|drops?|gains?|slides?|jumps?|sinks?|surges?|plunges?|approves?|rejects?|clears?|halts?|halted|files?|filed|wins?|won|loses?|lost|acquires?|acquired|agrees?|agreed|announces?|announced|reports?|reported|launches?|launched|plans?|seizes?|seized|strikes?|struck|attacks?|attacked|warns?|warned|expects?|reaches?|reached|remains?|blocks?|blocked|suspends?|suspended|resigns?|resigned|names?|named|raises?|issues?|adds?|expands?|begins?|starts?|ends?|delivers?|leaves?|left|votes?|voted|denies?|denied|confirms?|confirmed|declares?|declared|takes? effect|to take effect|comes? into force|enters? into force|signs?|signed|sets?|set|receives?|received|grants?|granted|secures?|secured|posts?|posted|reaffirms?|reaffirmed|reiterates?|reiterated|affirms?|affirmed|maintains?|maintained|withdraws?|withdrew|terminates?|terminated|prices?|priced|upsizes?|upsized|resumes?|resumed|discontinues?|discontinued|initiates?|initiated|completes?|completed)\b/i;
+// The tail of that list was added after the gate called "NextEra Energy reaffirms 2026 earnings
+// guidance and merger timeline" fragmentary. It is a complete sentence; the list simply did not
+// know the verb, and a missing verb reads to this gate exactly like a missing predicate.
 // A trailing Title Case noun phrase with no qualifier is the signature of a truncated PR headline.
 const TRAILING_FRAGMENT = /\b(?:[A-Z][a-z]+\s+){1,}[A-Z][a-z]+\s*$/;
 
@@ -135,6 +160,20 @@ export function publicationVerdict(ev, now = Date.now()) {
 
   if (!headline) return no('no headline');
 
+  // ── exchange halts ─────────────────────────────────────────────────────────
+  // A halt is a market fact with its own editorial bar, so it is judged here rather than by the
+  // rules below, which are written for prose. Measured over 72h the feed produced 46 halts, every
+  // one a routine LULD volatility pause, and seven of them were the SAME micro-cap. Posting that is
+  // fifteen tweets a day of mechanical noise. What a trader actually wants is the halt that means
+  // something: news pending, a regulatory or SEC trading suspension, or a pause in a security big
+  // enough that the market cares. A routine auto-triggered pause is not news.
+  if (String(ev?.source_type || '') === 'halt') {
+    const t = (ev?.tickers || [])[0];
+    if (!t) return no('halt with no resolved symbol');
+    if (ROUTINE_HALT.test(headline) && !bigEnoughToMatter(ev)) return no('routine volatility pause');
+    return { publish: true, reason: null, breaking: NEWS_HALT.test(headline), terminal: false };
+  }
+
   // 0. ENGLISH, OR NOTHING. This runs before every other test because it is not a judgement about
   // the event: an untranslated source line is not a Catalyst Pit sentence at all, whatever it says.
   // Pit Wire already holds these back from public display; the account must fail closed on the same
@@ -182,7 +221,16 @@ export function publicationVerdict(ev, now = Date.now()) {
   // publishable and useful, and it is not that — "Canada inflation holds at 3.0% year-over-year"
   // and "Spot gold falls nearly 1% to $4,306.19" go out as plain trader-wire lines. Walter
   // provenance earns consideration, never the label.
-  const breaking = !COMMENTARY.test(headline) && (
+  // Four shapes can never carry the label, whatever else is true of them:
+  //   a CONSEQUENCE piece   "Saudi pipeline outage threatens to raise gas prices further" — posted
+  //                         43 hours after the shutdown it is describing
+  //   a HEDGED outcome      "could", "may", "risks", "set to" — it has not happened
+  //   a PRICE UPDATE        "Brent crude reaches $108" — the market moving is not an event breaking
+  //   a FOLLOW-UP           the account has already told this story; the second post is not news
+  const consequence = CONSEQUENCE.test(headline) || RESTATEMENT.test(headline);
+  const priceUpdate = isPricePrint(headline);
+  const followUp = !!ev?.storyHasPriors;
+  const breaking = !COMMENTARY.test(headline) && !consequence && !priceUpdate && !followUp && (
     macro === 3                                  // chokepoint/producer disruption, sovereign emergency
     || predicate === 'emergency_action'
     || (predicate === 'halt' && hasTicker)        // a halt matters when we can say what halted
