@@ -272,7 +272,13 @@ export async function runPrimarySources({ only = null, budgetMs = 0, onNew = nul
     // Hand new rows straight to enrichment instead of waiting for its own cron tick. Enrichment
     // updates the event that is ALREADY captured and already deduped, so this only sharpens a row
     // that is safely stored — it can fail freely without costing us the event.
-    if (sweepWrote && onNew) { try { await onNew(sweepWrote); } catch { /* never blocks ingest */ } }
+    // Enrichment must never block or fail ingest — but it must never fail SILENTLY either. A bare
+    // catch here hid a claim query that threw on every single call: ingest carried on looking
+    // healthy, nothing was ever enriched, and the symptom was indistinguishable from an LLM outage.
+    if (sweepWrote && onNew) {
+      try { await onNew(sweepWrote); }
+      catch (e) { console.error('[primary-sources] enrichment failed:', e?.message || e); }
+    }
 
     const left = budgetMs - (Date.now() - t0);
     if (left <= 6000) break;
@@ -469,8 +475,15 @@ async function claimPending(limit) {
        -- A trusted source keeps trying long after an ordinary event would have been parked. Its
        -- wording must never be what the tape settles on, so it does not get three attempts and a
        -- shrug; it stays in the queue until a Catalyst Pit headline exists.
+       -- The ::int below is LOAD-BEARING. Both branches of this CASE are bind parameters, so
+       -- Postgres has nothing to infer their type from and defaults them to text, and there is no
+       -- smallint-less-than-text operator, so the whole query threw on every call. The caller
+       -- treats a throw the same way it treats a model outage, which is why this looked exactly
+       -- like an Anthropic problem: ingest kept running, enrich_attempts never moved, and
+       -- enriched_at simply stopped. A bare comparison to one parameter infers from the column and
+       -- is fine; a CASE is not.
        and enrich_attempts < (case when source = any(${TRUSTED}::text[]) then ${TRUSTED_REWRITE_ATTEMPTS}
-                                   else ${MAX_REWRITE_ATTEMPTS} end)
+                                   else ${MAX_REWRITE_ATTEMPTS} end)::int
      -- Trusted first, then newest. A breaking flash is rewritten before anything else waiting.
      order by (source = any(${TRUSTED}::text[])) desc, seq desc
      limit ${Math.max(1, Math.min(60, limit))}`);
@@ -482,7 +495,17 @@ async function claimPending(limit) {
 // real batch generator.
 export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generateBatch } = {}) {
   const t0 = Date.now();
-  const rows = await claimPending(limit);
+  // A claim that throws is reported, not propagated as a mystery. It is a different failure from a
+  // model outage and has to be readable as one: `claimError` in the cron's own JSON says the queue
+  // could not even be read, where `unavailable` says the model could not be reached.
+  let rows;
+  try {
+    rows = await claimPending(limit);
+  } catch (e) {
+    const claimError = String(e?.message || e).slice(0, 160);
+    console.error('[enrich] claimPending failed:', claimError);
+    return { claimed: 0, ready: 0, original: 0, fallback: 0, tickers: 0, claimError, ms: Date.now() - t0 };
+  }
   const stats = { claimed: rows.length, ready: 0, original: 0, fallback: 0, tickers: 0 };
   if (!rows.length) return { ...stats, ms: Date.now() - t0 };
 

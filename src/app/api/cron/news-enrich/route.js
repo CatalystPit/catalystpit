@@ -20,7 +20,7 @@ export async function GET(request) {
     const limit = Number(new URL(request.url).searchParams.get('limit') || 30);
     const res = await runEnrichment({ limit });
     const parked = await parkExhausted();
-    if (res.claimed) console.log(`[news-enrich] ${JSON.stringify(res)}`);
+    if (res.claimed || res.claimError || res.unavailable) console.log(`[news-enrich] ${JSON.stringify(res)}`);
     return Response.json({ ok: true, ...res, parked }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     console.error('[news-enrich]', e);
