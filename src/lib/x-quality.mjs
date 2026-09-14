@@ -115,10 +115,15 @@ export function publicationVerdict(ev, now = Date.now()) {
   if (VAGUE.test(headline.trim())) return no('vague, no information');
   // A scheduled event that has not happened yet, with nothing that actually occurred alongside it.
   if (ANTICIPATION.test(headline) && !OCCURRED.test(headline)) return no('anticipated or scheduled event');
-  // macro >= 2 counts as substance in its own right: "Saudi Arabia's East-West pipeline could remain
-  // offline for 3-5 weeks after drone attack" carries no $ figure and no two-digit number, and is
-  // unquestionably concrete.
-  if (!HAS_SUBSTANCE.test(headline) && !MACRO_TERMS.test(headline) && macro < 2) return no('no concrete substance');
+  // Substance can be proved three ways, and a hard corporate predicate is one of them. Without this
+  // the gate suppressed "Nasus Pharma wins FDA approval" and "Scholar Rock receives FDA approval for
+  // spinal muscular atrophy drug Isembyld" as having no substance, which is plainly wrong: an
+  // approval IS the event. macro >= 2 is the third, for headlines like "Saudi Arabia's East-West
+  // pipeline could remain offline for 3-5 weeks after drone attack" that carry no figure at all.
+  const inherentlySubstantive = HARD_CORPORATE.has(predicate) || MARKET_WIDE.has(predicate);
+  if (!HAS_SUBSTANCE.test(headline) && !MACRO_TERMS.test(headline) && macro < 2 && !inherentlySubstantive) {
+    return no('no concrete substance');
+  }
 
   // 6. Signal, not PR-wire noise.
   for (const re of PR_NOISE) if (re.test(hay)) return no('pr wire noise');

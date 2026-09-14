@@ -232,6 +232,14 @@ export const criticalPredicate = (text) =>
 const MA_LANGUAGE = /\bacquir\w+|\bmerger\b|\bmerge[sd]?\b|\bmerging\b|\bto buy\b|\btakeover\b|\bbuyout\b|\btender offer\b/i;
 
 // Acquisition words that describe no transaction between companies.
+//
+// The first and most important of these is not a pattern at all but WHERE the word is allowed to
+// appear: see maSignificance below. Three live CRITICAL rows tripped M&A on a word buried in a
+// press-release body, and in none of them did it describe a transaction —
+//   "purchasers or acquirers of Regeneron Pharmaceuticals common stock"  (class-action boilerplate)
+//   "patients with acquired hypothalamic obesity"                        (a medical adjective)
+//   "the Company has an option to acquire..."                            (a mining option)
+// A transaction that belongs in the CRITICAL tier is stated in the headline.
 const MA_NOT_A_DEAL = [
   // Treasury mechanics: "Coop Pank AS own shares acquisition transactions", "Schouw & Co. share
   // buy-back programme, week 37 2026", "Marimekko to start acquiring the company's own shares".
@@ -244,7 +252,20 @@ const MA_NOT_A_DEAL = [
   /\bmultifamily\b|\bsquare (?:feet|foot|metres|meters)\b|\bretail leases?\b|\bproperty portfolio\b|\bunit community\b/i,
   // A bond sale that merely funds a deal is not the deal.
   /\bbond sale\b|\bnotes offering\b|\bfinancing for\b/i,
+  // "acquirers" meaning shareholders who bought stock, in securities-litigation notices.
+  /\b(?:purchasers? or acquirers?|acquirers? of)\b|\bclass action\b|\bclass period\b|\blead plaintiff\b/i,
+  // An OPTION to acquire is not an acquisition, and neither is an extension of one.
+  /\boptions? to acquire\b|\boption agreement\b|\bright to acquire\b|\bextension of (?:the )?expiration\b/i,
+  // "Inflection Point Acquisition Corp." is a company NAME, not a transaction. SPAC vehicles carry
+  // the word in their title and would otherwise trip this on every announcement they ever make.
+  /\bacquisition (?:corp|corporation|company|holdings|partners|group)\b/i,
+  // Real property, not corporate control.
+  /\bpropert(?:y|ies)\b|\bacres?\b|\bbuilding\b/i,
 ];
+
+// Analysis about a deal is not the deal: "Devon Energy: The Coterra Merger Meets A Powerful Oil
+// Price Tailwind" is a column, and a column must not occupy the tier reserved for the event itself.
+const MA_COMMENTARY = /\b(?:meets?|tailwind|thesis|outlook|why |what (?:it|this) means|analysis|opinion|deep dive|take on|impact of|how the)\b|:\s*(?:the|a|an)\s/i;
 
 // Talk is not a transaction. These stay out of CRITICAL whatever the companies involved.
 const MA_UNCONFIRMED = /\b(?:in (?:advanced )?talks|nears? (?:a )?deal|consider(?:s|ing)|explor(?:es|ing)|weigh(?:s|ing)|mulls?|reportedly|rumou?r\w*|said to be|approach(?:es|ed)|potential(?:ly)? (?:acquisition|merger|takeover)|non-?binding|letter of intent)\b/i;
@@ -262,8 +283,15 @@ const MATERIAL_DEAL_USD = 1e9;
  * @returns {'critical'|'high'|null} null means "no M&A boost at all".
  */
 export function maSignificance({ headline = '', summary = '', tickers = [] } = {}) {
-  const hay = `${headline} ${summary || ''}`;
-  if (!MA_LANGUAGE.test(hay)) return null;
+  const head = String(headline || '');
+  const hay = `${head} ${summary || ''}`;
+  // THE ASSERTION MUST BE IN THE HEADLINE. Supporting facts — a ticker, an exchange-qualified
+  // symbol, a deal value — may come from anywhere, but the claim that a transaction happened has to
+  // be the thing the headline says. Measured over 14 days this drops six CRITICAL rows and every
+  // one of them is a false positive: a class-action notice, a medical adjective, a mining option, a
+  // SPAC's own company name, a tender-offer extension notice and a market-commentary column.
+  if (!MA_LANGUAGE.test(head)) return null;
+  if (MA_COMMENTARY.test(head)) return null;
   for (const re of MA_NOT_A_DEAL) if (re.test(hay)) return null;
 
   const publicCompany = (tickers || []).length > 0 || EXCHANGE_QUALIFIED.test(hay);

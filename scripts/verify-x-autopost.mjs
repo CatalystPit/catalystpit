@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { evaluate, formatPost, buildCandidate, resolveMode, canPublish, sanitize, reactionLine,
          MAX_POST, MODES } from '../src/lib/x-autopost.mjs';
+import { publicationVerdict } from '../src/lib/x-quality.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -112,6 +113,68 @@ const withReaction = formatPost(ev({ importance: 3, tickers: ['NVDA'], headline:
 ok('reaction becomes a second line', withReaction.text.split('\n').length === 2, JSON.stringify(withReaction.text));
 ok('post with reaction still within the limit', withReaction.text.length <= MAX_POST);
 ok('no reading means exactly one line', formatPost(ev()).text.split('\n').length === 1);
+
+// ── publication quality gate ────────────────────────────────────────────────
+// Eligibility says an event MAY be posted. This says whether it SHOULD be. Every case below is a
+// real headline from the dry run.
+sec('PUBLICATION GATE — eligible is not the same as publishable');
+const at = (mins = 1) => new Date(Date.UTC(2026, 8, 14, 12, 0, 0) - mins * 60_000).toISOString();
+const NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
+const gate = (headline, extra = {}) => publicationVerdict(
+  { headline, summary: '', tickers: [], importance: 3, published_at: at(1), ...extra }, NOW);
+
+ok('a real energy-infrastructure event publishes as BREAKING',
+  (() => { const v = gate('Saudi Arabia shuts East-West pipeline after drone attacks'); return v.publish && v.breaking; })());
+// An FDA approval IS substantive — it passes the substance test, which it failed before the
+// hard-corporate clause. It is then held to the identity rule: a company-specific event with no
+// established public company is suppressed, fail closed. That is the specified behaviour, and it
+// means most FDA news waits on the ticker resolver rather than going out unattributed.
+ok('an FDA approval clears the substance test', gate('Nasus Pharma wins FDA approval').reason !== 'no concrete substance');
+ok('but without a resolved ticker it is still suppressed on identity',
+  gate('Nasus Pharma wins FDA approval').reason === 'no public-market relevance');
+ok('WITH a resolved ticker the same approval publishes as BREAKING',
+  (() => { const v = gate('Nasus Pharma wins FDA approval', { tickers: ['NSPH'] }); return v.publish && v.breaking; })());
+ok('a named-drug approval with a ticker publishes',
+  gate('Scholar Rock receives FDA approval for spinal muscular atrophy drug Isembyld', { tickers: ['SRRK'] }).publish);
+
+sec('GATE — private-company M&A can never publish');
+for (const h of ['Tristela Capital Partners acquires Pediatric Group of Acadiana',
+                 'Superhuman to acquire YC-backed notetaker Fathom',
+                 'Wellthy to acquire Cleo as Two Leaders',
+                 'Sazerac to acquire Au Vodka'])
+  ok(`suppressed: ${h.slice(0, 44)}`, gate(h).reason === 'ma without a listed company', gate(h).reason || 'PUBLISHED');
+ok('M&A WITH a resolved ticker publishes',
+  gate('Kyndryl to acquire Healthcare IT Leaders', { tickers: ['KD'] }).publish);
+
+sec('GATE — speculation, anticipation, staleness, PR noise');
+ok('"considers acquiring" is suppressed as speculative',
+  gate('Salesforce considers acquiring Listen Labs', { tickers: ['CRM'] }).reason === 'speculative');
+ok('an unheld scheduled meeting is suppressed',
+  gate('FOMC expected to raise rates 25 basis points this week').reason === 'anticipated or scheduled event');
+ok('a real event that merely mentions a future consequence survives',
+  gate('Saudi oil pipeline struck, expected out of service for several weeks').publish);
+ok('a stale event is suppressed', gate('Saudi Arabia shuts East-West pipeline after drone attacks',
+  { published_at: at(60 * 5) }).reason === 'stale');
+// Suppressed is what matters; WHICH rule catches it first is an implementation detail, so these
+// assert the outcome rather than the route. Both are caught before the PR-noise list even runs.
+ok('a law-firm class-action notice never publishes',
+  !gate('Robbins Geller announces investor deadline for Regeneron class action', { tickers: ['REGN'] }).publish);
+ok('an award announcement never publishes',
+  !gate('Live Oak Bank Named Official Business Bank of UNCW Athletics').publish);
+ok('the PR-noise list does catch one that reaches it',
+  gate('Acme wins $50 million award at industry conference', { tickers: ['ACME'] }).reason === 'pr wire noise');
+ok('a vague announcement is suppressed',
+  gate('Company announces strategic transaction').reason === 'vague, no information');
+
+sec('GATE — Walter macro flashes are never suppressed for lacking a ticker');
+for (const h of ['U.S. crude futures hit session high of $104.95 per barrel',
+                 'Canada inflation holds at 3.0% year-over-year in August',
+                 'Spot gold falls nearly 1% to $4,306.19 per ounce',
+                 "China's Jan-Aug new yuan loans reach CNY10.44T; M2 rises 7.5% y/y"])
+  ok(`Walter macro print publishes: ${h.slice(0, 40)}`,
+    gate(h, { importance: 2, trusted: true }).publish, gate(h, { importance: 2, trusted: true }).reason || '');
+ok('but Walter COMMENTARY is still suppressed',
+  !gate('Iran says US lack of mediation is main obstacle to diplomacy', { importance: 2, trusted: true }).publish);
 
 sec('MODE — fails closed');
 ok("'live' resolves", resolveMode('live') === 'live');
