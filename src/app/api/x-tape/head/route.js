@@ -51,6 +51,10 @@ const HEADERS = {
 const EMPTY = { id: null, at: null, n: 0 };
 let good = { at: 0, body: EMPTY };   // last SUCCESSFUL upstream read
 let triedAt = 0;                     // last upstream attempt, successful or not
+// Why the last upstream read failed. Reported so the difference between "X refused us" and "our own
+// parser broke" is observable from outside, instead of both looking like a null id. Diagnostic only:
+// it changes no behaviour and costs no extra request.
+let lastError = null;
 
 async function head() {
   if (!LIST_ID) return { id: null, at: null, n: 0 };
@@ -84,8 +88,9 @@ export async function GET() {
   // point of a per-IP rate limit, and hammering X while it is refusing us would keep it refusing.
   if (now - triedAt >= CACHE_MS) {
     triedAt = now;
-    try { good = { at: now, body: await head() }; } catch { /* the last good head stands */ }
+    try { good = { at: now, body: await head() }; lastError = null; }
+    catch (e) { lastError = String(e?.message || e).slice(0, 80); }   // the last good head stands
   }
   const usable = good.body.id && Date.now() - good.at <= STALE_OK_MS;
-  return send(usable ? good.body : EMPTY);
+  return send(usable ? good.body : { ...EMPTY, upstream: lastError || 'no read yet' });
 }
