@@ -53,6 +53,9 @@ const HIDDEN_REFRESH_MS = 30 * 60 * 1000; // backgrounded: keep it alive, stop s
 // hover guard below must never be able to latch on and freeze the tape for the rest of the session.
 const HOVER_MAX_HOLD_MS = 3 * 60 * 1000;
 const TICK_MS = 2000;
+// How long both tapes stay mounted and stacked after the new one is revealed. The old tape is the
+// safety net: while it is still there, no ordering mistake in the reveal can show an empty panel.
+const OVERLAP_MS = 400;
 
 // createTimeline returns X's own promise. It normally resolves (with the element, or with undefined
 // when X declines), but a hung syndication request can leave it pending forever, and a promise that
@@ -66,26 +69,47 @@ const withDeadline = (p, ms) => new Promise((resolve, reject) => {
   );
 });
 
-// Resolve once X's embed has actually RENDERED, not merely once the element exists.
+// Resolve once X's embed is genuinely ON SCREEN — which is a different moment from "has height".
 //
-// widgets.js resolves createTimeline when it has inserted the iframe; the document then loads and X
-// sizes the frame to its content. Between those two moments the frame is present and empty, so
-// swapping on the promise alone puts a blank dark rectangle on screen and lets it fill in — the
-// flash this is here to prevent. A frame taller than a single row is the observable proof that the
-// timeline painted, and it is the only signal available: the embed is cross-origin, so neither its
-// load event nor its contents can be read from here.
+// This is the exact lifecycle, read out of platform.twitter.com/widgets.js. The sandbox creates its
+// iframe with
+//     { position:'absolute', visibility:'hidden', display:'block', width:'0px', height:'0px' }
+// and reveals it later with
+//     { position:'static', visibility:'visible' }
+// through makeVisible(). The timeline factory calls setWaitToSwapUntilRendered(true), so that
+// reveal is deferred to the END of the render chain — results, then makeVisible, then rendered —
+// while the iframe's real width and height arrive EARLIER, on the resize message from inside the
+// frame.
+//
+// That ordering is what defeated the previous attempt. `visibility:hidden` does not remove an
+// element from layout, so offsetHeight reads ~600 on an iframe that is still invisible. Waiting on
+// height alone therefore resolved during the gap: we revealed the staging slot and dropped the old
+// one while X's new iframe was still hidden, and the panel went blank until makeVisible() ran.
+//
+// So readiness is BOTH: real height AND computed visibility. Both are observable from outside a
+// cross-origin frame; its load event and its contents are not.
 const MIN_RENDERED_PX = 120;
-const PAINT_TIMEOUT = 8000;
-const PAINT_POLL_MS = 100;
+const PAINT_TIMEOUT = 10000;
+const PAINT_POLL_MS = 80;
+const isOnScreen = (frame) => {
+  if (!frame || frame.offsetHeight < MIN_RENDERED_PX || frame.offsetWidth < 40) return false;
+  const cs = window.getComputedStyle(frame);
+  return cs.visibility === 'visible' && cs.display !== 'none' && Number(cs.opacity || '1') > 0.99;
+};
 const waitPainted = (slot, isCancelled) => new Promise((resolve, reject) => {
   const started = Date.now();
   const tick = () => {
     if (isCancelled()) return resolve(undefined);        // teardown, not a failure
     const frame = slot?.querySelector('iframe');
-    if (frame && frame.offsetHeight >= MIN_RENDERED_PX) return resolve(frame);
+    // Two consecutive passes, so a dimension caught mid-write is never mistaken for a stable one.
+    if (isOnScreen(frame)) return requestAnimationFrame(() => {
+      if (isCancelled()) return resolve(undefined);
+      if (isOnScreen(frame)) return resolve(frame);
+      setTimeout(tick, PAINT_POLL_MS);
+    });
     // Timing out is a real failure: it routes into the retry/backoff below, which leaves the tape
     // already on screen exactly where it is.
-    if (Date.now() - started > PAINT_TIMEOUT) return reject(new Error('embed never painted'));
+    if (Date.now() - started > PAINT_TIMEOUT) return reject(new Error('embed never became visible'));
     setTimeout(tick, PAINT_POLL_MS);
   };
   tick();
@@ -132,6 +156,10 @@ export default function XTape({ height = 620, onClose, bare = false }) {
   const hoverRef = useRef(false);
   const hoverSinceRef = useRef(0);
   const buildSeqRef = useRef(0);
+  // The pending removal of the outgoing tape. Held in a ref so a teardown or a second swap can
+  // cancel it — the one thing that must never happen is a stale timer removing the tape that is
+  // currently on screen.
+  const swapTimerRef = useRef(null);
 
   // The embed lives in a CROSS-ORIGIN iframe, so its text colour is fixed at creation and cannot be
   // restyled afterwards. It therefore has to be built with the theme that is actually active, and
@@ -181,16 +209,20 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     const swapIn = () => {
       if (!ref.current || !slot) return;
       const incoming = slot;
+      // The incoming slot is REVEALED ON TOP of the outgoing one, which is not touched. For this
+      // moment both tapes are mounted and painted, stacked exactly on each other, so there is no
+      // instant at which the panel contains nothing to show.
+      incoming.style.zIndex = '2';
       incoming.style.visibility = 'visible';
       incoming.style.pointerEvents = 'auto';
-      incoming.style.zIndex = '1';
-      // Drop the outgoing tape only after the browser has actually presented a frame containing
-      // the new one. Removing it in the same frame leaves a gap the compositor can show.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
+      // Only then, after a real overlap, is the outgoing tape removed. Two frames was not enough
+      // margin; a few hundred milliseconds of double-mounting costs nothing and removes the whole
+      // class of timing bug. Anything already-visible stays visible for the entire overlap.
+      swapTimerRef.current = setTimeout(() => {
         if (!ref.current) return;
         for (const child of [...ref.current.children]) if (child !== incoming) child.remove();
-        incoming.style.zIndex = '';
-      }));
+        incoming.style.zIndex = '1';
+      }, OVERLAP_MS);
     };
 
     const attempt = (i) => {
@@ -269,7 +301,18 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      if (slot) { slot.remove(); slot = null; }
+      // THE BUG THIS GUARD FIXES. `slot` is the staging slot only until swapIn() succeeds; after
+      // that it IS the visible tape. The previous version removed it unconditionally, so React's
+      // cleanup — which runs BEFORE the next effect — deleted the tape from the DOM at the start of
+      // every single refresh and left the panel empty for the whole 1-3s build. The comment here
+      // used to claim this dropped "only the in-flight staging slot"; it did not.
+      //
+      // A hidden slot has never been swapped in, so hidden is exactly the test for "safe to remove".
+      if (slot && slot.style.visibility === 'hidden') slot.remove();
+      slot = null;
+      // A pending overlap removal must not outlive this build and delete the tape belonging to the
+      // next one. The next swapIn clears any leftover siblings anyway.
+      if (swapTimerRef.current) { clearTimeout(swapTimerRef.current); swapTimerRef.current = null; }
     };
   }, [theme, nonce]);
 
