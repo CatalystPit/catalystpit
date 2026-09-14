@@ -10,10 +10,13 @@
 // not a secret. If it's ever cleared to empty, the component renders NOTHING (page never breaks).
 //
 // Reliability note: X's syndication endpoint that feeds this widget rate-limits (HTTP 429) PER
-// VISITOR IP. That fetch happens in the visitor's own browser, so a dev refreshing repeatedly gets
-// throttled while a normal first-time visitor is unaffected. We use createTimeline() (one clean
-// call, no repeated widgets.load storms) + retry-with-backoff so a transient 429 self-heals, and
-// fall back to a direct "open on X" link if it still can't paint — the box is never left dead.
+// VISITOR IP. That fetch happens in the visitor's own browser, so every rebuild is spent out of
+// that one visitor's budget, and a refused rebuild is SILENT — it leaves the previous tape on
+// screen, which is indistinguishable from a tape that simply has nothing new. Rebuilding on a blind
+// timer therefore burns the budget on an unchanged timeline and is throttled exactly when a post
+// finally lands. We use createTimeline() (one clean call, no repeated widgets.load storms), rebuild
+// only when the list has actually moved, retry with backoff so a transient 429 self-heals, and fall
+// back to a direct "open on X" link if it still can't paint — the box is never left dead.
 
 import { useEffect, useRef, useState } from 'react';
 import { C } from '../lib/cp-shared';
@@ -25,19 +28,31 @@ const WIDGETS_SRC = 'https://platform.twitter.com/widgets.js';
 const RETRY_DELAYS = [3000, 8000, 20000]; // backoff for transient 429s / slow syndication
 const CREATE_TIMEOUT = 15000;             // createTimeline must settle or we treat it as a failure
 
-// X's widget renders a SNAPSHOT at creation time and never polls for new posts, so a tape left open
-// all session showed whatever existed when the Terminal was opened. The only way to get new posts
-// out of an embed we cannot read into is to rebuild it.
+// X's widget renders a SNAPSHOT at creation time and never polls for new posts, so the only way to
+// get a new post out of an embed we cannot read into is to rebuild it.
 //
-// One minute while the panel is visible, every day of the week.
+// WHAT DRIVES A REBUILD: /api/x-tape/head, which reads the newest post id on the list from our own
+// server (one read per 15s shared by every open Terminal, no post content, nothing stored) and
+// costs the visitor nothing against X's per-IP limit. When that id differs from the one the visible
+// tape was built against, there is a post the embed cannot be showing, so we rebuild — and because
+// our server and the browser read the same syndication document, that rebuild is fetching a
+// snapshot which actually contains it. When the list is quiet we make NO request to X at all, which
+// is what leaves the rate-limit budget available for the moment a post does land. The blind 60s
+// timer this replaces did the opposite: it spent the visitor's whole budget re-fetching an
+// unchanged timeline, and a refused rebuild silently leaves the OLD tape up — a stale tape.
 //
-// Each rebuild is a fresh syndication request and X rate-limits per visitor IP with 429s, so this
-// leans on the existing retry/backoff: a refused build backs off 3s/8s/20s and, if it still cannot
-// paint, leaves the tape that is already on screen untouched.
-const VISIBLE_REFRESH_MS = 60 * 1000;
+// If the head signal is unavailable for any reason the component falls straight back to the plain
+// 60s timer, so this can only add freshness, never remove it.
+const HEAD_URL = '/api/x-tape/head';
+const HEAD_POLL_MS = 8 * 1000;            // same-origin; does not touch X, so poll faster than it
+const MIN_REBUILD_MS = 20 * 1000;         // floor between two syndication requests from one visitor
+const TIMER_REFRESH_MS = 60 * 1000;       // fallback cadence when the head signal is unavailable
+const IDLE_REBUILD_MS = 10 * 60 * 1000;   // safety net: rebuild eventually even with no head change
 const HIDDEN_REFRESH_MS = 30 * 60 * 1000; // backgrounded: keep it alive, stop spending requests
-// Polled finer than the cadence itself, so a 60s target lands near 60s rather than drifting to 120.
-const TICK_MS = 5000;
+// A cross-origin iframe swallows pointer events, so pointerleave is not guaranteed to fire — the
+// hover guard below must never be able to latch on and freeze the tape for the rest of the session.
+const HOVER_MAX_HOLD_MS = 3 * 60 * 1000;
+const TICK_MS = 2000;
 
 // createTimeline returns X's own promise. It normally resolves (with the element, or with undefined
 // when X declines), but a hung syndication request can leave it pending forever, and a promise that
@@ -83,10 +98,15 @@ export default function XTape({ height = 620, onClose, bare = false }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
   // Bumped by the refresh scheduler to re-run the build effect. builtAtRef is when the visible tape
-  // was last painted; hoverRef suppresses a rebuild while the cursor is over the panel.
+  // was last painted; builtHeadRef is the newest post id known at the moment that build started, so
+  // comparing it with the live head tells us whether the tape can possibly be showing everything.
   const [nonce, setNonce] = useState(0);
   const builtAtRef = useRef(0);
+  const builtHeadRef = useRef(undefined);
+  const headRef = useRef(null);
   const hoverRef = useRef(false);
+  const hoverSinceRef = useRef(0);
+  const buildSeqRef = useRef(0);
 
   // The embed lives in a CROSS-ORIGIN iframe, so its text colour is fixed at creation and cannot be
   // restyled afterwards. It therefore has to be built with the theme that is actually active, and
@@ -116,6 +136,10 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     // Only the FIRST build shows the loading state. A background refresh must not put "Loading tape
     // from X…" under a tape the trader is already reading.
     if (!ref.current?.querySelector('iframe')) setStatus('loading');
+    // Anchor this build to the head as it is known RIGHT NOW, not to whatever the response turns
+    // out to contain. A post published seconds ago can take up to a minute to reach syndication, so
+    // anchoring on arrival would let that post fall into the gap and never trigger a second build.
+    builtHeadRef.current = headRef.current?.id ?? undefined;
 
     // The new timeline is built into its OWN slot, appended alongside the current one and hidden
     // until it paints. Two reasons: the visible tape never blanks during a refresh, and the iframe
@@ -139,6 +163,15 @@ export default function XTape({ height = 620, onClose, bare = false }) {
           // Laid out (so the widget measures a real width) but invisible and inert until ready.
           slot.style.cssText = 'position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none';
           ref.current.appendChild(slot);
+          // Every createTimeline call mints a new embedId, which widgets.js puts in the iframe URL,
+          // so successive rebuilds within a page already miss the browser cache. The FIRST build of
+          // a page load does not: widgets.js restarts that counter at zero, so reopening the
+          // Terminal produces a byte-identical URL, and X serves that iframe with
+          // `cache-control: must-revalidate, max-age=60` — a reopen inside a minute can be answered
+          // out of disk cache with the previous visit's posts. Alternating the requested height by
+          // one pixel changes the maxHeight query parameter, so no two consecutive builds can
+          // collide on a cache entry. One pixel of a ~600px panel is not visible.
+          const px = heightRef.current - (buildSeqRef.current++ % 2);
           return withDeadline(twttr.widgets.createTimeline(
             { sourceType: 'list', id: LIST_ID },
             slot,
@@ -150,7 +183,7 @@ export default function XTape({ height = 620, onClose, bare = false }) {
             // Letting X paint its own background costs nothing (its light background matches our
             // light card exactly, and its dark background sits inside our dark panel) and is the
             // only way the embed renders its own theme consistently.
-            { theme, chrome: 'noheader nofooter', height: heightRef.current },
+            { theme, chrome: 'noheader nofooter', height: px },
           ), CREATE_TIMEOUT);
         })
         .then((el) => {
@@ -169,10 +202,16 @@ export default function XTape({ height = 620, onClose, bare = false }) {
           if (cancelled) return;
           if (slot) { slot.remove(); slot = null; }
           if (i < RETRY_DELAYS.length) timer = setTimeout(() => attempt(i + 1), RETRY_DELAYS[i]);
-          // A failed REFRESH must not blank a tape that is already on screen. Only the very first
-          // build has nothing to fall back to, so only that one surfaces the error state.
-          else if (!ref.current?.querySelector('iframe')) setStatus('error');
-          else setStatus('ready');
+          else {
+            // The rebuild lost — most often a 429. Do NOT let it count as a build: clearing the
+            // anchor is what makes the scheduler come back to this same head once MIN_REBUILD_MS
+            // has passed, instead of concluding the tape is up to date because it tried once.
+            builtHeadRef.current = undefined;
+            // A failed REFRESH must not blank a tape that is already on screen. Only the very first
+            // build has nothing to fall back to, so only that one surfaces the error state.
+            if (!ref.current?.querySelector('iframe')) setStatus('error');
+            else setStatus('ready');
+          }
         });
     };
     attempt(0);
@@ -189,31 +228,71 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     };
   }, [theme, nonce]);
 
+  // ── head poller ──
+  // Same-origin and content-free: it reports only the newest post id on the list. Nothing here
+  // touches X from the visitor's browser, so polling it often is free where rebuilding is not.
+  useEffect(() => {
+    if (!LIST_ID) return;
+    let stopped = false;
+    let timer;
+    const poll = async () => {
+      if (!document.hidden) {
+        try {
+          const r = await fetch(HEAD_URL, { cache: 'no-store' });
+          const j = await r.json();
+          headRef.current = j?.id ? j : null;   // null = signal unavailable, fall back to the timer
+        } catch { headRef.current = null; }
+      }
+      if (!stopped) timer = setTimeout(poll, HEAD_POLL_MS);
+    };
+    poll();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, []);
+
   // ── refresh scheduler ──
   // Bumping `nonce` re-runs the build effect above, so refreshing reuses the existing build, retry,
   // backoff and teardown path rather than adding a second mechanism.
   useEffect(() => {
     if (!LIST_ID) return;
     let timer;
-    const due = () => Date.now() - builtAtRef.current >= (document.hidden ? HIDDEN_REFRESH_MS : VISIBLE_REFRESH_MS);
+
+    // Never rebuild under the trader's cursor: the embed is cross-origin, so its internal scroll
+    // position cannot be restored across a rebuild. But pointer events over that iframe do not
+    // reach us, so pointerleave is not guaranteed to arrive — parking the cursor on the tape and
+    // switching windows used to latch this guard on and stop every refresh for the rest of the
+    // session. It is now time-capped, and released whenever the page stops being the focused one.
+    const held = () => hoverRef.current && Date.now() - hoverSinceRef.current < HOVER_MAX_HOLD_MS;
+
+    const shouldBuild = () => {
+      const since = Date.now() - builtAtRef.current;
+      if (document.hidden) return since >= HIDDEN_REFRESH_MS;
+      if (since >= IDLE_REBUILD_MS) return true;          // safety net, head signal or not
+      const head = headRef.current;
+      if (!head?.id) return since >= TIMER_REFRESH_MS;    // no signal → previous 60s behaviour
+      return head.id !== builtHeadRef.current && since >= MIN_REBUILD_MS;
+    };
 
     const tick = () => {
-      // Never rebuild under the trader's cursor. The embed is cross-origin, so its internal scroll
-      // position cannot be restored across a rebuild — the fix is to not rebuild while they are
-      // reading it. The next tick picks it up as soon as they move away.
-      if (!hoverRef.current && due()) setNonce((n) => n + 1);
-      timer = setTimeout(tick, TICK_MS);    // cheap poll; the real cadence is the due() check
+      if (!held() && shouldBuild()) setNonce((n) => n + 1);
+      timer = setTimeout(tick, TICK_MS);
     };
     timer = setTimeout(tick, TICK_MS);
 
-    // Coming back to a backgrounded tab checks for missed posts immediately instead of waiting.
-    const wake = () => { if (!document.hidden && !hoverRef.current && due()) setNonce((n) => n + 1); };
+    // Coming back to a backgrounded tab, or back online, checks immediately instead of waiting. A
+    // hidden or unfocused page cannot have a cursor resting on the tape, so release the guard too.
+    const release = () => { hoverRef.current = false; };
+    const wake = () => {
+      if (document.hidden) { release(); return; }
+      if (!held() && shouldBuild()) setNonce((n) => n + 1);
+    };
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('online', wake);
+    window.addEventListener('blur', release);
     return () => {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', wake);
       window.removeEventListener('online', wake);
+      window.removeEventListener('blur', release);
     };
   }, []);
 
@@ -244,7 +323,7 @@ export default function XTape({ height = 620, onClose, bare = false }) {
 
       {/* Timeline mounts here. Kept in the DOM across states so createTimeline always has its target. */}
       <div ref={ref}
-        onPointerEnter={() => { hoverRef.current = true; }}
+        onPointerEnter={() => { hoverRef.current = true; hoverSinceRef.current = Date.now(); }}
         onPointerLeave={() => { hoverRef.current = false; }}
         style={{ position: 'relative', padding: '0 2px', minHeight: status === 'ready' ? undefined : 0 }} />
 
