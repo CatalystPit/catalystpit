@@ -217,6 +217,83 @@ const MEDIUM = [
   /\bconference call\b|\bwebcast\b|\bpresent(?:s|ation)\b/i, /\bjoint venture\b|\bpartnership\b/i,
   /\bappoint\w*|\bnames?\b.*\b(?:president|director|officer)\b/i, /\bpatent\b/i,
 ];
+// ── macro / geopolitical impact ──────────────────────────────────────────────
+// The tiers above are entirely corporate, which is why a live production event — Saudi Arabia's
+// East-West pipeline taken offline by a drone attack — scored 0 from all eight sources that
+// reported it and vanished from Market Moving. Oil moved; the tape did not.
+//
+// The rule is a CONJUNCTION, never a keyword. A headline must name something that moves a market
+// AND assert that something happened to it. "Iran" alone is not an event; "Iran seizes tanker in
+// the Strait of Hormuz" is. That conjunction is what keeps ordinary diplomacy out: our own tape
+// carried "Trump urges Ukraine to halt refinery strikes", "Iran says US is main obstacle to
+// diplomacy" and "Saudi Crown Prince meets US CENTCOM chief" in the same window, and none of them
+// is a market event.
+const ENERGY_ASSET = /\b(?:oil|crude|gas|lng|petroleum|diesel|fuel|refinery|refineries|refining|pipeline|oilfield|oil field|export terminal|oil terminal|gas terminal|tanker|power (?:plant|grid|station)|nuclear (?:plant|facility|site))\b/i;
+const CHOKEPOINT = /\b(?:strait of hormuz|hormuz|suez|bab[- ]?el[- ]?mandeb|panama canal|strait of malacca|bosphorus|dardanelles|red sea|kerch strait|taiwan strait)\b/i;
+const PRODUCER = /\b(?:saudi|opec|iran|iraq|uae|emirates|kuwait|qatar|russia|russian|venezuela|libya|nigeria|kazakhstan|norway|algeria|angola)\b/i;
+
+// Something actually happened to it — not that someone has opinions about it.
+const DISRUPTION = /\b(?:attack(?:ed|s|ing)?|struck|strikes?|drones?|missiles?|bomb\w*|explosion|blast|sabotage\w*|seiz(?:e|es|ed|ure)|blockad\w+|shut\s?down|shuts?\b|shutting|halt(?:ed|s)?|offline|out of service|outage|suspend(?:ed|s)?|disrupt\w+|force majeure|evacuat\w+|destroyed|damag(?:e|ed|ing)|caught fire|ablaze|spill)\b/i;
+
+const OPEC_ACTION = /\bopec\+?\b[\s\S]{0,70}?\b(?:cut|cuts|raise|raises|boost|increase|reduce|output|production|quota|target|agree|agrees|decide|decides|extend|extends|pause|unwind|taper)\w*/i;
+const TRADE_INSTRUMENT = /\b(?:sanction(?:s|ed|ing)?|embargo|export (?:ban|controls?|restrictions?|licen[cs]e)|import ban|tariffs?|duties|price cap|blacklist|entity list)\b/i;
+const TRADE_ACTION = /\b(?:impos(?:e|es|ed|ing)|announc(?:e|es|ed)|introduc(?:e|es|ed)|rais(?:e|es|ed)|hik(?:e|es|ed)|lift(?:s|ed)?|eas(?:e|es|ed)|expand(?:s|ed)?|slap(?:s|ped)?|enact\w*|take[s]? effect|effective|set[s]? at|doubl(?:e|es|ed)|extend(?:s|ed)?)\b/i;
+const EMERGENCY_SOVEREIGN = /\b(?:emergency (?:meeting|rate|action|measures?|session|summit)|unscheduled meeting|interven(?:e|es|ed|tion)\b|capital controls|devalu\w+|currency peg|state of emergency|martial law|sovereign default|defaults? on (?:its )?debt|nationaliz\w+|bank holiday|deposit freeze)\b/i;
+// The lookbehind is load-bearing: without it "escalat\w+" matches inside "DE-escalation", and
+// "Japan and Yemen to work on Bab-el-Mandeb situation de-escalation" — diplomacy, and the opposite
+// of the event — scored HIGH.
+const MILITARY_ESCALATION = /\b(?:airstrikes?|air strikes?|invasion|invad(?:e|es|ed)|mobiliz\w+|ceasefire|declare[sd]? war|retaliat\w+|(?<![a-z]|de[- ])escalat\w+|nuclear test|missile (?:launch|test|strike|attack)|no[- ]fly zone|troops? (?:cross|enter|deploy)\w*)\b/i;
+
+// Advocacy, not action. Someone wanting, urging or condemning a thing is not the thing happening.
+// Deliberately narrow: hedges about DURATION or degree are fine, because "pipeline could remain
+// offline for 3-5 weeks" is a material fact about a real outage.
+const ADVOCACY = /\b(?:urge[sd]?|urging|calls? (?:on|for)|called (?:on|for)|demand(?:s|ed|ing)?|criticiz\w+|criticis\w+|condemn\w+|slam(?:s|med)?|denounc\w+|appeals? to|lobb(?:y|ies|ied|ying)|push(?:es|ed|ing)? for|wants? to see|hopes? (?:for|to)|should\b|must\b)/i;
+// A question or an explainer is commentary about an event, not the event.
+const COMMENTARY = /(?:\?\s*$|\b(?:what (?:it|this) means|explainer|analysis|opinion|column|why \w+ (?:is|are|will)|here'?s (?:what|why|how))\b)/i;
+// Someone's account of an event is not the event. "Trump says Saudi crown prince is close ally,
+// pipeline attack will work out fine" carries every word a real outage carries; what it asserts is
+// a politician's view. Reported speech is capped at HIGH rather than discarded, because the event
+// behind it is usually real — CRITICAL is reserved for the headline that states the event itself.
+const REPORTED_SPEECH = /\b(?:says?|said|tells?|told|claims?|denies|denied|believes?|comments?|insists?|suggests?)\b/i;
+
+// Scored on the HEADLINE ALONE, deliberately. The corporate tiers read headline + summary, and on
+// live data that dragged unrelated rows to CRITICAL off boilerplate in a press-release body — "Live
+// Oak Bank Named Official Business Bank of UNCW Athletics" among them. An impact badge has to be
+// explicable from the row the trader is looking at.
+export function macroImpact(text) {
+  const s = String(text || '');
+  if (!s) return 0;
+  if (COMMENTARY.test(s)) return 0;
+  const advocacy = ADVOCACY.test(s);
+  const reported = REPORTED_SPEECH.test(s);
+
+  const chokepoint = CHOKEPOINT.test(s);
+  const energy = ENERGY_ASSET.test(s);
+  const disrupted = DISRUPTION.test(s);
+
+  // CRITICAL: a trade chokepoint or major energy infrastructure is actually disrupted, or a
+  // sovereign takes an emergency action. These reprice crude, freight and risk within minutes.
+  if (!advocacy && !reported) {
+    if (chokepoint && disrupted) return 3;
+    if (energy && disrupted && PRODUCER.test(s)) return 3;
+    if (EMERGENCY_SOVEREIGN.test(s)) return 3;
+  }
+
+  // HIGH: energy infrastructure disrupted anywhere; an OPEC output decision; sanctions or tariffs
+  // actually imposed or lifted; military escalation naming an energy producer or a chokepoint.
+  if (!advocacy) {
+    if (energy && disrupted) return 2;
+    if (OPEC_ACTION.test(s)) return 2;
+    if (TRADE_INSTRUMENT.test(s) && TRADE_ACTION.test(s)) return 2;
+    if (MILITARY_ESCALATION.test(s) && (PRODUCER.test(s) || chokepoint)) return 2;
+  }
+
+  // MEDIUM: the subject matter is market-relevant but what is asserted is intent, advocacy or
+  // proximity rather than an event. Visible in Everything, out of Market Moving.
+  if (chokepoint || (energy && PRODUCER.test(s)) || TRADE_INSTRUMENT.test(s) || OPEC_ACTION.test(s)) return 1;
+  return 0;
+}
+
 // Never let promotional noise outrank real news, whatever words it happens to contain.
 const NOISE = [
   /\binvestors? (?:who|have) (?:suffered )?(?:losses|opportunity to lead)\b/i,
@@ -226,13 +303,19 @@ const NOISE = [
   /\bhoroscope\b|\brecipe\b|\bgift guide\b|\bdeals? of the day\b/i,
 ];
 
-export function scoreImportance({ headline, summary = '', source = '', sourceType = '', tickers = [] }) {
+export function scoreImportance({ headline, summary = '', source = '', sourceType = '', tickers = [], macroEnabled = true }) {
   const hay = `${headline} ${summary || ''}`;
   if (NOISE.some((re) => re.test(hay))) return 0;
   if (sourceType === 'halt') return 3;
+  // Event-based, publisher-independent. Checked alongside the corporate tiers rather than instead
+  // of them, so a headline that is both stays at the higher of the two.
+  const macro = macroEnabled ? macroImpact(headline) : 0;
   if (CRITICAL.some((re) => re.test(hay))) return 3;
+  if (macro === 3) return 3;
   if (HIGH.some((re) => re.test(hay))) return 2;
+  if (macro === 2) return 2;
   if (MEDIUM.some((re) => re.test(hay))) return 1;
+  if (macro === 1) return 1;
   // A confidently resolved ticker means it is at least about a specific listed company.
   return (tickers || []).length ? 1 : 0;
 }
