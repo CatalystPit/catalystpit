@@ -141,7 +141,7 @@ console.log('\n=== the scroll viewport is the table itself, only while it overfl
 ok('the previous sticky-proxy scrollbar is gone', !/HScrollBar/.test(page));
 ok('overflow is measured, not assumed', /function useHOverflow/.test(page));
 ok('...by ResizeObserver, so a dock toggle re-answers it',
-  /new ResizeObserver\(measure\)/.test(page) && /ro\.observe\(box\)/.test(page));
+  /new ResizeObserver\(measure\)/.test(page) && /ro\.observe\(node\)/.test(page));
 ok('...and on window resize', /window\.addEventListener\('resize', measure\)/.test(page));
 ok('the box takes a height of its own ONLY when it overflows',
   /maxHeight:txOverflows\?"calc\(100vh - 150px\)":undefined/.test(page));

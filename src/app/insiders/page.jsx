@@ -19,7 +19,12 @@ function useHOverflow(node) {
   const [over, setOver] = useState(false);
   useEffect(() => {
     if (!node || typeof ResizeObserver === 'undefined') { setOver(false); return undefined; }
-    const measure = () => setOver(node.scrollWidth > node.clientWidth + 1);
+    // Compared against offsetWidth, NOT clientWidth. Bounding the height adds a vertical scrollbar,
+    // which takes ~15px out of clientWidth, which on a workspace where the table fitted by 6px
+    // created overflow that kept it bounded forever. offsetWidth is the border box and does not
+    // move when a scrollbar appears inside it, so the question stays the one actually being asked:
+    // is the table wider than the space the box occupies?
+    const measure = () => setOver(node.scrollWidth > node.offsetWidth + 1);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(node);

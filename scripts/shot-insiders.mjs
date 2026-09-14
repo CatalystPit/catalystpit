@@ -94,13 +94,17 @@ try {
   await send('Page.navigate', { url: `${BASE}/insiders` });
   for (let i = 0; i < 60; i++) { await sleep(500); const g = await ev(GEOM).catch(() => ({ ready: false })); if (g.ready) break; }
 
-  // The user's configuration: Tape open on the left, a dock open on the right.
-  for (const l of ['Open the Tape', 'Open The Pit', 'Open watchlist']) { const r = await click(l); if (r === 'clicked') await sleep(500); }
+  // The user's configuration: Tape open on the left, a dock open on the right. DOCKS=closed checks
+  // that the ordinary full-width layout is untouched.
+  const want = process.env.DOCKS === 'closed'
+    ? ['Collapse the Tape', 'Collapse The Pit', 'Collapse watchlist']
+    : ['Open the Tape', 'Open The Pit', 'Open watchlist'];
+  for (const l of want) { const r = await click(l); if (r === 'clicked') await sleep(500); }
   await sleep(900);
 
-  // Scroll down into the filings list, the way a trader reads it.
+  // Bring the table area into view the way a trader scrolling down would.
   await ev(`(() => { const t=[...document.querySelectorAll('table')].find(t=>[...t.querySelectorAll('thead th')].some(th=>th.textContent.trim().startsWith('VALUE')));
-    window.scrollTo(0, t.getBoundingClientRect().top + window.scrollY + 400); return 1; })()`);
+    window.scrollTo(0, t.parentElement.getBoundingClientRect().top + window.scrollY - 70); return 1; })()`);
   await sleep(700);
 
   const g = await ev(GEOM);
@@ -118,10 +122,13 @@ try {
   })()`));
   await shot('insiders-docks-open-scrolled');
 
-  // And at the very bottom of the page, where the old scrollbar lived.
-  await ev('window.scrollTo(0, document.body.scrollHeight); 1');
-  await sleep(600);
-  console.log('\n-- at the bottom of the page --');
-  console.log(JSON.stringify(await ev(GEOM), null, 1));
-  await shot('insiders-docks-open-bottom');
+  // Now scroll the TABLE to its right end: VALUE and CONVICTION must be fully visible, not clipped.
+  await ev(`(() => { const t=[...document.querySelectorAll('table')].find(t=>[...t.querySelectorAll('thead th')].some(th=>th.textContent.trim().startsWith('VALUE')));
+    t.parentElement.scrollLeft = t.parentElement.scrollWidth; return 1; })()`);
+  await sleep(500);
+  const g2 = await ev(GEOM);
+  console.log('\n-- table scrolled to its right end --');
+  console.log(`  scrollLeft=${g2.scrollLeft} clipped VALUE cells: ${JSON.stringify(g2.clippedCells)}`);
+  console.log(`  VALUE cells now: ${JSON.stringify(g2.cells.map((c) => c.text))}`);
+  await shot('insiders-scrolled-right');
 } finally { ws.close(); chrome.kill(); }
