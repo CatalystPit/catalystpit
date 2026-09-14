@@ -1,0 +1,175 @@
+// Catalyst Pit X auto-poster — persistence and the X API. All decisions live in x-autopost.mjs.
+//
+// CREDENTIALS ARE NEVER READ INTO A RETURN VALUE, A LOG LINE OR AN ERROR MESSAGE. They are read
+// from the environment at the moment a request is signed and go nowhere else. Every failure path
+// below reports a status code or a short reason, never a header, a signature or a key.
+
+import { db } from './db';
+import { sql } from 'drizzle-orm';
+import { createHmac, randomBytes } from 'node:crypto';
+import { buildCandidate, resolveMode, canPublish } from './x-autopost.mjs';
+
+export const mode = () => resolveMode(process.env.X_AUTOPOST_MODE);
+
+// ── candidate generation ─────────────────────────────────────────────────────
+// Canonical events only, with every source code in their cluster, so Walter provenance is visible
+// whether he was the first report or a later one that merged in.
+//
+// LEFT JOIN against x_post_candidates: an event that already has a candidate is never reconsidered,
+// which is what stops a later merge producing a second post.
+async function eligibleEvents(sinceHours, limit) {
+  const res = await db.execute(sql`
+    select e.seq, e.headline, e.headline_status, e.importance, e.tickers, e.source_kind,
+           e.published_at,
+           array(
+             select distinct m.source from primary_events m
+              where m.seq = e.seq or m.cluster_id = e.seq
+           ) as sources
+      from primary_events e
+      left join x_post_candidates c on c.event_seq = e.seq
+     where e.cluster_id is null
+       and c.id is null
+       and e.published_at > now() - (${sinceHours} || ' hours')::interval
+       -- Cheap prefilter; the real decision is evaluate() in the pure module.
+       and (e.importance = 3 or exists (
+             select 1 from primary_events w
+              where (w.seq = e.seq or w.cluster_id = e.seq) and w.source = 'WALTERBLOOMBERG'))
+     order by e.published_at desc
+     limit ${Math.max(1, Math.min(500, limit))}`);
+  return res.rows ?? res;
+}
+
+/**
+ * Walk recent eligible events and persist a candidate for each. Never calls X.
+ * In `off` this does nothing at all.
+ */
+export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) {
+  const m = mode();
+  const out = { mode: m, examined: 0, created: 0, waiting: 0, skipped: 0, blocked: {} };
+  if (m === 'off') return out;
+
+  const rows = await eligibleEvents(sinceHours, limit);
+  out.examined = rows.length;
+
+  for (const ev of rows) {
+    // No market-reaction reading is passed. The only change figure we hold is a daily screener
+    // value that is hours to days old, and presenting that as the reaction to a breaking event
+    // would be inventing a fact. One line now beats two lines that are wrong.
+    const c = buildCandidate(ev, null);
+    if (!c.eligible) {
+      out.waiting += c.blocked?.startsWith('awaiting') ? 1 : 0;
+      out.skipped += c.blocked?.startsWith('awaiting') ? 0 : 1;
+      out.blocked[c.blocked || 'unknown'] = (out.blocked[c.blocked || 'unknown'] || 0) + 1;
+      continue;
+    }
+    // ON CONFLICT DO NOTHING on the unique event_seq: the duplicate guard is the schema's, so a
+    // concurrent pass or a later merge cannot produce a second row for one event.
+    const ins = await db.execute(sql`
+      insert into x_post_candidates
+        (event_seq, reason, post_text, char_count, shape, ticker, impact, mode, status)
+      values (${ev.seq}, ${c.reason}, ${c.text}, ${c.chars}, ${c.shape},
+              ${(ev.tickers || [])[0] ?? null}, ${ev.importance ?? null}, ${m},
+              ${m === 'dry_run' ? 'dry_run' : 'pending'})
+      on conflict (event_seq) do nothing
+      returning id`);
+    if ((ins.rows ?? ins)?.length) out.created++;
+  }
+  return out;
+}
+
+// ── inspection ───────────────────────────────────────────────────────────────
+export async function recentCandidates(limit = 50) {
+  const res = await db.execute(sql`
+    select c.id, c.event_seq, c.reason, c.post_text, c.char_count, c.shape, c.ticker, c.impact,
+           c.mode, c.status, c.attempts, c.x_post_id, c.failure_reason, c.created_at, c.posted_at,
+           e.headline, e.published_at, e.source_count
+      from x_post_candidates c
+      left join primary_events e on e.seq = c.event_seq
+     order by c.created_at desc
+     limit ${Math.max(1, Math.min(200, limit))}`);
+  return res.rows ?? res;
+}
+
+// ── OAuth 1.0a user context ──────────────────────────────────────────────────
+// X's create-post endpoint requires user-context auth; OAuth 1.0a is the form that works with the
+// four credentials already held. Signed here and nowhere else.
+const enc = (s) => encodeURIComponent(String(s)).replace(/[!*'()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+function authHeader(method, url) {
+  const key = process.env.X_API_KEY;
+  const secret = process.env.X_API_SECRET;
+  const token = process.env.X_ACCESS_TOKEN;
+  const tokenSecret = process.env.X_ACCESS_TOKEN_SECRET;
+  if (!key || !secret || !token || !tokenSecret) throw new Error('x credentials not configured');
+
+  const params = {
+    oauth_consumer_key: key,
+    oauth_nonce: randomBytes(16).toString('hex'),
+    oauth_signature_method: 'HMAC-SHA1',
+    oauth_timestamp: Math.floor(Date.now() / 1000).toString(),
+    oauth_token: token,
+    oauth_version: '1.0',
+  };
+  // JSON body parameters are NOT part of an OAuth 1.0a signature base string.
+  const base = [method.toUpperCase(), enc(url),
+    enc(Object.keys(params).sort().map((k) => `${enc(k)}=${enc(params[k])}`).join('&'))].join('&');
+  const signature = createHmac('sha1', `${enc(secret)}&${enc(tokenSecret)}`).update(base).digest('base64');
+  const all = { ...params, oauth_signature: signature };
+  return 'OAuth ' + Object.keys(all).sort().map((k) => `${enc(k)}="${enc(all[k])}"`).join(', ');
+}
+
+const X_CREATE_POST = 'https://api.x.com/2/tweets';
+
+// A 4xx that is about authentication or the content itself will fail identically forever, so it
+// stops the candidate rather than being retried. Only transport and 5xx/429 are worth another go.
+const isPermanent = (status) => status === 400 || status === 401 || status === 403 || status === 404;
+
+/**
+ * Publish ONE candidate. Guarded three ways: mode must be exactly 'live', the row is re-read inside
+ * the call, and a row that is already posted returns its existing id without contacting X.
+ */
+export async function publishCandidate(id, { fetchImpl = fetch } = {}) {
+  // The ONLY gate on contacting X, and it is checked before anything else in this function: no
+  // database read, no request object, no credential access happens unless the mode is exactly live.
+  if (!canPublish(process.env.X_AUTOPOST_MODE)) return { sent: false, reason: `mode is ${mode()}` };
+
+  // Re-read immediately before publishing, so a concurrent pass or an earlier success is seen.
+  const cur = (await db.execute(sql`
+    select id, event_seq, post_text, status, attempts, x_post_id
+      from x_post_candidates where id = ${id}`)).rows?.[0];
+  if (!cur) return { sent: false, reason: 'no such candidate' };
+  if (cur.x_post_id) return { sent: false, reason: 'already posted', xPostId: cur.x_post_id };
+  if (cur.status === 'failed') return { sent: false, reason: 'previously failed permanently' };
+  if (Number(cur.attempts) >= MAX_PUBLISH_ATTEMPTS) return { sent: false, reason: 'attempts exhausted' };
+
+  await db.execute(sql`update x_post_candidates
+     set attempts = attempts + 1, updated_at = now() where id = ${id}`);
+
+  try {
+    const r = await fetchImpl(X_CREATE_POST, {
+      method: 'POST',
+      headers: { Authorization: authHeader('POST', X_CREATE_POST), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: cur.post_text }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (r.ok && body?.data?.id) {
+      await db.execute(sql`update x_post_candidates
+         set status = 'posted', x_post_id = ${String(body.data.id)}, failure_reason = null,
+             posted_at = now(), updated_at = now() where id = ${id}`);
+      return { sent: true, xPostId: String(body.data.id) };
+    }
+    // Status code and X's own short title only. No headers, no request, no credentials.
+    const why = `HTTP ${r.status}${body?.title ? ` ${String(body.title).slice(0, 60)}` : ''}`;
+    await db.execute(sql`update x_post_candidates
+       set status = ${isPermanent(r.status) ? 'failed' : 'pending'},
+           failure_reason = ${why}, updated_at = now() where id = ${id}`);
+    return { sent: false, reason: why, permanent: isPermanent(r.status) };
+  } catch (e) {
+    const why = String(e?.message || e).slice(0, 80);
+    await db.execute(sql`update x_post_candidates
+       set failure_reason = ${why}, updated_at = now() where id = ${id}`);
+    return { sent: false, reason: why };
+  }
+}
+
+export const MAX_PUBLISH_ATTEMPTS = 3;
