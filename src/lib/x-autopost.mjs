@@ -10,7 +10,7 @@
 import { publicationVerdict } from './x-quality.mjs';
 import { isTaxonomyLabel } from './news-normalize.mjs';
 import { storyVerdict, factsOf } from './x-story.mjs';
-import { groundedFigures, subjectTickers, filingRegistrant } from './x-relevance.mjs';
+import { groundedFigures, subjectTickers, filingRegistrant, filingFact } from './x-relevance.mjs';
 
 export const MODES = ['off', 'dry_run', 'live'];
 
@@ -328,8 +328,15 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   // and the SEC defines that. The registrant's own name and the item's own definition are the only
   // inputs — nothing is inferred about what the filing says beyond the classification it carries.
   if (String(ev?.source_type || '') === 'filing' && catalyst?.item) {
+    // THE POST SAYS WHAT HAPPENED, OR THERE IS NO POST. The taxonomy phrase describes the form's
+    // box, not the event, and "$LULU reports a departure or appointment of directors or officers"
+    // is not trader news — it is the SEC's table of contents. The sentence is built from the fact
+    // the filing itself states; where the row holds no such sentence, formatting fails and the
+    // event is suppressed rather than padded out with form language.
     const who = titleCaseRegistrant(filingRegistrant(ev?.headline));
-    body = `${who} ${catalyst.phrase} (8-K item ${catalyst.item})`;
+    const fact = filingFact(ev);
+    if (!who || !fact) return { ok: false, error: 'filing states no material fact' };
+    body = `${who} ${fact} (8-K item ${catalyst.item})`;
   }
   body = body.replace(/^breaking\s*[:\-]\s*/i, '').trim();
   if (!body) return { ok: false, error: 'nothing left after sanitising' };

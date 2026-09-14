@@ -160,16 +160,32 @@ sec('SEC filings are judged by their 8-K items, not by being SEC');
 // POLICY, revised: source_kind 'sec' is no longer a permanent exile. The SOURCE still qualifies
 // nothing — the filing has to pass the same catalyst rules as anything else.
 const NOWF = Date.parse('2026-09-14T05:10:00Z');
-const filing = (h, o = {}) => buildCandidate({ headline: h, headline_status: 'not_required',
+const filing = (h, o = {}) => buildCandidate({ headline: h, headline_status: 'not_required', summary: null,
   source_type: 'filing', source_kind: 'sec', category: 'FILING', sources: ['SEC'],
   published_at: '2026-09-14T05:00:00Z', importance: 2, tickers: ['CMG'], ...o }, null, NOWF, []);
 ok('an SEC filing is no longer blocked outright', filing('CHIPOTLE MEXICAN GRILL INC · 8-K (5.02,9.01)').eligible);
 ok('...with its own reason', filing('CHIPOTLE MEXICAN GRILL INC · 8-K (5.02,9.01)').reason === 'sec filing');
-for (const [item, want] of [['1.03', 'bankruptcy'], ['2.01', 'ma'], ['2.02', 'earnings'],
-  ['2.03', 'offering'], ['3.02', 'offering'], ['5.02', 'exec'], ['1.01', 'contract'],
-  ['4.02', 'legal'], ['3.01', 'bankruptcy'], ['5.01', 'ma']]) {
-  const c = classifyCatalyst({ headline: `ACME CORP · 8-K (${item},9.01)`, source_type: 'filing', tickers: ['ACME'] });
-  ok(`item ${item} is a ${want}`, c?.type === want, `got ${c?.type}`);
+// THE ITEM NUMBER CLASSIFIES; THE FACTS DECIDE. An item code alone establishes only which box the
+// form ticked. Each case below supplies the fact the filing would state, and the type is then read
+// off the item — which is what the item is for.
+for (const [item, want, evidence] of [
+  ['1.03', 'bankruptcy', 'The Company filed a voluntary petition under Chapter 11.'],
+  ['2.01', 'ma', 'The Company completed the acquisition of Beta Corp.'],
+  ['2.02', 'earnings', 'The Company reported revenue of $412 million for the quarter.'],
+  ['2.03', 'offering', 'The Company entered a credit agreement providing for a $250 million term loan.'],
+  ['3.02', 'offering', 'The Company issued 4,000,000 shares in a private placement for $12 million.'],
+  ['5.02', 'exec', 'Jane Doe, Chief Financial Officer, will step down effective October 31.'],
+  ['1.01', 'contract', 'The Company entered a supply agreement valued at $80 million.'],
+  ['4.02', 'legal', 'Previously issued financial statements should no longer be relied upon and will be restated.'],
+  ['3.01', 'bankruptcy', 'The Company received a Nasdaq notice of non-compliance with the listing rule.'],
+  ['5.01', 'ma', 'A change in control of the registrant occurred following the merger.'],
+]) {
+  const c = classifyCatalyst({ headline: `ACME CORP · 8-K (${item},9.01)`, source_type: 'filing',
+    tickers: ['ACME'], summary: evidence });
+  ok(`item ${item} with its fact is a ${want}`, c?.type === want, `got ${c?.type}`);
+  // ...and the SAME item with nothing behind it is not an event at all.
+  ok(`item ${item} on its own is not`,
+    classifyCatalyst({ headline: `ACME CORP · 8-K (${item},9.01)`, source_type: 'filing', tickers: ['ACME'] }) === null);
 }
 // Routine items are the bulk of the feed and none of them is an event.
 for (const item of ['7.01', '8.01', '9.01', '5.03', '5.07', '5.08', '1.04', '3.03']) {
@@ -177,16 +193,67 @@ for (const item of ['7.01', '8.01', '9.01', '5.03', '5.07', '5.08', '1.04', '3.0
     classifyCatalyst({ headline: `ACME CORP · 8-K (${item})`, source_type: 'filing', tickers: ['ACME'] }) === null);
 }
 ok('the most material item wins over the exhibit index',
-  classifyCatalyst({ headline: 'ACME CORP · 8-K (9.01,2.01,7.01)', source_type: 'filing', tickers: ['ACME'] })?.type === 'ma');
+  classifyCatalyst({ headline: 'ACME CORP · 8-K (9.01,2.01,7.01)', source_type: 'filing', tickers: ['ACME'],
+    summary: 'The Company completed the acquisition of Beta Corp.' })?.type === 'ma');
 ok('a filing with no resolved symbol does not post',
-  classifyCatalyst({ headline: 'ACME CORP · 8-K (5.02)', source_type: 'filing', tickers: [] }) === null);
-// The post is composed from the SEC's own item definition, never from the index line.
-const post = filing('CHIPOTLE MEXICAN GRILL INC · 8-K (5.02,9.01)').text;
-ok('the EDGAR index line never reaches the post', !/8-K \(|·/.test(post || ''), post);
-ok('the item is named in plain words', /departure or appointment of directors or officers/.test(post || ''), post);
-ok('the item number is cited', /8-K item 5\.02/.test(post || ''), post);
-ok('the registrant is not shouted', /Chipotle Mexican Grill/.test(post || ''), post);
-ok('the cashtag is the registrant\'s own symbol', /^\$CMG: /.test(post || ''), post);
+  classifyCatalyst({ headline: 'ACME CORP · 8-K (5.02)', source_type: 'filing', tickers: [],
+    summary: 'Jane Doe, Chief Financial Officer, will step down.' }) === null);
+
+sec('the EXACT batch that reached the live account must not post');
+// Verbatim from production. Every one carried ONLY the EDGAR index line: summary NULL, facts null,
+// raw {cik, items, accession}. There is no material fact in the row to state, so there is no post.
+for (const [t, h] of [
+  ['LULU', 'lululemon athletica inc. · 8-K (5.02,5.03,9.01)'],
+  ['CHGA', 'Change Agents Corporation. · 8-K (1.01,2.03,3.02,9.01)'],
+  ['IONI', 'I-ON Digital Corp. · 8-K (5.02)'],
+  ['ELMT', 'Elmet Group Co. · 8-K (1.01,3.02,3.03,5.02,5.03,7.01,9.01)'],
+  ['BOW', 'Bowhead Specialty Holdings Inc. · 8-K (5.02)'],
+  ['PAGP', 'PLAINS GP HOLDINGS LP · 8-K (1.01,2.02,2.03,8.01,9.01)'],
+  ['HODO', 'House of Doge Inc. · 8-K (2.01,3.01,3.02,5.01,5.02,5.03,8.01)'],
+]) {
+  const c = filing(h, { tickers: [t] });
+  ok(`$${t} does not post`, !c.publishable, c.text);
+}
+ok('and none of them classifies at all',
+  classifyCatalyst({ headline: 'lululemon athletica inc. · 8-K (5.02,5.03,9.01)', source_type: 'filing',
+    tickers: ['LULU'] }) === null);
+
+sec('item 5.02 is a leadership change only when it says so');
+const exec502 = (summary) => classifyCatalyst({ headline: 'ACME CORP · 8-K (5.02,9.01)',
+  source_type: 'filing', tickers: ['ACME'], summary })?.type ?? null;
+ok('a CFO stepping down qualifies',
+  exec502('Jane Doe, Chief Financial Officer, will step down effective October 31, 2026.') === 'exec');
+ok('a CEO appointment qualifies',
+  exec502('The Board appointed John Smith as Chief Executive Officer, effective immediately.') === 'exec');
+ok('a CEO termination qualifies',
+  exec502('The Company terminated the employment of its President and CEO.') === 'exec');
+ok('a routine director retirement does NOT',
+  exec502('Director Alan Green will retire from the Board at the annual meeting.') === null);
+ok('a compensation-plan amendment does NOT',
+  exec502('The Board approved an amendment to the 2019 equity incentive compensation plan.') === null);
+ok('an option grant does NOT',
+  exec502('The Compensation Committee approved an option grant and a retention bonus for certain officers.') === null);
+ok('a bare form heading does NOT', exec502('Departure of Directors or Certain Officers.') === null);
+
+sec('item 3.02 needs financing terms, not a form heading');
+const off302 = (summary) => classifyCatalyst({ headline: 'ACME CORP · 8-K (3.02,9.01)',
+  source_type: 'filing', tickers: ['ACME'], summary })?.type ?? null;
+ok('a placement with terms qualifies',
+  off302('The Company issued 4,000,000 shares in a private placement for gross proceeds of $12 million.') === 'offering');
+ok('a bare form heading does NOT', off302('Unregistered Sales of Equity Securities.') === null);
+ok('no terms at all does NOT', off302('The Company issued securities to an investor.') === null);
+
+sec('the post states the fact, never the taxonomy');
+const real = filing('ACME CORP · 8-K (5.02,9.01)', { tickers: ['ACME'],
+  summary: 'The Company announced that Jane Doe, Chief Financial Officer, will step down effective October 31, 2026.' });
+ok('a filing that states its fact does post', real.publishable, real.suppressed);
+ok('...and the post carries that fact', /Chief Financial Officer/.test(real.text || ''), real.text);
+ok('...and cites the item', /8-K item 5\.02/.test(real.text || ''), real.text);
+ok('...under the registrant\'s own symbol', /^\$ACME: /.test(real.text || ''), real.text);
+// The generic taxonomy sentence must never appear, for any item, under any circumstances.
+for (const [, [, phrase]] of [...new Map([['x', ['exec', 'reports a departure or appointment of directors or officers']]])]) {
+  ok('the EDGAR taxonomy phrase never reaches a post', !String(real.text || '').includes(phrase));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

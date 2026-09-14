@@ -96,6 +96,24 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
     if (k) told.add(k);
   }
 
+  // ── SEC burst protection ───────────────────────────────────────────────────
+  // EDGAR publishes in batches, so filings arrive dozens at a time and a pass that likes several of
+  // them empties them onto the timeline within one minute — which is exactly what happened: five
+  // 8-K posts in seconds. A FINAL safety layer, after every editorial rule, so that even a gate
+  // that has gone wrong cannot produce a burst.
+  //
+  // CRITICAL is exempt. If several genuinely critical and independent filings land together — three
+  // bankruptcies in a market panic — every one of them still goes out. The cap exists to stop
+  // VOLUME of the ordinary, never to withhold the important.
+  const secRecentCount = (await db.execute(sql`
+    select count(*)::int n
+      from x_post_candidates c join primary_events e on e.seq = c.event_seq
+     where c.status in ('dry_run', 'pending', 'posted')
+       and e.source_kind = 'sec'
+       and coalesce(e.importance, 0) < 3
+       and c.created_at > now() - ${SEC_BURST_WINDOW_MIN} * interval '1 minute'`)).rows?.[0]?.n ?? 0;
+  let secBudget = Math.max(0, SEC_BURST_MAX - Number(secRecentCount));
+
   for (const ev of rows) {
     // No market-reaction reading is passed. The only change figure we hold is a daily screener
     // value that is hours to days old, and presenting that as the reaction to a breaking event
@@ -142,6 +160,18 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
       continue;
     }
 
+    // The burst cap, applied last and to ordinary SEC filings only. Not persisted as a suppression:
+    // this is a "not now", and the event must stay eligible for the next pass rather than being
+    // retired by a rate limit.
+    if (String(ev.source_kind || '') === 'sec' && Number(ev.importance) < 3) {
+      if (secBudget <= 0) {
+        out.deferred = (out.deferred || 0) + 1;
+        out.reasons['sec burst cap'] = (out.reasons['sec burst cap'] || 0) + 1;
+        continue;
+      }
+      secBudget--;
+    }
+
     // ON CONFLICT DO NOTHING on the unique event_seq: the duplicate guard is the schema's, so a
     // concurrent pass or a later merge cannot produce a second row for one event.
     const ins = await db.execute(sql`
@@ -166,6 +196,11 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
 // At most this many posts per cron run, so a backlog can never empty itself onto the timeline in
 // one burst. The story guard already limits repetition; this limits VOLUME.
 export const MAX_PER_RUN = 12;
+
+// SEC burst protection. EDGAR publishes in batches; these bound how many ORDINARY filings can reach
+// the account in a window. CRITICAL filings are exempt and are never counted or capped.
+export const SEC_BURST_MAX = 2;
+export const SEC_BURST_WINDOW_MIN = 30;
 
 /**
  * Publish the candidates waiting in `pending`, oldest first. In any mode but `live` this returns

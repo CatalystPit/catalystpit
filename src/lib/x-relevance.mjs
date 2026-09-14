@@ -286,8 +286,101 @@ export function eightKItems(headline) {
 export const filingRegistrant = (headline) => String(headline || '').split('·')[0].trim();
 
 /**
- * Classify an SEC filing row by its item codes. Returns the most material item only — a filing
- * reporting both an acquisition and an exhibit index is an acquisition.
+ * The filing's own statement of what happened, in its own words, or null.
+ *
+ * This is the sentence a post is built from, and it comes from the row's summary or its extracted
+ * facts — never from the item taxonomy, which describes a form heading rather than an event. A row
+ * carrying only the EDGAR index line returns null and is not posted.
+ *
+ * Nothing is fetched or inferred: the clause is lifted from text the pipeline already stored.
+ */
+export function filingFact(ev) {
+  const f = ev?.facts || {};
+  // The extracted assertion, when the enricher produced one. action + object is a real predicate;
+  // an actor alone is just the registrant's name again.
+  const act = String(f.action || '').trim();
+  const obj = String(f.object || '').trim();
+  const val = String(f.value || '').trim();
+  if (act && obj) {
+    const tail = val && !obj.includes(val) ? ` for ${val}` : '';
+    return `${act} ${obj}${tail}`.replace(/\s+/g, ' ').trim();
+  }
+  // Otherwise the first clause of the summary that carries a real predicate.
+  const sum = String(ev?.summary || '').replace(/\s+/g, ' ').trim();
+  if (!sum) return null;
+  const first = sum.split(/(?<=[.;])\s+/)[0];
+  if (!first || first.length < 20 || first.length > 180) return null;
+  // Must assert something, not merely restate the form's own heading.
+  if (!/\b(?:appoint\w*|names?|named|resign\w*|retir\w+|depart\w*|steps? down|terminat\w+|succeed\w*|entered?|agreed?|acquir\w+|sold|issued?|priced?|completed?|announced?|received?|reported?|filed?|approved?|raised?|cut|reduced)\b/i.test(first)) return null;
+  return first.replace(/^[A-Z][\w.,'&-]*(?:\s+[A-Z][\w.,'&-]*){0,5}\s+(?=(?:has|have|is|are|will|today|announced|entered|appointed))/, '').trim();
+}
+
+// ── an item number is a CLUE, never the decision ─────────────────────────────
+// THE MISTAKE THIS FIXES. Classifying by item code and publishing on that alone put a burst of
+// filings on the live account within seconds, every one of them generic:
+//   "$LULU: lululemon athletica inc. reports a departure or appointment of directors or officers
+//    (8-K item 5.02)"
+// That sentence tells a trader nothing. Item 5.02 covers a CEO being fired, a director retiring and
+// a compensation plan being amended; the code says which BOX the filing ticked, not what happened
+// inside it. The same is true of 3.02, which covers a transformative PIPE and a routine option
+// issuance alike.
+//
+// So the item still CLASSIFIES, and the filing's own text has to establish the FACT. Where the fact
+// cannot be established the event is not posted — it stays on Pit Wire, where a trader can open the
+// filing, which is what Pit Wire is for.
+//
+// Evidence is read ONLY from fields the row already holds. Nothing is fetched, no document is
+// parsed and no model is called, so SEC ingestion and Pit Wire latency are untouched.
+const FILING_EVIDENCE = {
+  // A named senior role AND something happening to it. A director retiring or a plan being amended
+  // is not a leadership change, and "certain officers" is the form's language, not an event.
+  '5.02': {
+    need: /\b(?:chief executive|chief financial|chief operating|chief technology|chief medical|chief commercial|chief legal|chief accounting)\s+officer\b|\b(?:ceo|cfo|coo|cto|president|chairman|chair)\b/i,
+    also: /\b(?:appoint\w*|names?|named|hires?|promot\w+|elect\w+|resign\w*|retir\w+|depart\w*|steps? down|stepping down|terminat\w+|dismiss\w+|removed|succeed\w*|successor|transition|interim|effective immediately)\b/i,
+    reject: /\b(?:compensation|incentive|equity award|option grant|bonus|severance|salary|retention|amend\w+ (?:the )?plan|director compensation)\b/i,
+  },
+  // A financing, with terms. "Unregistered sales of equity securities" alone is a form heading.
+  '3.02': { need: /\$[\d,.]+|\b[\d,.]+\s+(?:shares|units|warrants)\b|\b\d+(?:\.\d+)?%/i,
+    also: /\b(?:private placement|pipe\b|convertible|warrants?|notes?|purchase agreement|subscription|investors?|proceeds|financing|raise[sd]?)\b/i },
+  '2.03': { need: /\$[\d,.]+/i, also: /\b(?:credit (?:agreement|facility)|term loan|revolver|notes?|indenture|borrow\w+|debt)\b/i },
+  '2.02': { need: /\$[\d,.]+|\beps\b|\brevenue\b/i, also: /\b(?:results|earnings|revenue|eps|quarter|guidance)\b/i },
+  '1.01': { need: /\$[\d,.]+|\b[\d,.]+\s*(?:million|billion)\b/i,
+    also: /\b(?:agreement|contract|merger|purchase|supply|license|partnership|amendment)\b/i },
+  '1.02': { need: /\b(?:terminat\w+|cancel\w+|ends?|expir\w+)\b/i, also: /\b(?:agreement|contract)\b/i },
+  '2.01': { need: /\b(?:acquir\w+|purchas\w+|sold|sale|dispos\w+|merger|completed)\b/i, also: null },
+  '5.01': { need: /\b(?:control|acquir\w+|merger|majority|takeover)\b/i, also: null },
+  '1.03': { need: /\b(?:chapter (?:7|11)|bankrupt\w*|receivership|petition)\b/i, also: null },
+  '3.01': { need: /\b(?:delist\w+|listing|compliance|notice|deficien\w+|nasdaq|nyse)\b/i, also: null },
+  '4.02': { need: /\b(?:restat\w+|non-?reliance|cannot be relied|error|misstat\w+)\b/i, also: null },
+  '4.01': { need: /\b(?:auditor|accountant|dismiss\w+|engag\w+|resign\w+)\b/i, also: null },
+  '2.04': { need: /\b(?:acceler\w+|default|covenant|breach)\b/i, also: null },
+  '2.05': { need: /\$[\d,.]+|\b[\d,.]+\s+(?:jobs|employees|positions)\b/i, also: null },
+  '2.06': { need: /\$[\d,.]+/i, also: null },
+};
+
+/**
+ * Whether the row's OWN text establishes the material fact behind an item. The EDGAR index line
+ * ("LULULEMON ATHLETICA INC · 8-K (5.02,5.03,9.01)") establishes nothing, which is the point: rows
+ * that carry only the index line do not post.
+ */
+export function filingEvidence(ev, item) {
+  const rule = FILING_EVIDENCE[item];
+  if (!rule) return false;
+  const f = ev?.facts || {};
+  // The registrant's name is NOT evidence — it appears in every filing — so the index line's own
+  // company half is removed before the text is examined.
+  const line = String(ev?.headline || '').replace(/^[^·]*·\s*8-K[^)]*\)?/i, ' ');
+  const text = `${line} ${ev?.summary || ''} ${f.actor || ''} ${f.action || ''} ${f.object || ''} ${f.value || ''}`;
+  if (!text.trim()) return false;
+  if (rule.reject && rule.reject.test(text) && !rule.need.test(text)) return false;
+  if (!rule.need.test(text)) return false;
+  if (rule.also && !rule.also.test(text)) return false;
+  return true;
+}
+
+/**
+ * Classify an SEC filing row by its item codes, and require the filing's own text to establish the
+ * fact. Returns the most material item that BOTH classifies and is evidenced.
  * @returns {{type:string, scope:string, item:string, phrase:string}|null}
  */
 export function classifyFiling(ev) {
@@ -296,9 +389,11 @@ export function classifyFiling(ev) {
   if (!items.length) return null;
   // Ordered by the map's own order, which runs from most to least consequential.
   for (const [code, [type, phrase]] of EIGHT_K_ITEMS) {
-    if (items.includes(code)) return { type, scope: COMPANY, item: code, phrase };
+    if (!items.includes(code)) continue;
+    if (!filingEvidence(ev, code)) continue;      // classified, but nothing establishes it happened
+    return { type, scope: COMPANY, item: code, phrase };
   }
-  return null;            // every item present is routine
+  return null;            // routine, or the facts are not in the row
 }
 
 /**
