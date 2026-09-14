@@ -225,8 +225,15 @@ export async function publishCandidate(id, { fetchImpl = fetch } = {}) {
              posted_at = now(), updated_at = now() where id = ${id}`);
       return { sent: true, xPostId: String(body.data.id) };
     }
-    // Status code and X's own short title only. No headers, no request, no credentials.
-    const why = `HTTP ${r.status}${body?.title ? ` ${String(body.title).slice(0, 60)}` : ''}`;
+    // Status code plus X'S OWN WORDS. No headers, no request, no credentials — `title` and `detail`
+    // are the two fields of X's error body, and `detail` is the one that says WHY: a duplicate, a
+    // content rule, a revoked permission all arrive as 403 with the same title, and without the
+    // detail a failure is indistinguishable from the others. Errors also arrive as an `errors[]`
+    // array on some endpoints, so that shape is read too, and the whole thing is length-capped.
+    const err = Array.isArray(body?.errors) ? body.errors[0] : null;
+    const detail = body?.detail || err?.detail || err?.message || err?.title || '';
+    const why = `HTTP ${r.status}${body?.title ? ` ${String(body.title).slice(0, 40)}` : ''}`
+      + (detail ? `: ${String(detail).slice(0, 120)}` : '');
     await db.execute(sql`update x_post_candidates
        set status = ${isPermanent(r.status) ? 'failed' : 'pending'},
            failure_reason = ${why}, updated_at = now() where id = ${id}`);
