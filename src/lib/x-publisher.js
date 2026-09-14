@@ -7,7 +7,8 @@
 import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { createHmac, randomBytes } from 'node:crypto';
-import { buildCandidate, resolveMode, canPublish } from './x-autopost.mjs';
+import { buildCandidate, resolveMode, canPublish, cashtags } from './x-autopost.mjs';
+import { backfillTickers } from './primary-events';
 
 export const mode = () => resolveMode(process.env.X_AUTOPOST_MODE);
 
@@ -19,8 +20,8 @@ export const mode = () => resolveMode(process.env.X_AUTOPOST_MODE);
 // which is what stops a later merge producing a second post.
 async function eligibleEvents(sinceHours, limit) {
   const res = await db.execute(sql`
-    select e.seq, e.headline, e.headline_status, e.importance, e.tickers, e.source_kind,
-           e.published_at,
+    select e.seq, e.headline, e.summary, e.headline_status, e.importance, e.tickers, e.source_kind,
+           e.source_type, e.category, e.source_headline, e.published_at,
            array(
              select distinct m.source from primary_events m
               where m.seq = e.seq or m.cluster_id = e.seq
@@ -30,8 +31,11 @@ async function eligibleEvents(sinceHours, limit) {
      where e.cluster_id is null
        and c.id is null
        and e.published_at > now() - (${sinceHours} || ' hours')::interval
-       -- Cheap prefilter; the real decision is evaluate() in the pure module.
-       and (e.importance = 3 or exists (
+       -- Cheap prefilter; the real decision is evaluate() in the pure module. It has to admit
+       -- everything evaluate() would accept, so it reads HIGH-or-better, not CRITICAL: the policy
+       -- is that every HIGH or CRITICAL canonical event is eligible, and a prefilter pinned to 3
+       -- would have kept every HIGH event off the account no matter what the gate decided.
+       and (e.importance >= 2 or exists (
              select 1 from primary_events w
               where (w.seq = e.seq or w.cluster_id = e.seq) and w.source = 'WALTERBLOOMBERG'))
      order by e.published_at desc
@@ -50,6 +54,14 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
 
   const rows = await eligibleEvents(sinceHours, limit);
   out.examined = rows.length;
+
+  // TICKER RESOLUTION RUNS BEFORE FORMATTING, and it is the SAME resolver Pit Wire uses. An event
+  // that reached this point with no symbol is almost always one the ingest pass saw before the
+  // company index could place it; resolving here and writing the result back means the cashtag on
+  // the post and the ticker on the Pit Wire row can never disagree, because they are one value.
+  // Events that genuinely resolve to nothing — macro prints, geopolitics — stay untagged and post
+  // without a cashtag, which is the correct shape for them.
+  out.tickersResolved = await backfillTickers(rows);
 
   // What the account has already said, for the story guard. Read once; each new post is appended in
   // memory so a single pass cannot post the same story twice either.
@@ -85,7 +97,7 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
         insert into x_post_candidates
           (event_seq, reason, post_text, char_count, shape, ticker, impact, mode, status, failure_reason)
         values (${ev.seq}, ${c.reason}, ${ev.headline ?? ''}, 0, 'suppressed',
-                ${(ev.tickers || [])[0] ?? null}, ${ev.importance ?? null}, ${m},
+                ${cashtags(ev)[0] ?? null}, ${ev.importance ?? null}, ${m},
                 'suppressed', ${c.suppressed})
         on conflict (event_seq) do nothing`);
       continue;
@@ -97,7 +109,7 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
       insert into x_post_candidates
         (event_seq, reason, post_text, char_count, shape, ticker, impact, mode, status, story_key, post_facts)
       values (${ev.seq}, ${c.reason}, ${c.text}, ${c.chars}, ${c.shape},
-              ${(ev.tickers || [])[0] ?? null}, ${ev.importance ?? null}, ${m},
+              ${cashtags(ev)[0] ?? null}, ${ev.importance ?? null}, ${m},
               ${m === 'dry_run' ? 'dry_run' : 'pending'}, ${c.storyKey ?? null}, ${c.facts ?? null})
       on conflict (event_seq) do nothing
       returning id`);

@@ -29,8 +29,9 @@ if (reset) {
 // ── generation, mirroring x-publisher.generateCandidates ─────────────────────
 if (reset) {
   const rows = await sql.query(`
-    select e.seq, e.headline, e.headline_status, e.importance, e.tickers, e.source_kind,
-           e.published_at,
+    select e.seq, e.headline, e.summary, e.headline_status, e.importance, e.tickers, e.source_kind,
+           e.source_type, e.published_at,
+           (select sm.market_cap from screener_meta sm where sm.ticker = any(e.tickers) and sm.market_cap is not null order by sm.market_cap desc limit 1) market_cap,
            array(select distinct m.source from primary_events m
                   where m.seq = e.seq or m.cluster_id = e.seq) as sources
       from primary_events e
@@ -114,7 +115,7 @@ const perDay = rate.span_h > 0 ? (rate.n / rate.span_h) * 24 : 0;
 console.log(`  ${rate.n} publishable events spanning ${rate.span_h}h (${rate.first_ev} -> ${rate.last_ev})`);
 console.log(`  = ${perDay.toFixed(1)} posts/day`);
 
-console.log('\n=== EVERY POST FROM THE MOST RECENT 6 HOURS OF EVENTS ===');
+console.log('\n=== EVERY POST FROM THE MOST RECENT 24 HOURS OF EVENTS ===');
 const recent = await sql.query(`
   select c.post_text, c.shape, c.char_count, c.reason, c.ticker, c.impact, c.story_key,
          e.headline, e.published_at, e.source_count, e.seq,
@@ -122,7 +123,7 @@ const recent = await sql.query(`
            where m.seq = e.seq or m.cluster_id = e.seq) sources
     from x_post_candidates c join primary_events e on e.seq = c.event_seq
    where c.status in ('dry_run','pending')
-     and e.published_at > (select max(published_at) from primary_events) - interval '6 hours'
+     and e.published_at > (select max(published_at) from primary_events) - interval '24 hours'
    order by e.published_at asc`);
 console.log(`  ${recent.length} posts\n`);
 for (const r of recent) {

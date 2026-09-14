@@ -299,6 +299,11 @@ export const TAXONOMY_LABELS = new Set([
   'FX', 'BONDS', 'COMMODITIES', 'EQUITIES', 'STOCKS', 'INDICES', 'FUTURES', 'OPTIONS', 'NEWS',
   'BREAKING', 'ALERT', 'FLASH', 'UPDATE', 'DATA', 'CALENDAR', 'ECONOMY', 'ECON', 'POLITICS',
   'GEOPOLITICS', 'TECH', 'HEALTH', 'RETAIL', 'BANKS', 'HOUSING', 'JOBS', 'INFLATION',
+  // Agencies and central banks. A wire tags a story with the body that acted, and the tag is shaped
+  // exactly like a symbol — "$FDA" and "$FED" on the public account would be securities that do not
+  // exist. None of these is a listed US symbol, so none is a legitimate ticker being removed.
+  'FED', 'FOMC', 'FDA', 'SEC', 'DOJ', 'FTC', 'FCC', 'CFTC', 'IRS', 'CDC', 'USDA', 'OPEC',
+  'ECB', 'BOJ', 'BOE', 'PBOC', 'IMF', 'NATO', 'WTO', 'WHO', 'OECD',
 ]);
 
 export const isTaxonomyLabel = (sym) => TAXONOMY_LABELS.has(String(sym || '').toUpperCase());
@@ -611,6 +616,62 @@ const NOISE = [
   /\bhoroscope\b|\brecipe\b|\bgift guide\b|\bdeals? of the day\b/i,
 ];
 
+// ── presidential action ──────────────────────────────────────────────────────
+// The president is an unusually market-moving actor: a sentence from him can reprice a sector
+// before any company says anything. But most sentences from him are not that, so the tier is earned
+// by STRUCTURE rather than by the name appearing.
+//
+// Three things must all be present, which is what keeps campaign talk and personal attacks at their
+// ordinary score:
+//   1. the actor  - the president, the White House, the administration
+//   2. a market-sensitive DOMAIN - trade, sanctions, monetary policy, military, energy, fiscal,
+//      regulatory, or a named major-risk counterparty
+//   3. an ACTION that is announced, threatened, ordered or already done
+// "Trump says AI taking over the world is a hoax" has the actor and nothing else. "Trump threatens
+// 200% tariffs on European cars" has all three.
+// The US president specifically. A bare "president" matched Iran's, and "Iran's President
+// Pezeshkian states demands unchanged" was promoted to CRITICAL as though Washington had acted.
+const PRESIDENT = /\b(?:trump|white house|the administration|potus|oval office|president trump|us president|u\.s\. president)\b/i;
+
+// Someone acting AGAINST the president is not the president acting. "States and cities sue to block
+// Trump immigration rule" and "Federal judge blocks Trump's mail-in voting restrictions" are court
+// news, and the tier is for what the executive itself announces, threatens or does.
+const ACTED_UPON = /\b(?:sues?|sued|suing|lawsuit|judge|court|injunction|appeals?|ruled?|ruling|blocked by|struck down|overturn\w*|challenge[sd]?)\b/i;
+
+const POLICY_DOMAIN = [
+  ['trade', /\b(?:tariffs?|duties|customs|trade (?:deal|war|policy|agreement|deficit)|import tax|export controls?|quotas?|usmca|nafta|section 232|section 301)\b/i],
+  ['sanctions', /\b(?:sanctions?|embargo|blacklist|entity list|asset freeze|secondary sanctions|export ban)\b/i],
+  ['monetary', /\b(?:the fed|federal reserve|fed chair|interest rates?|rate (?:cut|hike|decision)|monetary policy|fomc|powell|quantitative)\b/i],
+  ['military', /\b(?:military|troops?|airstrikes?|strikes?|missiles?|war|invasion|blockade|no-fly|deploy(?:s|ed|ment)?|attack(?:s|ed)?|bomb(?:s|ed|ing)?|nuclear|armed forces)\b/i],
+  ['geopolitical', /\b(?:iran|russia|china|north korea|venezuela|taiwan|israel|ukraine|opec|nato)\b/i],
+  ['energy', /\b(?:oil|crude|opec|energy|gas|lng|pipeline|hormuz|refiner\w*|drilling|spr|strategic petroleum)\b/i],
+  ['fiscal', /\b(?:tax(?:es|ation)?|tariff revenue|budget|deficit|debt ceiling|stimulus|spending bill|shutdown|entitlement|social security|medicare)\b/i],
+  ['regulatory', /\b(?:regulation|deregulat\w+|antitrust|executive order|ban|approve[sd]?|block(?:s|ed)?|investigat\w+|probe|doj|ftc|sec\b|fcc|epa|cfius)\b/i],
+];
+
+// Something is being DONE or promised, not merely discussed. Without this, "Trump comments on
+// China" would rate the same as "Trump orders new China tariffs".
+const POLICY_ACTION = /\b(?:announce[sd]?|impos(?:e|es|ed|ing)|threat(?:en|ens|ened|ening)?|order(?:s|ed)?|sign(?:s|ed)?|ban(?:s|ned)?|block(?:s|ed)?|approv(?:e|es|ed)|authoriz\w+|direct(?:s|ed)?|launch(?:es|ed)?|strike[sd]?|deploy(?:s|ed)?|rais(?:e|es|ed)|cut(?:s)?|lift(?:s|ed)?|halt(?:s|ed)?|revok(?:e|es|ed)|withdraw(?:s|n)?|declar(?:e|es|ed)|demand(?:s|ed)?|will (?:impose|order|sign|ban|cut|raise|send|strike|fire|replace|remove|nominate|end|stop)|plans to (?:impose|order|sign|ban|fire|replace)|fire[sd]?|firing|replac(?:e|es|ed)|oust(?:s|ed)?|remov(?:e|es|ed)|nominat(?:e|es|ed)|appoint(?:s|ed)?)\b/i;
+// Removing or installing the person who sets policy IS the policy action, and markets treat it as
+// one: a threat to fire the Fed chair moves rates before any rate decision does.
+
+// Commentary about the man rather than an act by him. These keep their ordinary score.
+const POLITICAL_NOISE = /\b(?:poll(?:s|ing)?|approval rating|campaign|rally|endorse\w*|primary|caucus|indict\w*|verdict|golf|social media post|truth social post|feud|insult|slam(?:s|med)?|mock(?:s|ed)?|birthday|memoir|documentary|hoax|conspiracy)\b/i;
+
+/**
+ * Does this read as the president announcing, threatening or taking concrete action in a
+ * market-sensitive domain? Returns the domain name, or null.
+ */
+export function presidentialAction(text) {
+  const s = String(text || '');
+  if (!PRESIDENT.test(s)) return null;
+  if (POLITICAL_NOISE.test(s)) return null;
+  if (ACTED_UPON.test(s)) return null;
+  if (!POLICY_ACTION.test(s)) return null;
+  for (const [name, re] of POLICY_DOMAIN) if (re.test(s)) return name;
+  return null;
+}
+
 export function scoreImportance({ headline, summary = '', source = '', sourceType = '', tickers = [], macroEnabled = true }) {
   const hay = `${headline} ${summary || ''}`;
   if (NOISE.some((re) => re.test(hay))) return 0;
@@ -620,6 +681,9 @@ export function scoreImportance({ headline, summary = '', source = '', sourceTyp
   const macro = macroEnabled ? macroImpact(headline) : 0;
   // Every CRITICAL predicate EXCEPT M&A is decisive on its own. A halt is a halt.
   if (CRITICAL_PREDICATES.some((p) => p.name !== 'ma' && p.re.test(hay))) return 3;
+  // The president acting in a market-sensitive domain. Judged on the HEADLINE, so a passing mention
+  // buried in a summary cannot promote an unrelated story.
+  if (presidentialAction(headline)) return 3;
   if (macro === 3) return 3;
   // M&A must earn the tier on evidence of public-market involvement, and falls downward when that
   // evidence is missing rather than upward on acquisition vocabulary alone.

@@ -23,20 +23,25 @@ ok('a publisher fragment is still NOT eligible',
   !evaluate(base({ headline_status: 'rewrite_pending' })).eligible);
 ok('SEC is still never eligible', !evaluate(base({ source_kind: 'sec' })).eligible);
 
-console.log('\n=== 2. halts are judged, not flooded ===');
-ok('a routine LULD pause on a micro-cap is suppressed',
-  build({ ...halt, headline: 'RFAI halted, volatility pause (LULD)', tickers: ['RFAI'] }).suppressed === 'routine volatility pause');
-ok('...but the same pause on a large cap publishes',
-  build({ ...halt, headline: 'AAPL halted, volatility pause (LULD)', tickers: ['AAPL'], market_cap: 3.2e12 }).publishable);
-ok('a news-pending halt publishes', build(halt).publishable);
-ok('...and is BREAKING, because news is pending', build(halt).breaking === true);
-ok('a routine pause is never BREAKING',
-  build({ ...halt, headline: 'AAPL halted, volatility pause (LULD)', tickers: ['AAPL'], market_cap: 3.2e12 }).breaking === false);
-ok('the exchange separator and reason code are cleaned up',
-  build({ ...halt, headline: 'AAPL halted · Volatility pause (LULD)', tickers: ['AAPL'], market_cap: 3.2e12 }).text
-    === '$AAPL: halted, volatility pause');
-ok('a halt with no symbol cannot post',
-  build({ ...halt, tickers: [] }).suppressed === 'halt with no resolved symbol');
+console.log('\n=== 2. halts are NEVER auto-posted ===');
+// POLICY CHANGE. Halts used to be judged on materiality and some published. They are now excluded
+// outright: mechanical, high-volume and short-lived is exactly what a public account should not
+// carry, and the exclusion reads the event's CLASSIFICATION, never words in its sentence.
+for (const [label, extra] of [
+  ['source_type', { source_type: 'halt' }],
+  ['category', { category: 'HALT' }],
+  ['wireType', { wireType: 'halt' }],
+  ['wireCategory', { wireCategory: 'HALT' }],
+]) {
+  const c = build({ ...halt, headline: 'AAPL halted, volatility pause (LULD)', tickers: ['AAPL'],
+    market_cap: 3.2e12, importance: 3, ...extra });
+  ok(`a halt never posts, by ${label}`, !c.publishable, c.text || c.suppressed || c.blocked);
+}
+ok('a news-pending halt never posts either', !build(halt).publishable);
+ok('a large-cap pause never posts either',
+  !build({ ...halt, headline: 'AAPL halted, volatility pause', tickers: ['AAPL'], market_cap: 3.2e12 }).publishable);
+ok('a non-halt event that merely uses the word is unaffected',
+  build({ headline: 'Company halts production at its main plant after fire', importance: 3 }).publishable);
 
 console.log('\n=== 3. facts the event holds are not thrown away ===');
 const saudi = { headline: 'Saudi Arabia shuts East-West pipeline after drone damage',
@@ -106,7 +111,11 @@ ok('a named security is never called featureless', !tooVagueToPost('$KD Kyndryl 
 ok('a halt is never called featureless', !tooVagueToPost('$XYZ halted', { isHalt: true, unusedContext: true }));
 
 console.log('\n=== gates that must NOT have loosened ===');
-ok('speculation still suppressed', !build({ headline: 'Acme considers acquiring Beta', tickers: ['ACM'] }).publishable);
+// POLICY: at HIGH or CRITICAL, speculation is no longer a blocker — Pit Wire already scored the
+// event and the account does not hold a second vote. The rule still applies below that bar.
+ok('speculation is suppressed below HIGH',
+  !build({ headline: 'Acme considers acquiring Beta', tickers: ['ACM'], importance: 1,
+    sources: ['WALTERBLOOMBERG'] }).publishable);
 ok('truncated wording still suppressed', !build({ headline: 'Acme agrees to acquire Beta for…', tickers: ['ACM'] }).publishable);
 ok('non-English still suppressed', !build({ headline: 'SÍL 2 hs. - ákvörðun vaxta og almenn upplýsingagjöf' }).publishable);
 ok('a taxonomy label is never a cashtag',

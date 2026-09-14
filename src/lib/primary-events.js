@@ -10,7 +10,7 @@ import { canonicalUrl, eventKey, factKey, findCluster, normHash, PROXIMITY_MS } 
 import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDisplayable } from './news-normalize.mjs';
 import { isNonEnglish } from './language.mjs';
 import { generateBatch, validateHeadline, validateFacts, BATCH_SIZE } from './headline-writer.mjs';
-import { TRUSTED_SOURCES, TRUSTED_REWRITE_ATTEMPTS } from './trusted-sources.mjs';
+import { TRUSTED_SOURCES, TRUSTED_REWRITE_ATTEMPTS, TRUSTED_MIN_IMPORTANCE } from './trusted-sources.mjs';
 
 // The trusted list as a Postgres array LITERAL with an explicit cast, matching how every other
 // array is bound in this file. Passing the JS array straight into any() leaves the parameter
@@ -180,19 +180,57 @@ async function resolveTickers(events) {
       }
     }
   } catch { /* best effort; no ticker is always an acceptable outcome */ }
-  const items = candidates.map((e, i) => ({
+  // Only events the name pass could not place. Overwriting a name-resolved result here would throw
+  // away a two-company match ("Kyndryl to acquire Healthcare IT Leaders") for a single registrant.
+  const items = candidates.filter((e) => !(e.tickers || []).length).map((e, i) => ({
     cusip: String(i),
     issuers: companyPhrases(e.source_headline || e.headline),
     current: null,
+    _e: e,
   })).filter((it) => it.issuers.length);
   if (!items.length) return;
   try {
     const hits = await resolveIssuerItems(items);
     for (const h of hits) {
-      const e = candidates[Number(h.cusip)];
+      const e = items[Number(h.cusip)]?._e;
       if (e && h.ticker) e.tickers = [h.ticker];
     }
   } catch { /* resolution is best-effort; no ticker is always an acceptable outcome */ }
+}
+
+/**
+ * Resolve tickers for canonical events that reach a downstream surface still carrying none, and
+ * PERSIST the result. Exported because X formatting must not do its own company→symbol mapping: a
+ * second mapping is a second source of truth, and the two would drift. This runs the one canonical
+ * resolver and writes back to primary_events, so Pit Wire and the X post show the same symbols.
+ *
+ * Conservative by construction — resolveCompanies returns [] rather than a guess, and an event that
+ * resolves to nothing is simply left with no ticker.
+ *
+ * @param {Array<{seq:number|string, headline:string, source_headline?:string, tickers?:string[]}>} rows
+ *   mutated in place with whatever resolved
+ * @returns {Promise<number>} how many events gained a ticker
+ */
+export async function backfillTickers(rows) {
+  const need = (rows || []).filter((r) => !(r.tickers || []).length && (r.source_headline || r.headline));
+  if (!need.length) return 0;
+  let n = 0;
+  try {
+    const idx = await symbolIndex();
+    if (!idx) return 0;
+    for (const r of need) {
+      const hits = resolveCompanies(r.source_headline || r.headline, idx);
+      if (!hits.length) continue;
+      r.tickers = hits;
+      n++;
+      try {
+        await db.execute(sql`
+          update primary_events set tickers = ${hits}::text[]
+           where seq = ${r.seq} and coalesce(array_length(tickers, 1), 0) = 0`);
+      } catch { /* the post still carries the symbol even if the write loses a race */ }
+    }
+  } catch { /* no index means no name resolution, which is an acceptable outcome */ }
+  return n;
 }
 
 // ── ingest-time deduplication ────────────────────────────────────────────────
@@ -697,6 +735,25 @@ async function foldOnDisplayHeadline(seq, headline, publishedAt) {
 // Rows that exhausted their retries are parked rather than retried forever. They keep their source
 // headline and stay visible; only the Catalyst Pit rewrite is abandoned.
 //
+// A trusted source's floor follows the CLUSTER, not the row that filed first.
+//
+// The floor is applied at ingest to a trusted source's own row, which is right until that row merges
+// into an earlier one from an ordinary wire: the canonical event then carries the ordinary row's
+// score and the trusted provenance counts for nothing. greatest() is used rather than a plain set,
+// so a CRITICAL event is never pulled down to HIGH.
+export async function applyTrustedFloor() {
+  const res = await db.execute(sql`
+    update primary_events c
+       set importance = greatest(c.importance, ${TRUSTED_MIN_IMPORTANCE}::smallint)
+     where c.cluster_id is null
+       and c.importance < ${TRUSTED_MIN_IMPORTANCE}
+       and exists (select 1 from primary_events m
+                    where (m.seq = c.seq or m.cluster_id = c.seq)
+                      and m.source = any(${TRUSTED}::text[]))
+    returning c.seq`);
+  return (res.rows ?? res)?.length || 0;
+}
+
 // CANONICALISATION DOES NOT WAIT ON THE MODEL.
 //
 // A trusted flash routinely arrives seconds after a wire story about the same event and merges into

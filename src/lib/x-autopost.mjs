@@ -42,6 +42,7 @@ const CATALYST_WORDING = new Set(['original', 'composed']);
 
 export const WALTER_SOURCE = 'WALTERBLOOMBERG';
 export const CRITICAL = 3;
+export const HIGH = 2;
 
 /**
  * @param {object} ev canonical event: { importance, headline_status, source_kind, sources[] }
@@ -53,7 +54,12 @@ export function evaluate(ev) {
   const isCritical = Number(ev?.importance) === CRITICAL;
   const hasWalter = sources.includes(WALTER_SOURCE);
 
-  if (!isCritical && !hasWalter) return { eligible: false, reason: null, blocked: 'not critical, no Walter provenance' };
+  // HIGH or CRITICAL is the bar. The account exists to carry what Pit Wire already judged to matter,
+  // and a second, stricter opinion about that was keeping real events off it. Walter provenance
+  // still qualifies on its own, which is now mostly redundant given his HIGH floor, but it keeps
+  // working if that floor ever changes.
+  const isHigh = Number(ev?.importance) >= HIGH;
+  if (!isHigh && !hasWalter) return { eligible: false, reason: null, blocked: 'below HIGH, no Walter provenance' };
   // SEC is never auto-posted. Its wording is the filing's, and its handling is out of scope here.
   if (ev?.source_kind === 'sec') return { eligible: false, reason: null, blocked: 'SEC' };
   // `not_required` is not a wait — it is a permanent state, so treating it as one made every event
@@ -72,7 +78,7 @@ export function evaluate(ev) {
     return { eligible: false, reason: null, blocked: `awaiting Catalyst wording (${ev?.headline_status})` };
   }
   if (mechanical) return { eligible: true, reason: 'exchange halt', blocked: null };
-  const reason = isCritical && hasWalter ? 'critical+walter' : isCritical ? 'critical' : 'walter';
+  const reason = isCritical && hasWalter ? 'critical+walter' : isCritical ? 'critical' : isHigh ? 'high' : 'walter';
   return { eligible: true, reason, blocked: null };
 }
 
@@ -224,23 +230,52 @@ export function tooVagueToPost(text, { hasTicker = false, isHalt = false, unused
   return unusedContext && s.split(/\s+/).filter(Boolean).length <= 12;
 }
 
+// ── cashtags ─────────────────────────────────────────────────────────────────
+// The symbols on a post come from the canonical event's OWN resolved tickers — the same field Pit
+// Wire renders — and this file never maps a company name to a symbol itself. A hardcoded mapping
+// here would be a second, quietly diverging source of truth; resolving upstream is what keeps the
+// two surfaces from disagreeing.
+//
+// Three refusals:
+//   • a taxonomy label (MACRO, FED, HALT) is a desk category, not a security
+//   • anything not shaped like a listed symbol, so a stray phrase never becomes a cashtag
+//   • duplicates, including one symbol contributed by two sources in the cluster
+// Share classes survive exactly as resolved: BRK.B stays BRK.B and GOOG is never widened to GOOGL.
+// A name that was ambiguous resolved to nothing upstream and arrives here as no ticker at all,
+// which is the intended outcome — no ticker is better than a wrong ticker.
+const TICKER_SHAPE = /^[A-Z]{1,6}(?:[.\-][A-Z]{1,2})?$/;
+export const MAX_CASHTAGS = 3;
+export const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, (m) => `\\${m}`);
+
+export function cashtags(ev) {
+  const out = [];
+  for (const raw of (ev?.tickers || [])) {
+    const t = String(raw || '').trim().toUpperCase();
+    if (!t || isTaxonomyLabel(t) || !TICKER_SHAPE.test(t)) continue;
+    if (!out.includes(t)) out.push(t);
+    if (out.length >= MAX_CASHTAGS) break;
+  }
+  return out;
+}
+
 // ── formatting ───────────────────────────────────────────────────────────────
 // Three shapes, exactly as specified:
 //   macro / geopolitical        BREAKING: <event>
 //   ticker-specific             $TICKER: <event>
 //   exceptional ticker event    BREAKING: $TICKER <event>   (exceptional = CRITICAL)
 export function formatPost(ev, reading = null, now = Date.now(), breaking = null) {
-  // A desk label is not a cashtag. The resolver no longer stores one, but a row ingested before
-  // that fix still carries tickers:['MACRO'], and "$MACRO" on the public account would be a symbol
-  // that does not exist. The account fails closed on its own, independently of the stored row.
-  const first = (ev?.tickers || [])[0];
-  const ticker = first && !isTaxonomyLabel(first) ? String(first).toUpperCase() : null;
+  // Every public company the canonical event resolved, not just the first. A two-company event —
+  // an acquisition, a supply deal, a licensing agreement — is about both of them, and tagging only
+  // the acquirer leaves the other side silently untagged.
+  const tags = cashtags(ev);
+  const ticker = tags[0] || null;
   let body = sanitize(ev?.headline);
   if (!body) return { ok: false, error: 'no headline' };
 
   // canonicalHeadline prefixes a resolved symbol ("MSFT: Microsoft sets limits…"). Left in it would
-  // read "$MSFT: MSFT: Microsoft…".
-  if (ticker) body = body.replace(new RegExp(`^\\$?${ticker}\\s*[:\\-]?\\s+`, 'i'), '');
+  // read "$MSFT: MSFT: Microsoft…". Escaped, because a share class carries a dot (BRK.B) and an
+  // unescaped dot is a regex wildcard that would eat a real character.
+  for (const t of tags) body = body.replace(new RegExp(`^\\$?${escapeRe(t)}\\s*[:\\-]?\\s+`, 'i'), '');
   // Exchange halt lines are assembled by the engine from feed fields and still carry its separator
   // and the exchange's own reason code. "$AAPL: AAPL halted, volatility pause (LULD)" is the symbol
   // twice and a code no reader needs.
@@ -264,7 +299,8 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   // "Canada inflation holds at 3.0% year-over-year in August" — goes out as a plain trader-wire
   // line. Without this shape every no-ticker post had to be labelled BREAKING, which is how the
   // label ended up on 68 of 68 candidates and stopped meaning anything.
-  const prefix = ticker ? (brk ? `BREAKING: $${ticker} ` : `$${ticker}: `) : (brk ? 'BREAKING: ' : '');
+  const tagStr = tags.map((t) => `$${t}`).join(' ');
+  const prefix = tagStr ? (brk ? `BREAKING: ${tagStr} ` : `${tagStr}: `) : (brk ? 'BREAKING: ' : '');
 
   // Add back a fact the event holds and the headline dropped, in the source's own words.
   const extra = supportingClause(body, ev?.summary);

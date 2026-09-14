@@ -28,7 +28,7 @@ sec('ELIGIBILITY');
 ok('CRITICAL event qualifies', evaluate(ev()).eligible && evaluate(ev()).reason === 'critical');
 ok('Walter event qualifies at HIGH', (() => {
   const v = evaluate(ev({ importance: 2, sources: ['WALTERBLOOMBERG'] }));
-  return v.eligible && v.reason === 'walter';
+  return v.eligible && v.reason === 'high';   // HIGH now qualifies on impact alone
 })());
 ok('Walter event qualifies at LOW too, impact is irrelevant for him',
   evaluate(ev({ importance: 0, sources: ['WALTERBLOOMBERG'] })).eligible);
@@ -36,7 +36,9 @@ ok('CRITICAL + Walter reports both reasons',
   evaluate(ev({ sources: ['BLOOMBERG', 'WALTERBLOOMBERG'] })).reason === 'critical+walter');
 ok('Walter provenance counts when he MERGED IN, not just when canonical',
   evaluate(ev({ importance: 1, sources: ['FINANCIALJUICE', 'WALTERBLOOMBERG'] })).eligible);
-ok('HIGH non-Walter does NOT qualify', !evaluate(ev({ importance: 2 })).eligible);
+// POLICY: a HIGH event qualifies on its own impact. Pit Wire already judged it; the account does
+// not hold a second, stricter vote on the same event.
+ok('HIGH non-Walter DOES qualify', evaluate(ev({ importance: 2 })).eligible);
 ok('MEDIUM non-Walter does NOT qualify', !evaluate(ev({ importance: 1 })).eligible);
 ok('LOW non-Walter does NOT qualify', !evaluate(ev({ importance: 0 })).eligible);
 ok('SEC is never eligible even at CRITICAL',
@@ -121,8 +123,10 @@ ok('no reading means exactly one line', formatPost(ev()).text.split('\n').length
 sec('PUBLICATION GATE — eligible is not the same as publishable');
 const at = (mins = 1) => new Date(Date.UTC(2026, 8, 14, 12, 0, 0) - mins * 60_000).toISOString();
 const NOW = Date.UTC(2026, 8, 14, 12, 0, 0);
+// MEDIUM by default, on purpose. HIGH and CRITICAL now bypass the editorial rules entirely (see
+// the POLICY section at the end), so exercising those rules requires an event below that bar.
 const gate = (headline, extra = {}) => publicationVerdict(
-  { headline, summary: '', tickers: [], importance: 3, published_at: at(1), ...extra }, NOW);
+  { headline, summary: '', tickers: [], importance: 1, published_at: at(1), ...extra }, NOW);
 
 ok('a real energy-infrastructure event publishes as BREAKING',
   (() => { const v = gate('Saudi Arabia shuts East-West pipeline after drone attacks'); return v.publish && v.breaking; })());
@@ -131,8 +135,9 @@ ok('a real energy-infrastructure event publishes as BREAKING',
 // established public company is suppressed, fail closed. That is the specified behaviour, and it
 // means most FDA news waits on the ticker resolver rather than going out unattributed.
 ok('an FDA approval clears the substance test', gate('Nasus Pharma wins FDA approval').reason !== 'no concrete substance');
-ok('but without a resolved ticker it is still suppressed on identity',
-  gate('Nasus Pharma wins FDA approval').reason === 'no public-market relevance');
+// A missing ticker is no longer a reason to suppress a HIGH/CRITICAL event.
+ok('without a resolved ticker a CRITICAL approval still publishes',
+  gate('Nasus Pharma wins FDA approval', { importance: 3 }).publish);
 ok('WITH a resolved ticker the same approval publishes as BREAKING',
   (() => { const v = gate('Nasus Pharma wins FDA approval', { tickers: ['NSPH'] }); return v.publish && v.breaking; })());
 ok('a named-drug approval with a ticker publishes',
@@ -174,8 +179,10 @@ for (const h of ['U.S. crude futures hit session high of $104.95 per barrel',
                  "China's Jan-Aug new yuan loans reach CNY10.44T; M2 rises 7.5% y/y"])
   ok(`Walter macro print publishes: ${h.slice(0, 40)}`,
     gate(h, { importance: 2, trusted: true }).publish, gate(h, { importance: 2, trusted: true }).reason || '');
-ok('but Walter COMMENTARY is still suppressed',
-  !gate('Iran says US lack of mediation is main obstacle to diplomacy', { importance: 2, trusted: true }).publish);
+// POLICY: at HIGH this now publishes. Commentary is an editorial judgement, and Pit Wire already
+// scored the event. The rule still applies below HIGH.
+ok('Walter COMMENTARY is suppressed below HIGH',
+  !gate('Iran says US lack of mediation is main obstacle to diplomacy', { importance: 1, trusted: true }).publish);
 
 sec('STORY GUARD — a developing story gets one post, not thirty-five');
 // X-only. Pit Wire keeps every event; the account does not. Over six days the Saudi pipeline
@@ -327,3 +334,40 @@ if (!process.env.DATABASE_URL) {
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
+
+
+// ── POLICY: HIGH and CRITICAL post ───────────────────────────────────────────
+sec('POLICY — HIGH and CRITICAL publish, halts never do');
+const hi = (headline, extra = {}) => publicationVerdict(
+  { headline, summary: '', tickers: [], importance: 2, published_at: at(1), ...extra }, NOW);
+
+ok('a HIGH event publishes', hi('Washington considering phased agreement with Iran').publish);
+ok('a CRITICAL event publishes', hi('DeepSeek hires first CFO ahead of potential IPO', { importance: 3 }).publish);
+ok('no ticker is not a reason to suppress', hi('Kalshi puts Democrats at 51% in Senate race odds').publish);
+ok('no measured figure is not a reason to suppress', hi('Germany to lobby EU on new China policy').publish);
+ok('speculation is not a reason to suppress at HIGH', hi('Acme considers acquiring Beta Industries').publish);
+ok('a private-company deal is not a reason to suppress at HIGH', hi('Superhuman to acquire YC-backed notetaker Fathom').publish);
+
+ok('a MEDIUM event still faces the editorial gate', !hi('Acme considers acquiring Beta', { importance: 1 }).publish);
+
+// The blockers that remain, at every impact.
+ok('malformed wording still blocks', !hi('Acme agrees to acquire Beta for…').publish);
+ok('...with the right reason', hi('Acme agrees to acquire Beta for…').reason === 'incomplete or fragmentary wording');
+ok('foreign text still blocks', !hi('SÍL 2 hs. - ákvörðun vaxta og almenn upplýsingagjöf').publish);
+ok('a stale event still blocks', !hi('Saudi Arabia shuts East-West pipeline', { published_at: at(600) }).publish);
+
+// HALTS: a deterministic category/type exclusion that overrides impact.
+for (const [label, extra] of [
+  ['source_type halt', { source_type: 'halt' }],
+  ['category HALT', { category: 'HALT' }],
+  ['wireType halt', { wireType: 'halt' }],
+  ['wireCategory HALT', { wireCategory: 'HALT' }],
+]) {
+  const v = hi('AAPL halted, volatility pause', { tickers: ['AAPL'], importance: 3, market_cap: 3e12, ...extra });
+  ok(`a halt never posts (${label})`, !v.publish, v.reason || 'PUBLISHED');
+  ok(`...for the halt reason (${label})`, v.reason === 'halts are not auto-posted', v.reason);
+}
+ok('a news-pending halt never posts either',
+  !hi('XYZ halted, news pending', { source_type: 'halt', tickers: ['XYZ'], importance: 3 }).publish);
+ok('a non-halt event with the word halt in it is unaffected',
+  hi('Company halts production at its main plant after fire').publish);

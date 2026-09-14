@@ -30,6 +30,39 @@ const NEWS_HALT = /\bnews\b|\bT1\b|\bregulatory\b|\bSEC (?:trading )?suspension\
 export const HALT_CAP_FLOOR = 2e9;
 const bigEnoughToMatter = (ev) => Number(ev?.market_cap) >= HALT_CAP_FLOOR;
 
+// Structural identification of a halt: what the engine CLASSIFIED it as, never what the sentence
+// says. source_type is set by the Nasdaq adapter, category by the engine, wireType by the shared
+// taxonomy. Any of the three is decisive, so a halt cannot slip through by being worded unusually.
+// Pit Wire's own HIGH. An event it scored this far is posted; the account does not re-litigate it.
+export const HIGH_IMPORTANCE = 2;
+
+// Whether a post carries the BREAKING label. Extracted so the HIGH/CRITICAL path and the ordinary
+// path cannot drift apart: four shapes can never carry it, whatever else is true of them.
+//   a CONSEQUENCE piece   "Saudi pipeline outage threatens to raise gas prices further", posted 43
+//                         hours after the shutdown it describes
+//   a HEDGED outcome      "could", "may", "risks", "set to" — it has not happened
+//   a PRICE UPDATE        "Brent crude reaches $108" — the market moving is not an event breaking
+//   a FOLLOW-UP           the account has already told this story
+export function computeBreaking({ headline, macro, predicate, hasTicker, maWorded, storyHasPriors }) {
+  const consequence = CONSEQUENCE.test(headline) || RESTATEMENT.test(headline);
+  if (COMMENTARY.test(headline) || consequence || isPricePrint(headline) || storyHasPriors) return false;
+  return !!(
+    macro === 3                                  // chokepoint/producer disruption, sovereign emergency
+    || predicate === 'emergency_action'
+    || (predicate === 'halt' && hasTicker)
+    || HARD_CORPORATE.has(predicate)             // bankruptcy, default, delisting, FDA decision, indictment
+    || (maWorded && hasTicker && !SPECULATIVE.test(headline))   // a definitive public-company deal
+    || ((predicate === 'fomc' || predicate === 'fomc_long' || predicate === 'rate_decision')
+        && DECIDED.test(headline))
+  );
+}
+
+export const isHaltEvent = (ev) =>
+  String(ev?.source_type || '').toLowerCase() === 'halt'
+  || String(ev?.category || '').toUpperCase() === 'HALT'
+  || String(ev?.wireType || '').toLowerCase() === 'halt'
+  || String(ev?.wireCategory || '').toUpperCase() === 'HALT';
+
 // ── speculation and commentary ───────────────────────────────────────────────
 // A deal that might happen is not a deal. From the sample: "Salesforce considers acquiring Listen
 // Labs", "Brookfield in talks to acquire PGP Glass", "Michael Dell's family office nears deal to
@@ -109,6 +142,8 @@ const FINITE_VERB = /\b(?:is|are|was|were|has|have|had|says?|said|will|shuts?|cl
 // A trailing Title Case noun phrase with no qualifier is the signature of a truncated PR headline.
 const TRAILING_FRAGMENT = /\b(?:[A-Z][a-z]+\s+){1,}[A-Z][a-z]+\s*$/;
 
+export const words = (s) => String(s || '').trim().split(/\s+/).filter(Boolean).length;
+
 export function readsAsSentence(headline) {
   const s = String(headline || '').trim();
   const words = s.split(/\s+/).filter(Boolean);
@@ -163,6 +198,13 @@ export function publicationVerdict(ev, now = Date.now()) {
 
   if (!headline) return no('no headline');
 
+  // ── halts are never auto-posted ────────────────────────────────────────────
+  // A deterministic exclusion on the event's own CATEGORY and TYPE, not on words in the headline.
+  // It overrides impact entirely: a halt is CRITICAL on the tape because a trader scanning for
+  // tradeable events needs it immediately, and that is exactly the kind of mechanical, high-volume,
+  // short-lived notice a public account should not carry. LULD pauses alone ran 46 in 72 hours.
+  if (isHaltEvent(ev)) return no('halts are not auto-posted');
+
   // ── exchange halts ─────────────────────────────────────────────────────────
   // A halt is a market fact with its own editorial bar, so it is judged here rather than by the
   // rules below, which are written for prose. Measured over 72h the feed produced 46 halts, every
@@ -188,6 +230,40 @@ export function publicationVerdict(ev, now = Date.now()) {
   const at = Date.parse(ev?.published_at ?? NaN);
   if (!Number.isFinite(at)) return no('no timestamp');
   if (now - at > MAX_AGE_MS) return no('stale');
+
+  // ── HIGH and CRITICAL publish ──────────────────────────────────────────────
+  // Everything ABOVE this line is an INTEGRITY check and still applies to every event: a headline
+  // must exist, be English, be complete, be current, and not be a halt. Everything BELOW is
+  // editorial judgement — speculation, vagueness, PR noise, substance, relevance — and for an event
+  // Pit Wire has already scored HIGH or CRITICAL that second, stricter opinion was keeping real
+  // market news off the account.
+  //
+  // Completeness is asserted here rather than left below, because a broken sentence is not a matter
+  // of taste: it is malformed feed text, which must never be published at any impact.
+  if (Number(ev?.importance) >= HIGH_IMPORTANCE) {
+    // isCompletePhrase, NOT readsAsSentence. The latter also demands a verb from a fixed list and
+    // rejects trailing noun phrases, which is editorial taste; this asks only whether the sentence
+    // is broken — an ellipsis, a dangling connector, an unfinished date, an unclosed bracket.
+    if (!isCompletePhrase(headline)) return no('incomplete or fragmentary wording');
+    // A truncated PR fragment is broken FEED TEXT, not a matter of taste: "FDA approves Reduced
+    // Monitoring Time" names neither whose drug nor for what. Short, all Title Case, no figure.
+    if (words(headline) <= 7 && TRAILING_FRAGMENT.test(headline) && !/[.%$\d]/.test(headline)) {
+      return no('incomplete or fragmentary wording');
+    }
+    return {
+      publish: true,
+      reason: null,
+      breaking: computeBreaking({
+        headline,
+        macro: macroImpact(headline),
+        predicate: criticalPredicate(hay),
+        hasTicker: (ev?.tickers || []).filter(Boolean).length > 0,
+        maWorded: MA_WORDED.test(headline),
+        storyHasPriors: !!ev?.storyHasPriors,
+      }),
+      terminal: false,
+    };
+  }
 
   // 1. A concrete factual event, not commentary or speculation.
   // An admission that we do not know what happened is not publishable under any label. "Saudi
@@ -233,20 +309,8 @@ export function publicationVerdict(ev, now = Date.now()) {
   //   a HEDGED outcome      "could", "may", "risks", "set to" — it has not happened
   //   a PRICE UPDATE        "Brent crude reaches $108" — the market moving is not an event breaking
   //   a FOLLOW-UP           the account has already told this story; the second post is not news
-  const consequence = CONSEQUENCE.test(headline) || RESTATEMENT.test(headline);
-  const priceUpdate = isPricePrint(headline);
-  const followUp = !!ev?.storyHasPriors;
-  const breaking = !COMMENTARY.test(headline) && !consequence && !priceUpdate && !followUp && (
-    macro === 3                                  // chokepoint/producer disruption, sovereign emergency
-    || predicate === 'emergency_action'
-    || (predicate === 'halt' && hasTicker)        // a halt matters when we can say what halted
-    || HARD_CORPORATE.has(predicate)              // bankruptcy, default, delisting, FDA decision, indictment
-    || (maWorded && hasTicker && !SPECULATIVE.test(headline))   // a definitive public-company deal
-    // A rate DECISION, not the meeting calendar. Anticipation was already suppressed above, so
-    // anything reaching here with this predicate is an actual action.
-    || ((predicate === 'fomc' || predicate === 'fomc_long' || predicate === 'rate_decision')
-        && DECIDED.test(headline))
-  );
+  const breaking = computeBreaking({ headline, macro, predicate, hasTicker, maWorded,
+    storyHasPriors: !!ev?.storyHasPriors });
 
   // A post that is not BREAKING still has to be worth reading. It needs either a ticker or a
   // measured macro fact; a vague no-ticker line with no figure is neither urgent nor informative.

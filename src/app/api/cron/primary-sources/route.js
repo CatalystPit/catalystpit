@@ -1,4 +1,4 @@
-import { runPrimarySources, runEnrichment, parkExhausted, adoptClusterWording } from '../../../../lib/primary-events';
+import { runPrimarySources, runEnrichment, parkExhausted, adoptClusterWording, applyTrustedFloor } from '../../../../lib/primary-events';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -39,9 +39,10 @@ export async function GET(request) {
     });
     const parked = await parkExhausted();
     const adopted = await adoptClusterWording();
+    const floored = await applyTrustedFloor();
 
     console.log(`[primary-sources] ${JSON.stringify({ written: res.written, folded: res.folded, sweeps: res.sweeps, enrich, ms: res.ms })}`);
-    return Response.json({ ok: true, ...res, enrich, parked, adopted }, { headers: { 'Cache-Control': 'private, no-store' } });
+    return Response.json({ ok: true, ...res, enrich, parked, adopted, floored }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     console.error('[primary-sources]', e);
     return Response.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 });
