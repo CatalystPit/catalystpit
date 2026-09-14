@@ -151,19 +151,36 @@ function telegramAdapter(body, feed) {
 
 export const ADAPTERS = { rss: rssAdapter, atom: rssAdapter, json: jsonAdapter, api: jsonAdapter, telegram: telegramAdapter };
 
+// Some wires sign every line: FinancialJuice ends each post "|FJ", Walter Bloomberg appends
+// "(@WalterBloomberg)". That is the channel's watermark, not part of the event, and leaving it in
+// puts it on screen and dilutes the text the cross-source dedupe compares. A feed therefore declares
+// its own `strip` patterns rather than any adapter learning about a particular source. The ORIGINAL
+// line survives untouched as `sourceTitle`, which is what normalize() records as source_headline.
+function applyStrip(title, feed) {
+  if (!feed.strip?.length) return title;
+  let s = title;
+  for (const re of feed.strip) s = s.replace(re, ' ');
+  s = s.replace(/\s+/g, ' ').replace(/[\s|·\-–—]+$/, '').trim();
+  return s || title;            // never let a greedy pattern delete the whole headline
+}
+
 export function runAdapter(body, feed) {
   const fn = ADAPTERS[feed.adapter || 'rss'];
   if (!fn) return [];
   try {
     const items = fn(body, feed) || [];
     // Normalize the contract so downstream code never has to defend against a sloppy adapter.
-    return items.map((it) => ({
-      title: String(it.title || '').trim(),
-      url: String(it.url || '').trim(),
-      uid: String(it.uid || it.url || '').trim(),
-      publishedAt: it.publishedAt ?? null,
-      summary: it.summary ?? null,
-      tickers: Array.isArray(it.tickers) ? it.tickers : [],
-    })).filter((it) => it.title && it.url);
+    return items.map((it) => {
+      const raw = String(it.title || '').trim();
+      return {
+        title: applyStrip(raw, feed),
+        sourceTitle: raw,
+        url: String(it.url || '').trim(),
+        uid: String(it.uid || it.url || '').trim(),
+        publishedAt: it.publishedAt ?? null,
+        summary: it.summary ?? null,
+        tickers: Array.isArray(it.tickers) ? it.tickers : [],
+      };
+    }).filter((it) => it.title && it.url);
   } catch { return []; }        // a malformed payload yields no items; it never breaks the pass
 }

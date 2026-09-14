@@ -49,6 +49,9 @@ export function isTickerableSource(source) {
 //   tickerable  true  → may carry a ticker (conservatively resolved, or stated by the source)
 //   map         JSON field paths, for the json/api adapters only
 //   headers     extra request headers, e.g. an API key read from process.env
+//   strip       regexes removing the channel's own watermark from the headline ("|FJ",
+//               "(@WalterBloomberg)"). Display and dedupe use the cleaned line; source_headline
+//               and raw keep the original exactly as published.
 //
 // SEC is deliberately ABSENT from this registry. SEC events are projected from eightk_filings by
 // the existing pipeline and never pass through fetching, rewriting or enrichment.
@@ -127,14 +130,41 @@ export const FEEDS = [
   // ══ BREAKING WIRES ════════════════════════════════════════════════════════
   // FinancialJuice publishes a public, unauthenticated RSS endpoint that its own homepage links to.
   // No login, token, paywall or CAPTCHA is involved. It sends no ETag/Last-Modified, so every poll
-  // transfers the body — hence FAST rather than FLASH.
+  // transfers the body — and it will not take FLASH: polled at 15s it answered 429 to six of eight
+  // requests, where its own Telegram channel below answered 200 to eight of eight. So this stays at
+  // FAST as the durable copy of record, and the Telegram channel carries the speed.
+  // Every line is signed "FinancialJuice: "; that prefix is the channel, not the event.
   feed({ key: 'financialjuice', source: 'FINANCIALJUICE', sourceName: 'FinancialJuice', type: 'wire',
     everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
+    strip: [/^\s*FinancialJuice\s*:\s*/i, /\s*\|\s*FJ\s*$/i],
     url: 'https://www.financialjuice.com/feed.ashx' }),
+  // The same operator's own public Telegram channel, carrying the same lines. Registered under the
+  // SAME source code and with the same `strip`, so once both watermarks are off ("FinancialJuice: "
+  // on the RSS, "|FJ" here) the two arrivals of one headline are byte-identical and collapse on the
+  // norm_hash layer into one canonical event — whichever got there first. It exists purely to close
+  // the 60s gap the RSS cannot: 15s here, and the RSS behind it so nothing is lost if t.me is down.
+  feed({ key: 'telegram_financialjuice', source: 'FINANCIALJUICE', sourceName: 'FinancialJuice', type: 'wire',
+    adapter: 'telegram', everySec: TIER.FLASH, category: 'MARKETS', tickerable: true,
+    strip: [/^\s*FinancialJuice\s*:\s*/i, /\s*\|\s*FJ\s*$/i],
+    url: 'https://t.me/s/financialjuice' }),
   // Telegram's own public channel preview page. Public content, no authentication.
   feed({ key: 'telegram_bmn', source: 'BREAKINGMARKETNEWS', sourceName: 'Breaking Market News', type: 'wire',
     adapter: 'telegram', everySec: TIER.FLASH, category: 'MARKETS', tickerable: true,
     url: 'https://t.me/s/breakingmarketnews' }),
+  // Walter Bloomberg's own public Telegram channel — the operator's first-party distribution of the
+  // same headlines they post as @DeItaone on X, which has no feed of any kind we may read.
+  //
+  // Identified by measurement, not by name. Against a captured window of @DeItaone's posts, this
+  // channel carried the same lines a MEDIAN OF 1 SECOND later (13 matched pairs, worst 80s), while
+  // the similarly-named t.me/walter_bloomberg ran 433s behind with decoration added — a relay, not
+  // the source. Registering the wrong one would have cost seven minutes on every headline.
+  // Each line is signed "(@WalterBloomberg)"; that is the channel's watermark, not the event.
+  feed({ key: 'telegram_walterbloomberg', source: 'WALTERBLOOMBERG', sourceName: 'Walter Bloomberg', type: 'wire',
+    adapter: 'telegram', everySec: TIER.FLASH, category: 'MARKETS', tickerable: true,
+    // The leading "*" is the terminal convention for a flash headline, not part of the sentence;
+    // left on, it survives into the display headline and into every text comparison dedupe makes.
+    strip: [/\s*\(\s*@?walter\s*bloomberg\s*\)/gi, /^\s*\*+\s*/],
+    url: 'https://t.me/s/WalterBloomberg' }),
 
   // ══ FINANCIAL / MARKET NEWS ═══════════════════════════════════════════════
   feed({ key: 'sa_market_currents', source: 'SEEKINGALPHA', sourceName: 'Seeking Alpha', type: 'article',
@@ -512,7 +542,9 @@ export function normalize(feed, item) {
     // headline is the DISPLAY headline — deterministically normalised now, refined by Haiku later.
     // source_headline keeps the source's exact words permanently, whatever happens afterwards.
     headline: display || item.title,
-    source_headline: item.title,
+    // The source's exact words, permanently. When a feed declares `strip`, item.title has had the
+    // channel's own watermark removed for display and dedupe — sourceTitle is the untouched line.
+    source_headline: item.sourceTitle || item.title,
     summary: item.summary,
     published_at: item.publishedAt,
     original_url: item.url,

@@ -101,7 +101,7 @@ export function categoryOf(ev, type = eventTypeOf(ev)) {
 // 61 individual feeds is an unusable filter list, so sources are grouped by what a trader actually
 // thinks in terms of. Individual sources stay addressable underneath for anyone who wants them.
 export const SOURCE_GROUPS = [
-  { key: 'wires',    label: 'Breaking Wires',      sources: ['FINANCIALJUICE', 'BREAKINGMARKETNEWS'] },
+  { key: 'wires',    label: 'Breaking Wires',      sources: ['FINANCIALJUICE', 'BREAKINGMARKETNEWS', 'WALTERBLOOMBERG'] },
   { key: 'media',    label: 'Financial Media',     sources: ['BLOOMBERG', 'WSJ', 'CNBC', 'YAHOO', 'MARKETWATCH', 'FT', 'ECONOMIST', 'AXIOS', 'TECHCRUNCH'] },
   { key: 'research', label: 'Research & Analysis', sources: ['SEEKINGALPHA', 'INVESTING', 'ZEROHEDGE'] },
   { key: 'biotech',  label: 'Biotech Trade Press', sources: ['BIOSPACE'] },
