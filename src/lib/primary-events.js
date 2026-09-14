@@ -5,7 +5,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { FEEDS, PENDING, activeFeeds, fetchFeed, normalize, TICKERABLE, categoryOf, importanceOf, contentHash, companyPhrases, isTickerableSource } from './primary-sources.mjs';
 import { resolveIssuerItems } from './name-resolver';
-import { canonicalUrl, eventKey, factKey, findCluster } from './event-cluster.mjs';
+import { canonicalUrl, eventKey, factKey, findCluster, normHash, PROXIMITY_MS } from './event-cluster.mjs';
 import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDisplayable } from './news-normalize.mjs';
 import { generateBatch, validateHeadline, validateFacts, BATCH_SIZE } from './headline-writer.mjs';
 
@@ -26,7 +26,7 @@ export async function insertEvents(events) {
       insert into primary_events (source, source_name, source_kind, source_type, source_uid,
         headline, source_headline, summary, published_at, original_url, canonical_url, tickers,
         category, importance, content_hash, headline_status, pipeline_status, event_key,
-        fact_key, fact_sig, norm_hash, entity, display_ready, first_seen_at, last_seen_at,
+        fact_key, fact_sig, norm_hash, display_hash, entity, display_ready, first_seen_at, last_seen_at,
         cluster_id, raw)
       values (${e.source}, ${e.source_name ?? e.source}, ${e.source_kind ?? 'external'},
         ${e.source_type}, ${e.source_uid}, ${e.headline}, ${e.source_headline ?? e.headline},
@@ -37,7 +37,10 @@ export async function insertEvents(events) {
         ${e.headline_status ?? 'pending'}, ${e.pipeline_status ?? 'pending'},
         ${e.event_key ?? null},
         -- Deterministic dedupe keys, computed at ingest so layers 2-4 are indexed equality checks.
-        ${e.fact_key ?? null}, ${e.fact_sig ?? null}, ${e.norm_hash ?? null}, ${e.entity ?? null},
+        ${e.fact_key ?? null}, ${e.fact_sig ?? null}, ${e.norm_hash ?? null},
+        -- normHash of the DISPLAY headline — the words the trader actually reads, which is what
+        -- must never appear twice. Rewritten again whenever enrichment changes the headline.
+        ${e.display_hash ?? null}, ${e.entity ?? null},
         ${e.display_ready ?? true}, now(), now(),
         -- NULL = this row is the canonical event. Set = it folded into an existing one. Decided
         -- by the INSERT itself, so a row is never visible without its cluster already resolved.
@@ -161,7 +164,7 @@ const MAX_REWRITE_ATTEMPTS = 3;
 
 async function clusterCandidates() {
   const res = await db.execute(sql`
-    select seq, cluster_id, event_key, fact_key, fact_sig, norm_hash, entity, headline,
+    select seq, cluster_id, event_key, fact_key, fact_sig, norm_hash, display_hash, entity, headline,
            source_headline, summary, tickers, canonical_url, published_at, received_at
       from primary_events
      where received_at > now() - (${CLUSTER_WINDOW_HOURS} || ' hours')::interval
@@ -368,6 +371,72 @@ export async function projectHalts(halts) {
   return insertEvents(events);
 }
 
+// ── early halt detection ─────────────────────────────────────────────────────
+// A trusted wire sometimes states a halt before Nasdaq's feed carries it. This finds those events
+// so the Halt Scanner can show them immediately, and it is deliberately hard to satisfy.
+//
+// TWO independent gates, both required:
+//   1. a ticker the conservative resolver actually resolved — never a symbol parsed out of prose
+//   2. a phrase that can only mean a SECURITIES trading halt
+//
+// Gate 2 is the one that matters. "Halt", "pause" and "stopped" on their own are everywhere in
+// ordinary news and must never create a halt: our own tape carried "Amazon halts operations with 21
+// aircraft after Miami crash" and "Saudi oil pipeline to be out of service" in the same window. So
+// every pattern below anchors the word to trading itself — "trading halted", "shares halted",
+// "halted pending news" — and a company halting a factory, a flight or a drug trial matches none of
+// them. NASDAQ's own projected rows are excluded: those already ARE the official feed.
+const HALT_PHRASES = [
+  /\btrading (?:is |was |has been )?halted\b/i,
+  /\btrading halt\b/i,
+  /\bshares? (?:are |were |is |was )?halted\b/i,
+  /\bstock (?:is |was )?halted\b/i,
+  /\bhalted (?:for|pending) news\b/i,
+  /\bhalted,? news pending\b/i,
+  /\bnews pending halt\b/i,
+  /\bvolatility (?:trading )?(?:halt|pause)\b/i,
+  /\bregulatory halt\b/i,
+  /\btrading pause[ds]?\b/i,
+  /\blimit up[- ]limit down\b/i,
+  /\bLULD\b/,
+];
+
+export async function detectedHalts({ withinMinutes = 240 } = {}) {
+  const res = await db.execute(sql`
+    select seq, source, headline, source_headline, tickers, published_at, received_at
+      from primary_events
+     where cluster_id is null
+       and source_kind <> 'sec'
+       and source <> 'NASDAQ'
+       and cardinality(tickers) > 0
+       and coalesce(published_at, received_at) > now() - (${withinMinutes} || ' minutes')::interval
+       -- Cheap prefilter so the regex gate below only sees plausible rows.
+       and (headline ~* '\\mhalt' or headline ~* '\\mLULD\\M' or source_headline ~* '\\mhalt')
+     order by coalesce(published_at, received_at) desc
+     limit 60`);
+  const out = [];
+  for (const r of (res.rows ?? res)) {
+    const hay = `${r.headline || ''} ${r.source_headline || ''}`;
+    if (!HALT_PHRASES.some((re) => re.test(hay))) continue;
+    const at = new Date(r.published_at || r.received_at);
+    if (Number.isNaN(at.getTime())) continue;
+    // Formatted to match the official feed's own shape so the panel needs no special case.
+    const et = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: '2-digit',
+      day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const p = Object.fromEntries(et.formatToParts(at).map((x) => [x.type, x.value]));
+    out.push({
+      symbol: String(r.tickers[0]).toUpperCase(),
+      reason: 'Halt reported — awaiting official confirmation',
+      haltDate: `${p.month}/${p.day}/${p.year}`,
+      haltTime: `${p.hour}:${p.minute}:${p.second}.000`,
+      seq: r.seq,
+    });
+  }
+  // One row per symbol, newest kept.
+  const bySym = new Map();
+  for (const h of out) if (!bySym.has(h.symbol)) bySym.set(h.symbol, h);
+  return [...bySym.values()];
+}
+
 // ── STAGE 2: enrichment ──────────────────────────────────────────────────────
 // Completely independent of ingestion. Reads rows that are ALREADY captured, already deduped and
 // already canonical, then sharpens them in place: the Catalyst Pit headline, the extracted facts,
@@ -486,15 +555,58 @@ export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generat
              event_key = coalesce(${key}, event_key),
              fact_key = coalesce(${fkey}, fact_key),
              importance = greatest(importance, ${r.importance ?? 0}::smallint),
+             display_hash = ${normHash(headline) || null},
              display_ready = display_ready or ${isDisplayable(r.source_headline || r.headline)},
              pipeline_status = 'ready',
              enrich_attempts = enrich_attempts + 1,
              enriched_at = now()
        where seq = ${r.seq}`);
     stats.ready++;
+    // Rewriting can CREATE a duplicate that did not exist at ingest. Four language editions of one
+    // press release, or two outlets whose phrasings missed the similarity threshold, all become the
+    // same English sentence once Catalyst Pit has worded them. Dedupe ran before that happened, so
+    // this is the only place that collapse can be caught.
+    if (!r.cluster_id) stats.foldedAfterRewrite = (stats.foldedAfterRewrite || 0) + await foldOnDisplayHeadline(r.seq, headline, r.published_at);
   }
 
   return { ...stats, ms: Date.now() - t0 };
+}
+
+// Fold a freshly-reworded event into an older canonical event that now reads identically.
+//
+// The OLDER row always wins, which is what keeps "first source on screen immediately" true: the row
+// the trader has already seen keeps its seq, its position and its timestamp, and the late arrival
+// becomes a member of it. Never touches SEC, never merges a row into itself or into one of its own
+// members, and never fires on a headline too short to be a safe identity.
+async function foldOnDisplayHeadline(seq, headline, publishedAt) {
+  const hash = normHash(headline);
+  if (!hash || hash.split(' ').length < 4) return 0;   // too thin to assert two events are one
+  const res = await db.execute(sql`
+    with head as (
+      select seq, published_at from primary_events
+       where display_hash = ${hash}
+         and cluster_id is null
+         and source_kind <> 'sec'
+         and seq <> ${seq}
+         -- The same proximity gate every other layer uses. The Fed prints "Federal Reserve issues
+         -- FOMC statement" verbatim eight times a year and those stay eight events.
+         and abs(extract(epoch from (coalesce(published_at, received_at)
+             - ${publishedAt ?? null}::timestamptz))) <= ${PROXIMITY_MS / 1000}
+       order by seq asc
+       limit 1)
+    update primary_events p
+       set cluster_id = head.seq
+      from head
+     where p.seq = ${seq} and head.seq < p.seq
+    returning p.seq`);
+  const folded = (res.rows ?? res)?.length || 0;
+  if (folded) {
+    await db.execute(sql`
+      update primary_events
+         set source_count = source_count + 1, last_seen_at = now()
+       where seq = (select cluster_id from primary_events where seq = ${seq})`);
+  }
+  return folded;
 }
 
 // Rows that exhausted their retries are parked rather than retried forever. They keep their source

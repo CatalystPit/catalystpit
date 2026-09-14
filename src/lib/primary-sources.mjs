@@ -148,8 +148,12 @@ export const FEEDS = [
     strip: [/^\s*FinancialJuice\s*:\s*/i, /\s*\|\s*FJ\s*$/i],
     url: 'https://t.me/s/financialjuice' }),
   // Telegram's own public channel preview page. Public content, no authentication.
+  // Signs every line "(@BreakingMarketNews)". Left in, that watermark changed the normalised text
+  // enough that its copy of a headline would not collapse against FinancialJuice's copy of the same
+  // headline — three canonical rows for one wire flash, on the tape, in production.
   feed({ key: 'telegram_bmn', source: 'BREAKINGMARKETNEWS', sourceName: 'Breaking Market News', type: 'wire',
     adapter: 'telegram', everySec: TIER.FLASH, category: 'MARKETS', tickerable: true,
+    strip: [/\s*\(\s*@?breaking\s*market\s*news\s*\)/gi],
     url: 'https://t.me/s/breakingmarketnews' }),
   // Walter Bloomberg's own public Telegram channel — the operator's first-party distribution of the
   // same headlines they post as @DeItaone on X, which has no feed of any kind we may read.
@@ -554,6 +558,9 @@ export function normalize(feed, item) {
     entity: entityToken(item.title, tickers),
     fact_sig: factSig,
     norm_hash: normHash(item.title),
+    // The display headline's own hash. Ingest-time dedupe keys off the SOURCE's wording, which is
+    // blind to four language editions of one press release all rendering as the same sentence.
+    display_hash: normHash(display || item.title),
     category: feed.category || categoryOf(feed.source),
     importance: scoreImportance({ headline: item.title, summary: item.summary, source: feed.source, sourceType: feed.type, tickers }),
     content_hash: contentHash({ source: feed.source, title: item.title, publishedAt: item.publishedAt }),

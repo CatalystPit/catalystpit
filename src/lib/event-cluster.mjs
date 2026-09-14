@@ -13,11 +13,25 @@
 const STRIP_PARAMS = /^(utm_|ref$|ref_|source$|src$|cmp$|cmpid$|ito$|at_|mc_|fbclid$|gclid$|igshid$|s$|__twitter|sh$|taid$)/i;
 
 // Same article, different link decoration → one canonical string.
+// A wire release that carries its own id in the path IS that id. GlobeNewswire publishes one
+// announcement at .../news-release/2026/09/14/3361074/0/en/<slug>.html and again at
+// .../3361074/0/da/<danish-slug>.html — same release id 3361074, different language, so the URL
+// layer saw two articles and the text layers saw two languages. That produced the live duplicate
+// "Jyske Realkredit opens new fixed rate bonds" / "...convertible bonds": one press release, two
+// canonical events. Reducing the path to the release id closes it at the earliest, cheapest layer.
+//
+// This cannot over-merge: two announcements never share a release id, and the 36h proximity gate
+// still applies on top. Note it does NOT catch the case where the publisher mints a SEPARATE id per
+// language (GlobeNewswire does both) — that one is caught later, on the display headline.
+const RELEASE_PATH = /^\/news-release\/\d{4}\/\d{2}\/\d{2}\/(\d{4,})\//;
+
 export function canonicalUrl(raw) {
   let u;
   try { u = new URL(String(raw || '')); } catch { return ''; }
   u.protocol = 'https:';
   u.hostname = u.hostname.toLowerCase().replace(/^www\./, '');
+  const release = u.pathname.match(RELEASE_PATH);
+  if (release) return `https://${u.hostname}/news-release/${release[1]}`;
   // The fragment is USUALLY cosmetic ("#top"), but some feeds use it as the item identifier: the
   // Fed's G.19 feed publishes every notice as ".../G19.html#3929". Stripping it merged 44 distinct
   // announcements spanning three years into one event. So only known cosmetic anchors are dropped.
@@ -191,6 +205,15 @@ export function findCluster(item, candidates) {
   if (item.norm_hash) {
     for (const c of candidates) {
       if (c.norm_hash && c.norm_hash === item.norm_hash && nearInTime(item, c)) return { match: c, tier: 'norm_hash' };
+    }
+  }
+  // The headline the TRADER will read. norm_hash above is the SOURCE's wording, which is the right
+  // key at ingest but blind to two things that both reached production: four language editions of
+  // one press release, and two outlets whose different phrasings were rewritten into identical
+  // Catalyst Pit text. If two events would print the same words, they are the same event.
+  if (item.display_hash) {
+    for (const c of candidates) {
+      if (c.display_hash && c.display_hash === item.display_hash && nearInTime(item, c)) return { match: c, tier: 'display_hash' };
     }
   }
 

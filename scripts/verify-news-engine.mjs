@@ -66,6 +66,33 @@ ok('canonicalUrl strips www + trailing slash + hash',
   canonicalUrl('http://www.ex.com/b/#top') === 'https://ex.com/b');
 ok('canonicalUrl on junk returns empty', canonicalUrl('not a url') === '');
 
+// A wire release that carries its own id IS that id. GlobeNewswire publishes one announcement in
+// several languages under the SAME id; that shipped as two live Pit Wire rows for release 3361074,
+// "Jyske Realkredit opens new fixed rate bonds" and "...convertible bonds".
+const JY_EN = 'https://www.globenewswire.com/news-release/2026/09/14/3361074/0/en/jyske-realkredit-to-open-new-fixed-rate-bonds.html';
+const JY_DA = 'https://www.globenewswire.com/news-release/2026/09/14/3361074/0/da/jyske-realkredit-abner-nye-obligationer.html';
+ok('canonicalUrl reduces a wire release to its id', canonicalUrl(JY_EN) === 'https://globenewswire.com/news-release/3361074', canonicalUrl(JY_EN));
+ok('two language editions of one release share a canonical url', canonicalUrl(JY_EN) === canonicalUrl(JY_DA));
+ok('different releases keep different canonical urls',
+  canonicalUrl(JY_EN) !== canonicalUrl(JY_EN.replace('3361074', '3361075')));
+ok('an ordinary article url is untouched by the release rule',
+  canonicalUrl('https://www.ex.com/news-release/some-story') === 'https://ex.com/news-release/some-story');
+
+// The display-headline layer: two events that would PRINT the same words are one event. This is
+// what catches four language editions that each got their own release id and were then all
+// rewritten into the same English sentence.
+const at = '2026-09-14T12:00:00Z';
+const dh = (seq, display_hash, extra = {}) => ({ seq, display_hash, published_at: at, headline: 'x', ...extra });
+ok('identical display headlines collapse',
+  findCluster({ display_hash: 'pan global wins bid salamon gold project rights spain', published_at: at, headline: 'x' },
+    [dh(1, 'pan global wins bid salamon gold project rights spain')])?.tier === 'display_hash');
+ok('different display headlines do not collapse',
+  findCluster({ display_hash: 'acme raises guidance', published_at: at, headline: 'x' },
+    [dh(1, 'beta cuts guidance')]) === null);
+ok('the 36h gate still applies to display headlines — a recurring notice stays separate',
+  findCluster({ display_hash: 'federal reserve issues fomc statement', published_at: '2026-09-14T12:00:00Z', headline: 'x' },
+    [dh(1, 'federal reserve issues fomc statement', { published_at: '2026-07-30T12:00:00Z' })]) === null);
+
 ok('actionClass finds merger', actionClass('Acme to buy Beta') === 'merger');
 ok('actionClass finds approval', actionClass('FDA approves drug') === 'approval');
 ok('actionClass unknown → null', actionClass('weather is nice today') === null);

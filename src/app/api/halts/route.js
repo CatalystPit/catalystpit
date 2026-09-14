@@ -1,5 +1,5 @@
 import { after } from 'next/server';
-import { projectHalts } from '../../../lib/primary-events';
+import { projectHalts, detectedHalts } from '../../../lib/primary-events';
 
 export const runtime = 'nodejs';
 
@@ -43,6 +43,48 @@ async function kvSet(key, value, ttl) {
   } catch { /* non-fatal */ }
 }
 
+// Sort key from the halt date/time the feed states. Unparseable values sort last rather than
+// throwing the whole ordering off.
+function haltKey(h) {
+  const [m, d, y] = String(h.haltDate || '').split('/');
+  const t = String(h.haltTime || '').slice(0, 8);
+  const ms = Date.parse(`${y}-${m}-${d}T${t || '00:00:00'}Z`);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+// ── early detection ──────────────────────────────────────────────────────────
+// Nasdaq's feed is authoritative but it is not always first. When a trusted wire states outright
+// that a named security is halted, the scanner should show it immediately and let the official
+// record take over the moment it lands.
+//
+// The official row ALWAYS wins: a detected halt is dropped the instant the same symbol appears in
+// the feed, so the panel never shows the same halt twice and every official field — halt time,
+// reason code, resumption times — comes from Nasdaq and never from a headline. A detected row is
+// marked `detected: true` so the data model can tell them apart; the panel renders it identically.
+//
+// If this query fails or the engine has nothing, the official feed is returned exactly as before.
+async function earlyHalts(official) {
+  try {
+    const seen = new Set(official.map((h) => String(h.symbol || '').toUpperCase()));
+    const rows = await detectedHalts();
+    return rows
+      .filter((r) => !seen.has(r.symbol))
+      .map((r) => ({
+        symbol: r.symbol,
+        name: null,
+        market: null,
+        reasonCode: null,
+        reason: r.reason,
+        haltDate: r.haltDate,
+        haltTime: r.haltTime,
+        resumeQuote: null,
+        resumeTrade: null,
+        resumed: false,
+        detected: true,          // not yet in the official record
+      }));
+  } catch { return []; }
+}
+
 // namespace-tolerant single-tag extractor
 const tag = (xml, name) => {
   const m = xml.match(new RegExp(`<(?:[a-z]+:)?${name}>([\\s\\S]*?)</(?:[a-z]+:)?${name}>`, 'i'));
@@ -78,9 +120,16 @@ export async function GET() {
       };
     }).filter(Boolean);
 
-    // newest first by halt time (feed is roughly chronological; reverse to be safe)
-    halts.reverse();
-    const payload = { halts, asOf: new Date().toISOString() };
+    // Newest first, sorted on the halt timestamp the feed itself states.
+    //
+    // This used to be `halts.reverse()`, on the assumption that Nasdaq delivers oldest-first. It
+    // does not — it delivers NEWEST-first, so the reverse put the newest halt of the day at the
+    // BOTTOM of the panel. That is how BWIN, halted 08:25 and the first item in the feed, ended up
+    // rendered at row 25 of 25 and read as "missing from the Halt Scanner" while Pit Wire showed it
+    // immediately. Sorting explicitly means the answer no longer depends on the feed's order at all.
+    halts.sort((a, b) => haltKey(b) - haltKey(a));
+    const detected = await earlyHalts(halts);
+    const payload = { halts: [...detected, ...halts].sort((a, b) => haltKey(b) - haltKey(a)), asOf: new Date().toISOString() };
     await kvSet('halts:v1', payload, TTL);
 
     // Mirror into the primary-event stream. This runs only on a cache MISS, so it is bounded by the
