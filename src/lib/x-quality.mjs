@@ -11,7 +11,7 @@
 // Every rule here was written against a real 179-candidate dry run. The examples in the comments
 // are verbatim from that sample.
 
-import { macroImpact, criticalPredicate } from './news-normalize.mjs';
+import { macroImpact, criticalPredicate, isCompletePhrase } from './news-normalize.mjs';
 import { materiallyNonEnglish } from './language.mjs';
 
 // ── how old is too old to call it breaking market information ────────────────
@@ -85,6 +85,11 @@ export function readsAsSentence(headline) {
   const s = String(headline || '').trim();
   const words = s.split(/\s+/).filter(Boolean);
   if (words.length < 5) return false;                        // too thin to be a sentence
+  // Truncated wording can never be published, whatever else is right about it. This is the same
+  // completeness test the engine applies before STORING a canonical headline — an ellipsis, a
+  // dangling connector, an unfinished date, an unclosed bracket. Held here too so the account fails
+  // closed on any row that predates that fix or arrives broken by some other route.
+  if (!isCompletePhrase(s)) return false;
   if (!FINITE_VERB.test(s)) return false;                    // no assertion
   if (/\b(?:the|a|an|of|for|to|in|on|with|and|or|its|their)\s*$/i.test(s)) return false;  // dangling
   // "FDA approves Reduced Monitoring Time" - ends in a bare Title Case phrase, and the sentence is

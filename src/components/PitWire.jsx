@@ -205,13 +205,20 @@ const Row = memo(function Row({ ev, onPick }) {
 
       {/* The headline is Catalyst Pit's own wording and leads nowhere off-site. A filing is the one
           exception: an 8-K has to be readable AT the SEC, so those keep their direct filing link. */}
+      {/* Clamping is a DISPLAY concern and lives here only. The stored headline is always the
+          complete sentence — the engine no longer shortens one unless the shortening is itself a
+          complete sentence — so a row that is too long for its width is ellipsised by CSS and the
+          whole thing is on the title attribute, one hover away. Nothing is mutated to make it fit. */}
       {sec ? (
-        <a href={ev.original_url} target="_blank" rel="noopener noreferrer"
-          style={{ fontSize: 12, color: C.text, textDecoration: 'none', flex: 1, minWidth: 0, fontWeight: ev.importance >= 2 ? 600 : 400 }}>
+        <a href={ev.original_url} target="_blank" rel="noopener noreferrer" title={ev.headline}
+          style={{ fontSize: 12, color: C.text, textDecoration: 'none', flex: 1, minWidth: 0, fontWeight: ev.importance >= 2 ? 600 : 400,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {ev.headline}
         </a>
       ) : (
-        <span style={{ fontSize: 12, color: C.text, flex: 1, minWidth: 0, fontWeight: ev.importance >= 2 ? 600 : 400 }}>
+        <span title={ev.headline}
+          style={{ fontSize: 12, color: C.text, flex: 1, minWidth: 0, fontWeight: ev.importance >= 2 ? 600 : 400,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {ev.headline}
         </span>
       )}

@@ -106,12 +106,105 @@ export function cleanHeadline(raw) {
 // The canonical headline shown to users: a cleaned real headline, prefixed with the ticker when one
 // was conservatively resolved. Truncation is on a word boundary so a headline is never cut mid-word.
 export const MAX_DISPLAY = 140;
+
+// ── shortening a long headline without breaking it ───────────────────────────
+// This used to be `s.slice(0, 140)` with an ellipsis stuck on the end, which is how Pit Wire came to
+// display "...(outside the liquidity agreement) from 7…". A character slice knows nothing about
+// where a sentence can stop, so it cut mid-date, mid-phrase and after bare connectors, and the
+// result was STORED — the canonical headline itself was broken, not merely clipped by the UI.
+//
+// A shortened headline must be a sentence that ends where a sentence can end. Two deterministic
+// moves are allowed, in order of how little they cost the reader:
+//   1. drop a trailing parenthetical, which is nearly always a qualifier rather than the fact
+//   2. cut at a real clause boundary, keeping the leading clause that carries the subject and verb
+// Whatever survives has to pass isCompletePhrase(). If nothing does, the FULL headline is kept and
+// the UI ellipsises it visually — a complete headline the reader can hover is strictly better than
+// a broken one nobody can complete.
+
+// Words a headline cannot end on: it is still mid-thought.
+const DANGLING_TAIL = new RegExp(String.raw`\b(?:${[
+  'a', 'an', 'the', 'this', 'that', 'these', 'those', 'its', 'their', 'his', 'her', 'our', 'your',
+  'and', 'or', 'but', 'nor', 'for', 'to', 'of', 'in', 'on', 'at', 'by', 'from', 'with', 'without',
+  'into', 'onto', 'upon', 'over', 'under', 'within', 'between', 'among', 'across', 'through',
+  'during', 'before', 'after', 'since', 'until', 'about', 'against', 'per', 'via', 'as', 'than',
+  'up', 'down', 'off', 'out', 'plus', 'versus', 'vs', 'amid', 'ahead', 'following', 'including',
+  'is', 'are', 'was', 'were', 'be', 'been', 'being', 'has', 'have', 'had', 'will', 'would', 'can',
+  'could', 'should', 'may', 'might', 'must', 'does', 'did', 'no', 'not',
+].join('|')})$`, 'i');
+// A month with nothing after it, or a range opener with only its first number, is an unfinished date.
+// A month with only its DAY. "Investors Alerted to September 21" is a date the sentence has not
+// finished stating: the cut took the year that made it a deadline.
+//
+// A BARE trailing month is not this. "Canada inflation holds at 3.0% year-over-year in August" and
+// "Fund reports results for September" are ordinary complete headlines, and rejecting them cost
+// three real macro prints in the X suite before this was narrowed.
+const MONTH = String.raw`jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?`;
+const DANGLING_DATE = new RegExp(String.raw`\b(?:${MONTH})\.?\s+\d{1,2}(?:st|nd|rd|th)?$`, 'i');
+// Only the OPENING half of a range is unfinished. "from 7" and "between 5" still owe a second
+// number; "aged 18 to 59" has already closed, and rejecting it would have thrown away a complete
+// headline about an approved label.
+const DANGLING_RANGE = /\b(?:from|between)\s+\d[\d.,]*$/i;
+const balanced = (s, open, close) =>
+  (s.split(open).length - 1) === (s.split(close).length - 1);
+
+/** Can a headline stop here? */
+export function isCompletePhrase(text) {
+  const s = String(text || '').trim();
+  if (s.length < 12) return false;
+  if (/[…]$|\.\.\.$/.test(s)) return false;
+  if (/[,;:\-–—/&+]$/.test(s)) return false;           // trailing punctuation that joins clauses
+  if (DANGLING_TAIL.test(s)) return false;
+  if (DANGLING_DATE.test(s)) return false;
+  if (DANGLING_RANGE.test(s)) return false;
+  if (!balanced(s, '(', ')') || !balanced(s, '[', ']')) return false;
+  if ((s.split('"').length - 1) % 2 !== 0) return false;
+  if ((s.split('“').length - 1) !== (s.split('”').length - 1)) return false;
+  return true;
+}
+
+// Clause boundaries, most natural stopping point first.
+const BOUNDARIES = [/\.\s+/g, /;\s+/g, /\s+[–—]\s+/g, /\s+-\s+/g, /:\s+/g, /,\s+/g];
+// A shortened headline that keeps less than this much of the original has thrown away the event.
+const MIN_KEEP = 0.45;
+
+export function shortenHeadline(raw, max = MAX_DISPLAY) {
+  const s = String(raw || '').trim();
+  if (s.length <= max) return s;
+
+  // 1. Drop trailing parentheticals. "(outside the liquidity agreement)" qualifies the fact; the
+  //    fact is the transactions and the dates.
+  let trimmed = s;
+  for (let i = 0; i < 3; i++) {
+    const next = trimmed.replace(/\s*[([][^()[\]]*[)\]]\s*$/, ' ').replace(/\s+/g, ' ').trim();
+    if (next === trimmed) break;
+    trimmed = next;
+    if (trimmed.length <= max && isCompletePhrase(trimmed)) return trimmed;
+  }
+  // A parenthetical in the MIDDLE is just as droppable when it is what pushes the line over.
+  const inner = s.replace(/\s*\([^()]{0,60}\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  if (inner.length <= max && inner.length >= s.length * MIN_KEEP && isCompletePhrase(inner)) return inner;
+
+  // 2. Cut at the last clause boundary that still fits, preferring the strongest break.
+  const base = trimmed.length < s.length ? trimmed : s;
+  for (const re of BOUNDARIES) {
+    let best = -1;
+    re.lastIndex = 0;
+    for (const m of base.matchAll(re)) {
+      if (m.index > 0 && m.index <= max) best = m.index;
+    }
+    if (best < 0) continue;
+    const cut = base.slice(0, best).replace(/[\s,;:–—-]+$/, '').trim();
+    if (cut.length >= base.length * MIN_KEEP && isCompletePhrase(cut)) return cut;
+  }
+
+  // 3. Nothing deterministic is safe. Keep the whole thing; the UI clamps it.
+  return s;
+}
+
 export function canonicalHeadline(rawHeadline, tickers = []) {
   let s = cleanHeadline(rawHeadline);
   if (!s) return '';
-  if (s.length > MAX_DISPLAY) {
-    s = s.slice(0, MAX_DISPLAY).replace(/\s+\S*$/, '').replace(/[\s,;:–—-]+$/, '') + '…';
-  }
+  s = shortenHeadline(s, MAX_DISPLAY);
   const sym = (tickers || [])[0];
   // Only prefix when the headline does not already lead with that symbol.
   if (sym && !new RegExp(`^\\$?${sym}\\b`, 'i').test(s)) return `${sym}: ${s}`;
