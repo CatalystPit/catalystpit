@@ -1,4 +1,4 @@
-import { runPrimarySources, runEnrichment, parkExhausted, adoptTrustedWording } from '../../../../lib/primary-events';
+import { runPrimarySources, runEnrichment, parkExhausted, adoptClusterWording } from '../../../../lib/primary-events';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -38,7 +38,7 @@ export async function GET(request) {
       },
     });
     const parked = await parkExhausted();
-    const adopted = await adoptTrustedWording();
+    const adopted = await adoptClusterWording();
 
     console.log(`[primary-sources] ${JSON.stringify({ written: res.written, folded: res.folded, sweeps: res.sweeps, enrich, ms: res.ms })}`);
     return Response.json({ ok: true, ...res, enrich, parked, adopted }, { headers: { 'Cache-Control': 'private, no-store' } });

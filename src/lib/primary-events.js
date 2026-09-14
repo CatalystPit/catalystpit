@@ -678,20 +678,40 @@ async function foldOnDisplayHeadline(seq, headline, publishedAt) {
 // and cluster membership are all untouched, so provenance still says the canonical row is the
 // wire's. The adopted text has already passed the same grounding gate as any other rewrite, so this
 // publishes nothing that was not already validated.
-export async function adoptTrustedWording() {
+// Valid Catalyst wording ANYWHERE in the cluster is used immediately. Which source happened to
+// arrive first decides nothing: a canonical row that cannot be worded is not allowed to hold the
+// whole event hostage while a member already carries a finished sentence.
+//
+// Preference, in order: a trusted source, then the headline carrying the most figures (a price and
+// a size beat a bare description of the same deal), then whichever arrived first. Only a canonical
+// row that LACKS Catalyst wording is touched, so an event that already reads correctly is never
+// churned by a later arrival.
+export async function adoptClusterWording() {
   const res = await db.execute(sql`
+    with best as (
+      select distinct on (m.cluster_id)
+             m.cluster_id, m.headline, m.headline_status, m.display_hash
+        from primary_events m
+        join primary_events c on c.seq = m.cluster_id
+       where c.cluster_id is null
+         -- rewrite_pending ONLY. A source_fallback row is the PUBLISHER's sentence, kept on purpose
+         -- after the model declined it; restamping that as 'original' because a clustered member
+         -- carries the same words would tell the X gate a publisher's line is ours to publish.
+         and c.headline_status = 'rewrite_pending'
+         and m.headline_status in ('original', 'composed')
+         and coalesce(m.headline, '') <> ''
+       order by m.cluster_id,
+                (m.source = any(${TRUSTED}::text[])) desc,
+                length(regexp_replace(m.headline, '[^0-9]', '', 'g')) desc,
+                m.received_at asc
+    )
     update primary_events c
-       set headline = m.headline,
-           headline_status = m.headline_status,
-           display_hash = m.display_hash,
+       set headline = b.headline,
+           headline_status = b.headline_status,
+           display_hash = b.display_hash,
            enriched_at = now()
-      from primary_events m
-     where c.cluster_id is null
-       and c.headline_status = 'rewrite_pending'
-       and m.cluster_id = c.seq
-       and m.source = any(${TRUSTED}::text[])
-       and m.headline_status in ('original', 'composed')
-       and coalesce(m.headline, '') <> ''
+      from best b
+     where b.cluster_id = c.seq
     returning c.seq`);
   return (res.rows ?? res)?.length || 0;
 }
