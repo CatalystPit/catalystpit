@@ -1,4 +1,4 @@
-import { generateCandidates, mode } from '../../../../lib/x-publisher';
+import { generateCandidates, publishPending, mode } from '../../../../lib/x-publisher';
 
 export const runtime = 'nodejs';
 
@@ -22,8 +22,12 @@ export async function GET(request) {
       sinceHours: Number(p.get('hours') || 24),
       limit: Number(p.get('limit') || 200),
     });
-    console.log(`[x-autopost] ${JSON.stringify(res)}`);
-    return Response.json({ ok: true, ...res, liveCallsMade: 0 },
+    // Publishing is a SEPARATE step and gated on the mode being exactly `live`. In dry_run and off
+    // this returns without reading the database or touching a credential, so the generation pass
+    // above behaves identically to how it always has.
+    const pub = await publishPending();
+    console.log(`[x-autopost] ${JSON.stringify(res)} published=${pub.sent} mode=${pub.mode}`);
+    return Response.json({ ok: true, ...res, published: pub.sent, liveCallsMade: pub.sent },
       { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     console.error('[x-autopost]', e?.message);

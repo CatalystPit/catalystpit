@@ -110,6 +110,28 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
   return out;
 }
 
+// ── publishing a pass ────────────────────────────────────────────────────────
+// At most this many posts per cron run, so a backlog can never empty itself onto the timeline in
+// one burst. The story guard already limits repetition; this limits VOLUME.
+export const MAX_PER_RUN = 3;
+
+/**
+ * Publish the candidates waiting in `pending`, oldest first. In any mode but `live` this returns
+ * immediately without reading the database, so the dry run cannot become a live run by accident.
+ */
+export async function publishPending({ limit = MAX_PER_RUN, fetchImpl = fetch } = {}) {
+  if (!canPublish(process.env.X_AUTOPOST_MODE)) return { sent: 0, mode: mode(), results: [] };
+  const rows = (await db.execute(sql`
+    select id from x_post_candidates
+     where status = 'pending' and x_post_id is null
+       and attempts < ${MAX_PUBLISH_ATTEMPTS}
+       and created_at > now() - interval '2 hours'
+     order by created_at asc limit ${Math.max(1, Math.min(MAX_PER_RUN, limit))}`)).rows ?? [];
+  const results = [];
+  for (const r of rows) results.push(await publishCandidate(r.id, { fetchImpl }));
+  return { sent: results.filter((x) => x.sent).length, mode: mode(), results };
+}
+
 // ── inspection ───────────────────────────────────────────────────────────────
 export async function recentCandidates(limit = 50) {
   const res = await db.execute(sql`

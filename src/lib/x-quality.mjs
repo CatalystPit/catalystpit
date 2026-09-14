@@ -22,8 +22,8 @@ export const MAX_AGE_MS = 2 * 60 * 60 * 1000;
 // LULD is the exchange's automatic circuit breaker: it fires on any security that moves fast, which
 // on a micro-cap is most days. A halt pending news, or a regulatory suspension, is a decision
 // somebody made about that company, and that is the one worth an account's attention.
-const ROUTINE_HALT = /\bvolatility pause\b|\bLULD\b|\bcode\s*M\b/i;
-const NEWS_HALT = /\bnews (?:pending|dissemination)\b|\bT1\b|\bregulatory\b|\bSEC (?:trading )?suspension\b|\bhalted pending\b/i;
+const ROUTINE_HALT = /\bvolatility pause\b|\bLULD\b|\bcode\s*M\b|\(M\)\s*$/i;
+const NEWS_HALT = /\bnews\b|\bT1\b|\bregulatory\b|\bSEC (?:trading )?suspension\b|\bhalted pending\b/i;
 // Size is read from the market cap the engine already holds for the symbol. It is never guessed: a
 // symbol with no cap on file is treated as too small to override a routine pause, which is the
 // fail-closed direction.
@@ -35,6 +35,9 @@ const bigEnoughToMatter = (ev) => Number(ev?.market_cap) >= HALT_CAP_FLOOR;
 // Labs", "Brookfield in talks to acquire PGP Glass", "Michael Dell's family office nears deal to
 // acquire Baldwin Insurance", "Euronext CEO says merger with Deutsche Boerse would make sense".
 const SPECULATIVE = /\b(?:consider(?:s|ing)|in (?:advanced )?talks|nears? (?:a )?deal|weigh(?:s|ing)|explor(?:es|ing)|mulls?|reportedly|rumou?r\w*|said to be|is said to|may (?:acquire|buy|sell|cut|raise)|could (?:acquire|buy|sell)|would make sense|signals?\b|plans to explore|letter of intent|non-?binding|preliminary (?:talks|discussions)|potential(?:ly)? (?:acquir|merg|buy))/i;
+
+// The event admitting it does not know its own outcome.
+const UNCERTAIN = /\b(?:unclear|unknown|not (?:yet )?(?:clear|known|confirmed)|no details|details? (?:to follow|awaited)|remains? to be seen|yet to be (?:determined|confirmed))\b/i;
 
 // Someone's opinion about an event is not the event.
 const COMMENTARY = /\b(?:says?|said|believes?|thinks?|argues?|expects? that|comments?|opinion|analysis|outlook for|what (?:it|this) means|why \w+|here'?s (?:why|what|how))\b/i;
@@ -187,6 +190,9 @@ export function publicationVerdict(ev, now = Date.now()) {
   if (now - at > MAX_AGE_MS) return no('stale');
 
   // 1. A concrete factual event, not commentary or speculation.
+  // An admission that we do not know what happened is not publishable under any label. "Saudi
+  // Arabia under attack; oil market impact unclear" tells a trader nothing and says so itself.
+  if (UNCERTAIN.test(headline)) return no('outcome unclear in the event itself');
   if (SPECULATIVE.test(headline)) return no('speculative');
   if (VAGUE.test(headline.trim())) return no('vague, no information');
   // A scheduled event that has not happened yet, with nothing that actually occurred alongside it.

@@ -245,8 +245,14 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   // and the exchange's own reason code. "$AAPL: AAPL halted, volatility pause (LULD)" is the symbol
   // twice and a code no reader needs.
   if (String(ev?.source_type || '') === 'halt') {
-    body = body.replace(/\s*·\s*/g, ', ').replace(/\s*\(LULD\)\s*$/i, '').trim()
-      .replace(/,\s+([A-Z])(?=[a-z])/g, (m, c) => `, ${c.toLowerCase()}`);
+    // The feed's reason field is not prose. "DFTX halted, News & resumption times" and "VRC halted,
+    // Halt (M)" are column contents and an exchange code. The reason is normalised to the three
+    // things a reader needs, and anything unrecognised is simply dropped.
+    const reason = /\bnews\b/i.test(body) ? 'news pending'
+      : /\b(?:regulatory|suspension)\b/i.test(body) ? 'regulatory halt'
+        : /\b(?:volatility|luld)\b/i.test(body) ? 'volatility pause'
+          : null;
+    body = reason ? `halted, ${reason}` : 'halted';
   }
   body = body.replace(/^breaking\s*[:\-]\s*/i, '').trim();
   if (!body) return { ok: false, error: 'nothing left after sanitising' };

@@ -302,15 +302,23 @@ if (!process.env.DATABASE_URL) {
     ok('generateCandidates never references the endpoint',
       !pub.slice(pub.indexOf('export async function generateCandidates'),
                  pub.indexOf('export async function recentCandidates')).includes('X_CREATE_POST'));
-    ok('the cron route cannot publish: it never imports or calls publishCandidate',
-      !cron.includes('publishCandidate'));
-    ok('the cron route reports liveCallsMade: 0', cron.includes('liveCallsMade: 0'));
-    ok('the admin route cannot publish', !admin.includes('publishCandidate'));
-    // Nothing anywhere under src/app CALLS it. Checked across every route file rather than one, and
-    // matching an actual call `publishCandidate(` so a mention in a comment does not count.
+    // THE CONTRACT CHANGED when live posting was enabled. The cron may now publish — but only
+    // through publishPending, which returns before reading the database unless the mode is exactly
+    // `live`. What must stay true is that the gate is the ONLY way through, and that dry_run and
+    // off cannot reach the endpoint however the route is called.
+    ok('the cron publishes only via publishPending', cron.includes('publishPending')
+      && !cron.includes('publishCandidate('));
+    const pendAt = pub.indexOf('export async function publishPending');
+    const pendBody = pub.slice(pendAt, pub.indexOf('// ── inspection'));
+    ok('publishPending gates on canPublish first', pendBody.indexOf('canPublish') >= 0
+      && pendBody.indexOf('canPublish') < pendBody.indexOf('db.execute'));
+    ok('publishPending caps how many go out in one run', /MAX_PER_RUN/.test(pendBody));
+    ok('the admin route still cannot publish',
+      !admin.includes('publishCandidate') && !admin.includes('publishPending'));
+    // Still nothing else in the app reaches the publisher directly.
     const { execSync } = await import('node:child_process');
     const callers = execSync('git grep -l "publishCandidate(" -- src/app || true', { encoding: 'utf8' }).trim();
-    ok('no route in the app calls publishCandidate', callers === '', callers);
+    ok('no route calls publishCandidate directly', callers === '', callers);
     ok('no credential value is ever returned or logged',
       !/console\.(log|error|warn)\([^)]*X_(API|ACCESS)/.test(pub)
       && !/return[^;]*process\.env\.X_(API|ACCESS)/.test(pub));
