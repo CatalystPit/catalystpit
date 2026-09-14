@@ -11,6 +11,7 @@
 // guessed.
 
 import { actionClass } from './event-cluster.mjs';
+import { isTaxonomyLabel } from './news-normalize.mjs';
 import { isTrustedSource } from './trusted-sources.mjs';
 
 // ── event types ──────────────────────────────────────────────────────────────
@@ -197,6 +198,10 @@ export function decorate(ev) {
   const type = eventTypeOf(ev);
   return {
     ...ev,
+    // A CATEGORY LABEL IS NOT A SYMBOL, and this is the single point every wire row passes through
+    // on its way to the browser — so no stored row, however old, can hand "MACRO" to the chart. The
+    // label itself is untouched: it is wireCategory below, which is what paints the green chip.
+    tickers: (ev.tickers || []).filter((t) => t && !isTaxonomyLabel(t)),
     wireType: type,
     wireCategory: categoryOf(ev, type),
     wireGroup: sourceGroupOf(ev.source),

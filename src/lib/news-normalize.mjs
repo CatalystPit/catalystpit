@@ -57,14 +57,50 @@ function unshout(s) {
   });
 }
 
+// The wires tag each flash with the desk it came from, as a trailing cashtag: "... $MACRO", and the
+// channel suffix is already removed above. That tag is routing metadata, not part of the sentence,
+// and Pit Wire renders the same word as the row's category label anyway — leaving it produced
+// "MACRO  US 3-Month Bill High Yield ... $Macro". Only a TAXONOMY label is stripped: a trailing
+// "$AAPL" is a real symbol the source is pointing at and it stays.
+const trailingDeskTag = (s) => s.replace(/\s*\$([A-Za-z]{2,14})\s*$/, (m, sym) => (isTaxonomyLabel(sym) ? '' : m));
+
+// ── economic releases ────────────────────────────────────────────────────────
+// The calendar wires publish one rigid shape:
+//   "US 3-MONTH BILL HIGH YIELD ACTUAL 4.06% (FORECAST -, PREVIOUS 3.97%)"
+// which reads as machine output. This restates it as a sentence WITHOUT touching a single figure:
+// every number below is copied from the source, a missing field (written "-") is dropped rather
+// than filled in, and nothing that is not in the source is added.
+//   → "US 3-Month Bill High Yield: 4.06% vs. 3.97% previous"
+//   → "US 3-Month Bill High Yield: 4.06% vs. 4.00% forecast, 3.97% previous"
+const RELEASE = /^(.*?)[\s,:-]*\bactual\b[\s:]*([^\s(]+)\s*(?:\(([^)]*)\))?\s*$/i;
+const FIELD = (body, name) => {
+  const m = new RegExp(`\\b${name}\\b[\\s:]*([^,)]*)`, 'i').exec(body || '');
+  const v = (m?.[1] || '').trim().replace(/[.,;]+$/, '');
+  return v && v !== '-' && v !== '--' && !/^n\/?a$/i.test(v) ? v : null;
+};
+
+export function formatEconomicRelease(headline) {
+  const s = String(headline || '').trim();
+  const m = RELEASE.exec(s);
+  if (!m) return s;
+  const name = m[1].trim().replace(/[\s,:-]+$/, '');
+  const actual = m[2].trim().replace(/[.,;]+$/, '');
+  if (!name || !actual) return s;
+  const forecast = FIELD(m[3], 'forecast');
+  const previous = FIELD(m[3], 'previous');
+  const against = [forecast && `${forecast} forecast`, previous && `${previous} previous`].filter(Boolean);
+  return against.length ? `${name}: ${actual} vs. ${against.join(', ')}` : `${name}: ${actual}`;
+}
+
 export function cleanHeadline(raw) {
   let s = deEntity(raw).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   let prev;
   do { prev = s; s = s.replace(LEAD_JUNK, ''); } while (s !== prev);
   for (const re of TRAIL_JUNK) s = s.replace(re, '');
+  s = trailingDeskTag(s).trim();
   s = unshout(s).replace(/\s+/g, ' ').replace(/\s+([,.;:])/g, '$1').trim();
   s = s.replace(/[\s\-–—:|]+$/, '').trim();
-  return s;
+  return formatEconomicRelease(s);
 }
 
 // The canonical headline shown to users: a cleaned real headline, prefixed with the ticker when one
@@ -144,15 +180,50 @@ const NOT_TICKERS = new Set(['CEO', 'CFO', 'COO', 'CTO', 'USA', 'USD', 'EUR', 'G
   'GDP', 'CPI', 'PPI', 'FED', 'FOMC', 'ECB', 'IMF', 'OPEC', 'EPS', 'IPO', 'ETF', 'SEC', 'FDA',
   'FTC', 'DOJ', 'AI', 'EV', 'ESG', 'API', 'CEOS', 'Q1', 'Q2', 'Q3', 'Q4', 'FY', 'YOY', 'NYSE']);
 
+// TAXONOMY IS NOT A SECURITY. The breaking wires tag each flash with the DESK it belongs to, in
+// cashtag form: "US 3-MONTH BILL HIGH YIELD ACTUAL 4.06% ... $MACRO". Read as a ticker, $MACRO
+// became the event's ticker AND its entity, canonicalHeadline prefixed the headline with "MACRO: ",
+// and clicking the row sent MACRO to TradingView, which has no such symbol.
+//
+// These are the product's OWN label vocabulary — Pit Wire categories, event types and source groups.
+// scripts/verify-macro-labels.mjs asserts this set still covers every one of them, so adding a
+// category to wire-taxonomy.mjs cannot silently reintroduce a label that resolves as a ticker.
+//
+// This applies to the CASHTAG form only. An exchange-qualified statement — "(NYSE: GOLD)" — is the
+// source explicitly naming a listed security, and Barrick Gold is a real company whose real ticker
+// is GOLD, so that form is still believed. A macro story that genuinely names a public company
+// keeps its ticker.
+export const TAXONOMY_LABELS = new Set([
+  // Pit Wire categories
+  'MACRO', 'MARKETS', 'EARNINGS', 'MA', 'PHARMA', 'REGULATORY', 'ENERGY', 'FILING', 'ANALYST',
+  'CORPORATE', 'HALT',
+  // event types
+  'MERGER', 'APPROVAL', 'REJECTION', 'TRIAL', 'OFFERING', 'BUYBACK', 'DIVIDEND', 'SPLIT',
+  'CONTRACT', 'LEADERSHIP', 'BANKRUPTCY', 'LAWSUIT', 'SETTLEMENT', 'UPGRADE', 'DOWNGRADE',
+  'RATING', 'RATES', 'RECALL', 'OTHER',
+  // desks and groups the wires tag with
+  'WIRES', 'MEDIA', 'RESEARCH', 'BIOTECH', 'PR', 'GOV', 'EXCHANGE', 'APIS', 'CRYPTO', 'FOREX',
+  'FX', 'BONDS', 'COMMODITIES', 'EQUITIES', 'STOCKS', 'INDICES', 'FUTURES', 'OPTIONS', 'NEWS',
+  'BREAKING', 'ALERT', 'FLASH', 'UPDATE', 'DATA', 'CALENDAR', 'ECONOMY', 'ECON', 'POLITICS',
+  'GEOPOLITICS', 'TECH', 'HEALTH', 'RETAIL', 'BANKS', 'HOUSING', 'JOBS', 'INFLATION',
+]);
+
+export const isTaxonomyLabel = (sym) => TAXONOMY_LABELS.has(String(sym || '').toUpperCase());
+
 export function statedTickersIn(text) {
   const s = String(text || '');
   const out = [];
-  for (const re of [TICKER_STATED, CASHTAG]) {
-    re.lastIndex = 0;
-    for (const m of s.matchAll(re)) {
-      const sym = String(m[1] || '').toUpperCase();
-      if (sym && !NOT_TICKERS.has(sym) && !out.includes(sym)) out.push(sym);
-    }
+  // Exchange-qualified first, and it is NOT subject to the taxonomy filter: that form is the source
+  // naming a listed security outright.
+  TICKER_STATED.lastIndex = 0;
+  for (const m of s.matchAll(TICKER_STATED)) {
+    const sym = String(m[1] || '').toUpperCase();
+    if (sym && !NOT_TICKERS.has(sym) && !out.includes(sym)) out.push(sym);
+  }
+  CASHTAG.lastIndex = 0;
+  for (const m of s.matchAll(CASHTAG)) {
+    const sym = String(m[1] || '').toUpperCase();
+    if (sym && !NOT_TICKERS.has(sym) && !isTaxonomyLabel(sym) && !out.includes(sym)) out.push(sym);
   }
   return out.slice(0, 4);
 }

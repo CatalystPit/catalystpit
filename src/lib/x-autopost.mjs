@@ -8,6 +8,7 @@
 // No implications, no context, no prices we did not measure, no "investors are watching closely".
 
 import { publicationVerdict } from './x-quality.mjs';
+import { isTaxonomyLabel } from './news-normalize.mjs';
 import { storyVerdict, factsOf } from './x-story.mjs';
 
 export const MODES = ['off', 'dry_run', 'live'];
@@ -123,7 +124,11 @@ export function reactionLine(reading, now = Date.now()) {
 //   ticker-specific             $TICKER: <event>
 //   exceptional ticker event    BREAKING: $TICKER <event>   (exceptional = CRITICAL)
 export function formatPost(ev, reading = null, now = Date.now(), breaking = null) {
-  const ticker = (ev?.tickers || [])[0] ? String(ev.tickers[0]).toUpperCase() : null;
+  // A desk label is not a cashtag. The resolver no longer stores one, but a row ingested before
+  // that fix still carries tickers:['MACRO'], and "$MACRO" on the public account would be a symbol
+  // that does not exist. The account fails closed on its own, independently of the stored row.
+  const first = (ev?.tickers || [])[0];
+  const ticker = first && !isTaxonomyLabel(first) ? String(first).toUpperCase() : null;
   let body = sanitize(ev?.headline);
   if (!body) return { ok: false, error: 'no headline' };
 
