@@ -108,6 +108,30 @@ const AMBIGUOUS_WORD = new Set([
   // Companies whose registered name IS an ordinary word. MicroStrategy renamed itself "Strategy",
   // so every headline containing the word would otherwise be tagged MSTR.
   'STRATEGY', 'SOUND', 'EMPIRE', 'CREDIT', 'GROWTH', 'INNOVATION', 'DISCOVERY', 'ENTERPRISE',
+  // PR wires publish in TITLE CASE, where every word is capitalised and capitalisation therefore
+  // proves nothing. "The SEO Answer Rebrands as Rank & Revenue, Expanding Beyond SEO" was tagged
+  // $BYON because Beyond, Inc. reduces to the single word BEYOND, and "EMILY Launches AI Strike
+  // Workshop" was tagged $NWGL because CL Workshop Group Ltd reduces to WORKSHOP. Both went out on
+  // the live account. A one-word name that is also an ordinary English word cannot be told apart
+  // from the word itself, so it is refused — see the index guard below, which now also refuses to
+  // store such a name at all.
+  'ANSWER', 'BEYOND', 'WORKSHOP', 'STRIKE', 'LAUNCH', 'REVENUE', 'RANK', 'CONNECTED', 'BUSINESS',
+  'BUSINESSES', 'STRATEGIC', 'STRATEGICALLY', 'PARTNER', 'PROGRAM', 'MODEL', 'PLATFORM', 'NETWORK',
+  'SYSTEM', 'SYSTEMS', 'SOLUTION', 'SOLUTIONS', 'SERVICE', 'SERVICES', 'PRODUCT', 'PRODUCTS',
+  'BRAND', 'BRANDS', 'DEMAND', 'SUPPLY', 'OUTLOOK', 'REPORT', 'RESULTS', 'STUDY', 'TRIAL',
+  'REVIEW', 'AWARD', 'AWARDS', 'LEADER', 'LEADERS', 'EXPERT', 'EXPERTS', 'INSIGHT', 'INSIGHTS',
+  'ACCESS', 'ACTION', 'ALIGN', 'AMPLIFY', 'ANCHOR', 'APEX', 'ASCEND', 'ASSURE', 'ATLAS', 'BEACON',
+  'BRIDGE', 'CASCADE', 'CATALYST', 'CHAMPION', 'CLARITY', 'COMPASS', 'CONCORD', 'CONNECT',
+  'CORNERSTONE', 'CREST', 'CRUCIAL', 'DIRECT', 'ECLIPSE', 'ELEVATE', 'EMBARK', 'EMERGE', 'ENDURE',
+  'ENGAGE', 'EVOLVE', 'FLAGSHIP', 'FOCUS', 'FORGE', 'FORTUNE', 'FOUNDER', 'FUSION', 'GATEWAY',
+  'GENESIS', 'GRAVITY', 'HERITAGE', 'IGNITE', 'INSPIRE', 'INTEGRITY', 'KEYSTONE', 'LANDMARK',
+  'LEGEND', 'LIFT', 'MERIDIAN', 'MOMENTUM', 'NAVIGATE', 'NEXUS', 'NOBLE', 'NORTH', 'SOUTH', 'EAST',
+  'WEST', 'OASIS', 'ODYSSEY', 'PARAGON', 'PATHWAY', 'PATRIOT', 'PHOENIX', 'PILLAR', 'PINNACLE',
+  'PIVOT', 'PLEDGE', 'PRECISION', 'PREMIUM', 'PROSPER', 'PROTECT', 'PURSUIT', 'QUEST', 'RADIANT',
+  'REACH', 'RELIANCE', 'RENEW', 'RESOLVE', 'REVIVE', 'SAFEGUARD', 'SENTINEL', 'SHIELD', 'SIMPLE',
+  'SOAR', 'SOLID', 'SPECTRUM', 'STELLAR', 'STRONG', 'SUMMIT', 'SURGE', 'SUSTAIN', 'THRIVE',
+  'TRIBUTE', 'TRIUMPH', 'TRUST', 'VANGUARD', 'VELOCITY', 'VENTURE', 'VERITY', 'VIGOR', 'VITAL',
+  'VOYAGE', 'ZENITH',
 ]);
 
 // Brand and common names that differ from the legal name the filings carry. Each entry is a fact
@@ -150,6 +174,13 @@ export function buildIndex(rows) {
     const head = toks[0];
     if (!head || (!curated && head.length < 4)) return;
     if (NOT_A_COMPANY.has(head) || NOT_A_COMPANY.has(toks.join(''))) return;
+    // A name that reduces to ONE ORDINARY ENGLISH WORD is not indexable. "CL Workshop Group Ltd"
+    // reduces to WORKSHOP and "Beyond, Inc." to BEYOND, and a headline is far more likely to be
+    // using the word than naming the company — decisively so on a PR wire, where Title Case
+    // capitalises every word and the usual proof that a word is a name disappears. Refusing at
+    // index time rather than at match time means Pit Wire and the X post both stop seeing it, so
+    // the two surfaces cannot disagree about a symbol that should never have existed.
+    if (!curated && toks.length === 1 && AMBIGUOUS_WORD.has(head)) return;
     if (!byFirst.has(head)) byFirst.set(head, []);
     byFirst.get(head).push({ toks, ticker: String(ticker).toUpperCase() });
   };

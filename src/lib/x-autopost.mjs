@@ -273,9 +273,15 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   if (!body) return { ok: false, error: 'no headline' };
 
   // canonicalHeadline prefixes a resolved symbol ("MSFT: Microsoft sets limits…"). Left in it would
-  // read "$MSFT: MSFT: Microsoft…". Escaped, because a share class carries a dot (BRK.B) and an
-  // unescaped dot is a regex wildcard that would eat a real character.
-  for (const t of tags) body = body.replace(new RegExp(`^\\$?${escapeRe(t)}\\s*[:\\-]?\\s+`, 'i'), '');
+  // read "$MSFT: MSFT: Microsoft…".
+  //
+  // A SEPARATOR IS REQUIRED. Without one this also ate the sentence's SUBJECT whenever a company's
+  // name happens to be its symbol: "Trex lifts outlook citing demand" became "$TREX: lifts outlook
+  // citing demand", a sentence with nothing doing the lifting. The engine's own prefix always
+  // carries a colon or a dash, so demanding one removes exactly what was added and never a word the
+  // source wrote. Escaped, because a share class carries a dot (BRK.B) and an unescaped dot is a
+  // regex wildcard that would eat a real character.
+  for (const t of tags) body = body.replace(new RegExp(`^\\$?${escapeRe(t)}\\s*[:\\-]\\s+`, 'i'), '');
   // Exchange halt lines are assembled by the engine from feed fields and still carry its separator
   // and the exchange's own reason code. "$AAPL: AAPL halted, volatility pause (LULD)" is the symbol
   // twice and a code no reader needs.

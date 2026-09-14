@@ -88,5 +88,37 @@ ok('...and that is exactly what the post tags',
 ok('an unresolvable name yields no cashtag at all',
   resolveCompanies('Saudi Arabia shuts East-West pipeline', idx).length === 0);
 
+console.log('\n=== a one-word ordinary name is not a company (both went out live) ===');
+// PR wires publish in Title Case, where capitalisation proves nothing. Each of these was a real
+// wrong cashtag on the public account.
+const prIdx = buildIndex([
+  { ticker: 'BYON', company: 'BEYOND, INC.' },            // reduces to BEYOND
+  { ticker: 'NWGL', company: 'CL Workshop Group Ltd' },   // reduces to WORKSHOP
+  { ticker: 'GLW', company: 'Corning Incorporated' },
+  { ticker: 'COST', company: 'Costco Wholesale Corp' },
+]);
+ok('"Expanding Beyond SEO" is not $BYON',
+  resolveCompanies('The SEO Answer Rebrands as Rank & Revenue, Expanding Beyond SEO with a Connected Growth Strategy', prIdx).length === 0,
+  JSON.stringify(resolveCompanies('The SEO Answer Rebrands as Rank & Revenue, Expanding Beyond SEO', prIdx)));
+ok('"AI Strike Workshop" is not $NWGL',
+  resolveCompanies('EMILY Launches AI Strike Workshop to Help Businesses Use AI Strategically', prIdx).length === 0,
+  JSON.stringify(resolveCompanies('EMILY Launches AI Strike Workshop to Help Businesses', prIdx)));
+// The guard must not cost a real name that merely appears in a Title Case headline.
+ok('...but Corning still resolves in Title Case',
+  resolveCompanies('Corning Launches $2B At-The-Market Equity Offering', prIdx).join(',') === 'GLW');
+ok('...and Costco still resolves in Title Case',
+  resolveCompanies('Costco Raises Motor Oil Prices and Limits Purchases', prIdx).join(',') === 'COST');
+
+console.log('\n=== the cashtag never eats the sentence subject ===');
+// "Trex lifts outlook citing demand" went out as "$TREX: lifts outlook citing demand" — a sentence
+// with nothing doing the lifting. The engine's own prefix always carries a separator; a bare
+// repetition of the name is the source's own subject.
+const trex = text({ headline: 'Trex lifts outlook citing demand and growth plan', tickers: ['TREX'], importance: 2 });
+ok('a company name that equals its symbol is kept', /Trex lifts outlook/.test(trex), trex);
+ok('...and the engine prefix, which carries a separator, is still removed',
+  text({ headline: 'TREX: Trex Company lifts full-year outlook', tickers: ['TREX'], importance: 2 })
+    === '$TREX: Trex Company lifts full-year outlook',
+  text({ headline: 'TREX: Trex Company lifts full-year outlook', tickers: ['TREX'], importance: 2 }));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
