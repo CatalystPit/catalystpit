@@ -53,6 +53,9 @@ const HIDDEN_REFRESH_MS = 30 * 60 * 1000; // backgrounded: keep it alive, stop s
 // hover guard below must never be able to latch on and freeze the tape for the rest of the session.
 const HOVER_MAX_HOLD_MS = 3 * 60 * 1000;
 const TICK_MS = 2000;
+// A build that has not settled in this long is treated as abandoned, so the scheduler can never be
+// locked out permanently by a promise chain that neither resolves nor rejects.
+const BUILD_STALL_MS = 90 * 1000;
 // How long both tapes stay mounted and stacked after the new one is revealed. The old tape is the
 // safety net: while it is still there, no ordering mistake in the reveal can show an empty panel.
 const OVERLAP_MS = 400;
@@ -115,30 +118,62 @@ const waitPainted = (slot, isCancelled) => new Promise((resolve, reject) => {
   tick();
 });
 
-// Load platform.twitter.com/widgets.js exactly once; resolve with window.twttr when ready.
+// Load platform.twitter.com/widgets.js exactly once per page, and hand every LATER mount the widgets
+// object without waiting for a load event that has already fired.
+//
+// This is shared by two different mount points: the Terminal workspace panel and the global dock in
+// the root layout. Crossing the /terminal boundary unmounts one and mounts the other, so the second
+// one always arrives with the script already in the document. Three things follow, and all three are
+// handled here rather than being left to a poll that can only time out:
+//   • twttr already initialized  → resolve synchronously. The new tape then calls createTimeline()
+//     itself, which is the explicit rebuild; nothing waits on a script event.
+//   • the tag is present but twttr is not ready yet → listen for load AND use X's own twttr.ready()
+//     queue, which its stub installs before widgets is populated.
+//   • the tag is present but never produced twttr (blocked, aborted, or a tag left behind by an
+//     earlier page) → waiting longer cannot help, so ask for the script again from scratch.
+// And a failure is NEVER cached: one bad load must not poison every later mount on every later route.
 let widgetsPromise = null;
+function injectScript(onDone, onFail) {
+  const script = document.createElement('script');
+  script.src = WIDGETS_SRC;
+  script.async = true;
+  script.onload = onDone;
+  script.onerror = onFail;
+  document.body.appendChild(script);
+  return script;
+}
 function loadWidgets() {
   if (typeof window === 'undefined') return Promise.reject(new Error('no window'));
   if (window.twttr?.widgets) return Promise.resolve(window.twttr);
   if (widgetsPromise) return widgetsPromise;
+
   widgetsPromise = new Promise((resolve, reject) => {
-    let script = document.querySelector(`script[src="${WIDGETS_SRC}"]`);
-    const done = () => (window.twttr?.widgets ? resolve(window.twttr) : reject(new Error('twttr missing')));
-    if (!script) {
-      script = document.createElement('script');
-      script.src = WIDGETS_SRC;
-      script.async = true;
-      script.onload = done;
-      script.onerror = () => reject(new Error('widgets.js failed'));
-      document.body.appendChild(script);
-    } else {
-      // Script present but twttr may still be initializing — poll briefly.
-      let n = 0;
-      const t = setInterval(() => {
-        if (window.twttr?.widgets) { clearInterval(t); resolve(window.twttr); }
-        else if (++n > 40) { clearInterval(t); reject(new Error('twttr init timeout')); } // ~12s
-      }, 300);
-    }
+    let settled = false;
+    const ok = () => { if (!settled) { settled = true; resolve(window.twttr); } };
+    const fail = (e) => { if (!settled) { settled = true; reject(e); } };
+    // A load event is only a hint. widgets.js publishes window.twttr.widgets as it evaluates, and an
+    // event that fired before this mount existed will never fire again, so the poll is the decider
+    // and every event merely gives it an early nudge.
+    const nudge = () => { if (window.twttr?.widgets) ok(); };
+
+    const existing = document.querySelector(`script[src="${WIDGETS_SRC}"]`);
+    if (existing) existing.addEventListener('load', nudge);
+    else injectScript(nudge, () => fail(new Error('widgets.js failed')));
+    if (typeof window.twttr?.ready === 'function') window.twttr.ready(ok);
+
+    let n = 0;
+    const t = setInterval(() => {
+      if (settled) { clearInterval(t); return; }
+      if (window.twttr?.widgets) { clearInterval(t); ok(); return; }
+      n++;
+      // ~6s in, a tag that has still produced nothing never will. Ask for the script again instead
+      // of waiting out a timeout on an event that already happened.
+      if (n === 20 && existing) injectScript(nudge, () => {});
+      if (n > 50) { clearInterval(t); fail(new Error('twttr init timeout')); }
+    }, 300);
+  }).catch((e) => {
+    widgetsPromise = null;
+    throw e;
   });
   return widgetsPromise;
 }
@@ -150,8 +185,20 @@ export default function XTape({ height = 620, onClose, bare = false }) {
   // was last painted; builtHeadRef is the newest post id known at the moment that build started, so
   // comparing it with the live head tells us whether the tape can possibly be showing everything.
   const [nonce, setNonce] = useState(0);
-  const builtAtRef = useRef(0);
+  // Seeded with MOUNT TIME, not 0. A tape that has not built yet is not a tape that was last built in
+  // 1970: with a zero here every staleness test below ("is it older than 10 minutes / 60 seconds")
+  // was true from the first tick, so the scheduler demanded a rebuild every 2s while the very first
+  // build was still running, cancelled it through the effect's cleanup, and started another one.
+  // That loop is what left the panel on "Loading tape from X…" forever — it also wiped the retry
+  // backoff on every pass, so the attempts never exhausted and the error fallback never appeared.
+  const builtAtRef = useRef(Date.now());
   const builtHeadRef = useRef(undefined);
+  // True while a build (including its retry backoff) is in flight. The scheduler must not restart a
+  // build that has not finished: a rebuild takes 1-3s and the tick is 2s, so without this a slow
+  // build is restarted forever, and every restart spends another syndication request against X's
+  // per-visitor limit until it 429s and no build can ever succeed again.
+  const buildingRef = useRef(false);
+  const buildSinceRef = useRef(0);
   const headRef = useRef(null);
   const hoverRef = useRef(false);
   const hoverSinceRef = useRef(0);
@@ -189,6 +236,9 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     // Only the FIRST build shows the loading state. A background refresh must not put "Loading tape
     // from X…" under a tape the trader is already reading.
     if (!ref.current?.querySelector('iframe')) setStatus('loading');
+    // This build owns the scheduler until it settles, one way or the other.
+    buildingRef.current = true;
+    buildSinceRef.current = Date.now();
     // Anchor this build to the head as it is known RIGHT NOW, not to whatever the response turns
     // out to contain. A post published seconds ago can take up to a minute to reach syndication, so
     // anchoring on arrival would let that post fall into the gap and never trigger a second build.
@@ -273,6 +323,7 @@ export default function XTape({ height = 620, onClose, bare = false }) {
           if (cancelled || painted === undefined) return;
           swapIn();
           builtAtRef.current = Date.now();
+          buildingRef.current = false;
           setStatus('ready');
         })
         .catch(() => {
@@ -284,6 +335,11 @@ export default function XTape({ height = 620, onClose, bare = false }) {
             // anchor is what makes the scheduler come back to this same head once MIN_REBUILD_MS
             // has passed, instead of concluding the tape is up to date because it tried once.
             builtHeadRef.current = undefined;
+            // This build is over. Release the scheduler and restart the freshness clock, so the next
+            // attempt arrives on the normal cadence instead of on the very next 2s tick — retrying
+            // a rate-limited embed twice a second is what kept it rate-limited.
+            buildingRef.current = false;
+            builtAtRef.current = Date.now();
             // A failed REFRESH must not blank a tape that is already on screen. Only the very first
             // build has nothing to fall back to, so only that one surfaces the error state.
             if (!ref.current?.querySelector('iframe')) setStatus('error');
@@ -300,6 +356,9 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     // swapIn removes every sibling.
     return () => {
       cancelled = true;
+      // Whatever was in flight is abandoned here; the next effect claims the scheduler again
+      // immediately, and React commits both in the same synchronous pass, so no tick can slip in.
+      buildingRef.current = false;
       if (timer) clearTimeout(timer);
       // THE BUG THIS GUARD FIXES. `slot` is the staging slot only until swapIn() succeeds; after
       // that it IS the visible tape. The previous version removed it unconditionally, so React's
@@ -351,6 +410,10 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     // session. It is now time-capped, and released whenever the page stops being the focused one.
     const held = () => hoverRef.current && Date.now() - hoverSinceRef.current < HOVER_MAX_HOLD_MS;
 
+    // A build already running owns the tape. Time-capped for the same reason the hover guard is: a
+    // flag that can latch on must never be able to stop refreshing for the rest of the session.
+    const building = () => buildingRef.current && Date.now() - buildSinceRef.current < BUILD_STALL_MS;
+
     const shouldBuild = () => {
       const since = Date.now() - builtAtRef.current;
       if (document.hidden) return since >= HIDDEN_REFRESH_MS;
@@ -361,7 +424,7 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     };
 
     const tick = () => {
-      if (!held() && shouldBuild()) setNonce((n) => n + 1);
+      if (!held() && !building() && shouldBuild()) setNonce((n) => n + 1);
       timer = setTimeout(tick, TICK_MS);
     };
     timer = setTimeout(tick, TICK_MS);
@@ -371,7 +434,7 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     const release = () => { hoverRef.current = false; };
     const wake = () => {
       if (document.hidden) { release(); return; }
-      if (!held() && shouldBuild()) setNonce((n) => n + 1);
+      if (!held() && !building() && shouldBuild()) setNonce((n) => n + 1);
     };
     document.addEventListener('visibilitychange', wake);
     window.addEventListener('online', wake);
