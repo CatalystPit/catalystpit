@@ -25,6 +25,16 @@ const WIDGETS_SRC = 'https://platform.twitter.com/widgets.js';
 const RETRY_DELAYS = [3000, 8000, 20000]; // backoff for transient 429s / slow syndication
 const CREATE_TIMEOUT = 15000;             // createTimeline must settle or we treat it as a failure
 
+// X's widget renders a SNAPSHOT at creation time and never polls for new posts, so a tape left open
+// all session showed whatever existed when the Terminal was opened. The only way to get new posts
+// out of an embed we cannot read into is to rebuild it.
+//
+// Five minutes, not seconds: X's syndication endpoint rate-limits PER VISITOR IP and answers 429,
+// and a rebuild is a fresh syndication request. A trader with the Terminal open all day makes ~96
+// requests, which is comfortably inside the allowance the existing retry/backoff was written for.
+const REFRESH_MS = 5 * 60 * 1000;
+const HIDDEN_REFRESH_MS = 30 * 60 * 1000; // backgrounded: keep it alive, stop spending requests
+
 // createTimeline returns X's own promise. It normally resolves (with the element, or with undefined
 // when X declines), but a hung syndication request can leave it pending forever, and a promise that
 // never settles means the catch that schedules the retry never runs: the box sits on "Loading tape
@@ -68,6 +78,11 @@ function loadWidgets() {
 export default function XTape({ height = 620, onClose, bare = false }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
+  // Bumped by the refresh scheduler to re-run the build effect. builtAtRef is when the visible tape
+  // was last painted; hoverRef suppresses a rebuild while the cursor is over the panel.
+  const [nonce, setNonce] = useState(0);
+  const builtAtRef = useRef(0);
+  const hoverRef = useRef(false);
 
   // The embed lives in a CROSS-ORIGIN iframe, so its text colour is fixed at creation and cannot be
   // restyled afterwards. It therefore has to be built with the theme that is actually active, and
@@ -94,17 +109,35 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     if (!theme) return;                 // not measured yet; never build with a guessed theme
     let cancelled = false;
     let timer;
-    setStatus('loading');               // every build starts from the intentional loading state
+    // Only the FIRST build shows the loading state. A background refresh must not put "Loading tape
+    // from X…" under a tape the trader is already reading.
+    if (!ref.current?.querySelector('iframe')) setStatus('loading');
+
+    // The new timeline is built into its OWN slot, appended alongside the current one and hidden
+    // until it paints. Two reasons: the visible tape never blanks during a refresh, and the iframe
+    // is never moved between parents — moving an iframe in the DOM forces it to reload, which would
+    // undo the whole point. On success the old slots are dropped; on failure nothing is touched and
+    // the trader keeps looking at the tape they already had.
+    let slot = null;
+    const swapIn = () => {
+      if (!ref.current || !slot) return;
+      for (const child of [...ref.current.children]) if (child !== slot) child.remove();
+      slot.style.cssText = '';
+    };
 
     const attempt = (i) => {
       if (cancelled) return;
       loadWidgets()
         .then((twttr) => {
           if (cancelled || !ref.current) return;
-          ref.current.innerHTML = ''; // clear any prior (failed or stale-theme) render
+          if (slot) slot.remove();
+          slot = document.createElement('div');
+          // Laid out (so the widget measures a real width) but invisible and inert until ready.
+          slot.style.cssText = 'position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none';
+          ref.current.appendChild(slot);
           return withDeadline(twttr.widgets.createTimeline(
             { sourceType: 'list', id: LIST_ID },
-            ref.current,
+            slot,
             // `transparent` is deliberately NOT in this list. It tells X to drop its own background
             // so the host page shows through, but X still emits the DARK theme's light-grey text
             // while the iframe canvas paints white, so usernames, tweet text, timestamps, the X
@@ -120,25 +153,65 @@ export default function XTape({ height = 620, onClose, bare = false }) {
           if (cancelled) return;
           // Trust what is actually in the DOM over the promise's word. X resolves with undefined when
           // it declines (429), and has also been seen to resolve oddly while the iframe did paint.
-          if (el || ref.current?.querySelector('iframe')) { setStatus('ready'); return; }
+          if (el || slot?.querySelector('iframe')) {
+            swapIn();
+            builtAtRef.current = Date.now();
+            setStatus('ready');
+            return;
+          }
           throw new Error('timeline not created');
         })
         .catch(() => {
           if (cancelled) return;
+          if (slot) { slot.remove(); slot = null; }
           if (i < RETRY_DELAYS.length) timer = setTimeout(() => attempt(i + 1), RETRY_DELAYS[i]);
-          else setStatus('error');
+          // A failed REFRESH must not blank a tape that is already on screen. Only the very first
+          // build has nothing to fall back to, so only that one surfaces the error state.
+          else if (!ref.current?.querySelector('iframe')) setStatus('error');
+          else setStatus('ready');
         });
     };
     attempt(0);
 
-    // Drop the old widget on teardown. Without this a theme rebuild stacks a second iframe under the
-    // first, and the abandoned one keeps its old colours.
+    // Teardown drops only the IN-FLIGHT staging slot, never the visible tape. React runs cleanup
+    // before the next effect, so clearing everything here would blank the panel at the start of every
+    // refresh and defeat the staging entirely. The visible widget is replaced by swapIn() once its
+    // successor has actually painted — which also stops a theme rebuild stacking two iframes, since
+    // swapIn removes every sibling.
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      if (ref.current) ref.current.innerHTML = '';
+      if (slot) { slot.remove(); slot = null; }
     };
-  }, [theme]);
+  }, [theme, nonce]);
+
+  // ── refresh scheduler ──
+  // Bumping `nonce` re-runs the build effect above, so refreshing reuses the existing build, retry,
+  // backoff and teardown path rather than adding a second mechanism.
+  useEffect(() => {
+    if (!LIST_ID) return;
+    let timer;
+    const due = () => Date.now() - builtAtRef.current >= (document.hidden ? HIDDEN_REFRESH_MS : REFRESH_MS);
+
+    const tick = () => {
+      // Never rebuild under the trader's cursor. The embed is cross-origin, so its internal scroll
+      // position cannot be restored across a rebuild — the fix is to not rebuild while they are
+      // reading it. The next tick picks it up as soon as they move away.
+      if (!hoverRef.current && due()) setNonce((n) => n + 1);
+      timer = setTimeout(tick, 30000);      // cheap poll; the real cadence is the due() check
+    };
+    timer = setTimeout(tick, 30000);
+
+    // Coming back to a backgrounded tab checks for missed posts immediately instead of waiting.
+    const wake = () => { if (!document.hidden && !hoverRef.current && due()) setNonce((n) => n + 1); };
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('online', wake);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('online', wake);
+    };
+  }, []);
 
   if (!LIST_ID) return null;
 
@@ -166,7 +239,10 @@ export default function XTape({ height = 620, onClose, bare = false }) {
       </div>
 
       {/* Timeline mounts here. Kept in the DOM across states so createTimeline always has its target. */}
-      <div ref={ref} style={{ padding: '0 2px', minHeight: status === 'ready' ? undefined : 0 }} />
+      <div ref={ref}
+        onPointerEnter={() => { hoverRef.current = true; }}
+        onPointerLeave={() => { hoverRef.current = false; }}
+        style={{ position: 'relative', padding: '0 2px', minHeight: status === 'ready' ? undefined : 0 }} />
 
       {status === 'loading' && (
         <div style={{ padding: '18px 14px', fontSize: 12, color: C.dim, textAlign: 'center' }}>
