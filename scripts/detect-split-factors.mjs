@@ -61,23 +61,33 @@ const rows = await sql`
   pp as (select distinct on (ticker) ticker, close from ticker_daily_candles
          where date <= ${prev}::date and date > ${prev}::date - 12 order by ticker, date desc),
   cur as (
-    select h.ticker,
+    -- CANONICAL IDENTITY, same mapping the aggregate uses. Without it a security whose positions
+    -- arrive under a dirty symbol is never evaluated under its real ticker, so it has no split
+    -- verdict and the aggregate excludes it. This identifies the security; it does not relax the
+    -- sample, tolerance or flat-band thresholds.
+    select coalesce(tc.canonical_ticker, h.ticker) ticker,
            percentile_disc(0.5) within group (order by (h.value * s.scale_factor) / h.shares)::float med,
            count(*)::int n
       from fund_holdings h
+      left join ticker_canonical tc on tc.raw_ticker = h.ticker
       join security_position_class c on c.cusip = h.cusip and c.cls = h.class and c.put_call = h.put_call
       join fund_filing_scale s on s.cik = h.cik and s.quarter = h.quarter and s.confidence = 'high'
      where h.quarter = ${quarter}::date and c.rankable and h.shares > 0 and h.value > 0
-     group by h.ticker),
+     group by coalesce(tc.canonical_ticker, h.ticker)),
   prv as (
-    select h.ticker,
+    -- CANONICAL IDENTITY, same mapping the aggregate uses. Without it a security whose positions
+    -- arrive under a dirty symbol is never evaluated under its real ticker, so it has no split
+    -- verdict and the aggregate excludes it. This identifies the security; it does not relax the
+    -- sample, tolerance or flat-band thresholds.
+    select coalesce(tc.canonical_ticker, h.ticker) ticker,
            percentile_disc(0.5) within group (order by (h.value * s.scale_factor) / h.shares)::float med,
            count(*)::int n
       from fund_holdings h
+      left join ticker_canonical tc on tc.raw_ticker = h.ticker
       join security_position_class c on c.cusip = h.cusip and c.cls = h.class and c.put_call = h.put_call
       join fund_filing_scale s on s.cik = h.cik and s.quarter = h.quarter and s.confidence = 'high'
      where h.quarter = ${prev}::date and c.rankable and h.shares > 0 and h.value > 0
-     group by h.ticker)
+     group by coalesce(tc.canonical_ticker, h.ticker))
   select cur.ticker, cur.med cur_med, prv.med prv_med, least(cur.n, prv.n)::int samples,
          pc.close::float cur_px, pp.close::float prv_px
     from cur

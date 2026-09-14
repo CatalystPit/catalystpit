@@ -38,26 +38,32 @@ const rows = await sql`
   paired as (select distinct cik from fund_holdings where quarter = ${quarter}::date
              intersect select distinct cik from fund_holdings where quarter = ${prev}::date),
   cur as (
-    select h.ticker, max(h.issuer) issuer, sum(h.shares) sh,
+    -- CANONICAL IDENTITY. Filers write the ticker field freely, so one security arrives under
+    -- several spellings (BRK/B, EXMOC, EA*). Those have no candle history and were dropped,
+    -- leaving the real security's row understating its ownership. The mapping is applied here, at
+    -- read time; fund_holdings still holds exactly what the filer reported.
+    select coalesce(tc.canonical_ticker, h.ticker) ticker, max(h.issuer) issuer, sum(h.shares) sh,
            sum(h.value * s.scale_factor) val, count(distinct h.cik)::int funds
       from fund_holdings h
+      left join ticker_canonical tc on tc.raw_ticker = h.ticker
       join security_position_class c on c.cusip = h.cusip and c.cls = h.class and c.put_call = h.put_call
-      join pc p on p.ticker = h.ticker
+      join pc p on p.ticker = coalesce(tc.canonical_ticker, h.ticker)
       join paired f on f.cik = h.cik
       join fund_filing_scale s on s.cik = h.cik and s.quarter = h.quarter and s.confidence = 'high'
      where h.quarter = ${quarter}::date and c.rankable and h.shares > 0 and h.value > 0
        and (h.value * s.scale_factor) / h.shares between p.close * 0.2 and p.close * 5
-     group by h.ticker),
+     group by coalesce(tc.canonical_ticker, h.ticker)),
   prv as (
-    select h.ticker, sum(h.shares) sh
+    select coalesce(tc.canonical_ticker, h.ticker) ticker, sum(h.shares) sh
       from fund_holdings h
+      left join ticker_canonical tc on tc.raw_ticker = h.ticker
       join security_position_class c on c.cusip = h.cusip and c.cls = h.class and c.put_call = h.put_call
-      join pp p on p.ticker = h.ticker
+      join pp p on p.ticker = coalesce(tc.canonical_ticker, h.ticker)
       join paired f on f.cik = h.cik
       join fund_filing_scale s on s.cik = h.cik and s.quarter = h.quarter and s.confidence = 'high'
      where h.quarter = ${prev}::date and c.rankable and h.shares > 0 and h.value > 0
        and (h.value * s.scale_factor) / h.shares between p.close * 0.2 and p.close * 5
-     group by h.ticker)
+     group by coalesce(tc.canonical_ticker, h.ticker))
   select c.ticker, c.issuer, m.sector,
          c.sh::float cur_sh,
          -- SPLIT ADJUSTMENT. 13F share counts are as filed, so a 10-for-1 split between quarters
