@@ -8,60 +8,23 @@ import { treemap } from '../../lib/treemap';
 import { INSIDER_TX_COLUMNS, INSIDER_TX_MIN_WIDTH } from '../../lib/insider-columns.mjs';
 import { useRouter } from 'next/navigation';
 
-// A horizontal scrollbar for `targetRef`, pinned to the bottom of the viewport.
-//
-// WHY THIS EXISTS. The transactions table is 1326px of declared columns. With both shared docks
-// closed the workspace is 1330px and it fits exactly; open the Watchlist or The Pit and the shell
-// gives up 330px, leaving 1128px, so VALUE begins at x=1124 inside a 1128px box and CONVICTION is
-// past the edge. The box has always been able to scroll — but its scrollbar lives on ITS bottom
-// edge, and with a page of filings that edge is ~1400px below the fold. Measured on production:
-// boxW 1128, scrollWidth 1326, box bottom 1438px below the viewport. So the columns were reachable
-// only by a trackpad gesture nobody advertises. This renders the same scroll position as a bar the
-// trader can actually see and drag, and only when the table really does overflow.
-//
-// It sits OUTSIDE the table card on purpose: the card is `overflow:hidden`, which would make it the
-// sticky containing block and nail the bar to the card's bottom, exactly where it already was.
-function HScrollBar({ targetRef }) {
-  const barRef = useRef(null);
-  const [width, setWidth] = useState(0);   // the scrollable width, or 0 when nothing overflows
-
-  // Re-measure whenever the usable width changes. ResizeObserver on the scroll box covers a dock
-  // expanding or collapsing, a window resize and a sidebar animating, all through one path — and it
-  // fires on the frame the layout actually changes, so there is nothing to keep in sync by hand.
+// Does this scroll box currently overflow horizontally? Recomputed by ResizeObserver, so opening or
+// collapsing a dock re-answers it on the frame the layout changes — no measuring code, no listeners
+// to keep in step with the CSS that actually moves the shell.
+function useHOverflow(ref) {
+  const [over, setOver] = useState(false);
   useEffect(() => {
-    const box = targetRef.current;
+    const box = ref.current;
     if (!box || typeof ResizeObserver === 'undefined') return undefined;
-    const measure = () => setWidth(box.scrollWidth > box.clientWidth + 1 ? box.scrollWidth : 0);
+    const measure = () => setOver(box.scrollWidth > box.clientWidth + 1);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(box);
     if (box.firstElementChild) ro.observe(box.firstElementChild);   // the table itself
     window.addEventListener('resize', measure);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
-  }, [targetRef]);
-
-  // Two-way, with a lock so one element's scroll event cannot bounce off the other.
-  useEffect(() => {
-    const box = targetRef.current, bar = barRef.current;
-    if (!box || !bar) return undefined;
-    let lock = false;
-    const fromBox = () => { if (lock) return; lock = true; bar.scrollLeft = box.scrollLeft; lock = false; };
-    const fromBar = () => { if (lock) return; lock = true; box.scrollLeft = bar.scrollLeft; lock = false; };
-    box.addEventListener('scroll', fromBox, { passive: true });
-    bar.addEventListener('scroll', fromBar, { passive: true });
-    bar.scrollLeft = box.scrollLeft;
-    return () => { box.removeEventListener('scroll', fromBox); bar.removeEventListener('scroll', fromBar); };
-  }, [targetRef, width]);
-
-  if (!width) return null;   // full-width layout: nothing overflows, so nothing is added
-  return (
-    <div ref={barRef} className="cp-hbar" aria-hidden="true"
-      style={{position:"sticky",bottom:0,zIndex:5,overflowX:"auto",overflowY:"hidden",
-        height:12,background:C.white,borderTop:`1px solid ${C.border}`,
-        borderRadius:"0 0 8px 8px",marginTop:-1}}>
-      <div style={{width,height:1}} />
-    </div>
-  );
+  }, [ref]);
+  return over;
 }
 
 const Dot = () => <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:C.green,animation:"cp-pulse 2s infinite",flexShrink:0}}/>;
@@ -675,8 +638,9 @@ export default function InsidersPage() {
   // Conviction sorts on the SERVER: paging is server-side, so a client-side sort would
   // only reorder the current page and quietly lie about "highest conviction".
   const [convSort, setConvSort] = useState(false);
-  // The transactions table's horizontal scroll box, so the sticky scrollbar can drive it.
+  // The transactions table's scroll box, and whether it currently overflows sideways.
   const txScrollRef = useRef(null);
+  const txOverflows = useHOverflow(txScrollRef);
   const [sortBy,  setSortBy]  = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [days, setDays] = useState(0);          // 0 = any window (folded-in screener filter)
@@ -828,16 +792,15 @@ export default function InsidersPage() {
            effect, which would flash this strip dark-green for a frame in dark mode. */
         .cp-sec-hd{background:${C.surface};color:${C.dim}}
         :root:not([data-theme="dark"]) .cp-sec-hd{background:#1E5C38;color:#FFFFFF}
-        /* The table's own horizontal scrollbar sits at the bottom edge of a card that is over a
-           thousand pixels tall, so it is off screen and unusable. This is the same scrollbar,
-           pinned to the bottom of the viewport for as long as the table is in view. Always drawn
-           rather than overlay-auto-hidden, because it is the affordance that tells the trader the
-           table continues to the right. */
-        .cp-hbar{scrollbar-width:thin;scrollbar-color:${C.border2||C.dim} transparent}
-        .cp-hbar::-webkit-scrollbar{height:10px}
-        .cp-hbar::-webkit-scrollbar-track{background:${C.surface};border-radius:5px}
-        .cp-hbar::-webkit-scrollbar-thumb{background:${C.dim};border-radius:5px}
-        .cp-hbar::-webkit-scrollbar-thumb:hover{background:${C.green}}
+        /* The bounded table viewport. Its scrollbars are drawn rather than left as auto-hiding
+           overlays, because the horizontal one is also the signal that the table continues past
+           VALUE — a trader who cannot see it has no reason to look for the columns behind it. */
+        .cp-tscroll{scrollbar-width:auto;scrollbar-color:${C.dim} ${C.surface}}
+        .cp-tscroll::-webkit-scrollbar{height:12px;width:12px}
+        .cp-tscroll::-webkit-scrollbar-track{background:${C.surface}}
+        .cp-tscroll::-webkit-scrollbar-thumb{background:${C.dim};border-radius:6px;border:2px solid ${C.surface}}
+        .cp-tscroll::-webkit-scrollbar-thumb:hover{background:${C.green}}
+        .cp-tscroll::-webkit-scrollbar-corner{background:${C.surface}}
         *{box-sizing:border-box}
       `}</style>
 
@@ -1063,25 +1026,38 @@ export default function InsidersPage() {
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,fontSize:12,color:C.dim,fontFamily:"'DM Sans',sans-serif"}}>
               {searching ? `${rows.length} filings for ${debouncedSearch}` : `${VIEW_LABEL[activeView]} · ${rows.length} filings`}
             </div>
-            {/* The table keeps its declared column layout at every workspace width. When the
-                Watchlist or Pit dock takes 330px out of the shell, this box scrolls horizontally
-                instead of the columns being compressed — so VALUE and CONVICTION stay reachable and
-                readable, and because the header lives in the same <table> as the rows it scrolls
-                with them and cannot fall out of alignment. The card clips, so the PAGE never grows
-                a horizontal scrollbar of its own, and the docks are fixed-position siblings of the
-                shell, which is margin-inset by exactly their width: nothing renders underneath
-                them. No JS measures anything — the shell margin is CSS, so collapsing a dock
-                recalculates the usable width on the same frame the layout changes. */}
-            <div style={{position:"relative"}}>
+            {/* WHEN THE TABLE IS WIDER THAN THE WORKSPACE, THE TABLE BECOMES THE SCROLL VIEWPORT.
+                The columns declare 1326px. Open the Tape on the left and a dock on the right and the
+                shell keeps 852px, so VALUE and CONVICTION are off the right edge — and a scroll box
+                that is as tall as the whole filings list puts its horizontal scrollbar at the bottom
+                of that list, hundreds of pixels below the fold, which is where the previous attempt
+                left it. Measured on production: box 798px, table 1326px, scrollbar 1438px below the
+                viewport in one state and stranded under the locked-rows teaser in another.
+
+                So the box is given a height of its own. Its horizontal scrollbar then sits at the
+                bottom of the TABLE the trader is looking at, on screen the whole time, and the
+                header is sticky inside it so the columns stay labelled while scrolling. Header and
+                rows are one <table>, so they cannot drift apart horizontally by construction.
+
+                All of this applies ONLY while the table actually overflows. With the docks closed it
+                fits (1330px of workspace), nothing is bounded, and the page is exactly as before. */}
             <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-              <div ref={txScrollRef} style={{overflowX:"auto",maxWidth:"100%"}}>
+              <div ref={txScrollRef} className={txOverflows ? "cp-tscroll" : undefined}
+                style={{overflow:txOverflows?"auto":"visible",overflowX:"auto",maxWidth:"100%",
+                  maxHeight:txOverflows?"calc(100vh - 150px)":undefined,
+                  minHeight:txOverflows?360:undefined}}>
               <table style={{width:"100%",minWidth:INSIDER_TX_MIN_WIDTH,borderCollapse:"collapse",tableLayout:"fixed"}}>
                 <colgroup>{INSIDER_TX_COLUMNS.map(c=><col key={c.label} style={{width:c.width}} />)}</colgroup>
                 <thead><tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
                   {INSIDER_TX_COLUMNS.map(h=>{
-                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap"}}>CONVICTION{convSort?' ↓':''}</th>;
+                    // Sticky INSIDE the scroll box, so the columns stay labelled while the trader
+                    // reads down the filings. The background is set on the cell, not the row: a
+                    // sticky <th> paints itself, and a transparent one would let rows show through.
+                    const stick=txOverflows?{position:"sticky",top:0,zIndex:2,background:C.surface,
+                      boxShadow:`inset 0 -1px 0 ${C.border}`}:null;
+                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap",...stick}}>CONVICTION{convSort?' ↓':''}</th>;
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
-                    return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 10px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{h.label.toUpperCase()}{arrow}</th>;
+                    return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 10px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...stick}}>{h.label.toUpperCase()}{arrow}</th>;
                   })}
                 </tr></thead>
                 <tbody>
@@ -1157,8 +1133,6 @@ export default function InsidersPage() {
                   </div>
                 </div>
               )}
-            </div>
-            <HScrollBar targetRef={txScrollRef} />
             </div>
 
             {/* Server-side pagination (Pro; ticker drill-down + free preview excluded) */}

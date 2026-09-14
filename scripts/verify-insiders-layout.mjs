@@ -112,7 +112,8 @@ ok('...and CONVICTION, the column after it, is reachable too',
 const tbl = page.slice(page.indexOf('minWidth:INSIDER_TX_MIN_WIDTH'));
 ok('header and rows share ONE table element',
   tbl.indexOf('<thead>') < tbl.indexOf('<tbody>') && tbl.indexOf('<tbody>') < tbl.indexOf('</table>'));
-ok('the scroll container wraps the whole table', /overflowX:"auto",maxWidth:"100%"[\s\S]{0,120}<table/.test(page));
+ok('the scroll container wraps the whole table',
+  /ref=\{txScrollRef\}[\s\S]{0,400}<table style=\{\{width:"100%",minWidth:INSIDER_TX_MIN_WIDTH/.test(page));
 ok('the card still clips, so the page grows no scrollbar of its own',
   /borderRadius:8,overflow:"hidden"\}\}>\s*<div style=\{\{overflowX:"auto"/.test(page));
 ok('the shell is inset by the open dock, so the table cannot sit under it',
@@ -126,25 +127,27 @@ ok('the VALUE cell exists', !!valueCell);
 ok('...and is nowrap like every other figure on the row',
   !!valueCell && /whiteSpace:"nowrap"/.test(valueCell[0]));
 
-console.log('\n=== the scrollbar is reachable, and only exists when needed ===');
-// Measured on production before the fix: with The Pit open the box was 1128px, the table 1326px,
-// and the box's bottom edge — where its own scrollbar lives — was 1438px BELOW the viewport. The
-// columns were reachable only by a gesture nothing advertised.
-ok('a sticky scrollbar component exists', /function HScrollBar/.test(page));
-ok('...pinned to the bottom of the viewport', /position:"sticky",bottom:0/.test(page));
-ok('...rendered OUTSIDE the overflow:hidden card, or sticky would not move',
-  /<HScrollBar targetRef=\{txScrollRef\} \/>\s*<\/div>/.test(page));
-ok('...inside a positioned wrapper with no overflow of its own',
-  /<div style=\{\{position:"relative"\}\}>\s*<div style=\{\{background:C\.white/.test(page));
-ok('...absent when nothing overflows', /if \(!width\) return null;/.test(page));
-ok('...driven two-way with the table box', /fromBox/.test(page) && /fromBar/.test(page));
-ok('...with a re-entrancy lock, so the two cannot fight', /let lock = false;/.test(page));
-ok('a ResizeObserver recalculates on dock expand and collapse',
+console.log('\n=== the scroll viewport is the table itself, only while it overflows ===');
+// The first attempt pinned a proxy scrollbar with position:sticky;bottom:0 as the LAST child of a
+// wrapper. A screenshot of production killed it: once the wrapper's bottom edge rises above the
+// viewport bottom there is nothing left to stick to, so the bar sat at the bottom of the card,
+// under the locked-rows teaser, exactly where the browser's own scrollbar already was.
+ok('the previous sticky-proxy scrollbar is gone', !/HScrollBar/.test(page));
+ok('overflow is measured, not assumed', /function useHOverflow/.test(page));
+ok('...by ResizeObserver, so a dock toggle re-answers it',
   /new ResizeObserver\(measure\)/.test(page) && /ro\.observe\(box\)/.test(page));
 ok('...and on window resize', /window\.addEventListener\('resize', measure\)/.test(page));
-ok('the bar is given a visible track rather than an auto-hiding overlay',
-  /\.cp-hbar::-webkit-scrollbar\{height:10px\}/.test(page) && /scrollbar-width:thin/.test(page));
-ok('it is hidden from assistive tech, being a duplicate control', /aria-hidden="true"/.test(page));
+ok('the box takes a height of its own ONLY when it overflows',
+  /maxHeight:txOverflows\?"calc\(100vh - 150px\)":undefined/.test(page));
+ok('...so its horizontal scrollbar is at the bottom of the visible table',
+  /overflow:txOverflows\?"auto":"visible"/.test(page));
+ok('...and it keeps a usable minimum height', /minHeight:txOverflows\?360:undefined/.test(page));
+ok('the header sticks inside that viewport', /position:"sticky",top:0,zIndex:2,background:C\.surface/.test(page));
+ok('...painting its own background, since a sticky th is not covered by its row',
+  /background:C\.surface,\s*\n?\s*boxShadow/.test(page));
+ok('the scrollbars are drawn, not auto-hiding overlays',
+  /\.cp-tscroll::-webkit-scrollbar\{height:12px;width:12px\}/.test(page));
+ok('nothing is bounded when the table fits', /className=\{txOverflows \? "cp-tscroll" : undefined\}/.test(page));
 
 console.log('\n=== nothing else on the page changed ===');
 for (const keep of ['sortBy===h.sortKey', 'handleSort', 'setConvSort', 'ConvictionCell', 'activeView',
