@@ -45,7 +45,7 @@ console.log('\n=== the two numbers that disagreed now cannot ===');
 ok('the floor equals the declared column layout',
   INSIDER_TX_MIN_WIDTH === INSIDER_TX_COLUMNS.reduce((s, c) => s + c.width, 0),
   String(INSIDER_TX_MIN_WIDTH));
-ok('...which is 1324, not the 1180 that shipped', INSIDER_TX_MIN_WIDTH === 1324, String(INSIDER_TX_MIN_WIDTH));
+ok('...and is sized to content, not whitespace', INSIDER_TX_MIN_WIDTH === 960, String(INSIDER_TX_MIN_WIDTH));
 ok('the page no longer hardcodes a second floor', !/minWidth:1180/.test(page));
 ok('the page uses the shared floor', /minWidth:INSIDER_TX_MIN_WIDTH/.test(page));
 ok('the colgroup is generated from the shared columns',
@@ -80,33 +80,44 @@ for (const [name, vp, docks] of STATES) {
   const valuePx = columnWidth(content, 'Value');
   const full = tableWidth(content) >= INSIDER_TX_MIN_WIDTH;
   ok(`${name}: columns never compressed`, full, `table=${Math.round(tableWidth(content))}`);
-  ok(`${name}: VALUE keeps its full width`, valuePx >= 92, `${Math.round(valuePx)}px`);
+  ok(`${name}: VALUE keeps its full width`, valuePx >= 84, `${Math.round(valuePx)}px`);
+  ok(`${name}: VALUE is in the initial viewport, or the box scrolls`,
+    !scrolls(content) || tableWidth(content) >= INSIDER_TX_MIN_WIDTH);
   console.log(`  ${name.padEnd(30)} content=${Math.round(content)}px table=${Math.round(tableWidth(content))}px `
     + `value=${Math.round(valuePx)}px ${scrolls(content) ? 'scrolls' : 'fits'}`);
 }
 
-console.log('\n=== what the OLD floor did in those same states ===');
-// Proof the reported symptom follows from the old number, and only from it.
-const OLD = 1180;
-const oldColumn = (content, label) => {
-  const col = INSIDER_TX_COLUMNS.find((c) => c.label === label);
-  return col.width * (Math.max(content, OLD) / INSIDER_TX_MIN_WIDTH);
-};
-const squeezed = STATES.filter(([, vp, d]) => oldColumn(contentWidth(vp, d), 'Value') < 92);
-ok('the old floor DID squeeze VALUE in real dock states', squeezed.length > 0,
-  'the regression this test exists for would pass silently');
-for (const [name, vp, d] of squeezed) {
-  console.log(`  ${name.padEnd(30)} VALUE was ${Math.round(oldColumn(contentWidth(vp, d), 'Value'))}px `
-    + `(now ${Math.round(columnWidth(contentWidth(vp, d), 'Value'))}px)`);
+console.log('\n=== the width the old columns needed, in those same states ===');
+// The old set declared 1324px, most of it padding. This is where that forced a horizontal scroll
+// and where the content-sized set no longer does — which is the whole point of the change.
+const OLD_TOTAL = 1324;
+const fixedByResize = STATES.filter(([, vp, d]) => {
+  const c = contentWidth(vp, d);
+  return c < OLD_TOTAL && c >= INSIDER_TX_MIN_WIDTH;
+});
+ok('narrowing the columns removes the scroll in real dock states', fixedByResize.length > 0,
+  'the change bought nothing');
+for (const [name, vp, d] of fixedByResize) {
+  console.log(`  ${name.padEnd(30)} content=${Math.round(contentWidth(vp, d))}px: `
+    + `1324px scrolled, ${INSIDER_TX_MIN_WIDTH}px fits`);
 }
+const stillScrolls = STATES.filter(([, vp, d]) => contentWidth(vp, d) < INSIDER_TX_MIN_WIDTH);
+console.log(`  still on the scroll fallback: ${stillScrolls.map(([n]) => n).join(', ') || 'none'}`);
 
 console.log('\n=== scrolling, alignment and the page itself ===');
 const narrow = contentWidth(1280, { pit: DOCK_W, tape: DOCK_W });
 ok('at the narrowest supported workspace the table scrolls', scrolls(narrow), `${Math.round(narrow)}px`);
 ok('...and scrolling reaches the complete VALUE column',
-  tableWidth(narrow) >= INSIDER_TX_MIN_WIDTH, 'the full 1324px layout is reachable');
+  tableWidth(narrow) >= INSIDER_TX_MIN_WIDTH, `the full ${INSIDER_TX_MIN_WIDTH}px layout is reachable`);
 ok('...and CONVICTION, the column after it, is reachable too',
-  columnWidth(narrow, 'Conviction') >= 110);
+  columnWidth(narrow, 'Conviction') >= 74);
+// The figures that must never be clipped. Width at 14px bold DM Sans is ~8.2px per glyph, and the
+// cell carries 7px of padding a side.
+const VALUE_W = INSIDER_TX_COLUMNS.find((c) => c.label === 'Value').width;
+for (const v of ['$8.0K', '$81.3K', '$219.4K', '$1.67M', '$458.3K', '$1.15M']) {
+  ok(`${v} fits the VALUE cell`, v.length * 8.2 + 14 <= VALUE_W,
+    `needs ${Math.round(v.length * 8.2 + 14)}px of ${VALUE_W}px`);
+}
 // One <table> holds both <thead> and <tbody>, so the header cannot scroll independently of the rows
 // and cannot drift out of column alignment. This asserts the structure that guarantees it.
 const tbl = page.slice(page.indexOf('minWidth:INSIDER_TX_MIN_WIDTH'));

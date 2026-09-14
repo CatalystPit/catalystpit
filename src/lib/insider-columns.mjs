@@ -13,20 +13,30 @@
 // Deriving the floor from the widths makes the two impossible to disagree again: change a width,
 // and the minimum the table will accept before it scrolls changes with it.
 
+// Widths are sized to the CONTENT each column actually carries, at 7px of cell padding per side.
+// The old set was 1324px of mostly whitespace, which pushed VALUE off the right edge as soon as a
+// dock took 330px out of the shell. Sized down to what the data needs, the whole table fits the
+// docked workspace on an ordinary wide monitor and VALUE is simply there, with the scroll viewport
+// still in place as the fallback for narrower or custom dock setups.
+//
+// The numbers below are text width + 14px padding, measured against the widest real value each
+// column holds. Nothing numeric is squeezed below its own content: Shares carries "5,039,989",
+// Owned the same, Value "$458.3K" at 14px bold. Company and Insider are the two columns that were
+// ALREADY ellipsised, so they absorb the reduction.
 export const INSIDER_TX_COLUMNS = [
-  { label: 'Filed',      sortKey: 'DATE',   align: 'left',  width: 96 },
-  { label: 'Traded',     sortKey: null,     align: 'left',  width: 88 },
-  { label: 'Ticker',     sortKey: 'TICKER', align: 'left',  width: 92 },
-  { label: 'Company',    sortKey: null,     align: 'left',  width: 128 },
-  { label: 'Insider',    sortKey: null,     align: 'left',  width: 164 },
-  { label: 'Type',       sortKey: null,     align: 'left',  width: 150 },
-  { label: 'Code',       sortKey: null,     align: 'left',  width: 44 },
-  { label: 'Shares',     sortKey: 'SHARES', align: 'right', width: 92 },
-  { label: 'Owned',      sortKey: null,     align: 'right', width: 92 },
-  { label: 'ΔOwn',       sortKey: null,     align: 'right', width: 80 },
-  { label: 'Avg Price',  sortKey: null,     align: 'right', width: 96 },
-  { label: 'Value',      sortKey: 'VALUE',  align: 'right', width: 92 },
-  { label: 'Conviction', sortKey: null,     align: 'right', width: 110, server: true },
+  { label: 'Filed',      sortKey: 'DATE',   align: 'left',  width: 84 },   // 2026-09-14 + filing link
+  { label: 'Traded',     sortKey: null,     align: 'left',  width: 76 },   // 2026-09-14
+  { label: 'Ticker',     sortKey: 'TICKER', align: 'left',  width: 78 },   // logo + up to 5 chars
+  { label: 'Company',    sortKey: null,     align: 'left',  width: 84 },   // ellipsised
+  { label: 'Insider',    sortKey: null,     align: 'left',  width: 100 },  // ellipsised, 2-3 lines
+  { label: 'Type',       sortKey: null,     align: 'left',  width: 84 },   // badge, wraps
+  { label: 'Code',       sortKey: null,     align: 'left',  width: 24 },   // a single letter
+  { label: 'Shares',     sortKey: 'SHARES', align: 'right', width: 78 },
+  { label: 'Owned',      sortKey: null,     align: 'right', width: 74 },
+  { label: 'ΔOwn',       sortKey: null,     align: 'right', width: 54 },   // -34.7%
+  { label: 'Avg Price',  sortKey: null,     align: 'right', width: 66 },
+  { label: 'Value',      sortKey: 'VALUE',  align: 'right', width: 84 },   // $458.3K, 14px bold
+  { label: 'Conviction', sortKey: null,     align: 'right', width: 74, server: true },
 ];
 
 // The width below which the table stops shrinking and the surrounding box scrolls instead. It is

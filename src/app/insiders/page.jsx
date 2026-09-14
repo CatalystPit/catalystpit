@@ -1063,9 +1063,9 @@ export default function InsidersPage() {
                     // sticky <th> paints itself, and a transparent one would let rows show through.
                     const stick=txOverflows?{position:"sticky",top:0,zIndex:2,background:C.surface,
                       boxShadow:`inset 0 -1px 0 ${C.border}`}:null;
-                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap",...stick}}>CONVICTION{convSort?' ↓':''}</th>;
+                    if(h.server) return <th key={h.label} onClick={()=>setConvSort(v=>!v)} title="Catalyst Pit Insider Conviction. Click to sort highest first." style={{padding:"10px 7px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:convSort?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:"pointer",userSelect:"none",whiteSpace:"nowrap",...stick}}>CONVICTION{convSort?' ↓':''}</th>;
                     const active=h.sortKey&&sortBy===h.sortKey;const arrow=active?(sortDir==='asc'?' ↑':' ↓'):'';
-                    return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 10px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...stick}}>{h.label.toUpperCase()}{arrow}</th>;
+                    return <th key={h.label} onClick={h.sortKey?()=>handleSort(h.sortKey):undefined} style={{padding:"10px 7px",textAlign:h.align||"left",fontFamily:"'DM Sans',sans-serif",fontSize:9,color:active?C.green:C.dim,letterSpacing:"0.8px",fontWeight:400,cursor:h.sortKey?"pointer":"default",userSelect:"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",...stick}}>{h.label.toUpperCase()}{arrow}</th>;
                   })}
                 </tr></thead>
                 <tbody>
@@ -1073,20 +1073,22 @@ export default function InsidersPage() {
                     <tr><td colSpan={INSIDER_TX_COLUMNS.length} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>{searching?`No insider trades found for ${debouncedSearch}.`:'No insider trades in this view.'}</td></tr>
                   ) : rows.map((ins,i)=>(
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
-                      <td className="cp-num" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
+                      <td className="cp-num" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
                         {ins.filingUrl
                           ? <a href={ins.filingUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} title="View SEC filing" style={{color:C.dim,textDecoration:"none"}}>{ins.filed} <span style={{color:C.green}}>↗</span></a>
                           : ins.filed}
                       </td>
-                      <td className="cp-num" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
-                      <td className="cp-tkr" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
-                      <td title={ins.company} style={{padding:"13px 10px",fontSize:13,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
-                      <td onClick={(e)=>{ e.stopPropagation(); openInsider(ins); }} style={{padding:"13px 10px",fontSize:13,color:C.text,cursor:"pointer",overflow:"hidden"}}>
+                      <td className="cp-num" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
+                      {/* Logo and gap trimmed with the column: 16 + 6 + five characters fits the
+                          64px of content a 78px cell leaves, so a 5-letter symbol never clips. */}
+                      <td className="cp-tkr" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}><TickerLogo symbol={ins.sym} size={16}/>{ins.sym}</span></td>
+                      <td title={ins.company} style={{padding:"13px 7px",fontSize:13,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
+                      <td onClick={(e)=>{ e.stopPropagation(); openInsider(ins); }} style={{padding:"13px 7px",fontSize:13,color:C.text,cursor:"pointer",overflow:"hidden"}}>
                         <div className="ins-name" title={ins.name || ''} style={{fontWeight:500,transition:"color 0.15s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.name || '—'}</div>
                         {ins.role && <div title={ins.role} style={{fontSize:11,color:C.muted,fontWeight:300,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.role}</div>}
                         <Badges ins={ins} />
                       </td>
-                      <td style={{padding:"13px 10px"}}>
+                      <td style={{padding:"13px 7px"}}>
                         {(() => {
                           const m = meaningFor(ins.code);
                           let label = m.short, tip = m.tip;
@@ -1103,16 +1105,16 @@ export default function InsidersPage() {
                           );
                         })()}
                       </td>
-                      <td className="cp-num" style={{padding:"13px 10px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
-                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
-                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.ownedAfter!=null?Math.round(ins.ownedAfter).toLocaleString('en-US'):'—'}</td>
-                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':fmtOwnershipPct(ins.ownChange)}</td>
-                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fmtPrice(ins.avgPrice)}</td>
+                      <td className="cp-num" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{ins.code || '—'}</td>
+                      <td className="cp-num" style={{padding:"13px 7px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.shares>0?ins.shares.toLocaleString('en-US'):'—'}</td>
+                      <td className="cp-num" style={{padding:"13px 7px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.ownedAfter!=null?Math.round(ins.ownedAfter).toLocaleString('en-US'):'—'}</td>
+                      <td className="cp-num" style={{padding:"13px 7px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:ins.ownChange==null?C.dim:ins.ownChange>0?C.green:ins.ownChange<0?C.red:C.muted}}>{ins.ownChange==null?'—':fmtOwnershipPct(ins.ownChange)}</td>
+                      <td className="cp-num" style={{padding:"13px 7px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:500,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{fmtPrice(ins.avgPrice)}</td>
                       {/* nowrap like every other figure on the row. Without it this was the one
                           numeric cell that could break inside its fixed-width box, which is why
                           VALUE was the column that visibly broke first. */}
-                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,whiteSpace:"nowrap",color:actionStyles(ins.type).fg}}>{ins.value}</td>
-                      <td className="cp-num" style={{padding:"13px 10px",textAlign:"right",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}><ConvictionCell ins={ins} /></td>
+                      <td className="cp-num" style={{padding:"13px 7px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,whiteSpace:"nowrap",color:actionStyles(ins.type).fg}}>{ins.value}</td>
+                      <td className="cp-num" style={{padding:"13px 7px",textAlign:"right",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}><ConvictionCell ins={ins} /></td>
                     </tr>
                   ))}
                 </tbody>
