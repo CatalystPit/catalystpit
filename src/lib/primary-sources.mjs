@@ -65,8 +65,13 @@ export function isTickerableSource(source) {
 // A breaking wire and a working-paper archive must not consume the same polling budget. Every feed
 // declares a tier; the number is its cadence in seconds.
 //
-//   FLASH  15s  breaking wires and Fed policy — where seconds decide whether we were first
-//   FAST   60s  market headlines and high-value press releases
+//   FLASH  15s  breaking wires — where seconds decide whether we were first
+//   FAST   60s  market headlines, high-value press releases, and CATALYST-BEARING PR subject feeds
+//               (earnings, M&A, financing, management, bankruptcy, IPO, clinical, health, energy).
+//               Measured: those subject feeds ran a p50 of 72-234s against a 300s cadence with
+//               floors inside one 60s interval, so the cadence was the delay and not the source.
+//               Fed press and monetary sit here too rather than at FLASH: press_all publishes a few
+//               times a month, so 5,760 polls a day bought nothing 1,440 does not.
 //   NORMAL  5m  general financial news and corporate PR
 //   SLOW   30m  analysis, transcripts, research
 //   GLACIAL 6h  working papers, statistical archives, non-urgent publications
@@ -81,9 +86,9 @@ export const FEEDS = [
   // ══ MACRO / GOVERNMENT / REGULATORY ═══════════════════════════════════════
   // Verified reachable and parsing during integration. Approved for rewriting into the unified
   // Catalyst Pit feed; original source, headline, URL, timestamp and raw payload are always kept.
-  feed({ key: 'fed_press', source: 'FED', sourceName: 'Federal Reserve', type: 'release', everySec: TIER.FLASH,
+  feed({ key: 'fed_press', source: 'FED', sourceName: 'Federal Reserve', type: 'release', everySec: TIER.FAST,
     url: 'https://www.federalreserve.gov/feeds/press_all.xml' }),
-  feed({ key: 'fed_monetary', source: 'FED', sourceName: 'Federal Reserve', type: 'statement', everySec: TIER.FLASH,
+  feed({ key: 'fed_monetary', source: 'FED', sourceName: 'Federal Reserve', type: 'statement', everySec: TIER.FAST,
     url: 'https://www.federalreserve.gov/feeds/press_monetary.xml' }),
   feed({ key: 'fed_speeches', source: 'FED', sourceName: 'Federal Reserve', type: 'speech', everySec: TIER.SLOW,
     url: 'https://www.federalreserve.gov/feeds/speeches.xml' }),
@@ -253,41 +258,41 @@ export const FEEDS = [
   // Clinical Study (90, already registered above) are the biotech-bearing ones, so Health is what
   // gets added rather than inventing a subject code that does not exist.
   feed({ key: 'gnw_health', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'PHARMA', tickerable: true,
+    everySec: TIER.FAST, category: 'PHARMA', tickerable: true,
     url: `${GNW}/subjectcode/20-Health/feedTitle/x` }),
   feed({ key: 'gnw_dividends', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
     everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
     url: `${GNW}/subjectcode/12-Dividend%20Reports%20and%20Estimates/feedTitle/x` }),
   feed({ key: 'gnw_bankruptcy', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: `${GNW}/subjectcode/5-Bankruptcy/feedTitle/x` }),
   feed({ key: 'gnw_ipo', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: `${GNW}/subjectcode/21-Initial%20Public%20Offerings/feedTitle/x` }),
   feed({ key: 'gnw_management', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: `${GNW}/subjectcode/86-Management%20Changes/feedTitle/x` }),
   feed({ key: 'gnw_financing', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: `${GNW}/subjectcode/17-Financing%20Agreements/feedTitle/x` }),
   feed({ key: 'gnw_own_shares', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: `${GNW}/subjectcode/58-Changes%20In%20Company%2027s%20Own%20Shares/feedTitle/x` }),
   feed({ key: 'gnw_corporate_action', source: 'GLOBENEWSWIRE', sourceName: 'GlobeNewswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: `${GNW}/subjectcode/61-Corporate%20Action/feedTitle/x` }),
 
   feed({ key: 'prn_all', source: 'PRNEWSWIRE', sourceName: 'PR Newswire', type: 'press_release',
     everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: 'https://www.prnewswire.com/rss/news-releases-list.rss' }),
   feed({ key: 'prn_financial', source: 'PRNEWSWIRE', sourceName: 'PR Newswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'MARKETS', tickerable: true,
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
     url: 'https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss' }),
   feed({ key: 'prn_health', source: 'PRNEWSWIRE', sourceName: 'PR Newswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'PHARMA', tickerable: true,
+    everySec: TIER.FAST, category: 'PHARMA', tickerable: true,
     url: 'https://www.prnewswire.com/rss/health-latest-news/health-latest-news-list.rss' }),
   feed({ key: 'prn_energy', source: 'PRNEWSWIRE', sourceName: 'PR Newswire', type: 'press_release',
-    everySec: TIER.NORMAL, category: 'ENERGY', tickerable: true,
+    everySec: TIER.FAST, category: 'ENERGY', tickerable: true,
     url: 'https://www.prnewswire.com/rss/energy-latest-news/energy-latest-news-list.rss' }),
 
   // Low signal-to-noise: the public token feed carries multilingual SEO releases alongside real
