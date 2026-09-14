@@ -12,6 +12,7 @@
 // are verbatim from that sample.
 
 import { macroImpact, criticalPredicate } from './news-normalize.mjs';
+import { materiallyNonEnglish } from './language.mjs';
 
 // ── how old is too old to call it breaking market information ────────────────
 export const MAX_AGE_MS = 2 * 60 * 60 * 1000;
@@ -128,6 +129,13 @@ export function publicationVerdict(ev, now = Date.now()) {
   const no = (reason, terminal = true) => ({ publish: false, reason, breaking: false, terminal });
 
   if (!headline) return no('no headline');
+
+  // 0. ENGLISH, OR NOTHING. This runs before every other test because it is not a judgement about
+  // the event: an untranslated source line is not a Catalyst Pit sentence at all, whatever it says.
+  // Pit Wire already holds these back from public display; the account must fail closed on the same
+  // evidence rather than trusting that it never receives one.
+  const lang = materiallyNonEnglish(headline, ev?.summary);
+  if (lang.nonEnglish) return no('untranslated non-English source text');
 
   // 2. Current enough to publish as breaking market information.
   const at = Date.parse(ev?.published_at ?? NaN);

@@ -9,6 +9,7 @@
 
 import { createHash } from 'node:crypto';
 import { canonicalHeadline, isDisplayable, entityToken, factSignature, scoreImportance, statedTickersIn } from './news-normalize.mjs';
+import { isNonEnglish } from './language.mjs';
 import { normHash } from './event-cluster.mjs';
 import { composeHeadline } from './headline-compose.mjs';
 import { TRUSTED_MIN_IMPORTANCE } from './trusted-sources.mjs';
@@ -603,7 +604,14 @@ export function normalize(feed, item) {
     // isDisplayable rejects a headline under 12 characters or three words. A trusted wire is taken
     // at its word: any non-empty post it publishes is an event, and "capture every valid post"
     // cannot be subject to a length heuristic.
-    display_ready: feed.trusted ? true : isDisplayable(item.title),
+    //
+    // LANGUAGE IS DIFFERENT, and it overrides even a trusted wire. Pit Wire publishes one English
+    // Catalyst line; raw foreign source text is not that line, and no amount of trust in the
+    // publisher makes it readable. The row is still ingested in full — headline, source_headline,
+    // summary, url, provenance, cluster membership — it is only held OUT OF THE PUBLIC VIEW until a
+    // real English headline exists for it, which runEnrichment re-checks on every rewrite.
+    display_ready: !isNonEnglish(item.title, item.summary)
+      && (feed.trusted ? true : isDisplayable(item.title)),
     // A feed marked rewrite:false keeps the source headline forever, so it is already final.
     headline_status: feed.rewrite === false ? 'not_required' : (built ? 'composed' : 'rewrite_pending'),
     pipeline_status: feed.rewrite === false ? 'ready' : 'pending',

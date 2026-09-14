@@ -7,6 +7,7 @@ import { FEEDS, PENDING, activeFeeds, fetchFeed, normalize, TICKERABLE, category
 import { resolveIssuerItems } from './name-resolver';
 import { canonicalUrl, eventKey, factKey, findCluster, normHash, PROXIMITY_MS } from './event-cluster.mjs';
 import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDisplayable } from './news-normalize.mjs';
+import { isNonEnglish } from './language.mjs';
 import { generateBatch, validateHeadline, validateFacts, BATCH_SIZE } from './headline-writer.mjs';
 import { TRUSTED_SOURCES, TRUSTED_REWRITE_ATTEMPTS } from './trusted-sources.mjs';
 
@@ -567,7 +568,14 @@ export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generat
              fact_key = coalesce(${fkey}, fact_key),
              importance = greatest(importance, ${r.importance ?? 0}::smallint),
              display_hash = ${normHash(headline) || null},
-             display_ready = display_ready or ${isDisplayable(r.source_headline || r.headline)},
+             -- A rewrite is the ONE moment a suppressed foreign row can earn its way onto the public
+             -- wire: if what Catalyst Pit now holds is English, it displays. If the rewrite failed
+             -- and the source's own foreign wording is still standing, it stays off. The OR keeps
+             -- the historical "never lower a row that already displays" behaviour; the AND is the
+             -- language gate, which is allowed to lower it, because raw foreign text on the public
+             -- wire is the defect being fixed.
+             display_ready = (display_ready or ${isDisplayable(r.source_headline || r.headline)})
+                             and ${!isNonEnglish(headline, r.summary)},
              pipeline_status = 'ready',
              enrich_attempts = enrich_attempts + 1,
              enriched_at = now()
@@ -684,7 +692,13 @@ export async function canonicalWire({ since = null, limit = 100, minImportance =
        and (${ticker === null || ticker === ''}::boolean or ${String(ticker || '').toUpperCase()} = any(e.tickers))
      order by coalesce(e.published_at, e.received_at) desc, e.seq desc
      limit ${n}`);
-  return res.rows ?? res;
+  const rows = res.rows ?? res;
+  // LAST LINE OF DEFENCE, on the headline as it stands RIGHT NOW. display_ready is decided when a
+  // row is written; this is decided when it is read, so a row that predates the language gate, or
+  // one whose stored flag is wrong for any other reason, still cannot reach the public wire. SEC is
+  // untouched by design: a filing is a filing, its title is the registrant's own name plus item
+  // numbers, and SEC handling is not in scope for language rules.
+  return rows.filter((e) => e.source_kind === 'sec' || !isNonEnglish(e.headline, e.summary));
 }
 
 // Cursor read for the future SSE/WebSocket endpoint. Already the right shape; no ingestion change
