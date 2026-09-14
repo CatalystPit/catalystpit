@@ -8,6 +8,12 @@ import { resolveIssuerItems } from './name-resolver';
 import { canonicalUrl, eventKey, factKey, findCluster, normHash, PROXIMITY_MS } from './event-cluster.mjs';
 import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDisplayable } from './news-normalize.mjs';
 import { generateBatch, validateHeadline, validateFacts, BATCH_SIZE } from './headline-writer.mjs';
+import { TRUSTED_SOURCES, TRUSTED_REWRITE_ATTEMPTS } from './trusted-sources.mjs';
+
+// The trusted list as a Postgres array LITERAL with an explicit cast, matching how every other
+// array is bound in this file. Passing the JS array straight into any() leaves the parameter
+// untyped and the query fails at parse time.
+const TRUSTED = `{${[...TRUSTED_SOURCES].join(',')}}`;
 
 // Two unique constraints guard the table: (source, source_uid) for the same item seen twice, and
 // content_hash for the same event arriving on two different feeds. Both are DO NOTHING, so a
@@ -459,8 +465,13 @@ async function claimPending(limit) {
      -- look at again. A row needing Catalyst Pit wording says so in one place now.
      where headline_status = 'rewrite_pending'
        and source_kind <> 'sec'
-       and enrich_attempts < ${MAX_REWRITE_ATTEMPTS}
-     order by seq desc
+       -- A trusted source keeps trying long after an ordinary event would have been parked. Its
+       -- wording must never be what the tape settles on, so it does not get three attempts and a
+       -- shrug; it stays in the queue until a Catalyst Pit headline exists.
+       and enrich_attempts < (case when source = any(${TRUSTED}::text[]) then ${TRUSTED_REWRITE_ATTEMPTS}
+                                   else ${MAX_REWRITE_ATTEMPTS} end)
+     -- Trusted first, then newest. A breaking flash is rewritten before anything else waiting.
+     order by (source = any(${TRUSTED}::text[])) desc, seq desc
      limit ${Math.max(1, Math.min(60, limit))}`);
   return res.rows ?? res;
 }
@@ -611,12 +622,17 @@ async function foldOnDisplayHeadline(seq, headline, publishedAt) {
 
 // Rows that exhausted their retries are parked rather than retried forever. They keep their source
 // headline and stay visible; only the Catalyst Pit rewrite is abandoned.
+//
+// A TRUSTED source is never parked. Parking is the moment the publisher's wording becomes the final
+// answer, and for a trusted source that outcome is not allowed — it keeps its place in the queue
+// under the larger budget above instead.
 export async function parkExhausted() {
   const res = await db.execute(sql`
     update primary_events
        set pipeline_status = 'ready'
      where pipeline_status = 'pending'
        and enrich_attempts >= ${MAX_REWRITE_ATTEMPTS}
+       and not (source = any(${TRUSTED}::text[]))
     returning seq`);
   return (res.rows ?? res)?.length || 0;
 }

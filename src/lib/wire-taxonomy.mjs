@@ -11,6 +11,7 @@
 // guessed.
 
 import { actionClass } from './event-cluster.mjs';
+import { isTrustedSource } from './trusted-sources.mjs';
 
 // ── event types ──────────────────────────────────────────────────────────────
 // Keyed to what the engine can actually establish. There is deliberately no "guidance" type
@@ -200,6 +201,12 @@ export function decorate(ev) {
     wireCategory: categoryOf(ev, type),
     wireGroup: sourceGroupOf(ev.source),
     wireCap: capBucketOf(ev.market_cap),
-    wireNoise: NOISE_FILTERS.filter((n) => { try { return n.test(ev); } catch { return false; } }).map((n) => n.key),
+    // A trusted source is never classified as noise. These filters exist to keep commentary out of
+    // the useful presets, and a breaking-news wire the operator has designated high-signal must not
+    // be capable of being discarded by them — a flash about crypto or a foreign index is still a
+    // flash. Nothing else about the row changes, and it remains fully filterable by impact,
+    // category, event type, ticker and source group like every other event.
+    wireNoise: isTrustedSource(ev.source) ? []
+      : NOISE_FILTERS.filter((n) => { try { return n.test(ev); } catch { return false; } }).map((n) => n.key),
   };
 }

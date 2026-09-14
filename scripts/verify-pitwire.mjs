@@ -99,6 +99,16 @@ ok('macro flash survives', !advice('Goldman Sachs and JPMorgan expect 25bp Fed h
 ok('wire flashes are never advice', !advice('Is the ECB done hiking?', { source_type: 'wire' }));
 ok('SEC filings are never advice', !advice('Acme Corp files 8-K', { source_kind: 'sec' }));
 
+// A trusted source is exempt from noise classification entirely. The point is that nothing the tape
+// does to suppress commentary can be what discards a designated breaking-news flash.
+const noiseFor = (source, headline) => decorate({ source, headline, source_type: 'wire', importance: 2 }).wireNoise;
+ok('an untrusted crypto flash is classified', noiseFor('SEEKINGALPHA', 'Bitcoin rallies past resistance').includes('crypto'));
+ok('a trusted crypto flash is not', noiseFor('WALTERBLOOMBERG', 'Bitcoin rallies past resistance').length === 0);
+ok('an untrusted foreign-index flash is classified', noiseFor('YAHOO', 'Nikkei closes higher').includes('foreign'));
+ok('a trusted foreign-index flash is not', noiseFor('WALTERBLOOMBERG', 'Nikkei closes higher').length === 0);
+ok('trust does not change category or type',
+  decorate({ source: 'WALTERBLOOMBERG', headline: 'Acme to buy Beta in $2B deal', source_type: 'wire' }).wireCategory === 'MA');
+
 // ── filter engine (mirrors the component's pure `passes`) ────────────────────
 sec('FILTER COMPOSITION');
 const D = {

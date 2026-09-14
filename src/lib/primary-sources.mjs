@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { canonicalHeadline, isDisplayable, entityToken, factSignature, scoreImportance, statedTickersIn } from './news-normalize.mjs';
 import { normHash } from './event-cluster.mjs';
 import { composeHeadline } from './headline-compose.mjs';
+import { TRUSTED_MIN_IMPORTANCE } from './trusted-sources.mjs';
 
 export const UA = { 'User-Agent': 'CatalystPit contact@catalystpit.com', 'Accept-Encoding': 'gzip, deflate' };
 
@@ -52,6 +53,10 @@ export function isTickerableSource(source) {
 //   strip       regexes removing the channel's own watermark from the headline ("|FJ",
 //               "(@WalterBloomberg)"). Display and dedupe use the cleaned line; source_headline
 //               and raw keep the original exactly as published.
+//   trusted     operator-designated high-signal breaking news. The ONLY flag here that overrides a
+//               content-based decision: importance floor, no noise classification, top rewrite
+//               priority, never parked with the publisher's wording. See trusted-sources.mjs.
+//               Capture, dedupe, provenance and ticker confidence are untouched by it.
 //
 // SEC is deliberately ABSENT from this registry. SEC events are projected from eightk_filings by
 // the existing pipeline and never pass through fetching, rewriting or enrichment.
@@ -163,8 +168,13 @@ export const FEEDS = [
   // the similarly-named t.me/walter_bloomberg ran 433s behind with decoration added — a relay, not
   // the source. Registering the wrong one would have cost seven minutes on every headline.
   // Each line is signed "(@WalterBloomberg)"; that is the channel's watermark, not the event.
+  //
+  // `trusted` is an operator judgement about the SOURCE, and it is the only thing in this registry
+  // that overrides a content-based decision. See trusted-sources.mjs for exactly what it changes —
+  // an importance floor, no noise classification, queue priority and a larger rewrite budget. It
+  // changes nothing about capture, dedupe, provenance or ticker confidence.
   feed({ key: 'telegram_walterbloomberg', source: 'WALTERBLOOMBERG', sourceName: 'Walter Bloomberg', type: 'wire',
-    adapter: 'telegram', everySec: TIER.FLASH, category: 'MARKETS', tickerable: true,
+    adapter: 'telegram', everySec: TIER.FLASH, category: 'MARKETS', tickerable: true, trusted: true,
     // The leading "*" is the terminal convention for a flash headline, not part of the sentence;
     // left on, it survives into the display headline and into every text comparison dedupe makes.
     strip: [/\s*\(\s*@?walter\s*bloomberg\s*\)/gi, /^\s*\*+\s*/],
@@ -581,9 +591,19 @@ export function normalize(feed, item) {
     // blind to four language editions of one press release all rendering as the same sentence.
     display_hash: normHash(display || item.title),
     category: feed.category || categoryOf(feed.source),
-    importance: scoreImportance({ headline: item.title, summary: item.summary, source: feed.source, sourceType: feed.type, tickers }),
+    // A trusted source cannot fall below HIGH. The scorer reads content, and a terse terminal flash
+    // reads as unremarkable to it — "*GERMANY TO LOBBY EU ON NEW CHINA POLICY, MAY SEEK MORE
+    // TARIFFS" scored 0, as did 18 of the first 19 posts from this source, which put every one of
+    // them under the Market Moving preset's impact filter. The floor raises; it never lowers, so a
+    // flash the scorer independently judges CRITICAL still comes through as CRITICAL.
+    importance: feed.trusted
+      ? Math.max(TRUSTED_MIN_IMPORTANCE, scoreImportance({ headline: item.title, summary: item.summary, source: feed.source, sourceType: feed.type, tickers }))
+      : scoreImportance({ headline: item.title, summary: item.summary, source: feed.source, sourceType: feed.type, tickers }),
     content_hash: contentHash({ source: feed.source, title: item.title, publishedAt: item.publishedAt }),
-    display_ready: isDisplayable(item.title),
+    // isDisplayable rejects a headline under 12 characters or three words. A trusted wire is taken
+    // at its word: any non-empty post it publishes is an event, and "capture every valid post"
+    // cannot be subject to a length heuristic.
+    display_ready: feed.trusted ? true : isDisplayable(item.title),
     // A feed marked rewrite:false keeps the source headline forever, so it is already final.
     headline_status: feed.rewrite === false ? 'not_required' : (built ? 'composed' : 'rewrite_pending'),
     pipeline_status: feed.rewrite === false ? 'ready' : 'pending',
