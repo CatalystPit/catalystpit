@@ -1,4 +1,5 @@
 'use client';
+import ErrorState from '../../components/ErrorState';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
@@ -164,6 +165,9 @@ export default function ScreenerClient() {
   const [showFilters, setShowFilters] = useState(true);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  // A 200 with zero rows means the filters matched nothing — a real answer, and the existing empty
+  // state says so. This flag is only for a request that never produced an answer at all.
+  const [loadError, setLoadError] = useState(false);
   const [saved, setSaved] = useState([]);
   const [prices, setPrices] = useState({});   // on-demand quote overlay for the visible page
   const [hover, setHover] = useState(null);   // Finviz-style ticker-hover daily-chart preview { sym, rect }
@@ -192,7 +196,10 @@ export default function ScreenerClient() {
 
   const load = useCallback(() => {
     setLoading(true);
-    fetch(`/api/screener?${qs}`, { cache: 'no-store' }).then((r) => r.json()).then((j) => { setData(j); setLoading(false); }).catch(() => { setData({ rows: [], total: 0 }); setLoading(false); });
+    fetch(`/api/screener?${qs}`, { cache: 'no-store' })
+      .then((r) => { if (!r.ok) throw new Error('bad status'); return r.json(); })
+      .then((j) => { setData(j); setLoadError(false); setLoading(false); })
+      .catch(() => { setData({ rows: [], total: 0 }); setLoadError(true); setLoading(false); });
   }, [qs]);
 
   // Debounced fetch + URL sync on any change.
@@ -343,6 +350,7 @@ export default function ScreenerClient() {
               </thead>
               <tbody>
                 {loading ? Array(10).fill(0).map((_, i) => <tr key={i}><td colSpan={cols.length + 1} style={{ padding: '10px 14px' }}><Skel h={16} mb={0} /></td></tr>)
+                  : loadError ? <tr><td colSpan={cols.length + 1} style={{ padding: '18px 14px' }}><ErrorState compact title="Couldn't run the screen" message="The screener didn't come back. Your filters are still set — try again." onRetry={load} /></td></tr>
                   : rows.length === 0 ? <tr><td colSpan={cols.length + 1} style={{ padding: '40px 14px', textAlign: 'center', color: C.muted, fontSize: 13 }}>No stocks match these filters. Widen them or clear a chip.</td></tr>
                   : rows.map((r0) => {
                     const pr = prices[r0.ticker];

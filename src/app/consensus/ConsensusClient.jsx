@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout } from '../../lib/cp-shared';
 
 const money = (v) => {
@@ -49,17 +50,25 @@ export default function ConsensusClient() {
   const [dir, setDir] = useState('bull');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  // A non-2xx or a thrown fetch is a LOAD FAILURE. A 200 carrying an empty list is a real answer —
+  // no names cleared the confluence bar today — and keeps the existing empty state.
+  const [loadError, setLoadError] = useState(false);
+  const [reloadAt, setReloadAt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     (async () => {
-      try { const r = await fetch(`/api/confluence?dir=${dir}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive) setData(j); }
-      catch { if (alive) setData({ list: [], lockedCount: 0 }); }
+      try {
+        const r = await fetch(`/api/confluence?dir=${dir}`, { cache: 'no-store' });
+        if (!r.ok) throw new Error('bad status');
+        const j = await r.json();
+        if (alive) { setData(j); setLoadError(false); }
+      } catch { if (alive) { setData(null); setLoadError(true); } }
       if (alive) setLoading(false);
     })();
     return () => { alive = false; };
-  }, [dir]);
+  }, [dir, reloadAt]);
 
   const Tab = ({ id, label }) => (
     <button onClick={() => setDir(id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 2px', fontSize: 14, fontWeight: dir === id ? 700 : 500, color: dir === id ? C.ink : C.muted, borderBottom: dir === id ? `2px solid ${id === 'bear' ? C.red : C.green}` : '2px solid transparent', fontFamily: "'DM Sans',sans-serif" }}>{label}</button>
@@ -83,7 +92,13 @@ export default function ConsensusClient() {
           <Tab id="bear" label="📉 Distribution" />
         </div>
 
-        {loading ? (
+        {loadError && !loading ? (
+          <ErrorState
+            title="Couldn't load Pit Consensus"
+            message="The confluence board didn't come back. This is a loading problem, not an empty board."
+            onRetry={() => setReloadAt((n) => n + 1)}
+          />
+        ) : loading ? (
           <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: 'center' }}>Scanning insiders · Congress · 13F…</div>
         ) : list.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>

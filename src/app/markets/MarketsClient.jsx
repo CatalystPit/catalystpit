@@ -1,7 +1,8 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, fetchKey, toArr, TickerLogo } from '../../lib/cp-shared';
+import ErrorState from '../../components/ErrorState';
 
 // C4 — Markets = "names with catalysts today" from the pit_snapshot. NO last-sale/prices
 // (compliance): this is a catalyst board (filings + Congress + headlines), not a gainers tape.
@@ -30,13 +31,27 @@ export default function MarketsClient() {
   const router = useRouter();
   const [snap, setSnap] = useState(null);
   const [loading, setLoading] = useState(true);
+  // fetchKey returns null on EVERY failure path — network, non-2xx, malformed body. The snapshot is
+  // always an object when the API is healthy, so a null here is a load failure and not an empty day.
+  // A snapshot that loads but happens to carry no catalysts still renders the existing empty state.
+  const [failed, setFailed] = useState(false);
   const go = (s) => { if (s && s !== '?') router.push(`/ticker/${encodeURIComponent(s)}`); };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const s = await fetchKey('pit_snapshot');
+    const ok = s && typeof s === 'object';
+    setSnap(ok ? s : null);
+    setFailed(!ok);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       const s = await fetchKey('pit_snapshot');
-      if (alive) { setSnap(s && typeof s === 'object' ? s : null); setLoading(false); }
+      const ok = s && typeof s === 'object';
+      if (alive) { setSnap(ok ? s : null); setFailed(!ok); setLoading(false); }
     })();
     return () => { alive = false; };
   }, []);
@@ -62,6 +77,17 @@ export default function MarketsClient() {
       </div>
 
       <div style={{ maxWidth: 1380, margin: '16px auto', padding: '0 24px 40px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* The snapshot did not load. Shown INSTEAD of the cards, because every card on this page
+            reads from that one object — rendering four empty cards would claim there were no
+            catalysts today, which is a different statement. */}
+        {failed && !loading ? (
+          <ErrorState
+            title="Couldn't load the catalyst board"
+            message="The market snapshot didn't come back. This is a loading problem, not an empty market."
+            onRetry={load}
+          />
+        ) : (
+        <>
         {/* CATALYSTS */}
         <Card title="TODAY'S CATALYSTS" badge="FROM FILINGS">
           <div style={{ padding: 14 }}>
@@ -132,6 +158,8 @@ export default function MarketsClient() {
               </a>
             ))}
           </Card>
+        )}
+        </>
         )}
 
         <div style={{ fontSize: 11, color: C.dim, fontWeight: 300 }}>

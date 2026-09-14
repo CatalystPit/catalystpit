@@ -10,13 +10,18 @@ export default function AccountBilling() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      try { const r = await fetch('/api/me/plan'); const j = r.ok ? await r.json() : null; if (alive) setTier(j?.tier || 'free'); }
-      catch { if (alive) setTier('free'); }
+      try {
+        const r = await fetch('/api/me/plan');
+        if (!r.ok) throw new Error('bad status');
+        const j = await r.json();
+        if (alive) setTier(j?.tier || 'free');
+      } catch { if (alive) setTier('error'); }
     })();
     return () => { alive = false; };
   }, []);
 
   const isPro = tier === 'pro' || tier === 'elite';
+  const planUnknown = tier === 'error';
 
   async function manage() {
     if (busy) return;
@@ -42,14 +47,16 @@ export default function AccountBilling() {
           <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink }}>Plan</span>
           <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', padding: '3px 10px', borderRadius: 999,
             background: isPro ? C.green : C.surface, color: isPro ? '#fff' : C.muted, border: isPro ? 'none' : `1px solid ${C.border}` }}>
-            {tier == null ? '…' : isPro ? (tier === 'elite' ? 'ELITE' : 'PRO') : 'FREE'}
+            {tier == null ? '…' : planUnknown ? 'UNKNOWN' : isPro ? (tier === 'elite' ? 'ELITE' : 'PRO') : 'FREE'}
           </span>
         </div>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, fontWeight: 300, marginTop: 6 }}>
-          {isPro ? 'Thanks for supporting CatalystPit. Manage or cancel anytime.' : 'Upgrade for insider-alert depth, full Bulls & Bears, and more.'}
+          {planUnknown
+            ? "We couldn't check your plan just now. Your subscription is unaffected — reload to try again."
+            : isPro ? 'Thanks for supporting CatalystPit. Manage or cancel anytime.' : 'Upgrade for insider-alert depth, full Bulls & Bears, and more.'}
         </div>
       </div>
-      {tier != null && (isPro ? (
+      {tier != null && !planUnknown && (isPro ? (
         <button onClick={manage} disabled={busy}
           style={{ background: C.white, border: `1px solid ${C.green}`, color: C.green, borderRadius: 6, padding: '9px 16px',
             fontSize: 13, fontWeight: 600, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, fontFamily: "'DM Sans',sans-serif" }}>

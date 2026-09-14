@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ErrorState from '../../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer } from '../../../lib/cp-shared';
 
 const HANDLE_MAX = 20, BIO_MAX = 280;
@@ -11,7 +12,7 @@ const label = { fontSize: 12, fontWeight: 600, color: C.muted, marginBottom: 6, 
 const ERRORS = { invalid_handle: 'Handle must be 3–20 chars: letters, numbers, underscores.', handle_taken: 'That handle is taken.' };
 
 export default function ProfileEditor() {
-  const [state, setState] = useState('loading'); // loading | ready | signedout
+  const [state, setState] = useState('loading'); // loading | ready | signedout | error
   const [form, setForm] = useState({ handle: '', displayName: '', bio: '', xHandle: '', igHandle: '', showWatchlist: false });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -28,7 +29,7 @@ export default function ProfileEditor() {
           xHandle: p.xHandle || '', igHandle: p.igHandle || '', showWatchlist: !!p.showWatchlist,
         });
         setState('ready');
-      } catch { setState('ready'); }
+      } catch { setState('error'); }
     })();
   }, []);
 
@@ -57,6 +58,14 @@ export default function ProfileEditor() {
         <p style={{ fontSize: 13, color: C.muted, margin: '0 0 20px', fontWeight: 300 }}>
           This is how you show up in The Pit and across CatalystPit.
         </p>
+
+        {state === 'error' && (
+          <ErrorState
+            title="Couldn't load your profile"
+            message="We couldn't reach the profile service, so the form isn't shown — editing a blank form would overwrite what you already have. Reload to try again."
+            onRetry={() => window.location.reload()}
+          />
+        )}
 
         {state === 'signedout' && (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '32px 24px', textAlign: 'center' }}>

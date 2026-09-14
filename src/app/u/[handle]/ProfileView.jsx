@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ErrorState from '../../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, TickerLogo } from '../../../lib/cp-shared';
 
 const CASHTAG_RE = /\$[A-Za-z]{1,5}\b/g;
@@ -20,7 +21,7 @@ const fmtDate = (ts) => { try { return new Date(ts).toLocaleDateString([], { yea
 const fmtTime = (ts) => { try { return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
 
 export default function ProfileView({ handle }) {
-  const [state, setState] = useState('loading'); // loading | ok | notfound
+  const [state, setState] = useState('loading'); // loading | ok | notfound | error
   const [p, setP] = useState(null);
   const [isOwn, setIsOwn] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -37,7 +38,8 @@ export default function ProfileView({ handle }) {
           fetch('/api/profile', { cache: 'no-store' }).catch(() => null),
         ]);
         if (cancelled) return;
-        if (!pubRes.ok) { setState('notfound'); return; }
+        // 404 is an answer: no such handle. Anything else is a failure to get an answer.
+        if (!pubRes.ok) { setState(pubRes.status === 404 ? 'notfound' : 'error'); return; }
         const j = await pubRes.json();
         setP(j.profile); setState('ok');
         setFollowing(!!j.profile.isFollowing);
@@ -48,7 +50,7 @@ export default function ProfileView({ handle }) {
           const mj = await meRes.json();
           if (mj?.profile?.handle && mj.profile.handle === j.profile.handle) setIsOwn(true);
         }
-      } catch { if (!cancelled) setState('notfound'); }
+      } catch { if (!cancelled) setState('error'); }
     })();
     return () => { cancelled = true; };
   }, [handle]);
@@ -75,6 +77,14 @@ export default function ProfileView({ handle }) {
       <TopNav />
       <div style={{ maxWidth: 720, margin: '24px auto', padding: '0 24px 48px' }}>
         {state === 'loading' && <div style={{ color: C.dim, fontSize: 13, padding: 40, textAlign: 'center' }}>Loading…</div>}
+
+        {state === 'error' && (
+          <ErrorState
+            title="Couldn't load this profile"
+            message="We couldn't reach the profile service. This doesn't mean the account is gone — try again in a moment."
+            onRetry={() => window.location.reload()}
+          />
+        )}
 
         {state === 'notfound' && (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '48px 24px', textAlign: 'center' }}>

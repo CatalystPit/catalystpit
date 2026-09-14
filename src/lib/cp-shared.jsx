@@ -1215,9 +1215,14 @@ export function CatalystBriefCard() {
 
 // ─── FOOTER ─────────────────────────────────────────────────────────────────
 export function Footer() {
+  // Features and Pricing have NO destination — there is no /features or /pricing route and no
+  // anchor on the homepage to point at. They were still rendered with cursor:pointer and a hover
+  // colour change, so they looked exactly like the four working links beside them and did nothing
+  // when clicked. Until a real page exists they render as plain, non-interactive labels: no hover,
+  // no pointer, dimmer than the links, and marked so the state is honest rather than broken.
   const links = [
-    {label:"Features", href:null},
-    {label:"Pricing",  href:null},
+    {label:"Features", href:null, note:"Coming soon"},
+    {label:"Pricing",  href:null, note:"Coming soon"},
     {label:"Privacy",  href:"/privacy"},
     {label:"Terms",    href:"/terms"},
     {label:"Disclaimer", href:"/disclaimer"},
@@ -1237,11 +1242,12 @@ export function Footer() {
             {l.label}
           </a>
         ) : (
-          <span key={l.label} style={{fontSize:12, color:"rgba(255,255,255,0.6)",
-            cursor:"pointer", fontWeight:300}}
-            onMouseEnter={e => e.currentTarget.style.color = "#FFFFFF"}
-            onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.6)"}>
+          <span key={l.label} aria-disabled="true" title={l.note}
+            style={{fontSize:12, color:"rgba(255,255,255,0.35)", cursor:"default",
+              fontWeight:300, display:"inline-flex", alignItems:"baseline", gap:6}}>
             {l.label}
+            {l.note && <span style={{fontSize:9, letterSpacing:"0.5px",
+              color:"rgba(255,255,255,0.28)", textTransform:"uppercase"}}>{l.note}</span>}
           </span>
         ))}
       </div>

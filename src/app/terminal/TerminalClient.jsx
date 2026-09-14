@@ -1,4 +1,5 @@
 'use client';
+import ErrorState from '../../components/ErrorState';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, useTheme } from '../../lib/cp-shared';
@@ -200,6 +201,8 @@ const fmtCap = (m) => (m == null ? '—' : m >= 1e12 ? `$${(m / 1e12).toFixed(1)
 function ScanBody({ mode, onPick }) {
   const [rows, setRows] = useState(null);
   const [configured, setConfigured] = useState(true);
+  // A 200 with zero rows means the scan ran and matched nothing — kept as the existing empty state.
+  const [scanError, setScanError] = useState(false);
   const [f, setF] = useState({ priceMin: '', priceMax: '', volumeMin: '', mktCapMin: '', sector: '' });
   const setFf = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
 
@@ -209,15 +212,18 @@ function ScanBody({ mode, onPick }) {
     if (mode === 'custom') { for (const [k, v] of Object.entries(f)) if (v) qs.set(k, v); }
     try {
       const r = await fetch(`/api/scan?${qs.toString()}`, { cache: 'no-store' });
-      const j = r.ok ? await r.json() : null;
+      if (!r.ok) throw new Error('bad status');
+      const j = await r.json();
       setConfigured(j?.configured !== false);
       setRows(j?.rows || []);
-    } catch { setRows([]); }
+      setScanError(false);
+    } catch { setRows([]); setScanError(true); }
   };
   useEffect(() => { if (mode === 'preset') run(); else setRows([]); /* custom waits for Run */ }, [mode]);
 
   const results = (
     rows === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Scanning…</div>
+      : scanError ? <div style={{ padding: '14px 12px' }}><ErrorState compact title="Scan didn't run" message="The scanner didn't come back. Your filters are still set." onRetry={run} /></div>
       : !configured ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Scanner needs a market-data feed. Add <b>FMP_API_KEY</b> to enable live movers.</div>
       : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>{mode === 'custom' ? 'No matches. Adjust your filters and Run.' : 'No results.'}</div>
       : (

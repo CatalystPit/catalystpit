@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
 
 const CASHTAG_RE = /\$[A-Za-z]{1,5}\b/g;
@@ -243,6 +244,8 @@ function PostCard({ post, me, onDelete }) {
 export default function FeedClient() {
   const [scope, setScope] = useState('global');
   const [posts, setPosts] = useState([]);
+  // A 200 with zero posts is a quiet day in The Pit and keeps the existing empty state.
+  const [loadError, setLoadError] = useState(false);
   const [me, setMe] = useState({ canPost: false, loggedIn: false, admin: false });
   const [loading, setLoading] = useState(true);
   const [input, setInput] = useState('');
@@ -268,11 +271,13 @@ export default function FeedClient() {
     setLoading(true);
     try {
       const r = await fetch(`/api/feed?scope=${sc}`, { cache: 'no-store' });
-      const j = r.ok ? await r.json() : null;
+      if (!r.ok) throw new Error('bad status');
+      const j = await r.json();
       setPosts(j?.posts || []);
       if (j?.me) setMe(j.me);
       setMore((j?.posts || []).length >= 30);
-    } catch { setPosts([]); }
+      setLoadError(false);
+    } catch { setPosts([]); setLoadError(true); }
     setLoading(false);
   }, []);
 
@@ -394,7 +399,13 @@ export default function FeedClient() {
         </div>
 
         {/* posts */}
-        {loading ? (
+        {loadError && !loading ? (
+          <ErrorState
+            title="Couldn't load the feed"
+            message="The Pit didn't come back. This is a loading problem, not an empty feed."
+            onRetry={() => load(scope)}
+          />
+        ) : loading ? (
           <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: 'center' }}>Loading…</div>
         ) : posts.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>

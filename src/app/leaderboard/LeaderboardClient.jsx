@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer } from '../../lib/cp-shared';
 
 function Avatar({ url, name, size = 38 }) {
@@ -16,6 +17,10 @@ export default function LeaderboardClient() {
   const [window, setWindow] = useState('all');
   const [leaders, setLeaders] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Distinct from the Avatar component's own `failed` above, which is an image that would not load.
+  // This one is the request: a 200 with zero leaders is a real, empty community board.
+  const [loadError, setLoadError] = useState(false);
+  const [reloadAt, setReloadAt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,13 +28,14 @@ export default function LeaderboardClient() {
     (async () => {
       try {
         const r = await fetch(`/api/leaderboard?window=${window}`, { cache: 'no-store' });
-        const j = r.ok ? await r.json() : null;
-        if (!cancelled) setLeaders(j?.leaders || []);
-      } catch { if (!cancelled) setLeaders([]); }
+        if (!r.ok) throw new Error('bad status');
+        const j = await r.json();
+        if (!cancelled) { setLeaders(j?.leaders || []); setLoadError(false); }
+      } catch { if (!cancelled) { setLeaders([]); setLoadError(true); } }
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [window]);
+  }, [window, reloadAt]);
 
   const Tab = ({ id, label }) => (
     <button onClick={() => setWindow(id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 2px',
@@ -61,7 +67,13 @@ export default function LeaderboardClient() {
           <Tab id="week" label="This week" />
         </div>
 
-        {loading ? (
+        {loadError && !loading ? (
+          <ErrorState
+            title="Couldn't load the leaderboard"
+            message="The leaderboard didn't come back. This is a loading problem, not an empty board."
+            onRetry={() => setReloadAt((n) => n + 1)}
+          />
+        ) : loading ? (
           <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: 'center' }}>Loading…</div>
         ) : leaders.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
