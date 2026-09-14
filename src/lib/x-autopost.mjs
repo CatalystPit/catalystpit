@@ -8,6 +8,7 @@
 // No implications, no context, no prices we did not measure, no "investors are watching closely".
 
 import { publicationVerdict } from './x-quality.mjs';
+import { storyVerdict, factsOf } from './x-story.mjs';
 
 export const MODES = ['off', 'dry_run', 'live'];
 
@@ -135,7 +136,11 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   // BREAKING is decided by the publication gate, not by the impact score. Passing null keeps the
   // old score-based behaviour for direct callers and tests that predate the gate.
   const brk = breaking === null ? Number(ev?.importance) === CRITICAL : !!breaking;
-  const prefix = ticker ? (brk ? `BREAKING: $${ticker} ` : `$${ticker}: `) : 'BREAKING: ';
+  // FOUR shapes, not three. A measured macro print that is real and useful but not urgent —
+  // "Canada inflation holds at 3.0% year-over-year in August" — goes out as a plain trader-wire
+  // line. Without this shape every no-ticker post had to be labelled BREAKING, which is how the
+  // label ended up on 68 of 68 candidates and stopped meaning anything.
+  const prefix = ticker ? (brk ? `BREAKING: $${ticker} ` : `$${ticker}: `) : (brk ? 'BREAKING: ' : '');
 
   const reaction = reactionLine(reading, now);
   const tail = reaction ? `\n${reaction}` : '';
@@ -145,7 +150,8 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   if (text.length > MAX_POST) return { ok: false, error: `too long (${text.length})` };
   if (/#[A-Za-z0-9_]/.test(text)) return { ok: false, error: 'hashtag survived sanitising' };
   if (URL.test(text)) return { ok: false, error: 'url survived sanitising' };
-  return { ok: true, text, chars: text.length, shape: ticker ? (brk ? 'breaking_ticker' : 'ticker') : 'breaking' };
+  const shape = ticker ? (brk ? 'breaking_ticker' : 'ticker') : (brk ? 'breaking' : 'plain');
+  return { ok: true, text, chars: text.length, shape };
 }
 
 // The whole decision in one call: eligible, then PUBLISHABLE, then formatted.
@@ -154,7 +160,7 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
 // this", publication answers "should it", and only the second one knows what the account is for.
 // A `suppressed` result is terminal and carries an auditable reason; a `blocked` result beginning
 // "awaiting" is transient and the event is reconsidered on the next pass.
-export function buildCandidate(ev, reading = null, now = Date.now()) {
+export function buildCandidate(ev, reading = null, now = Date.now(), priorPosts = null) {
   const verdict = evaluate(ev);
   if (!verdict.eligible) return { eligible: false, reason: null, blocked: verdict.blocked };
 
@@ -167,5 +173,17 @@ export function buildCandidate(ev, reading = null, now = Date.now()) {
   const post = formatPost(ev, reading, now, quality.breaking);
   if (!post.ok) return { eligible: true, publishable: false, reason: verdict.reason,
     suppressed: post.error, terminal: true };
-  return { eligible: true, publishable: true, reason: verdict.reason, breaking: quality.breaking, ...post };
+
+  // LAST gate: has the account already told this story? Only applied when the caller supplies the
+  // history, so a pure formatting call stays pure. X-only — Pit Wire's canonical dedupe is not
+  // consulted and not affected.
+  const story = priorPosts ? storyVerdict({ headline: ev.headline, text: post.text }, priorPosts, now)
+    : { post: true, reason: null, storyKey: null };
+  if (!story.post) {
+    return { eligible: true, publishable: false, reason: verdict.reason,
+      suppressed: story.reason, terminal: true, storyKey: story.storyKey };
+  }
+
+  return { eligible: true, publishable: true, reason: verdict.reason, breaking: quality.breaking,
+    storyKey: story.storyKey, facts: [...factsOf(ev.headline)].join(','), ...post };
 }

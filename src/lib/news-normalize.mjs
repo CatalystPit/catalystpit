@@ -338,7 +338,33 @@ const MEDIUM = [
 // carried "Trump urges Ukraine to halt refinery strikes", "Iran says US is main obstacle to
 // diplomacy" and "Saudi Crown Prince meets US CENTCOM chief" in the same window, and none of them
 // is a market event.
-const ENERGY_ASSET = /\b(?:oil|crude|gas|lng|petroleum|diesel|fuel|refinery|refineries|refining|pipeline|oilfield|oil field|export terminal|oil terminal|gas terminal|tanker|power (?:plant|grid|station)|nuclear (?:plant|facility|site))\b/i;
+const ENERGY_ASSET = /\b(?:oil|crude|gas|lng|petroleum|diesel|fuel|refinery|refineries|refining|pipeline|oilfield|oil field|export terminal|oil terminal|gas terminal|tanker|power (?:plant|grid|station)|nuclear (?:plant|facility|site)|energy (?:infrastructure|targets?|facilities|facility|sites?|assets?|supply|supplies))\b/i;
+
+// ── concrete geopolitical agreements ─────────────────────────────────────────
+// A bilateral agreement to stop attacking energy infrastructure is a market event: it reprices
+// supply risk the moment it is asserted. The scorer had no way to see one, because its geopolitical
+// rules keyed on DISRUPTION — something being broken — and an agreement is the opposite.
+//
+// The test is the same conjunction used everywhere else: a concrete asserted development AND a
+// subject that moves markets. It is emphatically NOT "a politician is mentioned":
+//   "Russia and Ukraine agree to halt attacks on energy infrastructure"        CRITICAL
+//   "Trump: Ukraine has agreed not to hit Russian energy targets"              CRITICAL (the
+//                                                                             agreement is asserted)
+//   "Russia and Ukraine are discussing an energy infrastructure ceasefire"     not critical
+//   "Trump urges Russia and Ukraine to stop attacking energy targets"          not critical
+//   "Trump: World's diesel price rise is caused by Russia-Ukraine war"         not critical
+const AGREEMENT = /\b(?:agree(?:s|d)?|agreement|accord|ceasefire|truce|armistice|pact|deal (?:reached|struck|agreed)|reached a deal|signed? (?:a |an )?(?:deal|accord|agreement)|commits? to|committed to|pledge[sd]?)\b/i;
+// Talking about an agreement is not having one.
+// Talking about an agreement is not having one, and so is FORECASTING one. "Analysts expect Russia
+// and Ukraine to agree an energy ceasefire" reached CRITICAL before the forecast verbs were added,
+// which is a prediction being published as an event.
+const NEGOTIATION = /\b(?:discuss\w+|negotiat\w+|in talks|talks (?:on|over|about|continue)|propos\w+|considering|seeking|hope[sd]? (?:to|for)|push(?:es|ing)? for|working (?:on|toward|towards)|draft\w*|framework for|prospects? for|expect\w*|forecast\w*|predict\w*|anticipat\w*|likely to|poised to|set to agree|would agree|may agree|could agree|might agree)\b/i;
+
+// The agreement has to be about HOSTILITIES or ACCESS, which is what makes it geopolitical rather
+// than commercial. Without this, "METLEN and PETRONAS sign long-term LNG supply agreement for
+// Greece" scored CRITICAL three times: a supplier contract between two companies, carrying an
+// energy word and the word "agreement", and nothing to do with supply risk.
+const HOSTILITY_OR_ACCESS = /\b(?:ceasefire|truce|armistice|hostilities|war|attacks?|strikes?|striking|hitting|bombard\w*|shelling|blockad\w+|embargo|not to (?:hit|attack|strike|target)|stop (?:attack|strik|hit|targeting)\w*|halt(?:ing)? (?:attack|strik)\w*|cease (?:fire|attacks?)|reopen\w*|re-?open\w*|closure|closed|shut\w*|access|passage|transit|safe corridor|demilitaris\w+|demilitariz\w+|withdraw\w+)\b/i;
 const CHOKEPOINT = /\b(?:strait of hormuz|hormuz|suez|bab[- ]?el[- ]?mandeb|panama canal|strait of malacca|bosphorus|dardanelles|red sea|kerch strait|taiwan strait)\b/i;
 const PRODUCER = /\b(?:saudi|opec|iran|iraq|uae|emirates|kuwait|qatar|russia|russian|venezuela|libya|nigeria|kazakhstan|norway|algeria|angola)\b/i;
 
@@ -383,6 +409,14 @@ export function macroImpact(text) {
 
   // CRITICAL: a trade chokepoint or major energy infrastructure is actually disrupted, or a
   // sovereign takes an emergency action. These reprice crude, freight and risk within minutes.
+  // A concrete agreement about energy or a chokepoint. Checked BEFORE the reported-speech cap,
+  // deliberately: "Trump: Ukraine has agreed not to hit Russian energy targets" is reported speech
+  // whose CONTENT is the event, and capping it at HIGH would miss a genuine supply-risk repricing.
+  // Advocacy and negotiation still block it, which is what keeps "urges", "discussing", "proposes"
+  // and "expected to agree" out.
+  if (!advocacy && !NEGOTIATION.test(s) && AGREEMENT.test(s) && HOSTILITY_OR_ACCESS.test(s)
+      && (energy || chokepoint || MILITARY_ESCALATION.test(s))) return 3;
+
   if (!advocacy && !reported) {
     if (chokepoint && disrupted) return 3;
     if (energy && disrupted && PRODUCER.test(s)) return 3;

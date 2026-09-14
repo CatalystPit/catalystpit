@@ -51,11 +51,21 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
   const rows = await eligibleEvents(sinceHours, limit);
   out.examined = rows.length;
 
+  // What the account has already said, for the story guard. Read once; each new post is appended in
+  // memory so a single pass cannot post the same story twice either.
+  const priors = (await db.execute(sql`
+    select post_text, story_key, post_facts, created_at,
+           (select headline from primary_events e where e.seq = c.event_seq) as headline
+      from x_post_candidates c
+     where status in ('dry_run', 'pending', 'posted')
+       and created_at > now() - interval '24 hours'
+     order by created_at desc limit 200`)).rows ?? [];
+
   for (const ev of rows) {
     // No market-reaction reading is passed. The only change figure we hold is a daily screener
     // value that is hours to days old, and presenting that as the reaction to a breaking event
     // would be inventing a fact. One line now beats two lines that are wrong.
-    const c = buildCandidate(ev, null);
+    const c = buildCandidate(ev, null, Date.now(), priors);
 
     // Not eligible at all, or still waiting for Catalyst wording: nothing is persisted, because the
     // event must be reconsidered on a later pass once the rewrite queue reaches it.
@@ -85,13 +95,17 @@ export async function generateCandidates({ sinceHours = 24, limit = 200 } = {}) 
     // concurrent pass or a later merge cannot produce a second row for one event.
     const ins = await db.execute(sql`
       insert into x_post_candidates
-        (event_seq, reason, post_text, char_count, shape, ticker, impact, mode, status)
+        (event_seq, reason, post_text, char_count, shape, ticker, impact, mode, status, story_key, post_facts)
       values (${ev.seq}, ${c.reason}, ${c.text}, ${c.chars}, ${c.shape},
               ${(ev.tickers || [])[0] ?? null}, ${ev.importance ?? null}, ${m},
-              ${m === 'dry_run' ? 'dry_run' : 'pending'})
+              ${m === 'dry_run' ? 'dry_run' : 'pending'}, ${c.storyKey ?? null}, ${c.facts ?? null})
       on conflict (event_seq) do nothing
       returning id`);
-    if ((ins.rows ?? ins)?.length) out.created++;
+    if ((ins.rows ?? ins)?.length) {
+      out.created++;
+      // Appended so a later event in THIS SAME pass sees it as a prior post.
+      priors.unshift({ headline: ev.headline, story_key: c.storyKey, post_facts: c.facts, created_at: new Date().toISOString() });
+    }
   }
   return out;
 }

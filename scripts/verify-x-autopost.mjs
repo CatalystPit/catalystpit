@@ -10,7 +10,8 @@
 import { readFileSync } from 'node:fs';
 import { evaluate, formatPost, buildCandidate, resolveMode, canPublish, sanitize, reactionLine,
          MAX_POST, MODES } from '../src/lib/x-autopost.mjs';
-import { publicationVerdict } from '../src/lib/x-quality.mjs';
+import { publicationVerdict, readsAsSentence } from '../src/lib/x-quality.mjs';
+import { storyVerdict, sameStory, factsOf, materiallyNew } from '../src/lib/x-story.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -175,6 +176,64 @@ for (const h of ['U.S. crude futures hit session high of $104.95 per barrel',
     gate(h, { importance: 2, trusted: true }).publish, gate(h, { importance: 2, trusted: true }).reason || '');
 ok('but Walter COMMENTARY is still suppressed',
   !gate('Iran says US lack of mediation is main obstacle to diplomacy', { importance: 2, trusted: true }).publish);
+
+sec('STORY GUARD — a developing story gets one post, not thirty-five');
+// X-only. Pit Wire keeps every event; the account does not. Over six days the Saudi pipeline
+// attack produced 35 publishable candidates, 51% of everything that would have gone out.
+const S0 = Date.UTC(2026, 8, 14, 10, 0, 0);
+const at2 = (m) => new Date(S0 + m * 60000).toISOString();
+
+ok('two wordings of one story are recognised as the same story',
+  sameStory('Saudi Arabia shuts East-West pipeline after drone attacks',
+           'Saudi pipeline outage affects 4% of global oil supply'));
+ok('a different story is not', !sameStory('Saudi Arabia shuts East-West pipeline after drone attacks',
+  "Ukraine's military strikes oil refinery in Russia's Krasnodar region"));
+ok('an unrelated macro print is not', !sameStory('Saudi Arabia shuts East-West pipeline after drone attacks',
+  'Canada inflation holds at 3.0% year-over-year in August'));
+
+const firstPost = [{ headline: 'Saudi Arabia shuts East-West pipeline after drone attacks', created_at: at2(0) }];
+ok('the first post on a story goes out',
+  storyVerdict({ headline: 'Saudi Arabia shuts East-West pipeline after drone attacks' }, [], S0).post);
+ok('a near-duplicate minutes later is suppressed',
+  storyVerdict({ headline: 'Saudi pipeline outage affects 4% of global oil supply' }, firstPost, S0 + 5 * 60000).reason
+    === 'repetitive story update within the minimum gap');
+ok('a rewording with no new fact is suppressed even after the gap',
+  storyVerdict({ headline: 'Saudi Arabia shuts major crude pipeline following attacks' }, firstPost, S0 + 120 * 60000).reason
+    === 'no materially new fact for this story');
+ok('a materially new development DOES post',
+  storyVerdict({ headline: "Saudi Arabia's East-West pipeline could remain offline for 3-5 weeks" }, firstPost, S0 + 120 * 60000).post);
+ok('a duration fact counts as material, which numericFacts alone would miss',
+  materiallyNew('pipeline could remain offline for 3-5 weeks', new Set()));
+ok('the same figure twice is not material', !materiallyNew('outage threatens 4% of global oil supply', factsOf('outage affects 4% of global oil supply')));
+const three = [0, 60, 130].map((m) => ({ headline: 'Saudi pipeline story update ' + m, created_at: at2(m) }));
+ok('a hard ceiling stops a story however much it develops',
+  /already posted/.test(storyVerdict({ headline: 'Saudi pipeline outage widens to 9% of supply' },
+    three.map((p) => ({ ...p, headline: 'Saudi pipeline ' + p.headline })), S0 + 200 * 60000).reason || ''));
+
+sec('BREAKING IS SELECTIVE');
+const brk = (h, e = {}) => publicationVerdict({ headline: h, summary: '', tickers: [], importance: 3,
+  published_at: new Date(Date.UTC(2026, 8, 14, 11, 59, 0)).toISOString(), ...e }, Date.UTC(2026, 8, 14, 12, 0, 0));
+ok('material infrastructure disruption earns BREAKING', brk('Saudi Arabia shuts East-West pipeline after drone attacks').breaking);
+ok('a bankruptcy earns BREAKING', brk('Acme files for Chapter 11 bankruptcy protection', { tickers: ['ACME'] }).breaking);
+ok('an FDA decision earns BREAKING', brk('Nasus Pharma wins FDA approval', { tickers: ['NSPH'] }).breaking);
+ok('a definitive public-company deal earns BREAKING', brk('Kyndryl to acquire Healthcare IT Leaders', { tickers: ['KD'] }).breaking);
+ok('a routine economic print does NOT', !brk('Canada inflation holds at 3.0% year-over-year in August', { importance: 2, trusted: true }).breaking);
+ok('a routine commodity move does NOT', !brk('Spot gold falls nearly 1% to $4,306.19 per ounce', { importance: 2, trusted: true }).breaking);
+ok('but both still PUBLISH, as plain wire lines',
+  brk('Canada inflation holds at 3.0% year-over-year in August', { importance: 2, trusted: true }).publish
+  && brk('Spot gold falls nearly 1% to $4,306.19 per ounce', { importance: 2, trusted: true }).publish);
+ok('Walter provenance alone never earns BREAKING',
+  !brk('China Jan-Aug new yuan loans reach CNY10.44T, M2 rises 7.5% y/y', { importance: 2, trusted: true }).breaking);
+
+sec('WORDING QUALITY — suppress rather than publish an awkward fragment');
+ok('a PR fragment is rejected', !readsAsSentence('FDA approves Reduced Monitoring Time'));
+ok('a vague announcement is rejected', !readsAsSentence('Company announces strategic transaction'));
+ok('a dangling preposition is rejected', !readsAsSentence('Acme Corporation announces agreement with'));
+ok('a real sentence passes', readsAsSentence('Saudi Arabia shuts East-West pipeline after drone attacks'));
+ok('a measured print passes', readsAsSentence('Canada inflation holds at 3.0% year-over-year in August'));
+ok('an agreement taking effect passes', readsAsSentence('Russia and Ukraine energy ceasefire to take effect within 72 hours'));
+ok('the AMGN fragment is suppressed end to end',
+  brk('FDA approves Reduced Monitoring Time', { tickers: ['AMGN'] }).reason === 'incomplete or fragmentary wording');
 
 sec('MODE — fails closed');
 ok("'live' resolves", resolveMode('live') === 'live');

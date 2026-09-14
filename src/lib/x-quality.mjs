@@ -68,6 +68,30 @@ const OCCURRED = /\b(?:struck|shut|shuts|closed|closes|halted|approved|approves|
 // having no ticker.
 const hasFigure = (s) => /\d/.test(s);
 
+// An actual decision, as opposed to a meeting on the calendar.
+const DECIDED = /\b(?:cuts?|cut|raises?|raised|hikes?|hiked|holds?|held|leaves?|left|lowers?|lowered|announces?|announced|delivers?|delivered|votes?|voted)\b/i;
+
+// ── does it read like a professional wire line ───────────────────────────────
+// A canonical headline is sometimes a press-release fragment. "FDA approves Reduced Monitoring
+// Time" is grammatical but says nothing about whose drug or for what, and published under the
+// account's name it reads as a machine emptying a queue. Where the facts are too thin to form a
+// sentence a professional would write, the instruction is to suppress rather than publish awkwardly.
+const FINITE_VERB = /\b(?:is|are|was|were|has|have|had|says?|said|will|shuts?|closes?|opens?|cuts?|raises?|holds?|hits?|falls?|rises?|climbs?|drops?|gains?|slides?|jumps?|sinks?|surges?|plunges?|approves?|rejects?|clears?|halts?|halted|files?|filed|wins?|won|loses?|lost|acquires?|acquired|agrees?|agreed|announces?|announced|reports?|reported|launches?|launched|plans?|seizes?|seized|strikes?|struck|attacks?|attacked|warns?|warned|expects?|reaches?|reached|remains?|blocks?|blocked|suspends?|suspended|resigns?|resigned|names?|named|raises?|issues?|adds?|expands?|begins?|starts?|ends?|delivers?|leaves?|left|votes?|voted|denies?|denied|confirms?|confirmed|declares?|declared|takes? effect|to take effect|comes? into force|enters? into force|signs?|signed|sets?|set|receives?|received|grants?|granted|secures?|secured|posts?|posted)\b/i;
+// A trailing Title Case noun phrase with no qualifier is the signature of a truncated PR headline.
+const TRAILING_FRAGMENT = /\b(?:[A-Z][a-z]+\s+){1,}[A-Z][a-z]+\s*$/;
+
+export function readsAsSentence(headline) {
+  const s = String(headline || '').trim();
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length < 5) return false;                        // too thin to be a sentence
+  if (!FINITE_VERB.test(s)) return false;                    // no assertion
+  if (/\b(?:the|a|an|of|for|to|in|on|with|and|or|its|their)\s*$/i.test(s)) return false;  // dangling
+  // "FDA approves Reduced Monitoring Time" - ends in a bare Title Case phrase, and the sentence is
+  // short enough that the phrase IS the object rather than a proper name inside a longer clause.
+  if (words.length <= 7 && TRAILING_FRAGMENT.test(s) && !/[.%$\d]/.test(s)) return false;
+  return true;
+}
+
 // ── M&A ──────────────────────────────────────────────────────────────────────
 // The single worst source of noise in the sample: 50 of 156 CRITICAL candidates tripped the `ma`
 // predicate and only 7 carried a resolved ticker. A private-company PR-wire acquisition has no
@@ -138,22 +162,35 @@ export function publicationVerdict(ev, now = Date.now()) {
   const walterMacro = !!ev?.trusted && MACRO_TERMS.test(headline);
   if (!hasTicker && !marketWide && !walterMacro) return no('no public-market relevance');
 
-  // BREAKING is a brand promise, so it is granted only by a rule, never by default.
-  // Commentary never gets it even when the subject matters.
-  const macroPrint = walterMacro && hasFigure(headline);
-  const consequential = macro === 3
-    || MARKET_WIDE.has(predicate)
-    || HARD_CORPORATE.has(predicate)
-    || (maWorded && hasTicker)
-    // A trusted wire's measured macro print — "Canada inflation holds at 3.0% year-over-year",
-    // "Brent crude rises 3.5% to $108.23". This is the clause that keeps the instruction "do not
-    // suppress a legitimate Walter macro flash merely because it has no ticker" true: without it
-    // every one of the 24 Walter events in the sample was suppressed.
-    || macroPrint;
-  const breaking = consequential && !COMMENTARY.test(headline);
+  // BREAKING is a brand promise and it is now SCARCE. The previous rule granted it to 68 of 68
+  // publishable candidates, which is the same as not having a label at all.
+  //
+  // It means: something urgent just happened that moves markets. A routine economic print is real,
+  // publishable and useful, and it is not that — "Canada inflation holds at 3.0% year-over-year"
+  // and "Spot gold falls nearly 1% to $4,306.19" go out as plain trader-wire lines. Walter
+  // provenance earns consideration, never the label.
+  const breaking = !COMMENTARY.test(headline) && (
+    macro === 3                                  // chokepoint/producer disruption, sovereign emergency
+    || predicate === 'emergency_action'
+    || (predicate === 'halt' && hasTicker)        // a halt matters when we can say what halted
+    || HARD_CORPORATE.has(predicate)              // bankruptcy, default, delisting, FDA decision, indictment
+    || (maWorded && hasTicker && !SPECULATIVE.test(headline))   // a definitive public-company deal
+    // A rate DECISION, not the meeting calendar. Anticipation was already suppressed above, so
+    // anything reaching here with this predicate is an actual action.
+    || ((predicate === 'fomc' || predicate === 'fomc_long' || predicate === 'rate_decision')
+        && DECIDED.test(headline))
+  );
 
-  // Anything that does not earn BREAKING must stand on a ticker, or it is not worth posting.
-  if (!breaking && !hasTicker) return no('not breaking and no ticker');
+  // A post that is not BREAKING still has to be worth reading. It needs either a ticker or a
+  // measured macro fact; a vague no-ticker line with no figure is neither urgent nor informative.
+  if (!breaking && !hasTicker && !(walterMacro && hasFigure(headline)) && macro < 2) {
+    return no('not breaking, no ticker, no measured fact');
+  }
+
+  // 5. The text must read as something a professional wire would publish. A canonical headline can
+  // be a press-release fragment — "FDA approves Reduced Monitoring Time" says nothing about whose
+  // drug or for what — and an awkward half-sentence is worse for the brand than silence.
+  if (!readsAsSentence(headline)) return no('incomplete or fragmentary wording');
 
   return { publish: true, reason: null, breaking, terminal: false };
 }
