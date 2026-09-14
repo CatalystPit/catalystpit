@@ -22,14 +22,37 @@
 const LEGAL = new Set(['INC', 'INCORPORATED', 'CORP', 'CORPORATION', 'CO', 'COMPANY', 'COMPANIES',
   'LTD', 'LIMITED', 'PLC', 'LLC', 'LLP', 'LP', 'NV', 'SA', 'SE', 'AG', 'AB', 'ASA', 'OYJ', 'THE',
   'HOLDINGS', 'HOLDING', 'HLDGS', 'HLDG', 'GROUP', 'GRP', 'CLASS', 'CL', 'ADR', 'ADS', 'SPONSORED',
-  'ORD', 'ORDINARY', 'NEW', 'COMMON', 'STOCK', 'SHARES', 'SHARE', 'TRUST', 'REIT', 'NA', 'AND']);
+  'ORD', 'ORDINARY', 'NEW', 'COMMON', 'STOCK', 'SHARES', 'SHARE', 'TRUST', 'REIT', 'NA', 'AND',
+  // CONNECTORS. A headline span is built from CAPITALISED words only, so "Bank of America" arrives
+  // as ["BANK","AMERICA"] with the lowercase "of" already gone, while the registrant name
+  // "BANK OF AMERICA CORP /DE/" kept it and became ["BANK","OF","AMERICA"]. The two could never
+  // match. Dropping connectors on BOTH sides makes the comparison symmetric — which is the only
+  // reason it works — and Bank of America is not an edge case, it is the second-largest US bank.
+  'OF', 'FOR', 'DE', 'DEL', 'DA', 'VON', 'VAN']);
+
+// Runs of single letters are ONE token. "R F INDUSTRIES LTD" is how the registrant filed it and
+// "RF Industries" is how every headline writes it; without this they tokenise differently and never
+// meet. Collapsing the run preserves what single letters are for — "O-I Glass" stays ["OI","GLASS"],
+// so the distinctive half of the name survives rather than being dropped.
+// BOTH tokens must be single letters. Merging a single letter into any short token instead turned
+// "AT&T" — which normalises to ["AT","T"] — into ["ATT"], changing a name the resolver already
+// handles. Only an actual run of initials is joined.
+function collapseInitials(toks) {
+  const out = [];
+  for (const t of toks) {
+    const prev = out[out.length - 1];
+    if (t.length === 1 && prev && /^[A-Z]+$/.test(prev) && prev.length === 1) out[out.length - 1] = prev + t;
+    else out.push(t);
+  }
+  return out;
+}
 
 // The name as TOKENS, legal scaffolding removed. Matching happens on whole tokens, never on
 // characters: a character prefix let "August" reach AUGG, "States" reach STT, "Illinois" reach ITW
 // and "Payment" reach PAY, and turned "Wall Street Lunch: Tesla's Roadster" into WBX and RC instead
 // of TSLA. A company reference has to begin at a word the company is actually called.
 export function tokens(name) {
-  return String(name || '')
+  const raw = String(name || '')
     .toUpperCase()
     .replace(/\/NEW\b|\/DE\b|\/MD\b|\/[A-Z]{2}\/?$/g, ' ')
     .replace(/'S\b|’S\b/g, '')                 // possessive: "Tesla's" is still Tesla
@@ -37,6 +60,7 @@ export function tokens(name) {
     .replace(/[^A-Z0-9 ]/g, ' ')
     .split(/\s+/)
     .filter((t) => t && !LEGAL.has(t));
+  return collapseInitials(raw);
 }
 
 export function core(name) {
@@ -138,26 +162,42 @@ const AMBIGUOUS_WORD = new Set([
 // about one company, not a guess: the reference data simply files it under another name.
 export const ALIASES = new Map(Object.entries({
   GOOGLE: 'GOOGL', ALPHABET: 'GOOGL', META: 'META', FACEBOOK: 'META', INSTAGRAM: 'META',
-  WHATSAPP: 'META', YOUTUBE: 'GOOGL', AWS: 'AMZN', AMAZONWEBSERVICES: 'AMZN',
+  WHATSAPP: 'META', YOUTUBE: 'GOOGL', AWS: 'AMZN', 'AMAZON WEB SERVICES': 'AMZN',
   IPHONE: 'AAPL', MACBOOK: 'AAPL', XBOX: 'MSFT',
-  KIRKLANDSIGNATURE: 'COST', COSTCOWHOLESALE: 'COST', COSTCO: 'COST', AMAZON: 'AMZN',
-  HOMEDEPOT: 'HD', LOWES: 'LOW', KROGER: 'KR', TARGETCORP: 'TGT', CATERPILLAR: 'CAT',
+  'KIRKLAND SIGNATURE': 'COST', 'COSTCO WHOLESALE': 'COST', COSTCO: 'COST', AMAZON: 'AMZN',
+  'HOME DEPOT': 'HD', LOWES: 'LOW', KROGER: 'KR', 'TARGET CORP': 'TGT', CATERPILLAR: 'CAT',
   LOCKHEED: 'LMT', RAYTHEON: 'RTX', HONEYWELL: 'HON', DEERE: 'DE', UPS: 'UPS', FEDEX: 'FDX',
   VERIZON: 'VZ', COMCAST: 'CMCSA', CVS: 'CVS', CIGNA: 'CI', UNITEDHEALTH: 'UNH', ANTHEM: 'ELV',
-  BRISTOLMYERS: 'BMY', GILEAD: 'GILD', BIOGEN: 'BIIB', REGENERON: 'REGN', VERTEX: 'VRTX',
-  COCACOLA: 'KO', PEPSICO: 'PEP', PEPSI: 'PEP', KELLOGG: 'K', HERSHEY: 'HSY', TYSON: 'TSN', WALMART: 'WMT', SAMSCLUB: 'WMT',
+  'BRISTOL MYERS': 'BMY', GILEAD: 'GILD', BIOGEN: 'BIIB', REGENERON: 'REGN', VERTEX: 'VRTX',
+  'COCA COLA': 'KO', PEPSICO: 'PEP', PEPSI: 'PEP', KELLOGG: 'K', HERSHEY: 'HSY', TYSON: 'TSN', WALMART: 'WMT', 'SAMS CLUB': 'WMT',
   TESLA: 'TSLA', SPACEX: null, NVIDIA: 'NVDA', GEFORCE: 'NVDA', INTEL: 'INTC', AMD: 'AMD',
-  BOEING: 'BA', AIRBUS: null, DELTA: 'DAL', UNITED: null, AMERICANAIRLINES: 'AAL',
-  JPMORGAN: 'JPM', JPMORGANCHASE: 'JPM', CHASE: 'JPM', GOLDMAN: 'GS', GOLDMANSACHS: 'GS',
-  MORGANSTANLEY: 'MS', BANKOFAMERICA: 'BAC', CITIGROUP: 'C', CITI: 'C', WELLSFARGO: 'WFC',
-  BERKSHIRE: null, BERKSHIREHATHAWAY: null, DISNEY: 'DIS', NETFLIX: 'NFLX', STARBUCKS: 'SBUX',
-  MCDONALDS: 'MCD', NIKE: 'NKE', PFIZER: 'PFE', MODERNA: 'MRNA', JOHNSONANDJOHNSON: 'JNJ',
-  ELILILLY: 'LLY', LILLY: 'LLY', MERCK: 'MRK', ABBOTT: 'ABT', ABBVIE: 'ABBV', AMGEN: 'AMGN',
-  EXXON: 'XOM', EXXONMOBIL: 'XOM', CHEVRON: 'CVX', SHELL: 'SHEL', BP: 'BP',
-  NEXTERA: 'NEE', NEXTERAENERGY: 'NEE', KYNDRYL: 'KD', SALESFORCE: 'CRM', ORACLE: 'ORCL',
+  BOEING: 'BA', AIRBUS: null, DELTA: 'DAL', UNITED: null, 'AMERICAN AIRLINES': 'AAL',
+  JPMORGAN: 'JPM', 'JPMORGAN CHASE': 'JPM', CHASE: 'JPM', GOLDMAN: 'GS', 'GOLDMAN SACHS': 'GS',
+  'MORGAN STANLEY': 'MS', 'BANK OF AMERICA': 'BAC', CITIGROUP: 'C', CITI: 'C', 'WELLS FARGO': 'WFC',
+  BERKSHIRE: null, 'BERKSHIRE HATHAWAY': null, DISNEY: 'DIS', NETFLIX: 'NFLX', STARBUCKS: 'SBUX',
+  MCDONALDS: 'MCD', NIKE: 'NKE', PFIZER: 'PFE', MODERNA: 'MRNA', 'JOHNSON AND JOHNSON': 'JNJ',
+  'ELI LILLY': 'LLY', LILLY: 'LLY', MERCK: 'MRK', ABBOTT: 'ABT', ABBVIE: 'ABBV', AMGEN: 'AMGN',
+  EXXON: 'XOM', 'EXXON MOBIL': 'XOM', CHEVRON: 'CVX', SHELL: 'SHEL', BP: 'BP',
+  NEXTERA: 'NEE', 'NEXTERA ENERGY': 'NEE', KYNDRYL: 'KD', SALESFORCE: 'CRM', ORACLE: 'ORCL',
   ADOBE: 'ADBE', UBER: 'UBER', LYFT: 'LYFT', AIRBNB: 'ABNB', COINBASE: 'COIN', ROBINHOOD: 'HOOD',
   PAYPAL: 'PYPL', VISA: 'V', MASTERCARD: 'MA', QUALCOMM: 'QCOM', BROADCOM: 'AVGO', MICRON: 'MU',
-  'AT&T': 'T', FORD: 'F', GENERALMOTORS: 'GM', PALANTIR: 'PLTR', SNOWFLAKE: 'SNOW', ZOOM: 'ZM', SHOPIFY: 'SHOP', SPOTIFY: 'SPOT',
+
+  // Exchange-listed foreign issuers and ADRs absent from the reference universe. Verified one by
+  // one; an issuer whose headline name is ambiguous is deliberately NOT here.
+  'NOVO NORDISK': 'NVO', EMBRAER: 'ERJ', 'INTERNATIONAL GAME TECHNOLOGY': 'IGT', IGT: 'IGT',
+  SAP: 'SAP', ASML: 'ASML', 'TAIWAN SEMICONDUCTOR': 'TSM', TSMC: 'TSM', INFOSYS: 'INFY',
+  'RIO TINTO': 'RIO', 'BHP': 'BHP', 'ANGLOGOLD': 'AU', 'BARRICK': 'B', 'TEVA': 'TEVA',
+  ASTRAZENECA: 'AZN', GLAXOSMITHKLINE: 'GSK', GSK: 'GSK', SANOFI: 'SNY', NOVARTIS: 'NVS',
+  'ROCHE': null, BAYER: null, 'DEUTSCHE BANK': 'DB', 'CREDIT SUISSE': null, UBS: 'UBS',
+  BARCLAYS: 'BCS', HSBC: 'HSBC', 'BANCO SANTANDER': 'SAN', SANTANDER: 'SAN', ING: 'ING',
+  'MITSUBISHI UFJ': 'MUFG', SONY: 'SONY', TOYOTA: 'TM', HONDA: 'HMC', 'CANON': 'CAJ',
+  'STMICROELECTRONICS': 'STM', 'ARM HOLDINGS': 'ARM', 'SHOPIFY': 'SHOP', 'ENBRIDGE': 'ENB',
+  'CANADIAN NATIONAL': 'CNI', 'CANADIAN PACIFIC': 'CP', 'BROOKFIELD': null, 'TELUS': 'TU',
+  'FEMSA': 'FMX', 'AMERICA MOVIL': 'AMX', 'GRUPO TELEVISA': 'TV', 'VALE': 'VALE',
+  'PETROBRAS': 'PBR', 'ITAU': 'ITUB', 'ALIBABA': 'BABA', 'BAIDU': 'BIDU', 'JD': null,
+  'NETEASE': 'NTES', 'PINDUODUO': 'PDD', 'NIO': 'NIO', 'XPENG': 'XPEV', 'LI AUTO': 'LI',
+  'HUB GROUP': 'HUBG', 'ENVIRONMENTAL TECTONICS': 'ETCC',
+  'AT&T': 'T', FORD: 'F', 'GENERAL MOTORS': 'GM', PALANTIR: 'PLTR', SNOWFLAKE: 'SNOW', ZOOM: 'ZM', SHOPIFY: 'SHOP', SPOTIFY: 'SPOT',
 }).filter(([, v]) => v !== null));
 
 // ── index ────────────────────────────────────────────────────────────────────
@@ -172,7 +212,10 @@ export function buildIndex(rows) {
   const add = (toks, ticker, curated = false) => {
     if (!toks.length) return;
     const head = toks[0];
-    if (!head || (!curated && head.length < 4)) return;
+    // A short head is only dangerous ALONE. "R F INDUSTRIES LTD" collapses to ["RF","INDUSTRIES"],
+    // whose head is two characters, and the flat length floor dropped the company from the index
+    // entirely. With a second token to match on, the pair carries the discrimination the head lacks.
+    if (!head || (!curated && head.length < 4 && toks.length < 2)) return;
     if (NOT_A_COMPANY.has(head) || NOT_A_COMPANY.has(toks.join(''))) return;
     // A name that reduces to ONE ORDINARY ENGLISH WORD is not indexable. "CL Workshop Group Ltd"
     // reduces to WORKSHOP and "Beyond, Inc." to BEYOND, and a headline is far more likely to be
@@ -182,7 +225,7 @@ export function buildIndex(rows) {
     // the two surfaces cannot disagree about a symbol that should never have existed.
     if (!curated && toks.length === 1 && AMBIGUOUS_WORD.has(head)) return;
     if (!byFirst.has(head)) byFirst.set(head, []);
-    byFirst.get(head).push({ toks, ticker: String(ticker).toUpperCase() });
+    byFirst.get(head).push({ toks, ticker: String(ticker).toUpperCase(), curated });
   };
   for (const r of rows) {
     const t = String(r.ticker || '').toUpperCase();
@@ -214,6 +257,24 @@ const MAX_SPAN = 4;
 // enough to land uniquely on the wrong company: "AT&T" normalises to ATT, whose only prefix match
 // is Attovia Therapeutics. Names that short are handled by an alias instead.
 const MIN_PREFIX = 4;
+
+// Words that describe an INDUSTRY rather than name a company. These are the tokens that change when
+// an issuer rebrands and the ones headlines drop, so two names that differ only in these refer to
+// the same company. Nothing here is distinctive on its own: "Therapeutics" identifies nobody.
+const DESCRIPTOR = new Set([
+  'THERAPEUTICS', 'THERAPEUTIC', 'THERAPIES', 'PHARMACEUTICALS', 'PHARMACEUTICAL', 'PHARMA',
+  'PHARMACEUTICALS', 'BIOPHARMA', 'BIOPHARMACEUTICALS', 'BIOSCIENCES', 'BIOSCIENCE', 'BIOTECH',
+  'BIO', 'ONCOLOGY', 'SCIENCES', 'SCIENCE', 'LABS', 'LABORATORIES', 'LABORATORY', 'MEDICAL',
+  'MEDICINES', 'MEDICINE', 'HEALTH', 'HEALTHCARE', 'DIAGNOSTICS', 'GENETICS', 'GENOMICS',
+  'TECHNOLOGIES', 'TECHNOLOGY', 'TECH', 'SYSTEMS', 'SOLUTIONS', 'SOFTWARE', 'NETWORKS',
+  'COMMUNICATIONS', 'SEMICONDUCTOR', 'SEMICONDUCTORS', 'MICROSYSTEMS', 'ROBOTICS', 'DYNAMICS',
+  'INDUSTRIES', 'INDUSTRIAL', 'MANUFACTURING', 'MATERIALS', 'CHEMICALS', 'ENERGY', 'RESOURCES',
+  'MINING', 'MINERALS', 'PETROLEUM', 'EXPLORATION', 'UTILITIES', 'POWER',
+  'FINANCIAL', 'FINANCE', 'BANCORP', 'BANCSHARES', 'BANKSHARES', 'CAPITAL', 'INVESTMENTS',
+  'INVESTMENT', 'PARTNERS', 'ENTERPRISES', 'VENTURES', 'PROPERTIES', 'REALTY', 'ESTATE',
+  'INTERNATIONAL', 'GLOBAL', 'WORLDWIDE', 'EQUITY', 'EQUITIES', 'ASSET', 'ASSETS', 'FUNDS', 'FUND', 'BRANDS', 'STORES', 'FOODS', 'MOTORS', 'AIRLINES',
+  'AEROSPACE', 'DEFENSE', 'TRANSPORTATION', 'LOGISTICS', 'SERVICES', 'MANAGEMENT', 'CONSULTING',
+]);
 
 export function candidateSpans(headline) {
   const words = [];
@@ -267,18 +328,78 @@ export function resolveCompanies(headline, index, max = 3) {
     // An EXACT name beats a longer name that merely starts the same way. "Apple" is Apple Inc, not
     // an ambiguity between Apple and Apple Hospitality REIT; without this the right answer loses to
     // a company that happens to extend it.
-    const exact = new Set(), prefix = new Set();
+    const exact = new Set(), prefix = new Set(), curatedHit = new Set();
     for (const e of entries) {
       if (spanToks.length > e.toks.length) continue;
       if (!spanToks.every((t, i) => t === e.toks[i])) continue;
+      if (e.curated && spanToks.length === e.toks.length) curatedHit.add(e.ticker);
       (spanToks.length === e.toks.length ? exact : prefix).add(e.ticker);
     }
+    // A CURATED ALIAS OUTRANKS THE REFERENCE TABLE. The alias map states a fact about one listing;
+    // the reference table is scraped and occasionally disagrees with itself. "BANK OF AMERICA" is
+    // filed against BAC twice and, in one stale row, against VKI — a closed-end fund that happens to
+    // hold the name — so the two collided and the second-largest US bank resolved to nothing. Where
+    // a deliberate entry exists it is the answer, and ambiguity among the rest stops mattering.
+    if (curatedHit.size) { exact.clear(); for (const t of curatedHit) exact.add(t); }
     // A SINGLE word identifies a company only when that word IS the company's whole name, or when
     // it is a curated alias. One word prefix-matching a longer name is where every remaining false
     // positive came from: "Take Flight" reached Take-Two, "Watchdog" reached a bank, "Space" reached
     // an ETF, "Trump's" reached T. Rowe. Two or more words may still prefix-match, because "NextEra
     // Energy" against "NEXTERA ENERGY INC" is a real reference and not a coincidence of vocabulary.
-    const hits = exact.size ? exact : (spanToks.length >= 2 ? prefix : new Set());
+    // ── the same company under another name ───────────────────────────────────
+    // A company's DISTINCTIVE HEAD survives a rename; what changes is the industry word after it.
+    // Cullinan Oncology became Cullinan Therapeutics, and headlines still say the old name, so the
+    // span ["CULLINAN","ONCOLOGY"] met the registrant's ["CULLINAN","THERAPEUTICS"] and was refused
+    // on the second token. Nurix Therapeutics is written "Nurix", one token, and a single-token
+    // span could only ever match a company whose WHOLE name was that word.
+    //
+    // Both resolve here, and only when every token AFTER the shared head — on both sides — is an
+    // industry descriptor carrying no identity. That is what keeps "Take Flight" away from Take-Two
+    // Interactive: the tail there is ["TWO","INTERACTIVE"], and "TWO" names something.
+    // Gated on what is ACCEPTED, not on what was collected. A single-token span like "Nurix" does
+    // populate `prefix` (NURIX does begin NURIX THERAPEUTICS) but that set is discarded below for
+    // one-word spans, so keying off prefix.size meant the branch never ran for exactly the case it
+    // was written for.
+    const accepted = exact.size ? exact : (spanToks.length >= 2 ? prefix : new Set());
+    const renamed = new Set();
+    if (!accepted.size) {
+      const head = spanToks[0];
+      // THE HEAD MUST BE THE COMPANY'S OWN WORD. Sharing a head is not evidence of being the same
+      // company when the head is a word many companies start with: "Alaris Equity Partners" reached
+      // Equity Bancshares and "Primaris REIT" reached the same, because EQUITY + a descriptor tail
+      // described both. So the head has to identify ONE issuer across the whole index — counting
+      // every company filed under it, not just the ones with a descriptor tail, because a rival
+      // with a distinctive tail is exactly the evidence that the head is generic.
+      const sameHead = new Set(entries.filter((e) => e.toks[0] === head).map((e) => e.ticker));
+      const distinct = pickOne(sameHead);             // collapses a share-class family to one
+      // TWO TOKENS MINIMUM, the same bar every other path in this file holds a single word to. A
+      // bare head is only unique in OUR universe, which is not the market: "Piedmont plans $200M
+      // exchangeable notes offering" found exactly one Piedmont on file and resolved to Piedmont
+      // Realty — while Piedmont Lithium, absent from the reference data, is the likelier subject of
+      // a convertible-notes story. The span's own descriptor is what confirms the industry, and
+      // without one there is nothing to confirm. This costs real matches; a wrong cashtag costs more.
+      // A head that is ITSELF an industry word is not distinctive, by definition — and the
+      // uniqueness test above cannot catch that, because uniqueness depends on how much reference
+      // data happens to be loaded. "Equity Partners" reached Equity Bancshares whenever the index
+      // held only one Equity-headed issuer. Requiring the head to carry identity of its own is a
+      // property of the word, not of the data, so it holds however sparse the universe is.
+      if (distinct && spanToks.length >= 2 && head.length >= MIN_PREFIX
+          && !DESCRIPTOR.has(head) && !AMBIGUOUS_WORD.has(head)
+          && spanToks.slice(1).every((t) => DESCRIPTOR.has(t))) {
+        for (const e of entries) {
+          if (e.toks[0] !== head) continue;
+          if (!e.toks.slice(1).every((t) => DESCRIPTOR.has(t))) continue;
+          renamed.add(e.ticker);
+        }
+      }
+    }
+
+    const hits = accepted;
+    if (!hits.size && renamed.size) {
+      const t2 = pickOne(renamed);
+      if (t2) { claimed.add(c); if (!out.includes(t2)) out.push(t2); if (out.length >= max) break; }
+      continue;
+    }
     if (!hits.size) continue;
     const t = pickOne(hits);
     if (!t) continue;                                  // ambiguous: two companies, or two classes

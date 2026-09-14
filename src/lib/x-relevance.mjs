@@ -241,6 +241,66 @@ const US_NEXUS = /\b(?:u\.?s\.?|america\w*|federal reserve|fed\b|fomc|treasury|t
 // the data-release types, where a foreign print may genuinely not reach US markets, are tested.
 const NEEDS_NEXUS = new Set(['macro_data', 'monetary', 'rates_credit', 'congress']);
 
+// ── SEC 8-K items ────────────────────────────────────────────────────────────
+// An 8-K headline is not prose — "CHIPOTLE MEXICAN GRILL INC · 8-K (5.02,9.01)" is the EDGAR index
+// line — so the catalyst patterns above, which read sentences, find nothing in it. But the ITEM
+// NUMBERS are a materiality taxonomy the SEC itself publishes, and they are already in the row.
+// Reading them is not interpretation: item 5.02 IS "Departure of Directors or Certain Officers",
+// by definition, and mapping it to `exec` says nothing the filing did not.
+//
+// This is a CLASSIFICATION of an already-ingested row. No filing is fetched, parsed or stored
+// differently, and nothing in the SEC pipeline is touched.
+// Ordered most consequential first: a filing reporting both an acquisition and an exhibit index is
+// an acquisition, and the first match wins.
+const EIGHT_K_ITEMS = new Map([
+  ['1.03', ['bankruptcy', 'files for bankruptcy or receivership']],
+  ['4.02', ['legal', 'says previously issued financial statements cannot be relied on']],
+  ['5.01', ['ma', 'reports a change in control']],
+  ['2.01', ['ma', 'completes an acquisition or disposition of assets']],
+  ['3.01', ['bankruptcy', 'receives a delisting or listing-rule notice']],
+  ['2.04', ['bankruptcy', 'triggers acceleration of a financial obligation']],
+  ['2.02', ['earnings', 'reports results of operations']],
+  ['5.02', ['exec', 'reports a departure or appointment of directors or officers']],
+  ['3.02', ['offering', 'reports unregistered sales of equity securities']],
+  ['2.03', ['offering', 'takes on a direct financial obligation']],
+  ['2.06', ['operations', 'records a material impairment']],
+  ['2.05', ['operations', 'books costs for exit or disposal activities']],
+  ['4.01', ['legal', 'changes its certifying accountant']],
+  ['1.01', ['contract', 'enters a material definitive agreement']],
+  ['1.02', ['contract', 'terminates a material definitive agreement']],
+]);
+
+// Items that are administrative by design. 9.01 is the exhibit index and accompanies almost every
+// filing; 7.01 is Reg FD, usually a press release the wires already carried; 8.01 is the catch-all.
+// A filing carrying ONLY these is not an event.
+const ROUTINE_ITEMS = new Set(['1.04', '3.03', '5.03', '5.04', '5.05', '5.06', '5.07', '5.08',
+  '6.01', '6.02', '6.03', '6.04', '6.05', '7.01', '8.01', '9.01']);
+
+/** The item codes an 8-K headline carries, e.g. "... · 8-K (5.02,9.01)" -> ['5.02','9.01']. */
+export function eightKItems(headline) {
+  const m = String(headline || '').match(/·\s*8-K[^(]*\(([\d.,\s]+)\)/i);
+  return m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/** The registrant name, i.e. everything before the form separator. */
+export const filingRegistrant = (headline) => String(headline || '').split('·')[0].trim();
+
+/**
+ * Classify an SEC filing row by its item codes. Returns the most material item only — a filing
+ * reporting both an acquisition and an exhibit index is an acquisition.
+ * @returns {{type:string, scope:string, item:string, phrase:string}|null}
+ */
+export function classifyFiling(ev) {
+  if (String(ev?.source_type || '') !== 'filing') return null;
+  const items = eightKItems(ev?.headline);
+  if (!items.length) return null;
+  // Ordered by the map's own order, which runs from most to least consequential.
+  for (const [code, [type, phrase]] of EIGHT_K_ITEMS) {
+    if (items.includes(code)) return { type, scope: COMPANY, item: code, phrase };
+  }
+  return null;            // every item present is routine
+}
+
 /**
  * Classify a canonical event as a tradeable catalyst, or refuse it.
  *
@@ -257,6 +317,17 @@ export function classifyCatalyst(ev) {
   // The headline decides the TYPE. The summary may only supply a supporting figure: letting it
   // decide the type lets a boilerplate paragraph reclassify an unrelated headline.
   const hay = `${headline} ${summary}`;
+
+  // An SEC filing is classified by its item codes, not by its index line. The prose disqualifiers
+  // below are written for sentences and would read an EDGAR header as noise either way.
+  const filing = classifyFiling(ev);
+  if (filing) {
+    // The same company rule as any other company catalyst: no symbol, no post. SEC rows carry the
+    // registrant's own ticker, so in practice this always holds.
+    if (!(ev?.tickers || []).filter(Boolean).length) return null;
+    return { ...filing, hasTicker: true, figure: false };
+  }
+  if (String(ev?.source_type || '') === 'filing') return null;   // routine or unrecognised filing
 
   for (const [, re] of DISQUALIFIERS) if (re.test(headline)) return null;
   if (anticipatedOnly(headline)) return null;

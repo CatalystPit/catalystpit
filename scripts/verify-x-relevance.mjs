@@ -151,13 +151,42 @@ ok('Fed expectations building is not a monetary event',
   type('August mortgage lock volume falls as Fed rate hike expectations build') === null);
 ok('an actual cut is', type('Fed cuts rates by 25 basis points') === 'monetary');
 
-sec('halts stay excluded, SEC stays untouched');
+sec('halts stay excluded');
 const halt = { headline: 'AAPL halted, volatility pause', headline_status: 'not_required', source_type: 'halt',
   tickers: ['AAPL'], importance: 3, sources: ['NASDAQ'], published_at: '2026-09-14T05:00:00Z' };
 ok('a halt still never posts', !buildCandidate(halt, null, Date.parse('2026-09-14T05:10:00Z'), []).publishable);
-ok('SEC is still never eligible',
-  buildCandidate({ ...halt, source_kind: 'sec', source_type: null, headline_status: 'composed' },
-    null, Date.parse('2026-09-14T05:10:00Z'), []).blocked === 'SEC');
+
+sec('SEC filings are judged by their 8-K items, not by being SEC');
+// POLICY, revised: source_kind 'sec' is no longer a permanent exile. The SOURCE still qualifies
+// nothing — the filing has to pass the same catalyst rules as anything else.
+const NOWF = Date.parse('2026-09-14T05:10:00Z');
+const filing = (h, o = {}) => buildCandidate({ headline: h, headline_status: 'not_required',
+  source_type: 'filing', source_kind: 'sec', category: 'FILING', sources: ['SEC'],
+  published_at: '2026-09-14T05:00:00Z', importance: 2, tickers: ['CMG'], ...o }, null, NOWF, []);
+ok('an SEC filing is no longer blocked outright', filing('CHIPOTLE MEXICAN GRILL INC · 8-K (5.02,9.01)').eligible);
+ok('...with its own reason', filing('CHIPOTLE MEXICAN GRILL INC · 8-K (5.02,9.01)').reason === 'sec filing');
+for (const [item, want] of [['1.03', 'bankruptcy'], ['2.01', 'ma'], ['2.02', 'earnings'],
+  ['2.03', 'offering'], ['3.02', 'offering'], ['5.02', 'exec'], ['1.01', 'contract'],
+  ['4.02', 'legal'], ['3.01', 'bankruptcy'], ['5.01', 'ma']]) {
+  const c = classifyCatalyst({ headline: `ACME CORP · 8-K (${item},9.01)`, source_type: 'filing', tickers: ['ACME'] });
+  ok(`item ${item} is a ${want}`, c?.type === want, `got ${c?.type}`);
+}
+// Routine items are the bulk of the feed and none of them is an event.
+for (const item of ['7.01', '8.01', '9.01', '5.03', '5.07', '5.08', '1.04', '3.03']) {
+  ok(`item ${item} alone is not an event`,
+    classifyCatalyst({ headline: `ACME CORP · 8-K (${item})`, source_type: 'filing', tickers: ['ACME'] }) === null);
+}
+ok('the most material item wins over the exhibit index',
+  classifyCatalyst({ headline: 'ACME CORP · 8-K (9.01,2.01,7.01)', source_type: 'filing', tickers: ['ACME'] })?.type === 'ma');
+ok('a filing with no resolved symbol does not post',
+  classifyCatalyst({ headline: 'ACME CORP · 8-K (5.02)', source_type: 'filing', tickers: [] }) === null);
+// The post is composed from the SEC's own item definition, never from the index line.
+const post = filing('CHIPOTLE MEXICAN GRILL INC · 8-K (5.02,9.01)').text;
+ok('the EDGAR index line never reaches the post', !/8-K \(|·/.test(post || ''), post);
+ok('the item is named in plain words', /departure or appointment of directors or officers/.test(post || ''), post);
+ok('the item number is cited', /8-K item 5\.02/.test(post || ''), post);
+ok('the registrant is not shouted', /Chipotle Mexican Grill/.test(post || ''), post);
+ok('the cashtag is the registrant\'s own symbol', /^\$CMG: /.test(post || ''), post);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

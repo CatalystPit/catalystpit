@@ -21,7 +21,13 @@ ok('an exchange halt is eligible', evaluate(base(halt)).eligible);
 ok('...with its own reason', evaluate(base(halt)).reason === 'exchange halt');
 ok('a publisher fragment is still NOT eligible',
   !evaluate(base({ headline_status: 'rewrite_pending' })).eligible);
-ok('SEC is still never eligible', !evaluate(base({ source_kind: 'sec' })).eligible);
+// POLICY, revised: SEC is no longer a permanent exile. A filing is eligible when it is a filing
+// row the engine wrote; whether it POSTS is then decided by its 8-K items like any other catalyst.
+// A non-filing row that merely carries source_kind 'sec' still has no Catalyst wording and waits.
+ok('an SEC row without Catalyst wording still waits',
+  !evaluate(base({ source_kind: 'sec', headline_status: 'rewrite_pending' })).eligible);
+ok('an SEC 8-K filing row IS eligible',
+  evaluate(base({ source_kind: 'sec', source_type: 'filing', headline_status: 'not_required' })).eligible);
 
 console.log('\n=== 2. halts are NEVER auto-posted ===');
 // POLICY CHANGE. Halts used to be judged on materiality and some published. They are now excluded

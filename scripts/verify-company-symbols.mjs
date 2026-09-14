@@ -111,5 +111,46 @@ console.log('\n=== a single word only counts when it IS the whole name ===');
 ok('Take does not reach Take-Two', resolveCompanies('Ready To Take Flight', idx).length === 0);
 ok('Stanley does not reach Stanley Black & Decker', resolveCompanies('Stanley said the plan works', idx).length === 0);
 
+console.log('\n=== coverage: names the resolver used to miss ===');
+// Every one of these was a real event blocked for having no ticker, measured over 24 hours.
+const cov = buildIndex([
+  { ticker: 'BAC', company: 'BANK OF AMERICA CORP /DE/' },
+  { ticker: 'VKI', company: 'BANK OF AMERICA' },          // stale reference row, collides with BAC
+  { ticker: 'RFIL', company: 'R F INDUSTRIES LTD' },
+  { ticker: 'CGEM', company: 'Cullinan Therapeutics, Inc.' },
+  { ticker: 'TLX', company: 'Telix Pharmaceuticals Ltd' },
+  { ticker: 'HUBG', company: 'Hub Group, Inc.' },
+  { ticker: 'EQBK', company: 'Equity Bancshares, Inc.' },
+  { ticker: 'PDM', company: 'Piedmont Realty Trust, Inc.' },
+]);
+// A connector word is scaffolding on BOTH sides. The headline span never contains "of" — it is
+// lowercase and spans are built from capitalised words — so the registrant could not keep it.
+ok('"Bank of America" resolves', resolveCompanies('Bank of America lowers trading guidance', cov).join(',') === 'BAC');
+ok('...and a curated alias outranks a colliding reference row',
+  resolveCompanies('Bank of America reports Q3 results', cov).join(',') === 'BAC');
+// Initials: "R F INDUSTRIES" as filed vs "RF Industries" as written.
+ok('a run of initials is one token', tokens('R F INDUSTRIES LTD').join('|') === 'RF|INDUSTRIES');
+ok('"RF Industries" resolves', resolveCompanies('RF Industries earnings miss by $0.01', cov).join(',') === 'RFIL');
+ok('an ampersand name is NOT collapsed', tokens('AT&T').join('|') === 'AT|T');
+// Renamed / trading-name differences: the head survives, the industry word changes.
+ok('"Cullinan Oncology" reaches Cullinan Therapeutics',
+  resolveCompanies('BTIG raises Cullinan Oncology price target', cov).join(',') === 'CGEM');
+ok('"Telix Pharma" reaches Telix Pharmaceuticals',
+  resolveCompanies('Telix Pharma wins FDA approval', cov).join(',') === 'TLX');
+
+console.log('\n=== the rename rule must not invent a ticker ===');
+// A generic head shared with another issuer is not evidence. Both of these produced a WRONG cashtag
+// before the uniqueness and two-token guards.
+ok('"Alaris Equity Partners" does not reach Equity Bancshares',
+  resolveCompanies('Alaris Equity Partners announces $100 million offering', cov).length === 0,
+  JSON.stringify(resolveCompanies('Alaris Equity Partners announces $100 million offering', cov)));
+// Unique in OUR universe is not unique in the market: Piedmont Lithium is simply absent from it.
+ok('a bare single-word head never resolves by rename',
+  resolveCompanies('Piedmont plans $200M exchangeable notes offering', cov).length === 0,
+  JSON.stringify(resolveCompanies('Piedmont plans $200M exchangeable notes offering', cov)));
+ok('the old single-word false positives stay refused',
+  resolveCompanies('Ready To Take Flight', idx).length === 0
+  && resolveCompanies('Stanley said the plan works', idx).length === 0);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
