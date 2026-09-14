@@ -66,6 +66,31 @@ const withDeadline = (p, ms) => new Promise((resolve, reject) => {
   );
 });
 
+// Resolve once X's embed has actually RENDERED, not merely once the element exists.
+//
+// widgets.js resolves createTimeline when it has inserted the iframe; the document then loads and X
+// sizes the frame to its content. Between those two moments the frame is present and empty, so
+// swapping on the promise alone puts a blank dark rectangle on screen and lets it fill in — the
+// flash this is here to prevent. A frame taller than a single row is the observable proof that the
+// timeline painted, and it is the only signal available: the embed is cross-origin, so neither its
+// load event nor its contents can be read from here.
+const MIN_RENDERED_PX = 120;
+const PAINT_TIMEOUT = 8000;
+const PAINT_POLL_MS = 100;
+const waitPainted = (slot, isCancelled) => new Promise((resolve, reject) => {
+  const started = Date.now();
+  const tick = () => {
+    if (isCancelled()) return resolve(undefined);        // teardown, not a failure
+    const frame = slot?.querySelector('iframe');
+    if (frame && frame.offsetHeight >= MIN_RENDERED_PX) return resolve(frame);
+    // Timing out is a real failure: it routes into the retry/backoff below, which leaves the tape
+    // already on screen exactly where it is.
+    if (Date.now() - started > PAINT_TIMEOUT) return reject(new Error('embed never painted'));
+    setTimeout(tick, PAINT_POLL_MS);
+  };
+  tick();
+});
+
 // Load platform.twitter.com/widgets.js exactly once; resolve with window.twttr when ready.
 let widgetsPromise = null;
 function loadWidgets() {
@@ -142,15 +167,30 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     builtHeadRef.current = headRef.current?.id ?? undefined;
 
     // The new timeline is built into its OWN slot, appended alongside the current one and hidden
-    // until it paints. Two reasons: the visible tape never blanks during a refresh, and the iframe
-    // is never moved between parents — moving an iframe in the DOM forces it to reload, which would
-    // undo the whole point. On success the old slots are dropped; on failure nothing is touched and
-    // the trader keeps looking at the tape they already had.
+    // until it paints. The iframe is never moved between parents — moving an iframe in the DOM
+    // forces it to reload, which would undo the whole point. On failure nothing is touched and the
+    // trader keeps looking at the tape they already had.
+    //
+    // EVERY slot stays absolutely positioned for its whole life, and the swap only ever flips
+    // `visibility`. That is what removes the black flash: the previous version finished by setting
+    // `slot.style.cssText = ''`, which moved the slot from absolute to static and dropped its
+    // width:100%. Re-laying-out a cross-origin iframe makes it repaint from scratch, and X's dark
+    // embed paints its background before its content — so the tape blinked black on every refresh.
+    // A box that never changes cannot trigger that repaint.
     let slot = null;
     const swapIn = () => {
       if (!ref.current || !slot) return;
-      for (const child of [...ref.current.children]) if (child !== slot) child.remove();
-      slot.style.cssText = '';
+      const incoming = slot;
+      incoming.style.visibility = 'visible';
+      incoming.style.pointerEvents = 'auto';
+      incoming.style.zIndex = '1';
+      // Drop the outgoing tape only after the browser has actually presented a frame containing
+      // the new one. Removing it in the same frame leaves a gap the compositor can show.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (!ref.current) return;
+        for (const child of [...ref.current.children]) if (child !== incoming) child.remove();
+        incoming.style.zIndex = '';
+      }));
     };
 
     const attempt = (i) => {
@@ -161,7 +201,7 @@ export default function XTape({ height = 620, onClose, bare = false }) {
           if (slot) slot.remove();
           slot = document.createElement('div');
           // Laid out (so the widget measures a real width) but invisible and inert until ready.
-          slot.style.cssText = 'position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none';
+          slot.style.cssText = 'position:absolute;left:0;top:0;width:100%;visibility:hidden;pointer-events:none;z-index:0';
           ref.current.appendChild(slot);
           // Every createTimeline call mints a new embedId, which widgets.js puts in the iframe URL,
           // so successive rebuilds within a page already miss the browser cache. The FIRST build of
@@ -190,13 +230,18 @@ export default function XTape({ height = 620, onClose, bare = false }) {
           if (cancelled) return;
           // Trust what is actually in the DOM over the promise's word. X resolves with undefined when
           // it declines (429), and has also been seen to resolve oddly while the iframe did paint.
-          if (el || slot?.querySelector('iframe')) {
-            swapIn();
-            builtAtRef.current = Date.now();
-            setStatus('ready');
-            return;
-          }
-          throw new Error('timeline not created');
+          if (!el && !slot?.querySelector('iframe')) throw new Error('timeline not created');
+          // An iframe EXISTING is not a rendered tape. widgets.js resolves once it has inserted the
+          // element; X then loads the document and sizes the frame to its content. Swapping on the
+          // promise alone put an empty frame on screen and let it fill in afterwards, which is the
+          // other half of the flash. Wait for the frame to have real height first.
+          return waitPainted(slot, () => cancelled);
+        })
+        .then((painted) => {
+          if (cancelled || painted === undefined) return;
+          swapIn();
+          builtAtRef.current = Date.now();
+          setStatus('ready');
         })
         .catch(() => {
           if (cancelled) return;
@@ -322,10 +367,15 @@ export default function XTape({ height = 620, onClose, bare = false }) {
       </div>
 
       {/* Timeline mounts here. Kept in the DOM across states so createTimeline always has its target. */}
+      {/* Every slot inside is absolutely positioned so a swap never re-lays-out an iframe, which
+          means this container has to carry the height itself or it would collapse to nothing. The
+          height asked of X is the height reserved here, so the box is stable across a refresh. */}
       <div ref={ref}
         onPointerEnter={() => { hoverRef.current = true; hoverSinceRef.current = Date.now(); }}
         onPointerLeave={() => { hoverRef.current = false; }}
-        style={{ position: 'relative', padding: '0 2px', minHeight: status === 'ready' ? undefined : 0 }} />
+        style={{ position: 'relative', padding: '0 2px', overflow: 'hidden',
+          height: status === 'ready' ? height : undefined,
+          minHeight: status === 'ready' ? undefined : 0 }} />
 
       {status === 'loading' && (
         <div style={{ padding: '18px 14px', fontSize: 12, color: C.dim, textAlign: 'center' }}>
