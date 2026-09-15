@@ -383,9 +383,27 @@ export async function resolveHoldingTickers({ cap = 500, timeBudgetMs = 200000, 
 export async function resolveHoldingsByName({ cap = 8000 } = {}) {
   // Use the DOMINANT (most-common) issuer per CUSIP — a stray mislabeled filing shouldn't drive the
   // ticker. CUSIP is authoritative; this is only the fallback for CUSIPs OpenFIGI couldn't map.
+  //
+  // DERIVATIVE AND DEBT LINES ARE NOT EVIDENCE OF IDENTITY. An option line carries a pseudo-CUSIP and
+  // the sponsor's or underlying's name, and a note line carries the financing subsidiary's, so
+  // letting either speak for a security is one of the ways an unrelated instrument acquires a ticker.
+  // The EXISTING position classifier decides that — no second hand-written class regex — together
+  // with put_call, which flags a derivative outright. Such rows are excluded from the VOTE only; the
+  // holdings themselves are untouched here.
+  //
+  // A CUSIP the repair has REJECTED is skipped entirely. Without that, the next cron pass would put
+  // the inference straight back onto the holdings the repair had just cleared.
   const res = await db.execute(sql`
     SELECT cusip, (array_agg(issuer ORDER BY cnt DESC, issuer))[1] AS issuer
-    FROM (SELECT cusip, issuer, count(*)::int AS cnt FROM fund_holdings WHERE ticker IS NULL AND issuer IS NOT NULL GROUP BY cusip, issuer) t
+    FROM (
+      SELECT h.cusip, h.issuer, count(*)::int AS cnt
+        FROM fund_holdings h
+        LEFT JOIN security_position_class s
+          ON s.cusip = h.cusip AND s.cls = h.class AND s.put_call = h.put_call
+       WHERE h.ticker IS NULL AND h.issuer IS NOT NULL AND h.put_call = ''
+         AND (s.kind IS NULL OR s.kind NOT IN ('debt', 'option', 'warrant', 'right', 'preferred'))
+         AND NOT EXISTS (SELECT 1 FROM cusip_map c WHERE c.cusip = h.cusip AND c.status = 'rejected')
+       GROUP BY h.cusip, h.issuer) t
     GROUP BY cusip
     LIMIT ${cap}
   `);
@@ -401,13 +419,14 @@ export async function resolveHoldingsByName({ cap = 8000 } = {}) {
     const cs = arr(b.map((p) => p.cusip)), ts = arr(b.map((p) => p.ticker));
     // WRITES ONLY WHERE NOTHING AUTHORITATIVE EXISTS, AND NEVER OVER ONE.
     //
-    // This used to overwrite unconditionally, which is how an ETF sponsor's name became 92 unrelated
-    // Invesco funds on IVZ, 35 ProShares funds on AGQ and 19 Innovator ETFs on INHD: the matcher
-    // prefix-matches a registrant name, and a sponsor's name is a prefix of every product it
-    // sponsors. It also meant a later OpenFIGI answer could be replaced by an earlier inference.
+    // This used to overwrite unconditionally, which is how an ETF sponsor's name became 33 unrelated
+    // Invesco securities on IVZ, 7 ProShares CUSIP prefixes on AGQ and the Innovator trust on INHD:
+    // the matcher prefix-matched a registrant name, and a sponsor's name is a prefix of every product
+    // it sponsors. It also meant a later OpenFIGI answer could be replaced by an earlier inference.
     //
     // An inferred mapping is now the LAST word, never the overriding one: a CUSIP OpenFIGI has
-    // already answered — resolved or explicitly unresolved — keeps that answer.
+    // already answered — resolved or explicitly unresolved — keeps that answer, and a CUSIP the
+    // repair has rejected keeps its rejection.
     await db.execute(sql`INSERT INTO cusip_map (cusip, ticker, status, confidence, source, updated_at)
       SELECT u.cusip, u.t, 'resolved', 'medium', 'sec-name', now() FROM unnest(${cs}, ${ts}) AS u(cusip, t)
       ON CONFLICT (cusip) DO NOTHING`);
@@ -418,7 +437,8 @@ export async function resolveHoldingsByName({ cap = 8000 } = {}) {
       WHERE h.cusip = m.cusip AND h.ticker IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM cusip_map c
-           WHERE c.cusip = h.cusip AND c.source IN ('openfigi', 'manual', 'consensus'))`);
+           WHERE c.cusip = h.cusip
+             AND (c.source IN ('openfigi', 'manual', 'consensus') OR c.status = 'rejected'))`);
   }
   return { resolved: matches.length };
 }
