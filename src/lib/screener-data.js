@@ -1,6 +1,6 @@
 import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
-import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals } from './schema';
+import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
 
@@ -781,6 +781,21 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
 
   // Persistent descriptive meta (market cap / sector / exchange / asset type) from Polygon details.
   const metaByT = new Map((await db.select().from(screenerMeta)).map((r) => [r.ticker, r]));
+
+  // INSTITUTIONAL OWNERSHIP %, which the screener has always OFFERED as a filter ("Inst Own %") and
+  // never populated: the column was declared in the schema, wired into screener-filters, and left
+  // null for all 17,643 rows, so selecting it silently matched nothing. The rollup that holds the
+  // number has 14,232 rows and is rebuilt nightly by institutions-ownership; it just was not read.
+  //
+  // Values above 100% are dropped rather than shown. Institutions cannot hold more than the shares
+  // outstanding; every one of the 570 such rows traces to a stale or wrong shares_out in
+  // screener_meta, and the tail is absurd on its face — the worst reads 728,573%. A wrong denominator
+  // is not a signal, and publishing it would be worse than leaving the cell empty.
+  const ownPctByT = new Map((await db.select({
+    ticker: tickerInstitutionalOwnership.ticker, pct: tickerInstitutionalOwnership.ownershipPct,
+  }).from(tickerInstitutionalOwnership))
+    .filter((r) => r.pct != null && r.pct > 0 && r.pct <= 100)
+    .map((r) => [r.ticker, r.pct]));
   // Persistent fundamentals (price-independent computed values + raw inputs) from Polygon Financials.
   const fundByT = new Map((await db.select().from(screenerFundamentals)).map((r) => [r.ticker, r]));
 
@@ -926,6 +941,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       candlestick: pv?.candlestick ?? null, pattern: pv?.pattern ?? null,
       insiderNet90d: i?.net ?? null, insiderBuyers90d: i?.buyers ?? null, insiderBuy90d: !!i?.buy, insiderSell90d: !!i?.sell,
       congressNet90d: c?.net ?? null, congressBuy90d: !!c?.buy,
+      instOwnPct: ownPctByT.get(t) ?? null,
       fundNetQoq: fundNet.get(t) ?? null, consensusScore: consensus.get(t) ?? null,
       hasMaterial8k: has8k.has(t), newsRecent: has8k.has(t),
       newsCategory: newsCat.get(t) ?? null, breakingToday: breaking.has(t),
@@ -967,6 +983,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
         candlestick: sql`excluded.candlestick`, pattern: sql`excluded.pattern`,
         insiderNet90d: sql`excluded.insider_net_90d`, insiderBuyers90d: sql`excluded.insider_buyers_90d`, insiderBuy90d: sql`excluded.insider_buy_90d`, insiderSell90d: sql`excluded.insider_sell_90d`,
         congressNet90d: sql`excluded.congress_net_90d`, congressBuy90d: sql`excluded.congress_buy_90d`,
+        instOwnPct: sql`excluded.inst_own_pct`,
         fundNetQoq: sql`excluded.fund_net_qoq`, consensusScore: sql`excluded.consensus_score`,
         hasMaterial8k: sql`excluded.has_material_8k`, newsRecent: sql`excluded.news_recent`,
         newsCategory: sql`excluded.news_category`, breakingToday: sql`excluded.breaking_today`,

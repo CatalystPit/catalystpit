@@ -11,6 +11,8 @@ const POLYGON_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const TTL = 60;
+// An empty result is cached only long enough to stop a hot loop against the provider.
+const EMPTY_TTL = 15;
 const CACHE_KEY = 'movers:v1';
 const MIN_PRICE = 1;          // drop sub-$1 noise
 const MIN_VOL = 200000;       // liquidity floor
@@ -58,7 +60,13 @@ export async function GET() {
 
     const [gainers, losers, active] = await Promise.all([fetchDirection('gainers'), fetchDirection('losers'), fetchActive()]);
     const payload = { gainers, losers, active, asOf: null };   // asOf stamped client-side to avoid Date in cache key
-    await kvSet(CACHE_KEY, payload, TTL);
+    // DO NOT CACHE A FAILURE AS IF IT WERE AN ANSWER. Each fetch above returns [] for any non-OK
+    // response, so a single provider error used to be written to KV and served back as a normal,
+    // empty result for the full TTL — the panel went blank and nothing said why. Caching an empty
+    // payload briefly still protects the provider from a hot loop, but the panel recovers on the
+    // next minute instead of holding an outage open.
+    const empty = !gainers.length && !losers.length && !active.length;
+    await kvSet(CACHE_KEY, payload, empty ? EMPTY_TTL : TTL);
     return Response.json({ configured: true, cached: false, ...payload }, { headers: NO_STORE });
   } catch (e) {
     return Response.json({ configured: !!POLYGON_KEY, gainers: [], losers: [], active: [], error: e.message }, { status: 200, headers: NO_STORE });
