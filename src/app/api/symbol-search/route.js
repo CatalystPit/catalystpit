@@ -1,5 +1,6 @@
 import { db } from '../../../lib/db';
 import { sql } from 'drizzle-orm';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 
@@ -37,6 +38,9 @@ async function loadTickers() {
 }
 
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'symsearch', 'heavy');
+  if (_rl) return _rl;
+
   const q = (new URL(request.url).searchParams.get('q') || '').trim().toUpperCase();
   if (q.length < 1 || q.startsWith('/')) return Response.json({ results: [] });
 

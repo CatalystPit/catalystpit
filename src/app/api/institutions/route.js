@@ -2,6 +2,7 @@ import { db } from '../../../lib/db';
 import { fundHoldings, fundFilings, institutions, tickerInstitutionalOwnership } from '../../../lib/schema';
 import { INSTITUTIONS, INSTITUTION_BY_SLUG } from '../../../lib/institutions.mjs';
 import { and, eq, ne, inArray, desc, sql, isNotNull, ilike, or } from 'drizzle-orm';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 
@@ -428,6 +429,9 @@ async function tickerView(ticker) {
 }
 
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'inst', 'heavy');
+  if (_rl) return _rl;
+
   try {
     const sp = new URL(request.url).searchParams;
     const ac = sp.get('ac');

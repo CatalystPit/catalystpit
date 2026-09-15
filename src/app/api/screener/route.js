@@ -3,6 +3,7 @@ import { db } from '../../../lib/db';
 import { screenerStocks } from '../../../lib/schema';
 import { buildConds, SORT_MAP, FILTERS } from '../../../lib/screener-filters';
 import { ensureScreenerTables } from '../../../lib/screener-data';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -11,6 +12,9 @@ const NO_STORE = { 'Cache-Control': 'public, max-age=30' };
 // GET ?filters=<json>&sort=&dir=&page=&ticker=  → screen our screener_stocks universe.
 // Also returns the filter registry (once) so the client renders categories without hardcoding.
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'screener', 'heavy');
+  if (_rl) return _rl;
+
   try {
     await ensureScreenerTables();
     const sp = new URL(request.url).searchParams;

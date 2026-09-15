@@ -3,6 +3,7 @@ import { tickerDailyCandles, shortInterest } from '../../../lib/schema';
 import { eq, desc } from 'drizzle-orm';
 import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
 import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 
@@ -272,6 +273,9 @@ async function resolveValidity(sym, profile, quote) {
 }
 
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'ticker', 'provider');
+  if (_rl) return _rl;
+
   try {
     const sym = (new URL(request.url).searchParams.get('symbol') || '').toUpperCase().trim();
 

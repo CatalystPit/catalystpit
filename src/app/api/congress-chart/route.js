@@ -1,6 +1,7 @@
 import { db } from '../../../lib/db';
 import { congressTrades, tickerDailyCandles, tickerPriceQuality } from '../../../lib/schema';
 import { and, eq, gte, lte, sql, asc } from 'drizzle-orm';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import {
   resolveRange, startDateFor, isoDate, fetchPolygonDaily, spanToFetch, DEFAULT_RANGE, RANGES,
   lastFetchableDay, MAX_RANGE,
@@ -22,6 +23,9 @@ const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 const CACHE = { 'Cache-Control': 'public, s-maxage=900, stale-while-revalidate=3600' };
 
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'congchart', 'provider');
+  if (_rl) return _rl;
+
   try {
     const { searchParams } = new URL(request.url);
     const ticker = searchParams.get('ticker')?.toUpperCase().trim() || '';

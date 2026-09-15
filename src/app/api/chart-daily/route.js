@@ -2,6 +2,7 @@ import { db } from '../../../lib/db';
 import { tickerDailyCandles } from '../../../lib/schema';
 import { and, eq, gte, lte, asc, sql } from 'drizzle-orm';
 import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -45,6 +46,9 @@ function startDateFor(range, now) {
 }
 
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'chart', 'provider');
+  if (_rl) return _rl;
+
   let ticker = '', range = DEFAULT_RANGE;
   try {
     const params = new URL(request.url).searchParams;

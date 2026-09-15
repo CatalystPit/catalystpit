@@ -1,3 +1,4 @@
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 export const runtime = 'nodejs';
 
 // Ticker logo proxy. Resolves a per-ticker logo server-side and streams it back.
@@ -29,6 +30,9 @@ async function tryLogo(url) {
 }
 
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'logo', 'provider');
+  if (_rl) return _rl;
+
   const t = (new URL(request.url).searchParams.get('ticker') || '').toUpperCase().trim();
   if (!TICKER_RE.test(t)) return new Response(null, { status: 404 });
 

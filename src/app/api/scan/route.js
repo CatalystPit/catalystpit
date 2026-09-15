@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { runPitScan } from '../../../lib/pitscan-feed';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
@@ -42,6 +43,9 @@ const shape = (r) => ({
 });
 
 export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'scan', 'provider');
+  if (_rl) return _rl;
+
   try {
     await auth();   // terminal is Pro-gated in the UI; API stays lightweight
     const { searchParams } = new URL(request.url);

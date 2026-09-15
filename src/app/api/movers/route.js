@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
+import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -51,7 +52,10 @@ async function fetchActive() {
   return (j.tickers || []).map(shape).filter(usable).sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, LIMIT);
 }
 
-export async function GET() {
+export async function GET(request) {
+  const _rl = await apiRateLimit(request, 'movers', 'provider');
+  if (_rl) return _rl;
+
   try {
     await auth();
     if (!POLYGON_KEY) return Response.json({ configured: false, gainers: [], losers: [], active: [] }, { headers: NO_STORE });
