@@ -10,9 +10,11 @@
 // analyst rating into upgrade vs downgrade, for example) — all read directly from the text, never
 // guessed.
 
+// NOTE: this module is imported by PitWire.jsx and therefore SHIPS TO THE BROWSER. Keep it to
+// display vocabulary and pure classifiers. Anything that names a vendor, maps a source code, or
+// encodes an operator judgement about a source belongs in wire-sources.server.mjs.
 import { actionClass } from './event-cluster.mjs';
 import { isTaxonomyLabel } from './news-normalize.mjs';
-import { isTrustedSource } from './trusted-sources.mjs';
 
 // ── event types ──────────────────────────────────────────────────────────────
 // Keyed to what the engine can actually establish. There is deliberately no "guidance" type
@@ -101,24 +103,27 @@ export function categoryOf(ev, type = eventTypeOf(ev)) {
 
 // ── source groups ────────────────────────────────────────────────────────────
 // 61 individual feeds is an unusable filter list, so sources are grouped by what a trader actually
-// thinks in terms of. Individual sources stay addressable underneath for anyone who wants them.
+// thinks in terms of.
+//
+// THE VENDOR ARRAYS ARE NOT HERE. This module is imported by PitWire.jsx, which is a client
+// component, so everything in it ships to the browser — and the `sources: [...]` arrays that used to
+// sit on these entries put the ENTIRE internal roster, all thirty vendors including the two unlaunched
+// paid APIs, into a public JS chunk that anyone could fetch without signing in.
+//
+// What the filter UI needs is the key and the label. What maps a source code to a group is
+// server-only, in wire-sources.server.mjs, and is reached exclusively through /api/wire — which
+// already returns the computed `wireGroup` and has never returned the source itself.
 export const SOURCE_GROUPS = [
-  { key: 'wires',    label: 'Breaking Wires',      sources: ['FINANCIALJUICE', 'BREAKINGMARKETNEWS', 'WALTERBLOOMBERG'] },
-  { key: 'media',    label: 'Financial Media',     sources: ['BLOOMBERG', 'WSJ', 'CNBC', 'YAHOO', 'MARKETWATCH', 'FT', 'ECONOMIST', 'AXIOS', 'TECHCRUNCH'] },
-  { key: 'research', label: 'Research & Analysis', sources: ['SEEKINGALPHA', 'INVESTING', 'ZEROHEDGE'] },
-  { key: 'biotech',  label: 'Biotech Trade Press', sources: ['BIOSPACE', 'BIOTECHNEWSWIRE'] },
-  { key: 'pr',       label: 'PR Wires',            sources: ['GLOBENEWSWIRE', 'PRNEWSWIRE', 'EINPRESSWIRE', 'PRCOM'] },
-  { key: 'gov',      label: 'Government / Regulatory', sources: ['FED', 'ECB', 'CFTC', 'FDA', 'FTC', 'DOJ', 'EIA'] },
-  { key: 'sec',      label: 'SEC Filings',         sources: ['SEC'] },
-  { key: 'exchange', label: 'Exchange / Halts',    sources: ['NASDAQ'] },
-  { key: 'apis',     label: 'News APIs',           sources: ['MARKETAUX', 'STOCKDATA'] },
+  { key: 'wires',    label: 'Breaking Wires' },
+  { key: 'media',    label: 'Financial Media' },
+  { key: 'research', label: 'Research & Analysis' },
+  { key: 'biotech',  label: 'Biotech Trade Press' },
+  { key: 'pr',       label: 'PR Wires' },
+  { key: 'gov',      label: 'Government / Regulatory' },
+  { key: 'sec',      label: 'SEC Filings' },
+  { key: 'exchange', label: 'Exchange / Halts' },
+  { key: 'apis',     label: 'News APIs' },
 ];
-const GROUP_OF = (() => {
-  const m = new Map();
-  for (const g of SOURCE_GROUPS) for (const s of g.sources) m.set(s, g.key);
-  return m;
-})();
-export const sourceGroupOf = (source) => GROUP_OF.get(String(source || '').toUpperCase()) || 'other';
 
 // ── market cap buckets ───────────────────────────────────────────────────────
 // Thresholds in dollars. `null` when we hold no reliable cap for the ticker — such events are
@@ -175,15 +180,18 @@ const isAdvice = (e) => {
   return ADVICE.some((re) => re.test(h));
 };
 
+// Only key + label. The `test` predicates that used to sit on these entries classify an event and
+// now live in wire-sources.server.mjs — the client never ran them. It filters on the server-computed
+// `wireNoise` array and uses these entries purely to render the filter chips.
 export const NOISE_FILTERS = [
-  { key: 'advice',      label: 'Opinion & advice',     test: isAdvice },
-  { key: 'lowPr',       label: 'Low-impact PR',        test: (e) => e.source_type === 'press_release' && (e.importance ?? 0) <= 1 },
-  { key: 'transcripts', label: 'Transcripts',          test: (e) => e.source_type === 'transcript' },
-  { key: 'commentary',  label: 'General commentary',   test: (e) => e.source_type === 'analysis' && (e.importance ?? 0) <= 1 },
-  { key: 'papers',      label: 'Working papers',       test: (e) => e.source_type === 'research' },
-  { key: 'govRoutine',  label: 'Routine gov notices',  test: (e) => (e.source_type === 'data' || e.source_type === 'speech') && (e.importance ?? 0) <= 1 },
-  { key: 'crypto',      label: 'Crypto',               test: (e) => CRYPTO.test(`${e.headline} ${e.summary || ''}`) },
-  { key: 'foreign',     label: 'Foreign markets',      test: (e) => FOREIGN.test(`${e.headline} ${e.summary || ''}`) },
+  { key: 'advice',      label: 'Opinion & advice' },
+  { key: 'lowPr',       label: 'Low-impact PR' },
+  { key: 'transcripts', label: 'Transcripts' },
+  { key: 'commentary',  label: 'General commentary' },
+  { key: 'papers',      label: 'Working papers' },
+  { key: 'govRoutine',  label: 'Routine gov notices' },
+  { key: 'crypto',      label: 'Crypto' },
+  { key: 'foreign',     label: 'Foreign markets' },
 ];
 
 // ── impact ───────────────────────────────────────────────────────────────────
@@ -192,26 +200,5 @@ export const IMPACT = [
   { key: 1, label: 'MEDIUM' },   { key: 0, label: 'LOW' },
 ];
 
-// Decorate a raw canonical event with its display facets. Called once per event on arrival, then
-// cached on the object, so filtering never re-runs classification.
-export function decorate(ev) {
-  const type = eventTypeOf(ev);
-  return {
-    ...ev,
-    // A CATEGORY LABEL IS NOT A SYMBOL, and this is the single point every wire row passes through
-    // on its way to the browser — so no stored row, however old, can hand "MACRO" to the chart. The
-    // label itself is untouched: it is wireCategory below, which is what paints the green chip.
-    tickers: (ev.tickers || []).filter((t) => t && !isTaxonomyLabel(t)),
-    wireType: type,
-    wireCategory: categoryOf(ev, type),
-    wireGroup: sourceGroupOf(ev.source),
-    wireCap: capBucketOf(ev.market_cap),
-    // A trusted source is never classified as noise. These filters exist to keep commentary out of
-    // the useful presets, and a breaking-news wire the operator has designated high-signal must not
-    // be capable of being discarded by them — a flash about crypto or a foreign index is still a
-    // flash. Nothing else about the row changes, and it remains fully filterable by impact,
-    // category, event type, ticker and source group like every other event.
-    wireNoise: isTrustedSource(ev.source) ? []
-      : NOISE_FILTERS.filter((n) => { try { return n.test(ev); } catch { return false; } }).map((n) => n.key),
-  };
-}
+// decorate() moved to wire-sources.server.mjs. It was the only thing in this module that needed the
+// source->group mapping and the trusted-source list, and keeping it here shipped both to browsers.

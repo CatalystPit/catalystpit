@@ -1,5 +1,5 @@
 import { canonicalWire } from '../../../lib/primary-events';
-import { decorate } from '../../../lib/wire-taxonomy.mjs';
+import { decorate } from '../../../lib/wire-sources.server.mjs';
 
 export const runtime = 'nodejs';
 
@@ -34,11 +34,42 @@ export const runtime = 'nodejs';
 // held "according to a document seen by Bloomberg", "(Source: Bloomberg)", and in one case a slab of
 // a publisher's raw <span property="schema:name"> markup. It is still read server-side, before this
 // runs, by the noise and event-type classifiers, and it is still on primary_events.
-const PUBLISHER_FIELDS = ['source', 'source_name', 'source_headline', 'original_url', 'summary'];
+// ── public view model ────────────────────────────────────────────────────────
+// AN EXPLICIT WHITELIST, not a blacklist. The route used to spread the decorated DB row and delete a
+// handful of publisher fields, which meant every column added to primary_events would have started
+// appearing in the public JSON automatically. Audited live, that shipped nine pipeline fields —
+// first_seen_at, last_seen_at, received_at, enriched_at, headline_status, facts, source_kind,
+// source_type and market_cap — none of which the client reads, and which together advertised our
+// ingestion latency, our enrichment lag and the internal states of the rewrite queue.
+//
+// Anything not named below does not leave the server. Adding a field here has to be a decision.
+const PUBLIC_FIELDS = [
+  'seq',             // cursor + React key + update merge — see the note below
+  'headline',
+  'published_at',    // the ONLY timestamp. It is the event's own, not ours.
+  'tickers',
+  'category',
+  'importance',
+  'source_count',    // renders the "·3" corroboration badge; says how many, never who
+  'wireType', 'wireCategory', 'wireGroup', 'wireCap', 'wireNoise',   // filter facets
+];
+
+// WHY `seq` STAYS. It is a DB sequence and the audit flagged it, but it is load-bearing in three
+// places at once: it is the live-tail cursor (?since=<seq>, and the client derives its own cursor by
+// taking the max seq it has seen), it is the React key for every row, and it is the join key that
+// merges an enrichment update into the row already on screen instead of appending a duplicate.
+// Making it opaque means changing the cursor protocol, which is the one part of Pit Wire that must
+// not break — so it is deliberately left for a separate, properly tested change rather than folded
+// into a hardening pass. What it reveals is event volume, not sources, feeds or credentials.
+//
+// SEC rows keep their attribution. A filing must say SEC and must link to the filing — that is
+// deliberate public attribution, not a leak, and removing it would misrepresent the source.
+const SEC_FIELDS = ['source', 'source_name', 'original_url', 'source_kind'];
+
 function present(ev) {
-  if (ev.source_kind === 'sec') return ev;
-  const out = { ...ev };
-  for (const k of PUBLISHER_FIELDS) delete out[k];
+  const out = {};
+  for (const k of PUBLIC_FIELDS) if (ev[k] !== undefined) out[k] = ev[k];
+  if (ev.source_kind === 'sec') for (const k of SEC_FIELDS) if (ev[k] !== undefined) out[k] = ev[k];
   return out;
 }
 

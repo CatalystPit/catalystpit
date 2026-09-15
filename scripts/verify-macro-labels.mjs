@@ -14,7 +14,10 @@
 
 import { statedTickersIn, cleanHeadline, canonicalHeadline, formatEconomicRelease,
   isTaxonomyLabel, TAXONOMY_LABELS } from '../src/lib/news-normalize.mjs';
-import { CATEGORIES, EVENT_TYPES, SOURCE_GROUPS, decorate } from '../src/lib/wire-taxonomy.mjs';
+import { CATEGORIES, EVENT_TYPES, SOURCE_GROUPS } from '../src/lib/wire-taxonomy.mjs';
+// decorate() moved server-side with the vendor roster; wire-taxonomy.mjs now ships only display
+// vocabulary to the browser. Imported from the unguarded impl because server-only blocks plain Node.
+import { decorate } from '../src/lib/wire-sources.mjs';
 import { formatPost } from '../src/lib/x-autopost.mjs';
 
 let pass = 0, fail = 0;
