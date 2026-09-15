@@ -2,7 +2,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
-  isPermanentFailure } from './facebook-post.mjs';
+  isPermanentFailure, failureSpendsAttempt } from './facebook-post.mjs';
 
 // PUBLISHING WALTER BLOOMBERG TO THE CATALYST PIT FACEBOOK PAGE.
 //
@@ -97,8 +97,10 @@ async function postToPage(cfg, message, fetchImpl = fetch) {
     + (err.code ? ` code ${err.code}` : '')
     + (err.error_subcode ? `/${err.error_subcode}` : '')
     + (err.message ? `: ${String(err.message).slice(0, 160)}` : '');
-  // A credential failure is not a property of this post — see isPermanentFailure.
-  return { ok: false, reason: why, permanent: isPermanentFailure(r.status, err.code) };
+  // A credential failure is not a property of this post — see isPermanentFailure. The code is
+  // returned so the caller can tell an expired token from a rejected post; it is a small integer
+  // from Meta's error envelope and carries nothing sensitive.
+  return { ok: false, reason: why, code: err.code ?? null, permanent: isPermanentFailure(r.status, err.code) };
 }
 
 /**
@@ -162,10 +164,16 @@ export async function publishFacebookCandidate(id, { fetchImpl = fetch } = {}) {
              posted_at = now(), updated_at = now() where id = ${id}`);
       return { sent: true, fbPostId: out.id };
     }
+    // THE ATTEMPT IS STILL TAKEN BEFORE THE REQUEST, and only given back once Meta has answered
+    // that the problem was the credential. That ordering is what keeps the crash-safety property:
+    // a process that dies mid-request leaves the row in `publishing` with the attempt counted, and
+    // is still never picked up again automatically.
+    const spent = failureSpendsAttempt(out.code);
     await db.execute(sql`update fb_post_candidates
        set status = ${out.permanent ? 'failed' : 'pending'},
+           attempts = ${spent ? sql`attempts` : sql`greatest(attempts - 1, 0)`},
            failure_reason = ${out.reason}, updated_at = now() where id = ${id}`);
-    return { sent: false, reason: out.reason, permanent: out.permanent };
+    return { sent: false, reason: out.reason, permanent: out.permanent, authFailure: !spent };
   } catch (e) {
     // The request itself failed, so Meta may or may not have seen it. Left in `publishing` rather
     // than released, for the reason in the doc comment above.
@@ -194,7 +202,15 @@ export async function publishPendingFacebook({ limit = MAX_PER_RUN, fetchImpl = 
      order by id asc limit ${limit}`)).rows ?? [];
   const results = [];
   for (const r of rows) results.push({ id: r.id, ...(await publishFacebookCandidate(r.id, { fetchImpl })) });
-  return { sent: results.filter((x) => x.sent).length, enabled: true, results };
+  // An expired or revoked credential is the one failure a human has to act on, and it is silent
+  // otherwise: the queue simply stops draining. Surfaced in the run log, with no credential in it.
+  const authFailures = results.filter((x) => x.authFailure).length;
+  if (authFailures) {
+    console.warn(`[facebook] CREDENTIAL FAILURE on ${authFailures} of ${results.length} candidates`
+      + ' — the Page token is expired, revoked or of the wrong type. Posts are being HELD, not lost,'
+      + ' until it is replaced or they pass the freshness limit.');
+  }
+  return { sent: results.filter((x) => x.sent).length, enabled: true, authFailures, results };
 }
 
 /**
@@ -216,6 +232,39 @@ export async function publishFacebookTest({ fetchImpl = fetch } = {}) {
   return out.ok
     ? { sent: true, fbPostId: out.id, message }
     : { sent: false, reason: out.reason, readiness: facebookReadiness(cfg) };
+}
+
+/**
+ * CREDENTIAL HEALTH, derived from what the queue already recorded.
+ *
+ * No new table and no new state: every rejection already stores its reason, and Meta's OAuth code
+ * is in that string. Counting the auth failures since the last successful publish is enough to tell
+ * a working credential from an expired or revoked one — zero means healthy, a non-zero count with a
+ * recent timestamp means the token is broken RIGHT NOW and posts are being held.
+ *
+ * NOTHING SENSITIVE LEAVES. The count and two timestamps are computed here; the failure text itself
+ * is never returned. Meta does not echo a token in an error body, and this does not read one either.
+ */
+export async function facebookAuthHealth() {
+  await ensureFacebookTable();
+  const rows = (await db.execute(sql`
+    with last_ok as (
+      select coalesce(max(posted_at), to_timestamp(0)) as t from fb_post_candidates where fb_post_id is not null)
+    select count(*) filter (where c.failure_reason like '%code 190%')::int              as auth_failures,
+           max(c.updated_at) filter (where c.failure_reason like '%code 190%')          as last_auth_failure,
+           (select t from last_ok)                                                      as last_published
+      from fb_post_candidates c, last_ok
+     where c.updated_at > last_ok.t`)).rows ?? [];
+  const r = rows[0] || {};
+  const n = Number(r.auth_failures) || 0;
+  return {
+    authFailuresSinceLastSuccess: n,
+    lastAuthFailureAt: r.last_auth_failure ? new Date(r.last_auth_failure).toISOString() : null,
+    lastPublishedAt: r.last_published && Number(new Date(r.last_published)) > 0
+      ? new Date(r.last_published).toISOString() : null,
+    // The one line an operator needs: is the credential working?
+    credentialHealthy: n === 0,
+  };
 }
 
 /** Configuration status for an operator. Reports WHETHER a token is set, never what it is. */

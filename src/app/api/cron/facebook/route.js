@@ -1,5 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
-import { publishPendingFacebook, publishFacebookTest, facebookStatus } from '../../../../lib/facebook-publisher';
+import { publishPendingFacebook, publishFacebookTest, facebookStatus,
+  facebookAuthHealth } from '../../../../lib/facebook-publisher';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -39,7 +40,10 @@ export async function GET(request) {
 
   const sp = new URL(request.url).searchParams;
   try {
-    if (sp.get('status') === '1') return Response.json({ ok: true, ...facebookStatus() });
+    // Configuration readiness AND credential health. Booleans, counts and timestamps only.
+    if (sp.get('status') === '1') {
+      return Response.json({ ok: true, ...facebookStatus(), ...(await facebookAuthHealth()) });
+    }
     if (sp.get('test') === '1') {
       const out = await publishFacebookTest();
       console.log(`[facebook] test post: ${out.sent ? 'sent ' + out.fbPostId : 'failed ' + out.reason}`);

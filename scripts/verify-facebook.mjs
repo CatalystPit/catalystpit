@@ -4,7 +4,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
-  FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE } from '../src/lib/facebook-post.mjs';
+  FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE,
+  isAuthFailure, failureSpendsAttempt } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -283,6 +284,69 @@ section('15. a broken credential delays a post, it does not destroy it');
     pub.indexOf("status = 'publishing'") < callSite);
   ok('a row left mid-publish is still never auto-retried', /left mid-publish, needs manual review/.test(pub));
   ok('the provenance gate is still terminal', /return \{ sent: false, reason: 'provenance: ' \+ why, permanent: true \}/.test(pub));
+}
+
+section('16. an auth outage holds posts, it does not spend their budget');
+{
+  ok('a credential failure does not spend an attempt', failureSpendsAttempt(190) === false);
+  ok('a string code from JSON behaves the same', failureSpendsAttempt('190') === false);
+  ok('isAuthFailure agrees', isAuthFailure(190) && isAuthFailure('190'));
+  // Everything else still spends one. This is the budget the 3-attempt cap protects.
+  for (const c of [100, 200, 4, 2, 1, 368, 506, 1487390, 19, 90, 1190, 1900, null, undefined])
+    ok(`code ${c} still spends an attempt`, failureSpendsAttempt(c) === true);
+  ok('a transport failure with no code spends one', failureSpendsAttempt(undefined) === true);
+
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  const fn = pub.slice(pub.indexOf('export async function publishFacebookCandidate'),
+                       pub.indexOf('export const MAX_FB_ATTEMPTS'));
+  ok('the attempt is still taken BEFORE the request',
+    fn.indexOf('attempts = attempts + 1') < fn.indexOf('await postToPage(cfg, cur.message'),
+    'crash safety depends on this ordering');
+  ok('it is given back only after Meta answers',
+    fn.indexOf('await postToPage(cfg, cur.message') < fn.indexOf('failureSpendsAttempt(out.code)'));
+  ok('the rollback cannot go negative', /greatest\(attempts - 1, 0\)/.test(fn));
+  ok('an ordinary failure leaves the count alone', /\? sql`attempts`/.test(fn));
+  ok('the publisher asks the shared rule, not its own copy', /failureSpendsAttempt\(out\.code\)/.test(fn));
+  ok('Meta\'s error code reaches the caller', /code: err\.code \?\? null/.test(pub));
+
+  // The freshness window is what bounds an auth retry. It must be untouched, and it is the ONLY
+  // thing standing between "held" and "retried forever".
+  ok('the window still bounds every retry', /MAX_AGE_MINUTES = 30/.test(pub)
+    && /created_at > now\(\) - \(\$\{MAX_AGE_MINUTES\}/.test(pub));
+  ok('nothing widened the drain selection',
+    /status = 'pending' and fb_post_id is null/.test(pub));
+  ok('the 3-attempt cap is still checked before Meta is contacted',
+    pub.indexOf('attempts exhausted') < pub.indexOf('await postToPage(cfg, cur.message'));
+  ok('MAX_FB_ATTEMPTS is still 3', /MAX_FB_ATTEMPTS = 3/.test(pub));
+  ok('a row left mid-publish is still never auto-retried', /left mid-publish, needs manual review/.test(pub));
+  ok('content and permission rejections are still terminal',
+    isPermanentFailure(400, 100) && isPermanentFailure(403, 200));
+}
+
+section('17. credential health is observable without exposing anything');
+{
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  const fn = pub.slice(pub.indexOf('export async function facebookAuthHealth'),
+                       pub.indexOf('export function facebookStatus'));
+  ok('it exists', fn.length > 200);
+  ok('it counts auth failures since the last success', /code 190/.test(fn) && /last_ok/.test(fn));
+  ok('it reports a single healthy/unhealthy verdict', /credentialHealthy/.test(fn));
+  ok('it returns counts and timestamps only, never the failure text',
+    !/failure_reason\s*[,:]/.test(fn.split('return {')[1] || ''));
+  ok('it reads no credential at all', !/process\.env/.test(fn) && !/cfg\.token/.test(fn));
+  ok('it adds no publishing path', !/postToPage|fetchImpl|graph\.facebook/.test(fn));
+  ok('it creates no new table', !/CREATE TABLE/i.test(fn));
+
+  const run = pub.slice(pub.indexOf('export async function publishPendingFacebook'));
+  ok('a run surfaces auth failures in the log', /CREDENTIAL FAILURE/.test(run));
+  ok('the log line carries no credential',
+    !/cfg\.token|access_token|process\.env/.test(run.slice(0, run.indexOf('return {'))));
+  ok('the run result counts them', /authFailures/.test(run));
+
+  const route = await readFile(new URL('../src/app/api/cron/facebook/route.js', import.meta.url), 'utf8');
+  ok('status=1 reports credential health', /facebookAuthHealth\(\)/.test(route));
+  ok('the route still returns no token', !/access_token|cfg\.token/.test(route));
+  ok('the route is still authenticated', /Unauthorized/.test(route) && /x-vercel-cron/.test(route));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

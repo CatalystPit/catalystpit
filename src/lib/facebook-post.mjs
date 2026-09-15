@@ -105,6 +105,9 @@ export function facebookConfig(env = process.env) {
  */
 export const META_OAUTH_ERROR_CODE = 190;
 
+/** Whether a Meta rejection is about the CREDENTIAL rather than the post. */
+export const isAuthFailure = (errorCode) => Number(errorCode) === META_OAUTH_ERROR_CODE;
+
 /**
  * Is a Meta rejection permanent FOR THIS POST, or worth another attempt while it is still fresh?
  *
@@ -124,9 +127,24 @@ export const META_OAUTH_ERROR_CODE = 190;
  * on its merits.
  */
 export function isPermanentFailure(httpStatus, errorCode) {
-  if (Number(errorCode) === META_OAUTH_ERROR_CODE) return false;
+  if (isAuthFailure(errorCode)) return false;
   return httpStatus === 400 || httpStatus === 403;
 }
+
+/**
+ * Does this failure spend one of the candidate's publishing attempts?
+ *
+ * Ordinary transient failures do — a rate limit or a 5xx is about this request, and three tries is
+ * the right budget before giving up. A CREDENTIAL failure does not. It is not a property of the
+ * request at all, it will fail identically on every attempt until a human replaces the token, and
+ * spending the budget on it means a post is dead three minutes into an outage that might last hours.
+ *
+ * So an auth failure leaves the count where it was and the candidate stays retryable. What bounds it
+ * is the freshness window, which is the right bound: the post goes out if the credential is fixed
+ * while it is still current news, and expires quietly if it is not. Nothing here can extend that
+ * window, and nothing here makes a candidate eligible that was not already eligible.
+ */
+export const failureSpendsAttempt = (errorCode) => !isAuthFailure(errorCode);
 
 /** Whether we hold everything needed to publish. Never reveals the token, only whether it is set. */
 export function facebookReadiness(cfg) {
