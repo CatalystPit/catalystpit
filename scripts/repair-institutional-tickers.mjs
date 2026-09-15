@@ -24,6 +24,17 @@ import { neon } from '@neondatabase/serverless';
 
 const sql = neon(process.env.DATABASE_URL);
 const APPLY = process.argv.includes('--apply');
+// REASSIGN-ONLY: write the positive corrections, null nothing.
+//
+// The two halves of this repair rest on opposite kinds of evidence. A reassignment happens because an
+// authoritative source POSITIVELY names a different security for that CUSIP — per-CUSIP proof, and it
+// cannot destroy a correct mapping. A null happens because the authority could not map the CUSIP,
+// which is an ABSENCE of evidence, and OpenFIGI cannot map foreign CINS at all: BlackRock Inc's own
+// 9,231 rows and Invesco Ltd's own 740 rows sit in that bucket and are correct today.
+//
+// So this mode runs the first UPDATE and skips the second. The 60% coverage guard is untouched and
+// still blocks the nulling half, which is the half it was built to stop.
+const REASSIGN_ONLY = process.argv.includes('--reassign-only');
 const n = (x) => Number(x).toLocaleString('en-US');
 const AUTH = ['openfigi', 'manual', 'consensus'];
 
@@ -72,7 +83,11 @@ console.log('  no authoritative mapping at all     ' + n(cov.no_authority) + '  
 // OpenFIGI yet. The answer to that is to ask, not to proceed.
 const coverage = cov.authoritative / Math.max(1, cov.cusips);
 console.log('  authoritative coverage              ' + (100 * coverage).toFixed(1) + '%');
-if (APPLY && coverage < 0.6) {
+if (APPLY && REASSIGN_ONLY && coverage < 0.6) {
+  console.log('  (coverage is below the guard, which is why nothing will be NULLed — reassign-only'
+    + ' writes the positive corrections and leaves every unresolved holding alone)');
+}
+if (APPLY && !REASSIGN_ONLY && coverage < 0.6) {
   console.error('\n  REFUSING TO APPLY: only ' + (100 * coverage).toFixed(1) + '% of disputed CUSIPs have'
     + ' authoritative evidence.');
   console.error('  Run the targeted re-resolution first, then re-run this:');
@@ -110,7 +125,18 @@ for (const r of sample) console.log('    ' + String(r.old_ticker).padEnd(9) + '-
 
 if (!APPLY) { console.log('\n(dry run — pass --apply to write)'); process.exit(0); }
 
-console.log('\n=== APPLYING (fund_holdings.ticker only) ===');
+console.log('\n=== APPLYING (fund_holdings.ticker only)'
+  + (REASSIGN_ONLY ? ' — REASSIGN-ONLY, nothing will be nulled' : '') + ' ===');
+
+// The exact CUSIPs about to move. Captured before the write so the KV purge and the cusip_map
+// cleanup below touch precisely this set and nothing else.
+const moved = (await sql.query(`
+  select distinct f.cusip from fund_holdings f join cusip_map m on m.cusip = f.cusip
+   where f.ticker is not null and f.cusip ~ '^[0-9A-Z]{9}$' and f.ticker in (${DISPUTED})
+     and m.source = any($1) and m.ticker is not null and m.ticker <> f.ticker`, [AUTH]))
+  .map((r) => r.cusip);
+console.log('  CUSIPs being corrected  ' + n(moved.length));
+
 // Reassign where an authoritative mapping names a different security.
 const r1 = await sql.query(`
   update fund_holdings f set ticker = m.ticker
@@ -121,22 +147,45 @@ const r1 = await sql.query(`
      and f.ticker in (${DISPUTED})`, [AUTH]);
 console.log('  reassigned  ' + n(r1.rowCount ?? plan.reassigned));
 
-// NULL everything the authority cannot vouch for. Raw facts stay; only the derived ticker goes.
-const r2 = await sql.query(`
-  update fund_holdings f set ticker = null
-   where f.ticker is not null and f.cusip ~ '^[0-9A-Z]{9}$'
-     and f.ticker in (${DISPUTED})
-     and not exists (
-       select 1 from cusip_map m
-        where m.cusip = f.cusip and m.source = any($1) and m.ticker is not null)`, [AUTH]);
-console.log('  nulled      ' + n(r2.rowCount ?? (plan.nulled_auth + plan.nulled_noauth)));
+if (!REASSIGN_ONLY) {
+  // NULL everything the authority cannot vouch for. Raw facts stay; only the derived ticker goes.
+  const r2 = await sql.query(`
+    update fund_holdings f set ticker = null
+     where f.ticker is not null and f.cusip ~ '^[0-9A-Z]{9}$'
+       and f.ticker in (${DISPUTED})
+       and not exists (
+         select 1 from cusip_map m
+          where m.cusip = f.cusip and m.source = any($1) and m.ticker is not null)`, [AUTH]);
+  console.log('  nulled      ' + n(r2.rowCount ?? (plan.nulled_auth + plan.nulled_noauth)));
+} else {
+  console.log('  nulled      0   (reassign-only: ' + n(plan.nulled_auth + plan.nulled_noauth)
+    + ' unresolved holdings left exactly as they are)');
+}
 
-// cusip_map hygiene: a name-inferred row for a CUSIP the authority has since answered is dead weight.
-const r3 = await sql.query(`
+// KV holds a 90-day CUSIP→ticker cache with no invalidation path. A reassigned CUSIP whose stale key
+// survives would be promoted straight back the next time resolveCusips() sees it, undoing the write.
+// ONLY the reassigned CUSIPs are touched; no other key is read or removed.
+const KV_URL = process.env.KV_REST_API_URL, KV_TOKEN = process.env.KV_REST_API_TOKEN;
+let kvPurged = 0, kvMissing = 0;
+if (KV_URL && KV_TOKEN && moved.length) {
+  for (let i = 0; i < moved.length; i += 25) {
+    const batch = moved.slice(i, i + 25);
+    const res = await Promise.all(batch.map((c) =>
+      fetch(`${KV_URL}/del/${encodeURIComponent(`catalystpit:cusip:${c}`)}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}` } })
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+    for (const r of res) { if (r && Number(r.result) > 0) kvPurged++; else kvMissing++; }
+  }
+}
+console.log('  KV cusip keys purged  ' + n(kvPurged) + '   (already absent: ' + n(kvMissing) + ')');
+
+// cusip_map hygiene: a name-inferred row is dead weight once the authority has answered the same
+// CUSIP. Scoped to the CUSIPs this run actually corrected.
+const r3 = moved.length ? await sql.query(`
   delete from cusip_map
-   where source = 'sec-name'
-     and cusip in (select distinct cusip from fund_holdings where cusip ~ '^[0-9A-Z]{9}$')
-     and exists (select 1 from cusip_map m2 where m2.cusip = cusip_map.cusip and m2.source = any($1))`, [AUTH]);
+   where source = 'sec-name' and cusip = any($1)
+     and exists (select 1 from cusip_map m2 where m2.cusip = cusip_map.cusip and m2.source = any($2))`,
+  [moved, AUTH]) : { rowCount: 0 };
 console.log('  cusip_map sec-name rows removed ' + n(r3.rowCount ?? 0));
 
 const after = (await sql.query(`

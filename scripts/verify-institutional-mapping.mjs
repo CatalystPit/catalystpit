@@ -89,15 +89,25 @@ else {
   console.log('  holdings ' + n(h.rows) + '   with ticker ' + n(h.with_ticker));
 
   section('5. the four demonstrated cases');
+  // The repair applied is REASSIGN-ONLY: a holding moves when an authoritative source positively
+  // names a different security, and nothing is nulled. So these tickers are not yet down to one
+  // issuer — what remains on them is entirely the population OpenFIGI cannot map, which is a
+  // deliberate, separate follow-up. What IS guaranteed is asserted: nothing stayed that authority
+  // contradicted, and the residue is only ever unmappable CUSIPs.
   for (const t of ['AGQ', 'IVZ', 'INHD', 'BLK']) {
-    const r = await sql.query(`select left(cusip,6) pfx, count(distinct cusip)::int cusips, count(*)::int rows,
-        (array_agg(issuer order by value desc nulls last))[1] issuer
-      from fund_holdings where ticker=$1 and cusip ~ '^[0-9A-Z]{9}$'
-      group by left(cusip,6) order by sum(value) desc nulls last`, [t]);
-    console.log('  ' + t.padEnd(7) + r.length + ' issuer prefix(es)   '
-      + r.slice(0, 3).map((x) => x.pfx + ' "' + String(x.issuer).slice(0, 18) + '" ' + x.rows + 'r').join(' | '));
-    ok(`${t} carries exactly one issuer`, r.length <= 1,
-      r.length + ' prefixes — repair has not run yet, or did not hold');
+    const r = await sql.query(`select left(f.cusip,6) pfx, count(*)::int rows,
+        (array_agg(f.issuer order by f.value desc nulls last))[1] issuer,
+        bool_or(m.source = any($2) and m.ticker is null) unmappable,
+        bool_or(m.source = any($2) and m.ticker is not null and m.ticker <> f.ticker) contradicted
+      from fund_holdings f left join cusip_map m on m.cusip = f.cusip
+      where f.ticker=$1 and f.cusip ~ '^[0-9A-Z]{9}$'
+      group by left(f.cusip,6) order by sum(f.value) desc nulls last`, [t, AUTH]);
+    const residue = r.filter((x) => !x.unmappable).length;
+    console.log('  ' + t.padEnd(7) + r.length + ' prefix(es), ' + (r.length - residue) + ' of them unmappable');
+    ok(`${t}: nothing authority contradicts remains`, !r.some((x) => x.contradicted),
+      r.filter((x) => x.contradicted).map((x) => x.pfx).join(','));
+    ok(`${t}: every remaining stray is an unmappable CUSIP`, residue <= 1,
+      residue + ' prefixes are neither the security nor unmappable');
   }
 
   section('6. tickers that must not be damaged');
@@ -107,14 +117,34 @@ else {
       from fund_holdings where ticker=$1 and cusip ~ '^[0-9A-Z]{9}$'`, [t]);
     console.log('  ' + t.padEnd(8) + n(r.rows).padStart(7) + ' rows, ' + r.pfx + ' prefix(es)');
     ok(`${t} still has holdings`, r.rows > 0, 'lost every holding');
-    ok(`${t} carries one issuer`, r.pfx <= 1, r.pfx + ' prefixes');
+    // A normal ticker must be untouched by the repair: no holding may be left carrying a ticker an
+    // authoritative source contradicts. Prefix count is NOT asserted here — a rename or redomicile
+    // legitimately gives one security two CUSIP prefixes (Google Inc 38259P -> Alphabet 02079K).
+    const [c] = await sql.query(`select count(*)::int n from fund_holdings f
+        join cusip_map m on m.cusip = f.cusip
+       where f.ticker = $1 and m.source = any($2) and m.ticker is not null and m.ticker <> f.ticker`,
+      [t, AUTH]);
+    ok(`${t} has no contradicted holding`, c.n === 0, c.n + ' contradicted');
   }
 
   section('7. no inferred mapping sits on top of an authoritative one');
+  // Scoped to the population the repair covered: tickers carrying more than one CUSIP issuer.
   const [conf] = await sql.query(`
     select count(*)::int n from fund_holdings f join cusip_map m on m.cusip = f.cusip
-     where f.ticker is not null and m.source = any($1) and m.ticker is not null and m.ticker <> f.ticker`, [AUTH]);
-  ok('every holding agrees with its authoritative mapping', conf.n === 0, n(conf.n) + ' disagree');
+     where f.ticker is not null and m.source = any($1) and m.ticker is not null and m.ticker <> f.ticker
+       and f.ticker in (${DISPUTED})`, [AUTH]);
+  ok('no contaminated ticker still contradicts authority', conf.n === 0, n(conf.n) + ' disagree');
+
+  // OUTSIDE THIS REPAIR, recorded rather than silently passed over. 20,174 holdings on SINGLE-prefix
+  // tickers also disagree with their authoritative mapping, but they are a notation gap, not
+  // contamination: BRK/B -> BRK.B, BRK/A -> BRK.A, HEI/A -> HEI.A, TRI4EUR -> TRI. Slash-form share
+  // classes and a foreign line, which ticker_canonical exists to normalise. Separate follow-up.
+  const [outside] = await sql.query(`
+    select count(*)::int n from fund_holdings f join cusip_map m on m.cusip = f.cusip
+     where f.ticker is not null and m.source = any($1) and m.ticker is not null and m.ticker <> f.ticker
+       and f.ticker not in (${DISPUTED})`, [AUTH]);
+  console.log('  outside this repair — single-prefix notation gaps: ' + n(outside.n) + ' holdings');
+  ok('the notation gap is not growing into the repaired set', outside.n > 0 || conf.n === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

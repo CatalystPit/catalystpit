@@ -175,7 +175,11 @@ section('6. ONE canonical event per release');
   }
   ok('every shared release collapses to one content_hash', collapsed === shared.length,
     collapsed + ' of ' + shared.length);
-  ok('no extra hashes were produced', distinctHashes.size === shared.length,
+  // The guarantee is that ONE release never becomes TWO events — not that two releases can never
+  // become one. Newsfile does republish a story under a second release id (seen live: "Elemental
+  // Royalty Completes the Acquisition of Vizsla Royalties…" carried two ids on the same day), and
+  // collapsing those is the dedupe working, not failing. So: never MORE hashes than releases.
+  ok('no release produced an extra event', distinctHashes.size <= shared.length,
     distinctHashes.size + ' hashes for ' + shared.length + ' releases');
 
   // Idempotence: parsing the same bytes twice must produce identical identity.
