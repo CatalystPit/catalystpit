@@ -628,16 +628,79 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     // `[q0, q1].filter(Boolean)` produced. The null carries the same meaning in the WHERE clause.
     const prevQ = q1 ?? null;
     const rows = await db.execute(sql`
+      -- 1. THE SECURITY THE TICKER NAMES. Filers report far more against an issuer than the one line
+      --    a ticker stands for: MSTR's filers report four convertible-note CUSIPs beside the common
+      --    stock, and a note's shares column is FACE VALUE (1,972,000 of principal), so adding it
+      --    to 564,358 common shares produces a number that means nothing.
+      --
+      --    security_position_class already classifies every position from the filing's own evidence.
+      --    It is applied ONLY to a CUSIP that is not the ticker's own, and that restriction is
+      --    load-bearing. Filers describe a bond ETF with bond words — BSV's own CUSIP carries
+      --    "SHORT TRM BOND" on 3,147 rows and "ETF" on 392 — so classifying positions in isolation
+      --    deleted BSV, VCSH, GOVT and VGIT outright, and resolving each CUSIP to its majority
+      --    verdict deleted them too. Measured: SGOV is ONE CUSIP classified four different ways
+      --    depending on whether a filer wrote "0-3 MNTH TREASRY" or "0-3 MTH TREASURY", which made
+      --    inclusion depend on spelling.
+      --
+      --    The primary CUSIP is the one carrying the most positions for the ticker. It only ever
+      --    PROTECTS a security from exclusion; it never assigns a ticker to one, so it does not
+      --    touch the separate cross-issuer mapping defect.
+      with primary_cusip as (
+        select distinct on (ticker) ticker, cusip
+          from (select h.ticker, h.cusip, count(*)::int c
+                  from fund_holdings h
+                 where (h.quarter = ${q0} or h.quarter = ${prevQ})
+                   and h.ticker is not null and h.put_call = ''
+                 group by h.ticker, h.cusip) z
+         order by ticker, c desc, cusip
+      ),
+      scoped as (
+        select h.ticker, h.cik, h.quarter, h.cusip, h.shares, h.accession, h.filed_date
+          from fund_holdings h
+          left join primary_cusip p on p.ticker = h.ticker
+          left join security_position_class s
+            on s.cusip = h.cusip and s.cls = h.class and s.put_call = h.put_call
+         where (h.quarter = ${q0} or h.quarter = ${prevQ})
+           and h.ticker is not null and h.put_call = ''
+           -- the ticker's own security always counts; anything else must not be debt or a derivative
+           and (h.cusip = p.cusip
+                or s.kind is null
+                or s.kind not in ('debt', 'option', 'warrant', 'right', 'preferred'))
+      ),
+      -- 2. AMENDMENTS. A 13F-HR/A restates the securities it re-lists, so an original and its
+      --    amendment must not both contribute. Measured on live data, 9 of 13 multi-accession
+      --    filings look like restatements, not additive ones. Per (cik, quarter, cusip) the LATEST
+      --    filing wins — filed_date then accession, both descending, so the answer never depends on
+      --    physical row order. Choosing the FILING and then taking its rows, rather than ranking
+      --    rows, is what keeps a filing whole.
+      latest as (
+        select distinct on (cik, quarter, cusip) cik, quarter, cusip, accession
+          from scoped
+         order by cik, quarter, cusip, filed_date desc nulls last, accession desc
+      ),
+      kept as (
+        select sc.ticker, sc.cik, sc.quarter, sc.cusip, sc.shares
+          from scoped sc
+          join latest l on l.cik = sc.cik and l.quarter = sc.quarter
+                       and l.cusip = sc.cusip and l.accession = sc.accession
+      ),
+      -- 3. MANAGER LINES. 13F lets one filer report a security across several internal managers, one
+      --    line each — 10,349 groups do. Those lines ARE one position, and this is the only level
+      --    where summing belongs.
+      per_security as (
+        select ticker, cik, quarter, cusip, sum(shares)::numeric as shares
+          from kept group by ticker, cik, quarter, cusip
+      ),
+      -- 4. ONE SCORE PER FILER. The filer's whole position in the ticker is built first, then scored
+      --    once, so a filer holding two share classes cannot vote twice.
+      per_filer as (
+        select ticker, cik,
+               coalesce(sum(shares) filter (where quarter = ${q0}), 0) as cur,
+               coalesce(sum(shares) filter (where quarter = ${prevQ}), 0) as prev
+          from per_security group by ticker, cik
+      )
       select ticker, sum(case when cur > prev then 1 when cur < prev then -1 else 0 end)::int as net
-        from (
-          select ticker, cik,
-                 coalesce((array_agg(shares order by id desc) filter (where quarter = ${q0}))[1], 0) as cur,
-                 coalesce((array_agg(shares order by id desc) filter (where quarter = ${prevQ}))[1], 0) as prev
-            from fund_holdings
-           where (quarter = ${q0} or quarter = ${prevQ}) and ticker is not null and put_call = ''
-           group by ticker, cik
-        ) x
-       group by ticker`);
+        from per_filer group by ticker`);
     for (const r of (rows.rows ?? rows)) fundNet.set(r.ticker, Number(r.net) || 0);
   }
 
