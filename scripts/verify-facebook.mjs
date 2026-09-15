@@ -4,7 +4,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
-  FB_SOURCE_WHITELIST, FB_MAX_CHARS } from '../src/lib/facebook-post.mjs';
+  FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -241,6 +241,48 @@ section('14. the public attribution never reaches the Page');
   ok('the strip is anchored to the end of the text', /\)\\s\*\$\/i/.test(src) || /\\s\*\$\/i/.test(src));
   ok('it names the handle rather than any handle', !/\\\(@\[A-Za-z\]\+\\\)/.test(src));
   ok('the whitelist is untouched', /FB_SOURCE_WHITELIST = new Set\(\['WALTERBLOOMBERG'\]\)/.test(src));
+}
+
+section('15. a broken credential delays a post, it does not destroy it');
+{
+  // The exact rejection that lost the 18:04 Walter item on 2026-09-15.
+  ok('an expired token is retryable, not terminal', isPermanentFailure(400, 190) === false);
+  ok('code 190 is Meta\'s OAuth code', META_OAUTH_ERROR_CODE === 190);
+  ok('it is retryable whatever the HTTP status', [400, 403, 401, 500].every((s) => !isPermanentFailure(s, 190)));
+  ok('a string code from JSON is handled too', isPermanentFailure(400, '190') === false);
+
+  // Everything Meta refuses on the post's own merits is still terminal, unchanged.
+  ok('a content rejection is still permanent', isPermanentFailure(400, 100) === true);
+  ok('a permissions rejection is still permanent', isPermanentFailure(403, 200) === true);
+  ok('a 400 with no code at all is still permanent', isPermanentFailure(400, undefined) === true);
+  ok('a 400 with a null code is still permanent', isPermanentFailure(400, null) === true);
+  // 190 must be matched exactly, never as a prefix or a substring of another code.
+  for (const c of [19, 1900, 1190, 90])
+    ok(`code ${c} is not mistaken for 190`, isPermanentFailure(400, c) === true);
+
+  // Transient classes were already retryable and must stay that way.
+  ok('a rate limit is still retryable', isPermanentFailure(429, 4) === false);
+  ok('a server error is still retryable', isPermanentFailure(500, 2) === false);
+
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  ok('the publisher uses the shared decision, not its own copy',
+    /permanent: isPermanentFailure\(r\.status, err\.code\)/.test(pub)
+    && !/permanent: r\.status === 400/.test(pub));
+  ok('a retryable failure returns the row to pending', /status = \$\{out\.permanent \? 'failed' : 'pending'\}/.test(pub));
+
+  // THE SAFEGUARDS THIS MUST NOT HAVE LOOSENED.
+  ok('the attempt cap is still 3', /MAX_FB_ATTEMPTS = 3/.test(pub));
+  // Anchored to the CALL SITE. postToPage is DECLARED earlier in the file, so comparing against the
+  // declaration made both of these assertions vacuously false.
+  const callSite = pub.indexOf('await postToPage(cfg, cur.message');
+  ok('the attempt cap is still enforced before contacting Meta',
+    pub.indexOf('attempts exhausted') < callSite);
+  ok('the freshness window is still 30 minutes', /MAX_AGE_MINUTES = 30/.test(pub));
+  ok('the drain still applies it', /created_at > now\(\) - \(\$\{MAX_AGE_MINUTES\}/.test(pub));
+  ok('publishing state is still set before the request',
+    pub.indexOf("status = 'publishing'") < callSite);
+  ok('a row left mid-publish is still never auto-retried', /left mid-publish, needs manual review/.test(pub));
+  ok('the provenance gate is still terminal', /return \{ sent: false, reason: 'provenance: ' \+ why, permanent: true \}/.test(pub));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

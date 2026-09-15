@@ -99,6 +99,35 @@ export function facebookConfig(env = process.env) {
   };
 }
 
+/**
+ * Meta's dedicated OAuth error code. Every credential problem arrives under it — expired session,
+ * revoked token, wrong token type — distinguished further by error_subcode (463 is expiry).
+ */
+export const META_OAUTH_ERROR_CODE = 190;
+
+/**
+ * Is a Meta rejection permanent FOR THIS POST, or worth another attempt while it is still fresh?
+ *
+ * A 400 or 403 about the CONTENT will fail identically forever, so the candidate stops rather than
+ * burning retries. A 400 about the CREDENTIAL will not: it says nothing about the post, it is fixed
+ * outside this process by replacing the token, and the queued item stays valid until the 30-minute
+ * freshness limit expires it.
+ *
+ * Treating the two alike cost a real post. On 2026-09-15 the Page token expired at 18:00:00 UTC;
+ * the 18:04 Walter item was queued correctly, attempted 55 seconds later, rejected with code 190
+ * subcode 463, and marked permanently failed while still four minutes old — unreachable by the
+ * drain even once the credential was replaced. During a longer outage that loses every post rather
+ * than delaying them.
+ *
+ * This ONLY moves a candidate from terminal to retryable. It does not add attempts (still capped at
+ * MAX_FB_ATTEMPTS), does not extend the freshness window, and does not retry anything Meta refused
+ * on its merits.
+ */
+export function isPermanentFailure(httpStatus, errorCode) {
+  if (Number(errorCode) === META_OAUTH_ERROR_CODE) return false;
+  return httpStatus === 400 || httpStatus === 403;
+}
+
 /** Whether we hold everything needed to publish. Never reveals the token, only whether it is set. */
 export function facebookReadiness(cfg) {
   return {

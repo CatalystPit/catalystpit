@@ -1,7 +1,8 @@
 import 'server-only';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
-import { facebookText, facebookEligibility, facebookConfig, facebookReadiness } from './facebook-post.mjs';
+import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
+  isPermanentFailure } from './facebook-post.mjs';
 
 // PUBLISHING WALTER BLOOMBERG TO THE CATALYST PIT FACEBOOK PAGE.
 //
@@ -96,7 +97,8 @@ async function postToPage(cfg, message, fetchImpl = fetch) {
     + (err.code ? ` code ${err.code}` : '')
     + (err.error_subcode ? `/${err.error_subcode}` : '')
     + (err.message ? `: ${String(err.message).slice(0, 160)}` : '');
-  return { ok: false, reason: why, permanent: r.status === 400 || r.status === 403 };
+  // A credential failure is not a property of this post — see isPermanentFailure.
+  return { ok: false, reason: why, permanent: isPermanentFailure(r.status, err.code) };
 }
 
 /**
