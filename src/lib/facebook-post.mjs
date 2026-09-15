@@ -23,10 +23,27 @@ export const FB_MIN_CHARS = 10;
  * Walter verbatim rather than our reading of him. So the canonical headline is only ever a fallback
  * for a row that somehow has no source text, and a row with neither is skipped.
  *
- * The ONLY transformation is transport normalisation Meta requires: CRLF to LF, non-breaking and
- * zero-width characters that survive a Telegram copy/paste removed, trailing whitespace trimmed. No
- * word is added, removed or reordered.
+ * Two transformations, and no others. Transport normalisation Meta requires: CRLF to LF,
+ * non-breaking and zero-width characters that survive a Telegram copy/paste removed, trailing
+ * whitespace trimmed. And the trailing source attribution is dropped — see below. No word is
+ * otherwise added, removed or reordered.
  */
+
+/**
+ * The attribution Walter appends to his own posts, removed from the PUBLIC text only.
+ *
+ * This says nothing about where a post may come from. Walter remains the sole permitted source and
+ * that is enforced by FB_SOURCE_WHITELIST against `ev.source`, which is provenance carried by the
+ * ingested row — never by anything in the text. Stripping the visible credit cannot widen the source
+ * rule, because the source rule has never read the text.
+ *
+ * Anchored to the END and to this handle specifically. Measured over all 105 ingested Walter events,
+ * every one ends with exactly "(@WalterBloomberg)" and not a single character follows it, so a
+ * trailing match covers the whole corpus. It is deliberately NOT a general "(@anything)" strip: a
+ * headline that genuinely ends by quoting another account's handle is content, not attribution.
+ */
+const WALTER_ATTRIBUTION = /\s*\(\s*@WalterBloomberg\s*\)\s*$/i;
+
 export function facebookText(ev) {
   const raw = String(ev?.source_headline ?? '') || String(ev?.headline ?? '');
   if (!raw) return null;
@@ -36,6 +53,7 @@ export function facebookText(ev) {
     .replace(/[​-‍﻿]/g, '')  // zero-width joiners and BOM
     .replace(/[ \t]+\n/g, '\n')       // trailing spaces on a line
     .replace(/\n{3,}/g, '\n\n')       // runs of blank lines
+    .replace(WALTER_ATTRIBUTION, '')  // the public credit, dropped
     .trim();
   return normalised || null;
 }

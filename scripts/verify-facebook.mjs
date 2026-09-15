@@ -38,10 +38,14 @@ ok('the reason names the backfill',
 section('3. the text is Walter verbatim, never our rewrite');
 {
   const t = facebookText(WALTER);
-  ok('uses source_headline, not the Catalyst Pit headline', t === WALTER.source_headline);
+  // Verbatim now means "Walter's words", not "Walter's string": the trailing attribution is the one
+  // thing removed, and removing it is the only difference between these two.
+  ok('uses source_headline, not the Catalyst Pit headline',
+    t === WALTER.source_headline.replace(/\s*\(@WalterBloomberg\)\s*$/, ''));
   ok('does NOT use the rewritten display headline', t !== WALTER.headline);
   ok('keeps the leading asterisk', t.startsWith('*'));
-  ok('keeps the channel watermark', /\(@WalterBloomberg\)/.test(t));
+  ok('keeps every word of the headline itself',
+    t === '*KREMLIN: IF SANCTIONS ARE LIFTED, WORLD ENERGY PRICES WILL GO DOWN', JSON.stringify(t));
   ok('adds no hashtag', !/#/.test(t));
   ok('adds no URL', !/https?:\/\//.test(t));
   ok('adds no Catalyst Pit wording', !/catalyst ?pit/i.test(t));
@@ -191,6 +195,52 @@ section('13. nothing publishes without a real source event');
   // exactly the coupling these two systems must not have.
   ok('facebook-publisher imports nothing from the X side', !/x-publisher|x-autopost/.test(pub));
   ok('it reads only its own table', !/x_post_candidates/.test(pub));
+}
+
+section('14. the public attribution never reaches the Page');
+{
+  // The forms that must be stripped. The first is the real one — all 105 ingested Walter events end
+  // with exactly this — and the rest are spacing and casing variants that cost nothing to cover.
+  for (const [raw, want] of [
+    ['*US 20Y BONDS DRAW 5.420% VS 5.400% (@WalterBloomberg)', '*US 20Y BONDS DRAW 5.420% VS 5.400%'],
+    ['SPOT GOLD FALLS NEARLY 1% TO $4,306.19/OZ (@WalterBloomberg)', 'SPOT GOLD FALLS NEARLY 1% TO $4,306.19/OZ'],
+    ['OIL SURGES (@WalterBloomberg) ', 'OIL SURGES'],
+    ['OIL SURGES(@WalterBloomberg)', 'OIL SURGES'],
+    ['OIL SURGES ( @WalterBloomberg )', 'OIL SURGES'],
+    ['OIL SURGES (@walterbloomberg)', 'OIL SURGES'],
+    ['OIL SURGES (@WALTERBLOOMBERG)', 'OIL SURGES'],
+    ['A multi-line post\n\nwith a body and a credit (@WalterBloomberg)', 'A multi-line post\n\nwith a body and a credit'],
+  ]) ok('stripped: ' + JSON.stringify(raw).slice(0, 52), facebookText({ source_headline: raw }) === want,
+    JSON.stringify(facebookText({ source_headline: raw })));
+
+  ok('no published text may contain the handle in any casing',
+    !/@walterbloomberg/i.test(facebookText(WALTER)));
+
+  // What must NOT be stripped. The rule is anchored to the end AND to this handle, so a mention that
+  // is part of the story survives, and another account's handle is never touched.
+  for (const raw of [
+    'Walter Bloomberg reported the figure first',
+    '(@WalterBloomberg) said the meeting was postponed',
+    'SOURCE SAYS (@SomeoneElse)',
+    'ANALYST CITES @WalterBloomberg AS THE SOURCE OF THE LEAK',
+  ]) ok('kept: ' + JSON.stringify(raw).slice(0, 50), facebookText({ source_headline: raw }) === raw,
+    JSON.stringify(facebookText({ source_headline: raw })));
+
+  // THE CHANGE IS COSMETIC ONLY. Source control lives on ev.source and has never read the text, so
+  // removing the visible credit cannot widen what may be published.
+  ok('the whitelist still gates on the source field, not the text',
+    facebookEligibility({ ...WALTER, source: 'FINANCIALJUICE' }, LIVE).eligible === false
+    && facebookEligibility({ ...WALTER, source: 'WALTERBLOOMBERG' }, LIVE).eligible === true);
+  ok('a non-Walter event is refused even with the attribution present',
+    !facebookEligibility({ ...WALTER, source: 'SEC',
+      source_headline: 'ANYTHING (@WalterBloomberg)' }, LIVE).eligible);
+  ok('a Walter event is still eligible once the attribution is gone',
+    facebookEligibility({ ...WALTER, source_headline: 'SPOT GOLD FALLS NEARLY 1% TO $4,306.19/OZ' }, LIVE).eligible);
+
+  const src = await readFile(new URL('../src/lib/facebook-post.mjs', import.meta.url), 'utf8');
+  ok('the strip is anchored to the end of the text', /\)\\s\*\$\/i/.test(src) || /\\s\*\$\/i/.test(src));
+  ok('it names the handle rather than any handle', !/\\\(@\[A-Za-z\]\+\\\)/.test(src));
+  ok('the whitelist is untouched', /FB_SOURCE_WHITELIST = new Set\(\['WALTERBLOOMBERG'\]\)/.test(src));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
