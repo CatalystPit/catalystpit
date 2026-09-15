@@ -122,6 +122,38 @@ section('4. SIC phrases do not resolve to tickers');
   }
 }
 
+section('5b. what the root fix does NOT change, recorded on purpose');
+{
+  // Rebuilt from live data, the number of SIC phrases that resolve falls from 92 to 11. The eleven
+  // are NOT the description resolving as a name — the index no longer contains one. They are real
+  // companies whose names sit INSIDE an industry phrase, found by the span matcher:
+  //   "HAZARDOUS WASTE MANAGEMENT"        -> WM   (Waste Management)
+  //   "BALL & ROLLER BEARINGS"            -> BALL (Ball Corporation)
+  //   "NATURAL GAS TRANSMISSION"          -> NGS  (Natural Gas Services Group)
+  // That is ordinary span matching against legitimate index entries, not contamination, and it would
+  // fire on any headline containing those words. Narrowing it would mean refusing real company
+  // names, which is a worse trade. Asserted so the distinction stays deliberate.
+  const idx = buildIndex([
+    { ticker: 'WM', company: 'Waste Management, Inc.' },
+    { ticker: 'HWM', company: 'HAZARDOUS WASTE MANAGEMENT', industry: 'HAZARDOUS WASTE MANAGEMENT' },
+  ]);
+  ok('the industry phrase itself is not indexed',
+    resolveCompanies('HAZARDOUS WASTE MANAGEMENT files its annual report', idx, 3).every((x) => x !== 'HWM'));
+  ok('the real company inside it still resolves',
+    resolveCompanies('Waste Management raises its dividend', idx, 3).includes('WM'));
+
+  // Two share classes that are not a prefix family resolve to NOTHING rather than to the wrong half.
+  // Pre-existing and intentional; recorded because the identity fix gives BRK.A a name for the first
+  // time, which makes the refusal fire where it previously could not.
+  const brk = buildIndex([
+    { ticker: 'BRK.A', company: 'BERKSHIRE HATHAWAY INC' },
+    { ticker: 'BRK.B', company: 'BERKSHIRE HATHAWAY INC' },
+  ]);
+  ok('an unqualified share-class name resolves to nothing',
+    resolveCompanies('Berkshire Hathaway trims its stake', brk, 3).length === 0,
+    JSON.stringify(resolveCompanies('Berkshire Hathaway trims its stake', brk, 3)));
+}
+
 // ── 6. the public view model ────────────────────────────────────────────────
 section('6. ticker SEO public model never emits a contaminated name');
 for (const p of CONTAMINANTS.slice(0, 6)) {
@@ -184,7 +216,9 @@ if (!process.env.DATABASE_URL) {
       count(*) filter (where company is not null and company = industry)::int co_eq_ind
       from screener_stocks`);
   console.log('  rows ' + a.rows + '   named ' + a.named + '   null ' + a.nulls + '   company=industry ' + a.co_eq_ind);
-  ok('no row has company = industry', a.co_eq_ind === 0, 'found ' + a.co_eq_ind);
+  ok('no row has company = industry', a.co_eq_ind === 0,
+    'found ' + a.co_eq_ind + ' — screener_stocks has not been rebuilt since the fix; '
+    + 'run the existing nightly job /api/cron/screener');
 
   const bad = await sql.query(`select ticker, company from screener_stocks
      where company is not null and company <> '' order by ticker`);
