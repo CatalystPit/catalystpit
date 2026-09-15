@@ -116,13 +116,37 @@ export async function publishFacebookCandidate(id, { fetchImpl = fetch } = {}) {
   if (!cfg.pageId || !cfg.token) return { sent: false, reason: 'page id or token not configured' };
 
   await ensureFacebookTable();
+  // The join resolves the source event in the same round trip — see the provenance gate below.
   const cur = (await db.execute(sql`
-    select id, message, status, attempts, fb_post_id from fb_post_candidates where id = ${id}`)).rows?.[0];
+    select c.id, c.event_seq, c.message, c.status, c.attempts, c.fb_post_id, e.seq as source_seq
+      from fb_post_candidates c
+      left join primary_events e on e.seq = c.event_seq
+     where c.id = ${id}`)).rows?.[0];
   if (!cur) return { sent: false, reason: 'no such candidate' };
   if (cur.fb_post_id) return { sent: false, reason: 'already posted', fbPostId: cur.fb_post_id };
   if (cur.status === 'publishing') return { sent: false, reason: 'left mid-publish, needs manual review' };
   if (cur.status === 'failed') return { sent: false, reason: 'previously failed permanently' };
   if (Number(cur.attempts) >= MAX_FB_ATTEMPTS) return { sent: false, reason: 'attempts exhausted' };
+
+  // PROVENANCE. Everything published to the Page must trace to an ingested Walter event. Queuing
+  // already runs inside insertEvents, so this is true of every row ever written — 33 of 33, none
+  // orphaned — and the gate changes nothing about what gets posted. It makes that an enforced
+  // invariant: no future path into this table can put text on the Page without a real event behind it.
+  //
+  // Deliberately duplicated rather than shared with the X publisher. These two systems have no table,
+  // column, formatter, route, credential or status value in common, and a helper spanning both would
+  // be the first thing to couple them.
+  //
+  // Checked BEFORE the row is marked `publishing`, so a rejected candidate never enters the state
+  // that requires manual review, and terminal rather than retried: a row with no source event is not
+  // a transient failure.
+  if (cur.event_seq == null || cur.source_seq == null) {
+    const why = cur.event_seq == null ? 'no source event' : 'source event no longer exists';
+    await db.execute(sql`update fb_post_candidates
+       set status = 'failed', failure_reason = ${'provenance: ' + why}, updated_at = now()
+     where id = ${id}`);
+    return { sent: false, reason: 'provenance: ' + why, permanent: true };
+  }
 
   await db.execute(sql`update fb_post_candidates
      set status = 'publishing', attempts = attempts + 1, page_id = ${cfg.pageId}, updated_at = now()

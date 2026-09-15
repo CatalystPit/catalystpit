@@ -107,6 +107,10 @@
     {
       "path": "/api/cron/x-autopost",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/facebook",
+      "schedule": "* * * * *"
     }
   ],
   "headers": [

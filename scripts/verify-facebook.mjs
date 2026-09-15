@@ -131,5 +131,67 @@ section('10. ingestion is never blocked by Facebook');
   ok('publishing is not imported into the ingest path', !/publishPendingFacebook/.test(pe));
 }
 
+section('11. the schedule is compatible with the queue it drains');
+{
+  // The drain interval is not a free choice: a queued row older than MAX_AGE_MINUTES is never
+  // published, and a transient failure is retried on the NEXT RUN, so three attempts have to fit
+  // inside that window with room to spare. At one minute they span three; at five they would span
+  // fifteen, leaving half the window gone before a post is abandoned.
+  const vercel = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const cron = (vercel.crons || []).filter((c) => c.path === '/api/cron/facebook');
+  ok('the drain is scheduled', cron.length === 1, cron.length + ' entries');
+
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  const maxAge = Number((pub.match(/MAX_AGE_MINUTES\s*=\s*(\d+)/) || [])[1]);
+  const attempts = Number((pub.match(/MAX_FB_ATTEMPTS\s*=\s*(\d+)/) || [])[1]);
+  ok('the queue still expires rows', maxAge === 30, 'MAX_AGE_MINUTES is ' + maxAge);
+  ok('the queue still caps attempts', attempts === 3, 'MAX_FB_ATTEMPTS is ' + attempts);
+
+  // Minutes between runs, for the only two shapes used in this file: "* * * * *" and "*/N * * * *".
+  const min = cron[0]?.schedule === '* * * * *' ? 1
+    : Number((String(cron[0]?.schedule).match(/^\*\/(\d+) /) || [])[1] || NaN);
+  ok('the interval is a plain minute cadence', Number.isFinite(min), cron[0]?.schedule);
+  ok('every attempt fits inside the expiry window with margin', min * attempts * 2 <= maxAge,
+    `${min}-minute interval x ${attempts} attempts is not comfortably under ${maxAge} minutes`);
+  ok('the drain runs at least as often as the ingest that fills it',
+    min <= 1, 'primary-sources queues every minute; a slower drain lets rows age');
+}
+
+section('12. a scheduled run is inert while the switch is off');
+{
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  const fn = pub.slice(pub.indexOf('export async function publishPendingFacebook'));
+  const gate = fn.indexOf("if (!cfg.enabled)");
+  ok('the kill switch is checked first', gate > 0 && gate < fn.indexOf('ensureFacebookTable'),
+    'a disabled run would still touch the database');
+  ok('nothing is read before it', fn.slice(0, gate).indexOf('db.execute') === -1);
+  // Only the exact string enables it, so a scheduled cron cannot be switched on by a typo.
+  ok('the switch still fails closed', facebookConfig({ FACEBOOK_AUTO_POST_ENABLED: 'TRUE' }).enabled === false
+    && facebookConfig({ FACEBOOK_AUTO_POST_ENABLED: '1' }).enabled === false
+    && facebookConfig({ FACEBOOK_AUTO_POST_ENABLED: 'true' }).enabled === true);
+}
+
+section('13. nothing publishes without a real source event');
+{
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  const fn = pub.slice(pub.indexOf('export async function publishFacebookCandidate'),
+                       pub.indexOf('export const MAX_FB_ATTEMPTS'));
+  ok('the candidate is joined to its source event', /left join primary_events e on e\.seq = c\.event_seq/.test(fn));
+  ok('a null event_seq is rejected', /cur\.event_seq == null/.test(fn));
+  ok('an unresolvable event_seq is rejected', /cur\.source_seq == null/.test(fn));
+  const gate = fn.indexOf('cur.event_seq == null');
+  ok('the gate runs BEFORE the row is marked publishing', gate > 0 && gate < fn.indexOf("status = 'publishing'"),
+    'a rejected row would need manual review');
+  ok('the gate runs BEFORE any Meta request', gate > 0 && gate < fn.indexOf('postToPage'));
+  ok('rejection is terminal, not retried', /status = 'failed', failure_reason = \$\{'provenance: '/.test(fn)
+    || /status = 'failed'[\s\S]{0,80}provenance/.test(fn));
+  ok('the reason is recorded for an operator', /provenance: /.test(fn));
+
+  // INDEPENDENCE. The safeguard is duplicated in each publisher on purpose; a shared helper is
+  // exactly the coupling these two systems must not have.
+  ok('facebook-publisher imports nothing from the X side', !/x-publisher|x-autopost/.test(pub));
+  ok('it reads only its own table', !/x_post_candidates/.test(pub));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

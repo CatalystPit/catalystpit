@@ -338,6 +338,29 @@ if (!process.env.DATABASE_URL) {
   } finally { await sql.end(); }
 }
 
+sec('NOTHING PUBLISHES WITHOUT A REAL SOURCE EVENT');
+{
+  // Defence in depth, not a behaviour change: every candidate ever written already carries a
+  // resolvable event_seq, so this gate has nothing to reject. It exists so that no future path into
+  // this table — an admin action, a migration, a script, a mistake — can put text on the account
+  // without an ingested news event behind it.
+  const { readFileSync } = await import('node:fs');
+  const pub = readFileSync(new URL('../src/lib/x-publisher.js', import.meta.url), 'utf8');
+  const body = pub.slice(pub.indexOf('export async function publishCandidate'));
+  ok('the candidate is joined to its source event', /left join primary_events e on e\.seq = c\.event_seq/.test(body));
+  ok('a null event_seq is rejected', /cur\.event_seq == null/.test(body));
+  ok('an unresolvable event_seq is rejected', /cur\.source_seq == null/.test(body));
+  const gate = body.indexOf('cur.event_seq == null');
+  ok('the gate runs BEFORE the attempt counter', gate > 0 && gate < body.indexOf('attempts = attempts + 1'),
+    'a rejected row would burn its retries instead of stopping');
+  ok('the gate runs BEFORE any request to X', gate > 0 && gate < body.indexOf('fetchImpl(X_CREATE_POST'));
+  ok('rejection is terminal and visible', /status = 'suppressed'[\s\S]{0,90}provenance/.test(body));
+  ok('the mode gate still comes first of all', body.indexOf('canPublish(') < gate);
+  // The X publisher must stay ignorant of the Facebook one.
+  ok('x-publisher imports nothing from the Facebook side', !/facebook/i.test(pub));
+  ok('it reads only its own table', !/fb_post_candidates/.test(pub));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
 

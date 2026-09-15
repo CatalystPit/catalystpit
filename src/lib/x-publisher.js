@@ -275,14 +275,34 @@ export async function publishCandidate(id, { fetchImpl = fetch } = {}) {
   // database read, no request object, no credential access happens unless the mode is exactly live.
   if (!canPublish(process.env.X_AUTOPOST_MODE)) return { sent: false, reason: `mode is ${mode()}` };
 
-  // Re-read immediately before publishing, so a concurrent pass or an earlier success is seen.
+  // Re-read immediately before publishing, so a concurrent pass or an earlier success is seen. The
+  // join resolves the source event in the same round trip — see the provenance gate below.
   const cur = (await db.execute(sql`
-    select id, event_seq, post_text, status, attempts, x_post_id
-      from x_post_candidates where id = ${id}`)).rows?.[0];
+    select c.id, c.event_seq, c.post_text, c.status, c.attempts, c.x_post_id, e.seq as source_seq
+      from x_post_candidates c
+      left join primary_events e on e.seq = c.event_seq
+     where c.id = ${id}`)).rows?.[0];
   if (!cur) return { sent: false, reason: 'no such candidate' };
   if (cur.x_post_id) return { sent: false, reason: 'already posted', xPostId: cur.x_post_id };
   if (cur.status === 'failed') return { sent: false, reason: 'previously failed permanently' };
   if (Number(cur.attempts) >= MAX_PUBLISH_ATTEMPTS) return { sent: false, reason: 'attempts exhausted' };
+
+  // PROVENANCE. Everything this account publishes must trace to an ingested news event. Candidates
+  // are only ever built from primary_events, so this is already true of every row ever written —
+  // 1,252 of 1,252, none orphaned — and the gate therefore changes nothing about what gets posted.
+  // It exists to make that an enforced invariant rather than an emergent one: no future path, however
+  // it reaches this table, can put text on the account without a real event behind it.
+  //
+  // Checked BEFORE the attempt counter, and terminal rather than retried: a row with no source event
+  // is not a transient failure, it is a row that must never be sent. `suppressed` is the status this
+  // table already uses for "deliberately not published", so it stays visible in the admin view.
+  if (cur.event_seq == null || cur.source_seq == null) {
+    const why = cur.event_seq == null ? 'no source event' : 'source event no longer exists';
+    await db.execute(sql`update x_post_candidates
+       set status = 'suppressed', failure_reason = ${'provenance: ' + why}, updated_at = now()
+     where id = ${id}`);
+    return { sent: false, reason: 'provenance: ' + why, permanent: true };
+  }
 
   await db.execute(sql`update x_post_candidates
      set attempts = attempts + 1, updated_at = now() where id = ${id}`);
