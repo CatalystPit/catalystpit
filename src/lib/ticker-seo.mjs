@@ -42,13 +42,12 @@ const conn = () => (client ||= neon(process.env.DATABASE_URL));
 const BUNDLE_SQL = `
   select
     (select to_jsonb(r) from (
-        select s.ticker, s.company, s.exchange, s.sector, s.industry, s.country,
-               s.asset_type, s.market_cap,
-               -- A company name is unique; an SIC industry description is shared by every issuer in
-               -- that industry. Counting the sharers is how the view model tells them apart without
-               -- guessing. Seq scan over 15,968 rows, 2ms server-side.
-               (select count(*)::int from screener_stocks o where o.company = s.company) as name_shared_by
-          from screener_stocks s where s.ticker = $1
+        -- industry/sector/country/asset_type come along for the view model's exact test that a
+        -- company name is not character-identical to a description of the company; they are public
+        -- facts it publishes anyway. The name-sharing count that used to sit here is gone with the
+        -- heuristic it fed.
+        select ticker, company, exchange, sector, industry, country, asset_type, market_cap
+          from screener_stocks where ticker = $1
       ) r) as identity,
 
     (select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) from (

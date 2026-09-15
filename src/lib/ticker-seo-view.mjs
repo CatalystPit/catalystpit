@@ -81,29 +81,32 @@ const amountBand = (v) => {
 /**
  * Company identity. Facts a filing or a listing already states.
  *
- * A COMPANY NAME IS UNIQUE; AN INDUSTRY DESCRIPTION IS NOT. Measured against the live screener,
- * 2,719 of the 5,701 rows that carry a company value — 47.7% — hold an SIC industry description
- * instead: 526 tickers say "BLANK CHECKS", 229 say "PHARMACEUTICAL PREPARATIONS", 147 say "REAL
- * ESTATE INVESTMENT TRUSTS". Publishing those as company names would put a false fact in a crawled
- * <h1> for thousands of pages, so a name shared by more than one ticker is not treated as a name.
- * `name_shared_by` comes from the query; when it is absent the value is taken at face value.
+ * A COMPANY NAME IS NOT A DESCRIPTION OF THE COMPANY. screener_stocks.company used to fall back to
+ * the SIC industry description, so 2,805 symbols named themselves after their industry — ZTS read
+ * "PHARMACEUTICAL PREPARATIONS", XOM "PETROLEUM REFINING". That is fixed in ingestion and the live
+ * count is now zero; the test below is the last gate before a name reaches crawlable HTML.
  *
  * The rest of the identity survives regardless — exchange, sector and market cap are still true
  * about the security even when we cannot state who it is.
  */
 function identityOf(row) {
   if (!row) return null;
-  const shared = int(row.name_shared_by);
-  // TWO INDEPENDENT REFUSALS, both exact.
-  //  - a value that is character-for-character its own industry is a classification that leaked into
-  //    a name column (ZTS read "PHARMACEUTICAL PREPARATIONS", XOM "PETROLEUM REFINING");
-  //  - a value shared by more than one ticker cannot be any single company's name.
-  // The ingestion bug behind both is fixed at the root, so neither should ever fire again. They stay
-  // because this is the last gate before a name reaches crawlable HTML, and neither needs a
-  // vocabulary, a heuristic or an import to be certain of its answer.
-  const isOwnIndustry = row.company != null && row.industry != null
-    && String(row.company) === String(row.industry);
-  const companyName = isOwnIndustry || (shared !== null && shared > 1) ? null : str(row.company);
+  // The bug that put an SIC description in the name column wrote the SAME string to `industry`, so a
+  // name that is character-for-character another descriptive field on its own row is that class of
+  // bug — whichever column the next one comes from. Exact, no vocabulary, nothing to go stale.
+  //
+  // THE SHARED-NAME RULE IS GONE, and removing it is the point rather than an oversight. It was built
+  // when 2,719 tickers shared an SIC description and it was the only defence available. With the
+  // fallback fixed at the root that number is 78, of which 35 of the 38 distinct names map to a
+  // SINGLE issuer CIK — BRK.A/BRK.B, FOX/FOXA, NWS/NWSA, KELYA/KELYB, NYT/NYT.A. Share classes of one
+  // company SHARE a company name; that is what makes them share classes. Keeping the rule cost the
+  // name on exactly the pages most likely to be worth indexing, to defend against a condition that no
+  // longer exists and that the exact test below already covers.
+  const describes = [row.industry, row.sector, row.country, row.asset_type];
+  const companyName = row.company != null
+    && describes.some((d) => d != null && String(d) === String(row.company))
+    ? null
+    : str(row.company);
   return {
     symbol: str(row.ticker),
     companyName,

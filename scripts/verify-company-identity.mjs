@@ -167,8 +167,8 @@ for (const p of CONTAMINANTS.slice(0, 6)) {
 {
   const v = buildPublicView('AAPL', { identity: { ticker: 'AAPL', company: 'Apple Inc.', industry: 'ELECTRONIC COMPUTERS', name_shared_by: 1 } });
   ok('a real name is still published', v.identity.companyName === 'Apple Inc.');
-  const shared = buildPublicView('U', { identity: { ticker: 'U', company: 'Acme Inc.', name_shared_by: 229 } });
-  ok('the name_shared_by defence still fires', shared.identity.companyName === null);
+  const cls = buildPublicView('BRK.B', { identity: { ticker: 'BRK.B', company: 'BERKSHIRE HATHAWAY INC', industry: 'FIRE, MARINE & CASUALTY INSURANCE' } });
+  ok('a share class keeps its issuer name', cls.identity.companyName === 'BERKSHIRE HATHAWAY INC');
 }
 
 // ── 7. identity and signals stay separate, asserted on the source ───────────

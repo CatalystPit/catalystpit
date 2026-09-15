@@ -234,15 +234,23 @@ ok('unresolved ZZZZZZ still returns a well-formed model',
 
 section('5b. an SIC industry description is not a company name');
 (() => {
-  const unique = buildPublicView('T', { identity: { ticker: 'T', company: 'Acme Inc.', exchange: 'NASDAQ', name_shared_by: 1 } });
-  const shared = buildPublicView('U', { identity: { ticker: 'U', company: 'PHARMACEUTICAL PREPARATIONS', exchange: 'NASDAQ', sector: 'Healthcare', name_shared_by: 229 } });
-  ok('a unique name is kept', unique.identity.companyName === 'Acme Inc.');
-  ok('a name shared by 229 tickers is refused', shared.identity.companyName === null);
+  const unique = buildPublicView('T', { identity: { ticker: 'T', company: 'Acme Inc.', exchange: 'NASDAQ', industry: 'SERVICES-PREPACKAGED SOFTWARE' } });
+  const shared = buildPublicView('U', { identity: { ticker: 'U', company: 'PHARMACEUTICAL PREPARATIONS', exchange: 'NASDAQ', sector: 'Healthcare', industry: 'PHARMACEUTICAL PREPARATIONS' } });
+  ok('a real name is kept', unique.identity.companyName === 'Acme Inc.');
+  ok('a name identical to its own industry is refused', shared.identity.companyName === null);
   ok('the rest of the identity survives', shared.identity.exchange === 'NASDAQ' && shared.identity.sector === 'Healthcare');
   ok('eligibility sees no company name', buildEligibility(shared).hasCompanyName === false);
   ok('eligibility still sees an identity', buildEligibility(shared).hasIdentity === true);
-  ok('missing signal is taken at face value',
+  ok('a name with no description to compare against is taken at face value',
     buildPublicView('V', { identity: { ticker: 'V', company: 'Acme Inc.' } }).identity.companyName === 'Acme Inc.');
+  // The other descriptive columns are covered too — the next wrong-column bug need not be `industry`.
+  for (const [col, val] of [['sector', 'Healthcare'], ['country', 'USA'], ['asset_type', 'ETF']])
+    ok(`a name identical to its ${col} is refused`,
+      buildPublicView('W', { identity: { ticker: 'W', company: val, [col]: val } }).identity.companyName === null);
+  // Share classes of one company SHARE a name; that is what makes them share classes.
+  ok('a share class keeps its issuer name',
+    buildPublicView('BRK.B', { identity: { ticker: 'BRK.B', company: 'BERKSHIRE HATHAWAY INC', industry: 'FIRE, MARINE & CASUALTY INSURANCE' } })
+      .identity.companyName === 'BERKSHIRE HATHAWAY INC');
 })();
 
 section('6. internal eligibility stays internal and carries inputs, not a verdict');
