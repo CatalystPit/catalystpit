@@ -273,6 +273,26 @@ section('7. no vendor call is possible from the bundle module');
 
 section('8. insider window is stated, not implied');
 ok('insider window carries its own length', bundles.get('AAPL')?.public.insiders.window?.windowDays === INSIDER_WINDOW_DAYS);
+// A CASE MISMATCH HERE IS SILENT. The stored vocabulary is BUY/SELL/OTHER; comparing against 'Buy'
+// returned trades=35, buys=0, sells=0, netValue=0 for AAPL and nothing failed. Assert the window
+// actually classifies, rather than only that it exists.
+(() => {
+  const withInsiders = [...bundles.entries()].filter(([, b]) => b?.public.insiders.window?.trades > 0);
+  ok('some ticker has a non-zero buy or sell count',
+    withInsiders.some(([, b]) => (b.public.insiders.window.buys + b.public.insiders.window.sells) > 0),
+    withInsiders.map(([s, b]) => s + ':' + JSON.stringify(b.public.insiders.window)).join(' ').slice(0, 200));
+  for (const [sym, b] of withInsiders) {
+    const w = b.public.insiders.window;
+    ok(sym + ': buys + sells never exceeds trades', w.buys + w.sells <= w.trades,
+      JSON.stringify(w));
+    ok(sym + ': a net of zero means no buys and no sells',
+      w.netValue !== 0 || (w.buys === 0 && w.sells === 0), JSON.stringify(w));
+  }
+  console.log('  insider windows: ' + withInsiders.map(([s, b]) => {
+    const w = b.public.insiders.window;
+    return s + '=' + w.trades + 't/' + w.buys + 'b/' + w.sells + 's';
+  }).join('  '));
+})();
 ok('no key named "summary" anywhere in any public model',
   [...bundles.values()].filter(Boolean).every((b) => !JSON.stringify(b.public).includes('"summary"')));
 

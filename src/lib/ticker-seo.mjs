@@ -63,13 +63,18 @@ const BUNDLE_SQL = `
       ) r) as insider_recent,
 
     (select to_jsonb(r) from (
-        select count(*)::int                                as trades,
-               count(*) filter (where action = 'Buy')::int  as buys,
-               count(*) filter (where action = 'Sell')::int as sells,
-               sum(case when action = 'Buy'  then  total_value
-                        when action = 'Sell' then -total_value
-                        else 0 end)::numeric                as net,
-               max(filing_date)::text                       as latest
+        -- The stored action vocabulary is BUY / SELL / OTHER, upper case. Matched case-insensitively
+        -- rather than against a literal, because a mismatch here is silent: every count comes back
+        -- zero and a page reports "35 trades, 0 buys, 0 sells" without anything failing.
+        select count(*)::int                                          as trades,
+               count(*) filter (where upper(action) = 'BUY')::int     as buys,
+               count(*) filter (where upper(action) = 'SELL')::int    as sells,
+               -- OTHER covers grants, option exercises and gifts. They are real Form 4 rows and are
+               -- counted in the trades total, but they are not purchases or sales and must not move a net.
+               sum(case when upper(action) = 'BUY'  then  total_value
+                        when upper(action) = 'SELL' then -total_value
+                        else 0 end)::numeric                          as net,
+               max(filing_date)::text                                 as latest
           from insider_trades
          where ticker = $1
            and is_amendment is not true
