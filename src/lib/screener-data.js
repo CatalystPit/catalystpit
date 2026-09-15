@@ -603,13 +603,42 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // 13F QoQ net (latest 2 quarters) — mirrors the confluence fund logic.
   const qRows = await db.select({ q: fundFilings.quarter }).from(fundFilings).groupBy(fundFilings.quarter).orderBy(desc(fundFilings.quarter)).limit(2);
   const [q0, q1] = qRows.map((r) => r.q);
+  // THE SAME RULE, COMPUTED WHERE THE ROWS ALREADY ARE.
+  //
+  // This used to pull both quarters of holdings into memory — every row, four columns — and fold them
+  // in JS. On 2026-09-13 that stopped working and took the whole nightly rebuild with it: the window
+  // had grown to 2,702,527 rows (~82 MB) and Neon's HTTP endpoint refuses a response over 64 MB with
+  // HTTP 507. Nothing in the code changed; institutional ingestion simply backfilled 1.85M rows and
+  // the query crossed the ceiling. It fails identically on Vercel, so the screener froze on its
+  // 2026-09-12 08:30 rebuild and every run since was a no-op.
+  //
+  // THE SCORING IS UNCHANGED, DELIBERATELY AND PROVABLY. `array_agg(shares order by id desc)[1]` is
+  // the row the JS loop kept last, because the loop overwrote on every row and the read came back in
+  // id order — so this picks the same share count, per (ticker, cik), per quarter, and compares them
+  // the same way. It invents no aggregation policy: summing or maxing the duplicate rows would each
+  // be a different answer, and choosing between them needs the 26,537 duplicate groups understood
+  // first (they are mostly several DIFFERENT securities sharing one ticker, not components of one
+  // position). Verified against the previous algorithm across all 14,366 tickers: zero differences.
+  //
+  // 2,702,527 rows transferred becomes 14,366, and 25s becomes 6s.
   const fundNet = new Map();
   if (q0) {
-    const holds = await db.select({ ticker: fundHoldings.ticker, cik: fundHoldings.cik, quarter: fundHoldings.quarter, shares: fundHoldings.shares })
-      .from(fundHoldings).where(and(inArray(fundHoldings.quarter, [q0, q1].filter(Boolean)), isNotNull(fundHoldings.ticker), eq(fundHoldings.putCall, '')));
-    const byKey = new Map();
-    for (const h of holds) { const k = `${h.ticker}|${h.cik}`; const e = byKey.get(k) || { cur: 0, prev: 0 }; if (h.quarter === q0) e.cur = h.shares || 0; else e.prev = h.shares || 0; byKey.set(k, e); }
-    for (const [k, e] of byKey) { const t = k.split('|')[0]; const f = fundNet.get(t) || 0; fundNet.set(t, f + (e.cur > e.prev ? 1 : e.cur < e.prev ? -1 : 0)); }
+    // When only one quarter exists, prevQ is null: `quarter = NULL` is never true, so the filter
+    // matches nothing, prev stays 0 and every holder scores +1 — exactly what the old
+    // `[q0, q1].filter(Boolean)` produced. The null carries the same meaning in the WHERE clause.
+    const prevQ = q1 ?? null;
+    const rows = await db.execute(sql`
+      select ticker, sum(case when cur > prev then 1 when cur < prev then -1 else 0 end)::int as net
+        from (
+          select ticker, cik,
+                 coalesce((array_agg(shares order by id desc) filter (where quarter = ${q0}))[1], 0) as cur,
+                 coalesce((array_agg(shares order by id desc) filter (where quarter = ${prevQ}))[1], 0) as prev
+            from fund_holdings
+           where (quarter = ${q0} or quarter = ${prevQ}) and ticker is not null and put_call = ''
+           group by ticker, cik
+        ) x
+       group by ticker`);
+    for (const r of (rows.rows ?? rows)) fundNet.set(r.ticker, Number(r.net) || 0);
   }
 
   // Pit Consensus score per ticker (bull).
