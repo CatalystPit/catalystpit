@@ -1,9 +1,11 @@
 import ComingSoon from '../../components/ComingSoon';
+import { pageMeta } from '../../lib/seo';
 
-export const metadata = {
-  title: 'Charts · CatalystPit',
-  description: 'Interactive live charts with real-time data, multiple timeframes, and technical indicators. Coming soon to CatalystPit.',
-};
+export const metadata = pageMeta({
+  title: { absolute: "Charts · CatalystPit" },
+  description: "Interactive live charts with real-time data, multiple timeframes, and technical indicators. Coming soon to CatalystPit.",
+  path: "/charts",
+});
 
 export default function ChartsPage() {
   return (

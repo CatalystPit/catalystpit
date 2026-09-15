@@ -1,26 +1,81 @@
 import { ClerkProvider } from '@clerk/nextjs';
+import { SITE_URL, SITE_NAME } from '../lib/seo';
 import XTapeDock from '../components/XTapeDock';
 import PitDock from '../components/PitDock';
 import WatchlistDock from '../components/WatchlistDock';
 
+// metadataBase is what makes every relative URL below — and in every page's generateMetadata —
+// resolve against the CANONICAL host. Without it Next emits relative og:image/canonical values that
+// some crawlers resolve against whichever host they happened to fetch, which is how a site ends up
+// indexed on both apex and www. SITE_URL is www, matching the production redirect.
+//
+// `url` was previously the APEX (https://catalystpit.com), which production 307s away from — so the
+// canonical we advertised pointed at a redirect. It is now the host we actually serve.
 export const metadata = {
-  title: 'CatalystPit · Live Market Intelligence',
-  description: 'Every catalyst. Before the bell. Real-time charts, insider trades, politician buys, AI-powered news and your morning brief.',
-  keywords: 'market intelligence, insider trading, politician trades, stock screener, options flow, financial news',
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: 'CatalystPit · Live Market Intelligence',
+    // Pages set a bare title and get the brand appended; a page may opt out with `absolute`.
+    template: '%s · CatalystPit',
+  },
+  description: 'Every catalyst. Before the bell. Insider trades, Congress trades, 13F institutional activity, SEC filings and real-time market news in one place.',
+  applicationName: SITE_NAME,
+  alternates: { canonical: '/' },
   openGraph: {
     title: 'CatalystPit · Live Market Intelligence',
     description: 'Every catalyst. Before the bell.',
-    url: 'https://catalystpit.com',
-    siteName: 'CatalystPit',
+    url: SITE_URL,
+    siteName: SITE_NAME,
     type: 'website',
+    locale: 'en_US',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'CatalystPit · Live Market Intelligence',
     description: 'Every catalyst. Before the bell.',
     creator: '@CatalystPit',
+    site: '@CatalystPit',
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
 }
+
+// ── structured data ─────────────────────────────────────────────────────────
+// CONSERVATIVE BY DESIGN. Only two types, and only facts the site itself demonstrates: who publishes
+// it, what it is called, where it lives, and its own search endpoint. No founder, no address, no
+// aggregateRating, no sameAs — none of that is verifiable from this repository, and inventing it is
+// how structured data becomes a liability rather than an asset.
+//
+// The logo is the wordmark this app already draws (see Logo in cp-shared), rendered by the icon
+// route rather than a new mark.
+const ORG_LD = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  '@id': `${SITE_URL}/#organization`,
+  name: SITE_NAME,
+  url: SITE_URL,
+  logo: `${SITE_URL}/icon`,
+  description: 'Market intelligence covering insider trades, Congressional trading, institutional 13F activity, SEC filings and market news.',
+};
+
+// SearchAction points at the screener's existing ticker filter — a real, working endpoint on this
+// site. It is not a claim about a feature that does not exist.
+const SITE_LD = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  '@id': `${SITE_URL}/#website`,
+  name: SITE_NAME,
+  url: SITE_URL,
+  publisher: { '@id': `${SITE_URL}/#organization` },
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: { '@type': 'EntryPoint', urlTemplate: `${SITE_URL}/screener?ticker={search_term_string}` },
+    'query-input': 'required name=search_term_string',
+  },
+};
 
 export const viewport = {
   width: 'device-width',
@@ -38,7 +93,14 @@ export default function RootLayout({ children }) {
         <head>
           {/* Apply the saved theme before first paint to avoid a flash of light. */}
           <script dangerouslySetInnerHTML={{ __html: "try{if(localStorage.getItem('cp_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}" }} />
-          <link rel="icon" href="/favicon.ico" />
+          {/* The old <link rel="icon" href="/favicon.ico"> pointed at a 404 — there is no public/
+              directory in this repo at all. Next now generates the icon from app/icon.jsx and emits
+              the correct <link> itself, so the hand-written tag is gone rather than replaced. */}
+          {/* Organization + WebSite, emitted server-side so a crawler sees them without running JS. */}
+          <script type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(ORG_LD) }} />
+          <script type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(SITE_LD) }} />
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
           <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />

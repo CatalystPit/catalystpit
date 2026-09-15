@@ -1,12 +1,14 @@
-'use client'
+import { pageMeta } from '../lib/seo';
+import HomeClient from './HomeClient';
 
-import dynamic from 'next/dynamic'
+// Server wrapper: a 'use client' file cannot export metadata, so the page's own title,
+// description and canonical live here and the interactive component sits alongside.
+export const metadata = pageMeta({
+  title: { absolute: "CatalystPit · Insider Trades, Congress Trades & Market Catalysts" },
+  description: "Track insider buying, Congressional stock trades, institutional 13F activity and SEC filings as they happen. Every catalyst, before the bell.",
+  path: "/",
+});
 
-const CatalystPit = dynamic(
-  () => import('../components/CatalystPit'),
-  { ssr: false }
-)
-
-export default function Home() {
-  return <CatalystPit />
+export default function Page() {
+  return <HomeClient />;
 }

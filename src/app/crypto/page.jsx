@@ -1,9 +1,11 @@
 import ComingSoon from '../../components/ComingSoon';
+import { pageMeta } from '../../lib/seo';
 
-export const metadata = {
-  title: 'Crypto · CatalystPit',
-  description: 'Live crypto prices, on-chain catalysts, and market intelligence for active digital asset traders.',
-};
+export const metadata = pageMeta({
+  title: { absolute: "Crypto · CatalystPit" },
+  description: "Live crypto prices, on-chain catalysts, and market intelligence for active digital asset traders.",
+  path: "/crypto",
+});
 
 export default function CryptoPage() {
   return (
