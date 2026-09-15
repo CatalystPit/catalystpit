@@ -89,8 +89,53 @@ export function statedTickers(v) {
 // ── adapters ─────────────────────────────────────────────────────────────────
 // RSS / Atom. Delegates to the existing, already-verified parseFeed; kept as a named adapter so
 // XML sources sit in the same registry as everything else.
+// Venues Catalyst Pit covers. A symbol from anywhere else is a real symbol on a market we do not
+// carry, so publishing it would produce a cashtag with no page behind it.
+const US_VENUES = new Set(['NASDAQ', 'NYSE', 'NYSE AMERICAN', 'NYSEAMERICAN', 'NYSE ARCA', 'AMEX', 'CBOE']);
+
+// SOME RSS FEEDS STATE SYMBOLS STRUCTURALLY rather than only in prose. Newsfile tags each release
+// with one <category domain="…/stocksymbol"> per listing:
+//
+//   <category domain="…/stocksymbol">NASDAQ:HIVE</category>
+//   <category domain="…/stocksymbol">TSX:HIVE</category>
+//   <category domain="…/stocksymbol">ISIN:CA4339211035</category>
+//
+// That is the source stating a fact, which is the standard this pipeline accepts — but it states
+// several, most of them on venues we do not cover, and one of them is not a symbol at all. So the
+// exchange qualifier is READ rather than discarded: only US venues survive, ISIN and every foreign
+// listing are dropped, and what is left still goes through statedTickers() for shape. A feed opts in
+// with `symbolCategories: true`; no other feed changes behaviour.
+const SYMBOL_CATEGORY = /<category\b[^>]*\bdomain\s*=\s*["'][^"']*stocksymbol[^"']*["'][^>]*>([\s\S]*?)<\/category>/gi;
+
+function symbolCategoriesOf(block) {
+  const out = [];
+  SYMBOL_CATEGORY.lastIndex = 0;
+  for (const m of String(block).matchAll(SYMBOL_CATEGORY)) {
+    const raw = text(m[1]);
+    const i = raw.indexOf(':');
+    if (i < 1) continue;                                  // no venue qualifier: not enough to trust
+    const venue = raw.slice(0, i).trim().toUpperCase();
+    if (!US_VENUES.has(venue)) continue;                  // ISIN, TSX, TSX-V, FSE, CNSX, OTC tiers …
+    out.push(raw.slice(i + 1).trim().toUpperCase());
+  }
+  return statedTickers(out);
+}
+
 function rssAdapter(body, feed) {
-  return parseFeed(body, feed.url);
+  const items = parseFeed(body, feed.url);
+  if (!feed.symbolCategories) return items;
+  // parseFeed does not carry <category> through, so the blocks are re-read here with the SAME split
+  // parseFeed uses and matched back by title, which is what the two have in common.
+  const blocks = String(body || '').match(/<(?:item|entry)[\s>][\s\S]*?<\/(?:item|entry)>/gi) || [];
+  const byTitle = new Map();
+  for (const blk of blocks) {
+    const t = text((blk.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+    if (t && !byTitle.has(t)) byTitle.set(t, symbolCategoriesOf(blk));
+  }
+  return items.map((it) => {
+    const syms = byTitle.get(it.title) || [];
+    return syms.length ? { ...it, tickers: syms } : it;
+  });
 }
 
 // JSON. `feed.map` names where the fields live; anything absent is simply absent.

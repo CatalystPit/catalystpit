@@ -308,6 +308,35 @@ export const TAXONOMY_LABELS = new Set([
 
 export const isTaxonomyLabel = (sym) => TAXONOMY_LABELS.has(String(sym || '').toUpperCase());
 
+// US-ONLY VARIANT, for feeds that are predominantly foreign.
+//
+// EXCHANGES above deliberately accepts TSX, FSE, LSE, ASX and the rest, because a source naming a
+// listed security outright is reading, not guessing. That is right for a US wire that occasionally
+// prints a foreign line. It is wrong for a wire where the foreign line is the NORM: a Newsfile
+// release typically reads "(CSE: LFLR) (OTCQB: LFLRF) (FSE: 3WK0)", and the permissive reader would
+// hand Pit Wire "3WK0" — a Frankfurt symbol — as a Catalyst Pit ticker. There is no ticker page,
+// no screener row and no chart behind it, so the cashtag is a dead end at best and a wrong symbol
+// at worst.
+//
+// The venues kept here are exactly the ones screener_stocks covers, which is what makes a ticker
+// clickable anywhere else in the product. OTC tiers are excluded for the same reason: they are US,
+// but they are not in our universe. Widening this is a one-line edit if that changes.
+const US_EXCHANGES = String.raw`NASDAQ|NYSE(?:\s*American|\s*Arca)?|NYSEAMERICAN|AMEX|CBOE`;
+const TICKER_STATED_US = new RegExp(
+  String.raw`\(\s*(?:${US_EXCHANGES})\s*[:\-–]\s*([A-Z][A-Z0-9.\-]{0,6})\s*\)`, 'gi');
+
+/** Exchange-qualified symbols a source printed, restricted to venues Catalyst Pit actually covers. */
+export function statedUsTickersIn(text) {
+  const s = String(text || '');
+  const out = [];
+  TICKER_STATED_US.lastIndex = 0;
+  for (const m of s.matchAll(TICKER_STATED_US)) {
+    const sym = String(m[1] || '').toUpperCase();
+    if (sym && !NOT_TICKERS.has(sym) && !isTaxonomyLabel(sym) && !out.includes(sym)) out.push(sym);
+  }
+  return out.slice(0, 4);
+}
+
 export function statedTickersIn(text) {
   const s = String(text || '');
   const out = [];

@@ -8,7 +8,7 @@
 //   - Macro sources never carry a ticker. See TICKERABLE below.
 
 import { createHash } from 'node:crypto';
-import { canonicalHeadline, isDisplayable, entityToken, factSignature, scoreImportance, statedTickersIn } from './news-normalize.mjs';
+import { canonicalHeadline, isDisplayable, entityToken, factSignature, scoreImportance, statedTickersIn, statedUsTickersIn } from './news-normalize.mjs';
 import { isNonEnglish } from './language.mjs';
 import { normHash } from './event-cluster.mjs';
 import { composeHeadline } from './headline-compose.mjs';
@@ -301,6 +301,32 @@ export const FEEDS = [
     everySec: TIER.SLOW, category: 'MARKETS', tickerable: true,
     url: 'https://www.einpresswire.com/rss/kYOgMzZ5jdDCEHmy' }),
 
+  // ── TMX NEWSFILE ──────────────────────────────────────────────────────────
+  // Two views of ONE wire. SyndiGate carries 10 items with structured
+  // <category domain="…/stocksymbol"> listings; Last25Stories carries 25 truncated items with no
+  // symbols. They overlap heavily and their GUIDs disagree on the same release — SyndiGate publishes
+  // `/release/314360` where Last25Stories publishes `/release/314360/<slug>` — so guid-keyed dedupe
+  // would NOT collapse them. They share one `source` on purpose: content_hash is
+  // sha256(source|headline|day) under a UNIQUE index, so the same release arriving on both feeds is
+  // one canonical event and the second insert is a no-op. Same protection against any other wire
+  // that carries a Newsfile release.
+  //
+  // FAST, not FLASH. These are corporate releases that can move a small cap, which is what FAST is
+  // for; FLASH is reserved for breaking wires where seconds decide whether we were first, and a
+  // press-release feed republishing on a build cycle does not qualify.
+  //
+  // usTickersOnly + symbolCategories: Newsfile is predominantly Canadian venture listings, and a
+  // release typically names four venues at once. Both flags exist so a Frankfurt or CSE symbol never
+  // reaches the tape as a Catalyst Pit ticker — see the notes on each.
+  feed({ key: 'newsfile_syndigate', source: 'NEWSFILE', sourceName: 'Newsfile', type: 'press_release',
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
+    usTickersOnly: true, symbolCategories: true,
+    url: 'https://feeds.newsfilecorp.com/feed/SyndiGate' }),
+  feed({ key: 'newsfile_last25', source: 'NEWSFILE', sourceName: 'Newsfile', type: 'press_release',
+    everySec: TIER.FAST, category: 'MARKETS', tickerable: true,
+    usTickersOnly: true,
+    url: 'https://feeds.newsfilecorp.com/global/Last25Stories' }),
+
   // ══ WALL STREET JOURNAL / DOW JONES ═══════════════════════════════════════
   // All five verified live (60/85/40/71/21 items, ETag present so polls are conditional).
   // NOTE: RSSMarketsMain is ALSO fetched by the legacy /api/refresh KV pipeline that feeds the old
@@ -583,9 +609,14 @@ export function contentHash({ source, title, publishedAt }) {
 export function normalize(feed, item) {
   // Tickers the source stated: either as structured API fields, or printed in its own text as an
   // exchange-qualified symbol or a cashtag. Both are reading what the source said, not inferring.
+  // `usTickersOnly` is for wires whose releases are predominantly foreign listings. The default
+  // reader accepts any exchange-qualified symbol, which is correct for a US wire that occasionally
+  // prints a foreign line — but a Newsfile release reads "(CSE: LFLR) (OTCQB: LFLRF) (FSE: 3WK0)",
+  // and the default would put a Frankfurt symbol on the tape as a Catalyst Pit ticker.
+  const readStated = feed.usTickersOnly ? statedUsTickersIn : statedTickersIn;
   const tickers = feed.tickerable === false
     ? []
-    : [...new Set([...(item.tickers || []), ...statedTickersIn(`${item.title} ${item.summary || ''}`)])].slice(0, 4);
+    : [...new Set([...(item.tickers || []), ...readStated(`${item.title} ${item.summary || ''}`)])].slice(0, 4);
   // Deterministic, instant, no AI: the event is displayable the moment it is captured.
   //
   // Two outcomes, and the difference is recorded honestly in headline_status:

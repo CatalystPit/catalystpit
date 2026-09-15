@@ -15,7 +15,7 @@ export const SOURCE_GROUP_MEMBERS = {
   media:    ['BLOOMBERG', 'WSJ', 'CNBC', 'YAHOO', 'MARKETWATCH', 'FT', 'ECONOMIST', 'AXIOS', 'TECHCRUNCH'],
   research: ['SEEKINGALPHA', 'INVESTING', 'ZEROHEDGE'],
   biotech:  ['BIOSPACE', 'BIOTECHNEWSWIRE'],
-  pr:       ['GLOBENEWSWIRE', 'PRNEWSWIRE', 'EINPRESSWIRE', 'PRCOM'],
+  pr:       ['GLOBENEWSWIRE', 'PRNEWSWIRE', 'EINPRESSWIRE', 'PRCOM', 'NEWSFILE'],
   gov:      ['FED', 'ECB', 'CFTC', 'FDA', 'FTC', 'DOJ', 'EIA'],
   sec:      ['SEC'],
   exchange: ['NASDAQ'],
