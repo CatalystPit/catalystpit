@@ -18,6 +18,22 @@ const r = (label, category, col, extra = {}) => ({ label, category, type: 'range
 const b = (label, category, col, extra = {}) => ({ label, category, type: 'bool', col, ...extra });
 const e = (label, category, col, options, extra = {}) => ({ label, category, type: 'enum', col, options, ...extra });
 
+// HIDDEN FROM V1, COLUMNS DELIBERATELY KEPT. A filter with no data behind it does not fail — it
+// matches nothing, which a user cannot tell apart from "no stocks meet your criteria". Each of these
+// was offered and null for all 17,643 rows:
+//
+//   forwardPe / peg  no forward-estimate source exists in V1; earnings-estimate.js predicts the next
+//                    earnings DATE from filing cadence, not EPS. peg depends on forwardPe.
+//   pCash            screener_fundamentals.cash is present in the schema and 0 non-null across all
+//                    4,069 rows — the ingestion never populates it.
+//   insiderOwnPct    derivable in shape from insider_trades.shares_owned_after, but not reliably:
+//                    validated against known values it gives NVDA 0.30% (real ~4%), TSLA 0.07%
+//                    (real ~13%) and META 0.00% (real ~13%), because Form 4 only shows owners who
+//                    TRANSACTED in the window — founders and multi-class holders are invisible — and
+//                    34 tickers came out above 100%. A wrong number is worse than an absent one.
+//
+// The database columns and schema bindings are untouched, so re-enabling any of these is a one-line
+// revert here once a source exists. scripts/verify-screener-coverage.mjs tracks all four.
 export const FILTERS = {
   // ══ DESCRIPTIVE ══
   exchange:     e('Exchange', 'Descriptive', 'exchange', EXCHANGES, { available: true }),
@@ -47,11 +63,8 @@ export const FILTERS = {
 
   // ══ FUNDAMENTAL — Valuation ══
   pe:           r('P/E', 'Fundamental', 'pe'),
-  forwardPe:    r('Forward P/E', 'Fundamental', 'forwardPe'),
-  peg:          r('PEG', 'Fundamental', 'peg'),
   ps:           r('P/S', 'Fundamental', 'ps'),
   pb:           r('P/B', 'Fundamental', 'pb'),
-  pCash:        r('Price/Cash', 'Fundamental', 'pCash'),
   pFcf:         r('P/FCF', 'Fundamental', 'pFcf'),
   evEbitda:     r('EV/EBITDA', 'Fundamental', 'evEbitda'),
   evSales:      r('EV/Sales', 'Fundamental', 'evSales'),
@@ -120,7 +133,6 @@ export const FILTERS = {
   congressBuy90d:  b('Congress Buy', 'Ownership', 'congressBuy90d', { pit: true, available: true }),
   congressNet90d:  r('Congress Net$', 'Ownership', 'congressNet90d', { unit: '$', pit: true, available: true }),
   fundNetQoq:      r('13F Net', 'Ownership', 'fundNetQoq', { pit: true, available: true }),
-  insiderOwnPct:   r('Insider Own %', 'Ownership', 'insiderOwnPct', { unit: '%' }),
   instOwnPct:      r('Inst Own %', 'Ownership', 'instOwnPct', { unit: '%' }),
 
   // ══ NEWS ══
@@ -175,11 +187,11 @@ const OPTS = {
   floatShares: FLOATO, sharesOut: FLOATO, shortFloat: SHORTF, daysToCover: DTC, dividendYield: DIVY, beta: BETAO,
   rsi14: RSIO, near52wHigh: NEARO, near52wLow: NEARO,
   changePct: PERF, perf1w: PERF, perf1m: PERF, perf3m: PERF, perf6m: PERF, perfYtd: PERF, perf1y: PERF, perf3y: PERF, perf5y: PERF,
-  pe: RATIO_LOW, forwardPe: RATIO_LOW, peg: RATIO_LOW, ps: RATIO_LOW, pb: RATIO_LOW, pCash: RATIO_LOW, pFcf: RATIO_LOW, evEbitda: RATIO_LOW, evSales: RATIO_LOW,
+  pe: RATIO_LOW, ps: RATIO_LOW, pb: RATIO_LOW, pFcf: RATIO_LOW, evEbitda: RATIO_LOW, evSales: RATIO_LOW,
   epsGrowthTtm: PCT_POS, revGrowthTtm: PCT_POS, epsGrowthThisYr: PCT_POS, epsGrowthNextYr: PCT_POS, epsGrowth3y: PCT_POS, epsGrowth5y: PCT_POS, epsGrowthNext5y: PCT_POS, epsGrowthQoq: PCT_POS, salesGrowthQoq: PCT_POS, salesGrowth3y: PCT_POS, salesGrowth5y: PCT_POS,
   roe: PCT_POS, roa: PCT_POS, roic: PCT_POS, grossMargin: PCT_POS, operMargin: PCT_POS, netMargin: PCT_POS, payoutRatio: PCT_POS,
   debtEquity: RATIO_DE, ltDebtEquity: RATIO_DE, currentRatio: RATIO_DE, quickRatio: RATIO_DE,
-  consensusScore: CONSENSUS, insiderBuyers90d: COUNT, insiderNet90d: NETMONEY, congressNet90d: NETMONEY, fundNetQoq: FUNDNET, insiderOwnPct: PCT_POS, instOwnPct: PCT_POS,
+  consensusScore: CONSENSUS, insiderBuyers90d: COUNT, insiderNet90d: NETMONEY, congressNet90d: NETMONEY, fundNetQoq: FUNDNET, instOwnPct: PCT_POS,
   industry: INDUSTRY, ipoDate: IPO,
 };
 
@@ -196,7 +208,7 @@ for (const k of Object.keys(FILTERS)) {
 }
 
 // Fundamentals now computed from Polygon Financials (2026-09-09) → flip these live.
-for (const k of ['pe', 'ps', 'pb', 'evEbitda', 'evSales', 'pCash', 'roe', 'roa', 'operMargin', 'grossMargin', 'netMargin', 'currentRatio', 'quickRatio', 'debtEquity', 'ltDebtEquity', 'epsGrowthTtm', 'revGrowthTtm', 'epsGrowthQoq', 'salesGrowthQoq', 'epsGrowth3y', 'salesGrowth3y']) {
+for (const k of ['pe', 'ps', 'pb', 'evEbitda', 'evSales', 'roe', 'roa', 'operMargin', 'grossMargin', 'netMargin', 'currentRatio', 'quickRatio', 'debtEquity', 'ltDebtEquity', 'epsGrowthTtm', 'revGrowthTtm', 'epsGrowthQoq', 'salesGrowthQoq', 'epsGrowth3y', 'salesGrowth3y']) {
   if (FILTERS[k]) FILTERS[k].available = true;
 }
 // Polygon-computed quote/technical extras (2026-09-09).

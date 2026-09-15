@@ -580,6 +580,10 @@ export const screenerMeta = pgTable('screener_meta', {
 // ratios (P/E, P/S, P/B, EV/*) nightly with fresh price. Separate table → survives the clean-rebuild.
 export const screenerFundamentals = pgTable('screener_fundamentals', {
   ticker:        text('ticker').primaryKey(),
+  // Ingest bookkeeping, not data. A provider that returns nothing for a symbol is recorded here so
+  // the backfill queue moves past it and retries later, instead of re-asking every single day.
+  attempts:      integer('attempts').default(0),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
   epsTtm:        doublePrecision('eps_ttm'),
   revenueTtm:    doublePrecision('revenue_ttm'),
   equity:        doublePrecision('equity'),

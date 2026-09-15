@@ -61,6 +61,10 @@ export async function ensureScreenerTables() {
   for (const c of ['eps_growth_5y', 'sales_growth_5y', 'eps_growth_this_yr', 'roic']) {
     await db.execute(sql.raw(`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS ${c} DOUBLE PRECISION`));
   }
+  // Backfill bookkeeping: how many times we asked the provider about a symbol and got nothing, and
+  // when we last asked. Lets an unfetchable symbol leave the daily queue without being blacklisted.
+  await db.execute(sql`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ`);
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS annual_dividend DOUBLE PRECISION`);
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS ipo_date DATE`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS news_category TEXT`);
@@ -137,19 +141,58 @@ export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleD
   await ensureScreenerTables();
   if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   const uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
-  const have = new Map((await db.select({ t: screenerFundamentals.ticker, u: screenerFundamentals.updatedAt }).from(screenerFundamentals)).map((r) => [r.t, r.u]));
+  const have = new Map((await db.select({
+    t: screenerFundamentals.ticker, u: screenerFundamentals.updatedAt,
+    eps: screenerFundamentals.epsTtm, attempts: screenerFundamentals.attempts,
+    last: screenerFundamentals.lastAttemptAt,
+  }).from(screenerFundamentals)).map((r) => [r.t, r]));
   const cutoff = Date.now() - staleDays * 86400000;
+
+  // WHY A SYMBOL THAT RETURNS NOTHING MUST STILL BE REMEMBERED.
+  //
+  // A fetch that came back empty used to write no row at all, so `have` never learned about it and
+  // the same symbol was selected again on every single run — forever. Sorted by volume descending,
+  // the highest-volume symbols a company-fundamentals API can never cover sat permanently at the top
+  // of a 3,000-a-day queue: 6,572 of the 13,578 missing tickers are ETFs, funds, warrants, rights or
+  // units. Measured, daily rows saved decayed 3,507 -> 350 -> 97 -> 46 -> 65 -> 4 as the fetchable
+  // symbols finished and the queue filled with permanently unfetchable ones. Roughly 97% of provider
+  // calls were being spent re-asking questions already answered, and the genuinely fetchable
+  // remainder further down the volume ranking was never reached.
+  //
+  // An empty answer is now recorded as an ATTEMPT, not as a verdict. The symbol leaves the queue for
+  // a while and comes back later, because "no data today" is not the same as "no data ever" — a
+  // newly listed company acquires fundamentals eventually. Backoff is linear in the number of failed
+  // attempts and capped, so a permanently unsupported symbol costs one call a quarter rather than
+  // one a day, while a temporarily empty one returns within the week.
+  const retryDueAt = (h) => {
+    const days = Math.min(7 * Math.max(1, h.attempts || 1), 90);
+    return h.last ? new Date(h.last).getTime() + days * 86400000 : 0;
+  };
+  const needsWork = (r) => {
+    const h = have.get(r.t);
+    if (!h) return true;                                       // never attempted
+    if (h.eps != null) return !h.u || new Date(h.u).getTime() < cutoff;   // has data -> refresh when stale
+    return retryDueAt(h) <= Date.now();                        // attempted, empty -> only when due
+  };
   // force = re-fetch everything (to backfill newly-added fields), oldest/never-fetched first so
-  // successive runs advance through the universe. Normal = only stale, prioritized by volume.
+  // successive runs advance through the universe. Normal = only what needs work, and among those a
+  // symbol never tried outranks one already known to come back empty, so a run spends its budget on
+  // new ground before re-testing old.
+  const rank = (r) => (have.get(r.t) ? (have.get(r.t).eps != null ? 1 : 2) : 0);
   const need = (force
-    ? uni.slice().sort((a, b) => (have.get(a.t) ? new Date(have.get(a.t)).getTime() : 0) - (have.get(b.t) ? new Date(have.get(b.t)).getTime() : 0))
-    : uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; }).sort((a, b) => (b.vol || 0) - (a.vol || 0))
+    ? uni.slice().sort((a, b) => (have.get(a.t)?.u ? new Date(have.get(a.t).u).getTime() : 0) - (have.get(b.t)?.u ? new Date(have.get(b.t).u).getTime() : 0))
+    : uni.filter(needsWork).sort((a, b) => rank(a) - rank(b) || (b.vol || 0) - (a.vol || 0))
   ).slice(0, cap).map((r) => r.t);
 
   const rows = [];
+  const emptied = [];
   for (let i = 0; i < need.length; i += concurrency) {
-    const got = await Promise.all(need.slice(i, i + concurrency).map(fetchFinancials));
-    got.forEach((d) => { if (d) rows.push({ ...d, updatedAt: new Date() }); });
+    const batch = need.slice(i, i + concurrency);
+    const got = await Promise.all(batch.map(fetchFinancials));
+    got.forEach((d, j) => {
+      if (d) rows.push({ ...d, updatedAt: new Date(), attempts: 0, lastAttemptAt: new Date() });
+      else emptied.push(batch[j]);
+    });
   }
   let saved = 0;
   for (let i = 0; i < rows.length; i += 200) {
@@ -163,11 +206,27 @@ export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleD
         epsGrowthTtm: sql`excluded.eps_growth_ttm`, revGrowthTtm: sql`excluded.rev_growth_ttm`, epsGrowthQoq: sql`excluded.eps_growth_qoq`, salesGrowthQoq: sql`excluded.sales_growth_qoq`,
         epsGrowth3y: sql`excluded.eps_growth_3y`, salesGrowth3y: sql`excluded.sales_growth_3y`,
         epsGrowth5y: sql`excluded.eps_growth_5y`, salesGrowth5y: sql`excluded.sales_growth_5y`, epsGrowthThisYr: sql`excluded.eps_growth_this_yr`, roic: sql`excluded.roic`, updatedAt: sql`now()`,
+        // A symbol that answers clears its backoff, so a temporary outage never compounds.
+        attempts: sql`0`, lastAttemptAt: sql`now()`,
       },
     });
     saved += batch.length;
   }
-  return { requested: need.length, fetched: rows.length, saved };
+
+  // The empty answers, recorded so the queue moves on. Data columns are left exactly as they were —
+  // this only ever touches the attempt counter, so a symbol that once had fundamentals and came back
+  // empty today keeps yesterday's numbers rather than being blanked.
+  let backedOff = 0;
+  for (let i = 0; i < emptied.length; i += 500) {
+    const b = emptied.slice(i, i + 500);
+    await db.execute(sql`
+      INSERT INTO screener_fundamentals (ticker, attempts, last_attempt_at)
+      SELECT t, 1, now() FROM unnest(${b}::text[]) AS t
+      ON CONFLICT (ticker) DO UPDATE
+        SET attempts = screener_fundamentals.attempts + 1, last_attempt_at = now()`);
+    backedOff += b.length;
+  }
+  return { requested: need.length, fetched: rows.length, saved, backedOff };
 }
 
 // Polygon primary_exchange (MIC) → our exchange label.

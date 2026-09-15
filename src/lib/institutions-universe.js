@@ -80,18 +80,72 @@ export async function runOwnershipAggregate() {
       FROM fund_filings
       ORDER BY cik, quarter DESC
     ),
+    -- THE SECURITY THE TICKER NAMES, exactly as fund_net_qoq decides it (17421db). This aggregate
+    -- summed every CUSIP mapped to a ticker, and a convertible note's shares column is FACE VALUE,
+    -- so note principal was added to share counts. Measured: Akamai's institutional holding came out
+    -- at 2,984M shares against 144M outstanding — 2,077% — and removing non-equity CUSIPs brought it
+    -- to 218M. Etsy 1,946M -> 152M. The denominator was never the problem.
+    --
+    -- The primary CUSIP is the one carrying the most positions for the ticker, and it only ever
+    -- PROTECTS a security from exclusion: filers describe a bond ETF with bond words, so classifying
+    -- in isolation deletes BSV, VCSH, GOVT and VGIT outright.
+    primary_cusip AS (
+      SELECT DISTINCT ON (ticker) ticker, cusip
+        FROM (SELECT h.ticker, h.cusip, count(*)::int c
+                FROM fund_holdings h JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
+               WHERE h.ticker IS NOT NULL AND coalesce(h.put_call, '') = ''
+               GROUP BY h.ticker, h.cusip) z
+       ORDER BY ticker, c DESC, cusip
+    ),
+    -- A derivative most filers label as one is never a share position, whatever CUSIP it sits on.
+    -- Same rule as 228d140: a blank put_call on a (cusip, class) that the majority of filers report
+    -- WITH an explicit put_call is one filer omitting the field.
+    mislabelled_option AS (
+      SELECT f.cusip, f.class
+        FROM fund_holdings f
+        JOIN latest l2 ON l2.cik = f.cik AND l2.quarter = f.quarter
+        JOIN security_position_class s
+          ON s.cusip = f.cusip AND s.cls = f.class AND s.put_call = ''
+       WHERE s.kind IN ('option', 'warrant', 'right')
+       GROUP BY f.cusip, f.class
+      HAVING count(*) FILTER (WHERE coalesce(f.put_call, '') <> '')
+           > count(*) FILTER (WHERE coalesce(f.put_call, '') = '')
+    ),
+    scoped AS (
+      SELECT h.ticker, h.cik, h.quarter, h.cusip, h.shares, h.value, h.accession, h.filed_date
+        FROM fund_holdings h
+        JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
+        LEFT JOIN primary_cusip p ON p.ticker = h.ticker
+        LEFT JOIN security_position_class s
+          ON s.cusip = h.cusip AND s.cls = h.class AND s.put_call = h.put_call
+        LEFT JOIN mislabelled_option m ON m.cusip = h.cusip AND m.class = h.class
+       WHERE h.ticker IS NOT NULL
+         AND coalesce(h.put_call, '') = ''
+         AND coalesce(h.shares, 0) > 0
+         AND m.cusip IS NULL
+         AND (h.cusip = p.cusip
+              OR s.kind IS NULL
+              OR s.kind NOT IN ('debt', 'option', 'warrant', 'right', 'preferred'))
+    ),
+    -- AMENDMENTS. A 13F-HR/A restates what it re-lists, so an original and its amendment must not
+    -- both contribute. Latest filing per (cik, quarter, cusip) wins.
+    pick AS (
+      SELECT DISTINCT ON (cik, quarter, cusip) cik, quarter, cusip, accession
+        FROM scoped ORDER BY cik, quarter, cusip, filed_date DESC NULLS LAST, accession DESC
+    ),
+    kept AS (
+      SELECT sc.* FROM scoped sc
+        JOIN pick pk ON pk.cik = sc.cik AND pk.quarter = sc.quarter
+                    AND pk.cusip = sc.cusip AND pk.accession = sc.accession
+    ),
     agg AS (
-      SELECT h.ticker,
-             SUM(h.shares)::double precision AS inst_shares,
-             SUM(h.value)::double precision  AS inst_value,
-             COUNT(DISTINCT h.cik)           AS filer_count,
-             MAX(h.quarter)                  AS as_of
-      FROM fund_holdings h
-      JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
-      WHERE h.ticker IS NOT NULL
-        AND coalesce(h.put_call, '') = ''
-        AND coalesce(h.shares, 0) > 0
-      GROUP BY h.ticker
+      SELECT kept.ticker,
+             SUM(kept.shares)::double precision AS inst_shares,
+             SUM(kept.value)::double precision  AS inst_value,
+             COUNT(DISTINCT kept.cik)           AS filer_count,
+             MAX(kept.quarter)                  AS as_of
+      FROM kept
+      GROUP BY kept.ticker
     )
     INSERT INTO ticker_institutional_ownership
       (ticker, as_of_quarter, inst_shares, inst_value, filer_count, shares_out, ownership_pct, updated_at)

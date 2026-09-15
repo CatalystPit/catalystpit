@@ -63,12 +63,18 @@ else {
   for (const c of dead) console.log('    DEAD: ' + c + ' is offered as a filter and is null for every row');
   ok('every offered filter has at least some data', dead.length === 0, dead.join(', '));
 
-  section('3. the tracked gaps have not silently grown');
-  const stillEmpty = [...KNOWN_UNSOURCED].filter((c) => cols.has(c) && r[c] === 0);
-  console.log('  known-unsourced filters still empty: ' + stillEmpty.length + ' of ' + KNOWN_UNSOURCED.size);
-  for (const c of stillEmpty) console.log('    ' + c);
-  ok('no tracked gap has been quietly wired without removing it from the list',
-    stillEmpty.length <= KNOWN_UNSOURCED.size);
+  section('3. the tracked gaps are still hidden, and still empty');
+  // Queried DIRECTLY, not via the offered-filter list. Once these were hidden they left `backed`,
+  // which silently made this section report zero — the guard has to outlive the hiding.
+  const tracked = [...KNOWN_UNSOURCED].filter((c) => cols.has(c));
+  const tsel = tracked.map((c) => `count(*) filter (where "${c}" is not null)::int "${c}"`).join(', ');
+  const [tr] = await sql.query(`select ${tsel} from screener_stocks`);
+  for (const c of tracked) console.log('    ' + c.padEnd(18) + n(tr[c]) + ' rows populated');
+  ok('none has been quietly wired without being un-hidden', tracked.every((c) => tr[c] === 0),
+    tracked.filter((c) => tr[c] > 0).join(', ') + ' now has data — re-offer it or drop it from the list');
+  // And none of them may be offered to a user while still empty.
+  const offeredButEmpty = tracked.filter((c) => backed.includes(c));
+  ok('none of them is offered as a filter', offeredButEmpty.length === 0, offeredButEmpty.join(', '));
 
   section('4. institutional ownership reaches the screener');
   const [io] = await sql.query(`select count(*) filter (where inst_own_pct is not null)::int have,
