@@ -260,7 +260,7 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
 // Backfill technicals market-wide from Polygon grouped-daily history (Stocks Starter = unlimited
 // calls). Pulls `days` trading days, computes RSI/SMA/52w/ATR/perf in memory (universe tickers only),
 // writes the technical columns to screener_stocks. Idempotent; run after the main rebuild.
-export async function backfillTechnicals({ days = 200 } = {}) {
+export async function backfillTechnicals({ days = 260 } = {}) {
   await ensureScreenerTables();
   if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   const uni = new Set((await db.select({ t: screenerStocks.ticker }).from(screenerStocks)).map((r) => r.t));
@@ -270,7 +270,17 @@ export async function backfillTechnicals({ days = 200 } = {}) {
   const series = new Map();   // ticker -> chronological [{close,high,low,date}]
   const spy = [];             // SPY chronological closes (market proxy for beta)
   let gotDays = 0;
-  for (let i = 1; gotDays < days && i <= days + 30; i++) {
+  // CALENDAR DAYS TO WALK BACK FOR `days` TRADING DAYS. The old bound was days + 30, which assumed
+  // roughly 30 non-trading days in any window. The real ratio is about 30% — weekends alone are
+  // 28.6% — so asking for 150 delivered 123, measured, and every indicator with a longer lookback
+  // than that silently returned null for the whole market: perf_6m needs 127 closes and had 0.6%
+  // coverage, missing by four.
+  //
+  // 252 trading days per 365 calendar days is the standard ratio; 1.5 plus a small constant absorbs
+  // holiday clusters. This costs nothing when the data is there, because the loop stops the moment
+  // gotDays reaches days — it only spends the extra iterations when a window really is sparse.
+  const calendarBudget = Math.ceil(days * 1.5) + 10;
+  for (let i = 1; gotDays < days && i <= calendarBudget; i++) {
     const d = new Date(now); d.setUTCDate(now.getUTCDate() - i);
     const ds = ymd(d);
     const res = await fetchGrouped(ds);
@@ -839,6 +849,29 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     }
   }
 
+  // TECHNICALS SURVIVE THE REBUILD. They belong to backfillTechnicals, which owns twenty-two columns
+  // this rebuild does not compute at all (perf_ytd/3y/5y, volatility, beta, high20d, high50d,
+  // all_time_high, candlestick, pattern) and computes the rest for at most `maxCandleTickers` of the
+  // 13,301 tickers that have candles. Clearing the table therefore used to null every technical for
+  // the whole market until the next technicals run: measured at 9.1% rsi14 and 0.0% for all ten of
+  // the fields above, which is what a user filtering on RSI or a 200-day average actually saw for
+  // the twenty minutes after the 08:30 rebuild, and for the rest of the day after any manual one.
+  //
+  // Read them before the delete and carry them forward for any ticker this run cannot recompute. A
+  // ticker that leaves the universe still disappears, because carry-forward only applies to rows
+  // being reinserted. Roughly 3 MB, one read.
+  const prevTech = new Map((await db.select({
+    ticker: screenerStocks.ticker,
+    rsi14: screenerStocks.rsi14, sma20: screenerStocks.sma20, sma50: screenerStocks.sma50, sma200: screenerStocks.sma200,
+    hi52: screenerStocks.hi52, lo52: screenerStocks.lo52, atr14: screenerStocks.atr14,
+    perf1w: screenerStocks.perf1w, perf1m: screenerStocks.perf1m, perf3m: screenerStocks.perf3m,
+    perf6m: screenerStocks.perf6m, perf1y: screenerStocks.perf1y, perfYtd: screenerStocks.perfYtd,
+    perf3y: screenerStocks.perf3y, perf5y: screenerStocks.perf5y,
+    volatility: screenerStocks.volatility, beta: screenerStocks.beta,
+    high20d: screenerStocks.high20d, high50d: screenerStocks.high50d, allTimeHigh: screenerStocks.allTimeHigh,
+    candlestick: screenerStocks.candlestick, pattern: screenerStocks.pattern,
+  }).from(screenerStocks)).map((r) => [r.ticker, r]));
+
   // Clean rebuild: clear the table, then insert the fresh universe. Prevents any accumulation of
   // delisted/junk tickers across runs (why the count was stuck at 25k).
   await db.delete(screenerStocks);
@@ -846,7 +879,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // 4) Insert the universe FIRST (fast, no network) so stocks always land even if the later quote
   // pass is slow/times out.
   const rowsOut = tickers.map((t) => {
-    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t), m = metaByT.get(t), fd = fundByT.get(t);
+    const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t), m = metaByT.get(t), fd = fundByT.get(t), pv = prevTech.get(t);
     const floatShares = f?.floatShares ?? null;
     const vol = tk?.volume ?? pg?.volume ?? s?.avg ?? null;
     const px = tk?.price ?? pg?.price ?? priceMap.get(t)?.price ?? null;
@@ -879,9 +912,18 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       payoutRatio: (m?.annualDividend > 0 && fd?.epsTtm > 0) ? (m.annualDividend / fd.epsTtm) * 100 : null,
       floatShares, sharesOut: f?.sharesOut ?? m?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
-      rsi14: tk?.rsi14 ?? null, sma20: tk?.sma20 ?? null, sma50: tk?.sma50 ?? null, sma200: tk?.sma200 ?? null,
-      hi52: tk?.hi52 ?? null, lo52: tk?.lo52 ?? null, atr14: tk?.atr14 ?? null,
-      perf1w: tk?.perf1w ?? null, perf1m: tk?.perf1m ?? null, perf3m: tk?.perf3m ?? null, perf6m: tk?.perf6m ?? null, perf1y: tk?.perf1y ?? null,
+      // This run's candle-derived value if it has one, else whatever the technicals job last wrote.
+      // pv supplies the twenty-two columns outright where this run computes nothing.
+      rsi14: tk?.rsi14 ?? pv?.rsi14 ?? null, sma20: tk?.sma20 ?? pv?.sma20 ?? null,
+      sma50: tk?.sma50 ?? pv?.sma50 ?? null, sma200: tk?.sma200 ?? pv?.sma200 ?? null,
+      hi52: tk?.hi52 ?? pv?.hi52 ?? null, lo52: tk?.lo52 ?? pv?.lo52 ?? null, atr14: tk?.atr14 ?? pv?.atr14 ?? null,
+      perf1w: tk?.perf1w ?? pv?.perf1w ?? null, perf1m: tk?.perf1m ?? pv?.perf1m ?? null,
+      perf3m: tk?.perf3m ?? pv?.perf3m ?? null, perf6m: tk?.perf6m ?? pv?.perf6m ?? null,
+      perf1y: tk?.perf1y ?? pv?.perf1y ?? null,
+      perfYtd: pv?.perfYtd ?? null, perf3y: pv?.perf3y ?? null, perf5y: pv?.perf5y ?? null,
+      volatility: pv?.volatility ?? null, beta: pv?.beta ?? null,
+      high20d: pv?.high20d ?? null, high50d: pv?.high50d ?? null, allTimeHigh: pv?.allTimeHigh ?? null,
+      candlestick: pv?.candlestick ?? null, pattern: pv?.pattern ?? null,
       insiderNet90d: i?.net ?? null, insiderBuyers90d: i?.buyers ?? null, insiderBuy90d: !!i?.buy, insiderSell90d: !!i?.sell,
       congressNet90d: c?.net ?? null, congressBuy90d: !!c?.buy,
       fundNetQoq: fundNet.get(t) ?? null, consensusScore: consensus.get(t) ?? null,
@@ -917,6 +959,12 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
         rsi14: sql`excluded.rsi14`, sma20: sql`excluded.sma20`, sma50: sql`excluded.sma50`, sma200: sql`excluded.sma200`,
         hi52: sql`excluded.hi52`, lo52: sql`excluded.lo52`, atr14: sql`excluded.atr14`,
         perf1w: sql`excluded.perf_1w`, perf1m: sql`excluded.perf_1m`, perf3m: sql`excluded.perf_3m`, perf6m: sql`excluded.perf_6m`, perf1y: sql`excluded.perf_1y`,
+        // Carried forward above rather than recomputed here; listed so the conflict path agrees with
+        // the insert path. backfillTechnicals remains the only writer that derives them.
+        perfYtd: sql`excluded.perf_ytd`, perf3y: sql`excluded.perf_3y`, perf5y: sql`excluded.perf_5y`,
+        volatility: sql`excluded.volatility`, beta: sql`excluded.beta`,
+        high20d: sql`excluded.high20d`, high50d: sql`excluded.high50d`, allTimeHigh: sql`excluded.all_time_high`,
+        candlestick: sql`excluded.candlestick`, pattern: sql`excluded.pattern`,
         insiderNet90d: sql`excluded.insider_net_90d`, insiderBuyers90d: sql`excluded.insider_buyers_90d`, insiderBuy90d: sql`excluded.insider_buy_90d`, insiderSell90d: sql`excluded.insider_sell_90d`,
         congressNet90d: sql`excluded.congress_net_90d`, congressBuy90d: sql`excluded.congress_buy_90d`,
         fundNetQoq: sql`excluded.fund_net_qoq`, consensusScore: sql`excluded.consensus_score`,
