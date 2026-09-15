@@ -34,6 +34,12 @@ export async function GET(request) {
   const tickerCap = Math.min(20000, Math.max(50, parseInt(sp.get('tickerCap') || '500', 10) || 500));
   const tickerOnly = sp.get('tickerOnly') === '1';   // skip ingest, just drain the ticker→logo backlog
   const cleanup = sp.get('cleanup') === '1';          // one-time purge of junk/bond "tickers"
+  // Targeted authoritative re-resolution of the CUSIPs on tickers carrying more than one issuer.
+  // Repair step, not steady state: it runs alone, asks OpenFIGI directly for a security-level answer
+  // and overwrites the name-inferred mappings that put unrelated funds on a sponsor's ticker.
+  // OPENFIGI_KEY is read server-side inside the resolver and never leaves it; the response carries
+  // counts only, never a CUSIP or a mapping.
+  const disputed = sp.get('disputed') === '1';
 
   // Re-ingest specific filers. Needed for repairs: a standalone node script cannot import this
   // module (it reaches lib/db, whose extensionless imports only resolve under Next), so targeted
@@ -49,7 +55,7 @@ export async function GET(request) {
   }
 
   try {
-    const res = await runInstitutionsUniverse({ indexes, ingestCap, tickerCap, tickerOnly, cleanup });
+    const res = await runInstitutionsUniverse({ indexes, ingestCap, tickerCap, tickerOnly, cleanup, disputed });
     console.log(`[institutions-universe] ${JSON.stringify(res)}`);
     return Response.json({ ok: true, ...res });
   } catch (e) {

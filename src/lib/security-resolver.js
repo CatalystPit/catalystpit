@@ -162,6 +162,57 @@ export async function resolveCusips(cusips, { maxLookups = 500 } = {}) {
   return out;
 }
 
+/**
+ * FORCE a fresh OpenFIGI answer for specific CUSIPs, ignoring what we already believe.
+ *
+ * resolveCusips() above is a cache: a CUSIP that already has a cusip_map row is returned as-is and
+ * never re-queried, which is exactly right for throughput and exactly wrong when the stored answer
+ * is the thing under suspicion. 2,156 of the 2,307 CUSIPs on contaminated tickers carry a
+ * `sec-name` mapping — inferred from an issuer string, not identified — and an ETF sponsor's name is
+ * a prefix of every product it sponsors, which is how 92 Invesco funds ended up on IVZ.
+ *
+ * So this path skips cusip_map AND the KV cache and asks OpenFIGI directly. Same batching, same
+ * throttle, same key handling as every other lookup — it reuses openfigi() rather than introducing a
+ * second resolver. What it does differently is overwrite: the answer lands as source 'openfigi',
+ * replacing whatever inference was there, and a CUSIP OpenFIGI cannot map is recorded as
+ * 'unresolved' with a NULL ticker rather than left holding a guess.
+ *
+ * Idempotent and resumable: re-running re-queries the same CUSIPs and writes the same answers, and
+ * `maxLookups` bounds a single pass so a large set can be drained across several runs.
+ */
+export async function reresolveCusips(cusips, { maxLookups = 2500 } = {}) {
+  await ensureSecurityTables();
+  const uniq = [...new Set((cusips || []).filter(Boolean).map((c) => String(c).toUpperCase()))]
+    .filter((c) => /^[0-9A-Z]{9}$/.test(c));
+  const stats = { submitted: uniq.length, queried: 0, resolved: 0, unresolved: 0, changed: 0, unchanged: 0 };
+  if (!uniq.length) return { ...stats, map: new Map() };
+
+  const before = new Map((await db.select().from(cusipMap).where(inArray(cusipMap.cusip, uniq)))
+    .map((r) => [r.cusip, r.ticker || null]));
+
+  const toQuery = uniq.slice(0, maxLookups);
+  stats.queried = toQuery.length;
+  const figi = await openfigi(toQuery);
+
+  const writes = [];
+  const map = new Map();
+  for (const c of toQuery) {
+    const t = normalizeTicker(figi.get(c)) || null;
+    if (t) { map.set(c, t); stats.resolved++; } else stats.unresolved++;
+    if ((before.get(c) ?? null) !== t) stats.changed++; else stats.unchanged++;
+    writes.push(t
+      ? { cusip: c, ticker: t, status: 'resolved', confidence: 'high', source: 'openfigi', updatedAt: new Date() }
+      : { cusip: c, ticker: null, status: 'unresolved', confidence: null, source: 'openfigi', updatedAt: new Date() });
+  }
+  for (let i = 0; i < writes.length; i += 500) {
+    await db.insert(cusipMap).values(writes.slice(i, i + 500)).onConflictDoUpdate({
+      target: cusipMap.cusip,
+      set: { ticker: sql`excluded.ticker`, status: sql`excluded.status`, confidence: sql`excluded.confidence`, source: sql`excluded.source`, updatedAt: sql`now()` },
+    });
+  }
+  return { ...stats, map };
+}
+
 // Single-CUSIP convenience.
 export async function resolveCusip(cusip) {
   const m = await resolveCusips([cusip], { maxLookups: 1 });

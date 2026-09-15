@@ -2,7 +2,7 @@ import { and, eq, gte, sql, desc, isNull, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { fundHoldings, fundFilings, institutions } from './schema';
 import { INSTITUTIONS } from './institutions.mjs';
-import { resolveCusips } from './security-resolver';
+import { resolveCusips, reresolveCusips } from './security-resolver';
 import { resolveIssuerItems } from './name-resolver';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -399,12 +399,68 @@ export async function resolveHoldingsByName({ cap = 8000 } = {}) {
   for (let i = 0; i < matches.length; i += 1000) {
     const b = matches.slice(i, i + 1000);
     const cs = arr(b.map((p) => p.cusip)), ts = arr(b.map((p) => p.ticker));
+    // WRITES ONLY WHERE NOTHING AUTHORITATIVE EXISTS, AND NEVER OVER ONE.
+    //
+    // This used to overwrite unconditionally, which is how an ETF sponsor's name became 92 unrelated
+    // Invesco funds on IVZ, 35 ProShares funds on AGQ and 19 Innovator ETFs on INHD: the matcher
+    // prefix-matches a registrant name, and a sponsor's name is a prefix of every product it
+    // sponsors. It also meant a later OpenFIGI answer could be replaced by an earlier inference.
+    //
+    // An inferred mapping is now the LAST word, never the overriding one: a CUSIP OpenFIGI has
+    // already answered — resolved or explicitly unresolved — keeps that answer.
     await db.execute(sql`INSERT INTO cusip_map (cusip, ticker, status, confidence, source, updated_at)
       SELECT u.cusip, u.t, 'resolved', 'medium', 'sec-name', now() FROM unnest(${cs}, ${ts}) AS u(cusip, t)
-      ON CONFLICT (cusip) DO UPDATE SET ticker = excluded.ticker, status = 'resolved', confidence = 'medium', source = 'sec-name', updated_at = now()`);
-    await db.execute(sql`UPDATE fund_holdings h SET ticker = m.t FROM unnest(${cs}, ${ts}) AS m(cusip, t) WHERE h.cusip = m.cusip AND h.ticker IS NULL`);
+      ON CONFLICT (cusip) DO NOTHING`);
+    // The same rule for the holdings themselves. Without this the repair would be undone on the next
+    // cron pass: it NULLs the contaminated tickers, and this filled every NULL straight back in.
+    await db.execute(sql`UPDATE fund_holdings h SET ticker = m.t
+      FROM unnest(${cs}, ${ts}) AS m(cusip, t)
+      WHERE h.cusip = m.cusip AND h.ticker IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM cusip_map c
+           WHERE c.cusip = h.cusip AND c.source IN ('openfigi', 'manual', 'consensus'))`);
   }
   return { resolved: matches.length };
+}
+
+/**
+ * TARGETED AUTHORITATIVE RE-RESOLUTION of the CUSIPs on contaminated tickers.
+ *
+ * A ticker names one security, so its holdings should carry one CUSIP issuer prefix — characters 1-6
+ * of a CUSIP identify the issuer, 7-8 the issue, 9 the check digit. 574 tickers carry more than one,
+ * because resolveHoldingsByName() assigns a ticker from the issuer STRING when OpenFIGI cannot map
+ * the CUSIP, and a sponsor's name is a prefix of every product it sponsors: 92 Invesco funds landed
+ * on IVZ, 35 ProShares funds on AGQ, 19 Innovator ETFs on INHD, the iShares trusts on BLK.
+ *
+ * Neither of the obvious repairs is safe on its own. Trusting the stored mapping keeps a 2-row,
+ * $0-value OpenFIGI artifact over QQQ's real 16,303-row CUSIP; trusting the majority keeps CRH plc
+ * over RH's own security, because the contamination outweighs it 93% to 7%. The missing input is a
+ * security-level answer, so this asks for one: every CUSIP on a contaminated ticker goes back to
+ * OpenFIGI, bypassing both the cusip_map row and the KV cache that produced the mess.
+ *
+ * Bounded, resumable and idempotent. `cap` limits one pass; re-running re-queries and rewrites the
+ * same answers. It changes cusip_map only — no holding is touched here.
+ */
+export async function reresolveDisputedCusips({ cap = 2500 } = {}) {
+  await ensureUniverseTables();
+  const res = await db.execute(sql`
+    with pfx as (
+      select ticker, left(cusip, 6) p from fund_holdings
+       where ticker is not null and cusip ~ '^[0-9A-Z]{9}$'
+       group by ticker, left(cusip, 6)),
+    disputed as (select ticker from pfx group by ticker having count(*) > 1)
+    select distinct f.cusip
+      from fund_holdings f join disputed d on d.ticker = f.ticker
+     where f.cusip ~ '^[0-9A-Z]{9}$'
+     order by f.cusip
+     limit ${cap}`);
+  const cusips = (res?.rows ?? res ?? []).map((r) => r.cusip);
+  if (!cusips.length) return { submitted: 0, queried: 0, resolved: 0, unresolved: 0, changed: 0 };
+  const out = await reresolveCusips(cusips, { maxLookups: cap });
+  // The map itself is not returned: it is a CUSIP→ticker table and has no business leaving the
+  // server. Counts are what the caller needs to see progress.
+  const { map, ...counts } = out;
+  return counts;
 }
 
 // One-time cleanup for earlier mis-resolutions. NORMALIZE first (recover real symbols) so we don't
@@ -422,11 +478,17 @@ export async function cleanupBadTickers() {
 // Orchestrate one run: discover → ingest a bounded batch of not-yet-ingested filers → resolve tickers.
 // tickerOnly: skip discovery/ingestion and just drain the ticker-resolution backlog (fast logo fill).
 // cleanup: one-time purge of junk tickers before resolving.
-export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tickerCap = 500, timeBudgetMs = 250000, tickerOnly = false, cleanup = false } = {}) {
+export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tickerCap = 500, timeBudgetMs = 250000, tickerOnly = false, cleanup = false, disputed = false } = {}) {
   await ensureUniverseTables();
   const t0 = Date.now();
   const out = {};
   if (cleanup) { try { out.cleanup = await cleanupBadTickers(); } catch (e) { out.cleanup = { error: e?.message }; } }
+  // Targeted authoritative re-resolution of the CUSIPs on contaminated tickers. Runs alone when
+  // asked for: it is a repair step, not part of the steady-state cycle.
+  if (disputed) {
+    try { return { ...out, disputed: await reresolveDisputedCusips({ cap: tickerCap }), ms: Date.now() - t0 }; }
+    catch (e) { return { ...out, disputed: { error: e?.message }, ms: Date.now() - t0 }; }
+  }
   if (tickerOnly) {
     let tick = { resolved: 0, checked: 0 }, named = { resolved: 0 };
     try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
