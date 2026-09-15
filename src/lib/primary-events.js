@@ -60,6 +60,22 @@ export async function insertEvents(events) {
     if (!row) continue;                       // conflicted away: already had this exact item
     written++;
     e._seq = row.seq;
+
+    // WALTER -> FACEBOOK. This is the only place that knows an event is NEW AND UNIQUE: the insert
+    // returned a row (so a replay or re-ingest of the same item conflicted away and never reaches
+    // here) and cluster_id is null (so it is the canonical story, not a duplicate folding into one).
+    //
+    // It QUEUES; it does not publish. Nothing about Facebook is on ingestion's critical path, and
+    // the try/catch means even the queue insert cannot fail a capture. The publisher drains the
+    // queue separately and checks the kill switch there.
+    if (e.source === 'WALTERBLOOMBERG' && !e.cluster_id) {
+      try {
+        const { queueFacebookPost } = await import('./facebook-publisher');
+        await queueFacebookPost({ ...e, seq: row.seq }, { isNew: true, isCanonical: true });
+      } catch (err) {
+        console.error('[facebook] queue skipped', String(err?.message || err).slice(0, 100));
+      }
+    }
     // A duplicate folded into an existing event bumps that event's source count. The raw row stays
     // in the table either way; only the canonical view collapses it.
     if (e.cluster_id) {
