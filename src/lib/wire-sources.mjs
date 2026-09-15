@@ -8,7 +8,9 @@
 // per real-world story and deliberately never tells the browser which feed found it. That is separate
 // from, and does not affect, the attribution Catalyst Pit shows on purpose — SEC rows still carry
 // their source and filing link, and /api/news still names the publisher of a story it links to.
-const SOURCE_GROUP_MEMBERS = {
+// Exported so the verification suite can assert no source lands in two groups. Server-side only —
+// this module is reachable from app code solely through wire-sources.server.mjs.
+export const SOURCE_GROUP_MEMBERS = {
   wires:    ['FINANCIALJUICE', 'BREAKINGMARKETNEWS', 'WALTERBLOOMBERG'],
   media:    ['BLOOMBERG', 'WSJ', 'CNBC', 'YAHOO', 'MARKETWATCH', 'FT', 'ECONOMIST', 'AXIOS', 'TECHCRUNCH'],
   research: ['SEEKINGALPHA', 'INVESTING', 'ZEROHEDGE'],

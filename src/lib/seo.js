@@ -19,7 +19,10 @@ export const canonical = (path = '/') => {
 // filesystem walk would sweep those in the moment anyone adds a directory.
 //
 // NOT here, on purpose:
-//   /ticker/[symbol]        renders no server-side content yet — Phase 3
+//   /ticker/[symbol]        renders no server-side content yet — Phase 3. The route now normalises
+//                           its URL, 404s malformed symbols and self-canonicalises, but it is not
+//                           listed here: a sitemap is a claim that a URL is worth crawling, and
+//                           until the page has server-rendered content there is nothing to crawl.
 //   /politicians/[slug]     detail pages, until they are linked and their metadata is proven
 //   /institutions/[slug]    same
 //   /watchlist /account /settings /sign-in /sign-up /u/[handle]   private or personal

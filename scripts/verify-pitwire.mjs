@@ -6,7 +6,11 @@
 // Run: node scripts/verify-pitwire.mjs        (needs the dev server on :3000)
 
 import { EVENT_TYPES, CATEGORIES, SOURCE_GROUPS, CAP_BUCKETS, NOISE_FILTERS, IMPACT,
-         eventTypeOf, categoryOf, sourceGroupOf, capBucketOf, decorate } from '../src/lib/wire-taxonomy.mjs';
+         eventTypeOf, categoryOf, capBucketOf } from '../src/lib/wire-taxonomy.mjs';
+// sourceGroupOf and decorate moved out of wire-taxonomy.mjs in 4e2163e: they carry the vendor
+// roster, and wire-taxonomy.mjs is imported by PitWire.jsx and therefore ships to browsers. Imported
+// here from the unguarded implementation because `server-only` throws outside a server component.
+import { sourceGroupOf, decorate, SOURCE_GROUP_MEMBERS } from '../src/lib/wire-sources.mjs';
 
 const BASE = process.env.WIRE_BASE || 'http://localhost:3000';
 let pass = 0, fail = 0;
@@ -53,11 +57,16 @@ ok('Fed → gov', sourceGroupOf('FED') === 'gov');
 ok('SEC has its own group', sourceGroupOf('SEC') === 'sec');
 ok('Nasdaq → exchange', sourceGroupOf('NASDAQ') === 'exchange');
 ok('unknown → other', sourceGroupOf('WHOEVER') === 'other');
+// SOURCE_GROUPS is now {key,label} only — the membership lists moved server-side with the roster,
+// which is the point of 4e2163e. Both halves are still checked: no source in two groups, and every
+// group the chips offer is a group something can actually belong to.
 ok('no source is in two groups', (() => {
   const seen = new Set();
-  for (const g of SOURCE_GROUPS) for (const s of g.sources) { if (seen.has(s)) return false; seen.add(s); }
+  for (const members of Object.values(SOURCE_GROUP_MEMBERS)) for (const s of members) { if (seen.has(s)) return false; seen.add(s); }
   return true;
 })());
+ok('every membership group has a filter chip', Object.keys(SOURCE_GROUP_MEMBERS)
+  .every((k) => SOURCE_GROUPS.some((g) => g.key === k)));
 
 sec('MARKET CAP — bucketed, never guessed');
 ok('mega', capBucketOf(3.2e12) === 'mega');
