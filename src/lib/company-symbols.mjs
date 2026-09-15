@@ -15,6 +15,8 @@
 // that is also an ordinary English word, a country, an agency, a currency. Each of those is a
 // silent-wrong-answer generator, and a wrong cashtag on a public wire is worse than a missing one.
 
+import { isSicDescription } from './sic-descriptions.mjs';
+
 // ── normalisation ────────────────────────────────────────────────────────────
 // Legal scaffolding carries no identity: "COSTCO WHOLESALE CORP /NEW" and "Costco Wholesale" are
 // the same company. Dropped, punctuation removed, joined with no spaces, so spacing and commas
@@ -78,11 +80,25 @@ export function core(name) {
     .join('');
 }
 
-// An SIC industry description is not a company name. screener_stocks carries these for some symbols
-// (COST reads "RETAIL-VARIETY STORES", GOOG "SERVICES-COMPUTER PROGRAMMING, DATA PROCESSING, ETC.")
-// and indexing them would map a whole industry onto one arbitrary ticker.
+// An SIC industry description is not a company name. screener_stocks carried these for 2,805 symbols
+// (COST read "RETAIL-VARIETY STORES", GOOG "SERVICES-COMPUTER PROGRAMMING, DATA PROCESSING, ETC.")
+// and indexing them maps a whole industry onto one arbitrary ticker.
+//
+// THE SHAPE PATTERN BELOW WAS NOT ENOUGH. Measured against the live table it caught 757 of those
+// 2,805 — it needs an industry-ish head AND an industry-ish tail, so "PHARMACEUTICAL PREPARATIONS",
+// "PETROLEUM REFINING" and "METAL CANS" all sailed through. 2,048 descriptions were indexed as
+// company names, and 92 of them actually resolved to a ticker through the matcher: "MEAT PACKING
+// PLANTS" returned $JBS, "HOSPITAL & MEDICAL SERVICE PLANS" returned $HUM. pickOne()'s ambiguity
+// refusal absorbed the rest only because most descriptions are shared by hundreds of symbols; the
+// ones held by a single ticker had nothing to be ambiguous against.
+//
+// So the primary test is now EXACT MEMBERSHIP in the EDGAR vocabulary rather than a guess at its
+// shape — see sic-descriptions.mjs, where the zero-collision measurement is recorded. The pattern is
+// kept beside it, not replaced by it: it costs nothing, it had no false positives against the live
+// table, and it still covers a description that postdates the snapshot.
 const SIC_SHAPED = /\b(?:SERVICES|RETAIL|WHOLESALE|MANUFACTURING|MFG|PRODUCTS|PREPACKAGED|ETC\.?)\b.*\b(?:STORES|SOFTWARE|PROGRAMMING|PROCESSING|EQUIPMENT|SUPPLIES|GOODS|NEC)\b|^\s*(?:BLANK CHECKS?|INVESTORS?, NEC)\s*$/i;
-export const looksLikeIndustry = (name) => SIC_SHAPED.test(String(name || ''));
+export const looksLikeIndustry = (name) =>
+  isSicDescription(name) || SIC_SHAPED.test(String(name || ''));
 
 // ── things that are never a company, however they are spelled ────────────────
 // A wrong cashtag on a macro line is the most damaging failure available here, so these are refused
@@ -236,6 +252,10 @@ export function buildIndex(rows) {
   for (const r of rows) {
     const t = String(r.ticker || '').toUpperCase();
     if (!t || !/^[A-Z][A-Z0-9.\-]{0,6}$/.test(t)) continue;
+    // EXACT EVIDENCE, when the caller can supply it. A row whose company is character-for-character
+    // its own industry is a classification that leaked into a name column, not a coincidence. This
+    // needs no vocabulary and cannot go stale, so it holds for any description EDGAR invents later.
+    if (r.industry != null && r.company != null && String(r.company) === String(r.industry)) continue;
     if (looksLikeIndustry(r.company)) continue;
     add(tokens(r.company), t);
   }

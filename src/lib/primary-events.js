@@ -155,8 +155,11 @@ async function symbolIndex() {
     const a = await db.execute(sql`
       select distinct on (ticker) ticker, company from insider_trades
        where company is not null and company <> '' order by ticker, filing_date desc`);
+    // `industry` comes along so buildIndex can apply its exact company===industry rule: a value that
+    // is character-for-character its own classification is an SIC description, not a name. It is the
+    // evidence, not a heuristic, and it costs one column.
     const b = await db.execute(sql`
-      select ticker, company from screener_stocks where company is not null and company <> ''`);
+      select ticker, company, industry from screener_stocks where company is not null and company <> ''`);
     _symIdx = buildIndex([...(a.rows ?? a), ...(b.rows ?? b)]);
     _symAt = Date.now();
   } catch { /* keep whatever index we had; no index simply means no name resolution */ }

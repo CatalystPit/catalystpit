@@ -2,6 +2,7 @@ import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals } from './schema';
 import { computeConfluence } from './confluence';
+import { isSicDescription } from './sic-descriptions.mjs';
 
 // Populates the screener_stocks universe from data we ALREADY own (no external provider):
 //  proprietary signals (insider/congress/13F/consensus/8-K) + price/volume/technicals computed
@@ -524,6 +525,57 @@ function eightkCategory(itemsCsv) {
 const CLEAN_SYM = /^[A-Z]{1,5}$/;
 const MIN_LIQUID_VOL = 50000;   // FINRA breadth floor: skip dead/thin names (signal tickers bypass)
 
+// CANONICAL COMPANY IDENTITY, from SEC filings only.
+//
+// screener_stocks.company must hold a trustworthy issuer name or NOTHING. It previously fell back to
+// the SIC industry description when no name was at hand, which put "PHARMACEUTICAL PREPARATIONS"
+// under ZTS, "PETROLEUM REFINING" under XOM and "RADIO BROADCASTING STATIONS" under SIRI — 2,805
+// rows, 49% of every populated value. A page titled with an industry is a false fact about a real
+// company; a page with no name is merely a page with no name.
+//
+// The hierarchy is short on purpose:
+//   1. the Form 4 issuer name, as the issuer itself filed it, most recent filing first
+//   2. the 8-K registrant name, for companies with no Form 4 under that symbol
+//   3. null
+//
+// 13F issuer names, FINRA security names and the vendor's own name field are all DELIBERATELY absent.
+// Measured against the SEC names on the overlap, 13F agrees exactly 60% of the time (it carries
+// "SCHEIN HENRY INC", "BANK AMERICA CORP", HTML entities) and FINRA 26% (it names the security, not
+// the company: "Apple Inc. Common Stock"). Admitting either would buy about fifty extra symbols and
+// cost the guarantee that a name we print is a name its owner filed.
+//
+// ALL HISTORY, INDEPENDENT OF EVERY SIGNAL WINDOW. A company does not stop being itself because no
+// insider traded in the last quarter.
+async function companyIdentity() {
+  const clean = (v) => {
+    const t = String(v || '').trim();
+    // Defence in depth. No SEC name in the live data is an SIC description — 5,542 Form 4 names and
+    // 1,010 registrant names, zero collisions — but an identity column must never be able to carry
+    // one, whatever arrives upstream later.
+    return t && !isSicDescription(t) ? t : null;
+  };
+  const byTicker = new Map();
+  const form4 = await db.execute(sql`
+    select distinct on (ticker) ticker, company from insider_trades
+     where ticker is not null and company is not null and company <> ''
+     order by ticker, filing_date desc nulls last, transaction_date desc nulls last`);
+  for (const r of (form4.rows ?? form4)) {
+    const nm = clean(r.company);
+    if (nm) byTicker.set(String(r.ticker).toUpperCase(), nm);
+  }
+  const eightk = await db.execute(sql`
+    select distinct on (ticker) ticker, company from eightk_filings
+     where ticker is not null and company is not null and company <> ''
+     order by ticker, filed_at desc nulls last`);
+  for (const r of (eightk.rows ?? eightk)) {
+    const t = String(r.ticker).toUpperCase();
+    if (byTicker.has(t)) continue;              // a Form 4 name outranks a registrant name
+    const nm = clean(r.company);
+    if (nm) byTicker.set(t, nm);
+  }
+  return byTicker;
+}
+
 export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   await ensureScreenerTables();
   const runTs = new Date();     // rows written this run get this exact stamp; stale rows are pruned
@@ -536,7 +588,10 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     buyers: sql`count(distinct case when ${insiderTrades.action}='BUY' then ${insiderTrades.executive} end)`.mapWith(Number),
     buy: sql`bool_or(${insiderTrades.action}='BUY')`,
     sell: sql`bool_or(${insiderTrades.action}='SELL')`,
-    company: sql`max(${insiderTrades.company})`,
+    // NO company HERE. Identity used to be read off this aggregate, which is scoped to the 90-day,
+    // value>0 SIGNAL window — so a company whose last Form 4 predated the window contributed no name
+    // and fell through to an SIC description. See companyIdentity() for the all-history lookup.
+    // Widening this query instead would have silently widened every insider signal with it.
   }).from(insiderTrades).where(and(gte(insiderTrades.transactionDate, since90), sql`${insiderTrades.totalValue} > 0`)).groupBy(insiderTrades.ticker);
 
   const conRows = await db.select({
@@ -584,6 +639,10 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   const siByT = new Map(si.map((r) => [r.ticker, r]));
   const fl = await db.select({ ticker: tickerFloat.ticker, floatShares: tickerFloat.floatShares, sharesOut: tickerFloat.outstandingShares }).from(tickerFloat);
   const flByT = new Map(fl.map((r) => [r.ticker, r]));
+
+  // Canonical company names. Separate query, separate concern: nothing about it is scoped to a
+  // signal window, and nothing in the signal aggregates supplies a name.
+  const nameByT = await companyIdentity();
 
   // Persistent descriptive meta (market cap / sector / exchange / asset type) from Polygon details.
   const metaByT = new Map((await db.select().from(screenerMeta)).map((r) => [r.ticker, r]));
@@ -669,7 +728,9 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     const mcap = m?.marketCap ?? null;
     const ev = (mcap != null) ? mcap + (fd?.totalDebt || 0) - (fd?.cash || 0) : null;   // enterprise value
     return {
-      ticker: t, company: i?.company || m?.industry || null,
+      // NEVER m?.industry. An industry description is not a company name, and null is the honest
+      // answer when no SEC filing has told us who this issuer is.
+      ticker: t, company: nameByT.get(t) ?? null,
       exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: mcap, ipoDate: m?.ipoDate ?? null,
       price: px, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
       changeFromOpen: pg?.changeFromOpen ?? null, gap: pg?.gap ?? null,
@@ -711,7 +772,12 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     await db.insert(screenerStocks).values(batch).onConflictDoUpdate({
       target: screenerStocks.ticker,
       set: {
-        company: sql`coalesce(excluded.company, screener_stocks.company)`,
+        // The old clause coalesced the incoming name with the row's existing one, to keep a
+        // previously-known name when a run produced none — but now that null is a MEANING ("no SEC
+        // filing names this issuer") rather than an absence, preserving the old value would let a
+        // retired or contaminated name survive a correction forever. The rebuild deletes the table
+        // first, so this path is not normally taken; it must still be correct when it is.
+        company: sql`excluded.company`,
         exchange: sql`excluded.exchange`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, country: sql`excluded.country`, assetType: sql`excluded.asset_type`, marketCap: sql`excluded.market_cap`, ipoDate: sql`excluded.ipo_date`,
         pe: sql`excluded.pe`, ps: sql`excluded.ps`, pb: sql`excluded.pb`, pCash: sql`excluded.p_cash`, evSales: sql`excluded.ev_sales`, evEbitda: sql`excluded.ev_ebitda`,
         grossMargin: sql`excluded.gross_margin`, operMargin: sql`excluded.oper_margin`, netMargin: sql`excluded.net_margin`, roe: sql`excluded.roe`, roa: sql`excluded.roa`,

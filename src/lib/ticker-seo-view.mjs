@@ -94,7 +94,16 @@ const amountBand = (v) => {
 function identityOf(row) {
   if (!row) return null;
   const shared = int(row.name_shared_by);
-  const companyName = shared !== null && shared > 1 ? null : str(row.company);
+  // TWO INDEPENDENT REFUSALS, both exact.
+  //  - a value that is character-for-character its own industry is a classification that leaked into
+  //    a name column (ZTS read "PHARMACEUTICAL PREPARATIONS", XOM "PETROLEUM REFINING");
+  //  - a value shared by more than one ticker cannot be any single company's name.
+  // The ingestion bug behind both is fixed at the root, so neither should ever fire again. They stay
+  // because this is the last gate before a name reaches crawlable HTML, and neither needs a
+  // vocabulary, a heuristic or an import to be certain of its answer.
+  const isOwnIndustry = row.company != null && row.industry != null
+    && String(row.company) === String(row.industry);
+  const companyName = isOwnIndustry || (shared !== null && shared > 1) ? null : str(row.company);
   return {
     symbol: str(row.ticker),
     companyName,
