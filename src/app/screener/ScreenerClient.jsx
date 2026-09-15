@@ -163,6 +163,17 @@ export default function ScreenerClient() {
   const [view, setView] = useState('Overview');
   const [activeCat, setActiveCat] = useState('Descriptive');
   const [showFilters, setShowFilters] = useState(true);
+  // COLLAPSED BY DEFAULT ON PHONES. The panel is ~22 stacked dropdowns; open, it filled the entire
+  // first screen at 390px and the results table — the thing a reader came for — began about twenty
+  // controls down. The existing "Filters ▾" toggle in the toolbar is unchanged and reopens it.
+  //
+  // Set in an effect rather than in useState, so the server and the first client render agree and
+  // hydration does not mismatch. Desktop never runs the collapse.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 860px)').matches) {
+      setShowFilters(false);
+    }
+  }, []);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   // A 200 with zero rows means the filters matched nothing — a real answer, and the existing empty

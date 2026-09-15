@@ -683,6 +683,12 @@ export function TopNav({ active }) {
       <div style={{display:"flex", gap:8, alignItems:"center", marginLeft:20, flexShrink:0}}>
         <span className="cp-nav-search"><SymbolSearch /></span>
         <ThemeToggle style={{color:"rgba(255,255,255,0.85)"}} />
+        {/* Log In / Start Free are hidden ≤430px via .cp-nav-auth and reappear inside the menu.
+            Measured: with both buttons in this row the hamburger sat at x384-420, so at 320/360/390
+            it was 100/60/30px PAST the right edge and the menu could not be opened at all — and at
+            320 "Start Free" itself rendered as "Star". Dropping them below 430 is what gives the
+            burger its space back; nothing is lost, because the menu carries both. */}
+        <span className="cp-nav-auth" style={{display:"contents"}}>
         <SignedOut>
           <a href="/sign-in" style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)",
             color:"rgba(255,255,255,0.9)", height:32, padding:"0 16px", borderRadius:5, fontSize:13,
@@ -706,21 +712,26 @@ export function TopNav({ active }) {
           <NotificationBell/>
           <UserButton afterSignOutUrl="/" userProfileMode="navigation" userProfileUrl="/account" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
         </SignedIn>
+        </span>
 
-        {/* Hamburger — shown ≤860px via .cp-nav-burger */}
+        {/* Hamburger — shown ≤860px via .cp-nav-burger. 44x38 rather than 36x30: it is the ONLY way
+            to reach navigation on a phone, so it is the last control that should be hard to hit. */}
         <button className="cp-nav-burger" onClick={() => setMenuOpen(o => !o)} aria-label="Menu"
+          aria-expanded={menuOpen} aria-controls="cp-mobile-menu"
           style={{background:"transparent", border:"1px solid rgba(255,255,255,0.4)", color:"#fff",
-            borderRadius:5, width:36, height:30, alignItems:"center", justifyContent:"center",
-            fontSize:16, cursor:"pointer", padding:0}}>
+            borderRadius:5, width:44, height:38, alignItems:"center", justifyContent:"center",
+            fontSize:18, cursor:"pointer", padding:0, flexShrink:0}}>
           {menuOpen ? "✕" : "☰"}
         </button>
       </div>
 
       {/* Mobile dropdown — overlays below the bar, shown ≤860px when open */}
       {menuOpen && (
-        <div className="cp-nav-menu" style={{position:"absolute", top:50, left:0, right:0,
+        <div id="cp-mobile-menu" className="cp-nav-menu" style={{position:"absolute", top:50, left:0, right:0,
           flexDirection:"column", background:C.navBg, borderBottom:"1px solid rgba(255,255,255,0.15)",
-          boxShadow:"0 8px 16px rgba(0,0,0,0.25)"}}>
+          boxShadow:"0 8px 16px rgba(0,0,0,0.25)",
+          // The menu can outgrow a short landscape phone, so it scrolls rather than running off.
+          maxHeight:"calc(100vh - 50px)", overflowY:"auto"}}>
           <div style={{padding:"11px 24px", borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
             <SymbolSearch mobile onNavigate={() => setMenuOpen(false)} />
           </div>
@@ -740,6 +751,27 @@ export function TopNav({ active }) {
               Watchlist
             </a>
           </SignedIn>
+
+          {/* The auth pair, for the widths where the bar no longer shows it. `.cp-nav-auth-menu`
+              is display:none above 430px, so a tablet that still shows the buttons in the bar does
+              not get a duplicate pair here. Full-width rows, 44px tall. */}
+          <SignedOut>
+            <div className="cp-nav-auth-menu" style={{gap:10, padding:"12px 24px 14px",
+              borderTop:"1px solid rgba(255,255,255,0.1)"}}>
+              <a href="/sign-in" onClick={() => setMenuOpen(false)}
+                style={{flex:1, height:44, display:"inline-flex", alignItems:"center", justifyContent:"center",
+                  background:"transparent", border:"1px solid rgba(255,255,255,0.4)", color:"rgba(255,255,255,0.9)",
+                  borderRadius:5, fontSize:14, textDecoration:"none", fontFamily:"'DM Sans',sans-serif", fontWeight:300}}>
+                Log In
+              </a>
+              <a href="/sign-up" onClick={() => setMenuOpen(false)}
+                style={{flex:1, height:44, display:"inline-flex", alignItems:"center", justifyContent:"center",
+                  background:"#FFFFFF", border:"none", color:"#1E5C38", borderRadius:5, fontSize:14,
+                  fontWeight:600, textDecoration:"none", fontFamily:"'DM Sans',sans-serif"}}>
+                Start Free
+              </a>
+            </div>
+          </SignedOut>
         </div>
       )}
     </div>
@@ -797,7 +829,11 @@ export function TickerTape({tickers}) {
         <div style={{padding:"0 16px", fontFamily:"'DM Sans',sans-serif",
           fontSize:11, color:C.dim, letterSpacing:"0.5px"}}>Loading market data…</div>
       )}
-      <div style={{position:"absolute", right:0, top:0, bottom:0, display:"flex",
+      {/* The badge floats over the moving tape behind a fade. On a phone the fade was too narrow to
+          clear the text under it, so "DELAYED" sat directly on top of a price — measured at 320 and
+          390 over the NVDA quote. `.cp-tape-delayed` widens the fade and the left padding on small
+          screens so the label always lands on faded tape rather than on a number. */}
+      <div className="cp-tape-delayed" style={{position:"absolute", right:0, top:0, bottom:0, display:"flex",
         alignItems:"center", padding:"0 12px 0 32px",
         // The fade must match the tape it sits on. Hardcoded #FFFFFF painted a white smear across
         // the dark tape; C.white is #FFFFFF in light, so light mode renders identically.

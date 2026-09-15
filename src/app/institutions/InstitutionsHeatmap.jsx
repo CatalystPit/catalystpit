@@ -117,6 +117,17 @@ export default function InstitutionsHeatmap() {
   const [width, setWidth] = useState(1100);
   const [hover, setHover] = useState(null);
 
+  // Touch has no "mouse leave", so a tapped card would otherwise stay pinned. A pointerdown outside
+  // the heatmap closes it, and Escape does the same for a keyboard. Only bound while a card is open.
+  useEffect(() => {
+    if (!hover) return undefined;
+    const away = (e) => { if (!wrapRef.current || !wrapRef.current.contains(e.target)) setHover(null); };
+    const esc = (e) => { if (e.key === 'Escape') setHover(null); };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', away); document.removeEventListener('keydown', esc); };
+  }, [hover]);
+
   useEffect(() => {
     let alive = true;
     fetch('/api/institutions-heatmap?limit=260')
@@ -184,14 +195,25 @@ export default function InstitutionsHeatmap() {
               whiteSpace: 'nowrap', fontFamily: "'DM Sans',sans-serif" }}>
               {s.sector.toUpperCase()}
             </div>
+            {/* The card was reachable by HOVER ONLY, so on a phone the position size, value and
+                quarter-over-quarter change behind each tile were simply unavailable — the tile
+                showed a ticker and a colour and nothing else.
+                onClick gives touch the same card. Mouse behaviour is untouched: a desktop pointer
+                still opens it on enter and closes it on leave, and a click there just re-pins the
+                tile already under the cursor. Tapping the same tile again closes it. */}
             {s.tiles.map((t) => (
               <div key={t.ticker}
                 onMouseEnter={(e) => setHover({ tile: t, anchor: e.currentTarget })}
                 onMouseLeave={() => setHover(null)}
+                onClick={(e) => { e.stopPropagation(); setHover((h) => (h?.tile?.ticker === t.ticker ? null : { tile: t, anchor: e.currentTarget })); }}
+                role="button"
+                tabIndex={0}
+                aria-label={`${t.ticker} ${pctText(t.pctChange)}`}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setHover({ tile: t, anchor: e.currentTarget }); } else if (e.key === 'Escape') setHover(null); }}
                 style={{ position: 'absolute', left: t.x, top: t.y, width: t.w - 1, height: t.h - 1,
                   background: tileColor(t.pctChange), color: inkFor(t.pctChange),
                   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                  overflow: 'hidden', cursor: 'default' }}>
+                  overflow: 'hidden', cursor: 'pointer' }}>
                 {t.w >= 34 && t.h >= 16 && (
                   <span className="cp-tkr" style={{ fontSize: Math.min(12, Math.max(8, t.w / 5)), fontWeight: 700, lineHeight: 1 }}>
                     {t.ticker}

@@ -102,7 +102,7 @@ export default function PitDock() {
     return (
       <>
         <button onClick={() => toggle(true)} aria-label="Open The Pit"
-          style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 60, width: 52, height: 52,
+          style={{ position: 'fixed', right: 16, bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))', zIndex: 60, width: 52, height: 52,
             borderRadius: '50%', background: C.green, color: '#fff', border: 'none', cursor: 'pointer',
             fontSize: 22, boxShadow: '0 4px 14px rgba(0,0,0,0.25)', display: open ? 'none' : 'flex',
             alignItems: 'center', justifyContent: 'center' }}>

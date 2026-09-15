@@ -268,7 +268,11 @@ export default function CatalystPit() {
               <span style={{fontSize:13, fontWeight:600, color:C.ink}}>MARKETS</span>
               <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim, letterSpacing:"0.8px"}}>DAILY</span>
             </div>
-            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, background:C.border}}>
+            {/* Two columns give each chart ~180px at 390px and ~145px at 320px, which is below what
+                the widget can draw: the right column was visibly clipped at 390 and the S&P 500
+                cell rendered EMPTY at 320. `.cp-mkt-grid` collapses to one column ≤430px, where a
+                full-width chart has room. Unchanged above that. */}
+            <div className="cp-mkt-grid" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, background:C.border}}>
               {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["VIX","VIX"]].map(([sym,label]) => { const q = idxQ(sym); return (
                 <div key={sym} style={{background:C.white, padding:"8px 10px"}}>
                   <div style={{display:"flex", alignItems:"baseline", gap:6, marginBottom:4, flexWrap:"wrap"}}>
