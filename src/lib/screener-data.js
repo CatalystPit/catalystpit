@@ -654,14 +654,47 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
                  group by h.ticker, h.cusip) z
          order by ticker, c desc, cusip
       ),
+      -- 1b. THE ONE HOLE IN THE PRIMARY-CUSIP PROTECTION. Rule 1 protects the ticker's own CUSIP
+      --     from exclusion, which is what keeps the bond ETFs alive. But an OPTION on that same
+      --     security is often filed against the underlying's CUSIP, and 1,161 such rows carry a
+      --     BLANK put_call, so the put_call filter lets them in and the protection then shields
+      --     them. SPY scored 9 option lines as share positions, NVDA 6, AAPL 3.
+      --
+      --     The evidence used is the filers' own disagreement, not a new class regex. A security
+      --     that MOST filers report with an explicit put_call is a derivative; a blank put_call on
+      --     that same (cusip, class) is one filer omitting the field, not an equity position.
+      --     Measured over the window this matches 1,457 pairs and the only class strings it ever
+      --     selects are PUT and CALL.
+      --
+      --     Deliberately a majority test rather than "any filer labelled it". 84 of QQQE's own
+      --     holdings share a (cusip, class) with 13 option lines, and 51 of HYGH's with one, so
+      --     presence alone would have deleted real ETF positions. The majority never does: the
+      --     excluded set is 64 rows on 29 tickers, all of kind option, and it touches no bond ETF
+      --     (BSV, VCSH, GOVT, VGIT), no rate-hedged or equal-weight fund whose name the classifier
+      --     misreads as a right or a warrant (TFLO, LQDH, IGHG, IGBH, IVOL, QQQE, KLIP), and no
+      --     ticker that IS a warrant or a right (OXY.WS, GME.WS, OPENW, XRXDW, GENVR).
+      mislabelled_option as (
+        select f.cusip, f.class
+          from fund_holdings f
+          join security_position_class s
+            on s.cusip = f.cusip and s.cls = f.class and s.put_call = ''
+         where (f.quarter = ${q0} or f.quarter = ${prevQ})
+           and s.kind in ('option', 'warrant', 'right')
+         group by f.cusip, f.class
+        having count(*) filter (where coalesce(f.put_call, '') <> '')
+             > count(*) filter (where coalesce(f.put_call, '') = '')
+      ),
       scoped as (
         select h.ticker, h.cik, h.quarter, h.cusip, h.shares, h.accession, h.filed_date
           from fund_holdings h
           left join primary_cusip p on p.ticker = h.ticker
           left join security_position_class s
             on s.cusip = h.cusip and s.cls = h.class and s.put_call = h.put_call
+          left join mislabelled_option m on m.cusip = h.cusip and m.class = h.class
          where (h.quarter = ${q0} or h.quarter = ${prevQ})
            and h.ticker is not null and h.put_call = ''
+           -- a derivative most filers label as one is never a share position, whose CUSIP it sits on
+           and m.cusip is null
            -- the ticker's own security always counts; anything else must not be debt or a derivative
            and (h.cusip = p.cusip
                 or s.kind is null
