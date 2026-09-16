@@ -171,6 +171,7 @@ export default function CPChart({
     for (const entry of activeRef.current) {
       const def = INDICATORS[entry.id];
       if (!def || def.builtin) continue;                    // volume is the chart's own series
+      if (entry.visible === false) continue;                // parked, but its settings are kept
       if (def.intradayOnly && !ctx.intraday) continue;      // VWAP on a daily chart is meaningless
       const { plots, guides, scale } = computeIndicator(entry.id, bars, entry.params, ctx);
       if (!plots.length || plots.every((pl) => !pl.data.length)) continue;
@@ -181,7 +182,11 @@ export default function CPChart({
 
       for (const plot of plots) {
         if (!plot.data.length) continue;
-        const color = indicatorColor(th, def.colors?.[plot.key] ?? 0);
+        // The INSTANCE's colour wins. Two EMAs differ only by their settings, so the colour has to
+        // belong to the instance rather than to the indicator, or a ribbon would be one flat hue.
+        // Multi-plot indicators (Bollinger's three bands) still take their shape from the registry.
+        const baseIdx = def.colors?.[plot.key] ?? 0;
+        const color = indicatorColor(th, (plots.length === 1 && entry.color != null) ? entry.color : baseIdx);
         const series = plot.type === 'histogram'
           ? chart.addSeries(lwc.HistogramSeries, {
             color, priceLineVisible: false, lastValueVisible: false,
@@ -211,7 +216,11 @@ export default function CPChart({
       if (separate && scale) {
         try { chart.panes()[target]?.setHeight?.(110); } catch { /* optional */ }
       }
-      legendOut.push({ id: entry.id, label: indicatorLabel(entry.id, entry.params), color: indicatorColor(th, def.colors ? Object.values(def.colors)[0] : 0) });
+      legendOut.push({
+        key: entry.key || entry.id,
+        label: indicatorLabel(entry.id, entry.params),
+        color: indicatorColor(th, entry.color != null ? entry.color : (def.colors ? Object.values(def.colors)[0] : 0)),
+      });
     }
     setIndicatorLegend(legendOut);
   }
@@ -374,7 +383,7 @@ export default function CPChart({
           <div style={{ position: 'absolute', left: 8, top: legend ? 22 : 6, zIndex: 4, pointerEvents: 'none',
             fontFamily: "'DM Sans',sans-serif", fontSize: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             {indicatorLegend.map((l) => (
-              <span key={l.id} style={{ color: l.color }}>{l.label}</span>
+              <span key={l.key} style={{ color: l.color }}>{l.label}</span>
             ))}
           </div>
         )}

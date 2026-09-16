@@ -260,11 +260,14 @@ export function volume() { return { plots: [] }; }
  */
 export const INDICATORS = {
   volume:    { id: 'volume',    label: 'Volume',          pane: 'price',    builtin: true, compute: volume, params: [] },
+  // ANY period the user types, within reason. 1000 covers every conventional average and more; 1 is
+  // degenerate but valid — it is the close itself — and there is no reason to forbid it. Both are
+  // O(n) whatever the length, so a long period costs screen space and nothing else.
   sma:       { id: 'sma',       label: 'SMA',             pane: 'price',    compute: sma,
-    params: [{ key: 'length', label: 'Length', type: 'int', min: 2, max: 400, default: 20 }],
+    params: [{ key: 'length', label: 'Length', type: 'int', min: 1, max: 1000, default: 20 }],
     colors: { sma: 0 } },
   ema:       { id: 'ema',       label: 'EMA',             pane: 'price',    compute: ema,
-    params: [{ key: 'length', label: 'Length', type: 'int', min: 2, max: 400, default: 20 }],
+    params: [{ key: 'length', label: 'Length', type: 'int', min: 1, max: 1000, default: 20 }],
     colors: { ema: 1 } },
   vwap:      { id: 'vwap',      label: 'VWAP',            pane: 'price',    compute: vwap, intradayOnly: true,
     params: [], colors: { vwap: 2 } },
@@ -291,6 +294,57 @@ export const INDICATORS = {
 
 export const INDICATOR_IDS = Object.keys(INDICATORS);
 
+/**
+ * Indicators a user may have more than one of at a time.
+ *
+ * A 9/21/50/200 EMA ribbon is one of the most common setups there is, and the single-instance model
+ * could not express it. Only the moving averages are multi-instance: two RSIs at different lengths
+ * is a legitimate but rare thing to want, and each would need its own pane, so it is left until
+ * somebody asks. Adding one is adding an id to this set.
+ */
+export const MULTI_INSTANCE = new Set(['sma', 'ema']);
+export const isMultiInstance = (id) => MULTI_INSTANCE.has(id);
+
+/** A ceiling per indicator, so the chart cannot be drowned in lines by accident. */
+export const MAX_INSTANCES_PER_INDICATOR = 8;
+
+/**
+ * A stable identity for one instance.
+ *
+ * Needed because two EMAs are no longer told apart by their id. The key is what the chart uses to
+ * decide which series to keep, what the settings file stores, and what React keys the menu rows on,
+ * so it must survive a settings edit — changing an EMA's length must not destroy and recreate it as
+ * a different instance, or its colour and visibility would reset with it.
+ *
+ * Derived from the existing set rather than random, so it is deterministic and testable and does not
+ * need a browser crypto API.
+ */
+export function nextInstanceKey(id, existing = []) {
+  const used = new Set(existing.map((e) => e?.key).filter(Boolean));
+  for (let n = 1; n <= 999; n += 1) {
+    const k = `${id}-${n}`;
+    if (!used.has(k)) return k;
+  }
+  return `${id}-${Date.now()}`;
+}
+
+/**
+ * Sensible defaults for a NEW instance of a multi-instance indicator.
+ *
+ * The lengths traders actually reach for, in the order they usually add them, so clicking "Add"
+ * repeatedly builds a conventional ribbon instead of four identical lines. Past the end of the list
+ * it falls back to the registry default; the user can type anything regardless.
+ */
+const COMMON_LENGTHS = [9, 21, 50, 200, 10, 20, 100, 5];
+
+export function defaultParamsForNew(id, existing = []) {
+  const base = defaultParams(id);
+  if (!isMultiInstance(id)) return base;
+  const taken = new Set(existing.filter((e) => e.id === id).map((e) => e.params?.length));
+  const pick = COMMON_LENGTHS.find((n) => !taken.has(n));
+  return { ...base, length: pick ?? base.length };
+}
+
 /** Defaults for one indicator, as a plain object. */
 export function defaultParams(id) {
   const def = INDICATORS[id];
@@ -312,6 +366,9 @@ export function sanitizeParams(id, raw) {
   const out = {};
   for (const p of def.params) {
     let v = raw?.[p.key];
+    // An EMPTY box is missing, not zero. Number('') is 0 and finite, so without this a user who
+    // clears the field to retype gets a 1-period average rather than the default back.
+    if (v === '' || v === null || v === undefined) v = p.default;
     v = p.type === 'int' ? Math.round(Number(v)) : Number(v);
     if (!finite(v)) v = p.default;
     out[p.key] = Math.min(p.max, Math.max(p.min, v));

@@ -17,8 +17,10 @@ import {
 import { CHART_THEMES, palette, chartOptions, CHART_ATTRIBUTION } from '../src/lib/chart/chart-theme.mjs';
 import { sma, ema, vwap, rsi, macd, bollinger, atr, trueRange, smaValues, emaValues,
   INDICATORS, INDICATOR_IDS, availableIndicators, defaultParams, sanitizeParams,
-  indicatorLabel, computeIndicator } from '../src/lib/chart/chart-indicators.mjs';
-import { loadIndicators, saveIndicators, DEFAULT_ACTIVE, STORAGE_KEY } from '../src/lib/chart/chart-settings.mjs';
+  indicatorLabel, computeIndicator, isMultiInstance, nextInstanceKey, defaultParamsForNew,
+  MAX_INSTANCES_PER_INDICATOR } from '../src/lib/chart/chart-indicators.mjs';
+import { loadIndicators, saveIndicators, DEFAULT_ACTIVE, STORAGE_KEY, STORAGE_VERSION,
+  __coerceInstance, __enforce } from '../src/lib/chart/chart-settings.mjs';
 import { indicatorColor, indicatorColors } from '../src/lib/chart/chart-theme.mjs';
 import { sessionKeyFor } from '../src/lib/chart/chart-source.mjs';
 
@@ -325,8 +327,8 @@ section('8c. the registry, settings and persistence');
   ok('a float is rounded for an int param', sanitizeParams('sma', { length: 14.7 }).length === 15);
   ok('NaN falls back to the default', sanitizeParams('sma', { length: 'abc' }).length === 20);
   ok('missing falls back to the default', sanitizeParams('sma', {}).length === 20);
-  ok('below the minimum clamps up', sanitizeParams('sma', { length: -5 }).length === 2);
-  ok('above the maximum clamps down', sanitizeParams('sma', { length: 99999 }).length === 400);
+  ok('below the minimum clamps up', sanitizeParams('sma', { length: -5 }).length === 1);
+  ok('above the maximum clamps down', sanitizeParams('sma', { length: 99999 }).length === 1000);
   ok('MACD fast is forced below slow', sanitizeParams('macd', { fast: 30, slow: 26, signal: 9 }).fast === 25);
 
   ok('the legend names the settings', indicatorLabel('sma', { length: 50 }) === 'SMA 50');
@@ -357,6 +359,88 @@ section('8c. the registry, settings and persistence');
   ok('saving without a browser is a no-op, not a throw',
     (() => { try { saveIndicators([{ id: 'sma' }]); return true; } catch { return false; } })());
   ok('the storage key follows the cp_ convention', /^cp_/.test(STORAGE_KEY));
+}
+
+section('8d. multiple SMAs and EMAs, each with its own length');
+{
+  ok('SMA and EMA are multi-instance', isMultiInstance('sma') && isMultiInstance('ema'));
+  ok('the single-instance ones are not',
+    !isMultiInstance('rsi') && !isMultiInstance('macd') && !isMultiInstance('volume') && !isMultiInstance('vwap'));
+
+  // ANY LENGTH THE USER TYPES. The ones traders actually reach for must all survive sanitising
+  // unchanged — a clamp that quietly turned a 200 EMA into something else would be invisible.
+  for (const n of [1, 5, 8, 9, 10, 12, 20, 21, 34, 50, 55, 89, 100, 144, 200, 233, 377, 500, 1000])
+    ok(`length ${n} is accepted verbatim`, sanitizeParams('ema', { length: n }).length === n);
+  ok('0 clamps to the minimum', sanitizeParams('ema', { length: 0 }).length === 1);
+  ok('a negative length clamps to the minimum', sanitizeParams('sma', { length: -20 }).length === 1);
+  ok('beyond the ceiling clamps down', sanitizeParams('ema', { length: 5000 }).length === 1000);
+  ok('a typed string is accepted', sanitizeParams('ema', { length: '200' }).length === 200);
+  ok('an empty box falls back to the default', sanitizeParams('ema', { length: '' }).length === 20);
+
+  // A ribbon: four EMAs at different lengths, all at once.
+  const bars = Array.from({ length: 300 }, (_, i) => ({
+    time: i + 1, open: 10 + i, high: 11 + i, low: 9 + i, close: 10 + i, volume: 100,
+  }));
+  const lengths = [9, 21, 50, 200];
+  const series = lengths.map((n) => computeIndicator('ema', bars, { length: n }, {}).plots[0].data);
+  ok('every length produces its own line', series.every((d) => d.length > 0));
+  ok('a longer average starts later', series[0].length > series[3].length);
+  ok('the four lines are genuinely different',
+    new Set(series.map((d) => d[d.length - 1].value.toFixed(6))).size === 4);
+  ok('a 200 EMA needs 200 bars', computeIndicator('ema', bars.slice(0, 100), { length: 200 }, {}).plots[0].data.length === 0);
+
+  // Instance keys must be unique and stable.
+  const a1 = { key: nextInstanceKey('ema', []), id: 'ema' };
+  const a2 = { key: nextInstanceKey('ema', [a1]), id: 'ema' };
+  const a3 = { key: nextInstanceKey('ema', [a1, a2]), id: 'ema' };
+  ok('keys are unique', new Set([a1.key, a2.key, a3.key]).size === 3);
+  ok('keys name their indicator', a1.key.startsWith('ema-'));
+  ok('a key is not reused after a removal', nextInstanceKey('ema', [a1, a3]) !== a1.key && nextInstanceKey('ema', [a1, a3]) !== a3.key);
+
+  // Adding repeatedly should build a conventional ribbon, not four identical lines.
+  const built = [];
+  for (let i = 0; i < 4; i += 1) {
+    built.push({ key: nextInstanceKey('ema', built), id: 'ema', params: defaultParamsForNew('ema', built) });
+  }
+  ok('successive adds pick different lengths',
+    new Set(built.map((b) => b.params.length)).size === 4, JSON.stringify(built.map((b) => b.params.length)));
+  ok('the first suggestions are the common ones',
+    built.slice(0, 4).map((b) => b.params.length).join(',') === '9,21,50,200');
+  ok('a single-instance indicator just takes its default', defaultParamsForNew('rsi', []).length === 14);
+}
+
+section('8e. instances persist with their own colour and visibility');
+{
+  const mk = (id, length, color, visible = true, key = null) =>
+    ({ key: key || `${id}-${length}`, id, params: { length }, color, visible });
+
+  // Each instance keeps its own settings through a save/load round trip.
+  const set = [mk('ema', 9, 0), mk('ema', 21, 1), mk('ema', 50, 2), mk('sma', 200, 3, false)];
+  const kept = __enforce(set.map((e, i, arr) => __coerceInstance(e, arr.slice(0, i))));
+  ok('all four survive', kept.length === 4);
+  ok('lengths are preserved individually', kept.map((k) => k.params.length).join(',') === '9,21,50,200');
+  ok('colours are preserved individually', kept.map((k) => k.color).join(',') === '0,1,2,3');
+  ok('visibility is preserved', kept[3].visible === false && kept[0].visible === true);
+  ok('keys are preserved', kept[0].key === 'ema-9');
+
+  // Defensive reads: none of this may throw or produce a broken row.
+  ok('an unknown indicator is dropped', __coerceInstance({ id: 'nope', params: {} }, []) === null);
+  ok('a missing key is generated', !!__coerceInstance({ id: 'ema', params: { length: 9 } }, []).key);
+  ok('a missing colour means "use the default"', __coerceInstance({ id: 'ema' }, []).color === null);
+  ok('a non-numeric colour means "use the default"', __coerceInstance({ id: 'ema', color: 'red' }, []).color === null);
+  ok('visibility defaults to visible when absent', __coerceInstance({ id: 'ema' }, []).visible === true);
+  ok('an out-of-range stored length is re-clamped',
+    __coerceInstance({ id: 'ema', params: { length: 99999 } }, []).params.length === 1000);
+
+  // The ceiling stops a runaway from filling the chart, and single-instance stays single.
+  const many = Array.from({ length: 20 }, (_, i) => mk('ema', i + 2, i, true, `ema-${i}`));
+  ok('multi-instance is capped', __enforce(many).length === MAX_INSTANCES_PER_INDICATOR);
+  const dupRsi = [mk('rsi', 14, 0, true, 'rsi-1'), mk('rsi', 21, 1, true, 'rsi-2')];
+  ok('a single-instance indicator stays single', __enforce(dupRsi).length === 1);
+  ok('duplicate keys are dropped',
+    __enforce([mk('ema', 9, 0, true, 'x'), mk('ema', 21, 1, true, 'x')]).length === 1);
+
+  ok('the stored version moved with the shape', STORAGE_VERSION === 2);
 }
 
 section('9. the component does not reach past the boundary');
