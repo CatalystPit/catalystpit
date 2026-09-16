@@ -36,34 +36,41 @@ ok('a backfill is not', !facebookEligibility(WALTER, { ...LIVE, isBackfill: true
 ok('the reason names the backfill',
   /backfill|replay/.test(facebookEligibility(WALTER, { ...LIVE, isBackfill: true }).reason));
 
-section('3. the text is Walter verbatim, never our rewrite');
+section('3. the text is Walter\'s FACTS, in Catalyst Pit\'s voice');
 {
   const t = facebookText(WALTER);
-  // Verbatim now means "Walter's words", not "Walter's string": the trailing attribution is the one
-  // thing removed, and removing it is the only difference between these two.
-  ok('uses source_headline, not the Catalyst Pit headline',
-    t === WALTER.source_headline.replace(/\s*\(@WalterBloomberg\)\s*$/, ''));
-  ok('does NOT use the rewritten display headline', t !== WALTER.headline);
-  ok('keeps the leading asterisk', t.startsWith('*'));
-  ok('keeps every word of the headline itself',
-    t === '*KREMLIN: IF SANCTIONS ARE LIFTED, WORLD ENERGY PRICES WILL GO DOWN', JSON.stringify(t));
+  // THE POLICY CHANGED HERE, deliberately. It used to be byte-verbatim, which meant the Page
+  // published terminal copy: a leading asterisk and the whole line shouted in capitals. Presentation
+  // is now Catalyst Pit's; the facts are still Walter's, enforced by facebook-voice's own guard and
+  // asserted word by word below. See scripts/verify-facebook-voice.mjs for the full treatment.
+  ok('still built from source_headline, not the Catalyst Pit headline',
+    /sanctions are lifted/i.test(t) && t !== WALTER.headline);
+  ok('the terminal flash marker is gone', !t.startsWith('*'));
+  ok('it is no longer shouting', t !== t.toUpperCase());
+  ok('every word of the headline survives',
+    t === 'Kremlin: if sanctions are lifted, world energy prices will go down.', JSON.stringify(t));
+  ok('no word was added or dropped',
+    t.replace(/[^A-Za-z]/g, '').toUpperCase()
+      === '*KREMLIN: IF SANCTIONS ARE LIFTED, WORLD ENERGY PRICES WILL GO DOWN'.replace(/[^A-Za-z]/g, ''));
   ok('adds no hashtag', !/#/.test(t));
   ok('adds no URL', !/https?:\/\//.test(t));
   ok('adds no Catalyst Pit wording', !/catalyst ?pit/i.test(t));
   ok('adds no ticker', !/\$[A-Z]{1,5}\b/.test(t));
   // Falls back to the canonical headline only when there is no source text at all.
   ok('falls back when source text is missing',
-    facebookText({ headline: 'X', source_headline: '' }) === 'X');
+    facebookText({ headline: 'X', source_headline: '' }) === 'X.');
   ok('no text at all yields null', facebookText({}) === null);
 }
 
-section('4. transport normalisation only');
+section('4. transport normalisation');
+// The editorial pass also ends a line as a sentence now, so these assert the transport rules — the
+// characters are normalised and the line structure is kept — with the terminal full stop expected.
 for (const [raw, want, why] of [
-  ['A\r\nB', 'A\nB', 'CRLF becomes LF'],
-  ['A B', 'A B', 'non-breaking space'],
-  ['A​B', 'AB', 'zero-width space removed'],
-  ['  A  ', 'A', 'trimmed'],
-  ['A\n\n\n\n B', 'A\n\n B', 'blank-line runs collapsed'],
+  ['A\r\nB', 'A.\nB.', 'CRLF becomes LF'],
+  ['A B', 'A B.', 'non-breaking space'],
+  ['A​B', 'AB.', 'zero-width space removed'],
+  ['  A  ', 'A.', 'trimmed'],
+  ['A\n\n\n\n B', 'A.\n\n B.', 'blank-line runs collapsed'],
 ]) ok(why, facebookText({ source_headline: raw }) === want, JSON.stringify(facebookText({ source_headline: raw })));
 ok('word order and punctuation untouched',
   facebookText({ source_headline: 'WTI climbed 1% to $102.40, holding near recent highs.' })
@@ -73,7 +80,7 @@ section('5. length bounds — skip, never truncate');
 ok('an overlong post is skipped', !facebookEligibility(
   { ...WALTER, source_headline: 'x'.repeat(FB_MAX_CHARS + 1) }, LIVE).eligible);
 ok('it is not truncated instead',
-  facebookText({ source_headline: 'x'.repeat(FB_MAX_CHARS + 1) }).length === FB_MAX_CHARS + 1);
+  facebookText({ source_headline: 'x'.repeat(FB_MAX_CHARS + 1) }).length > FB_MAX_CHARS);
 ok('an empty post is skipped', !facebookEligibility({ ...WALTER, source_headline: '', headline: '' }, LIVE).eligible);
 ok('a two-character post is skipped', !facebookEligibility({ ...WALTER, source_headline: 'ok', headline: '' }, LIVE).eligible);
 
@@ -208,15 +215,17 @@ section('14. the public attribution never reaches the Page');
 {
   // The forms that must be stripped. The first is the real one — all 105 ingested Walter events end
   // with exactly this — and the rest are spacing and casing variants that cost nothing to cover.
+  // The editorial pass runs after the strip, so these assert the PROPERTY — the handle is gone and
+  // every word of the story survives — rather than a byte-for-byte string that casing now changes.
   for (const [raw, want] of [
-    ['*US 20Y BONDS DRAW 5.420% VS 5.400% (@WalterBloomberg)', '*US 20Y BONDS DRAW 5.420% VS 5.400%'],
-    ['SPOT GOLD FALLS NEARLY 1% TO $4,306.19/OZ (@WalterBloomberg)', 'SPOT GOLD FALLS NEARLY 1% TO $4,306.19/OZ'],
-    ['OIL SURGES (@WalterBloomberg) ', 'OIL SURGES'],
-    ['OIL SURGES(@WalterBloomberg)', 'OIL SURGES'],
-    ['OIL SURGES ( @WalterBloomberg )', 'OIL SURGES'],
-    ['OIL SURGES (@walterbloomberg)', 'OIL SURGES'],
-    ['OIL SURGES (@WALTERBLOOMBERG)', 'OIL SURGES'],
-    ['A multi-line post\n\nwith a body and a credit (@WalterBloomberg)', 'A multi-line post\n\nwith a body and a credit'],
+    ['*US 20Y BONDS DRAW 5.420% VS 5.400% (@WalterBloomberg)', 'US 20Y bonds draw 5.420% vs 5.400%.'],
+    ['SPOT GOLD FALLS NEARLY 1% TO $4,306.19/OZ (@WalterBloomberg)', 'Spot gold falls nearly 1% to $4,306.19/OZ.'],
+    ['OIL SURGES (@WalterBloomberg) ', 'Oil surges.'],
+    ['OIL SURGES(@WalterBloomberg)', 'Oil surges.'],
+    ['OIL SURGES ( @WalterBloomberg )', 'Oil surges.'],
+    ['OIL SURGES (@walterbloomberg)', 'Oil surges.'],
+    ['OIL SURGES (@WALTERBLOOMBERG)', 'Oil surges.'],
+    ['A multi-line post\n\nwith a body and a credit (@WalterBloomberg)', 'A multi-line post.\n\nwith a body and a credit.'],
   ]) ok('stripped: ' + JSON.stringify(raw).slice(0, 52), facebookText({ source_headline: raw }) === want,
     JSON.stringify(facebookText({ source_headline: raw })));
 
@@ -225,12 +234,16 @@ section('14. the public attribution never reaches the Page');
 
   // What must NOT be stripped. The rule is anchored to the end AND to this handle, so a mention that
   // is part of the story survives, and another account's handle is never touched.
+  // Asserted on WORDS, not bytes: the editorial pass may recase and punctuate, but a mention that is
+  // part of the story must still be there afterwards.
+  const words = (s) => s.replace(/[^A-Za-z@]/g, '').toUpperCase();
   for (const raw of [
     'Walter Bloomberg reported the figure first',
     '(@WalterBloomberg) said the meeting was postponed',
     'SOURCE SAYS (@SomeoneElse)',
     'ANALYST CITES @WalterBloomberg AS THE SOURCE OF THE LEAK',
-  ]) ok('kept: ' + JSON.stringify(raw).slice(0, 50), facebookText({ source_headline: raw }) === raw,
+  ]) ok('kept: ' + JSON.stringify(raw).slice(0, 50),
+    words(facebookText({ source_headline: raw })) === words(raw),
     JSON.stringify(facebookText({ source_headline: raw })));
 
   // THE CHANGE IS COSMETIC ONLY. Source control lives on ev.source and has never read the text, so

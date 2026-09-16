@@ -77,8 +77,9 @@ section('2. what Facebook would actually publish');
   console.log(out.split('\n').map((l, i) => '    ' + String(i + 1).padStart(2) + '| ' + l).join('\n'));
   ok('multiline output reaches the Page', lines.length >= 9, lines.length + ' lines');
   ok('the trailing Walter attribution is gone', !/@WalterBloomberg/i.test(out));
-  ok('the heading is the first line', lines[0].includes('WHAT TO WATCH TODAY'));
-  ok('section structure is intact', /🔥 FED — KEY EVENT\n🎙 WARSH/.test(out));
+  // Cased by the editorial pass now (see facebook-voice.mjs); the STRUCTURE is what this pins.
+  ok('the heading is the first line', /what to watch today/i.test(lines[0]), lines[0]);
+  ok('section structure is intact', /🔥 FED — key event\.\n🎙 Warsh/.test(out), JSON.stringify(out.slice(0, 120)));
   ok('wording is otherwise unchanged', out.includes('China industrial output slows'));
 }
 
@@ -92,7 +93,7 @@ section('3. an ordinary one-line flash is NOT reformatted');
   const out = facebookText({ source_headline: item.sourceTitle });
   ok('the Facebook post is still one line', !out.includes('\n'), JSON.stringify(out));
   ok('it is the SK Hynix line, attribution stripped',
-    out === 'SK HYNIX SAYS IT WILL SUPPLY HBM4 TO INTEL', JSON.stringify(out));
+    out === 'SK Hynix says it will supply HBM4 to Intel.', JSON.stringify(out));
 }
 
 section('4. THE SAFETY PROPERTY: title is byte-identical to the old behaviour');

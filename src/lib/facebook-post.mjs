@@ -5,6 +5,8 @@
 // tests exercise the same code production runs, and it guarantees no token can pass through here.
 
 /** Only this source. One entry, by instruction; adding another is a deliberate edit. */
+import { editorialVoice } from './facebook-voice.mjs';
+
 export const FB_SOURCE_WHITELIST = new Set(['WALTERBLOOMBERG']);
 
 // Facebook's own ceiling is ~63k characters. This is far below it and exists for a different reason:
@@ -55,7 +57,12 @@ export function facebookText(ev) {
     .replace(/\n{3,}/g, '\n\n')       // runs of blank lines
     .replace(WALTER_ATTRIBUTION, '')  // the public credit, dropped
     .trim();
-  return normalised || null;
+  if (!normalised) return null;
+  // CATALYST PIT'S VOICE. Presentation only — capitalisation, the flash asterisk, the trailing
+  // outlet tag, terminal punctuation. editorialVoice is total and failure-safe: it returns the input
+  // unchanged on a throw, an empty result, or any fact that moved, so it can never be the reason a
+  // post fails to publish. See facebook-voice.mjs.
+  return editorialVoice(normalised) || normalised;
 }
 
 /**
