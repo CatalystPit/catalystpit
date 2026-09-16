@@ -414,9 +414,35 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
 // this", publication answers "should it", and only the second one knows what the account is for.
 // A `suppressed` result is terminal and carries an auditable reason; a `blocked` result beginning
 // "awaiting" is transient and the event is reconsidered on the next pass.
+/**
+ * Does this event carry Walter Bloomberg provenance, as the canonical row or anywhere in its cluster?
+ * Same test evaluate() uses, lifted out so the publication path can ask it too.
+ */
+export function hasWalterProvenance(ev) {
+  const sources = (ev?.sources || []).map((s) => String(s || '').toUpperCase());
+  return sources.includes(WALTER_SOURCE) || String(ev?.source || '').toUpperCase() === WALTER_SOURCE;
+}
+
 export function buildCandidate(ev, reading = null, now = Date.now(), priorPosts = null) {
   const verdict = evaluate(ev);
   if (!verdict.eligible) return { eligible: false, reason: null, blocked: verdict.blocked };
+
+  // EVERY WALTER POST GOES OUT. Operator decision, 2026-09-16: the account carries all of his
+  // items, and the only thing Catalyst Pit changes is the wording.
+  //
+  // So the EDITORIAL gates below — is this a recognised catalyst, is it substantive, is it merely
+  // anticipated, has this story run too often — do not apply to him. They were suppressing 58 of his
+  // 124 posts in seven days, including "Ed Yardeni cuts S&P 500 year-end target to 7,900 from 8,400"
+  // as "incomplete or fragmentary wording".
+  //
+  // WHAT THIS DOES NOT BYPASS, because none of it is an editorial opinion:
+  //   - evaluate() above, which is the WORDING gate. A Walter event is still ineligible until a
+  //     Catalyst Pit headline exists, so his sentence is never what publishes. That is the whole
+  //     point of the exercise and it is deliberately left in force.
+  //   - formatPost below. If there is no text to send there is no post to make.
+  //   - the same-event dedupe in x-publisher, which stops one event posting twice. "Every post" is
+  //     not "the same post repeatedly".
+  const walter = hasWalterProvenance(ev);
 
   // The story guard runs FIRST now. It still decides publication below, but whether the account has
   // already told this story is also an INPUT to the BREAKING decision: a second post on a
@@ -424,8 +450,10 @@ export function buildCandidate(ev, reading = null, now = Date.now(), priorPosts 
   const story = priorPosts ? storyVerdict({ headline: ev.headline, text: '' }, priorPosts, now)
     : { post: true, reason: null, storyKey: null, priors: 0 };
 
+  // Still evaluated for Walter, because it identifies the catalyst and the BREAKING decision the
+  // formatter needs — its SUPPRESSION is what no longer applies to him.
   const quality = publicationVerdict({ ...ev, storyHasPriors: (story.priors || 0) > 0 }, now);
-  if (!quality.publish) {
+  if (!quality.publish && !walter) {
     return { eligible: true, publishable: false, reason: verdict.reason,
       suppressed: quality.reason, terminal: quality.terminal };
   }
@@ -433,13 +461,18 @@ export function buildCandidate(ev, reading = null, now = Date.now(), priorPosts 
   // The catalyst the gate identified is passed to the formatter, which uses it to decide WHICH
   // grounded number the post should carry — an offering's size reads differently from an earnings
   // surprise — and is handed back to the caller for the same-event dedupe key.
-  const post = formatPost(ev, reading, now, quality.breaking, quality.catalyst);
+  // `?? null` matters on the Walter bypass: a rejecting publicationVerdict never set these, and
+  // passing undefined would silently force brk=false, where null restores formatPost's own
+  // importance-based decision. A CRITICAL Walter flash keeps its BREAKING label.
+  const post = formatPost(ev, reading, now, quality.breaking ?? null, quality.catalyst ?? null);
   if (!post.ok) return { eligible: true, publishable: false, reason: verdict.reason,
     suppressed: post.error, terminal: true };
 
   // The story verdict computed above decides it. X-only — Pit Wire's canonical dedupe is not
-  // consulted and not affected.
-  if (!story.post) {
+  // consulted and not affected. Walter is exempt: a follow-up on a story he is still developing is
+  // exactly the kind of item the account is meant to carry, and this gate was throttling seven of
+  // his posts in a week as "repetitive story update within the minimum gap".
+  if (!story.post && !walter) {
     return { eligible: true, publishable: false, reason: verdict.reason,
       suppressed: story.reason, terminal: true, storyKey: story.storyKey };
   }

@@ -361,6 +361,64 @@ sec('NOTHING PUBLISHES WITHOUT A REAL SOURCE EVENT');
   ok('it reads only its own table', !/fb_post_candidates/.test(pub));
 }
 
+sec('EVERY WALTER POST GOES OUT — only the wording is ours');
+{
+  // Operator decision, 2026-09-16. The editorial gates were suppressing 58 of his 124 posts in seven
+  // days. They no longer apply to him; the WORDING gate still does, and that is the whole point.
+  const W = (h, x = {}) => ({ seq: 1, headline: h, headline_status: 'original', importance: 2,
+    tickers: [], source_kind: 'external', sources: ['WALTERBLOOMBERG'], ...x });
+
+  // Real posts that were suppressed, with the reason each was given.
+  for (const [h, was] of [
+    ['Ed Yardeni cuts S&P 500 year-end target to 7,900 from 8,400', 'incomplete or fragmentary wording'],
+    ['Bessent cites deficit as factor in 10-year Treasury yield', 'repetitive story update'],
+    ['OpenAI CFO Friar says company will pace frontier work and slow if needed', 'repetitive story update'],
+    ['Fed meeting to decide interest rates', 'no recognised market catalyst'],
+    ['Stocks halt decline ahead of Fed decision', 'anticipated, has not happened'],
+    ['Nvidia and SK Hynix signal outlook for Micron', 'opinion or commentary'],
+  ]) ok(`posts despite "${was}"`, buildCandidate(W(h)).publishable === true, h.slice(0, 50));
+
+  // Repetition no longer throttles him: the same developing story may run again and again.
+  // Priors carry created_at + headline, which is what storyVerdict actually reads. Getting the
+  // field names wrong silently produced an empty prior list and a test that proved nothing —
+  // caught by mutation, which is why the mutation run is worth doing.
+  const SAME = 'Federal Reserve signals another rate hike is possible';
+  const priors = [
+    { created_at: new Date(Date.now() - 60_000).toISOString(), headline: SAME, story_key: 'fed' },
+    { created_at: new Date(Date.now() - 120_000).toISOString(), headline: SAME, story_key: 'fed' },
+    { created_at: new Date(Date.now() - 180_000).toISOString(), headline: SAME, story_key: 'fed' },
+  ];
+  // Proof the gate really would have stopped a non-Walter event with these same priors.
+  const blockedOther = buildCandidate({ seq: 3, headline: SAME, headline_status: 'original',
+    importance: 2, tickers: [], source_kind: 'external', sources: ['GLOBENEWSWIRE'],
+    published_at: new Date().toISOString() }, null, Date.now(), priors);
+  ok('the story gate DOES block a non-Walter repeat', blockedOther.publishable !== true,
+    JSON.stringify(blockedOther.suppressed));
+  ok('a rapid follow-up on the same story still posts for Walter',
+    buildCandidate(W(SAME), null, Date.now(), priors).publishable === true);
+
+  // THE ONE GATE THAT MUST SURVIVE. His sentence is never what publishes.
+  const pending = buildCandidate(W('GERMANY TO LOBBY EU ON NEW CHINA POLICY', { headline_status: 'rewrite_pending' }));
+  ok('his own wording is STILL never published', pending.publishable !== true);
+  ok('and it waits for a rewrite rather than being dropped',
+    /awaiting Catalyst wording/.test(pending.blocked || ''), pending.blocked);
+  ok('once reworded it publishes',
+    buildCandidate(W('Germany to lobby EU on new China policy')).publishable === true);
+  ok('not_required wording is still not ours to publish',
+    buildCandidate(W('x', { headline_status: 'not_required' })).publishable !== true);
+  // No text means no post, for him as for anyone.
+  ok('an empty headline still produces nothing', buildCandidate(W('')).publishable !== true);
+
+  // AND THE BYPASS IS HIS ALONE. Every other source is judged exactly as before.
+  const other = (h) => buildCandidate({ seq: 2, headline: h, headline_status: 'original',
+    importance: 2, tickers: [], source_kind: 'external', sources: ['GLOBENEWSWIRE'],
+    published_at: new Date().toISOString() });
+  ok('a non-Walter lifestyle PR is still suppressed',
+    other('Upfront Septic & Plumbing opens new branch in Woodinville').publishable !== true);
+  ok('a non-Walter scheduled announcement is still suppressed',
+    other('NEXGEL schedules investor update call for September 24').publishable !== true);
+}
+
 sec('X allows exactly ONE cashtag per post');
 {
   // X rejects a post carrying more than one $SYMBOL outright:
