@@ -13,7 +13,7 @@
 //   node scripts/verify-telegram-structure.mjs
 
 import { ADAPTERS, runAdapter } from '../src/lib/news-adapters.mjs';
-import { facebookText } from '../src/lib/facebook-post.mjs';
+import { facebookText, withoutHashtags } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -91,9 +91,10 @@ section('3. an ordinary one-line flash is NOT reformatted');
   ok('sourceTitle is byte-identical to title when there are no breaks',
     item.sourceTitle === item.title, JSON.stringify([item.title, item.sourceTitle]));
   const out = facebookText({ source_headline: item.sourceTitle });
-  ok('the Facebook post is still one line', !out.includes('\n'), JSON.stringify(out));
+  // The standing hashtag block is appended to every post; the STORY must still be a single line.
+  ok('the Facebook post is still one line', !withoutHashtags(out).includes('\n'), JSON.stringify(out));
   ok('it is the SK Hynix line, attribution stripped',
-    out === 'SK Hynix says it will supply HBM4 to Intel.', JSON.stringify(out));
+    withoutHashtags(out) === 'SK Hynix says it will supply HBM4 to Intel.', JSON.stringify(out));
 }
 
 section('4. THE SAFETY PROPERTY: title is byte-identical to the old behaviour');

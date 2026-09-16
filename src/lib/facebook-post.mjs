@@ -62,7 +62,35 @@ export function facebookText(ev) {
   // outlet tag, terminal punctuation. editorialVoice is total and failure-safe: it returns the input
   // unchanged on a throw, an empty result, or any fact that moved, so it can never be the reason a
   // post fails to publish. See facebook-voice.mjs.
-  return editorialVoice(normalised) || normalised;
+  const edited = editorialVoice(normalised) || normalised;
+  return withHashtags(edited);
+}
+
+/**
+ * The standing hashtag block, appended to every Facebook post.
+ *
+ * Fixed and identical on every post by request — not derived from the story, so there is no way for
+ * it to assert a topic the post does not support. They are added AFTER the editorial pass, so
+ * facebook-voice's fact guard compares the story against the story and never sees them.
+ */
+export const FB_HASHTAGS = ['#stockmarket', '#investing', '#daytrading', '#stocks'];
+const HASHTAG_BLOCK = FB_HASHTAGS.join(' ');
+// Anchored to the end, and tolerant of spacing, so re-running this on text that already carries the
+// block cannot produce it twice.
+const HASHTAG_BLOCK_RE = new RegExp(
+  '\\n*\\s*' + FB_HASHTAGS.map((h) => '\\' + h).join('\\s+') + '\\s*$', 'i');
+
+/** The published text with the standing block removed — i.e. the story on its own. */
+export const withoutHashtags = (text) =>
+  String(text ?? '').replace(HASHTAG_BLOCK_RE, '').trimEnd();
+
+export function withHashtags(text) {
+  const body = withoutHashtags(text);
+  if (!body) return text;
+  const withTags = `${body}\n\n${HASHTAG_BLOCK}`;
+  // A POST IS NEVER LOST TO MAKE ROOM FOR HASHTAGS. Eligibility measures this exact string, so if
+  // the block would carry a long post past the limit, the story ships without it.
+  return withTags.length <= FB_MAX_CHARS ? withTags : body;
 }
 
 /**
@@ -85,7 +113,12 @@ export function facebookEligibility(ev, { isNew, isCanonical, isBackfill = false
 
   const text = facebookText(ev);
   if (!text) return no('no text to publish');
-  if (text.length < FB_MIN_CHARS) return no(`text too short (${text.length})`);
+  // THE MINIMUM MEASURES THE STORY, NOT THE PUBLISHED STRING. The standing hashtag block adds ~43
+  // characters to every post, which would carry a two-character junk item past a ten-character floor
+  // and publish it. The floor is a judgement about content, so it is applied to the content.
+  const story = withoutHashtags(text);
+  if (story.length < FB_MIN_CHARS) return no(`text too short (${story.length})`);
+  // The maximum measures what is actually sent, because that is what Facebook limits.
   if (text.length > FB_MAX_CHARS) return no(`text too long (${text.length} > ${FB_MAX_CHARS})`);
   return { eligible: true, reason: null };
 }

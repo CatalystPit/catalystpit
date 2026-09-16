@@ -5,13 +5,16 @@
 import { readFile } from 'node:fs/promises';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
   FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE, META_PERMISSION_ERROR_CODE, redactCredential,
-  isAuthFailure, failureSpendsAttempt } from '../src/lib/facebook-post.mjs';
+  isAuthFailure, failureSpendsAttempt, FB_HASHTAGS, withHashtags, withoutHashtags } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
   if (cond) pass++; else { fail++; console.error(`  FAIL ${name}${detail ? ' — ' + detail : ''}`); }
 };
 const section = (s) => console.log('\n' + s);
+
+// Every post now ends with the standing hashtag block; assertions about the STORY strip it first.
+const story = (t) => withoutHashtags(t);
 
 const WALTER = {
   source: 'WALTERBLOOMBERG', content_hash: 'h1', source_uid: 'WalterBloomberg/35531',
@@ -48,18 +51,63 @@ section('3. the text is Walter\'s FACTS, in Catalyst Pit\'s voice');
   ok('the terminal flash marker is gone', !t.startsWith('*'));
   ok('it is no longer shouting', t !== t.toUpperCase());
   ok('every word of the headline survives',
-    t === 'Kremlin: if sanctions are lifted, world energy prices will go down.', JSON.stringify(t));
+    story(t) === 'Kremlin: if sanctions are lifted, world energy prices will go down.', JSON.stringify(t));
   ok('no word was added or dropped',
-    t.replace(/[^A-Za-z]/g, '').toUpperCase()
+    story(t).replace(/[^A-Za-z]/g, '').toUpperCase()
       === '*KREMLIN: IF SANCTIONS ARE LIFTED, WORLD ENERGY PRICES WILL GO DOWN'.replace(/[^A-Za-z]/g, ''));
-  ok('adds no hashtag', !/#/.test(t));
+  // The standing hashtag block is now appended to every post by request. It is fixed text, identical
+  // everywhere, so it asserts nothing about this particular story — see section 3c.
+  ok('the story itself carries no hashtag', !/#/.test(t.split('\n\n').slice(0, -1).join('\n\n')));
   ok('adds no URL', !/https?:\/\//.test(t));
   ok('adds no Catalyst Pit wording', !/catalyst ?pit/i.test(t));
   ok('adds no ticker', !/\$[A-Z]{1,5}\b/.test(t));
   // Falls back to the canonical headline only when there is no source text at all.
   ok('falls back when source text is missing',
-    facebookText({ headline: 'X', source_headline: '' }) === 'X.');
+    story(facebookText({ headline: 'X', source_headline: '' })) === 'X.');
   ok('no text at all yields null', facebookText({}) === null);
+}
+
+section('3c. every post carries the four hashtags');
+{
+  const tags = '#stockmarket #investing #daytrading #stocks';
+  ok('the block is exactly the four requested tags', FB_HASHTAGS.join(' ') === tags, FB_HASHTAGS.join(' '));
+  ok('in the requested order', FB_HASHTAGS[0] === '#stockmarket' && FB_HASHTAGS[3] === '#stocks');
+
+  for (const [label, sh] of [
+    ['a one-line flash', '*OIL SURGES 3% (@WalterBloomberg)'],
+    ['a multi-paragraph post', 'HEADLINE HERE\n\nA body paragraph.\n\nAnother body paragraph.'],
+    ['already-clean prose', 'Michael Burry is joining Minerva as senior adviser.'],
+    ['a post ending in a quote', 'HE SAID "WE WILL ACT"'],
+  ]) {
+    const t = facebookText({ source_headline: sh });
+    ok(`${label}: ends with the block`, t.endsWith(tags), JSON.stringify(t.slice(-60)));
+    ok(`${label}: separated by a blank line`, t.endsWith('\n\n' + tags));
+    ok(`${label}: appears exactly once`, t.split('#stockmarket').length === 2);
+    ok(`${label}: the story survives above it`, t.replace(tags, '').trim().length > 0);
+  }
+
+  // Appending must be idempotent: running it twice cannot produce the block twice.
+  const once = withHashtags('OIL SURGES.');
+  ok('idempotent', withHashtags(once) === once, JSON.stringify(withHashtags(once).slice(-70)));
+  ok('idempotent regardless of spacing', withHashtags('OIL SURGES.\n\n' + tags + '  ') === once);
+
+  // A POST MUST NEVER BE LOST TO MAKE ROOM FOR HASHTAGS. Eligibility measures the final string, so a
+  // story close to the limit ships without the block rather than failing the length gate.
+  const huge = 'x'.repeat(FB_MAX_CHARS - 5);
+  ok('a near-limit post keeps its story and drops the block', withHashtags(huge) === huge);
+  ok('and is still eligible to publish',
+    facebookEligibility({ source: 'WALTERBLOOMBERG', content_hash: 'h', source_headline: huge },
+      LIVE).eligible);
+  ok('a normal post is comfortably inside the limit',
+    facebookText({ source_headline: 'OIL SURGES 3%' }).length < FB_MAX_CHARS);
+  ok('hashtags do not make an empty post publishable', facebookText({}) === null);
+
+  // The tags are FIXED. They are never derived from the story, so they cannot claim a topic.
+  const a = facebookText({ source_headline: 'GOLD FALLS 1%' });
+  const b = facebookText({ source_headline: 'FED HOLDS RATES' });
+  ok('identical on every post', a.slice(a.indexOf('#')) === b.slice(b.indexOf('#')));
+  ok('no ticker is ever turned into a hashtag',
+    !/#[A-Z]{2,5}\b/.test(facebookText({ source_headline: 'APPLE $AAPL RISES 3%' })));
 }
 
 section('4. transport normalisation');
@@ -71,9 +119,9 @@ for (const [raw, want, why] of [
   ['A​B', 'AB.', 'zero-width space removed'],
   ['  A  ', 'A.', 'trimmed'],
   ['A\n\n\n\n B', 'A.\n\n B.', 'blank-line runs collapsed'],
-]) ok(why, facebookText({ source_headline: raw }) === want, JSON.stringify(facebookText({ source_headline: raw })));
+]) ok(why, story(facebookText({ source_headline: raw })) === want, JSON.stringify(facebookText({ source_headline: raw })));
 ok('word order and punctuation untouched',
-  facebookText({ source_headline: 'WTI climbed 1% to $102.40, holding near recent highs.' })
+  story(facebookText({ source_headline: 'WTI climbed 1% to $102.40, holding near recent highs.' }))
   === 'WTI climbed 1% to $102.40, holding near recent highs.');
 
 section('5. length bounds — skip, never truncate');
@@ -226,7 +274,7 @@ section('14. the public attribution never reaches the Page');
     ['OIL SURGES (@walterbloomberg)', 'Oil surges.'],
     ['OIL SURGES (@WALTERBLOOMBERG)', 'Oil surges.'],
     ['A multi-line post\n\nwith a body and a credit (@WalterBloomberg)', 'A multi-line post.\n\nwith a body and a credit.'],
-  ]) ok('stripped: ' + JSON.stringify(raw).slice(0, 52), facebookText({ source_headline: raw }) === want,
+  ]) ok('stripped: ' + JSON.stringify(raw).slice(0, 52), story(facebookText({ source_headline: raw })) === want,
     JSON.stringify(facebookText({ source_headline: raw })));
 
   ok('no published text may contain the handle in any casing',
@@ -243,7 +291,7 @@ section('14. the public attribution never reaches the Page');
     'SOURCE SAYS (@SomeoneElse)',
     'ANALYST CITES @WalterBloomberg AS THE SOURCE OF THE LEAK',
   ]) ok('kept: ' + JSON.stringify(raw).slice(0, 50),
-    words(facebookText({ source_headline: raw })) === words(raw),
+    words(story(facebookText({ source_headline: raw }))) === words(raw),
     JSON.stringify(facebookText({ source_headline: raw })));
 
   // THE CHANGE IS COSMETIC ONLY. Source control lives on ev.source and has never read the text, so

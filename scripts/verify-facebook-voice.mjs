@@ -9,7 +9,7 @@
 
 import { editorialVoice, editorialize, sentenceCase, isShouted, splitSourceTag,
   assertFactsPreserved } from '../src/lib/facebook-voice.mjs';
-import { facebookText } from '../src/lib/facebook-post.mjs';
+import { facebookText, withoutHashtags } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -177,8 +177,9 @@ section('6. it can never block a post');
 
   // And the wiring: facebookText must apply it, and must still return the text if it cannot.
   const t = facebookText({ source_headline: HOUSE_IN + ' (@WalterBloomberg)' });
+  // Every post ends with the standing hashtag block; this asserts the STORY it wraps.
   ok('facebookText publishes the edited copy',
-    t === 'House Democrats seek bipartisan AI safeguards, according to Politico.', JSON.stringify(t));
+    withoutHashtags(t) === 'House Democrats seek bipartisan AI safeguards, according to Politico.', JSON.stringify(t));
   ok('the Walter watermark is still removed first', !/WalterBloomberg/i.test(t));
   ok('facebookText still returns null with no text', facebookText({}) === null);
 }
