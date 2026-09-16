@@ -365,8 +365,12 @@ sec('EVERY WALTER POST GOES OUT — only the wording is ours');
 {
   // Operator decision, 2026-09-16. The editorial gates were suppressing 58 of his 124 posts in seven
   // days. They no longer apply to him; the WORDING gate still does, and that is the whole point.
+  // published_at is REQUIRED: "no timestamp" and "stale" are always-enforced, so an event without
+  // one is correctly hard-blocked even for Walter. Omitting it here made these tests fail for a
+  // reason that had nothing to do with what they are testing.
   const W = (h, x = {}) => ({ seq: 1, headline: h, headline_status: 'original', importance: 2,
-    tickers: [], source_kind: 'external', sources: ['WALTERBLOOMBERG'], ...x });
+    tickers: [], source_kind: 'external', sources: ['WALTERBLOOMBERG'],
+    published_at: new Date().toISOString(), ...x });
 
   // Real posts that were suppressed, with the reason each was given.
   for (const [h, was] of [
@@ -408,6 +412,27 @@ sec('EVERY WALTER POST GOES OUT — only the wording is ours');
     buildCandidate(W('x', { headline_status: 'not_required' })).publishable !== true);
   // No text means no post, for him as for anyone.
   ok('an empty headline still produces nothing', buildCandidate(W('')).publishable !== true);
+
+  // WHAT THE BYPASS MUST NEVER DROP. These are not opinions about newsworthiness — they decide
+  // whether there is a publishable post at all. "Post everything he writes" was never a request to
+  // publish Icelandic source text, a five-hour-old flash, or a truncated sentence. Four matching
+  // assertions live in verify-x-relevance; these guard the same line from this side.
+  const STALE = new Date(Date.now() - 5 * 3600_000).toISOString();
+  ok('stale is still enforced for Walter',
+    buildCandidate(W('Trump says something', { published_at: STALE })).suppressed === 'stale');
+  ok('untranslated non-English is still enforced',
+    buildCandidate(W('SÍL 2 hs. - ákvörðun vaxta og almenn upplýsingagjöf')).publishable !== true);
+  ok('a truncated line is still enforced',
+    buildCandidate(W('Trump agrees to acquire something for…')).publishable !== true);
+  ok('an ASCII-ellipsis truncation is caught too',
+    buildCandidate(W('Trump agrees to acquire something for...')).publishable !== true);
+  ok('halts are still excluded for Walter',
+    buildCandidate(W('XYZ halted, volatility pause', { source_type: 'halt', tickers: ['XYZ'] })).publishable !== true);
+  ok('an event with no timestamp is still blocked',
+    buildCandidate(W('Trump says something', { published_at: null })).publishable !== true);
+  // ...but the fragmentary-wording JUDGEMENT is still bypassed, which is the whole point.
+  ok('the fragmentary-wording judgement is still bypassed for him',
+    buildCandidate(W('Ed Yardeni cuts S&P 500 year-end target to 7,900 from 8,400')).publishable === true);
 
   // AND THE BYPASS IS HIS ALONE. Every other source is judged exactly as before.
   const other = (h) => buildCandidate({ seq: 2, headline: h, headline_status: 'original',

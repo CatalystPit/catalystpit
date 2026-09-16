@@ -418,6 +418,36 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
  * Does this event carry Walter Bloomberg provenance, as the canonical row or anywhere in its cluster?
  * Same test evaluate() uses, lifted out so the publication path can ask it too.
  */
+/**
+ * Suppressions that apply to EVERYONE, Walter included.
+ *
+ * The Walter bypass drops the gates that are an OPINION about whether an item deserves a post. It
+ * must not drop the ones that are about whether there is a publishable post at all — those are not
+ * editorial judgements and "post everything he writes" was never a request to publish Icelandic
+ * source text, a five-hour-old flash, or an exchange halt notice.
+ *
+ * This list is the difference, and four pre-existing assertions in verify-x-relevance pin it.
+ */
+const ALWAYS_ENFORCED = new Set([
+  'no headline',
+  'halts are not auto-posted',
+  'halt with no resolved symbol',
+  'untranslated non-English source text',
+  'no timestamp',
+  'stale',
+]);
+
+/**
+ * A genuinely truncated line, which must never publish however trusted the source.
+ *
+ * Checked separately because "incomplete or fragmentary wording" covers two different things under
+ * one reason string: real truncation ("Trump agrees to acquire something for…") and a readability
+ * heuristic that also rejects perfectly good headlines — it threw away "Ed Yardeni cuts S&P 500
+ * year-end target to 7,900 from 8,400". readsAsSentence() returns false for both, so the reason
+ * string cannot separate them; the trailing ellipsis can.
+ */
+const isTruncated = (h) => /(?:…|\.\.\.)\s*$/.test(String(h || ''));
+
 export function hasWalterProvenance(ev) {
   const sources = (ev?.sources || []).map((s) => String(s || '').toUpperCase());
   return sources.includes(WALTER_SOURCE) || String(ev?.source || '').toUpperCase() === WALTER_SOURCE;
@@ -453,7 +483,8 @@ export function buildCandidate(ev, reading = null, now = Date.now(), priorPosts 
   // Still evaluated for Walter, because it identifies the catalyst and the BREAKING decision the
   // formatter needs — its SUPPRESSION is what no longer applies to him.
   const quality = publicationVerdict({ ...ev, storyHasPriors: (story.priors || 0) > 0 }, now);
-  if (!quality.publish && !walter) {
+  const hardBlock = ALWAYS_ENFORCED.has(quality.reason) || isTruncated(ev?.headline);
+  if (!quality.publish && (!walter || hardBlock)) {
     return { eligible: true, publishable: false, reason: verdict.reason,
       suppressed: quality.reason, terminal: quality.terminal };
   }
