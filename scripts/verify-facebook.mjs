@@ -3,6 +3,7 @@
 // Run: node scripts/verify-facebook.mjs
 
 import { readFile } from 'node:fs/promises';
+import { sameTopic, directionDiffers, facebookRelevance } from '../src/lib/facebook-relevance.mjs';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
   FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE, META_PERMISSION_ERROR_CODE, redactCredential,
   isAuthFailure, failureSpendsAttempt, FB_HASHTAGS, withHashtags, withoutHashtags, stripLinks } from '../src/lib/facebook-post.mjs';
@@ -108,6 +109,106 @@ section('3d. ZeroHedge publishes OUR sentence; Walter publishes his own');
       === facebookText(WALTER).slice(facebookText(WALTER).indexOf('#')));
 }
 
+section('3f. the Page is economics and markets only');
+{
+  const fb = (h) => facebookEligibility({ source: 'WALTERBLOOMBERG', content_hash: 'r' + h.length,
+    source_headline: h }, LIVE);
+
+  // MUST PUBLISH — real market and economic stories, taken from live rows.
+  for (const h of [
+    'Fed raises rates 25 basis points, first hike since July 2023',
+    'US retail sales rebound in August',
+    'Diesel crack spread hits record high amid supply disruptions',
+    'Bank of England to stop selling 20- and 30-year gilts',
+    'Houthi attacks damage Saudi Arabia east-west pipeline',
+    'Dollar General CEO warns middle-income customers showing financial stress',
+    'Libya National Oil Corporation threatens force majeure as oil guards shut fields',
+    'Greece seeks to attract hedge funds with tax incentives',
+    'Manufacturers plan production moves from Canada amid US tariffs',
+    'SK Hynix explores US memory chip production with Intel',
+  ]) ok(`publishes: ${h.slice(0, 48)}`, fb(h).eligible, fb(h).reason);
+
+  // MUST NOT PUBLISH — the half of the feed that is not what this Page is for.
+  for (const h of [
+    'Houthis claim shooting down Saudi F-15 fighter jet',
+    'NATO reports weekly aerial incursions into eastern flank airspace',
+    'Left-wing parties win narrow Swedish national election victory',
+    'AfD reaches 30 support in German poll; CDU hits record low',
+    'Rep. Mace demands public execution for Lindsay Clancy',
+    'Study finds stay-at-home subsidies unlikely to increase birth rates',
+    'Trump expresses support for Flock surveillance cameras',
+    'US troops leak photos showing damage at Gulf bases from Iran attacks',
+    'Drone with explosive found at Leipzig airport near Ukrainian aircraft',
+  ]) ok(`drops: ${h.slice(0, 48)}`, !fb(h).eligible, JSON.stringify(fb(h)));
+
+  // The gate applies to BOTH sources, not just the new one.
+  ok('it applies to Walter too',
+    !facebookEligibility({ ...WALTER, source_headline: 'HOUTHIS CLAIM SHOOTING DOWN SAUDI F-15 FIGHTER JET' }, LIVE).eligible);
+  ok('and to ZeroHedge',
+    !facebookEligibility({ source: 'ZEROHEDGE', content_hash: 'z9', headline_status: 'original',
+      headline: 'Left-wing parties win narrow Swedish national election victory' }, LIVE).eligible);
+  // A wrong ticker must not drag an off-topic story on. This is the $FTEK/$FUSB class.
+  ok('a resolved ticker does NOT override the subject test',
+    !facebookEligibility({ source: 'ZEROHEDGE', content_hash: 'z8', headline_status: 'original',
+      headline: 'Houthis claim shooting down Saudi F-15 fighter jet', tickers: ['FTEK'] }, LIVE).eligible);
+}
+
+section('3g. one story, one post');
+{
+  // The pairs that matter: the same event reported by both sources, in different words.
+  for (const [a, b] of [
+    ['Fed raises rates 25 basis points, first hike since July 2023',
+     'Fed hikes rates by 25bp in first increase since July 2023'],
+    ['US retail sales rebound in August', 'US August retail sales rebound strongly'],
+    ['Houthi attacks damage Saudi Arabia east-west pipeline',
+     'Saudi Arabia east-west pipeline damaged by Houthi attacks'],
+  ]) ok(`same story: ${a.slice(0, 42)}`, sameTopic(a, b), a + ' || ' + b);
+
+  // DISTINCT stories must still both publish. Over-suppression is the failure mode that loses news.
+  for (const [a, b] of [
+    ['Diesel crack spread hits record high', 'US retail sales rebound in August'],
+    ['Fed raises rates 25 basis points', 'Fed cuts rates 50 basis points'],
+    ['Oil rises 2% on supply concerns', 'Oil falls 2% on demand concerns'],
+    ['Saudi pipeline shut after attack', 'Saudi pipeline could resume within days'],
+    ['Apple beats third-quarter estimates', 'Apple misses third-quarter estimates'],
+  ]) ok(`different stories: ${a.slice(0, 38)} vs ${b.slice(0, 30)}`, !sameTopic(a, b));
+
+  // DIFFERENT STORIES THAT SHARE A LOT OF WORDING, and carry no direction conflict — so these test
+  // the overlap thresholds themselves rather than the direction guard. Both were false merges at the
+  // original 3-word / 0.5-ratio setting.
+  ok('two different recalls by the same company stay separate',
+    !sameTopic('Tesla recalls vehicles over a software defect',
+               'Tesla recalls chargers over an overheating defect'));
+  ok('two central banks saying similar things stay separate',
+    !sameTopic('Federal Reserve officials signal caution on inflation while assessing labour market conditions and wage growth',
+               'European Central Bank officials signal caution on growth while reviewing inflation expectations across member economies'));
+
+  // ONLY THE DIRECTION GUARD SEPARATES THIS PAIR: 8 shared words out of 10, a 0.80 ratio, so the
+  // overlap thresholds would merge a pipeline reopening with a pipeline shutdown into one post.
+  ok('opposite directions are never merged even at high word overlap',
+    !sameTopic('Saudi Arabia east-west pipeline resumes crude flows after repair work completes',
+               'Saudi Arabia east-west pipeline halts crude flows after damage stops repair work'));
+
+  // The direction guard is what separates the last four; assert it directly.
+  ok('a hike and a cut are never merged', directionDiffers('Fed raises rates', 'Fed cuts rates'));
+  ok('a beat and a miss are never merged', directionDiffers('Apple beats estimates', 'Apple misses estimates'));
+  ok('an open and a shut are never merged', directionDiffers('pipeline resumes flows', 'pipeline halts flows'));
+  ok('two posts in the same direction are not forced apart',
+    !directionDiffers('Fed raises rates', 'Fed hikes rates again'));
+  ok('an unrelated pair asserts no direction conflict',
+    !directionDiffers('US retail sales rebound', 'Bank of England sells gilts'));
+
+  // Generic market furniture must not create a false match on its own.
+  ok('shared market furniture alone is not a story match',
+    !sameTopic('Stocks rise as market prices in rate cut', 'Gold prices fall as market data lands'));
+
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  ok('the queue checks the Page before adding', /same story already on the Page/.test(pub));
+  ok('it compares against what was actually carried',
+    /from fb_post_candidates[\s\S]{0,200}status in \('posted', 'pending', 'publishing'\)/.test(pub));
+  ok('the window is bounded', /SAME_TOPIC_WINDOW_MINUTES = \d+/.test(pub));
+}
+
 section('3e. links are never published');
 {
   for (const [raw, why] of [
@@ -158,7 +259,10 @@ section('3c. every post carries the four hashtags');
 
   // A POST MUST NEVER BE LOST TO MAKE ROOM FOR HASHTAGS. Eligibility measures the final string, so a
   // story close to the limit ships without the block rather than failing the length gate.
-  const huge = 'x'.repeat(FB_MAX_CHARS - 5);
+  // Market-relevant filler: the relevance gate now (correctly) drops a wall of "x".
+  // Market-relevant filler: the relevance gate now (correctly) drops a wall of "x". Trimmed, because
+  // withoutHashtags trims and a trailing space would make the equality below fail for that reason.
+  const huge = ('Fed rate decision. ' + 'oil '.repeat((FB_MAX_CHARS - 60) / 4)).trim();
   ok('a near-limit post keeps its story and drops the block', withHashtags(huge) === huge);
   ok('and is still eligible to publish',
     facebookEligibility({ source: 'WALTERBLOOMBERG', content_hash: 'h', source_headline: huge },

@@ -3,9 +3,14 @@ import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
   isPermanentFailure, failureSpendsAttempt, redactCredential, isAuthFailure,
-  FB_REWORDED_SOURCES, FB_CATALYST_WORDING,
+  FB_REWORDED_SOURCES, FB_CATALYST_WORDING, withoutHashtags,
   META_OAUTH_ERROR_CODE } from './facebook-post.mjs';
 import { resolvePageToken, invalidatePageToken, graphUrl as GRAPH } from './facebook-page-token.mjs';
+import { sameTopic } from './facebook-relevance.mjs';
+
+// How far back the Page is checked for the same story. Long enough to catch two sources reporting
+// one event, short enough that a genuine development hours later is still publishable.
+const SAME_TOPIC_WINDOW_MINUTES = 360;
 
 // PUBLISHING WALTER BLOOMBERG TO THE CATALYST PIT FACEBOOK PAGE.
 //
@@ -64,6 +69,24 @@ export async function queueFacebookPost(ev, { isNew, isCanonical, isBackfill = f
   const message = facebookText(ev);
   try {
     await ensureFacebookTable();
+    // ONE STORY, ONE POST. Walter and ZeroHedge cover the same events, and ZeroHedge never folds
+    // into the ingestion pipeline's clusters — 0 of 162 measured over three days — so the existing
+    // cross-source dedupe cannot see it and both copies would publish.
+    //
+    // Compared against what the Page has recently CARRIED rather than against the event table,
+    // because that is the thing being protected from repeating itself. The unique indexes below
+    // still catch the same event twice; this catches the same STORY from a different source.
+    const recent = (await db.execute(sql`
+      select message from fb_post_candidates
+       where created_at > now() - (${SAME_TOPIC_WINDOW_MINUTES} || ' minutes')::interval
+         and status in ('posted', 'pending', 'publishing')
+       order by id desc limit 60`)).rows ?? [];
+    const story = withoutHashtags(message);
+    for (const prior of recent) {
+      if (sameTopic(story, withoutHashtags(prior.message))) {
+        return { queued: false, reason: 'same story already on the Page' };
+      }
+    }
     const res = await db.execute(sql`
       insert into fb_post_candidates (event_seq, source_uid, content_hash, message)
       values (${ev._seq ?? ev.seq ?? null}, ${ev.source_uid ?? null}, ${ev.content_hash}, ${message})

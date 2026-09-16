@@ -6,6 +6,7 @@
 
 /** Only this source. One entry, by instruction; adding another is a deliberate edit. */
 import { editorialVoice } from './facebook-voice.mjs';
+import { facebookRelevance } from './facebook-relevance.mjs';
 
 export const FB_SOURCE_WHITELIST = new Set(['WALTERBLOOMBERG', 'ZEROHEDGE']);
 
@@ -178,6 +179,11 @@ export function facebookEligibility(ev, { isNew, isCanonical, isBackfill = false
   // and publish it. The floor is a judgement about content, so it is applied to the content.
   const story = withoutHashtags(text);
   if (story.length < FB_MIN_CHARS) return no(`text too short (${story.length})`);
+  // THE PAGE IS ABOUT ECONOMICS AND MARKETS. An allowlist, applied to BOTH sources — measured on
+  // live rows it drops about half of ZeroHedge (military, electoral, cultural) and about a quarter
+  // of Walter. See facebook-relevance.mjs for why it is an allowlist rather than a blocklist.
+  const rel = facebookRelevance(story, ev.tickers || []);
+  if (!rel.relevant) return no(rel.reason);
   // The maximum measures what is actually sent, because that is what Facebook limits.
   if (text.length > FB_MAX_CHARS) return no(`text too long (${text.length} > ${FB_MAX_CHARS})`);
   return { eligible: true, reason: null };
