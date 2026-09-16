@@ -77,6 +77,31 @@ export const TOOLS = {
 export const TOOL_IDS = Object.keys(TOOLS);
 export const tool = (id) => TOOLS[id] || null;
 
+// ── categories ───────────────────────────────────────────────────────────────
+// ONE RAIL BUTTON PER CATEGORY, not per tool. Six tools already crowd a narrow panel and the list
+// is going to grow; a category button that remembers the last tool chosen from it keeps the rail a
+// fixed height however many tools exist.
+//
+// Categories with no tools yet are declared but not rendered, so the roadmap is visible in the code
+// without putting an empty button on the chart.
+
+export const TOOL_CATEGORIES = [
+  { id: 'lines', label: 'Lines', icon: '╱', tools: ['trend', 'ray', 'horizontal', 'vertical'] },
+  { id: 'fib', label: 'Fibonacci', icon: '≡', tools: ['fib'] },
+  { id: 'shapes', label: 'Shapes', icon: '▭', tools: ['rectangle'] },
+  // Declared for later. Rendered only once they have tools.
+  { id: 'text', label: 'Text & notes', icon: 'T', tools: [] },
+  { id: 'measure', label: 'Measure', icon: '⇱', tools: [] },
+];
+
+/** Only the categories that actually have something in them. */
+export const activeCategories = () => TOOL_CATEGORIES.filter((c) => c.tools.some((t) => !!TOOLS[t]));
+
+/** Which category a tool belongs to — used to light up the right rail button. */
+export function categoryOfTool(toolId) {
+  return TOOL_CATEGORIES.find((c) => c.tools.includes(toolId)) || null;
+}
+
 /** Where a ray leaves the visible window. Null view means "stop at the second anchor". */
 export function extendRay(a, b, view) {
   if (!view || typeof a.time !== 'number' || typeof b.time !== 'number') return b;

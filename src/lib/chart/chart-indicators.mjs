@@ -294,6 +294,68 @@ export const INDICATORS = {
 
 export const INDICATOR_IDS = Object.keys(INDICATORS);
 
+// ── categories and search ────────────────────────────────────────────────────
+// BUILT FOR FIFTY, NOT FOR EIGHT. The browser renders from these, so the modal does not need
+// redesigning when the list grows: a new indicator declares a category and some keywords and it
+// appears, is searchable, and sorts into the right group.
+
+export const INDICATOR_CATEGORIES = [
+  { id: 'all', label: 'All' },
+  { id: 'trend', label: 'Trend' },
+  { id: 'momentum', label: 'Momentum' },
+  { id: 'volatility', label: 'Volatility' },
+  { id: 'volume', label: 'Volume' },
+];
+
+/**
+ * Category and search terms per indicator, kept beside the registry rather than inside it so the
+ * maths stays free of presentation concerns.
+ *
+ * `keywords` exist because people search for what a thing IS, not only what it is called: someone
+ * looking for a moving average should find SMA and EMA, and someone typing "bands" should find
+ * Bollinger.
+ */
+const META = {
+  sma:       { category: 'trend',      keywords: ['simple', 'moving average', 'ma', 'mean'] },
+  ema:       { category: 'trend',      keywords: ['exponential', 'moving average', 'ma'] },
+  vwap:      { category: 'volume',     keywords: ['volume weighted', 'average price', 'session'] },
+  bollinger: { category: 'volatility', keywords: ['bands', 'bb', 'standard deviation', 'envelope'] },
+  rsi:       { category: 'momentum',   keywords: ['relative strength', 'oscillator', 'overbought', 'oversold'] },
+  macd:      { category: 'momentum',   keywords: ['convergence', 'divergence', 'oscillator', 'signal'] },
+  atr:       { category: 'volatility', keywords: ['average true range', 'range', 'stop'] },
+  volume:    { category: 'volume',     keywords: ['bars', 'turnover', 'liquidity'] },
+};
+
+export const indicatorMeta = (id) => META[id] || { category: 'trend', keywords: [] };
+
+/**
+ * Search the catalogue.
+ *
+ * Matches the label, the id and the keywords, so "moving average" finds SMA and EMA, "bb" finds
+ * Bollinger, and an exact id still works. Ranked so a label match beats a keyword match — typing
+ * "ma" should offer the moving averages before anything that merely mentions one.
+ */
+export function searchIndicators(query, { intraday = true, category = 'all' } = {}) {
+  const q = String(query || '').trim().toLowerCase();
+  const pool = availableIndicators({ intraday })
+    .filter((d) => category === 'all' || indicatorMeta(d.id).category === category);
+  if (!q) return pool;
+  const scored = [];
+  for (const def of pool) {
+    const meta = indicatorMeta(def.id);
+    const label = def.label.toLowerCase();
+    const id = def.id.toLowerCase();
+    let score = 0;
+    if (label === q || id === q) score = 100;
+    else if (label.startsWith(q) || id.startsWith(q)) score = 80;
+    else if (label.includes(q) || id.includes(q)) score = 60;
+    else if (meta.keywords.some((k) => k.startsWith(q))) score = 40;
+    else if (meta.keywords.some((k) => k.includes(q))) score = 20;
+    if (score > 0) scored.push({ def, score });
+  }
+  return scored.sort((a, b) => b.score - a.score || a.def.label.localeCompare(b.def.label)).map((s) => s.def);
+}
+
 /**
  * Indicators a user may have more than one of at a time.
  *

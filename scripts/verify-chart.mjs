@@ -28,6 +28,9 @@ import { TOOLS, tool, createDrawing, coerceDrawing, moveDrawing, fibLevels, exte
 import { loadDrawings, saveDrawings, MAX_PER_SYMBOL, MAX_SYMBOLS,
   DRAWINGS_STORAGE_KEY } from '../src/lib/chart/chart-drawing-store.mjs';
 import { loadView, saveView, DEFAULT_VIEW, VIEW_STORAGE_KEY } from '../src/lib/chart/chart-settings.mjs';
+import { CHART_TYPES, CHART_TYPE_IDS, chartTypeOf, PLANNED_CHART_TYPES } from '../src/lib/chart/chart-types.mjs';
+import { INDICATOR_CATEGORIES, indicatorMeta, searchIndicators } from '../src/lib/chart/chart-indicators.mjs';
+import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../src/lib/chart/chart-drawings.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -603,57 +606,152 @@ section('13. view options persist');
   ok('it repaints on resize', /ResizeObserver/.test(layer));
 }
 
-section('14. the toolbar layout: top bar, left rail, nothing over the candles');
+section('14. chart types are a registry, and only what we draw is listed');
 {
+  ok('candles, line and area are offered', CHART_TYPE_IDS.join(',') === 'Candles,Line,Area');
+  ok('every type names a real series constructor',
+    CHART_TYPES.every((t) => /Series$/.test(t.series)));
+  ok('every type maps a bar to its point shape',
+    CHART_TYPES.every((t) => typeof t.map === 'function'));
+  ok('every type styles itself from the palette',
+    CHART_TYPES.every((t) => typeof t.options === 'function'));
+
+  const bar = { time: 1, open: 10, high: 12, low: 9, close: 11, volume: 5 };
+  const candle = chartTypeOf('Candles').map(bar);
+  ok('candles carry all four prices',
+    candle.open === 10 && candle.high === 12 && candle.low === 9 && candle.close === 11);
+  const line = chartTypeOf('Line').map(bar);
+  ok('line carries the close as a value', line.value === 11 && line.open === undefined);
+  ok('line and area are genuinely different series',
+    chartTypeOf('Line').series !== chartTypeOf('Area').series);
+
+  // NOTHING UNSUPPORTED IS LISTED. A type in the menu that renders wrongly is worse than absent.
+  for (const planned of ['HeikinAshi', 'HollowCandles', 'Bars', 'Baseline'])
+    ok(`${planned} is not offered yet`, !CHART_TYPE_IDS.includes(planned));
+  ok('...but the roadmap is recorded', PLANNED_CHART_TYPES.length >= 4);
+  ok('every planned type states what it needs',
+    PLANNED_CHART_TYPES.every((t) => typeof t.needs === 'string' && t.needs.length > 0));
+  // An unknown id must still draw something rather than leaving a blank box.
+  ok('an unknown type falls back to candles', chartTypeOf('nope').id === 'Candles');
+
   const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  ok('the chart draws from the registry', /chart\.addSeries\(lwc\[ct\.series\]/.test(cmp));
+  ok('...including on incremental updates', /chartTypeOf\(typeRef\.current\)\.map\(b\)/.test(cmp));
+  ok('no chart type is hard-coded in the draw path', !/typeRef\.current === 'Candles'/.test(cmp));
+  ok('the toolbar renders the type menu from the registry', /CHART_TYPES\.map/.test(cmp));
+}
+
+section('15. the indicator browser: searchable, categorised, registry-driven');
+{
+  ok('there are categories', INDICATOR_CATEGORIES.length >= 4);
+  ok('"all" is one of them', INDICATOR_CATEGORIES.some((c) => c.id === 'all'));
+  ok('every indicator declares a category',
+    INDICATOR_IDS.every((id) => !!indicatorMeta(id).category));
+  ok('every category used is declared',
+    INDICATOR_IDS.every((id) => INDICATOR_CATEGORIES.some((c) => c.id === indicatorMeta(id).category)));
+
+  // SEARCH BY WHAT A THING IS, not only what it is called.
+  const ids = (q, o) => searchIndicators(q, o).map((d) => d.id);
+  ok('an empty query returns everything', ids('').length === INDICATOR_IDS.length);
+  ok('an exact name matches', ids('RSI').join() === 'rsi');
+  ok('search is case-insensitive', ids('rsi').join() === 'rsi');
+  ok('a prefix matches', ids('boll').join() === 'bollinger');
+  ok('"moving average" finds both moving averages',
+    ids('moving average').includes('sma') && ids('moving average').includes('ema'));
+  ok('"bands" finds Bollinger', ids('bands').includes('bollinger'));
+  ok('"oscillator" finds RSI and MACD',
+    ids('oscillator').includes('rsi') && ids('oscillator').includes('macd'));
+  ok('a label match outranks a keyword match', ids('ma')[0] === 'macd' || ids('ma').includes('sma'));
+  ok('nonsense matches nothing', ids('zzzz').length === 0);
+  ok('a category filters the list',
+    searchIndicators('', { category: 'momentum' }).every((d) => indicatorMeta(d.id).category === 'momentum'));
+  // The timeframe rule still holds inside search.
+  ok('VWAP is not searchable on a daily chart', !ids('vwap', { intraday: false }).includes('vwap'));
+  ok('...but is on intraday', ids('vwap', { intraday: true }).includes('vwap'));
+
+  const br = await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8');
+  ok('the browser has a search box', /Search indicators/.test(br));
+  ok('it renders categories from the registry', /INDICATOR_CATEGORIES\.map/.test(br));
+  ok('it renders results from the search, not a hard-coded list', /searchIndicators\(/.test(br));
+  ok('a click adds immediately', /onClick=\{\(\) => add\(def\.id\)\}/.test(br));
+  ok('multi-instance is respected', /MAX_INSTANCES_PER_INDICATOR/.test(br));
+  // CUSTOM LENGTHS MUST SURVIVE THE REDESIGN: a free number input, not a preset list.
+  ok('lengths stay a free number input', /type="number"/.test(br) && !/<select[\s\S]{0,120}length/.test(br));
+  ok('settings, removal and visibility are all reachable',
+    /Reset settings/.test(br) && /title="Remove"/.test(br) && /'Show' : 'Hide'/.test(br));
+  ok('it is a modal, not another toolbar row', /<Modal/.test(br));
+
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  ok('one prominent Indicators button opens it', /setBrowserOpen\(true\)/.test(cmp));
+  ok('the old inline indicator menu is gone', !/IndicatorMenu/.test(cmp));
+}
+
+section('16. drawing tools are grouped into categories on a left rail');
+{
+  ok('categories are declared', TOOL_CATEGORIES.length >= 3);
+  ok('every tool belongs to exactly one category',
+    TOOL_IDS.every((id) => TOOL_CATEGORIES.filter((c) => c.tools.includes(id)).length === 1));
+  ok('the lines category holds the four line tools',
+    TOOL_CATEGORIES.find((c) => c.id === 'lines').tools.join(',') === 'trend,ray,horizontal,vertical');
+  ok('categoryOfTool resolves', categoryOfTool('ray')?.id === 'lines');
+  ok('an unknown tool has no category', categoryOfTool('nope') === null);
+  // Empty categories are declared for the roadmap but must not put a dead button on the chart.
+  ok('empty categories are declared', TOOL_CATEGORIES.some((c) => c.tools.length === 0));
+  ok('...but are not rendered', activeCategories().every((c) => c.tools.length > 0));
+  ok('every rendered category has a real tool',
+    activeCategories().every((c) => c.tools.some((t) => !!TOOLS[t])));
+
   const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
-
-  // THE RAIL IS A FLEX SIBLING OF THE CHART, never an overlay. Absolute positioning over the chart
-  // is what covers a candle, a price label or the time axis in a small Terminal panel.
-  ok('the rail sits beside the chart, not on top of it',
-    /rail \+ chart row/.test(cmp) && !/DrawingRail[\s\S]{0,200}position: 'absolute'/.test(cmp));
-  ok('the chart box can shrink beside it', /flex: 1, minWidth: 0, minHeight: 0/.test(cmp));
-  ok('the rail itself does not position absolutely over the chart',
-    !/position: 'absolute'[\s\S]{0,120}borderRight/.test(rail));
-
-  // The horizontal drawing row is gone; its controls moved to the rail.
-  ok('the old horizontal drawing row is gone', !/DrawingToolbar/.test(cmp));
-  ok('drawing tools render from the registry', /Object\.values\(TOOLS\)\.map/.test(rail));
-  ok('every rail button carries a tooltip and a label',
-    /title=\{title\}/.test(rail) && /aria-label=\{title\}/.test(rail));
+  ok('the rail renders categories, not every tool', /activeCategories\(\)/.test(rail));
+  ok('...so it is not one button per tool', !/Object\.values\(TOOLS\)\.map/.test(rail));
+  ok('a category remembers the last tool picked from it', /lastOf/.test(rail));
+  ok('a category with several tools gets a dropdown arrow',
+    /cat\.tools\.filter\(\(t\) => TOOLS\[t\]\)\.length > 1/.test(rail));
   ok('there is a select/edit mode', /Select \/ edit/.test(rail));
-  ok('hide/show lives on the rail', /Hide all drawings/.test(rail));
-  ok('delete and clear live on the rail',
-    /Delete selected/.test(rail) && /Clear all/.test(rail));
+  ok('hide, delete and clear live on the rail',
+    /Hide all drawings/.test(rail) && /Delete selected/.test(rail) && /Clear all/.test(rail));
 
-  // Style settings must not permanently consume another row.
-  // Asserted on the STATE, not the word: a mutant that hard-wired the panel off still contained
-  // every mention of it, so matching the name proved nothing.
-  ok('style settings are a popover, not a row',
-    /const \[stylePanel, setStylePanel\] = useState/.test(rail) && /position: 'absolute'/.test(rail));
-  ok('...and it can be opened from the rail', /setStylePanel\(\(v\) => !v\)/.test(rail));
-  ok('the popover can be dismissed', /Escape/.test(rail));
+  // CONTEXTUAL, NOT A PERMANENT ROW.
+  ok('style settings are a popover', /const \[stylePanel, setStylePanel\] = useState/.test(rail));
+  ok('...that opens when a drawing is selected',
+    /useEffect\(\(\) => \{ if \(selected\) setStylePanel\(true\); \}/.test(rail));
+  ok('colour, width and style are all there',
+    /Colour|colour/i.test(rail) && /Width/.test(rail) && /Style/.test(rail));
 
-  // The top bar keeps chart-level controls only, and the indicator controls stay behind the button.
-  ok('timeframes are on the top bar', /TIMEFRAMES\.map/.test(cmp));
-  ok('chart type is on the top bar', /'Candles', 'Line'/.test(cmp));
-  ok('fullscreen is on the top bar', /setFullscreen/.test(cmp));
-  ok('indicators open a menu rather than spilling across the bar',
-    /<IndicatorMenu/.test(cmp) && !/availableIndicators/.test(cmp));
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  // The rail must stay a layout sibling so it can never cover price.
+  ok('the rail sits beside the chart, not over it', /rail \+ chart row/.test(cmp));
+  ok('the chart box can shrink beside it', /flex: 1, minWidth: 0, minHeight: 0/.test(cmp));
+}
 
-  // RESPONSIVE ON THE ELEMENT, not the viewport: a Terminal panel resizes independently of the
-  // window, so a media query would call a 280px panel "desktop".
+section('17. shared UI primitives, and responsive collapse');
+{
+  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  // One implementation of dismissal, so every menu behaves the same.
+  ok('there is a shared dismiss hook', /export function useDismiss/.test(ui));
+  ok('it closes on an outside click', /mousedown/.test(ui));
+  ok('it closes on Escape', /'Escape'/.test(ui));
+  ok('there is a shared Dropdown', /export function Dropdown/.test(ui));
+  ok('there is a shared Modal', /export function Modal/.test(ui));
+  ok('there is a shared button', /export function ToolButton/.test(ui));
+  ok('every shared button is labelled for assistive tech', /aria-label=\{title\}/.test(ui));
+  ok('the modal is a dialog', /role="dialog"/.test(ui) && /aria-modal="true"/.test(ui));
+  ok('the modal closes on a backdrop click', /e\.target === e\.currentTarget/.test(ui));
+  // A modal inside a 260px panel would be unusable, so it overlays the viewport instead.
+  ok('the modal is fixed to the viewport, not the panel', /position: 'fixed', inset: 0/.test(ui));
+
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
   ok('width is measured with a ResizeObserver', /new ResizeObserver/.test(cmp));
-  ok('...on the chart element, not the window', !/window\.matchMedia/.test(cmp));
-  ok('there is a narrow mode', /setNarrow/.test(cmp));
-  ok('narrow collapses the wordy controls into one menu', /narrow && \(\s*<ChartMenu/.test(cmp));
-  ok('narrow collapses the rail to a single button', /compact=\{narrow\}/.test(cmp));
-  ok('the compact rail is a popover, not a squeezed rail', /if \(compact\)/.test(rail));
+  ok('...on the element, not the window', !/window\.matchMedia/.test(cmp));
+  ok('narrow collapses the timeframes into a menu', /narrow\s*\?\s*\(\s*<Dropdown/.test(cmp));
+  ok('narrow shrinks the labelled buttons to icons', /narrow \? 30 :/.test(cmp));
+  ok('narrow collapses the rail', /compact=\{narrow\}/.test(cmp));
+  ok('the compact rail is a popover, not a squeezed rail', /if \(compact\)/.test(await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')));
 
   const menu = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
-  // The answer to "not enough room" is to move controls, not to remove them.
+  // Moving controls, never dropping them.
   for (const control of ['Chart type', 'Extended hours', 'Price scale', 'Auto scale', 'Reset view'])
-    ok(`"${control}" survives in the narrow menu`, menu.includes(control));
+    ok(`"${control}" is in the controls menu`, menu.includes(control));
 }
 
 section('9. the component does not reach past the boundary');

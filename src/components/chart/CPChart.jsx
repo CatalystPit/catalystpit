@@ -10,7 +10,9 @@ import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/ch
 import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from '../../lib/chart/chart-settings.mjs';
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
 import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs';
-import IndicatorMenu from './IndicatorMenu';
+import IndicatorBrowser from './IndicatorBrowser';
+import { Dropdown, MenuItem, ToolButton } from './ChartUI';
+import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingRail from './DrawingRail';
 import ChartMenu from './ChartMenu';
@@ -84,6 +86,7 @@ export default function CPChart({
    * is there room for these controls?
    */
   const [narrow, setNarrow] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   // Derived BEFORE the refs below, which read chartType during their own initialisation.
   const intraday = isIntraday(tf);
@@ -182,21 +185,14 @@ export default function CPChart({
     const p = palette(themeRef.current);
 
     if (priceRef.current) { chart.removeSeries(priceRef.current); priceRef.current = null; }
-    priceRef.current = typeRef.current === 'Candles'
-      ? chart.addSeries(lwc.CandlestickSeries, {
-        upColor: p.up, downColor: p.down, borderUpColor: p.up, borderDownColor: p.down,
-        wickUpColor: p.up, wickDownColor: p.down,
-        // The current-price line and its axis label: what the last trade was, without hunting for it.
-        priceLineVisible: true, priceLineWidth: 1, priceLineStyle: 2, lastValueVisible: true,
-      })
-      : chart.addSeries(lwc.AreaSeries, {
-        lineColor: p.areaLine, topColor: p.areaTop, bottomColor: p.areaBottom,
-        lineWidth: 2, priceLineVisible: true, priceLineWidth: 1, priceLineStyle: 2, lastValueVisible: true,
-      });
-    priceRef.current.setData(typeRef.current === 'Candles'
-      ? bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }))
-      : bars.map((b) => ({ time: b.time, value: b.close })));
-
+    // FROM THE REGISTRY. Adding Heikin Ashi or Bars later is an entry in chart-types.mjs; this stays.
+    const ct = chartTypeOf(typeRef.current);
+    priceRef.current = chart.addSeries(lwc[ct.series], {
+      ...ct.options(p),
+      // The current-price line and its axis label: what the last trade was, without hunting for it.
+      priceLineVisible: true, priceLineWidth: 1, priceLineStyle: 2, lastValueVisible: true,
+    });
+    priceRef.current.setData(bars.map(ct.map));
     // VOLUME, on its own invisible scale pinned to the bottom so it never rescales price.
     // Volume is a toggle in the same menu as everything else; the chart owns the series because it
     // needs its own pinned scale, but the user's choice decides whether it exists.
@@ -446,9 +442,7 @@ export default function CPChart({
       barsRef.current = bars;
       if (delta && priceRef.current) {
         for (const b of delta) {
-          priceRef.current.update(typeRef.current === 'Candles'
-            ? { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }
-            : { time: b.time, value: b.close });
+          priceRef.current.update(chartTypeOf(typeRef.current).map(b));
           if (volumeRef.current && Number(b.volume) > 0) {
             const p = palette(themeRef.current);
             volumeRef.current.update({ time: b.time, value: Number(b.volume), color: b.close >= b.open ? p.volumeUp : p.volumeDown });
@@ -516,22 +510,43 @@ export default function CPChart({
       {showToolbar && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 2px 6px',
           overflowX: 'auto', flexShrink: 0 }}>
-          {TIMEFRAMES.map((t) => btn(t.label, t.id === tf, () => setTf(t.id), t.id))}
+          {/* TIMEFRAME → CHART TYPE → INDICATORS → the rest, in that order. */}
+          {narrow
+            ? (
+              <Dropdown theme={theme} label={tf} title="Timeframe" width={120} buttonWidth={46}>
+                {TIMEFRAMES.map((t) => (
+                  <MenuItem key={t.id} theme={theme} active={t.id === tf} onClick={() => setTf(t.id)}>
+                    {t.label}
+                  </MenuItem>
+                ))}
+              </Dropdown>
+            )
+            : TIMEFRAMES.map((t) => btn(t.label, t.id === tf, () => setTf(t.id), t.id))}
+
           <div style={{ width: 1, height: 16, background: p.border, margin: '0 6px 0 auto', flexShrink: 0 }} />
-          {/* Below a usable width the wordy controls collapse into one menu rather than being
-              squeezed until none of them is clickable. */}
-          {!narrow && ['Candles', 'Line'].map((t) => btn(t, t === chartType, () => patchView({ chartType: t })))}
-          {!narrow && canExtend && btn(extended ? 'Ext ✓' : 'Ext', extended, () => patchView({ extended: !extended }), 'ext')}
-          {!narrow && btn(view.logScale ? 'Log' : 'Lin', view.logScale, () => patchView({ logScale: !view.logScale }), 'log')}
-          {!narrow && btn('Auto', view.autoScale, () => patchView({ autoScale: !view.autoScale }), 'auto')}
-          {!narrow && btn('Reset', false, resetView, 'reset')}
-          {narrow && (
-            <ChartMenu theme={theme} view={view} canExtend={canExtend} chartType={chartType}
-              onPatch={patchView} onReset={resetView} />
-          )}
+
+          {/* ONE chart-type control, rendered from the registry — adding Heikin Ashi later puts it
+              in this menu with no toolbar change, and nothing unsupported is ever listed. */}
+          <Dropdown theme={theme} title="Chart type" width={160} buttonWidth={narrow ? 30 : 74}
+            label={narrow
+              ? chartTypeOf(chartType).icon
+              : <><span>{chartTypeOf(chartType).icon}</span><span>{chartTypeOf(chartType).label}</span></>}>
+            {CHART_TYPES.map((t) => (
+              <MenuItem key={t.id} theme={theme} active={t.id === chartType}
+                onClick={() => patchView({ chartType: t.id })} right={t.icon}>{t.label}</MenuItem>
+            ))}
+          </Dropdown>
+
+          {/* The prominent Indicators button. Everything about indicators lives behind it. */}
+          <ToolButton theme={theme} width={narrow ? 30 : 92} title="Indicators"
+            active={browserOpen || active.length > 0} onClick={() => setBrowserOpen(true)}>
+            {narrow ? 'ƒ' : <><span>ƒ</span><span>Indicators{active.length ? ` ${active.length}` : ''}</span></>}
+          </ToolButton>
+
+          {/* The remaining chart controls, grouped rather than strung out as a row of text buttons. */}
+          <ChartMenu theme={theme} view={view} canExtend={canExtend} chartType={chartType}
+            onPatch={patchView} onReset={resetView} />
           {btn(fullscreen ? '⤢' : '⛶', fullscreen, () => setFullscreen((v) => !v), 'full')}
-          <div style={{ width: 6, flexShrink: 0 }} />
-          <IndicatorMenu theme={theme} intraday={intraday} active={active} onChange={setActive} />
         </div>
       )}
 
@@ -610,6 +625,11 @@ export default function CPChart({
       </div>
 
       </div>{/* rail + chart row */}
+
+      <IndicatorBrowser
+        open={browserOpen} onClose={() => setBrowserOpen(false)}
+        theme={theme} intraday={intraday} active={active} onChange={setActive}
+      />
 
       {/* Apache-2.0 attribution — required, and asserted by scripts/verify-chart.mjs */}
       <div style={{ paddingTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: p.text, letterSpacing: '0.3px' }}>
