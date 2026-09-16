@@ -105,7 +105,13 @@ section('8. token handling, asserted on the source');
 {
   const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
   ok('publisher is server-only guarded', /^import 'server-only';/m.test(pub));
-  ok('the token is sent in the body, not the URL', /access_token: cfg\.token/.test(pub) && !/access_token=\$\{/.test(pub));
+  // Publishing now uses the token resolved by the System User exchange, not the raw configured one.
+  // The property asserted is unchanged: it goes in the BODY, never the query string.
+  ok('the token is sent in the body, not the URL',
+    /access_token: derived\.token/.test(pub) && !/access_token=\$\{/.test(pub));
+  const tok = await readFile(new URL('../src/lib/facebook-page-token.mjs', import.meta.url), 'utf8');
+  ok('the System User credential is sent as a header, never in the URL',
+    /Authorization: `Bearer \$\{cfg\.systemUserToken\}`/.test(tok) && !/access_token=\$\{/.test(tok));
   ok('the token is never logged', !/console\.(log|error)[^\n]*cfg\.token/.test(pub));
   ok('no NEXT_PUBLIC variable is read', !/NEXT_PUBLIC/.test(pub));
   const pure = await readFile(new URL('../src/lib/facebook-post.mjs', import.meta.url), 'utf8');

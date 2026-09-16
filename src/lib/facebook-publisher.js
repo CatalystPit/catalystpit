@@ -2,7 +2,9 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
-  isPermanentFailure, failureSpendsAttempt, redactCredential } from './facebook-post.mjs';
+  isPermanentFailure, failureSpendsAttempt, redactCredential, isAuthFailure,
+  META_OAUTH_ERROR_CODE } from './facebook-post.mjs';
+import { resolvePageToken, invalidatePageToken, graphUrl as GRAPH } from './facebook-page-token.mjs';
 
 // PUBLISHING WALTER BLOOMBERG TO THE CATALYST PIT FACEBOOK PAGE.
 //
@@ -12,8 +14,9 @@ import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
 //
 // THE TOKEN NEVER LEAVES THIS FILE. It is read from the environment inside the request, sent to
 // Meta in the POST body, and never returned, logged, rendered or included in an error string. Every
-// failure path below reconstructs its message from the HTTP status and Meta's own error text, and
-// Meta does not echo the token back. There is no code path that puts it in a Response.
+// failure path below reconstructs its message from the HTTP status and Meta's own error text --
+// which CAN echo the submitted token back, in the "Malformed access token" class, so every such
+// string is passed through redactCredential first. There is no code path that puts it in a Response.
 //
 // IT NEVER BLOCKS INGESTION. Nothing here is called inline from insertEvents; ingestion enqueues a
 // row and returns. A Meta outage, a revoked token or a rate limit leaves Pit Wire untouched, and the
@@ -73,20 +76,23 @@ export async function queueFacebookPost(ev, { isNew, isCanonical, isBackfill = f
   }
 }
 
-const GRAPH = (cfg, path) => `https://graph.facebook.com/${cfg.graphVersion}/${path}`;
-
 /**
- * Send one message to the Page. The ONLY function that contacts Meta.
+ * Send one message to the Page. The ONLY function that publishes to Meta.
  *
  * The token goes in the POST BODY, not the query string: a URL can end up in a proxy log or an error
  * trace, and a body does not. The returned error text is built from the status and Meta's own
- * message, which never contains the credential.
+ * message, with any echoed credential redacted out of it first.
  */
 async function postToPage(cfg, message, fetchImpl = fetch) {
+  const derived = await resolvePageToken(cfg, fetchImpl);
+  if (!derived.ok) {
+    return { ok: false, reason: derived.reason, code: derived.code,
+      permanent: isPermanentFailure(400, derived.code) };
+  }
   const r = await fetchImpl(GRAPH(cfg, `${cfg.pageId}/feed`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, access_token: cfg.token }),
+    body: JSON.stringify({ message, access_token: derived.token }),
   });
   const body = await r.json().catch(() => ({}));
   if (r.ok && body?.id) return { ok: true, id: String(body.id) };
@@ -99,6 +105,10 @@ async function postToPage(cfg, message, fetchImpl = fetch) {
     + (err.code ? ` code ${err.code}` : '')
     + (err.error_subcode ? `/${err.error_subcode}` : '')
     + (err.message ? `: ${redactCredential(err.message).slice(0, 160)}` : '');
+  // A DERIVED Page token that Meta has just rejected is worth nothing, and the cache would otherwise
+  // serve it for the rest of the TTL. Dropping it means the next attempt re-derives from the System
+  // User token, which is what recovers automatically once the Page assignment or credential is fixed.
+  if (isAuthFailure(err.code)) invalidatePageToken();
   // A credential failure is not a property of this post — see isPermanentFailure. The code is
   // returned so the caller can tell an expired token from a rejected post; it is a small integer
   // from Meta's error envelope and carries nothing sensitive.
@@ -119,7 +129,11 @@ export async function publishFacebookCandidate(id, { fetchImpl = fetch } = {}) {
   const cfg = facebookConfig();
   // Checked before any database read, any request object and any credential access.
   if (!cfg.enabled) return { sent: false, reason: 'FACEBOOK_AUTO_POST_ENABLED is not true' };
-  if (!cfg.pageId || !cfg.token) return { sent: false, reason: 'page id or token not configured' };
+  // Either credential mode satisfies this: a Page token used as-is, or a System User token that
+  // resolvePageToken() exchanges for one.
+  if (!cfg.pageId || !(cfg.token || cfg.systemUserToken)) {
+    return { sent: false, reason: 'page id or token not configured' };
+  }
 
   await ensureFacebookTable();
   // The join resolves the source event in the same round trip — see the provenance gate below.
@@ -227,7 +241,7 @@ export async function publishPendingFacebook({ limit = MAX_PER_RUN, fetchImpl = 
  */
 export async function publishFacebookTest({ fetchImpl = fetch } = {}) {
   const cfg = facebookConfig();
-  if (!cfg.pageId || !cfg.token) {
+  if (!cfg.pageId || !(cfg.token || cfg.systemUserToken)) {
     return { sent: false, reason: 'page id or token not configured', readiness: facebookReadiness(cfg) };
   }
   const message = 'Catalyst Pit publishing test. This post confirms the Page connection and will be removed.';

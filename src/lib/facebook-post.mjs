@@ -94,6 +94,17 @@ export function facebookConfig(env = process.env) {
     enabled: String(env.FACEBOOK_AUTO_POST_ENABLED ?? '') === 'true',
     pageId: env.FACEBOOK_PAGE_ID || null,
     // Read here and never returned, logged or rendered. See the note in facebook-publisher.js.
+    //
+    // TWO CREDENTIAL MODES, and the System User one is the correct production shape.
+    //
+    //   FACEBOOK_SYSTEM_USER_TOKEN   a Business Manager System User token, expiry "Never". It is a
+    //                                USER-type token, so it cannot post to a Page directly — see
+    //                                resolvePageToken(). Exchanged at runtime for the Page token.
+    //   FACEBOOK_PAGE_ACCESS_TOKEN   a Page-type token, used as-is.
+    //
+    // The System User token wins when both are set, because it is the one that does not expire and
+    // the one whose derived Page token can be re-derived automatically after an invalidation.
+    systemUserToken: env.FACEBOOK_SYSTEM_USER_TOKEN || null,
     token: env.FACEBOOK_PAGE_ACCESS_TOKEN || null,
     graphVersion: env.FACEBOOK_GRAPH_VERSION || 'v26.0',
   };
@@ -187,7 +198,12 @@ export function facebookReadiness(cfg) {
     enabled: cfg.enabled,
     hasPageId: !!cfg.pageId,
     hasToken: !!cfg.token,
+    hasSystemUserToken: !!cfg.systemUserToken,
+    // Which credential the publisher will actually use. Booleans and a mode name only — this is the
+    // field an operator reads to confirm the System User path is live, so it must never widen into
+    // anything that carries the credential itself.
+    credentialMode: cfg.systemUserToken ? 'system_user' : (cfg.token ? 'page_token' : 'none'),
     graphVersion: cfg.graphVersion,
-    ready: cfg.enabled && !!cfg.pageId && !!cfg.token,
+    ready: cfg.enabled && !!cfg.pageId && (!!cfg.token || !!cfg.systemUserToken),
   };
 }
