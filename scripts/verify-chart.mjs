@@ -603,6 +603,59 @@ section('13. view options persist');
   ok('it repaints on resize', /ResizeObserver/.test(layer));
 }
 
+section('14. the toolbar layout: top bar, left rail, nothing over the candles');
+{
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
+
+  // THE RAIL IS A FLEX SIBLING OF THE CHART, never an overlay. Absolute positioning over the chart
+  // is what covers a candle, a price label or the time axis in a small Terminal panel.
+  ok('the rail sits beside the chart, not on top of it',
+    /rail \+ chart row/.test(cmp) && !/DrawingRail[\s\S]{0,200}position: 'absolute'/.test(cmp));
+  ok('the chart box can shrink beside it', /flex: 1, minWidth: 0, minHeight: 0/.test(cmp));
+  ok('the rail itself does not position absolutely over the chart',
+    !/position: 'absolute'[\s\S]{0,120}borderRight/.test(rail));
+
+  // The horizontal drawing row is gone; its controls moved to the rail.
+  ok('the old horizontal drawing row is gone', !/DrawingToolbar/.test(cmp));
+  ok('drawing tools render from the registry', /Object\.values\(TOOLS\)\.map/.test(rail));
+  ok('every rail button carries a tooltip and a label',
+    /title=\{title\}/.test(rail) && /aria-label=\{title\}/.test(rail));
+  ok('there is a select/edit mode', /Select \/ edit/.test(rail));
+  ok('hide/show lives on the rail', /Hide all drawings/.test(rail));
+  ok('delete and clear live on the rail',
+    /Delete selected/.test(rail) && /Clear all/.test(rail));
+
+  // Style settings must not permanently consume another row.
+  // Asserted on the STATE, not the word: a mutant that hard-wired the panel off still contained
+  // every mention of it, so matching the name proved nothing.
+  ok('style settings are a popover, not a row',
+    /const \[stylePanel, setStylePanel\] = useState/.test(rail) && /position: 'absolute'/.test(rail));
+  ok('...and it can be opened from the rail', /setStylePanel\(\(v\) => !v\)/.test(rail));
+  ok('the popover can be dismissed', /Escape/.test(rail));
+
+  // The top bar keeps chart-level controls only, and the indicator controls stay behind the button.
+  ok('timeframes are on the top bar', /TIMEFRAMES\.map/.test(cmp));
+  ok('chart type is on the top bar', /'Candles', 'Line'/.test(cmp));
+  ok('fullscreen is on the top bar', /setFullscreen/.test(cmp));
+  ok('indicators open a menu rather than spilling across the bar',
+    /<IndicatorMenu/.test(cmp) && !/availableIndicators/.test(cmp));
+
+  // RESPONSIVE ON THE ELEMENT, not the viewport: a Terminal panel resizes independently of the
+  // window, so a media query would call a 280px panel "desktop".
+  ok('width is measured with a ResizeObserver', /new ResizeObserver/.test(cmp));
+  ok('...on the chart element, not the window', !/window\.matchMedia/.test(cmp));
+  ok('there is a narrow mode', /setNarrow/.test(cmp));
+  ok('narrow collapses the wordy controls into one menu', /narrow && \(\s*<ChartMenu/.test(cmp));
+  ok('narrow collapses the rail to a single button', /compact=\{narrow\}/.test(cmp));
+  ok('the compact rail is a popover, not a squeezed rail', /if \(compact\)/.test(rail));
+
+  const menu = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  // The answer to "not enough room" is to move controls, not to remove them.
+  for (const control of ['Chart type', 'Extended hours', 'Price scale', 'Auto scale', 'Reset view'])
+    ok(`"${control}" survives in the narrow menu`, menu.includes(control));
+}
+
 section('9. the component does not reach past the boundary');
 {
   const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');

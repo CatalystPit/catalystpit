@@ -12,7 +12,8 @@ import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.
 import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs';
 import IndicatorMenu from './IndicatorMenu';
 import DrawingLayer from './DrawingLayer';
-import DrawingToolbar from './DrawingToolbar';
+import DrawingRail from './DrawingRail';
+import ChartMenu from './ChartMenu';
 
 // CATALYST PIT PRICE CHART — TradingView Lightweight Charts v5, on our own licensed data.
 //
@@ -75,6 +76,14 @@ export default function CPChart({
   const [drawStyle, setDrawStyle] = useState(DEFAULT_STYLE);
   const [fullscreen, setFullscreen] = useState(false);
   const [chartReady, setChartReady] = useState(0);   // bumps when the chart instance exists
+  /**
+   * RESPONSIVE ON THE CHART'S OWN WIDTH, not the viewport.
+   *
+   * A Terminal panel is resized independently of the window, so a media query would report "desktop"
+   * for a 280px-wide panel. Measuring the element is the only thing that answers the real question:
+   * is there room for these controls?
+   */
+  const [narrow, setNarrow] = useState(false);
 
   // Derived BEFORE the refs below, which read chartType during their own initialisation.
   const intraday = isIntraday(tf);
@@ -375,6 +384,20 @@ export default function CPChart({
    * always left alone.
    */
   const rootRef = useRef(null);
+
+  // The threshold is where the full toolbar stops fitting, measured rather than guessed: below it
+  // the wordy controls collapse into one menu and the rail becomes a single button.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width ?? 0;
+      setNarrow(w > 0 && w < 460);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return undefined;
@@ -488,36 +511,47 @@ export default function CPChart({
           position: 'fixed', inset: 0, zIndex: 200, background: p.background, padding: 12,
         } : null),
       }}>
+      {/* TOP TOOLBAR — chart-level controls only. Drawing tools live on the left rail; the
+          indicator controls live behind the Indicators button rather than spilling across here. */}
       {showToolbar && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 2px 8px', overflowX: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 2px 6px',
+          overflowX: 'auto', flexShrink: 0 }}>
           {TIMEFRAMES.map((t) => btn(t.label, t.id === tf, () => setTf(t.id), t.id))}
-          <div style={{ width: 1, height: 16, background: p.border, margin: '0 8px 0 auto', flexShrink: 0 }} />
-          {['Candles', 'Line'].map((t) => btn(t, t === chartType, () => patchView({ chartType: t })))}
-          {canExtend && btn(extended ? 'Ext ✓' : 'Ext', extended, () => patchView({ extended: !extended }), 'ext')}
-          {btn(view.logScale ? 'Log' : 'Lin', view.logScale, () => patchView({ logScale: !view.logScale }), 'log')}
-          {btn('Auto', view.autoScale, () => patchView({ autoScale: !view.autoScale }), 'auto')}
-          {btn('Reset', false, resetView, 'reset')}
-          {btn(fullscreen ? 'Exit' : 'Full', fullscreen, () => setFullscreen((v) => !v), 'full')}
-          <div style={{ width: 8, flexShrink: 0 }} />
+          <div style={{ width: 1, height: 16, background: p.border, margin: '0 6px 0 auto', flexShrink: 0 }} />
+          {/* Below a usable width the wordy controls collapse into one menu rather than being
+              squeezed until none of them is clickable. */}
+          {!narrow && ['Candles', 'Line'].map((t) => btn(t, t === chartType, () => patchView({ chartType: t })))}
+          {!narrow && canExtend && btn(extended ? 'Ext ✓' : 'Ext', extended, () => patchView({ extended: !extended }), 'ext')}
+          {!narrow && btn(view.logScale ? 'Log' : 'Lin', view.logScale, () => patchView({ logScale: !view.logScale }), 'log')}
+          {!narrow && btn('Auto', view.autoScale, () => patchView({ autoScale: !view.autoScale }), 'auto')}
+          {!narrow && btn('Reset', false, resetView, 'reset')}
+          {narrow && (
+            <ChartMenu theme={theme} view={view} canExtend={canExtend} chartType={chartType}
+              onPatch={patchView} onReset={resetView} />
+          )}
+          {btn(fullscreen ? '⤢' : '⛶', fullscreen, () => setFullscreen((v) => !v), 'full')}
+          <div style={{ width: 6, flexShrink: 0 }} />
           <IndicatorMenu theme={theme} intraday={intraday} active={active} onChange={setActive} />
         </div>
       )}
 
-      {showToolbar && (
-        <DrawingToolbar
-          theme={theme} activeTool={activeTool} onPick={setActiveTool}
-          style={drawStyle} onStyle={applyStyle}
-          selected={selectedDrawing} onDelete={deleteSelected}
-          count={drawings.length} showDrawings={view.showDrawings}
-          onToggleShow={() => patchView({ showDrawings: !view.showDrawings })}
-          onClearAll={clearAllDrawings}
-        />
-      )}
+      {/* THE RAIL IS A SIBLING OF THE CHART, NOT AN OVERLAY. Sitting beside it means it can never
+          cover a candle, a price label or the time axis — which is exactly what a floating palette
+          does in a small Terminal panel. The chart takes the remaining width and autosizes. */}
+      <div style={{ display: 'flex', flex: 1, minHeight: height || 0, gap: 0 }}>
+        {showToolbar && (
+          <DrawingRail
+            theme={theme} activeTool={activeTool} onPick={setActiveTool}
+            style={drawStyle} onStyle={applyStyle}
+            selected={selectedDrawing} onDelete={deleteSelected}
+            count={drawings.length} showDrawings={view.showDrawings}
+            onToggleShow={() => patchView({ showDrawings: !view.showDrawings })}
+            onClearAll={clearAllDrawings}
+            compact={narrow}
+          />
+        )}
 
-      {/* The chart autosizes to THIS box, so the box must have a real height. It takes it from the
-          parent's flex column; `height` is only the floor for a caller that provides none, and is
-          never added on top of the parent's — a spacer here double-counted and overflowed the card. */}
-      <div style={{ position: 'relative', flex: 1, minHeight: height || 0 }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0 }}>
         <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
 
         {/* Drawings live on a canvas over the chart, sharing its scales. Mounted once the chart
@@ -574,6 +608,8 @@ export default function CPChart({
           background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, borderRadius: 6, padding: '5px 9px',
           fontFamily: "'DM Sans',sans-serif", lineHeight: 1.3, boxShadow: '0 4px 16px rgba(0,0,0,0.16)' }} />
       </div>
+
+      </div>{/* rail + chart row */}
 
       {/* Apache-2.0 attribution — required, and asserted by scripts/verify-chart.mjs */}
       <div style={{ paddingTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: p.text, letterSpacing: '0.3px' }}>
