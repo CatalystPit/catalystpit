@@ -1,8 +1,9 @@
 'use client';
 import ErrorState from '../../components/ErrorState';
+import CPChart from '../../components/chart/CPChart';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, useTheme } from '../../lib/cp-shared';
+import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
@@ -18,7 +19,7 @@ const PANELS = [
   { id: 'pitwire',   title: 'Pit Wire',     tag: 'LIVE · CANONICAL' },
   { id: 'tape',      title: 'Tape · X',     tag: 'SOCIAL' },
   { id: 'halts',     title: 'Halt Scanner', tag: 'US · LIVE' },
-  { id: 'chart',     title: 'Chart',        tag: 'TRADINGVIEW' },
+  { id: 'chart',     title: 'Chart',        tag: 'CHART' },
   { id: 'newswire',  title: 'News Wire',    tag: 'NEWS · PR · 8-K' },
   { id: 'pitscan',   title: 'Pit Scan',        tag: 'PROPRIETARY' },
   { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
@@ -118,25 +119,17 @@ function arrangeStation(ids, width) {
 const fmtHalt = (t) => (t ? `${String(t).slice(0, 5)} ET` : '—');
 
 // ── Panel bodies ──
+// Terminal chart panel — Lightweight Charts on our own licensed data.
+//
+// The panel is user-resizable, so the chart must follow its host rather than a fixed height:
+// CPChart runs with autoSize and fills the flex column. Symbol comes from the Terminal symbol bus
+// exactly as before, so link groups and click-to-load are unchanged.
 function ChartBody({ symbol }) {
-  const host = useRef(null);
-  const theme = useTheme();
-  useEffect(() => {
-    const h = host.current; if (!h) return; h.innerHTML = '';
-    const c = document.createElement('div'); c.className = 'tradingview-widget-container'; c.style.height = '100%'; c.style.width = '100%';
-    const w = document.createElement('div'); w.className = 'tradingview-widget-container__widget'; w.style.height = '100%'; w.style.width = '100%'; c.appendChild(w);
-    const s = document.createElement('script');
-    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-    s.async = true;
-    s.innerHTML = JSON.stringify({
-      autosize: true, symbol, interval: 'D', timezone: 'America/New_York', theme,
-      style: '1', locale: 'en', hide_side_toolbar: false, allow_symbol_change: true, support_host: 'https://www.tradingview.com',
-    });
-    c.appendChild(s); h.appendChild(c);
-    return () => { h.innerHTML = ''; };
-  }, [symbol, theme]);
-  // relative wrapper + absolute-fill host so the TradingView autosize widget gets a real height
-  return <div style={{ position: 'relative', flex: 1, minHeight: 0 }}><div ref={host} style={{ position: 'absolute', inset: 0 }} /></div>;
+  return (
+    <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '4px 6px 2px' }}>
+      <CPChart symbol={symbol} initialTimeframe="1D" transparent />
+    </div>
+  );
 }
 
 // Panel content reacts to its OWN width (users resize each panel independently). Returns [ref, width].

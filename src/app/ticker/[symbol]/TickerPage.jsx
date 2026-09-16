@@ -3,6 +3,7 @@ import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../../lib/cp-shared';
 import TradingViewChart from '../../../components/TradingViewChart';
+import TickerPriceChart from '../../../components/chart/TickerPriceChart';
 import { resolveFutures } from '../../../lib/futures';
 import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
@@ -220,8 +221,10 @@ function Hero({ data, earnings }) {
         </div>
       </div>
 
-      {/* price chart — licensed TradingView embed (A4); replaces self-plotted Polygon/Tiingo bars */}
-      <TradingViewChart ticker={data.symbol} />
+      {/* Price chart — Lightweight Charts on our own licensed data (Tiingo daily, Polygon intraday).
+          The futures blocks further down still use the TradingView widget on purpose: they address
+          TradingView symbols and our data covers neither futures nor their symbology. */}
+      <TickerPriceChart symbol={data.symbol} />
     </>
   );
 }

@@ -33,6 +33,15 @@ function etInfo(ms) {
 }
 const inSession = (info) => info.isWeekday && info.minutes >= OPEN_MIN && info.minutes < CLOSE_MIN;
 
+// EXTENDED HOURS. Our Polygon aggregates entitlement returns the full tape — verified against the
+// live API: 04:00 to 19:55 ET on a normal weekday, 66 pre-market and 48 after-hours 5-minute bars
+// alongside the 78 regular-session ones. Only the regular session was ever published because this
+// filter dropped the rest, not because the data was missing.
+//
+// Opt-in per request. The default stays exactly as it was, so every existing caller is unaffected.
+const PRE_MIN = 240, POST_MIN = 1200;   // 04:00 and 20:00 ET
+const inExtended = (info) => info.isWeekday && info.minutes >= PRE_MIN && info.minutes < POST_MIN;
+
 // TTL from the REQUEST time (not bar data): tighter cache while the market is live.
 function ttlForNow() {
   const i = etInfo(Date.now());
@@ -69,9 +78,13 @@ export async function GET(request) {
     ticker = (params.get('ticker') || '').toUpperCase().trim();
     range  = params.get('range') || DEFAULT_RANGE;
     if (!RANGES.has(range)) range = DEFAULT_RANGE;
+    // 'extended' is the only value that changes anything; anything else means the regular session.
+    const session = params.get('session') === 'extended' ? 'extended' : 'regular';
     if (!TICKER_RE.test(ticker)) return emptyResp(ticker, range);
 
-    const key     = `chart:intraday:${ticker}:${range}`;
+    // THE SESSION BELONGS IN THE KEY. Without it the first caller's shape is served to the other —
+    // a cache that returns the wrong data rather than a slow one.
+    const key     = `chart:intraday:${ticker}:${range}${session === 'extended' ? ':ext' : ''}`;
     const lastKey = `${key}:last`;
 
     // HIT → serve fresh cache, no Polygon call.
@@ -109,7 +122,7 @@ export async function GET(request) {
     // Map → UTC seconds (Lightweight Charts wants UNIX seconds), filter to regular session.
     const mapped = results
       .map((b) => ({ time: Math.floor(b.t / 1000), open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v, _et: etInfo(b.t) }))
-      .filter((b) => inSession(b._et));
+      .filter((b) => (session === 'extended' ? inExtended(b._et) : inSession(b._et)));
 
     const dates = [...new Set(mapped.map((b) => b._et.ymd))].sort();
     const keep  = new Set(dates.slice(-keepN));
@@ -117,7 +130,7 @@ export async function GET(request) {
 
     if (bars.length === 0) return emptyResp(ticker, range);     // junk ticker / no session data
 
-    const payload = { ticker, range, count: bars.length, bars, meta: { cached: false, delayed: DELAYED, source: 'polygon' } };
+    const payload = { ticker, range, count: bars.length, bars, meta: { cached: false, delayed: DELAYED, source: 'polygon', session } };
     await kvSet(key, JSON.stringify(payload), ttlForNow());     // primary: computed 5min/1hr TTL
     await kvSet(lastKey, JSON.stringify(payload), 21600);       // last-good: 6h, for Polygon-fail fallback
     console.log(`[chart_intraday] ${ticker} ${range} bars=${bars.length} sessions=${keep.size} ttl=${ttlForNow()}s`);
