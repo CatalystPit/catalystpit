@@ -7,8 +7,12 @@ import {
 } from '../../lib/chart/chart-source.mjs';
 import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
-import { loadIndicators, saveIndicators } from '../../lib/chart/chart-settings.mjs';
+import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from '../../lib/chart/chart-settings.mjs';
+import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
+import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs';
 import IndicatorMenu from './IndicatorMenu';
+import DrawingLayer from './DrawingLayer';
+import DrawingToolbar from './DrawingToolbar';
 
 // CATALYST PIT PRICE CHART — TradingView Lightweight Charts v5, on our own licensed data.
 //
@@ -52,8 +56,7 @@ export default function CPChart({
 }) {
   const theme = useTheme();
   const [tf, setTf] = useState(initialTimeframe);
-  const [chartType, setChartType] = useState('Candles');
-  const [extended, setExtended] = useState(false);
+
   const [status, setStatus] = useState('loading');   // loading | ready | empty | error
   const [meta, setMeta] = useState(null);
   const [legend, setLegend] = useState(null);
@@ -62,6 +65,21 @@ export default function CPChart({
   // disagree with the server's.
   const [active, setActive] = useState([]);
   const [indicatorLegend, setIndicatorLegend] = useState([]);
+
+  // View options and drawings, both persisted. Loaded on mount for the same reason the indicators
+  // are: localStorage does not exist during server rendering.
+  const [view, setView] = useState(DEFAULT_VIEW);
+  const [drawings, setDrawings] = useState([]);
+  const [activeTool, setActiveTool] = useState(null);
+  const [selectedDrawing, setSelectedDrawing] = useState(null);
+  const [drawStyle, setDrawStyle] = useState(DEFAULT_STYLE);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [chartReady, setChartReady] = useState(0);   // bumps when the chart instance exists
+
+  // Derived BEFORE the refs below, which read chartType during their own initialisation.
+  const intraday = isIntraday(tf);
+  const chartType = view.chartType;
+  const extended = view.extended;
 
   const hostRef = useRef(null);
   const tipRef = useRef(null);
@@ -82,14 +100,62 @@ export default function CPChart({
   activeRef.current = active;
   tfRef.current = tf;
 
-  const intraday = isIntraday(tf);
   const volumeOn = active.some((a) => a.id === 'volume');
   // Assigned AFTER the const it reads: a `const` is hoisted but not initialised, so touching it
   // above its declaration is a TDZ throw, not a stale value.
   volumeOnRef.current = volumeOn;
 
   // Saved selections, loaded on mount only (see the note on `active` above).
-  useEffect(() => { setActive(loadIndicators()); }, []);
+  useEffect(() => { setActive(loadIndicators()); setView(loadView()); }, []);
+
+  // DRAWINGS ARE PER SYMBOL: reloaded whenever the symbol changes, and the selection is dropped
+  // because the drawing it referred to belongs to a different chart now.
+  useEffect(() => {
+    setDrawings(loadDrawings(symbol));
+    setSelectedDrawing(null);
+    setActiveTool(null);
+  }, [symbol]);
+
+  const drawingsDirty = useRef(false);
+  useEffect(() => {
+    if (!drawingsDirty.current) return;
+    saveDrawings(symbol, drawings);
+  }, [drawings, symbol]);
+
+  const updateDrawings = useCallback((next) => { drawingsDirty.current = true; setDrawings(next); }, []);
+
+  const viewDirty = useRef(false);
+  useEffect(() => {
+    if (!viewDirty.current) return;
+    saveView(view);
+  }, [view]);
+  const patchView = useCallback((next) => { viewDirty.current = true; setView((v) => ({ ...v, ...next })); }, []);
+
+  // Style edits apply to the SELECTION when there is one, and otherwise set the style of the next
+  // drawing — which is how every charting tool behaves and avoids a separate edit mode.
+  const applyStyle = useCallback((patch) => {
+    setDrawStyle((prev) => {
+      const next = sanitizeStyle({ ...prev, ...patch });
+      if (selectedDrawing) {
+        drawingsDirty.current = true;
+        setDrawings((ds) => ds.map((d) => (d.id === selectedDrawing ? { ...d, style: next } : d)));
+      }
+      return next;
+    });
+  }, [selectedDrawing]);
+
+  const deleteSelected = useCallback(() => {
+    if (!selectedDrawing) return;
+    drawingsDirty.current = true;
+    setDrawings((ds) => ds.filter((d) => d.id !== selectedDrawing));
+    setSelectedDrawing(null);
+  }, [selectedDrawing]);
+
+  const clearAllDrawings = useCallback(() => {
+    drawingsDirty.current = true;
+    setDrawings([]);
+    setSelectedDrawing(null);
+  }, []);
 
   // Persist whatever the user lands on. Skips the pre-load empty state so a first paint cannot
   // overwrite a saved set with nothing.
@@ -110,11 +176,13 @@ export default function CPChart({
     priceRef.current = typeRef.current === 'Candles'
       ? chart.addSeries(lwc.CandlestickSeries, {
         upColor: p.up, downColor: p.down, borderUpColor: p.up, borderDownColor: p.down,
-        wickUpColor: p.up, wickDownColor: p.down, priceLineVisible: false,
+        wickUpColor: p.up, wickDownColor: p.down,
+        // The current-price line and its axis label: what the last trade was, without hunting for it.
+        priceLineVisible: true, priceLineWidth: 1, priceLineStyle: 2, lastValueVisible: true,
       })
       : chart.addSeries(lwc.AreaSeries, {
         lineColor: p.areaLine, topColor: p.areaTop, bottomColor: p.areaBottom,
-        lineWidth: 2, priceLineVisible: false,
+        lineWidth: 2, priceLineVisible: true, priceLineWidth: 1, priceLineStyle: 2, lastValueVisible: true,
       });
     priceRef.current.setData(typeRef.current === 'Candles'
       ? bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }))
@@ -245,6 +313,7 @@ export default function CPChart({
         },
       });
       chartRef.current = chart;
+      setChartReady((n) => n + 1);
 
       chart.subscribeCrosshairMove((param) => {
         const tip = tipRef.current;
@@ -277,6 +346,51 @@ export default function CPChart({
     // live instance below rather than by recreating it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── price-scale mode: applied to the live chart, never by rebuilding it ──
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !lwcRef.current) return;
+    chart.priceScale('right').applyOptions({
+      mode: view.logScale ? lwcRef.current.PriceScaleMode.Logarithmic : lwcRef.current.PriceScaleMode.Normal,
+      autoScale: view.autoScale,
+    });
+  }, [view.logScale, view.autoScale, chartReady]);
+
+  /** Fit the data back into the frame and clear any manual scaling the user has done. */
+  const resetView = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.timeScale().fitContent();
+    chart.priceScale('right').applyOptions({ autoScale: true });
+    viewDirty.current = true;
+    setView((v) => ({ ...v, autoScale: true }));
+  }, []);
+
+  /**
+   * KEYBOARD SHORTCUTS, scoped to the chart.
+   *
+   * Bound on the chart's own container rather than the document: a Terminal workspace can hold
+   * several charts, and a global listener would act on all of them at once. Typing in an input is
+   * always left alone.
+   */
+  const rootRef = useRef(null);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return undefined;
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+      if (e.key === 'Escape') { setActiveTool(null); setSelectedDrawing(null); if (fullscreen) setFullscreen(false); }
+      else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedDrawing) { e.preventDefault(); deleteSelected(); } }
+      else if (e.key === 'r' || e.key === 'R') resetView();
+      else if (e.key === 'l' || e.key === 'L') patchView({ logScale: !view.logScale });
+      else if (e.key === 'f' || e.key === 'F') setFullscreen((v) => !v);
+      else if (e.key === 'c' || e.key === 'C') patchView({ chartType: view.chartType === 'Candles' ? 'Line' : 'Candles' });
+    };
+    el.addEventListener('keydown', onKey);
+    return () => el.removeEventListener('keydown', onKey);
+  }, [selectedDrawing, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen]);
 
   // ── theme: applied to the live chart, then the series are recoloured ──
   useEffect(() => {
@@ -361,16 +475,43 @@ export default function CPChart({
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div
+      ref={rootRef}
+      tabIndex={0}
+      style={{
+        display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, outline: 'none',
+        // FULLSCREEN IS A FIXED OVERLAY, not the browser Fullscreen API. That API takes the whole
+        // tab, which is wrong inside a Terminal workspace where the chart is one panel among
+        // several, and some browsers refuse it without a user gesture. A positioned overlay keeps
+        // the rest of the app addressable and behaves identically in both hosts.
+        ...(fullscreen ? {
+          position: 'fixed', inset: 0, zIndex: 200, background: p.background, padding: 12,
+        } : null),
+      }}>
       {showToolbar && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 2px 8px', overflowX: 'auto' }}>
           {TIMEFRAMES.map((t) => btn(t.label, t.id === tf, () => setTf(t.id), t.id))}
           <div style={{ width: 1, height: 16, background: p.border, margin: '0 8px 0 auto', flexShrink: 0 }} />
-          {['Candles', 'Line'].map((t) => btn(t, t === chartType, () => setChartType(t)))}
-          {canExtend && btn(extended ? 'Ext ✓' : 'Ext', extended, () => setExtended((v) => !v), 'ext')}
+          {['Candles', 'Line'].map((t) => btn(t, t === chartType, () => patchView({ chartType: t })))}
+          {canExtend && btn(extended ? 'Ext ✓' : 'Ext', extended, () => patchView({ extended: !extended }), 'ext')}
+          {btn(view.logScale ? 'Log' : 'Lin', view.logScale, () => patchView({ logScale: !view.logScale }), 'log')}
+          {btn('Auto', view.autoScale, () => patchView({ autoScale: !view.autoScale }), 'auto')}
+          {btn('Reset', false, resetView, 'reset')}
+          {btn(fullscreen ? 'Exit' : 'Full', fullscreen, () => setFullscreen((v) => !v), 'full')}
           <div style={{ width: 8, flexShrink: 0 }} />
           <IndicatorMenu theme={theme} intraday={intraday} active={active} onChange={setActive} />
         </div>
+      )}
+
+      {showToolbar && (
+        <DrawingToolbar
+          theme={theme} activeTool={activeTool} onPick={setActiveTool}
+          style={drawStyle} onStyle={applyStyle}
+          selected={selectedDrawing} onDelete={deleteSelected}
+          count={drawings.length} showDrawings={view.showDrawings}
+          onToggleShow={() => patchView({ showDrawings: !view.showDrawings })}
+          onClearAll={clearAllDrawings}
+        />
       )}
 
       {/* The chart autosizes to THIS box, so the box must have a real height. It takes it from the
@@ -378,6 +519,19 @@ export default function CPChart({
           never added on top of the parent's — a spacer here double-counted and overflowed the card. */}
       <div style={{ position: 'relative', flex: 1, minHeight: height || 0 }}>
         <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
+
+        {/* Drawings live on a canvas over the chart, sharing its scales. Mounted once the chart
+            instance exists — chartReady is what says so. */}
+        {chartReady > 0 && chartRef.current && priceRef.current && (
+          <DrawingLayer
+            chart={chartRef.current} series={priceRef.current} theme={theme}
+            symbol={symbol} bars={barsRef.current}
+            drawings={drawings} onChange={updateDrawings}
+            activeTool={activeTool} onToolUsed={() => setActiveTool(null)}
+            selectedId={selectedDrawing} onSelect={setSelectedDrawing}
+            visible={view.showDrawings} style={drawStyle}
+          />
+        )}
 
         {indicatorLegend.length > 0 && status === 'ready' && (
           <div style={{ position: 'absolute', left: 8, top: legend ? 22 : 6, zIndex: 4, pointerEvents: 'none',

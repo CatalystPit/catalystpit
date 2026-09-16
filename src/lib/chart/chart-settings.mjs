@@ -111,6 +111,53 @@ export function saveIndicators(items) {
   } catch { /* ignore */ }
 }
 
+// ── view options ─────────────────────────────────────────────────────────────
+// Chart-level state that is not an indicator: how price is scaled, which series shape is drawn,
+// whether extended hours are requested. Persisted for the same reason the indicators are — a trader
+// who works on a log scale expects it to still be a log scale tomorrow.
+//
+// Kept in its own key rather than merged into the indicator payload so that a corrupt indicator list
+// cannot cost the user their view preferences, and so each can version independently.
+
+const VIEW_KEY = 'cp_chart_view';
+const VIEW_VERSION = 1;
+
+export const DEFAULT_VIEW = {
+  chartType: 'Candles',     // 'Candles' | 'Line'
+  logScale: false,
+  autoScale: true,
+  extended: false,
+  showDrawings: true,
+};
+
+export function loadView() {
+  if (!isBrowser()) return { ...DEFAULT_VIEW };
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(VIEW_KEY) || 'null');
+    if (!parsed || parsed.v !== VIEW_VERSION) return { ...DEFAULT_VIEW };
+    const v = parsed.view || {};
+    return {
+      chartType: v.chartType === 'Line' ? 'Line' : 'Candles',
+      logScale: v.logScale === true,
+      // Auto-scale defaults ON: a chart that opens without it looks broken until the user finds the
+      // control, and absent means "not chosen" rather than "off".
+      autoScale: v.autoScale !== false,
+      extended: v.extended === true,
+      showDrawings: v.showDrawings !== false,
+    };
+  } catch {
+    return { ...DEFAULT_VIEW };
+  }
+}
+
+export function saveView(view) {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(VIEW_KEY, JSON.stringify({ v: VIEW_VERSION, view: { ...DEFAULT_VIEW, ...view } }));
+  } catch { /* ignore */ }
+}
+
 export const STORAGE_KEY = KEY;
 export const STORAGE_VERSION = VERSION;
+export const VIEW_STORAGE_KEY = VIEW_KEY;
 export { coerceInstance as __coerceInstance, enforce as __enforce };

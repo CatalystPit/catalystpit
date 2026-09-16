@@ -67,6 +67,11 @@ export default function IndicatorMenu({ theme, intraday, active, onChange }) {
 
   const settingsRow = (inst) => (
     <div style={{ padding: '2px 8px 8px 24px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {/* Back to the declared defaults, without removing the instance and losing its colour. */}
+      <button type="button" onClick={() => patch(inst.key, { params: defaultParams(inst.id) })}
+        style={{ alignSelf: 'flex-start', background: 'transparent', border: `1px solid ${p.border}`,
+          borderRadius: 3, cursor: 'pointer', padding: '1px 6px', marginBottom: 2,
+          fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: p.text }}>Reset settings</button>
       {INDICATORS[inst.id].params.map((prm) => (
         <label key={prm.key} style={{ display: 'flex', alignItems: 'center', gap: 6,
           fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>

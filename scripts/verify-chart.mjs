@@ -23,6 +23,11 @@ import { loadIndicators, saveIndicators, DEFAULT_ACTIVE, STORAGE_KEY, STORAGE_VE
   __coerceInstance, __enforce } from '../src/lib/chart/chart-settings.mjs';
 import { indicatorColor, indicatorColors } from '../src/lib/chart/chart-theme.mjs';
 import { sessionKeyFor } from '../src/lib/chart/chart-source.mjs';
+import { TOOLS, tool, createDrawing, coerceDrawing, moveDrawing, fibLevels, extendRay,
+  hitTest, distanceToSegment, sanitizeStyle, DEFAULT_STYLE } from '../src/lib/chart/chart-drawings.mjs';
+import { loadDrawings, saveDrawings, MAX_PER_SYMBOL, MAX_SYMBOLS,
+  DRAWINGS_STORAGE_KEY } from '../src/lib/chart/chart-drawing-store.mjs';
+import { loadView, saveView, DEFAULT_VIEW, VIEW_STORAGE_KEY } from '../src/lib/chart/chart-settings.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -441,6 +446,161 @@ section('8e. instances persist with their own colour and visibility');
     __enforce([mk('ema', 9, 0, true, 'x'), mk('ema', 21, 1, true, 'x')]).length === 1);
 
   ok('the stored version moved with the shape', STORAGE_VERSION === 2);
+}
+
+section('11. drawings live in DATA space, so they survive zoom, pan and reload');
+{
+  const P = (time, price) => ({ time, price });
+
+  ok('every tool declares how many anchors it needs',
+    Object.values(TOOLS).every((t) => t.points >= 1 && typeof t.segments === 'function'));
+  ok('the six requested tools exist',
+    ['trend', 'horizontal', 'vertical', 'ray', 'rectangle', 'fib'].every((id) => !!tool(id)));
+  ok('an unknown tool resolves to nothing', tool('spiral') === null);
+
+  // THE DECISION THAT MAKES DRAWINGS WORK: anchors are { time, price }, never pixels. A stored
+  // pixel would slide off its level the moment the chart moved.
+  const d = createDrawing('trend', [P(100, 10), P(200, 20)], { color: 1, width: 3, dash: 'dashed' });
+  ok('a drawing stores time and price', d.points[0].time === 100 && d.points[0].price === 10);
+  ok('no pixel ever reaches the model', !JSON.stringify(d).includes('"x"') && !JSON.stringify(d).includes('"y"'));
+  ok('it carries its style', d.style.color === 1 && d.style.width === 3 && d.style.dash === 'dashed');
+  ok('it starts visible', d.visible === true);
+  ok('wrong anchor counts are refused', createDrawing('trend', [P(1, 1)]) === null);
+  ok('a non-numeric price is refused', createDrawing('trend', [P(1, 'abc'), P(2, 2)]) === null);
+  ok('an unknown tool is refused', createDrawing('spiral', [P(1, 1)]) === null);
+  ok('ids are unique', createDrawing('trend', [P(1, 1), P(2, 2)], {}, [d]).id !== d.id);
+
+  // A horizontal line and a ray have to reach the edge of whatever is on screen, which is why
+  // segments take the view rather than storing a second anchor that would move when the user pans.
+  const view = { from: 0, to: 1000, high: 100, low: 0 };
+  const h = createDrawing('horizontal', [P(500, 42)]);
+  const hs = tool('horizontal').segments(h.points, view);
+  ok('a horizontal line spans the visible window', hs[0][0].time === 0 && hs[0][1].time === 1000);
+  ok('...at a constant price', hs[0][0].price === 42 && hs[0][1].price === 42);
+  const v = createDrawing('vertical', [P(500, 42)]);
+  const vs = tool('vertical').segments(v.points, view);
+  ok('a vertical line spans the visible prices', vs[0][0].price === 0 && vs[0][1].price === 100);
+  ok('...at a constant time', vs[0][0].time === 500 && vs[0][1].time === 500);
+
+  // A ray extends past its second anchor, along its own slope.
+  const end = extendRay(P(0, 0), P(100, 10), view);
+  ok('a ray reaches the right edge', end.time === 1000);
+  ok('...following its slope', Math.abs(end.price - 100) < 1e-9, String(end.price));
+  const back = extendRay(P(100, 10), P(0, 0), view);
+  ok('a leftward ray reaches the left edge', back.time === 0);
+  ok('a vertical ray does not divide by zero', Number.isFinite(extendRay(P(5, 1), P(5, 2), view).price));
+
+  const r = createDrawing('rectangle', [P(10, 5), P(20, 15)]);
+  ok('a rectangle is four sides', tool('rectangle').segments(r.points, view).length === 4);
+  ok('a rectangle is filled', tool('rectangle').fill === true);
+
+  // Fibonacci: 0 and 1 are the anchors, and the ratios sit between them.
+  const f = fibLevels([P(0, 100), P(10, 50)]);
+  ok('seven levels', f.length === 7);
+  ok('the 0 level is the second anchor', Math.abs(f[0].price - 50) < 1e-9, String(f[0].price));
+  ok('the 1 level is the first anchor', Math.abs(f[6].price - 100) < 1e-9, String(f[6].price));
+  ok('0.5 is the midpoint', Math.abs(f[3].price - 75) < 1e-9, String(f[3].price));
+  ok('0.618 is where it should be', Math.abs(f[4].price - 80.9) < 0.01, String(f[4].price));
+
+  // Hit testing is a PIXEL judgement: "near enough to click" does not change with the zoom level.
+  ok('distance to a segment is measured perpendicular',
+    Math.abs(distanceToSegment({ x: 5, y: 5 }, { x: 0, y: 0 }, { x: 10, y: 0 }) - 5) < 1e-9);
+  ok('past the end it measures to the endpoint',
+    Math.abs(distanceToSegment({ x: 20, y: 0 }, { x: 0, y: 0 }, { x: 10, y: 0 }) - 10) < 1e-9);
+  ok('a zero-length segment is a point',
+    Math.abs(distanceToSegment({ x: 3, y: 4 }, { x: 0, y: 0 }, { x: 0, y: 0 }) - 5) < 1e-9);
+
+  const projected = [
+    { id: 'a', visible: true, segments: [[{ x: 0, y: 0 }, { x: 100, y: 0 }]], handles: [{ x: 0, y: 0 }, { x: 100, y: 0 }] },
+    { id: 'b', visible: true, segments: [[{ x: 0, y: 50 }, { x: 100, y: 50 }]], handles: [{ x: 0, y: 50 }, { x: 100, y: 50 }] },
+  ];
+  ok('a click on a line selects it', hitTest({ x: 50, y: 51 }, projected)?.id === 'b');
+  ok('a click in empty space selects nothing', hitTest({ x: 50, y: 25 }, projected) === null);
+  // A handle wins over the body: dragging an endpoint is a different intent, on a smaller target.
+  ok('a click on a handle reports the handle', hitTest({ x: 100, y: 50 }, projected)?.handle === 1);
+  ok('a hidden drawing cannot be hit',
+    hitTest({ x: 50, y: 1 }, [{ ...projected[0], visible: false }]) === null);
+  // Newest first, so clicking a stack grabs the one on top.
+  const stacked = [projected[0], { ...projected[1], id: 'top', segments: projected[0].segments, handles: [] }];
+  ok('the topmost drawing wins a stack', hitTest({ x: 50, y: 1 }, stacked)?.id === 'top');
+
+  // Moving is done in data space, so a drag behaves identically at any zoom.
+  const moved = moveDrawing(d, { dTime: 10, dPrice: 5 });
+  ok('moving shifts every anchor', moved.points[0].time === 110 && moved.points[1].price === 25);
+  ok('moving one handle leaves the other alone',
+    moveDrawing(d, { dTime: 10, dPrice: 5 }, 0).points[1].time === 200);
+  // A date-string time cannot take a numeric delta, so those drawings move vertically only rather
+  // than inventing a date.
+  const daily = createDrawing('trend', [P('2026-01-02', 10), P('2026-02-02', 20)]);
+  const dmoved = moveDrawing(daily, { dTime: 5, dPrice: 1 });
+  ok('a daily drawing keeps its dates', dmoved.points[0].time === '2026-01-02');
+  ok('...but still moves in price', dmoved.points[0].price === 11);
+
+  // Styles are persisted and user-editable, so they arrive as anything.
+  ok('a bad width falls back', sanitizeStyle({ width: 99 }).width === DEFAULT_STYLE.width);
+  ok('a bad dash falls back', sanitizeStyle({ dash: 'wavy' }).dash === 'solid');
+  ok('a bad colour falls back', sanitizeStyle({ color: 'red' }).color === DEFAULT_STYLE.color);
+  ok('colour is stored as an index, not hex', typeof sanitizeStyle({ color: 3 }).color === 'number');
+}
+
+section('12. drawings persist per symbol');
+{
+  const mk = (type, pts) => createDrawing(type, pts);
+  const line = mk('trend', [{ time: 1, price: 10 }, { time: 2, price: 20 }]);
+
+  ok('a valid drawing round-trips', !!coerceDrawing(JSON.parse(JSON.stringify(line))));
+  ok('a tool that no longer exists is dropped', coerceDrawing({ type: 'spiral', points: [] }) === null);
+  ok('a wrong anchor count is dropped',
+    coerceDrawing({ type: 'trend', points: [{ time: 1, price: 1 }] }) === null);
+  ok('a non-numeric price is dropped',
+    coerceDrawing({ type: 'trend', points: [{ time: 1, price: 'x' }, { time: 2, price: 2 }] }) === null);
+  ok('a missing time is dropped',
+    coerceDrawing({ type: 'trend', points: [{ price: 1 }, { time: 2, price: 2 }] }) === null);
+  ok('a missing id is generated', !!coerceDrawing({ type: 'trend', points: line.points }).id);
+  ok('visibility defaults to visible', coerceDrawing({ type: 'trend', points: line.points }).visible === true);
+  ok('an explicit hide is kept',
+    coerceDrawing({ type: 'trend', points: line.points, visible: false }).visible === false);
+
+  // Without a browser these must degrade quietly, not throw — the chart renders on the server too.
+  ok('loading without a browser is empty', loadDrawings('AAPL').length === 0);
+  ok('saving without a browser does not throw',
+    (() => { try { saveDrawings('AAPL', [line]); return true; } catch { return false; } })());
+  ok('the store is bounded per symbol', MAX_PER_SYMBOL > 0 && MAX_PER_SYMBOL <= 500);
+  ok('the number of remembered symbols is bounded', MAX_SYMBOLS > 0 && MAX_SYMBOLS <= 200);
+  ok('the drawings key follows the cp_ convention', /^cp_/.test(DRAWINGS_STORAGE_KEY));
+}
+
+section('13. view options persist');
+{
+  ok('the defaults are sane',
+    DEFAULT_VIEW.chartType === 'Candles' && DEFAULT_VIEW.logScale === false
+    && DEFAULT_VIEW.autoScale === true && DEFAULT_VIEW.showDrawings === true);
+  ok('loading without a browser returns the defaults', loadView().chartType === 'Candles');
+  ok('saving without a browser does not throw',
+    (() => { try { saveView({ logScale: true }); return true; } catch { return false; } })());
+  ok('the view key follows the cp_ convention', /^cp_/.test(VIEW_STORAGE_KEY));
+  ok('the view key is separate from the indicator key', VIEW_STORAGE_KEY !== STORAGE_KEY);
+
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  ok('log and linear are applied to the live scale', /PriceScaleMode\.Logarithmic/.test(cmp));
+  ok('auto-scale is applied to the live scale', /autoScale: view\.autoScale/.test(cmp));
+  ok('reset refits the content', /fitContent\(\)/.test(cmp));
+  ok('there is a current-price line', /priceLineVisible: true/.test(cmp));
+  // Fullscreen must not take the whole tab: the chart is one panel of several in the Terminal.
+  // Checked for the CALL, not the word: the comment above it explains why the Fullscreen API is the
+  // wrong choice here, and matching prose made this assertion fail on its own explanation.
+  ok('fullscreen is an overlay, not the Fullscreen API',
+    !/\.requestFullscreen\(/.test(cmp) && /position: 'fixed'/.test(cmp));
+  ok('keyboard shortcuts are scoped to the chart, not the document',
+    /el\.addEventListener\('keydown'/.test(cmp) && !/document\.addEventListener\('keydown'/.test(cmp));
+  ok('typing in an input is never hijacked', /t\.tagName === 'INPUT'/.test(cmp));
+
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  ok('the overlay is pointer-transparent when idle', /pointerEvents: interactive \? 'auto' : 'none'/.test(layer));
+  ok('selection comes from the chart click, so panning still works', /subscribeClick/.test(layer));
+  ok('anchors are snapped to a bar', /coordinateToLogical/.test(layer));
+  ok('it repaints when the chart moves', /subscribeVisibleLogicalRangeChange/.test(layer));
+  ok('it repaints on resize', /ResizeObserver/.test(layer));
 }
 
 section('9. the component does not reach past the boundary');
