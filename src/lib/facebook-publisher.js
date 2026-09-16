@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
   isPermanentFailure, failureSpendsAttempt, redactCredential, isAuthFailure,
+  FB_REWORDED_SOURCES, FB_CATALYST_WORDING,
   META_OAUTH_ERROR_CODE } from './facebook-post.mjs';
 import { resolvePageToken, invalidatePageToken, graphUrl as GRAPH } from './facebook-page-token.mjs';
 
@@ -205,6 +206,48 @@ const MAX_PER_RUN = 5;
 // A queued row older than this is not published. It stops a backlog accumulated while the switch was
 // off from firing all at once the moment it is turned on, and it stops stale news going out late.
 const MAX_AGE_MINUTES = 30;
+
+/**
+ * Queue events from sources that publish in OUR words, once that wording exists.
+ *
+ * WHY THIS IS NEEDED AT ALL. Everything else is queued inline by insertEvents, at ingest, which
+ * works for Walter because the post is his own sentence and is ready the moment it arrives. A
+ * reworded source is not: `headline` still holds the publisher's line until enrichment runs, so at
+ * ingest there is nothing of ours to publish and facebookEligibility correctly says "wait". Without
+ * a second look that wait would be permanent, and ZeroHedge would never post at all.
+ *
+ * So this is the same shape as the X publisher's own scan: a LEFT JOIN that ignores any event which
+ * already has a candidate, which is what stops a re-run posting twice. It queues; it never publishes.
+ *
+ * Bounded by the same freshness window the drain uses, so an old event that finishes enrichment
+ * hours late is not resurrected onto the Page.
+ */
+export async function queueRewordedFacebook({ limit = 20 } = {}) {
+  const sources = [...FB_REWORDED_SOURCES];
+  if (!sources.length) return { queued: 0, examined: 0 };
+  await ensureFacebookTable();
+  const rows = (await db.execute(sql`
+    select e.seq, e.source, e.source_uid, e.headline, e.source_headline, e.content_hash,
+           e.headline_status
+      from primary_events e
+      left join fb_post_candidates c on c.event_seq = e.seq
+     where c.id is null
+       and e.cluster_id is null
+       and e.source = any(${sources}::text[])
+       and e.headline_status = any(${[...FB_CATALYST_WORDING]}::text[])
+       and e.received_at > now() - (${MAX_AGE_MINUTES} || ' minutes')::interval
+     order by e.seq desc
+     limit ${Math.max(1, Math.min(100, limit))}`)).rows ?? [];
+
+  let queued = 0;
+  for (const r of rows) {
+    // Through the SAME eligibility and the SAME text builder as every other post. This function
+    // decides only WHICH rows to reconsider, never whether they may publish or what they say.
+    const res = await queueFacebookPost({ ...r, _seq: r.seq }, { isNew: true, isCanonical: true });
+    if (res.queued) queued += 1;
+  }
+  return { queued, examined: rows.length };
+}
 
 /** Drain the queue. Bounded per run and age-limited; publishes nothing when the switch is off. */
 export async function publishPendingFacebook({ limit = MAX_PER_RUN, fetchImpl = fetch } = {}) {

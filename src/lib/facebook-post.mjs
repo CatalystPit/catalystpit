@@ -7,7 +7,28 @@
 /** Only this source. One entry, by instruction; adding another is a deliberate edit. */
 import { editorialVoice } from './facebook-voice.mjs';
 
-export const FB_SOURCE_WHITELIST = new Set(['WALTERBLOOMBERG']);
+export const FB_SOURCE_WHITELIST = new Set(['WALTERBLOOMBERG', 'ZEROHEDGE']);
+
+/**
+ * Sources published in CATALYST PIT'S OWN WORDS rather than their own.
+ *
+ * Walter is a headline relay: republishing his line, with the presentation cleaned up, is the
+ * arrangement. ZeroHedge is a publisher with original copyrighted prose and a strong editorial
+ * voice — "Explodes", "Blast", "Fabrications & Lies" — and putting that on the Page verbatim would
+ * put their voice and their politics there too. For these sources the post is built from `headline`,
+ * the model's own rewrite, which has already passed the grounding gate in headline-writer.
+ *
+ * The consequence is a WAIT: `headline` only holds our wording once enrichment has run, so an event
+ * from one of these sources is not eligible at ingest. See queueRewordedFacebook().
+ */
+export const FB_REWORDED_SOURCES = new Set(['ZEROHEDGE']);
+
+/** The statuses that mean `headline` is Catalyst Pit's wording, not the publisher's. */
+export const FB_CATALYST_WORDING = new Set(['original', 'composed']);
+
+/** Whether this event must be published in our words rather than the source's. */
+export const isRewordedSource = (ev) =>
+  FB_REWORDED_SOURCES.has(String(ev?.source || '').toUpperCase());
 
 // Facebook's own ceiling is ~63k characters. This is far below it and exists for a different reason:
 // a post longer than this is not a Walter flash, it is something that went wrong upstream, and
@@ -46,8 +67,39 @@ export const FB_MIN_CHARS = 10;
  */
 const WALTER_ATTRIBUTION = /\s*\(\s*@WalterBloomberg\s*\)\s*$/i;
 
+/**
+ * Links are removed from every post.
+ *
+ * Walter's items carry t.co shorteners and ZeroHedge's carry article URLs; neither belongs on the
+ * Page. A bare link sends the reader away, and Facebook's own preview unfurl would rewrite how the
+ * post looks. It also removes a defect the editorial pass had created: the terminal full stop was
+ * being appended to a bare URL ("https://t.co/3TXWilnZWT."), which breaks the link in some clients.
+ *
+ * Removed BEFORE the editorial pass, so facebook-voice's fact guard compares the same text on both
+ * sides and does not read a stripped link as a dropped fact.
+ */
+const URL_RE = /\b(?:https?:\/\/|www\.)\S+/gi;
+
+export function stripLinks(text) {
+  return String(text ?? '')
+    .replace(URL_RE, ' ')
+    // A link often sat alone on its own line, or after a comma: tidy what removing it left behind.
+    .replace(/[ \t]+/g, ' ')
+    .replace(/[ \t]*\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]*([,;:])\s*$/gm, '')
+    .replace(/\(\s*\)/g, '')
+    .split('\n').map((l) => l.trim()).join('\n')
+    .trim();
+}
+
 export function facebookText(ev) {
-  const raw = String(ev?.source_headline ?? '') || String(ev?.headline ?? '');
+  // A REWORDED SOURCE PUBLISHES OUR SENTENCE, NOT THEIRS. `headline` is the model's rewrite; it is
+  // only Catalyst Pit's wording once enrichment has run, which facebookEligibility enforces, so
+  // there is no path here that puts a publisher's prose on the Page as our own.
+  const raw = isRewordedSource(ev)
+    ? String(ev?.headline ?? '')
+    : (String(ev?.source_headline ?? '') || String(ev?.headline ?? ''));
   if (!raw) return null;
   const normalised = raw
     .replace(/\r\n?/g, '\n')          // CRLF and CR both become LF
@@ -57,12 +109,14 @@ export function facebookText(ev) {
     .replace(/\n{3,}/g, '\n\n')       // runs of blank lines
     .replace(WALTER_ATTRIBUTION, '')  // the public credit, dropped
     .trim();
-  if (!normalised) return null;
+  // Links out, before the editorial pass sees the text.
+  const linkless = stripLinks(normalised);
+  if (!linkless) return null;
   // CATALYST PIT'S VOICE. Presentation only — capitalisation, the flash asterisk, the trailing
   // outlet tag, terminal punctuation. editorialVoice is total and failure-safe: it returns the input
   // unchanged on a throw, an empty result, or any fact that moved, so it can never be the reason a
   // post fails to publish. See facebook-voice.mjs.
-  const edited = editorialVoice(normalised) || normalised;
+  const edited = editorialVoice(linkless) || linkless;
   return withHashtags(edited);
 }
 
@@ -107,6 +161,12 @@ export function facebookEligibility(ev, { isNew, isCanonical, isBackfill = false
   const no = (reason) => ({ eligible: false, reason });
   if (!ev) return no('no event');
   if (!FB_SOURCE_WHITELIST.has(String(ev.source || '').toUpperCase())) return no('source not whitelisted');
+  // A REWORDED SOURCE WAITS FOR OUR SENTENCE. Until enrichment has produced Catalyst Pit wording,
+  // `headline` still holds the publisher's line, and publishing that as our own is the one thing
+  // this path exists to prevent. Not a rejection — a wait; queueRewordedFacebook() reconsiders it.
+  if (isRewordedSource(ev) && !FB_CATALYST_WORDING.has(String(ev.headline_status || ''))) {
+    return no(`awaiting Catalyst wording (${ev.headline_status || 'none'})`);
+  }
   if (isBackfill) return no('backfill or replay, not a live ingest');
   if (!isNew) return no('not a new row');
   if (!isCanonical) return no('duplicate folded into an existing event');

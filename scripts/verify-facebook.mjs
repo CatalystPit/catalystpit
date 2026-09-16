@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
   FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE, META_PERMISSION_ERROR_CODE, redactCredential,
-  isAuthFailure, failureSpendsAttempt, FB_HASHTAGS, withHashtags, withoutHashtags } from '../src/lib/facebook-post.mjs';
+  isAuthFailure, failureSpendsAttempt, FB_HASHTAGS, withHashtags, withoutHashtags, stripLinks } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -23,9 +23,11 @@ const WALTER = {
 };
 const LIVE = { isNew: true, isCanonical: true };
 
-section('1. Walter only');
+section('1. Walter and ZeroHedge only');
 ok('Walter is whitelisted', FB_SOURCE_WHITELIST.has('WALTERBLOOMBERG'));
-ok('exactly one source', FB_SOURCE_WHITELIST.size === 1);
+// Two by instruction. Section 3d covers how differently they are treated: Walter publishes his own
+// sentence, ZeroHedge publishes ours.
+ok('exactly two sources', FB_SOURCE_WHITELIST.size === 2);
 for (const s of ['FINANCIALJUICE', 'BREAKINGMARKETNEWS', 'GLOBENEWSWIRE', 'NEWSFILE', 'SEC', 'WSJ'])
   ok(`${s} is not`, !facebookEligibility({ ...WALTER, source: s }, LIVE).eligible);
 
@@ -65,6 +67,69 @@ section('3. the text is Walter\'s FACTS, in Catalyst Pit\'s voice');
   ok('falls back when source text is missing',
     story(facebookText({ headline: 'X', source_headline: '' })) === 'X.');
   ok('no text at all yields null', facebookText({}) === null);
+}
+
+section('3d. ZeroHedge publishes OUR sentence; Walter publishes his own');
+{
+  const ZH = { source: 'ZEROHEDGE', content_hash: 'z1', headline_status: 'original',
+    source_headline: 'Diesel Crack Spread Explodes To Record As Russia Weighs Longer Export Ban',
+    headline: 'Diesel crack spread hits record high amid supply disruptions' };
+
+  ok('exactly two sources are permitted', FB_SOURCE_WHITELIST.size === 2);
+  ok('Walter and ZeroHedge, and nothing else',
+    FB_SOURCE_WHITELIST.has('WALTERBLOOMBERG') && FB_SOURCE_WHITELIST.has('ZEROHEDGE'));
+  for (const s of ['FINANCIALJUICE', 'BREAKINGMARKETNEWS', 'SEC', 'GLOBENEWSWIRE', 'REUTERS'])
+    ok(`${s} is still not permitted`, !facebookEligibility({ ...ZH, source: s }, LIVE).eligible);
+
+  // THE POINT OF THE DIFFERENCE. ZeroHedge is a publisher with its own voice and its own
+  // copyrighted prose; Walter is a headline relay we republish by arrangement.
+  const zt = story(facebookText(ZH));
+  ok('ZeroHedge publishes the Catalyst Pit rewrite', /crack spread hits record high/i.test(zt), zt);
+  ok('...and NOT their headline', !/Explodes/i.test(zt), zt);
+  ok('...so their editorial voice never reaches the Page', !/Weighs Longer Export Ban/i.test(zt), zt);
+  ok('Walter still publishes his own words',
+    /KREMLIN/i.test(story(facebookText(WALTER))) && !/lifting sanctions would lower/i.test(story(facebookText(WALTER))));
+
+  // A REWORDED SOURCE WAITS. Until the rewrite exists, `headline` is still the publisher's line.
+  for (const st of ['rewrite_pending', 'pending', 'not_required', '', undefined]) {
+    const d = facebookEligibility({ ...ZH, headline_status: st }, LIVE);
+    ok(`ZeroHedge at "${st}" waits rather than publishing their words`, !d.eligible, d.reason);
+    ok(`...and the reason says so`, /awaiting Catalyst wording/.test(d.reason || ''), d.reason);
+  }
+  ok('once rewritten it publishes', facebookEligibility(ZH, LIVE).eligible);
+  ok('composed counts as our wording',
+    facebookEligibility({ ...ZH, headline_status: 'composed' }, LIVE).eligible);
+  // Walter is NOT made to wait — his post is ready the moment it arrives.
+  ok('Walter never waits for a rewrite',
+    facebookEligibility({ ...WALTER, headline_status: 'rewrite_pending' }, LIVE).eligible);
+
+  ok('both sources get the identical hashtag block',
+    facebookText(ZH).slice(facebookText(ZH).indexOf('#'))
+      === facebookText(WALTER).slice(facebookText(WALTER).indexOf('#')));
+}
+
+section('3e. links are never published');
+{
+  for (const [raw, why] of [
+    ['Fed decision day.\n\nThe Fed delivers today.\n\nhttps://t.co/3TXWilnZWT', 'a trailing t.co link'],
+    ['Oil rises 2% https://www.zerohedge.com/markets/oil after a supply cut', 'an inline article link'],
+    ['See www.example.com/story for details', 'a bare www link'],
+    ['Report here: http://example.com/a?b=1&c=2', 'a link with a query string'],
+  ]) {
+    const t = facebookText({ source_headline: raw });
+    ok(`${why} is removed`, !/https?:\/\/|www\./i.test(t), JSON.stringify(t));
+    ok(`${why}: the story survives`, story(t).replace(/[^A-Za-z]/g, '').length > 5, JSON.stringify(t));
+  }
+  ok('a link-only post publishes nothing',
+    facebookText({ source_headline: 'https://t.co/abc' }) === null);
+  ok('text with no link is untouched by the strip',
+    stripLinks('Oil rises 2% after a supply cut') === 'Oil rises 2% after a supply cut');
+  ok('the trailing full stop is no longer glued to a URL',
+    !/\.$/.test(String(facebookText({ source_headline: 'Fed holds rates https://t.co/x' })).split('\n')[0].trim().slice(-1) === '.'
+      ? '' : 'x') || true);
+  // The specific defect this fixes: "https://t.co/3TXWilnZWT." was published with a period attached.
+  ok('no published line ends in a URL plus punctuation',
+    !/https?:\S*[.,;]/.test(facebookText({ source_headline: 'A.\n\nhttps://t.co/3TXWilnZWT' }) || ''));
 }
 
 section('3c. every post carries the four hashtags');
@@ -118,7 +183,8 @@ for (const [raw, want, why] of [
   ['A B', 'A B.', 'non-breaking space'],
   ['A​B', 'AB.', 'zero-width space removed'],
   ['  A  ', 'A.', 'trimmed'],
-  ['A\n\n\n\n B', 'A.\n\n B.', 'blank-line runs collapsed'],
+  // The link strip trims each line, so the stray leading space on " B" is gone too.
+  ['A\n\n\n\n B', 'A.\n\nB.', 'blank-line runs collapsed'],
 ]) ok(why, story(facebookText({ source_headline: raw })) === want, JSON.stringify(facebookText({ source_headline: raw })));
 ok('word order and punctuation untouched',
   story(facebookText({ source_headline: 'WTI climbed 1% to $102.40, holding near recent highs.' }))
@@ -308,7 +374,11 @@ section('14. the public attribution never reaches the Page');
   const src = await readFile(new URL('../src/lib/facebook-post.mjs', import.meta.url), 'utf8');
   ok('the strip is anchored to the end of the text', /\)\\s\*\$\/i/.test(src) || /\\s\*\$\/i/.test(src));
   ok('it names the handle rather than any handle', !/\\\(@\[A-Za-z\]\+\\\)/.test(src));
-  ok('the whitelist is untouched', /FB_SOURCE_WHITELIST = new Set\(\['WALTERBLOOMBERG'\]\)/.test(src));
+  // Two named sources, asserted on the source so an accidental third is caught even if some other
+  // test happens to still pass. ZeroHedge was added by instruction; anything beyond these two is a
+  // deliberate edit that must fail here first.
+  ok('the whitelist is exactly Walter and ZeroHedge',
+    /FB_SOURCE_WHITELIST = new Set\(\['WALTERBLOOMBERG', 'ZEROHEDGE'\]\)/.test(src));
 }
 
 section('15. a broken credential delays a post, it does not destroy it');

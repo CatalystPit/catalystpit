@@ -1,5 +1,5 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
-import { publishPendingFacebook, publishFacebookTest, facebookStatus,
+import { publishPendingFacebook, publishFacebookTest, facebookStatus, queueRewordedFacebook,
   facebookAuthHealth } from '../../../../lib/facebook-publisher';
 
 export const runtime = 'nodejs';
@@ -49,6 +49,13 @@ export async function GET(request) {
       console.log(`[facebook] test post: ${out.sent ? 'sent ' + out.fbPostId : 'failed ' + out.reason}`);
       return Response.json({ ok: out.sent, ...out });
     }
+    // Sources published in OUR words are queued HERE rather than at ingest, because at ingest the
+    // rewrite does not exist yet. Queuing only; publishing is still the drain below, behind the same
+    // kill switch. A failure here must never stop the drain, so it is reported and stepped over.
+    let reworded = null;
+    try { reworded = await queueRewordedFacebook(); }
+    catch (e) { console.error('[facebook] reworded queue failed:', String(e?.message || e).slice(0, 120)); }
+
     const res = await publishPendingFacebook();
     if (res.sent) console.log(`[facebook] published ${res.sent}`);
     // A CREDENTIAL OUTAGE MUST NOT LOOK LIKE A HEALTHY RUN. On 2026-09-16 a wrong-type token was
@@ -63,7 +70,7 @@ export async function GET(request) {
       return Response.json({ ok: false, credentialAlarm: true, ...counts,
         ...(await facebookAuthHealth()) }, { status: 503 });
     }
-    return Response.json({ ok: true, ...res });
+    return Response.json({ ok: true, ...res, reworded });
   } catch (e) {
     // Meta's error text can be long; the message is capped and never carries a credential.
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 160) }, { status: 500 });
