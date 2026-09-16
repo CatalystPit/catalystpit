@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import { evaluate, formatPost, buildCandidate, resolveMode, canPublish, sanitize, reactionLine,
-         MAX_POST, MODES } from '../src/lib/x-autopost.mjs';
+         MAX_POST, MODES, MAX_POST_CASHTAGS, cashtags } from '../src/lib/x-autopost.mjs';
 import { publicationVerdict, readsAsSentence } from '../src/lib/x-quality.mjs';
 import { storyVerdict, sameStory, factsOf, materiallyNew } from '../src/lib/x-story.mjs';
 
@@ -359,6 +359,34 @@ sec('NOTHING PUBLISHES WITHOUT A REAL SOURCE EVENT');
   // The X publisher must stay ignorant of the Facebook one.
   ok('x-publisher imports nothing from the Facebook side', !/facebook/i.test(pub));
   ok('it reads only its own table', !/fb_post_candidates/.test(pub));
+}
+
+sec('X allows exactly ONE cashtag per post');
+{
+  // X rejects a post carrying more than one $SYMBOL outright:
+  //   HTTP 403 — Posts are limited to a maximum of one cashtag ($SYMBOL).
+  // A hard platform rule, not a rate limit, so a two-ticker post never publishes however many times
+  // it is retried. It cost the Sep 16 Fed decision post ("BREAKING: $BAC $GS $WFC ..."), which was
+  // CRITICAL and Walter-sourced, and four before it; 71 candidates in seven days carried more.
+  ok('the post-text cap is one', MAX_POST_CASHTAGS === 1, String(MAX_POST_CASHTAGS));
+  const multi = { headline: 'Federal Reserve to announce September rate decision', importance: 3,
+    tickers: ['BAC', 'GS', 'WFC'], headline_status: 'original' };
+  const r = formatPost(multi, null, Date.now(), true, null);
+  ok('formatting succeeds', r.ok, JSON.stringify(r).slice(0, 90));
+  ok('exactly one cashtag reaches the post', (r.text.match(/\$[A-Z]/g) || []).length === 1, r.text);
+  ok('it is the subject ticker', /\$BAC/.test(r.text), r.text);
+  ok('the other symbols are not printed as cashtags', !/\$GS|\$WFC/.test(r.text), r.text);
+  ok('the sentence itself is unchanged',
+    /Federal Reserve to announce September rate decision/.test(r.text), r.text);
+  // Resolution is NOT narrowed: the full list still strips engine-added prefixes off the sentence.
+  ok('ticker resolution still returns all of them', cashtags(multi).length === 3, JSON.stringify(cashtags(multi)));
+  const one = formatPost({ headline: 'Nvidia lifts outlook', importance: 2, tickers: ['NVDA'],
+    headline_status: 'original' }, null, Date.now(), false, null);
+  ok('a single-ticker post is unaffected',
+    /\$NVDA/.test(one.text) && (one.text.match(/\$[A-Z]/g) || []).length === 1, one.text);
+  const none = formatPost({ headline: 'Oil rises on supply concerns', importance: 2, tickers: [],
+    headline_status: 'original' }, null, Date.now(), false, null);
+  ok('a no-ticker post still carries no cashtag', !/\$[A-Z]/.test(none.text), none.text);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

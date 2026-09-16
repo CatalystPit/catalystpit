@@ -272,6 +272,15 @@ export function titleCaseRegistrant(name) {
 // which is the intended outcome — no ticker is better than a wrong ticker.
 const TICKER_SHAPE = /^[A-Z]{1,6}(?:[.\-][A-Z]{1,2})?$/;
 export const MAX_CASHTAGS = 3;
+/**
+ * How many cashtags may appear in the POST TEXT. X permits exactly one and rejects the whole post
+ * with HTTP 403 otherwise, so this is a platform rule, not a style choice.
+ *
+ * Kept separate from MAX_CASHTAGS above, which governs how many tickers the event RESOLVES. Those
+ * are still needed in full: the resolved list is what strips an engine-added "$MSFT: " prefix off
+ * the sentence and what subjectTickers() reasons about. Only the printed prefix is capped.
+ */
+export const MAX_POST_CASHTAGS = 1;
 export const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, (m) => `\\${m}`);
 
 export function cashtags(ev) {
@@ -348,7 +357,19 @@ export function formatPost(ev, reading = null, now = Date.now(), breaking = null
   // "Canada inflation holds at 3.0% year-over-year in August" — goes out as a plain trader-wire
   // line. Without this shape every no-ticker post had to be labelled BREAKING, which is how the
   // label ended up on 68 of 68 candidates and stopped meaning anything.
-  const tagStr = tags.map((t) => `$${t}`).join(' ');
+  // ONE CASHTAG. X rejects a post carrying more than one $SYMBOL outright:
+  //
+  //   HTTP 403 — Posts are limited to a maximum of one cashtag ($SYMBOL).
+  //
+  // It is a hard platform rule, not a rate limit, so a two-ticker post never publishes however many
+  // times it is retried. It cost the September 16 Fed decision post ("BREAKING: $BAC $GS $WFC …"),
+  // which was CRITICAL and Walter-sourced, and four others before it; 71 candidates in seven days
+  // carried more than one.
+  //
+  // tags[0] is already the SUBJECT — cashtags() orders by the event's own subject tickers — so the
+  // company the story is actually about keeps its symbol. The others are not lost to the reader:
+  // they are still named in the sentence, which is where the source named them.
+  const tagStr = tags.slice(0, MAX_POST_CASHTAGS).map((t) => `$${t}`).join(' ');
   const prefix = tagStr ? (brk ? `BREAKING: ${tagStr} ` : `${tagStr}: `) : (brk ? 'BREAKING: ' : '');
 
   // THE NUMBERS THAT MATTER, first. "$BUR: Burford Capital prices share offering" says a financing

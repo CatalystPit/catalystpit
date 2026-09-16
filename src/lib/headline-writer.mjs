@@ -19,6 +19,8 @@ export const MODEL = 'claude-haiku-4-5-20251001';   // same model the rest of th
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 export const BATCH_SIZE = 15;
 export const MAX_HEADLINE = 90;
+/** What the model is ASKED for. Below the limit on purpose — see the prompt note. */
+export const HEADLINE_TARGET = 78;
 
 // House voice: state what happened. These are the words that editorialise a fact into a take, and
 // none of them can be traced to a source, because they are judgements rather than claims.
@@ -37,7 +39,16 @@ const SYSTEM = [
   'For each numbered item you receive, return an ORIGINAL headline and the factual skeleton.',
   '',
   'HEADLINE RULES:',
-  `- At most ${MAX_HEADLINE} characters. One line. No trailing period.`,
+  // THE TARGET IS DELIBERATELY BELOW THE LIMIT. Asked for "at most 90" the model treats 90 as the
+  // goal and lands just past it on anything with several facts in it — measured at 93, 94, 97 and 98
+  // characters on four real multi-paragraph posts, every one of them a good, faithful, grounded
+  // headline thrown away for a handful of characters. The rejection is deterministic, so every retry
+  // produced the identical result and the event sat at rewrite_pending until its attempts ran out:
+  // 3,120 events in seven days. Asking for a shorter line leaves room for the overshoot to land
+  // inside the limit that validateHeadline still enforces.
+  `- Aim for ${HEADLINE_TARGET} characters or fewer. Never exceed ${MAX_HEADLINE}. One line. No trailing period.`,
+  '- If the source carries several facts, lead with the single most important one and drop the rest'
+    + ' rather than running long.',
   '- State only what the source states. Never add context, cause, consequence or market reaction.',
   '- Never invent a number, name, date, company or ticker. If the source does not say it, it does not exist.',
   '- Do not copy the source headline word-for-word; restate the same fact in plain, factual language.',
