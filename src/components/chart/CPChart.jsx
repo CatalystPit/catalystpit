@@ -1,9 +1,10 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from '../../lib/cp-shared';
 import {
-  TIMEFRAMES, DEFAULT_TIMEFRAME, timeframe, isIntraday, supportsExtendedHours,
-  barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol, sessionKeyFor,
+  DEFAULT_TIMEFRAME, timeframe, timeframesByGroup, unavailableReason, isIntraday,
+  supportsExtendedHours, barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol,
+  sessionKeyFor,
 } from '../../lib/chart/chart-source.mjs';
 import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
@@ -11,7 +12,7 @@ import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
 import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
-import { Dropdown, MenuItem, ToolButton, VectorIcon } from './ChartUI';
+import { Dropdown, MenuItem, MenuLabel, ToolButton, VectorIcon } from './ChartUI';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingRail from './DrawingRail';
@@ -510,18 +511,37 @@ export default function CPChart({
       {showToolbar && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 2px 6px',
           overflowX: 'auto', flexShrink: 0 }}>
-          {/* TIMEFRAME → CHART TYPE → INDICATORS → the rest, in that order. */}
-          {narrow
-            ? (
-              <Dropdown theme={theme} label={tf} title="Timeframe" width={120} buttonWidth={46}>
-                {TIMEFRAMES.map((t) => (
-                  <MenuItem key={t.id} theme={theme} active={t.id === tf} onClick={() => setTf(t.id)}>
-                    {t.label}
-                  </MenuItem>
-                ))}
-              </Dropdown>
-            )
-            : TIMEFRAMES.map((t) => btn(t.label, t.id === tf, () => setTf(t.id), t.id))}
+          {/* TIMEFRAME → CHART TYPE → INDICATORS → the rest, in that order.
+
+              ONE COMPACT CONTROL, AT EVERY WIDTH, showing the selected interval. The row of nine
+              buttons it replaces could not survive the registry growing to twenty intervals — it
+              already consumed the whole toolbar at panel widths a user actually drags to, and
+              minutes and hours would have made that three rows. The short label ("15m", "YTD") is
+              the selection; the full name is in the menu, where it is being read.
+
+              Grouped from the registry, so a new interval appears under its own heading with no
+              change here, and the menu scrolls rather than overflowing (Popover caps its height
+              against the window). */}
+          <Dropdown theme={theme} width={210} menuLabel="Timeframe"
+            title={`Timeframe — ${timeframe(tf)?.label ?? tf}`}
+            label={timeframe(tf)?.short ?? tf} buttonWidth={44}>
+            {timeframesByGroup().map((g) => (
+              <Fragment key={g.id}>
+                <MenuLabel theme={theme}>{g.label}</MenuLabel>
+                {g.items.map((t) => {
+                  // An interval the current provider cannot serve is shown but NOT selectable, with
+                  // the reason on hover. Hiding it would misrepresent the product; enabling it would
+                  // mean drawing candles we do not have.
+                  const why = unavailableReason(t.id);
+                  return (
+                    <MenuItem key={t.id} theme={theme} active={t.id === tf} disabled={!!why}
+                      title={why || undefined} onClick={() => setTf(t.id)}
+                      right={why ? 'n/a' : undefined}>{t.label}</MenuItem>
+                  );
+                })}
+              </Fragment>
+            ))}
+          </Dropdown>
 
           <div style={{ width: 1, height: 16, background: p.border, margin: '0 6px 0 auto', flexShrink: 0 }} />
 

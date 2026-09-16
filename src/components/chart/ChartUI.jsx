@@ -230,7 +230,7 @@ export function MenuLabel({ theme, children }) {
  * screen reader and a colour-blind user actually get.
  */
 export function MenuItem({
-  theme, onClick, active, children, left, right, closeOnPick = true, disabled,
+  theme, onClick, active, children, left, right, closeOnPick = true, disabled, title,
   // A one-of-many pick by default (chart type, drawing tool). Toggles pass 'menuitemcheckbox' and
   // plain commands pass 'menuitem', which takes no checked state at all.
   role = 'menuitemradio',
@@ -238,7 +238,7 @@ export function MenuItem({
   const [hover, setHover] = useState(false);
   const p = palette(theme);
   return (
-    <button type="button" onClick={disabled ? undefined : onClick} role={role}
+    <button type="button" onClick={disabled ? undefined : onClick} role={role} title={title}
       aria-checked={role === 'menuitem' ? undefined : !!active} disabled={disabled}
       {...(closeOnPick && !disabled ? { 'data-close-on-pick': '' } : {})}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}

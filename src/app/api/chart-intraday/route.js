@@ -1,4 +1,5 @@
 import { fetchPolygonMinuteAggs } from '../../../lib/polygon-intraday.mjs';
+import { TIMEFRAMES, timeframe, isServable } from '../../../lib/chart/chart-source.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -6,7 +7,14 @@ export const maxDuration = 30;
 const KV_URL   = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 
-const RANGES = new Set(['1D', '5D']);
+// THE ROUTE READS THE REGISTRY, it does not keep its own list. Every intraday timeframe declares the
+// bar multiplier it needs, how many trading sessions to keep and how many calendar days to request,
+// so adding an interval is a registry entry and this file does not change. An id the current adapter
+// cannot serve is refused rather than silently answered at the default resolution — a chart labelled
+// "3 minutes" showing 5-minute bars is worse than a chart showing nothing.
+const INTRADAY = new Map(
+  TIMEFRAMES.filter((t) => t.kind === 'intraday' && isServable(t.id)).map((t) => [t.id, t.request]),
+);
 const DEFAULT_RANGE = '1D';
 const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;     // same gate as /api/ticker & /api/chart-daily
 
@@ -77,7 +85,7 @@ export async function GET(request) {
     const params = new URL(request.url).searchParams;
     ticker = (params.get('ticker') || '').toUpperCase().trim();
     range  = params.get('range') || DEFAULT_RANGE;
-    if (!RANGES.has(range)) range = DEFAULT_RANGE;
+    if (!INTRADAY.has(range)) range = DEFAULT_RANGE;
     // 'extended' is the only value that changes anything; anything else means the regular session.
     const session = params.get('session') === 'extended' ? 'extended' : 'regular';
     if (!TICKER_RE.test(ticker)) return emptyResp(ticker, range);
@@ -97,12 +105,12 @@ export async function GET(request) {
     }
 
     // MISS → one Polygon call over a small window; keep the last N distinct ET trading days.
-    //   1D: 5-min bars, last 1 session;  5D: 15-min bars, last 5 sessions.
-    //   Multi-day window in a single call handles weekends/holidays (today may be non-trading).
-    const mult   = range === '5D' ? 15 : 5;
-    const keepN  = range === '5D' ? 5 : 1;
+    // All three numbers come from the timeframe's own declaration — e.g. 4 hours is a 240-minute
+    // multiple over 60 sessions, requested across 95 calendar days so weekends and holidays cannot
+    // shorten the window. Polygon has no hour endpoint; an hour is a 60-minute multiple.
+    const { barMinutes: mult, sessions: keepN, lookbackDays } = INTRADAY.get(range);
     const now    = Date.now();
-    const from   = etInfo(now - (range === '5D' ? 9 : 5) * DAY).ymd;
+    const from   = etInfo(now - lookbackDays * DAY).ymd;
     const to     = etInfo(now).ymd;
 
     // Accept either env-var name: POLYGON_API_KEY (local .env.local) or POLYGON_KEY (Vercel).

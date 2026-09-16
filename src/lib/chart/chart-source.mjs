@@ -11,7 +11,9 @@
 //
 // WHAT ACTUALLY BACKS THIS TODAY (measured, not assumed):
 //   daily      /api/chart-daily     Tiingo, cached in ticker_daily_candles. 1M 3M 6M YTD 1Y 5Y all.
-//   intraday   /api/chart-intraday  Polygon minute aggregates. 1D and 5D only.
+//   intraday   /api/chart-intraday  Polygon aggregates at any MINUTE multiple, driven by the
+//                                   registry below — the route reads the requested timeframe's own
+//                                   bar multiplier and window rather than hard-coding two of them.
 //
 // Polygon's plan is 15-minute delayed, which the endpoint reports as meta.delayed, and the chart
 // labels. There is no streaming source in this codebase — see REALTIME below.
@@ -20,21 +22,81 @@
 /** @typedef {{ time: number|string, open: number, high: number, low: number, close: number, volume: number|null }} Bar */
 
 /**
- * The timeframes the product offers, and what genuinely serves each one.
+ * THE TIMEFRAME REGISTRY.
  *
- * `barSeconds` is the real spacing of the returned bars, not an aspiration: it is what the endpoint
- * currently produces. A timeframe is listed here only when data for it exists today.
+ * TWO INDEPENDENT THINGS, DECLARED SEPARATELY. A timeframe is a display WINDOW ("how much history is
+ * on screen") and a bar RESOLUTION ("how wide is one candle"). Conflating them is what leads to
+ * asking a vendor for a million one-minute bars to draw five years, so every entry states both:
+ *
+ *   barSeconds    the spacing of one bar — the resolution the provider must deliver
+ *   window        how much history to show, as { sessions } intraday or { days | 'ytd' | 'all' }
+ *
+ * The two groups read from opposite ends of that pair, which is the point:
+ *   MINUTES / HOURS pick a RESOLUTION, and carry a sensible default window with them.
+ *   DAYS / LONGER pick a WINDOW, and carry the coarsest resolution that renders it honestly.
+ * So "15 minutes" and "1 week" both show five sessions and differ only in candle width.
+ *
+ * WHAT A PROVIDER ADAPTER NEEDS is entirely in `request`: for intraday, the bar multiplier in
+ * minutes, how many trading sessions to keep, and how many calendar days to ask for (wider than the
+ * sessions kept, so weekends and holidays still yield a full window). A new commercial feed supplies
+ * those without this file — or the menu, or the chart — changing. Adding an interval is one entry.
+ *
+ * NOTHING HERE IS ASPIRATIONAL. An entry exists only when a real adapter can serve it; resolutions
+ * we cannot yet produce are listed in PLANNED_TIMEFRAMES instead, so the roadmap lives in the code
+ * without putting a row in the menu that would draw invented candles.
  */
+export const TIMEFRAME_GROUPS = [
+  { id: 'minutes', label: 'Minutes' },
+  { id: 'hours',   label: 'Hours' },
+  { id: 'days',    label: 'Days / longer timeframes' },
+];
+
+// Intraday entries are Polygon aggregates at an arbitrary MINUTE multiplier — 240 minutes is the
+// four-hour bar, there is no separate hour endpoint. `sessions` is trading days kept; `lookbackDays`
+// is the calendar span requested, always wider so a long weekend cannot shorten the window.
+const intra = (id, label, short, group, barMinutes, sessions, lookbackDays) => ({
+  id, label, short, group, kind: 'intraday', endpoint: 'intraday',
+  barSeconds: barMinutes * 60,
+  window: { sessions },
+  request: { barMinutes, sessions, lookbackDays },
+  extendedCapable: true,
+});
+
+// Daily entries are Tiingo daily candles over a named range the daily route already understands.
+const day = (id, label, short, window, range) => ({
+  id, label, short, group: 'days', kind: 'daily', endpoint: 'daily',
+  barSeconds: 86400,
+  window,
+  request: { range },
+  extendedCapable: false,
+});
+
 export const TIMEFRAMES = [
-  { id: '1D',  label: '1D',  kind: 'intraday', endpoint: 'intraday', barSeconds: 300,    extendedCapable: true },
-  { id: '5D',  label: '5D',  kind: 'intraday', endpoint: 'intraday', barSeconds: 900,    extendedCapable: true },
-  { id: '1M',  label: '1M',  kind: 'daily',    endpoint: 'daily',    barSeconds: 86400,  extendedCapable: false },
-  { id: '3M',  label: '3M',  kind: 'daily',    endpoint: 'daily',    barSeconds: 86400,  extendedCapable: false },
-  { id: '6M',  label: '6M',  kind: 'daily',    endpoint: 'daily',    barSeconds: 86400,  extendedCapable: false },
-  { id: 'YTD', label: 'YTD', kind: 'daily',    endpoint: 'daily',    barSeconds: 86400,  extendedCapable: false },
-  { id: '1Y',  label: '1Y',  kind: 'daily',    endpoint: 'daily',    barSeconds: 86400,  extendedCapable: false },
-  { id: '5Y',  label: '5Y',  kind: 'daily',    endpoint: 'daily',    barSeconds: 86400,  extendedCapable: false },
-  { id: 'All', label: 'All', kind: 'daily',    endpoint: 'daily',    barSeconds: 86400,  extendedCapable: false },
+  //     id      label          short  group      barMin  sessions  lookback
+  intra('1m',  '1 minute',   '1m',  'minutes',    1,     1,   5),
+  intra('2m',  '2 minutes',  '2m',  'minutes',    2,     1,   5),
+  intra('3m',  '3 minutes',  '3m',  'minutes',    3,     1,   5),
+  intra('5m',  '5 minutes',  '5m',  'minutes',    5,     1,   5),
+  intra('10m', '10 minutes', '10m', 'minutes',   10,     2,   9),
+  intra('15m', '15 minutes', '15m', 'minutes',   15,     5,   9),
+  intra('30m', '30 minutes', '30m', 'minutes',   30,    10,  18),
+  intra('45m', '45 minutes', '45m', 'minutes',   45,    10,  18),
+
+  intra('1h',  '1 hour',     '1h',  'hours',     60,    20,  35),
+  intra('2h',  '2 hours',    '2h',  'hours',    120,    40,  65),
+  intra('3h',  '3 hours',    '3h',  'hours',    180,    60,  95),
+  intra('4h',  '4 hours',    '4h',  'hours',    240,    60,  95),
+
+  // A day and a week are WINDOWS, so they keep an intraday resolution — a one-day chart of daily
+  // bars is a single candle. From a month out, a daily bar is the honest unit.
+  intra('1D',  '1 day',      '1D',  'days',       5,     1,   5),
+  intra('1W',  '1 week',     '1W',  'days',      30,     5,   9),
+  day('1M',  '1 month',  '1M',  { days: 30 },  '1M'),
+  day('3M',  '3 months', '3M',  { days: 90 },  '3M'),
+  day('6M',  '6 months', '6M',  { days: 180 }, '6M'),
+  day('YTD', 'YTD',      'YTD', 'ytd',         'YTD'),
+  day('1Y',  '1 year',   '1Y',  { days: 365 }, '1Y'),
+  day('All', 'All',      'All', 'all',         'all'),
 ];
 
 export const DEFAULT_TIMEFRAME = '3M';
@@ -45,8 +107,57 @@ export const isIntraday = (id) => timeframe(id)?.kind === 'intraday';
 /** Extended hours are only meaningful on an intraday timeframe; a daily bar spans the whole day. */
 export const supportsExtendedHours = (id) => timeframe(id)?.extendedCapable === true;
 
-// The daily route spells "All" in lowercase; every other id matches one for one.
-const routeRange = (id) => (id === 'All' ? 'all' : id);
+/** The menu's shape: groups in order, each with its entries, skipping any group left empty. */
+export const timeframesByGroup = () => TIMEFRAME_GROUPS
+  .map((g) => ({ ...g, items: TIMEFRAMES.filter((t) => t.group === g.id) }))
+  .filter((g) => g.items.length > 0);
+
+/**
+ * WHAT TODAY'S ADAPTER CAN ACTUALLY SERVE.
+ *
+ * Declared rather than assumed, and checked against every entry, so the day a registry entry asks
+ * for something the current feed cannot produce it is reported as unavailable instead of quietly
+ * rendering whatever the endpoint happened to return.
+ *
+ *   intraday  Polygon aggregates: any minute multiple up to a day, bounded history.
+ *   daily     Tiingo daily candles, at the named ranges the daily route implements.
+ */
+export const ADAPTER = {
+  intraday: { minBarMinutes: 1, maxBarMinutes: 1440, maxSessions: 60 },
+  daily: { ranges: new Set(['1M', '3M', '6M', 'YTD', '1Y', '5Y', 'all']) },
+};
+
+/** Why a timeframe cannot be served right now, or null when it can. */
+export function unavailableReason(id) {
+  const tf = timeframe(id);
+  if (!tf) return 'Unknown timeframe';
+  if (tf.kind === 'intraday') {
+    const { barMinutes, sessions } = tf.request;
+    if (barMinutes < ADAPTER.intraday.minBarMinutes || barMinutes > ADAPTER.intraday.maxBarMinutes) {
+      return 'Bar size not available from the current data provider';
+    }
+    if (sessions > ADAPTER.intraday.maxSessions) return 'Intraday history is limited on the current data provider';
+    return null;
+  }
+  if (!ADAPTER.daily.ranges.has(tf.request.range)) return 'Range not available from the current data provider';
+  return null;
+}
+export const isServable = (id) => unavailableReason(id) === null;
+
+/**
+ * Declared, not built. Weekly and monthly BARS (as distinct from week- and month-long windows, which
+ * are in the registry above) need a resolution neither endpoint produces: they would have to be
+ * folded up from daily candles. That is honest arithmetic, not invention, but it is a real piece of
+ * work and it is written down here rather than being discovered when somebody picks it from a menu.
+ */
+export const PLANNED_TIMEFRAMES = [
+  { id: '1Wbar', label: 'Weekly bars', barSeconds: 604800, needs: 'daily candles folded into ISO weeks' },
+  { id: '1Mbar', label: 'Monthly bars', barSeconds: 2592000, needs: 'daily candles folded into calendar months' },
+];
+
+// The daily route spells "all" in lowercase; the registry carries the exact spelling each range
+// wants, so no id has to be translated on its way out.
+const routeRange = (id) => timeframe(id)?.request?.range ?? id;
 
 /** Same gate the API routes apply, so an unusable symbol never becomes a request. */
 export const SYMBOL_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
@@ -63,6 +174,10 @@ export function barsUrl(symbol, timeframeId, { session = 'regular' } = {}) {
   const sym = String(symbol || '').toUpperCase().trim();
   const tf = timeframe(timeframeId);
   if (!tf || !isValidSymbol(sym)) return null;
+  // A timeframe the current adapter cannot serve never becomes a request. Returning null here is
+  // what stops an unavailable interval from being answered with whatever the endpoint falls back to
+  // — the chart shows nothing rather than the wrong resolution wearing the right label.
+  if (!isServable(timeframeId)) return null;
   const q = new URLSearchParams({ ticker: sym });
   if (tf.endpoint === 'intraday') {
     q.set('range', tf.id);

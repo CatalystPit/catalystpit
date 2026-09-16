@@ -32,6 +32,8 @@ import { CHART_TYPES, CHART_TYPE_IDS, chartTypeOf, PLANNED_CHART_TYPES } from '.
 import { INDICATOR_CATEGORIES, indicatorMeta, searchIndicators } from '../src/lib/chart/chart-indicators.mjs';
 import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../src/lib/chart/chart-drawings.mjs';
 import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover.mjs';
+import { TIMEFRAME_GROUPS, timeframesByGroup, ADAPTER, isServable, unavailableReason,
+  PLANNED_TIMEFRAMES } from '../src/lib/chart/chart-source.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -44,18 +46,48 @@ section('1. the timeframe registry describes data we actually have');
   ok('every timeframe names an endpoint',
     TIMEFRAMES.every((t) => t.endpoint === 'daily' || t.endpoint === 'intraday'));
   ok('every timeframe declares a real bar size', TIMEFRAMES.every((t) => t.barSeconds > 0));
-  // Only 1D and 5D are intraday, because /api/chart-intraday serves only those two.
-  ok('intraday is exactly 1D and 5D',
-    TIMEFRAMES.filter((t) => t.kind === 'intraday').map((t) => t.id).join(',') === '1D,5D');
   ok('the default timeframe exists', !!timeframe(DEFAULT_TIMEFRAME));
   ok('an unknown timeframe resolves to nothing', timeframe('7Y') === null);
-  // NOT OFFERED, because nothing serves them: a 1-minute or weekly button would be a promise the
-  // data cannot keep.
-  for (const absent of ['1m', '5m', '1h', '1W', '1M1'])
-    ok(`"${absent}" is not offered`, !TIMEFRAMES.some((t) => t.id === absent));
   ok('extended hours is claimed only for intraday',
     TIMEFRAMES.every((t) => !t.extendedCapable || t.kind === 'intraday'));
   ok('supportsExtendedHours agrees', supportsExtendedHours('1D') && !supportsExtendedHours('1Y'));
+
+  // NO TICKS, NO SECONDS. The product does not offer them and no entry may smuggle one in.
+  ok('no timeframe is finer than a minute', TIMEFRAMES.every((t) => t.barSeconds >= 60));
+
+  // RANGE AND RESOLUTION ARE SEPARATE FIELDS. That separation is the whole point of the registry —
+  // it is what stops a five-year chart being asked for as a million one-minute bars.
+  ok('every timeframe declares a display window', TIMEFRAMES.every((t) => t.window != null));
+  ok('...and a bar resolution independent of it', TIMEFRAMES.every((t) => t.barSeconds > 0));
+  ok('a week and a 15-minute chart span the same sessions, differing only in resolution',
+    timeframe('1W').window.sessions === timeframe('15m').window.sessions
+      && timeframe('1W').barSeconds !== timeframe('15m').barSeconds);
+  // Longer windows must use coarser bars, never the other way round.
+  const dayEntries = TIMEFRAMES.filter((t) => t.group === 'days' && typeof t.window?.days === 'number');
+  ok('a longer window never uses finer bars than a shorter one',
+    dayEntries.every((a) => dayEntries.every((b) => !(a.window.days > b.window.days && a.barSeconds < b.barSeconds))));
+
+  // WHAT AN ADAPTER IS HANDED. A new commercial feed implements exactly this and nothing else.
+  const intradayTfs = TIMEFRAMES.filter((t) => t.kind === 'intraday');
+  ok('every intraday timeframe declares its bar multiplier, sessions and lookback',
+    intradayTfs.every((t) => t.request.barMinutes > 0 && t.request.sessions > 0 && t.request.lookbackDays > 0));
+  ok('...with the bar size agreeing with the multiplier',
+    intradayTfs.every((t) => t.barSeconds === t.request.barMinutes * 60));
+  // Calendar days requested must exceed trading sessions kept, or a long weekend truncates the window.
+  ok('...and a lookback wider than the sessions it keeps',
+    intradayTfs.every((t) => t.request.lookbackDays > t.request.sessions));
+  ok('every daily timeframe names a range its route implements',
+    TIMEFRAMES.filter((t) => t.kind === 'daily').every((t) => ADAPTER.daily.ranges.has(t.request.range)));
+
+  // NOTHING IN THE MENU IS UNSERVABLE TODAY, and the check that proves it is not vacuous.
+  ok('every listed timeframe can actually be served', TIMEFRAMES.every((t) => isServable(t.id)));
+  ok('...and an unservable one would be reported', unavailableReason('7Y') !== null);
+  ok('the roadmap records what we cannot yet produce', PLANNED_TIMEFRAMES.length >= 2);
+  ok('every planned timeframe states what it needs',
+    PLANNED_TIMEFRAMES.every((t) => typeof t.needs === 'string' && t.needs.length > 0));
+  // Weekly and monthly BARS are the planned ones; week- and month-long WINDOWS already exist.
+  ok('planned resolutions are not in the menu',
+    PLANNED_TIMEFRAMES.every((p) => !TIMEFRAMES.some((t) => t.id === p.id)));
 }
 
 section('2. the URL is the whole of the vendor coupling');
@@ -120,7 +152,9 @@ section('4. refresh is honest about a delayed feed');
 {
   // There is no stream. Polling faster than the bar size buys load, not freshness.
   ok('1D refreshes on its bar size', refreshIntervalMs('1D') === 300_000);
-  ok('5D refreshes on its bar size', refreshIntervalMs('5D') === 900_000);
+  ok('15m refreshes on its bar size', refreshIntervalMs('15m') === 900_000);
+  ok('a 4-hour chart polls on its bar size, not on the minute', refreshIntervalMs('4h') === 4 * 3_600_000);
+  ok('a 1-minute chart is floored at a minute', refreshIntervalMs('1m') === 60_000);
   ok('never faster than a minute', TIMEFRAMES.every((t) => !refreshIntervalMs(t.id) || refreshIntervalMs(t.id) >= 60_000));
   for (const d of ['1M', '1Y', 'All'])
     ok(`${d} does not poll at all`, refreshIntervalMs(d) === null);
@@ -785,7 +819,10 @@ section('17. shared UI primitives, and responsive collapse');
   const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
   ok('width is measured with a ResizeObserver', /new ResizeObserver/.test(cmp));
   ok('...on the element, not the window', !/window\.matchMedia/.test(cmp));
-  ok('narrow collapses the timeframes into a menu', /narrow\s*\?\s*\(\s*<Dropdown/.test(cmp));
+  // The timeframes no longer NEED collapsing: the row of nine buttons is gone and the control is a
+  // single compact dropdown at every width, which is why there is no `narrow` branch around it.
+  ok('the timeframe control is one dropdown, not a button row', /menuLabel="Timeframe"/.test(cmp));
+  ok('...with no width-dependent variant', !/narrow[\s\S]{0,80}Timeframe/.test(cmp));
   ok('narrow shrinks the labelled buttons to icons', /narrow \? 30 :/.test(cmp));
   ok('narrow collapses the rail', /compact=\{narrow\}/.test(cmp));
   ok('the compact rail is a popover, not a squeezed rail', /if \(compact\)/.test(await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')));
@@ -991,6 +1028,106 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
     /<Dropdown theme=\{theme\} width=\{180\} menuLabel="Chart type"/.test(cmp2));
   const menu2 = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
   ok('the settings menu is too', /from '\.\/ChartUI'/.test(menu2) && !/position: 'absolute'/.test(menu2));
+}
+
+section('19. the timeframe menu: one compact control, grouped, nothing invented');
+{
+  // THE MENU, EXACTLY AS SPECIFIED. Order and grouping are part of the spec, not decoration: a user
+  // reaches for "30 minutes" by position as much as by name.
+  const groups = timeframesByGroup();
+  ok('there are three groups', groups.map((g) => g.id).join(',') === 'minutes,hours,days');
+  ok('they are titled for the menu',
+    groups.map((g) => g.label).join('|') === 'Minutes|Hours|Days / longer timeframes');
+  ok('the minutes are 1 through 45',
+    groups[0].items.map((t) => t.id).join(',') === '1m,2m,3m,5m,10m,15m,30m,45m');
+  ok('the hours are 1 through 4', groups[1].items.map((t) => t.id).join(',') === '1h,2h,3h,4h');
+  ok('the longer timeframes run a day to all',
+    groups[2].items.map((t) => t.id).join(',') === '1D,1W,1M,3M,6M,YTD,1Y,All');
+  ok('every group is accounted for, none orphaned',
+    groups.reduce((n, g) => n + g.items.length, 0) === TIMEFRAMES.length);
+  ok('an empty group would not be rendered', groups.every((g) => g.items.length > 0));
+
+  // Both labels exist and differ: the long one for the menu, the short one for the toolbar.
+  ok('every timeframe has a menu name', TIMEFRAMES.every((t) => typeof t.label === 'string' && t.label.length > 0));
+  ok('...and a compact toolbar label', TIMEFRAMES.every((t) => typeof t.short === 'string' && t.short.length > 0));
+  ok('the toolbar label is never longer than the menu name',
+    TIMEFRAMES.every((t) => t.short.length <= t.label.length));
+  ok('the menu spells intervals out', timeframe('15m').label === '15 minutes' && timeframe('4h').label === '4 hours');
+  ok('...while the toolbar stays terse', timeframe('15m').short === '15m' && timeframe('4h').short === '4h');
+  ok('ids are unique', new Set(TIMEFRAMES.map((t) => t.id)).size === TIMEFRAMES.length);
+  ok('toolbar labels are unique too', new Set(TIMEFRAMES.map((t) => t.short)).size === TIMEFRAMES.length);
+
+  // The ids the existing callers pass must keep working — the Terminal panel asks for 1D and the
+  // ticker page for 3M, and a rebuilt registry that dropped either would blank both charts.
+  ok('the Terminal panel default still resolves', !!timeframe('1D'));
+  ok('the ticker page default still resolves', !!timeframe('3M'));
+
+  // ── requests: every interval reaches the right endpoint, and no unservable one is requested ──
+  ok('a minute interval goes to the intraday endpoint',
+    barsUrl('AAPL', '3m') === '/api/chart-intraday?ticker=AAPL&range=3m');
+  ok('an hour interval does too', barsUrl('AAPL', '4h') === '/api/chart-intraday?ticker=AAPL&range=4h');
+  ok('a long window goes to the daily endpoint',
+    barsUrl('AAPL', '1Y') === '/api/chart-daily?ticker=AAPL&range=1Y');
+  ok('"All" is spelled the way its route wants', barsUrl('AAPL', 'All') === '/api/chart-daily?ticker=AAPL&range=all');
+  // String(): barsUrl returns null for anything it refuses, and a bare .includes() on that throws,
+  // which would take the rest of this section down with it instead of failing one assertion.
+  ok('extended hours rides along on an intraday interval',
+    String(barsUrl('AAPL', '1m', { session: 'extended' })).includes('session=extended'));
+  ok('...and is not sent on a daily one',
+    !String(barsUrl('AAPL', '1Y', { session: 'extended' })).includes('session='));
+  ok('an unknown timeframe produces no request', barsUrl('AAPL', '9m') === null);
+
+  // THE UNSERVABLE GUARD, PROVEN. Every entry is servable today, so simply asserting that proves
+  // nothing about the guard — removing it would change no output. Narrowing the DECLARED adapter
+  // capability for a moment is what actually exercises the refusal: the boundary must decline to
+  // build a request rather than let the endpoint answer at whatever resolution it falls back to.
+  const realMin = ADAPTER.intraday.minBarMinutes;
+  ADAPTER.intraday.minBarMinutes = 5;
+  ok('a timeframe the adapter cannot serve is reported unavailable', unavailableReason('1m') !== null);
+  ok('...and produces no request at all', barsUrl('AAPL', '1m') === null);
+  ok('...while one it can serve is unaffected', barsUrl('AAPL', '15m') !== null);
+  ADAPTER.intraday.minBarMinutes = realMin;
+  ok('the declared capability was restored', barsUrl('AAPL', '1m') !== null);
+
+  // ── the route is driven by the registry, so an interval is one entry and not a code change ──
+  const route = await readFile(new URL('../src/app/api/chart-intraday/route.js', import.meta.url), 'utf8');
+  ok('the route reads the timeframe registry', /from '\.\.\/\.\.\/\.\.\/lib\/chart\/chart-source\.mjs'/.test(route));
+  ok('...instead of keeping its own list of ranges', !/const RANGES = new Set/.test(route));
+  ok('the bar multiplier comes from the timeframe', /barMinutes: mult/.test(route));
+  ok('...as do the sessions kept and the days requested',
+    /sessions: keepN, lookbackDays/.test(route));
+  ok('no range is hard-coded in the request any more', !/range === '5D' \? 15 : 5/.test(route));
+  ok('an unservable id never reaches the provider', /INTRADAY\.has\(range\)/.test(route));
+
+  // ── the toolbar control ──────────────────────────────────────────────────────────────────────
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  ok('the row of timeframe buttons is gone', !/TIMEFRAMES\.map\(\(t\) => btn\(/.test(cmp));
+  ok('the control shows the SHORT label', /label=\{timeframe\(tf\)\?\.short/.test(cmp));
+  ok('...and never the long one in the toolbar',
+    !/label=\{timeframe\(tf\)\?\.label/.test(cmp));
+  ok('the tooltip names the current timeframe in full',
+    /title=\{`Timeframe — \$\{timeframe\(tf\)\?\.label/.test(cmp));
+  ok('the menu is built from the groups', /timeframesByGroup\(\)\.map/.test(cmp));
+  ok('...with a heading per group', /<MenuLabel theme=\{theme\}>\{g\.label\}<\/MenuLabel>/.test(cmp));
+  ok('...and the full name on each row', /\{t\.label\}<\/MenuItem>/.test(cmp));
+  ok('picking one loads it immediately', /onClick=\{\(\) => setTf\(t\.id\)\}/.test(cmp));
+  ok('the selected interval is marked', /active=\{t\.id === tf\}/.test(cmp));
+  // An interval the provider cannot serve is visible but not selectable — neither hidden (which
+  // would misrepresent the product) nor enabled (which would mean drawing candles we do not have).
+  ok('an unservable interval is disabled, not hidden', /disabled=\{!!why\}/.test(cmp));
+  ok('...and says why on hover', /title=\{why \|\| undefined\}/.test(cmp));
+
+  // The menu is tall: it MUST be the portalled popover, or the panel clips it (see section 18).
+  const uiSrc = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  ok('the timeframe menu scrolls rather than overflowing', /overflowY: 'auto'/.test(uiSrc));
+  // 20 rows at ~30px plus three headings needs far more than a short panel has; the placement must
+  // cap the height against the WINDOW, which is what makes it scrollable instead of clipped.
+  const tall = placeFor({ left: 100, top: 300, right: 144, bottom: 326 }, 'bottom-start',
+    { width: 210, maxHeight: 360, viewport: { width: 1440, height: 500 } });
+  ok('a menu taller than the space below it is capped, not clipped',
+    tall.maxHeight <= 500 - EDGE && tall.maxHeight > 0);
+  ok('...and still sits inside the window',
+    boxOf(tall, { width: 1440, height: 500 }).bottom <= 500 - EDGE + 0.5);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
