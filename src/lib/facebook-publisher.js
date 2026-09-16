@@ -2,7 +2,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
-  isPermanentFailure, failureSpendsAttempt } from './facebook-post.mjs';
+  isPermanentFailure, failureSpendsAttempt, redactCredential } from './facebook-post.mjs';
 
 // PUBLISHING WALTER BLOOMBERG TO THE CATALYST PIT FACEBOOK PAGE.
 //
@@ -93,10 +93,12 @@ async function postToPage(cfg, message, fetchImpl = fetch) {
   const err = body?.error || {};
   // Meta's own words, capped. `code` and `message` say whether this is a permission problem, an
   // expired token or a content rejection, and those need different fixes.
+  // redactCredential before the slice: Meta echoes the submitted token inside "Malformed access
+  // token" messages, and this string is persisted in failure_reason and returned by the cron route.
   const why = `HTTP ${r.status}`
     + (err.code ? ` code ${err.code}` : '')
     + (err.error_subcode ? `/${err.error_subcode}` : '')
-    + (err.message ? `: ${String(err.message).slice(0, 160)}` : '');
+    + (err.message ? `: ${redactCredential(err.message).slice(0, 160)}` : '');
   // A credential failure is not a property of this post — see isPermanentFailure. The code is
   // returned so the caller can tell an expired token from a rejected post; it is a small integer
   // from Meta's error envelope and carries nothing sensitive.
@@ -206,9 +208,10 @@ export async function publishPendingFacebook({ limit = MAX_PER_RUN, fetchImpl = 
   // otherwise: the queue simply stops draining. Surfaced in the run log, with no credential in it.
   const authFailures = results.filter((x) => x.authFailure).length;
   if (authFailures) {
-    console.warn(`[facebook] CREDENTIAL FAILURE on ${authFailures} of ${results.length} candidates`
-      + ' — the Page token is expired, revoked or of the wrong type. Posts are being HELD, not lost,'
-      + ' until it is replaced or they pass the freshness limit.');
+    console.error(`[facebook] CREDENTIAL FAILURE on ${authFailures} of ${results.length} candidates`
+      + ' — the Page token is expired, revoked, or of the wrong type/permissions (Meta code 190 or'
+      + ` 200). Posts are being HELD, not lost, but only for ${MAX_AGE_MINUTES} minutes: every item`
+      + ' older than that is dropped silently. Replace FACEBOOK_PAGE_ACCESS_TOKEN and REDEPLOY.');
   }
   return { sent: results.filter((x) => x.sent).length, enabled: true, authFailures, results };
 }
@@ -243,15 +246,20 @@ export async function publishFacebookTest({ fetchImpl = fetch } = {}) {
  * recent timestamp means the token is broken RIGHT NOW and posts are being held.
  *
  * NOTHING SENSITIVE LEAVES. The count and two timestamps are computed here; the failure text itself
- * is never returned. Meta does not echo a token in an error body, and this does not read one either.
+ * is never returned — and that is load-bearing, not tidiness. Meta's "Malformed access token" class
+ * ECHOES THE SUBMITTED TOKEN back inside error.message, which postToPage stores verbatim (capped) in
+ * failure_reason. So failure_reason must be treated as credential-bearing: counted and matched
+ * against, never returned, logged or rendered.
  */
 export async function facebookAuthHealth() {
   await ensureFacebookTable();
   const rows = (await db.execute(sql`
     with last_ok as (
       select coalesce(max(posted_at), to_timestamp(0)) as t from fb_post_candidates where fb_post_id is not null)
-    select count(*) filter (where c.failure_reason like '%code 190%')::int              as auth_failures,
-           max(c.updated_at) filter (where c.failure_reason like '%code 190%')          as last_auth_failure,
+    select count(*) filter (where c.failure_reason like '%code 190%'
+                              or c.failure_reason like '%code 200%')::int               as auth_failures,
+           max(c.updated_at) filter (where c.failure_reason like '%code 190%'
+                                       or c.failure_reason like '%code 200%')           as last_auth_failure,
            (select t from last_ok)                                                      as last_published
       from fb_post_candidates c, last_ok
      where c.updated_at > last_ok.t`)).rows ?? [];

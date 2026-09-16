@@ -51,6 +51,18 @@ export async function GET(request) {
     }
     const res = await publishPendingFacebook();
     if (res.sent) console.log(`[facebook] published ${res.sent}`);
+    // A CREDENTIAL OUTAGE MUST NOT LOOK LIKE A HEALTHY RUN. On 2026-09-16 a wrong-type token was
+    // refused for 40 minutes while this route kept answering 200 OK, so nothing surfaced anywhere an
+    // operator looks and every post queued in that window aged out and was lost. Answering 5xx is
+    // what makes Vercel mark the cron run failed and notify.
+    //
+    // `results` is deliberately dropped: each entry carries Meta's own failure text, which is
+    // credential-bearing (see redactCredential). Counts and timestamps are enough to act on.
+    if (res.authFailures) {
+      const { results, ...counts } = res;
+      return Response.json({ ok: false, credentialAlarm: true, ...counts,
+        ...(await facebookAuthHealth()) }, { status: 503 });
+    }
     return Response.json({ ok: true, ...res });
   } catch (e) {
     // Meta's error text can be long; the message is capped and never carries a credential.

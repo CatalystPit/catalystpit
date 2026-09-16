@@ -105,8 +105,28 @@ export function facebookConfig(env = process.env) {
  */
 export const META_OAUTH_ERROR_CODE = 190;
 
+/**
+ * Meta's PERMISSION error code, which is a credential problem wearing different clothes.
+ *
+ * 190 is raised when the token is expired or revoked. 200 is raised when the token is VALID but is
+ * not allowed to do this — the commonest cause being a User token where a Page token is required,
+ * or a Page token whose System User was never assigned the Page. Both are fixed the same way, by an
+ * operator replacing the credential, and neither says anything about the post.
+ *
+ * Learned in production on 2026-09-16. A replaced token took effect on the next deployment and was
+ * refused with "(#200) ... requires ... pages_manage_posts permission with page token". Because 200
+ * fell through to the 403 branch below, every Walter item queued during the outage was marked
+ * permanently failed seconds after arriving and was unreachable by the drain even after the
+ * credential was fixed. Posts were destroyed at roughly one per 20 minutes for the length of it.
+ */
+export const META_PERMISSION_ERROR_CODE = 200;
+
+// The codes that mean "the credential is wrong", as opposed to "the post is wrong". Matched as
+// whole numbers via a Set, so 19, 90, 1190, 1900 and 2000 are not swept in by prefix or substring.
+const CREDENTIAL_ERROR_CODES = new Set([META_OAUTH_ERROR_CODE, META_PERMISSION_ERROR_CODE]);
+
 /** Whether a Meta rejection is about the CREDENTIAL rather than the post. */
-export const isAuthFailure = (errorCode) => Number(errorCode) === META_OAUTH_ERROR_CODE;
+export const isAuthFailure = (errorCode) => CREDENTIAL_ERROR_CODES.has(Number(errorCode));
 
 /**
  * Is a Meta rejection permanent FOR THIS POST, or worth another attempt while it is still fresh?
@@ -145,6 +165,21 @@ export function isPermanentFailure(httpStatus, errorCode) {
  * window, and nothing here makes a candidate eligible that was not already eligible.
  */
 export const failureSpendsAttempt = (errorCode) => !isAuthFailure(errorCode);
+
+/**
+ * Strip anything token-shaped out of text that came from Meta before it is stored or returned.
+ *
+ * NOT paranoia. Meta's "Malformed access token" error echoes the SUBMITTED TOKEN back inside
+ * error.message, and postToPage puts error.message straight into failure_reason, which is persisted
+ * and returned by the cron route. One malformed-token rejection would therefore write a live
+ * credential into the database and hand it back over HTTP.
+ *
+ * Two shapes: Meta's own EAA-prefixed tokens, and any long unbroken credential-like run. The 40-char
+ * floor is above anything that occurs in Meta's prose, so ordinary error text is left readable.
+ */
+export const redactCredential = (s) => String(s || '')
+  .replace(/EAA[A-Za-z0-9_-]{20,}/g, '[redacted]')
+  .replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[redacted]');
 
 /** Whether we hold everything needed to publish. Never reveals the token, only whether it is set. */
 export function facebookReadiness(cfg) {

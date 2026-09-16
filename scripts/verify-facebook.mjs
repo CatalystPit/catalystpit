@@ -4,7 +4,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
-  FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE,
+  FB_SOURCE_WHITELIST, FB_MAX_CHARS, isPermanentFailure, META_OAUTH_ERROR_CODE, META_PERMISSION_ERROR_CODE, redactCredential,
   isAuthFailure, failureSpendsAttempt } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
@@ -252,14 +252,25 @@ section('15. a broken credential delays a post, it does not destroy it');
   ok('it is retryable whatever the HTTP status', [400, 403, 401, 500].every((s) => !isPermanentFailure(s, 190)));
   ok('a string code from JSON is handled too', isPermanentFailure(400, '190') === false);
 
+  // CODE 200 IS A CREDENTIAL FAILURE TOO, and used to be classified as a content rejection.
+  // Production, 2026-09-16: a replaced token bound on the next deployment was refused with
+  // "(#200) ... requires ... pages_manage_posts permission with page token" — a valid token that is
+  // not allowed to post as the Page. Every item queued during the 40-minute outage was marked
+  // permanently failed within seconds and was unreachable by the drain after the fix. The token was
+  // wrong; the posts were not.
+  ok('a permission rejection is retryable, not terminal', isPermanentFailure(403, 200) === false);
+  ok('code 200 is Meta\'s permission code', META_PERMISSION_ERROR_CODE === 200);
+  ok('it is retryable whatever the HTTP status', [400, 403, 401, 500].every((s) => !isPermanentFailure(s, 200)));
+  ok('a string code from JSON is handled too', isPermanentFailure(403, '200') === false);
+  ok('isAuthFailure covers both credential codes', isAuthFailure(190) && isAuthFailure(200));
+
   // Everything Meta refuses on the post's own merits is still terminal, unchanged.
   ok('a content rejection is still permanent', isPermanentFailure(400, 100) === true);
-  ok('a permissions rejection is still permanent', isPermanentFailure(403, 200) === true);
   ok('a 400 with no code at all is still permanent', isPermanentFailure(400, undefined) === true);
   ok('a 400 with a null code is still permanent', isPermanentFailure(400, null) === true);
-  // 190 must be matched exactly, never as a prefix or a substring of another code.
-  for (const c of [19, 1900, 1190, 90])
-    ok(`code ${c} is not mistaken for 190`, isPermanentFailure(400, c) === true);
+  // Both credential codes must be matched exactly, never as a prefix or a substring of another.
+  for (const c of [19, 1900, 1190, 90, 20, 2000, 1200, 2001])
+    ok(`code ${c} is not mistaken for a credential code`, isPermanentFailure(400, c) === true);
 
   // Transient classes were already retryable and must stay that way.
   ok('a rate limit is still retryable', isPermanentFailure(429, 4) === false);
@@ -291,8 +302,13 @@ section('16. an auth outage holds posts, it does not spend their budget');
   ok('a credential failure does not spend an attempt', failureSpendsAttempt(190) === false);
   ok('a string code from JSON behaves the same', failureSpendsAttempt('190') === false);
   ok('isAuthFailure agrees', isAuthFailure(190) && isAuthFailure('190'));
+  // A permission failure is a credential failure: it will fail identically on every attempt until
+  // the token is replaced, so spending the budget on it kills the post for a reason that is not
+  // about the post.
+  ok('a permission failure does not spend one either', failureSpendsAttempt(200) === false);
+  ok('a string code from JSON behaves the same', failureSpendsAttempt('200') === false);
   // Everything else still spends one. This is the budget the 3-attempt cap protects.
-  for (const c of [100, 200, 4, 2, 1, 368, 506, 1487390, 19, 90, 1190, 1900, null, undefined])
+  for (const c of [100, 4, 2, 1, 368, 506, 1487390, 19, 90, 1190, 1900, 20, 2000, null, undefined])
     ok(`code ${c} still spends an attempt`, failureSpendsAttempt(c) === true);
   ok('a transport failure with no code spends one', failureSpendsAttempt(undefined) === true);
 
@@ -319,8 +335,38 @@ section('16. an auth outage holds posts, it does not spend their budget');
     pub.indexOf('attempts exhausted') < pub.indexOf('await postToPage(cfg, cur.message'));
   ok('MAX_FB_ATTEMPTS is still 3', /MAX_FB_ATTEMPTS = 3/.test(pub));
   ok('a row left mid-publish is still never auto-retried', /left mid-publish, needs manual review/.test(pub));
-  ok('content and permission rejections are still terminal',
-    isPermanentFailure(400, 100) && isPermanentFailure(403, 200));
+  ok('content rejections are still terminal', isPermanentFailure(400, 100) === true);
+  ok('permission rejections are held, not destroyed', isPermanentFailure(403, 200) === false);
+}
+
+section('15b. a credential outage is loud, and leaks nothing');
+{
+  // THE FAILURE THAT HID THIS. The drain answered 200 OK for 40 minutes while every post was being
+  // refused, so no run looked failed and nothing alerted.
+  const route = await readFile(new URL('../src/app/api/cron/facebook/route.js', import.meta.url), 'utf8');
+  ok('an auth outage answers 5xx so the cron run is marked failed',
+    /credentialAlarm: true/.test(route) && /status: 503/.test(route));
+  ok('the alarm reports health alongside the counts', /facebookAuthHealth\(\)/.test(route));
+  ok('per-candidate failure text is dropped from the alarm body',
+    /const \{ results, \.\.\.counts \} = res/.test(route));
+
+  // Meta echoes the submitted token inside "Malformed access token" errors, and postToPage stores
+  // that string in failure_reason, which is persisted AND returned. Unredacted, one such rejection
+  // writes a live credential into the database.
+  const TOKEN = 'EAA' + 'b'.repeat(180);
+  const echoed = `Malformed access token ${TOKEN} is not valid`;
+  ok('an echoed token is stripped', !redactCredential(echoed).includes(TOKEN));
+  ok('the surrounding message stays readable', /Malformed access token/.test(redactCredential(echoed)));
+  ok('a long credential-like run is stripped too',
+    !redactCredential('tok ' + 'A1b2'.repeat(20)).includes('A1b2A1b2'));
+  ok('ordinary Meta prose is untouched',
+    redactCredential('(#200) If posting to a group, requires pages_manage_posts permission')
+      === '(#200) If posting to a group, requires pages_manage_posts permission');
+  const pub = await readFile(new URL('../src/lib/facebook-publisher.js', import.meta.url), 'utf8');
+  ok('the publisher redacts BEFORE storing the reason',
+    /redactCredential\(err\.message\)\.slice/.test(pub));
+  ok('credential health counts permission failures as well as expiry',
+    /code 200/.test(pub) && /code 190/.test(pub));
 }
 
 section('17. credential health is observable without exposing anything');
