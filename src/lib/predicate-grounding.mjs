@@ -123,10 +123,69 @@ export function unsupportedCause(output, source) {
 //   direction   the rewrite reversed a fact the source asserted
 //   event_type  the rewrite describes a different kind of event
 //   cause       the rewrite added a reason the source did not give
+// ── anticipation ─────────────────────────────────────────────────────────────
+// THE MOST DANGEROUS REWRITE THIS FILE EXISTS TO STOP, and the one it missed.
+//
+// On 2026-09-16 the account published, as BREAKING:
+//
+//   "Fed raises rates 25 basis points, first hike since July 2023"
+//
+// from a ZeroHedge story headlined "Futures Rise, Oil And Yields Dip AHEAD OF First Fed Hike In
+// Three Years", whose body read "consensus is for a 25bp hike". The Fed had not moved. Every other
+// gate passed it: the actor is real, "25" traces to "25bp", the direction is a hike in both. What
+// changed was the TENSE — an expectation was restated as an accomplished fact, which is the single
+// worst error a market account can make, and it stood on the timeline contradicting a later post.
+//
+// Numbers and nouns cannot catch this. Only the framing can.
+const SOURCE_ANTICIPATES = new RegExp(
+  '\\b(?:ahead of|ahead|before the|in advance of|consensus (?:is )?(?:for|expects)|expected to|is expected'
+  + '|are expected|poised to|set to|due to (?:announce|report|decide|meet)|scheduled to|on track to'
+  + '|forecast(?:s|ed)? to|anticipat\\w+|preview|awaits?|awaiting|to decide|to announce|to report'
+  + '|projected to|seen \\w+ing|looks? set to|braces? for|gears? up for)\\b', 'i');
+
+// The rewrite stating the thing as DONE.
+// Bare infinitives are deliberately absent: "raise", "cut", "hike" on their own appear inside the
+// hedge itself ("expected to raise"), and matching them rejected the correctly-hedged rewrite
+// "Fed expected to raise rates for the first time in three years".
+const OUTPUT_ASSERTS_DONE = new RegExp(
+  '\\b(?:raises|raised|cuts|hike[sd]|lift(?:s|ed)|lower(?:s|ed)|announce[sd]|report(?:s|ed)'
+  + '|post(?:s|ed)|deliver(?:s|ed)|approve[sd]|reject(?:s|ed)|file[sd]|complete[sd]|acquire[sd]'
+  + '|launch(?:es|ed)|name[sd]|vote[sd]|held|holds)\\b', 'i');
+
+// The source confirming, somewhere, that it HAS happened. Present tense included: "Nvidia raises
+// guidance ahead of GTC" is a completed action that merely mentions a future event.
+const SOURCE_CONFIRMS_DONE = new RegExp(
+  '\\b(?:raise[sd]|cut|cuts|hiked|hikes|lift(?:s|ed)|lower(?:s|ed)|announce[sd]|report(?:s|ed)'
+  + '|post(?:s|ed)|deliver(?:s|ed)|approve[sd]|reject(?:s|ed)|file[sd]|complete[sd]|acquire[sd]'
+  + '|launch(?:es|ed)|name[sd]|vote[sd]|decided|has (?:raised|cut|announced|reported))\\b', 'i');
+
+/**
+ * Does the rewrite assert as DONE something the source frames as still to come?
+ * Returns the offending verb, or null.
+ */
+export function anticipationConflict(output, source) {
+  const src = String(source || '');
+  const out = String(output || '');
+  if (!SOURCE_ANTICIPATES.test(src)) return null;
+  // The source says somewhere that it happened, so an assertive rewrite is grounded.
+  if (SOURCE_CONFIRMS_DONE.test(src)) return null;
+  // The rewrite is hedged the same way the source is, so it asserts nothing the source does not.
+  // "Fed expected to raise rates for the first time in three years" is a correct headline.
+  if (SOURCE_ANTICIPATES.test(out)) return null;
+  const m = out.match(OUTPUT_ASSERTS_DONE);
+  return m ? { verb: m[0] } : null;
+}
+
 export function validatePredicate(output, sourceText) {
   const out = String(output || '');
   const src = String(sourceText || '');
   if (!out) return { ok: false, reason: 'empty' };
+
+  // Checked FIRST. An expectation restated as fact is wrong even when the direction, the numbers and
+  // the actor are all correct — which is exactly how the Fed post passed every other gate.
+  const a = anticipationConflict(out, src);
+  if (a) return { ok: false, reason: 'anticipated',
+    detail: `source frames this as expected; rewrite asserts "${a.verb}"` };
 
   const d = directionConflict(out, src);
   if (d) return { ok: false, reason: 'direction', detail: `${d.axis}: source ${d.source}, rewrite ${d.output}` };

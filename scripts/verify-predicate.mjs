@@ -7,7 +7,7 @@
 // Run: node scripts/verify-predicate.mjs
 
 import { validateHeadline } from '../src/lib/headline-writer.mjs';
-import { validatePredicate, directionConflict, eventTypeConflict, unsupportedCause } from '../src/lib/predicate-grounding.mjs';
+import { validatePredicate, directionConflict, eventTypeConflict, unsupportedCause, anticipationConflict } from '../src/lib/predicate-grounding.mjs';
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = '') => {
@@ -112,6 +112,53 @@ check('unsupportedCause flags an invented reason', !!unsupportedCause('raises gu
 check('unsupportedCause allows a supported reason', !unsupportedCause('raises guidance after Q3 revenue', 'Acme raises guidance after Q3 revenue rose'));
 check('stem matching tolerates word forms', !unsupportedCause('lifts outlook on quarterly revenue', 'Acme lifted outlook on third-quarter revenue'));
 check('validatePredicate passes a clean rewrite', validatePredicate('Acme lifts full-year outlook', 'Acme Corp raises full-year guidance').ok);
+
+// ── an expectation must never be restated as an accomplished fact ────────────
+// THE POST THAT MADE THIS NECESSARY. On 2026-09-16 the account published, as BREAKING:
+//   "Fed raises rates 25 basis points, first hike since July 2023"
+// from a ZeroHedge story headlined "Futures Rise, Oil And Yields Dip AHEAD OF First Fed Hike In
+// Three Years" whose body read "consensus is for a 25bp hike". The Fed had not moved. Every other
+// gate passed it — the actor is real, "25" traces to "25bp", the direction is a hike in both — and
+// it sat on the timeline contradicting a later post that said no hike was expected.
+{
+  const FED = 'HEADLINE: Futures Rise, Oil And Yields Dip Ahead Of First Fed Hike In Three Years\n'
+    + 'Futures are higher into Fed Day where consensus is for a 25bp hike, the first since July 2023.';
+
+  check('the exact published fabrication is now blocked',
+    validatePredicate('Fed raises rates 25 basis points, first hike since July 2023', FED).ok === false);
+  check('...and it is reported as an anticipation error',
+    validatePredicate('Fed raises rates 25 basis points', FED).reason === 'anticipated');
+  check('a reversed direction from an expected event is blocked too',
+    validatePredicate('Fed cuts rates 25 basis points', FED).ok === false);
+  check('asserting it was announced is blocked',
+    validatePredicate('Fed announced a 25bp hike today', FED).ok === false);
+
+  // The correctly hedged rewrites of the SAME source must still publish, or the account goes silent
+  // on the biggest story of the day.
+  check('a hedged rewrite passes',
+    validatePredicate('Fed expected to raise rates for the first time in three years', FED).ok);
+  check('restating the source framing passes',
+    validatePredicate('Futures rise and yields dip ahead of first Fed hike in three years', FED).ok);
+  check('naming the consensus passes',
+    validatePredicate("Consensus points to a 25bp Fed hike at today's meeting", FED).ok);
+  check('"braces for" passes', validatePredicate('Markets brace for the first Fed hike in three years', FED).ok);
+
+  // A COMPLETED action that merely mentions a future event is not an anticipation error.
+  check('a completed action mentioning a future event passes',
+    validatePredicate('Nvidia lifted its full-year outlook',
+      'HEADLINE: Nvidia raises guidance ahead of GTC\nNvidia raised its outlook today.').ok);
+  check('a completed earnings report passes',
+    validatePredicate('Apple posted record quarterly revenue',
+      'HEADLINE: Apple reported record revenue ahead of the holiday quarter\nApple reported results.').ok);
+  check('a completed approval passes',
+    validatePredicate('FDA cleared the Pfizer vaccine',
+      'HEADLINE: Pfizer wins FDA approval ahead of schedule\nThe FDA approved it.').ok);
+  // No anticipation language in the source at all: the check must stay out of the way entirely.
+  check('an ordinary completed event is untouched',
+    validatePredicate('Acme lifts full-year outlook', 'Acme Corp raises full-year guidance').ok);
+  check('anticipationConflict returns null when the source is not anticipatory',
+    anticipationConflict('Acme raised guidance', 'Acme raised guidance today') === null);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
