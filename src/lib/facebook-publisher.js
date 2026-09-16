@@ -256,8 +256,12 @@ export async function queueRewordedFacebook({ limit = 20 } = {}) {
       left join fb_post_candidates c on c.event_seq = e.seq
      where c.id is null
        and e.cluster_id is null
-       and e.source = any(${sources}::text[])
-       and e.headline_status = any(${[...FB_CATALYST_WORDING]}::text[])
+       -- ARRAY LITERALS, not JS arrays. Passing an array straight into a drizzle template throws
+       -- on this driver ("Failed query"), which is exactly how this scan failed silently for half
+       -- an hour: the error was caught so the drain kept working and the run kept answering 200.
+       -- The rest of the codebase builds the literal the same way — see insertEvents' tickers.
+       and e.source = any(${`{${sources.join(',')}}`}::text[])
+       and e.headline_status = any(${`{${[...FB_CATALYST_WORDING].join(',')}}`}::text[])
        and e.received_at > now() - (${MAX_AGE_MINUTES} || ' minutes')::interval
      order by e.seq desc
      limit ${Math.max(1, Math.min(100, limit))}`)).rows ?? [];
