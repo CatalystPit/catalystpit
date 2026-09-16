@@ -639,6 +639,45 @@ section('14. chart types are a registry, and only what we draw is listed');
   ok('...including on incremental updates', /chartTypeOf\(typeRef\.current\)\.map\(b\)/.test(cmp));
   ok('no chart type is hard-coded in the draw path', !/typeRef\.current === 'Candles'/.test(cmp));
   ok('the toolbar renders the type menu from the registry', /CHART_TYPES\.map/.test(cmp));
+
+  // ── the toolbar control is an ICON, not a name ─────────────────────────────────────────────
+  // The selected type is communicated by its icon plus the tooltip. Putting "Candlestick" in the
+  // toolbar spends width on something already visible in the chart, and it would grow again with
+  // every longer name added later — so these assertions exist to stop that creeping back in.
+  const ctStart = cmp.indexOf('title={`Chart type');
+  ok('the chart-type control carries a Chart type tooltip', ctStart > 0);
+  const ctBlock = cmp.slice(cmp.lastIndexOf('<Dropdown', ctStart), cmp.indexOf('</Dropdown>', ctStart));
+  const ctLabel = ctBlock.split('\n').find((l) => l.includes('label={')) || '';
+  ok('its button renders a vector icon', /label=\{<VectorIcon/.test(ctLabel));
+  ok('its button never renders the type NAME', !/\.label/.test(ctLabel));
+  ok('...at every width, not just when narrow', !/narrow/.test(ctLabel));
+  ok('it is not widened to fit text', !/buttonWidth/.test(ctBlock));
+  ok('the tooltip still names the current type',
+    /title=\{`Chart type — \$\{chartTypeOf\(chartType\)\.label\}`\}/.test(ctBlock));
+  // The NAME belongs in the menu, where it is actually being read.
+  ok('the menu rows show an icon', /left=\{<VectorIcon shapes=\{t\.shapes\}/.test(ctBlock));
+  ok('...and the name beside it', /\{t\.label\}<\/MenuItem>/.test(ctBlock));
+
+  // ── icons come from the registry, so a new chart type brings its own ───────────────────────
+  ok('every type declares icon geometry',
+    CHART_TYPES.every((t) => Array.isArray(t.shapes) && t.shapes.length > 0));
+  ok('every type declares a text glyph fallback',
+    CHART_TYPES.every((t) => typeof t.glyph === 'string' && t.glyph.length > 0));
+  ok('every icon is visually distinct',
+    new Set(CHART_TYPES.map((t) => JSON.stringify(t.shapes))).size === CHART_TYPES.length);
+  const uiSrc = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  const kinds = [...new Set(CHART_TYPES.flatMap((t) => t.shapes.map((sh) => sh[0])))];
+  ok('the renderer handles every primitive the registry uses',
+    kinds.length > 0 && kinds.every((k) => uiSrc.includes(`kind === '${k}'`)));
+  ok('icons inherit the button colour rather than hard-coding one',
+    /stroke: 'currentColor'/.test(uiSrc));
+  ok('a type with no geometry still falls back to its glyph',
+    /if \(!Array\.isArray\(shapes\) \|\| shapes\.length === 0\)/.test(uiSrc));
+
+  // ONE selector, not two. The settings menu used to carry a Candles/Line toggle that could not
+  // reach Area at all; the compact icon control replaces it at every width.
+  const menuSrc = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  ok('the settings menu no longer duplicates the chart-type control', !/chartType/.test(menuSrc));
 }
 
 section('15. the indicator browser: searchable, categorised, registry-driven');
@@ -750,8 +789,13 @@ section('17. shared UI primitives, and responsive collapse');
 
   const menu = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
   // Moving controls, never dropping them.
-  for (const control of ['Chart type', 'Extended hours', 'Price scale', 'Auto scale', 'Reset view'])
+  for (const control of ['Extended hours', 'Price scale', 'Auto scale', 'Reset view'])
     ok(`"${control}" is in the controls menu`, menu.includes(control));
+  // Chart type is the exception, and deliberately so: its icon button already fits a narrow toolbar
+  // at full size, so it needs neither a collapsed variant nor a seat in this menu.
+  const ctNarrow = cmp.slice(cmp.lastIndexOf('<Dropdown', cmp.indexOf('title={`Chart type')),
+    cmp.indexOf('</Dropdown>', cmp.indexOf('title={`Chart type')));
+  ok('chart type stays a toolbar icon at narrow widths', ctNarrow.length > 0 && !/narrow/.test(ctNarrow));
 }
 
 section('9. the component does not reach past the boundary');

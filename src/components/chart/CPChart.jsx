@@ -11,7 +11,7 @@ import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
 import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
-import { Dropdown, MenuItem, ToolButton } from './ChartUI';
+import { Dropdown, MenuItem, ToolButton, VectorIcon } from './ChartUI';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingRail from './DrawingRail';
@@ -526,14 +526,20 @@ export default function CPChart({
           <div style={{ width: 1, height: 16, background: p.border, margin: '0 6px 0 auto', flexShrink: 0 }} />
 
           {/* ONE chart-type control, rendered from the registry — adding Heikin Ashi later puts it
-              in this menu with no toolbar change, and nothing unsupported is ever listed. */}
-          <Dropdown theme={theme} title="Chart type" width={160} buttonWidth={narrow ? 30 : 74}
-            label={narrow
-              ? chartTypeOf(chartType).icon
-              : <><span>{chartTypeOf(chartType).icon}</span><span>{chartTypeOf(chartType).label}</span></>}>
+              in this menu with no toolbar change, and nothing unsupported is ever listed.
+
+              ICON ONLY, AT EVERY WIDTH. The selected type is shown by its icon, never by its name:
+              a permanent "Candlestick" in the toolbar spends horizontal room on something the user
+              picked and can already see in the chart, and it would grow again with every longer name
+              added later. The name belongs in the menu, where it is read; the tooltip carries the
+              purpose on hover. */}
+          <Dropdown theme={theme} width={170}
+            title={`Chart type — ${chartTypeOf(chartType).label}`}
+            label={<VectorIcon shapes={chartTypeOf(chartType).shapes} glyph={chartTypeOf(chartType).glyph} />}>
             {CHART_TYPES.map((t) => (
               <MenuItem key={t.id} theme={theme} active={t.id === chartType}
-                onClick={() => patchView({ chartType: t.id })} right={t.icon}>{t.label}</MenuItem>
+                onClick={() => patchView({ chartType: t.id })}
+                left={<VectorIcon shapes={t.shapes} glyph={t.glyph} />}>{t.label}</MenuItem>
             ))}
           </Dropdown>
 
@@ -544,7 +550,7 @@ export default function CPChart({
           </ToolButton>
 
           {/* The remaining chart controls, grouped rather than strung out as a row of text buttons. */}
-          <ChartMenu theme={theme} view={view} canExtend={canExtend} chartType={chartType}
+          <ChartMenu theme={theme} view={view} canExtend={canExtend}
             onPatch={patchView} onReset={resetView} />
           {btn(fullscreen ? '⤢' : '⛶', fullscreen, () => setFullscreen((v) => !v), 'full')}
         </div>

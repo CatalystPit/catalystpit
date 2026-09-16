@@ -74,8 +74,13 @@ export function Dropdown({ theme, label, title, active, width = 200, align = 'le
   );
 }
 
-/** A row inside a Dropdown. `data-close-on-pick` lets the menu shut itself when one is chosen. */
-export function MenuItem({ theme, onClick, active, children, right, closeOnPick = true }) {
+/**
+ * A row inside a Dropdown. `data-close-on-pick` lets the menu shut itself when one is chosen.
+ *
+ * `left` is a leading icon (fixed-width, so labels line up however wide the icons are); `right` is a
+ * trailing hint such as a keyboard shortcut.
+ */
+export function MenuItem({ theme, onClick, active, children, left, right, closeOnPick = true }) {
   const p = palette(theme);
   return (
     <button type="button" onClick={onClick} {...(closeOnPick ? { 'data-close-on-pick': '' } : {})}
@@ -86,6 +91,9 @@ export function MenuItem({ theme, onClick, active, children, right, closeOnPick 
         fontFamily: "'DM Sans',sans-serif", fontSize: 12,
         color: active ? p.textStrong : p.text, fontWeight: active ? 600 : 400,
       }}>
+      {left != null && (
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, flexShrink: 0 }}>{left}</span>
+      )}
       <span style={{ flex: 1 }}>{children}</span>
       {right != null && <span style={{ color: p.text, opacity: 0.8, fontSize: 11 }}>{right}</span>}
     </button>
@@ -130,5 +138,44 @@ export function Modal({ theme, open, onClose, title, width = 460, children }) {
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>{children}</div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A 16×16 icon drawn from registry data rather than from a glyph.
+ *
+ * WHY DATA AND NOT JSX: the chart-type registry is a plain .mjs module with no React in it, and that
+ * is what lets the pure logic be tested in node. So an entry describes its icon as primitives —
+ * ['rect', {...}], ['line', {...}], ['polyline', {...}], ['polygon', {...}] — and this renders them.
+ * Adding a chart type stays ONE registry entry: it brings its own icon with it.
+ *
+ * Strokes and fills use currentColor, so an icon picks up the button's active/inactive colour
+ * automatically and needs no theme plumbing. `faint` is the area fill, which must not read as solid.
+ */
+export function VectorIcon({ shapes, glyph, size = 14, title }) {
+  if (!Array.isArray(shapes) || shapes.length === 0) {
+    return <span aria-hidden="true">{glyph ?? '·'}</span>;
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+      style={{ display: 'block', flexShrink: 0 }}>
+      {title && <title>{title}</title>}
+      {shapes.map(([kind, a], i) => {
+        const paint = {
+          stroke: 'currentColor',
+          strokeWidth: a.strokeWidth ?? 1.4,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          fill: a.fill ? 'currentColor' : 'none',
+          fillOpacity: a.fill ? (a.faint ? 0.22 : 1) : undefined,
+        };
+        const key = `${kind}-${i}`;
+        if (kind === 'line') return <line key={key} x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2} {...paint} />;
+        if (kind === 'rect') return <rect key={key} x={a.x} y={a.y} width={a.width} height={a.height} rx={0.5} {...paint} />;
+        if (kind === 'polyline') return <polyline key={key} points={a.points} {...paint} fill="none" fillOpacity={undefined} />;
+        if (kind === 'polygon') return <polygon key={key} points={a.points} {...paint} stroke="none" />;
+        return null;
+      })}
+    </svg>
   );
 }

@@ -16,7 +16,14 @@ export const CHART_TYPES = [
   {
     id: 'Candles',
     label: 'Candlestick',
-    icon: '⁝',
+    glyph: '⁝',
+    // Two candles: a wick line and a body rect each.
+    shapes: [
+      ['line', { x1: 5, y1: 2, x2: 5, y2: 14 }],
+      ['rect', { x: 3, y: 5, width: 4, height: 6, fill: true }],
+      ['line', { x1: 11, y1: 3, x2: 11, y2: 13 }],
+      ['rect', { x: 9, y: 6, width: 4, height: 5 }],
+    ],
     series: 'CandlestickSeries',
     map: (b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }),
     options: (p) => ({
@@ -27,7 +34,8 @@ export const CHART_TYPES = [
   {
     id: 'Line',
     label: 'Line',
-    icon: '∿',
+    glyph: '∿',
+    shapes: [['polyline', { points: '2,12 6,7 9,10 14,3' }]],
     series: 'LineSeries',
     map: (b) => ({ time: b.time, value: b.close }),
     options: (p) => ({ color: p.areaLine, lineWidth: 2 }),
@@ -35,7 +43,11 @@ export const CHART_TYPES = [
   {
     id: 'Area',
     label: 'Area',
-    icon: '◣',
+    glyph: '◣',
+    shapes: [
+      ['polygon', { points: '2,12 6,7 9,10 14,3 14,14 2,14', fill: true, faint: true }],
+      ['polyline', { points: '2,12 6,7 9,10 14,3' }],
+    ],
     series: 'AreaSeries',
     map: (b) => ({ time: b.time, value: b.close }),
     options: (p) => ({

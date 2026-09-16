@@ -7,8 +7,12 @@ import { palette } from '../../lib/chart/chart-theme.mjs';
 // Used when the chart is too narrow to show them as buttons — a Terminal panel dragged small, or a
 // phone. Deliberately the SAME controls rather than a reduced set: the answer to "not enough room"
 // is to move them, not to take them away.
+//
+// CHART TYPE IS NOT HERE. It has its own compact icon control in the toolbar at every width, and a
+// second selector in this menu would be both a duplicate and a worse one — the toggle this replaced
+// flipped Candles/Line only, so it could not reach Area at all.
 
-export default function ChartMenu({ theme, view, canExtend, chartType, onPatch, onReset }) {
+export default function ChartMenu({ theme, view, canExtend, onPatch, onReset }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const p = palette(theme);
@@ -42,7 +46,6 @@ export default function ChartMenu({ theme, view, canExtend, chartType, onPatch, 
         <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 25, width: 176,
           background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, borderRadius: 6,
           boxShadow: '0 8px 28px rgba(0,0,0,0.22)', padding: 5 }}>
-          {row('Chart type', chartType, () => onPatch({ chartType: chartType === 'Candles' ? 'Line' : 'Candles' }))}
           {canExtend && row('Extended hours', view.extended ? 'On' : 'Off', () => onPatch({ extended: !view.extended }))}
           {row('Price scale', view.logScale ? 'Log' : 'Linear', () => onPatch({ logScale: !view.logScale }))}
           {row('Auto scale', view.autoScale ? 'On' : 'Off', () => onPatch({ autoScale: !view.autoScale }))}
