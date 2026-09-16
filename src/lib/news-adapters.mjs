@@ -290,9 +290,18 @@ export function runAdapter(body, feed) {
     // Normalize the contract so downstream code never has to defend against a sloppy adapter.
     return items.map((it) => {
       const raw = String(it.title || '').trim();
+      // An adapter MAY supply its own sourceTitle when the source's own text carries structure that
+      // `title` cannot: the Telegram adapter emits the message with its line breaks intact, while
+      // title stays flat so every hash, the display headline and the X pipeline are unaffected.
+      //
+      // This line used to be `sourceTitle: raw`, which silently threw that away and rebuilt it from
+      // the flattened title — so the adapter did the work and the normaliser undid it, and Walter's
+      // multi-line posts still reached the Page as a wall of text. Defaulting to `raw` keeps every
+      // other adapter byte-identical.
+      const structured = it.sourceTitle == null ? raw : String(it.sourceTitle).trim();
       return {
         title: applyStrip(raw, feed),
-        sourceTitle: raw,
+        sourceTitle: structured,
         url: String(it.url || '').trim(),
         uid: String(it.uid || it.url || '').trim(),
         publishedAt: it.publishedAt ?? null,

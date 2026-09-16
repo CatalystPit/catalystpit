@@ -12,7 +12,7 @@
 //
 //   node scripts/verify-telegram-structure.mjs
 
-import { ADAPTERS } from '../src/lib/news-adapters.mjs';
+import { ADAPTERS, runAdapter } from '../src/lib/news-adapters.mjs';
 import { facebookText } from '../src/lib/facebook-post.mjs';
 
 let pass = 0, fail = 0;
@@ -40,8 +40,13 @@ const STRUCTURED_HTML = [
 ].join('');
 const ONE_LINE_HTML = 'SK HYNIX SAYS IT WILL SUPPLY HBM4 TO INTEL (@WalterBloomberg)';
 
-const feed = { key: 'telegram_walterbloomberg', source: 'WALTERBLOOMBERG' };
-const parse = (html) => ADAPTERS.telegram(msg('9001', html), feed)[0];
+const feed = { key: 'telegram_walterbloomberg', source: 'WALTERBLOOMBERG', adapter: 'telegram' };
+// THROUGH runAdapter, NOT the adapter in isolation. The first version of this file called
+// ADAPTERS.telegram directly, so it never saw that runAdapter overwrote sourceTitle with the
+// flattened title — 33 assertions passed while production published a wall of text. Always test
+// the path production actually takes.
+const parse = (html) => runAdapter(msg('9001', html), feed)[0];
+const parseRawAdapter = (html) => ADAPTERS.telegram(msg('9001', html), feed)[0];
 
 section('1. the structured post keeps its structure');
 {
@@ -126,6 +131,43 @@ section('5. the X pipeline is unaffected by construction');
   ok('X-facing title has no structure to collapse', !item.title.includes('\n'));
   ok('sourceTitle is a separate field, not a replacement',
     item.title !== item.sourceTitle && typeof item.title === 'string');
+}
+
+section('6. runAdapter must not flatten what the adapter structured');
+{
+  // THE BUG THIS SECTION EXISTS FOR. runAdapter rebuilt sourceTitle from the flattened title:
+  //
+  //     sourceTitle: raw,        // raw = String(it.title).trim()
+  //
+  // so the adapter produced the structure and the normaliser discarded it. Nothing downstream ever
+  // saw a newline. It shipped because the tests above called ADAPTERS.telegram directly.
+  const viaAdapter = parseRawAdapter(STRUCTURED_HTML);
+  const viaRunAdapter = parse(STRUCTURED_HTML);
+  ok('the adapter produces structure', viaAdapter.sourceTitle.includes('\n'));
+  ok('runAdapter PRESERVES it', viaRunAdapter.sourceTitle.includes('\n'),
+    JSON.stringify(viaRunAdapter.sourceTitle.slice(0, 80)));
+  ok('it is the adapter\'s own value, unmodified',
+    viaRunAdapter.sourceTitle === viaAdapter.sourceTitle);
+  ok('title is still flat after runAdapter', !viaRunAdapter.title.includes('\n'));
+
+  // With the PRODUCTION feed config: `strip` removes the watermark and the leading flash asterisk
+  // from title for display and dedupe, and must not touch the source's own words.
+  const prodFeed = { key: 'telegram_walterbloomberg', source: 'WALTERBLOOMBERG', adapter: 'telegram',
+    strip: [/\s*\(\s*@?walter\s*bloomberg\s*\)/gi, /^\s*\*+\s*/] };
+  const it = runAdapter(msg('9002', STRUCTURED_HTML), prodFeed)[0];
+  ok('strip still cleans the display title', !/@WalterBloomberg/i.test(it.title));
+  ok('the source line keeps its structure under the real config', it.sourceTitle.includes('\n'));
+  ok('the source line is left verbatim, watermark and all', /@WalterBloomberg/i.test(it.sourceTitle));
+  const flash = runAdapter(msg('9003', '*US 20Y BONDS DRAW 5.420% (@WalterBloomberg)'), prodFeed)[0];
+  ok('a one-line flash still loses its asterisk in the display title', !flash.title.startsWith('*'));
+  ok('and stays a single line everywhere', !flash.sourceTitle.includes('\n'));
+
+  // Every other adapter must be byte-identical: they set no sourceTitle, so it falls back to title.
+  const rssFeed = { key: 'r', source: 'S', adapter: 'rss' };
+  const rss = runAdapter('<rss><channel><item><title>PLAIN HEADLINE</title>'
+    + '<link>https://example.com/a</link></item></channel></rss>', rssFeed)[0];
+  ok('an adapter that sets no sourceTitle is unchanged',
+    rss && rss.sourceTitle === 'PLAIN HEADLINE' && rss.title === 'PLAIN HEADLINE');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
