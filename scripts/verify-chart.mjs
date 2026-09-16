@@ -15,7 +15,12 @@ import {
   barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol,
 } from '../src/lib/chart/chart-source.mjs';
 import { CHART_THEMES, palette, chartOptions, CHART_ATTRIBUTION } from '../src/lib/chart/chart-theme.mjs';
-import { sma, ema, vwap, INDICATORS, availableIndicators } from '../src/lib/chart/chart-indicators.mjs';
+import { sma, ema, vwap, rsi, macd, bollinger, atr, trueRange, smaValues, emaValues,
+  INDICATORS, INDICATOR_IDS, availableIndicators, defaultParams, sanitizeParams,
+  indicatorLabel, computeIndicator } from '../src/lib/chart/chart-indicators.mjs';
+import { loadIndicators, saveIndicators, DEFAULT_ACTIVE, STORAGE_KEY } from '../src/lib/chart/chart-settings.mjs';
+import { indicatorColor, indicatorColors } from '../src/lib/chart/chart-theme.mjs';
+import { sessionKeyFor } from '../src/lib/chart/chart-source.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -166,40 +171,192 @@ section('7. the Apache-2.0 attribution is present on every chart surface');
   ok('it links to the project', /CHART_ATTRIBUTION_HREF/.test(cmp));
 }
 
-section('8. the indicator seam is a real interface, not a promise');
+section('8. the indicator maths, against hand-computed values');
 {
-  const bars = Array.from({ length: 30 }, (_, i) => ({
+  // A ramp: close = 10,11,12,... Every average has a closed form on this input, so a wrong
+  // implementation cannot hide behind output that merely looks plausible.
+  const ramp = Array.from({ length: 40 }, (_, i) => ({
     time: i + 1, open: 10 + i, high: 11 + i, low: 9 + i, close: 10 + i, volume: 100,
   }));
-  const s = sma(bars, { length: 5 });
-  ok('SMA starts only once it has a full window', s.length === bars.length - 4);
-  ok('SMA of a ramp is the middle value', Math.abs(s[0].value - 12) < 1e-9, String(s[0].value));
+
+  const s = sma(ramp, { length: 5 }).plots[0].data;
+  ok('SMA starts only when the window is full', s.length === ramp.length - 4);
+  ok('SMA of a ramp is the window midpoint', Math.abs(s[0].value - 12) < 1e-9, String(s[0].value));
   ok('SMA carries the bar time', s[0].time === 5);
-  ok('SMA of too-short input is empty', sma(bars.slice(0, 3), { length: 5 }).length === 0);
+  ok('SMA of too-short input is empty', sma(ramp.slice(0, 3), { length: 5 }).plots[0].data.length === 0);
 
-  const e = ema(bars, { length: 5 });
-  ok('EMA is produced', e.length === bars.length - 4);
-  ok('EMA tracks a rising series upward', e[e.length - 1].value > e[0].value);
+  // EMA MUST BE SEEDED WITH THE SMA. Seeded from the first value instead, this point would be 10.
+  const e = ema(ramp, { length: 5 }).plots[0].data;
+  ok('EMA is seeded with the SMA of the first window', Math.abs(e[0].value - 12) < 1e-9, String(e[0].value));
+  // Hand-checked: 15*(2/6) + 12*(4/6) = 13.
+  ok('the EMA recurrence is right', Math.abs(e[1].value - 13) < 1e-9, String(e[1].value));
+  ok('EMA tracks the ramp upward', e[e.length - 1].value > e[0].value);
 
-  // VWAP must RESET each session, or it is not VWAP.
+  // RSI OF AN UNBROKEN ADVANCE IS EXACTLY 100: every delta is a gain, so average loss is zero.
+  const r = rsi(ramp, { length: 14 }).plots[0].data;
+  ok('RSI of an unbroken advance is 100', Math.abs(r[0].value - 100) < 1e-9, String(r[0].value));
+  ok('RSI starts after `length` bars', r[0].time === 15, String(r[0].time));
+  const down = ramp.map((b, i) => ({ ...b, close: 100 - i }));
+  ok('RSI of an unbroken decline is 0', Math.abs(rsi(down, { length: 14 }).plots[0].data[0].value) < 1e-9);
+  const flat = ramp.map((b) => ({ ...b, close: 50 }));
+  ok('RSI of a flat series is defined, not NaN',
+    Number.isFinite(rsi(flat, { length: 14 }).plots[0].data[0]?.value));
+  ok('RSI is bounded 0..100', r.every((d) => d.value >= 0 && d.value <= 100));
+  ok('RSI declares its guides', (rsi(ramp).guides || []).join(',') === '30,50,70');
+
+  // ATR: each bar spans 2 (high-low) and gaps 1 from the previous close, so TR is 2 throughout.
+  const a = atr(ramp, { length: 14 }).plots[0].data;
+  ok('ATR of a constant-range series is that range', Math.abs(a[0].value - 2) < 1e-9, String(a[0].value));
+  ok('ATR starts after `length` bars', a[0].time === 15, String(a[0].time));
+  ok('true range uses the previous close when price gaps', trueRange({ high: 12, low: 11 }, 8) === 4);
+  ok('true range falls back to high-low on the first bar', trueRange({ high: 12, low: 11 }, null) === 1);
+
+  const bFlat = bollinger(flat, { length: 20, mult: 2 }).plots;
+  ok('Bollinger emits three bands', bFlat.length === 3);
+  ok('a flat series collapses the bands onto the basis',
+    Math.abs(bFlat[0].data[0].value - bFlat[2].data[0].value) < 1e-9);
+  const bRamp = bollinger(ramp, { length: 20, mult: 2 }).plots;
+  ok('upper > basis > lower',
+    bRamp[0].data[0].value > bRamp[1].data[0].value && bRamp[1].data[0].value > bRamp[2].data[0].value);
+  // POPULATION deviation: for closes 10..29 that is sqrt(33.25). The sample figure would be 5.9161.
+  const sd = (bRamp[0].data[0].value - bRamp[1].data[0].value) / 2;
+  ok('Bollinger uses the population deviation', Math.abs(sd - Math.sqrt(33.25)) < 1e-6, String(sd));
+  ok('a wider multiplier widens the band',
+    bollinger(ramp, { length: 20, mult: 3 }).plots[0].data[0].value > bRamp[0].data[0].value);
+
+  // MACD: the signal is an EMA OF THE MACD LINE and may only begin where that line exists.
+  const m = macd(ramp, { fast: 12, slow: 26, signal: 9 });
+  ok('MACD emits line, signal and histogram', m.plots.map((x) => x.key).join(',') === 'macd,signal,hist');
+  ok('the MACD line starts at the slow EMA', m.plots[0].data[0].time === 26, String(m.plots[0].data[0].time));
+  ok('the signal starts 8 bars after the line', m.plots[1].data[0].time === 34, String(m.plots[1].data[0].time));
+  ok('the histogram is line minus signal',
+    Math.abs(m.plots[2].data[0].value - (m.plots[0].data[8].value - m.plots[1].data[0].value)) < 1e-9);
+  ok('the histogram is drawn signed', m.plots[2].signed === true);
+  ok('MACD of a steady advance is positive', m.plots[0].data[0].value > 0);
+
+  // WILDER SMOOTHING IS NOT AN EMA, and a ramp cannot tell them apart because it has no losses.
+  // An alternating series can. closes 10,11,10,11... with length 2:
+  //   seed   avgGain 0.5, avgLoss 0.5           -> RSI 50
+  //   next   Wilder (0.5*1+1)/2 = 0.75 gain, (0.5*1+0)/2 = 0.25 loss -> RS 3     -> RSI 75
+  //          an EMA of the same period would give 0.8333 / 0.1667    -> RS 5     -> RSI 83.33
+  const alt = Array.from({ length: 12 }, (_, i) => ({
+    time: i + 1, open: 10, high: 12, low: 9, close: i % 2 === 0 ? 10 : 11, volume: 100,
+  }));
+  const rAlt = rsi(alt, { length: 2 }).plots[0].data;
+  ok('RSI uses Wilder smoothing, not an EMA', Math.abs(rAlt[1].value - 75) < 1e-9, String(rAlt[1].value));
+
+  // ATR the same way: a constant true range cannot distinguish the recurrence from a plain mean.
+  // Ranges alternate 1 and 3 with no gaps, length 2:
+  //   seed  (3 + 1) / 2 = 2        next  Wilder (2*1 + 3)/2 = 2.5, a plain mean would be 3
+  const varied = Array.from({ length: 10 }, (_, i) => ({
+    time: i + 1, open: 10, close: 10, high: i % 2 === 1 ? 11.5 : 10.5, low: i % 2 === 1 ? 8.5 : 9.5, volume: 100,
+  }));
+  const aVar = atr(varied, { length: 2 }).plots[0].data;
+  ok('ATR uses Wilder smoothing, not a plain mean', Math.abs(aVar[1].value - 2.5) < 1e-9, String(aVar[1].value));
+
+  // The MACD SIGNAL is seeded with the SMA of the MACD LINE's own first `signal` values. Computing
+  // it over an array still padded with zeros pulls the early signal toward zero, and the start time
+  // alone does not reveal that — only the value does.
+  const mm = macd(ramp, { fast: 12, slow: 26, signal: 9 });
+  const lineVals = mm.plots[0].data.slice(0, 9).map((d) => d.value);
+  const expectedSeed = lineVals.reduce((x, y) => x + y, 0) / 9;
+  ok('the MACD signal is seeded from the line, not from padding',
+    Math.abs(mm.plots[1].data[0].value - expectedSeed) < 1e-9,
+    `${mm.plots[1].data[0].value} vs ${expectedSeed}`);
+
+  // VWAP must RESET at the session boundary, or it is not VWAP.
   const two = [
     { time: 1, high: 10, low: 10, close: 10, open: 10, volume: 100 },
     { time: 2, high: 20, low: 20, close: 20, open: 20, volume: 100 },
     { time: 3, high: 40, low: 40, close: 40, open: 40, volume: 100 },
   ];
-  const cont = vwap(two);
-  const perSession = vwap(two, { sessionKey: (b) => (b.time <= 2 ? 'd1' : 'd2') });
-  ok('continuous VWAP averages across everything', Math.abs(cont[2].value - 23.333) < 0.01, String(cont[2].value));
-  ok('session VWAP resets at the boundary', Math.abs(perSession[2].value - 40) < 1e-9, String(perSession[2].value));
-  ok('VWAP with no volume returns nothing, not a flat line',
-    vwap(two.map((b) => ({ ...b, volume: 0 }))).length === 0);
+  ok('continuous VWAP averages the whole run',
+    Math.abs(vwap(two, {}, {}).plots[0].data[2].value - 23.3333) < 0.001);
+  ok('session VWAP resets at the boundary',
+    Math.abs(vwap(two, {}, { sessionKey: (b) => (b.time <= 2 ? 'd1' : 'd2') }).plots[0].data[2].value - 40) < 1e-9);
+  ok('a zero-volume bar is skipped, not counted at its price',
+    vwap([...two, { time: 4, high: 999, low: 999, close: 999, open: 999, volume: 0 }], {}, {}).plots[0].data.length === 3);
+  ok('no volume at all means no VWAP line',
+    vwap(two.map((b) => ({ ...b, volume: 0 })), {}, {}).plots[0].data.length === 0);
+}
 
-  ok('the registry exposes the implemented three', Object.keys(INDICATORS).sort().join() === 'ema,sma,vwap');
-  ok('every registry entry declares its pane',
+section('8b. session boundaries, including extended hours');
+{
+  // 2026-09-15 ET (UTC-4 in September). Pre-market 08:00, regular 10:00, after-hours 18:00.
+  const at = (h) => Math.floor(Date.UTC(2026, 8, 15, h + 4, 0) / 1000);
+  const key = sessionKeyFor('1D');
+  ok('intraday timeframes get a session key', typeof key === 'function');
+  ok('daily timeframes get none', sessionKeyFor('1Y') === null);
+  ok('pre-market shares the session with the regular open', key({ time: at(8) }) === key({ time: at(10) }));
+  ok('after-hours shares it too', key({ time: at(18) }) === key({ time: at(10) }));
+  ok('the next day is a different session', key({ time: at(10) }) !== key({ time: at(10) + 86400 }));
+
+  // THE EXTENDED-HOURS CASE. With pre-market bars on the chart, VWAP anchors at the first traded
+  // bar of the day — 04:00 — which is what a platform showing extended hours displays.
+  const bars = [
+    { time: at(8), high: 10, low: 10, close: 10, open: 10, volume: 100 },
+    { time: at(10), high: 20, low: 20, close: 20, open: 20, volume: 100 },
+    { time: at(10) + 86400, high: 60, low: 60, close: 60, open: 60, volume: 100 },
+  ];
+  const v = vwap(bars, {}, { sessionKey: key }).plots[0].data;
+  ok('pre-market is included in the session VWAP', Math.abs(v[1].value - 15) < 1e-9, String(v[1].value));
+  ok('the next day starts a fresh anchor', Math.abs(v[2].value - 60) < 1e-9, String(v[2].value));
+}
+
+section('8c. the registry, settings and persistence');
+{
+  for (const id of ['sma', 'ema', 'vwap', 'bollinger', 'rsi', 'macd', 'atr', 'volume'])
+    ok(`${id} is registered`, !!INDICATORS[id]);
+  ok('every entry declares a pane',
     Object.values(INDICATORS).every((i) => i.pane === 'price' || i.pane === 'separate'));
-  ok('every registry entry is callable', Object.values(INDICATORS).every((i) => typeof i.compute === 'function'));
+  ok('every entry is callable', Object.values(INDICATORS).every((i) => typeof i.compute === 'function'));
+  ok('every entry declares its params as data', Object.values(INDICATORS).every((i) => Array.isArray(i.params)));
+  ok('RSI, MACD and ATR take their own pane',
+    ['rsi', 'macd', 'atr'].every((id) => INDICATORS[id].pane === 'separate'));
+  ok('SMA, EMA, VWAP and Bollinger overlay price',
+    ['sma', 'ema', 'vwap', 'bollinger'].every((id) => INDICATORS[id].pane === 'price'));
+
+  ok('defaults come from the declaration', defaultParams('macd').fast === 12);
+  ok('an unknown id yields no defaults', Object.keys(defaultParams('nope')).length === 0);
+
+  // Settings arrive from a text box and from localStorage, so they can be anything at all. `length`
+  // drives loop bounds, which is why this is a correctness check and not a cosmetic one.
+  ok('a string is coerced', sanitizeParams('sma', { length: '30' }).length === 30);
+  ok('a float is rounded for an int param', sanitizeParams('sma', { length: 14.7 }).length === 15);
+  ok('NaN falls back to the default', sanitizeParams('sma', { length: 'abc' }).length === 20);
+  ok('missing falls back to the default', sanitizeParams('sma', {}).length === 20);
+  ok('below the minimum clamps up', sanitizeParams('sma', { length: -5 }).length === 2);
+  ok('above the maximum clamps down', sanitizeParams('sma', { length: 99999 }).length === 400);
+  ok('MACD fast is forced below slow', sanitizeParams('macd', { fast: 30, slow: 26, signal: 9 }).fast === 25);
+
+  ok('the legend names the settings', indicatorLabel('sma', { length: 50 }) === 'SMA 50');
+  ok('a no-param indicator just names itself', indicatorLabel('vwap', {}) === 'VWAP');
+  ok('MACD shows all three', indicatorLabel('macd', { fast: 12, slow: 26, signal: 9 }) === 'MACD 12/26/9');
+
+  // An indicator that throws must never take the chart down with it.
+  ok('a bad id computes to nothing', computeIndicator('nope', [{ close: 1 }], {}, {}).plots.length === 0);
+  ok('empty bars compute to nothing', computeIndicator('sma', [], {}, {}).plots.length === 0);
+  ok('a null bar list is safe', computeIndicator('sma', null, {}, {}).plots.length === 0);
+
   ok('VWAP is offered on intraday', availableIndicators({ intraday: true }).some((i) => i.id === 'vwap'));
-  ok('VWAP is NOT offered on daily', !availableIndicators({ intraday: false }).some((i) => i.id === 'vwap'));
+  ok('VWAP is withheld on daily', !availableIndicators({ intraday: false }).some((i) => i.id === 'vwap'));
+  ok('everything else is offered on both',
+    availableIndicators({ intraday: false }).length === INDICATOR_IDS.length - 1);
+
+  // Colours are theme-resolved, never hard-coded in the registry — the same rule as the palettes.
+  ok('the registry stores colour INDEXES, not hex',
+    Object.values(INDICATORS).every((i) => !i.colors || Object.values(i.colors).every((c) => typeof c === 'number')));
+  ok('both themes define indicator colours',
+    indicatorColors('light').length > 0 && indicatorColors('dark').length > 0);
+  ok('indicator colours differ between themes', indicatorColor('light', 0) !== indicatorColor('dark', 0));
+  ok('an out-of-range index wraps', typeof indicatorColor('light', 99) === 'string');
+  ok('a negative index wraps too', typeof indicatorColor('light', -3) === 'string');
+
+  // Persistence runs in the browser; on the server it must degrade to the default, never throw.
+  ok('loading without a browser returns the default', loadIndicators().length === DEFAULT_ACTIVE.length);
+  ok('saving without a browser is a no-op, not a throw',
+    (() => { try { saveIndicators([{ id: 'sma' }]); return true; } catch { return false; } })());
+  ok('the storage key follows the cp_ convention', /^cp_/.test(STORAGE_KEY));
 }
 
 section('9. the component does not reach past the boundary');

@@ -3,9 +3,12 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from '../../lib/cp-shared';
 import {
   TIMEFRAMES, DEFAULT_TIMEFRAME, timeframe, isIntraday, supportsExtendedHours,
-  barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol,
+  barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol, sessionKeyFor,
 } from '../../lib/chart/chart-source.mjs';
-import { chartOptions, palette, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
+import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
+import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
+import { loadIndicators, saveIndicators } from '../../lib/chart/chart-settings.mjs';
+import IndicatorMenu from './IndicatorMenu';
 
 // CATALYST PIT PRICE CHART — TradingView Lightweight Charts v5, on our own licensed data.
 //
@@ -54,6 +57,11 @@ export default function CPChart({
   const [status, setStatus] = useState('loading');   // loading | ready | empty | error
   const [meta, setMeta] = useState(null);
   const [legend, setLegend] = useState(null);
+  // Saved selections are read once on mount rather than at module scope: localStorage does not exist
+  // during server rendering, and reading it in the initial state would make the first client render
+  // disagree with the server's.
+  const [active, setActive] = useState([]);
+  const [indicatorLegend, setIndicatorLegend] = useState([]);
 
   const hostRef = useRef(null);
   const tipRef = useRef(null);
@@ -61,15 +69,35 @@ export default function CPChart({
   const chartRef = useRef(null);
   const priceRef = useRef(null);
   const volumeRef = useRef(null);
-  const overlaysRef = useRef(new Map());     // indicator id -> ISeriesApi
+  const overlaysRef = useRef([]);            // every indicator series currently on the chart
+  const activeRef = useRef([]);
+  const tfRef = useRef(initialTimeframe);
+  const volumeOnRef = useRef(true);
   const barsRef = useRef([]);
   const kindRef = useRef('daily');
   const themeRef = useRef(theme);
   const typeRef = useRef(chartType);
   themeRef.current = theme;
   typeRef.current = chartType;
+  activeRef.current = active;
+  tfRef.current = tf;
 
   const intraday = isIntraday(tf);
+  const volumeOn = active.some((a) => a.id === 'volume');
+  // Assigned AFTER the const it reads: a `const` is hoisted but not initialised, so touching it
+  // above its declaration is a TDZ throw, not a stale value.
+  volumeOnRef.current = volumeOn;
+
+  // Saved selections, loaded on mount only (see the note on `active` above).
+  useEffect(() => { setActive(loadIndicators()); }, []);
+
+  // Persist whatever the user lands on. Skips the pre-load empty state so a first paint cannot
+  // overwrite a saved set with nothing.
+  const persisted = useRef(false);
+  useEffect(() => {
+    if (!persisted.current) { if (active.length) persisted.current = true; return; }
+    saveIndicators(active);
+  }, [active]);
 
   // ── draw the cached bars in the currently selected shape ──
   const draw = useCallback(() => {
@@ -93,7 +121,9 @@ export default function CPChart({
       : bars.map((b) => ({ time: b.time, value: b.close })));
 
     // VOLUME, on its own invisible scale pinned to the bottom so it never rescales price.
-    const hasVolume = bars.some((b) => Number(b.volume) > 0);
+    // Volume is a toggle in the same menu as everything else; the chart owns the series because it
+    // needs its own pinned scale, but the user's choice decides whether it exists.
+    const hasVolume = volumeOnRef.current && bars.some((b) => Number(b.volume) > 0);
     if (volumeRef.current) { chart.removeSeries(volumeRef.current); volumeRef.current = null; }
     if (hasVolume) {
       volumeRef.current = chart.addSeries(lwc.HistogramSeries, {
@@ -105,8 +135,86 @@ export default function CPChart({
         color: b.close >= b.open ? p.volumeUp : p.volumeDown,
       })));
     }
+    drawIndicators();
     chart.timeScale().fitContent();
-  }, []);
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Draw every active indicator.
+   *
+   * REBUILT WHOLESALE on each call rather than diffed. An indicator's plot count can change with its
+   * settings — Bollinger is three lines, MACD is three plots across two types — so tracking which
+   * series belongs to which plot across a settings change is a bookkeeping problem with no upside.
+   * Series creation is cheap; the expensive thing is the data, and that is already in memory.
+   *
+   * Separate-pane indicators get their own Lightweight Charts v5 pane via the paneIndex argument.
+   * Panes are allocated in order and torn down together, so removing the middle one cannot leave a
+   * hole that the next render draws into.
+   */
+  function drawIndicators() {
+    const chart = chartRef.current, lwc = lwcRef.current;
+    if (!chart || !lwc) return;
+    const bars = barsRef.current;
+    const th = themeRef.current;
+
+    for (const s of overlaysRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
+    overlaysRef.current = [];
+    // Drop the extra panes too, highest index first so the remaining indices stay valid.
+    const panes = chart.panes();
+    for (let i = panes.length - 1; i >= 1; i -= 1) { try { chart.removePane(i); } catch { /* ignore */ } }
+
+    if (!bars.length) return;
+    const ctx = { intraday: kindRef.current === 'intraday', sessionKey: sessionKeyFor(tfRef.current) };
+    let paneIndex = 0;
+    const legendOut = [];
+
+    for (const entry of activeRef.current) {
+      const def = INDICATORS[entry.id];
+      if (!def || def.builtin) continue;                    // volume is the chart's own series
+      if (def.intradayOnly && !ctx.intraday) continue;      // VWAP on a daily chart is meaningless
+      const { plots, guides, scale } = computeIndicator(entry.id, bars, entry.params, ctx);
+      if (!plots.length || plots.every((pl) => !pl.data.length)) continue;
+
+      const separate = def.pane === 'separate';
+      if (separate) paneIndex += 1;
+      const target = separate ? paneIndex : 0;
+
+      for (const plot of plots) {
+        if (!plot.data.length) continue;
+        const color = indicatorColor(th, def.colors?.[plot.key] ?? 0);
+        const series = plot.type === 'histogram'
+          ? chart.addSeries(lwc.HistogramSeries, {
+            color, priceLineVisible: false, lastValueVisible: false,
+            priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
+          }, target)
+          : chart.addSeries(lwc.LineSeries, {
+            color, lineWidth: 1.5, priceLineVisible: false, lastValueVisible: separate,
+            crosshairMarkerVisible: false,
+          }, target);
+        // A signed histogram (MACD) reads as up/down, not as one colour.
+        series.setData(plot.signed
+          ? plot.data.map((d) => ({ ...d, color: d.value >= 0 ? palette(th).volumeUp : palette(th).volumeDown }))
+          : plot.data);
+        overlaysRef.current.push(series);
+      }
+
+      // Reference levels — RSI's 30/50/70, MACD's zero. Attached to the pane's first series so they
+      // move with it, and drawn flat because that is all they are.
+      if (separate && guides?.length && overlaysRef.current.length) {
+        const host = overlaysRef.current[overlaysRef.current.length - plots.filter((pl) => pl.data.length).length];
+        for (const level of guides) {
+          try {
+            host.createPriceLine({ price: level, color: palette(th).grid, lineWidth: 1, lineStyle: 2, axisLabelVisible: true });
+          } catch { /* a guide is decoration; never fail the chart for one */ }
+        }
+      }
+      if (separate && scale) {
+        try { chart.panes()[target]?.setHeight?.(110); } catch { /* optional */ }
+      }
+      legendOut.push({ id: entry.id, label: indicatorLabel(entry.id, entry.params), color: indicatorColor(th, def.colors ? Object.values(def.colors)[0] : 0) });
+    }
+    setIndicatorLegend(legendOut);
+  }
 
   // ── create once; never rebuilt on theme or timeframe change (that would lose zoom/pan) ──
   useEffect(() => {
@@ -213,6 +321,13 @@ export default function CPChart({
 
   useEffect(() => { load(); }, [load]);
 
+  // The indicator set, its settings, or the theme changed: recompute and redraw. Bars are already in
+  // memory, so this never refetches.
+  useEffect(() => {
+    if (!chartRef.current || !barsRef.current.length) return;
+    draw();
+  }, [active, theme, draw]);
+
   // ── polling refresh. There is no stream to subscribe to; see REALTIME in chart-source.mjs ──
   useEffect(() => {
     const ms = refreshIntervalMs(tf);
@@ -244,6 +359,8 @@ export default function CPChart({
           <div style={{ width: 1, height: 16, background: p.border, margin: '0 8px 0 auto', flexShrink: 0 }} />
           {['Candles', 'Line'].map((t) => btn(t, t === chartType, () => setChartType(t)))}
           {canExtend && btn(extended ? 'Ext ✓' : 'Ext', extended, () => setExtended((v) => !v), 'ext')}
+          <div style={{ width: 8, flexShrink: 0 }} />
+          <IndicatorMenu theme={theme} intraday={intraday} active={active} onChange={setActive} />
         </div>
       )}
 
@@ -252,6 +369,15 @@ export default function CPChart({
           never added on top of the parent's — a spacer here double-counted and overflowed the card. */}
       <div style={{ position: 'relative', flex: 1, minHeight: height || 0 }}>
         <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
+
+        {indicatorLegend.length > 0 && status === 'ready' && (
+          <div style={{ position: 'absolute', left: 8, top: legend ? 22 : 6, zIndex: 4, pointerEvents: 'none',
+            fontFamily: "'DM Sans',sans-serif", fontSize: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {indicatorLegend.map((l) => (
+              <span key={l.id} style={{ color: l.color }}>{l.label}</span>
+            ))}
+          </div>
+        )}
 
         {legend && status === 'ready' && (
           <div style={{ position: 'absolute', left: 8, top: 6, zIndex: 4, pointerEvents: 'none',

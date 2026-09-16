@@ -125,6 +125,28 @@ export function normalizeBars(payload, timeframeId) {
   };
 }
 
+// The exchange calendar day, in market time. Every viewer sees the same boundary regardless of where
+// they are, which is the only way a session-anchored figure can agree between two people.
+const ET_DAY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * The session-boundary function for VWAP and anything else that resets each day.
+ *
+ * Returns null for a daily timeframe: a daily bar already spans a whole session, so there is no
+ * boundary to find and a session-anchored indicator is not meaningful.
+ *
+ * The boundary is the ET CALENDAR DAY, not the 09:30 open. When the chart is showing extended hours,
+ * the 04:00 pre-market bars belong to that day's session and are included — which is what a platform
+ * anchored at 04:00 shows. When the chart is showing the regular session, those bars are not in the
+ * data at all, so the same rule anchors at 09:30 without needing a second code path.
+ */
+export function sessionKeyFor(timeframeId) {
+  if (!isIntraday(timeframeId)) return null;
+  return (bar) => (typeof bar.time === 'number' ? ET_DAY.format(new Date(bar.time * 1000)) : String(bar.time));
+}
+
 /**
  * REALTIME.
  *

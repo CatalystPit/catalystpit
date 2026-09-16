@@ -57,6 +57,27 @@ export const CHART_THEMES = {
 export const palette = (theme) => CHART_THEMES[theme === 'dark' ? 'dark' : 'light'];
 
 /**
+ * Indicator line colours, indexed rather than named.
+ *
+ * An indicator declares a colour INDEX, not a hex value, because the chart has two themes and a
+ * colour picked to read on white is unreadable on the dark surface. The registry stays theme-free
+ * and the theme owns the palette, which is the same split as everything else in this folder.
+ *
+ * Chosen to stay distinguishable from the up/down candle colours, so a moving average is never
+ * mistaken for price action.
+ */
+const INDICATOR_COLORS = {
+  light: ['#1A3A78', '#7A5818', '#7B3F98', '#2A7848', '#B4530A', '#0F6E6E'],
+  dark:  ['#6FA8FF', '#E0B84A', '#C08CE0', '#4FB37C', '#F0913F', '#4FC5C5'],
+};
+
+export const indicatorColors = (theme) => INDICATOR_COLORS[theme === 'dark' ? 'dark' : 'light'];
+export const indicatorColor = (theme, index) => {
+  const arr = indicatorColors(theme);
+  return arr[((Number(index) || 0) % arr.length + arr.length) % arr.length];
+};
+
+/**
  * Chart options for a theme, in the shape Lightweight Charts v5 expects.
  *
  * Kept as a pure function of (theme, options) so a theme switch is `chart.applyOptions(chartOptions(next))`
