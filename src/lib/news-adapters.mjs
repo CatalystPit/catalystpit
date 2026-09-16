@@ -64,6 +64,28 @@ const text = (v) => {
   return '';
 };
 
+/**
+ * Like text(), but keeps the line structure a message was written with.
+ *
+ * text() collapses every run of whitespace, newlines included, which is right for a headline and
+ * wrong for a post that was authored in sections. This keeps <br> and paragraph boundaries as real
+ * newlines while still collapsing runs of spaces and tabs WITHIN a line, so nothing gains an
+ * artificial break: a message with no <br> comes back byte-identical to text() on the same input.
+ */
+const multiline = (v) => {
+  if (typeof v !== 'string') return text(v);
+  const withBreaks = v
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, ' ');
+  return decode(withBreaks)
+    .replace(/\r\n?/g, '\n')
+    .replace(/[^\S\n]+/g, ' ')        // spaces and tabs collapse; newlines do not
+    .replace(/ *\n */g, '\n')         // no trailing or leading spaces around a break
+    .replace(/\n{3,}/g, '\n\n')       // at most one blank line between sections
+    .trim();
+};
+
 const absolute = (href, base) => {
   const h = text(href);
   if (!h) return '';
@@ -179,15 +201,26 @@ function telegramAdapter(body, feed) {
     const post = m[1], chunk = m[2];
     const tm = chunk.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/);
     if (!tm) continue;
-    const title = text(tm[1].replace(/<br\s*\/?>/gi, ' ').replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1'));
+    const inner = tm[1].replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, '$1');
+    // `title` is produced EXACTLY as before — flat, <br> to a space. Everything derived from it is
+    // therefore byte-identical: content_hash, norm_hash, entity, the fact signature, the display
+    // headline, Pit Wire and the whole X pipeline. Nothing about selection or dedupe moves.
+    const title = text(inner.replace(/<br\s*\/?>/gi, ' '));
+    // `sourceTitle` is the same line with its structure intact, which normalize() records as
+    // source_headline — "the source's exact words, permanently". Telegram renders every line break
+    // as <br/>, and flattening them turned Walter's structured WHAT TO WATCH TODAY posts into a wall
+    // of text on Facebook. A post with no <br> yields a string identical to `title`, so ordinary
+    // one-line flashes are untouched.
+    const sourceTitle = multiline(inner);
     const dm = chunk.match(/<time[^>]+datetime="([^"]+)"/);
     if (!title) continue;
     out.push({
       title,
+      sourceTitle,
       url: `https://t.me/${post}`,
       uid: post,
       publishedAt: parseDate(dm?.[1]),
-      summary: null,                  // a channel post is a single line; there is no separate body
+      summary: null,                  // no separate body: a channel post is one message, structure and all
       tickers: [],                    // never inferred here
     });
   }
