@@ -36,12 +36,42 @@ const RULES = [
 // company. Everything else is structurally a different instrument.
 export const RANKABLE = new Set(['common', 'adr']);
 
+/**
+ * Convertible-debt shorthand, matched as a WHOLE class string and nothing else.
+ *
+ * None of these matches any rule below — "SDBCV" contains no word the regexes look for — so they
+ * reached classifyWithFallback, which assigns the TICKER's Polygon asset_type to the position. The
+ * ticker is a stock, so a convertible NOTE was classified as common, and its shares column is face
+ * value: SiTime's note CUSIP 82982TAA4 contributed 534M "shares" against 30M outstanding and put
+ * SITM's institutional ownership at 1,901%. Across the book this family was 989 spellings on 344
+ * CUSIPs, affecting 240 tickers.
+ *
+ * EXACT, WHOLE-STRING, CASE-INSENSITIVE. Substring matching would be unsafe — "CV" inside "CVS" is a
+ * pharmacy — and a broader majority/dominant-class rule was measured and rejected: it would have
+ * reclassified 476,895 holdings and promoted 178,267 derivative rows into share counts, because one
+ * CUSIP legitimately carries both its shares and the options written against it.
+ *
+ * "CONVERTIBLE" alone is deliberately absent. It is the one spelling that also appears on a
+ * convertible PREFERRED (Wells Fargo 949746804, "Perp Pfd Cnv A"), and preferred is a different
+ * exclusion with a different meaning. Ambiguous shorthand stays out.
+ */
+export const CONVERTIBLE_DEBT_CLS = new Set([
+  'SDBCV', 'CONV', 'CNV', 'CONB', 'CCB', 'BND', 'CV', 'CVSR', 'DEBT',
+  'CONVDEBT', 'CVDEBT', 'CONV NT', 'CONVERTIBLE DEBT', 'SOVEREIGN/CORPORATE',
+]);
+export const isConvertibleDebtClass = (cls) =>
+  CONVERTIBLE_DEBT_CLS.has(String(cls || '').trim().toUpperCase());
+
 export function classifySecurity({ cls, putCall, cusip }) {
   if (putCall && String(putCall).trim() !== '') {
     return { kind: 'option', source: 'put_call', confidence: 'high', evidence: String(putCall) };
   }
   const text = String(cls || '').trim();
   if (!text) return { kind: 'unknown', source: 'none', confidence: 'none', evidence: '' };
+  // Before the regexes AND before the asset_type fallback, which is what misread these as equity.
+  if (isConvertibleDebtClass(text)) {
+    return { kind: 'debt', source: 'class_text', confidence: 'high', evidence: text.slice(0, 60) };
+  }
   for (const [kind, re] of RULES) {
     if (re.test(text)) return { kind, source: 'class_text', confidence: 'high', evidence: text.slice(0, 60) };
   }

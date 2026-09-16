@@ -10,6 +10,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { neon } from '@neondatabase/serverless';
+import { classifySecurity, CONVERTIBLE_DEBT_CLS, isConvertibleDebtClass } from '../src/lib/security-class.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -17,6 +18,47 @@ const ok = (name, cond, detail = '') => {
 };
 const section = (s) => console.log('\n' + s);
 const n = (x) => Number(x).toLocaleString('en-US');
+
+section('0. convertible-debt shorthand is classified as debt, and nothing else is');
+{
+  const k = (cls) => classifySecurity({ cls, putCall: '', cusip: '12345AB78' }).kind;
+  // The approved family. None of these matches any class regex, so before the fix they fell through
+  // to the asset_type fallback and inherited the TICKER's "Stock" — a note classified as common,
+  // with face value counted as shares.
+  for (const c of ['SDBCV', 'CV', 'CONV', 'CONVDEBT', 'CVDEBT', 'DEBT', 'CONV NT', 'CVSR',
+    'CNV', 'CONB', 'BND', 'CCB', 'Convertible Debt', 'Sovereign/Corporate'])
+    ok(`${JSON.stringify(c)} -> debt`, k(c) === 'debt', k(c));
+  ok('matching is case-insensitive', k('sdbcv') === 'debt' && k('ConV') === 'debt');
+  ok('surrounding whitespace is tolerated', k('  CONV  ') === 'debt');
+
+  // DELIBERATELY ABSENT. "Convertible" alone also names a convertible PREFERRED (Wells Fargo
+  // 949746804, "Perp Pfd Cnv A"), which is a different exclusion with a different meaning.
+  ok('"Convertible" alone is NOT swept in', k('Convertible') !== 'debt', k('Convertible'));
+  ok('a convertible preferred is still preferred', k('Perp Pfd Cnv A') === 'preferred');
+
+  // WHOLE-STRING ONLY. Substring matching would make a pharmacy a bond.
+  for (const c of ['CVS', 'CONVEY', 'BNDX', 'CCBG', 'DEBTORS', 'CV HOLDINGS'])
+    ok(`${JSON.stringify(c)} is not swept in by substring`, k(c) !== 'debt', k(c));
+
+  // Every other security type keeps its existing classification.
+  for (const [c, want] of [['COM', 'common'], ['COMMON', 'common'], ['SHS', 'common'],
+    ['CL A', 'common'], ['ORD', 'common'], ['SH BEN INT', 'common'], ['COM NEW', 'common'],
+    ['ADR', 'adr'], ['ADS', 'adr'], ['ETF', 'etf_fund'], ['FUND', 'etf_fund'],
+    ['UNIT SER 1', 'unit'], ['WARRANT', 'warrant'], ['WT', 'warrant'], ['RIGHT', 'right'],
+    ['RT', 'right'], ['PFD', 'preferred'], ['PREFERRED', 'preferred'],
+    ['PUT', 'option'], ['CALL', 'option']])
+    ok(`${JSON.stringify(c)} stays ${want}`, k(c) === want, k(c));
+  ok('an explicit put_call still wins outright',
+    classifySecurity({ cls: 'COM', putCall: 'Call', cusip: 'X' }).kind === 'option');
+
+  ok('the family is a Set of exact strings', CONVERTIBLE_DEBT_CLS instanceof Set && CONVERTIBLE_DEBT_CLS.size >= 14);
+  ok('the helper agrees with the classifier', isConvertibleDebtClass('sdbcv') && !isConvertibleDebtClass('CVS'));
+
+  const src = await readFile(new URL('../src/lib/security-class.mjs', import.meta.url), 'utf8');
+  ok('NO global dominant/majority-class rule was introduced',
+    !/dominant|majority/i.test(src.replace(/^\s*(\/\/|\*).*$/gm, '')),
+    'a dominant-class rule was measured at 476,895 reclassified holdings and rejected');
+}
 
 section('1. the aggregate applies the proven semantics');
 {

@@ -26,6 +26,8 @@ const e = (label, category, col, options, extra = {}) => ({ label, category, typ
 //                    earnings DATE from filing cadence, not EPS. peg depends on forwardPe.
 //   pCash            screener_fundamentals.cash is present in the schema and 0 non-null across all
 //                    4,069 rows — the ingestion never populates it.
+//   perf5y           Polygon returns 403 for dates 5 years back on this plan (grouped endpoint),
+//                    and only 4 of 17,643 tickers have 5y of our own stored candles. 0 rows populated.
 //   insiderOwnPct    derivable in shape from insider_trades.shares_owned_after, but not reliably:
 //                    validated against known values it gives NVDA 0.30% (real ~4%), TSLA 0.07%
 //                    (real ~13%) and META 0.00% (real ~13%), because Form 4 only shows owners who
@@ -122,7 +124,6 @@ export const FILTERS = {
   perfYtd:   r('Perf YTD', 'Performance', 'perfYtd', { unit: '%' }),
   perf1y:    r('Perf 1Y', 'Performance', 'perf1y', { unit: '%', available: true }),
   perf3y:    r('Perf 3Y', 'Performance', 'perf3y', { unit: '%' }),
-  perf5y:    r('Perf 5Y', 'Performance', 'perf5y', { unit: '%' }),
 
   // ══ OWNERSHIP / SMART MONEY (◆ Catalyst Pit proprietary) ══
   consensusScore:  r('Convergence ≥', 'Ownership', 'consensusScore', { pit: true, available: true }),
@@ -186,7 +187,7 @@ const OPTS = {
   marketCap: MCAP, price: PRICE, volume: VOLP, avgVol: VOLP, relVol: RELVOL, relVolT: RELVOL,
   floatShares: FLOATO, sharesOut: FLOATO, shortFloat: SHORTF, daysToCover: DTC, dividendYield: DIVY, beta: BETAO,
   rsi14: RSIO, near52wHigh: NEARO, near52wLow: NEARO,
-  changePct: PERF, perf1w: PERF, perf1m: PERF, perf3m: PERF, perf6m: PERF, perfYtd: PERF, perf1y: PERF, perf3y: PERF, perf5y: PERF,
+  changePct: PERF, perf1w: PERF, perf1m: PERF, perf3m: PERF, perf6m: PERF, perfYtd: PERF, perf1y: PERF, perf3y: PERF,
   pe: RATIO_LOW, ps: RATIO_LOW, pb: RATIO_LOW, pFcf: RATIO_LOW, evEbitda: RATIO_LOW, evSales: RATIO_LOW,
   epsGrowthTtm: PCT_POS, revGrowthTtm: PCT_POS, epsGrowthThisYr: PCT_POS, epsGrowthNextYr: PCT_POS, epsGrowth3y: PCT_POS, epsGrowth5y: PCT_POS, epsGrowthNext5y: PCT_POS, epsGrowthQoq: PCT_POS, salesGrowthQoq: PCT_POS, salesGrowth3y: PCT_POS, salesGrowth5y: PCT_POS,
   roe: PCT_POS, roa: PCT_POS, roic: PCT_POS, grossMargin: PCT_POS, operMargin: PCT_POS, netMargin: PCT_POS, payoutRatio: PCT_POS,
@@ -212,7 +213,7 @@ for (const k of ['pe', 'ps', 'pb', 'evEbitda', 'evSales', 'roe', 'roa', 'operMar
   if (FILTERS[k]) FILTERS[k].available = true;
 }
 // Polygon-computed quote/technical extras (2026-09-09).
-for (const k of ['dividendYield', 'beta', 'volatility', 'changeFromOpen', 'gap', 'high20d', 'high50d', 'allTimeHigh', 'perfYtd', 'perf3y', 'perf5y']) {
+for (const k of ['dividendYield', 'beta', 'volatility', 'changeFromOpen', 'gap', 'high20d', 'high50d', 'allTimeHigh', 'perfYtd', 'perf3y']) {
   if (FILTERS[k]) FILTERS[k].available = true;
 }
 // Additional Polygon-computable fundamentals + curated/news filters (2026-09-09).
