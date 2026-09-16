@@ -263,13 +263,43 @@ export async function queueRewordedFacebook({ limit = 20 } = {}) {
      limit ${Math.max(1, Math.min(100, limit))}`)).rows ?? [];
 
   let queued = 0;
+  const skipped = [];
   for (const r of rows) {
     // Through the SAME eligibility and the SAME text builder as every other post. This function
     // decides only WHICH rows to reconsider, never whether they may publish or what they say.
     const res = await queueFacebookPost({ ...r, _seq: r.seq }, { isNew: true, isCanonical: true });
-    if (res.queued) queued += 1;
+    if (res.queued) queued += 1; else skipped.push(res.reason);
   }
-  return { queued, examined: rows.length };
+  const out = { queued, examined: rows.length, skipped };
+  // A HEARTBEAT, because this runs on a schedule inside a serverless function and its absence is
+  // otherwise indistinguishable from its silence. Writing the outcome where the operator can already
+  // read feed health means "did the scan run at all?" is answerable without shipping a log reader.
+  // Never allowed to fail the scan.
+  await recordRewordedScan(out).catch(() => {});
+  return out;
+}
+
+/** Record that the scan THREW, so a swallowed error is still visible. Best effort. */
+export async function recordRewordedScanError(message) {
+  await db.execute(sql`
+    insert into feed_state (feed_key, last_polled_at, last_status, consecutive_failures, note)
+    values ('_facebook_reworded', now(), 500, 1, ${'ERROR: ' + String(message).slice(0, 280)})
+    on conflict (feed_key) do update
+       set last_polled_at = now(), last_status = 500,
+           consecutive_failures = feed_state.consecutive_failures + 1,
+           note = ${'ERROR: ' + String(message).slice(0, 280)}`);
+}
+
+/** Store the last reworded-scan outcome alongside the feed health rows. Best effort. */
+async function recordRewordedScan({ queued, examined, skipped }) {
+  const note = `examined ${examined}, queued ${queued}`
+    + (skipped.length ? `, skipped: ${[...new Set(skipped)].join(' | ')}` : '');
+  await db.execute(sql`
+    insert into feed_state (feed_key, last_polled_at, last_success_at, last_status, events_seen, note)
+    values ('_facebook_reworded', now(), now(), 200, ${examined}::int, ${note.slice(0, 300)})
+    on conflict (feed_key) do update
+       set last_polled_at = now(), last_success_at = now(), last_status = 200,
+           events_seen = ${examined}::int, note = ${note.slice(0, 300)}`);
 }
 
 /** Drain the queue. Bounded per run and age-limited; publishes nothing when the switch is off. */

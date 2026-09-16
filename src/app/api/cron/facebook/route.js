@@ -54,7 +54,16 @@ export async function GET(request) {
     // kill switch. A failure here must never stop the drain, so it is reported and stepped over.
     let reworded = null;
     try { reworded = await queueRewordedFacebook(); }
-    catch (e) { console.error('[facebook] reworded queue failed:', String(e?.message || e).slice(0, 120)); }
+    catch (e) {
+      // Recorded where it can be READ. A swallowed error here is invisible otherwise: the drain
+      // carries on, the run reports 200, and the only symptom is a source that never posts.
+      reworded = { error: String(e?.message || e).slice(0, 200) };
+      console.error('[facebook] reworded queue failed:', reworded.error);
+      try {
+        const { recordRewordedScanError } = await import('../../../../lib/facebook-publisher');
+        await recordRewordedScanError(reworded.error);
+      } catch { /* diagnostics must never fail the run */ }
+    }
 
     const res = await publishPendingFacebook();
     if (res.sent) console.log(`[facebook] published ${res.sent}`);
