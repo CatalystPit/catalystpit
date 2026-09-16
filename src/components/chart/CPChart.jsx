@@ -532,8 +532,11 @@ export default function CPChart({
               a permanent "Candlestick" in the toolbar spends horizontal room on something the user
               picked and can already see in the chart, and it would grow again with every longer name
               added later. The name belongs in the menu, where it is read; the tooltip carries the
-              purpose on hover. */}
-          <Dropdown theme={theme} width={170}
+              purpose on hover.
+
+              The menu itself is a portalled popover anchored under this icon (ChartUI's Popover), so
+              it overlays the chart and is clipped by the window rather than by the Terminal panel. */}
+          <Dropdown theme={theme} width={180} menuLabel="Chart type"
             title={`Chart type — ${chartTypeOf(chartType).label}`}
             label={<VectorIcon shapes={chartTypeOf(chartType).shapes} glyph={chartTypeOf(chartType).glyph} />}>
             {CHART_TYPES.map((t) => (

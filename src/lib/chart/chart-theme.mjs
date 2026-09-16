@@ -34,6 +34,10 @@ export const CHART_THEMES = {
     areaBottom: 'rgba(30,92,56,0)',
     tooltipBg: '#FFFFFF',
     tooltipBorder: '#E0E2DC',
+    // Menu row states. `grid` is deliberately near-invisible (it is a chart gridline) and cannot
+    // carry "this row is selected", so the menus get their own two values.
+    menuHover: 'rgba(0,0,0,0.055)',
+    menuActive: 'rgba(30,92,56,0.10)',
   },
   dark: {
     background: '#0E1512',
@@ -51,6 +55,8 @@ export const CHART_THEMES = {
     areaBottom: 'rgba(79,179,124,0)',
     tooltipBg: '#141C18',
     tooltipBorder: '#243029',
+    menuHover: 'rgba(255,255,255,0.07)',
+    menuActive: 'rgba(79,179,124,0.14)',
   },
 };
 

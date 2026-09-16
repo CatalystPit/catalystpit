@@ -31,6 +31,7 @@ import { loadView, saveView, DEFAULT_VIEW, VIEW_STORAGE_KEY } from '../src/lib/c
 import { CHART_TYPES, CHART_TYPE_IDS, chartTypeOf, PLANNED_CHART_TYPES } from '../src/lib/chart/chart-types.mjs';
 import { INDICATOR_CATEGORIES, indicatorMeta, searchIndicators } from '../src/lib/chart/chart-indicators.mjs';
 import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../src/lib/chart/chart-drawings.mjs';
+import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -744,8 +745,10 @@ section('16. drawing tools are grouped into categories on a left rail');
   ok('the rail renders categories, not every tool', /activeCategories\(\)/.test(rail));
   ok('...so it is not one button per tool', !/Object\.values\(TOOLS\)\.map/.test(rail));
   ok('a category remembers the last tool picked from it', /lastOf/.test(rail));
-  ok('a category with several tools gets a dropdown arrow',
-    /cat\.tools\.filter\(\(t\) => TOOLS\[t\]\)\.length > 1/.test(rail));
+  // Only a category holding more than one REAL tool gets the ▸; a category whose extra tools are
+  // still just roadmap entries must not grow an arrow that opens a one-row menu.
+  ok('a category counts only tools that exist', /cat\.tools\.filter\(\(t\) => TOOLS\[t\]\)/.test(rail));
+  ok('a category with several tools gets a dropdown arrow', /\{tools\.length > 1 && \(/.test(rail));
   ok('there is a select/edit mode', /Select \/ edit/.test(rail));
   ok('hide, delete and clear live on the rail',
     /Hide all drawings/.test(rail) && /Delete selected/.test(rail) && /Clear all/.test(rail));
@@ -838,6 +841,156 @@ if (!process.env.POLYGON_API_KEY && !process.env.POLYGON_KEY) {
   // A shared cache key would serve one session's bars for the other.
   ok('the cache key separates the two sessions', /:ext' : ''/.test(route));
   ok('the payload says which session it is', /source: 'polygon', session/.test(route));
+}
+
+section('18. menus overlay the chart and are never clipped by the Terminal panel');
+{
+  // ── the invariant, across every panel size a user can drag to ──────────────────────────────
+  // The bug being fixed: the chart sits in an `overflow: hidden` Terminal panel, so a menu placed
+  // inside the chart got cut off — mid-row in a small panel, entirely in a very small one. The
+  // menus are now portalled and placed against the WINDOW, so the property to prove is not a
+  // particular top/left but that THE WHOLE MENU FITS ON SCREEN, whatever the panel is doing.
+  const VIEWPORTS = [
+    { width: 1920, height: 1080 }, { width: 1440, height: 900 }, { width: 1280, height: 800 },
+    { width: 1024, height: 768 }, { width: 820, height: 1180 }, { width: 430, height: 932 },
+    { width: 390, height: 844 },
+  ];
+  const PANELS = [[1200, 700], [640, 420], [420, 300], [300, 220], [260, 180], [200, 150]];
+  const MENUS = [
+    { placement: 'bottom-start', width: 180 },   // chart type
+    { placement: 'bottom-end', width: 186 },     // chart settings
+    { placement: 'right-start', width: 182 },    // rail flyouts
+    { placement: 'right-start', width: 186 },    // drawing style
+  ];
+
+  let cases = 0, escaped = 0, degenerate = 0, worst = null;
+  for (const vp of VIEWPORTS) {
+    for (const [pwRaw, phRaw] of PANELS) {
+      const pw = Math.min(pwRaw, vp.width), ph = Math.min(phRaw, vp.height);
+      // Panels flush to each edge and centred: a panel jammed into the bottom-right corner is the
+      // case that used to clip, because the menu opened downward into nothing.
+      const spots = [
+        [0, 0], [vp.width - pw, 0], [0, vp.height - ph], [vp.width - pw, vp.height - ph],
+        [Math.round((vp.width - pw) / 2), Math.round((vp.height - ph) / 2)],
+      ];
+      for (const [px, py] of spots) {
+        for (const menu of MENUS) {
+          // Toolbar icons sit along the panel's top; rail icons down its left edge.
+          const isRail = menu.placement === 'right-start';
+          const x = isRail ? px + 4 : px + Math.min(pw - 30, 120);
+          const y = isRail ? py + Math.min(ph - 30, 90) : py + 6;
+          const rect = { left: x, top: y, right: x + 26, bottom: y + 26 };
+          const pos = placeFor(rect, menu.placement, { width: menu.width, maxHeight: 360, viewport: vp });
+          const box = boxOf(pos, vp);
+          cases += 1;
+          const fits = box.left >= EDGE - 0.5 && box.top >= EDGE - 0.5
+            && box.right <= vp.width - EDGE + 0.5 && box.bottom <= vp.height - EDGE + 0.5;
+          if (!fits && !worst) worst = { vp, panel: [pw, ph], spot: [px, py], menu, box };
+          if (!fits) escaped += 1;
+          if (!(pos.width > 0 && pos.maxHeight > 0)) degenerate += 1;
+        }
+      }
+    }
+  }
+  ok('the placement grid is actually large', cases >= 600, String(cases));
+  ok('no menu escapes the window at any panel size', escaped === 0,
+    worst ? `${escaped}/${cases}, e.g. ${JSON.stringify(worst)}` : '');
+  ok('no menu is placed with zero width or height', degenerate === 0, String(degenerate));
+
+  // ── the specific placements, so "it fits" is not satisfied by dumping everything at 6,6 ─────
+  const big = { width: 1440, height: 900 };
+  const mid = { left: 400, top: 300, right: 426, bottom: 326 };
+  const under = placeFor(mid, 'bottom-start', { width: 180, gap: 4, viewport: big });
+  ok('a dropdown opens DIRECTLY BELOW its control', under.top === mid.bottom + 4);
+  ok('...and is left-aligned to it', under.left === mid.left);
+  ok('...at the width asked for', under.width === 180);
+
+  const low = { left: 400, top: 860, right: 426, bottom: 886 };
+  const flipped = placeFor(low, 'bottom-start', { width: 180, gap: 4, viewport: big });
+  ok('a dropdown near the bottom flips above the control', flipped.bottom != null && flipped.top == null);
+  ok('...anchored to the control, not to the window', flipped.bottom === big.height - low.top + 4);
+
+  const far = { left: 1400, top: 40, right: 1426, bottom: 66 };
+  ok('a dropdown near the right edge is pulled inward',
+    placeFor(far, 'bottom-start', { width: 180, viewport: big }).left === big.width - 180 - EDGE);
+  ok('...and bottom-end hangs from the control right edge',
+    placeFor(mid, 'bottom-end', { width: 180, viewport: big }).left === mid.right - 180);
+
+  const rail = { left: 30, top: 300, right: 56, bottom: 326 };
+  const fly = placeFor(rail, 'right-start', { width: 182, gap: 6, viewport: big });
+  ok('a rail flyout opens BESIDE its icon', fly.left === rail.right + 6);
+  ok('...aligned to the icon top', fly.top === rail.top);
+  const railRight = { left: 1390, top: 300, right: 1416, bottom: 326 };
+  ok('a rail flyout with no room on the right flips to the left',
+    placeFor(railRight, 'right-start', { width: 182, gap: 6, viewport: big }).right
+      === big.width - railRight.left + 6);
+
+  // A window narrower than the menu itself: the menu shrinks rather than hanging off the side.
+  const tiny = { width: 320, height: 480 };
+  const squeezed = placeFor({ left: 200, top: 40, right: 226, bottom: 66 }, 'bottom-start',
+    { width: 400, viewport: tiny });
+  ok('a menu wider than the window is narrowed to fit', squeezed.width === tiny.width - EDGE * 2);
+  ok('...and still starts inside the window', squeezed.left === EDGE);
+  ok('a flipped menu never gets a useless height', flipped.maxHeight >= Math.min(MIN_PANEL, 360));
+
+  // ── the components actually use it ──────────────────────────────────────────────────────────
+  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  // Scoped to each component's own body: a file-wide search for `createPortal` is satisfied by the
+  // Modal even when the Popover has stopped portalling, which is the case that actually clips.
+  const bodyOf = (name, next) => ui.slice(ui.indexOf(`export function ${name}`), ui.indexOf(`export function ${next}`));
+  const popoverBody = bodyOf('Popover', 'useDismiss');
+  const itemBody = bodyOf('MenuItem', 'Modal');
+  const buttonBody = bodyOf('ToolButton', 'Dropdown');
+  ok('the popover bodies were located', popoverBody.length > 400 && itemBody.length > 300 && buttonBody.length > 300);
+  ok('menus are portalled out of the panel', /createPortal\(/.test(popoverBody));
+  ok('...to the document body, escaping every overflow', /document\.body,\s*\n\s*\);/.test(popoverBody));
+  ok('...and positioned against the viewport', /position: 'fixed'/.test(ui));
+  ok('the popover uses the shared placement module', /placeFor\(a\.getBoundingClientRect\(\)/.test(ui));
+  ok('it follows its trigger when an ancestor scrolls',
+    /addEventListener\('scroll', place, true\)/.test(ui));
+  ok('...and when the panel is resized by drag', /new ResizeObserver\(place\)/.test(ui));
+  ok('an outside click closes it', /addEventListener\('mousedown', onDown\)/.test(ui));
+  ok('Escape closes it', /e\.key !== 'Escape'/.test(ui));
+  ok('...the innermost one only, so nested menus peel', /openPanels\[openPanels\.length - 1\]/.test(ui));
+  ok('a click in a menu opened from another does not close the parent',
+    /hit !== -1 && hit >= mine/.test(ui));
+  ok('the trigger stays clickable to toggle its own menu',
+    /anchorRef\.current\?\.contains\(e\.target\)\) return/.test(ui));
+  ok('picking a row closes the menu', /data-close-on-pick/.test(ui));
+  ok('menu rows have a hover state', /hover && !disabled \? p\.menuHover/.test(itemBody));
+  ok('toolbar buttons have one too', /hover && !disabled \? p\.menuHover/.test(buttonBody));
+  ok('the selected row is tinted', /active \? p\.menuActive/.test(itemBody));
+  ok('...carries an accent bar', /background: p\.up \}\} \/>/.test(itemBody));
+  ok('...and is announced to a screen reader', /aria-checked=/.test(itemBody));
+  ok('the modal is portalled too', ui.slice(ui.indexOf('export function Modal')).includes('createPortal'));
+
+  // Nothing in the chart may go back to an in-panel absolute menu: that is the clipped design.
+  for (const f of ['CPChart', 'ChartMenu', 'DrawingRail', 'ChartUI', 'IndicatorBrowser']) {
+    const src = await readFile(new URL(`../src/components/chart/${f}.jsx`, import.meta.url), 'utf8');
+    const menus = src.split('\n').filter((l) => /position: 'absolute'/.test(l) && /zIndex: [23]\d\b/.test(l));
+    ok(`${f} has no panel-clipped absolute menu left`, menus.length === 0, menus[0]?.trim());
+  }
+
+  const rail2 = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
+  ok('every rail menu is a shared Popover', (rail2.match(/<Popover/g) || []).length >= 2);
+  // BOTH side flyouts open beside the icon — the category menu and the style panel — and exactly one
+  // menu hangs below: the collapsed rail's own button, which is a toolbar control, not a flyout.
+  // Counted absolutely, because a relative count stays balanced when one flips to the other.
+  const sideCount = (rail2.match(/placement="right-start"/g) || []).length;
+  const belowCount = (rail2.match(/placement="bottom-start"/g) || []).length;
+  ok('both rail flyouts open beside their icon', sideCount === 2, `${sideCount} right-start`);
+  ok('...and only the collapsed rail button opens below', belowCount === 1, `${belowCount} bottom-start`);
+  ok('...and the category flyout is one of them',
+    /placement="right-start" gap=\{6\} width=\{182\}/.test(rail2));
+  ok('...as is the style panel', /placement="right-start" gap=\{6\} width=\{186\}/.test(rail2));
+  ok('the flyout is anchored to the whole button group, so ▸ toggles it',
+    /<div key=\{cat\.id\} ref=\{ref\}/.test(rail2));
+
+  const cmp2 = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  ok('the chart-type menu is the shared dropdown, so it is portalled too',
+    /<Dropdown theme=\{theme\} width=\{180\} menuLabel="Chart type"/.test(cmp2));
+  const menu2 = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  ok('the settings menu is too', /from '\.\/ChartUI'/.test(menu2) && !/position: 'absolute'/.test(menu2));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

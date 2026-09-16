@@ -1,18 +1,151 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { palette } from '../../lib/chart/chart-theme.mjs';
+// Placement is pure geometry and lives in .mjs so every panel size can be tested in node.
+import { placeFor } from '../../lib/chart/chart-popover.mjs';
 
 // Shared chart UI primitives.
 //
-// Every menu, dropdown and modal on the chart is built from these three, so dismissal, focus and
+// Every menu, flyout and modal on the chart is built from these, so dismissal, focus, placement and
 // theming behave identically everywhere and adding the next menu is a call rather than another
 // hand-rolled popover with its own subtly different Escape handling.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// WHY EVERY MENU IS PORTALLED TO document.body
+//
+// The chart lives inside a Terminal panel, and that panel is `overflow: hidden` with a rounded
+// border — on the panel shell AND again on its content area (see TerminalClient). An absolutely
+// positioned menu inside the chart is therefore CLIPPED BY THE PANEL: in a small or freshly resized
+// panel the chart-type menu was cut off mid-row, or disappeared entirely, because the panel's box
+// ended before the menu did. `position: fixed` alone does not save it either — a fixed child is
+// still clipped once an ancestor establishes a containing block, and these panels are drag-placed.
+//
+// So the panel is escaped entirely: menus render into document.body through a portal and position
+// themselves in VIEWPORT coordinates taken from the trigger's bounding rect, then re-measure on
+// scroll, on resize and on any change to the trigger. They stay visually pinned to their icon while
+// being clipped by nothing but the window.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+// Above the fullscreen chart (200) and anything the Terminal panels use, matching the convention the
+// Insiders and Institutions portals already established in this codebase.
+const POPOVER_Z = 2147482000;
+const MODAL_Z = 2147482600;
+// useLayoutEffect warns during SSR; placement must still run pre-paint in the browser so a menu
+// never appears at 0,0 for a frame.
+const useIsoLayout = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+/**
+ * Open popover panels, innermost last.
+ *
+ * NESTED MENUS NEED THIS. In a narrow panel the rail collapses to one button whose menu contains the
+ * category buttons, and a category flyout opens FROM inside that menu. Both are portalled to
+ * document.body, so they are DOM siblings: a click in the flyout looks like an outside click to the
+ * menu that spawned it, and the parent would slam shut underneath the child. Comparing stack
+ * positions instead of DOM ancestry fixes it — a click inside any popover opened at or after mine is
+ * not "outside" me. Escape likewise closes only the topmost.
+ */
+const openPanels = [];
+
+/**
+ * A floating panel anchored to a trigger element, rendered through a portal.
+ *
+ * Controlled: the caller owns `open`, so a trigger can be anything — a plain button, a button with
+ * its own sub-button, a rail icon. Dismissal (outside click, Escape) is handled here so it behaves
+ * identically everywhere; the anchor is excluded from "outside" so its own click still toggles.
+ */
+export function Popover({
+  anchorRef, open, onClose, theme, children,
+  placement = 'bottom-start', gap = 4, width = 200, maxHeight = 360, label,
+}) {
+  const [pos, setPos] = useState(null);
+  const panelRef = useRef(null);
+  const p = palette(theme);
+
+  const place = useCallback(() => {
+    const a = anchorRef.current;
+    if (!a) return;
+    setPos(placeFor(a.getBoundingClientRect(), placement, { gap, width, maxHeight }));
+  }, [anchorRef, placement, gap, width, maxHeight]);
+
+  useIsoLayout(() => { if (open) place(); else setPos(null); }, [open, place]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    // Capture phase, so this catches scrolling of ANY ancestor container and not just the window —
+    // a Terminal panel body scrolls, and the menu has to follow its icon when it does.
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    // A panel is also resized by dragging its corner, which moves the icon without firing either.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
+    if (ro) {
+      if (anchorRef.current) ro.observe(anchorRef.current);
+      if (document.body) ro.observe(document.body);
+    }
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+      if (ro) ro.disconnect();
+    };
+  }, [open, place, anchorRef]);
+
+  // Join the stack while open, leave on close — order of open, not order in the DOM.
+  useEffect(() => {
+    if (!open) return undefined;
+    const el = panelRef.current;
+    if (el) openPanels.push(el);
+    return () => { const i = openPanels.indexOf(el); if (i !== -1) openPanels.splice(i, 1); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (anchorRef.current?.contains(e.target)) return;   // the trigger toggles itself
+      const mine = openPanels.indexOf(panelRef.current);
+      const hit = openPanels.findIndex((el) => el.contains(e.target));
+      if (hit !== -1 && hit >= mine) return;               // inside me, or inside a menu I spawned
+      onClose();
+    };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      // Only the innermost menu closes, so Escape peels one layer at a time.
+      if (openPanels.length && openPanels[openPanels.length - 1] !== panelRef.current) return;
+      e.stopPropagation();
+      onClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open, onClose, anchorRef]);
+
+  // NOTHING RENDERS UNTIL IT HAS BEEN PLACED. `place` runs in a layout effect, so the positioned
+  // render still happens before paint and there is no visible jump — while a panel whose anchor is
+  // missing (the style flyout can be opened by selecting a drawing while the collapsed rail's menu
+  // is shut) is simply not mounted, rather than stranded off-screen swallowing the next Escape.
+  if (!open || !pos || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div ref={panelRef} role="menu" aria-label={label}
+      // A row marked data-close-on-pick shuts the menu, so picking a chart type applies AND closes in
+      // one click without every menu having to wire that up itself.
+      onClick={(e) => { if (e.target.closest?.('[data-close-on-pick]')) onClose(); }}
+      style={{
+        position: 'fixed',
+        top: pos.top, left: pos.left, right: pos.right, bottom: pos.bottom,
+        width: pos.width, maxHeight: pos.maxHeight,
+        zIndex: POPOVER_Z, overflowY: 'auto', overflowX: 'hidden',
+        background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, borderRadius: 8,
+        boxShadow: '0 10px 32px rgba(0,0,0,0.26)', padding: 4,
+      }}>{children}</div>,
+    document.body,
+  );
+}
 
 /**
  * Close on an outside click or Escape.
  *
  * Both, always. A popover that can only be dismissed by clicking its own trigger is a trap, and one
- * that ignores Escape is unusable from the keyboard.
+ * that ignores Escape is unusable from the keyboard. Kept for panels that are not `Popover`s.
  */
 export function useDismiss(open, onClose) {
   const ref = useRef(null);
@@ -28,82 +161,119 @@ export function useDismiss(open, onClose) {
 }
 
 /** A toolbar button. One definition, so every control on the chart looks and behaves the same. */
-export function ToolButton({ theme, active, onClick, title, children, width, danger, disabled }) {
+export function ToolButton({
+  theme, active, onClick, title, children, width, danger, disabled, anchorRef, expanded,
+}) {
+  const [hover, setHover] = useState(false);
   const p = palette(theme);
   return (
-    <button type="button" onClick={onClick} title={title} aria-label={title} disabled={disabled}
-      aria-pressed={active || undefined}
+    <button ref={anchorRef} type="button" onClick={onClick} title={title} aria-label={title}
+      disabled={disabled} aria-pressed={active || undefined}
+      aria-haspopup={expanded === undefined ? undefined : 'menu'}
+      aria-expanded={expanded === undefined ? undefined : !!expanded}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
         minWidth: width || 26, height: 26, padding: width ? '0 8px' : 0, flexShrink: 0,
-        background: active ? p.grid : 'transparent',
+        background: active ? p.menuActive : (hover && !disabled ? p.menuHover : 'transparent'),
         border: `1px solid ${active ? p.up : 'transparent'}`,
         borderRadius: 4, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1,
         fontFamily: "'DM Sans',sans-serif", fontSize: 12, lineHeight: 1,
         color: danger ? p.down : (active ? p.textStrong : p.text),
+        transition: 'background 90ms ease',
       }}>{children}</button>
   );
 }
 
 /**
- * A button that opens a floating panel beneath it.
+ * A button that opens an anchored menu directly beneath it.
  *
- * `align` decides which edge the panel hangs from, because a menu on the right of a narrow panel
- * must not open off the edge of the chart.
+ * `align: 'right'` hangs the menu from the control's right edge, because a control on the right of a
+ * narrow panel must not open off the edge of the window.
  */
-export function Dropdown({ theme, label, title, active, width = 200, align = 'left', children, buttonWidth }) {
+export function Dropdown({
+  theme, label, title, active, width = 200, align = 'left', children, buttonWidth, menuLabel,
+}) {
   const [open, setOpen] = useState(false);
+  const anchorRef = useRef(null);
   const close = useCallback(() => setOpen(false), []);
-  const ref = useDismiss(open, close);
+  return (
+    <>
+      <ToolButton anchorRef={anchorRef} theme={theme} active={active || open} expanded={open}
+        onClick={() => setOpen((v) => !v)} title={title} width={buttonWidth}>{label}</ToolButton>
+      <Popover anchorRef={anchorRef} open={open} onClose={close} theme={theme} width={width}
+        label={menuLabel || title} placement={align === 'right' ? 'bottom-end' : 'bottom-start'}>
+        {children}
+      </Popover>
+    </>
+  );
+}
+
+/** A small heading inside a menu, for flyouts that name their group. */
+export function MenuLabel({ theme, children }) {
   const p = palette(theme);
   return (
-    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
-      <ToolButton theme={theme} active={active || open} onClick={() => setOpen((v) => !v)}
-        title={title} width={buttonWidth}>{label}</ToolButton>
-      {open && (
-        <div
-          onClick={(e) => { if (e.target.closest('[data-close-on-pick]')) close(); }}
-          style={{
-            position: 'absolute', top: '100%', marginTop: 4, zIndex: 40, width,
-            [align]: 0,
-            background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, borderRadius: 6,
-            boxShadow: '0 8px 28px rgba(0,0,0,0.22)', padding: 5, maxHeight: 360, overflowY: 'auto',
-          }}>{children}</div>
-      )}
-    </div>
+    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9.5, color: p.text, opacity: 0.85,
+      padding: '4px 8px 5px', letterSpacing: '0.6px' }}>{String(children).toUpperCase()}</div>
   );
 }
 
 /**
- * A row inside a Dropdown. `data-close-on-pick` lets the menu shut itself when one is chosen.
+ * A row inside a menu.
  *
  * `left` is a leading icon (fixed-width, so labels line up however wide the icons are); `right` is a
- * trailing hint such as a keyboard shortcut.
+ * trailing hint such as a keyboard shortcut. `data-close-on-pick` lets the menu shut itself when a
+ * row is chosen.
+ *
+ * THE SELECTED ROW IS MARKED THREE WAYS — a tinted background, an accent bar down its leading edge
+ * and a trailing check — because a tint alone is easy to miss at this size, and the check is what a
+ * screen reader and a colour-blind user actually get.
  */
-export function MenuItem({ theme, onClick, active, children, left, right, closeOnPick = true }) {
+export function MenuItem({
+  theme, onClick, active, children, left, right, closeOnPick = true, disabled,
+  // A one-of-many pick by default (chart type, drawing tool). Toggles pass 'menuitemcheckbox' and
+  // plain commands pass 'menuitem', which takes no checked state at all.
+  role = 'menuitemradio',
+}) {
+  const [hover, setHover] = useState(false);
   const p = palette(theme);
   return (
-    <button type="button" onClick={onClick} {...(closeOnPick ? { 'data-close-on-pick': '' } : {})}
+    <button type="button" onClick={disabled ? undefined : onClick} role={role}
+      aria-checked={role === 'menuitem' ? undefined : !!active} disabled={disabled}
+      {...(closeOnPick && !disabled ? { 'data-close-on-pick': '' } : {})}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
-        display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
-        background: active ? p.grid : 'transparent', border: 'none', borderRadius: 4,
-        cursor: 'pointer', padding: '6px 8px',
-        fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+        position: 'relative',
+        display: 'flex', alignItems: 'center', gap: 9, width: '100%', textAlign: 'left',
+        background: active ? p.menuActive : (hover && !disabled ? p.menuHover : 'transparent'),
+        border: 'none', borderRadius: 5,
+        cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.45 : 1,
+        padding: '7px 9px 7px 10px',
+        fontFamily: "'DM Sans',sans-serif", fontSize: 12.5, lineHeight: 1.2,
         color: active ? p.textStrong : p.text, fontWeight: active ? 600 : 400,
+        transition: 'background 90ms ease',
       }}>
+      {active && (
+        <span aria-hidden="true" style={{ position: 'absolute', left: 0, top: 5, bottom: 5, width: 2.5,
+          borderRadius: 2, background: p.up }} />
+      )}
       {left != null && (
-        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 16, flexShrink: 0 }}>{left}</span>
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 16, flexShrink: 0, color: active ? p.up : p.text }}>{left}</span>
       )}
       <span style={{ flex: 1 }}>{children}</span>
       {right != null && <span style={{ color: p.text, opacity: 0.8, fontSize: 11 }}>{right}</span>}
+      {active && right == null && (
+        <span aria-hidden="true" style={{ color: p.up, fontSize: 11, fontWeight: 700 }}>✓</span>
+      )}
     </button>
   );
 }
 
 /**
- * A centred modal.
+ * A centred modal, portalled for the same reason the menus are.
  *
- * Fixed to the viewport rather than to the chart: in a Terminal panel a 260px-wide chart cannot
+ * Fixed to the VIEWPORT rather than to the chart: in a Terminal panel a 260px-wide chart cannot
  * contain a usable browser, and a modal clipped by its own panel is worse than one that overlays the
  * workspace. Escape and a backdrop click both close it.
  */
@@ -115,12 +285,12 @@ export function Modal({ theme, open, onClose, title, width = 460, children }) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
-  if (!open) return null;
-  return (
+  if (!open || typeof document === 'undefined') return null;
+  return createPortal(
     <div
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
-        position: 'fixed', inset: 0, zIndex: 300, background: 'rgba(0,0,0,0.42)',
+        position: 'fixed', inset: 0, zIndex: MODAL_Z, background: 'rgba(0,0,0,0.42)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
       }}>
       <div role="dialog" aria-modal="true" aria-label={title}
@@ -137,7 +307,8 @@ export function Modal({ theme, open, onClose, title, width = 460, children }) {
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
