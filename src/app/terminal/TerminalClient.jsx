@@ -1305,8 +1305,11 @@ function Workspace() {
     : def.id === 'convergence' ? <ConvergenceBody onPick={(s) => linkSymbol('convergence', s)} />
     : def.id === 'alerts' ? <AlertsBody symbol={selectedSymbol} />
     : null);
-  const headerRightOf = (def) => (def.id === 'chart'
-    ? <span className="cp-tkr" style={{ fontSize: 11, color: C.ink, fontWeight: 700 }}>{selectedSymbol}</span> : null);
+  // THE CHART PANEL NO LONGER LABELS ITS SYMBOL UP HERE. The symbol is the first control in the
+  // chart's own toolbar now — top-left, searchable, and the thing that actually changes it — so a
+  // read-only copy in the panel's title bar was both redundant and, once a chart panel can hold its
+  // own symbol, capable of disagreeing with the chart beneath it.
+  const headerRightOf = () => null;
 
   if (!layout) return <div style={{ color: C.dim, fontSize: 13, padding: 40, textAlign: 'center' }}>Loading workspace…</div>;
 

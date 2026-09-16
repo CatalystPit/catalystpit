@@ -13,10 +13,11 @@ import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.
 import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
 import { Dropdown, MenuItem, MenuLabel, ToolButton, VectorIcon } from './ChartUI';
+import SymbolSearch from './SymbolSearch';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingRail from './DrawingRail';
-import ChartMenu from './ChartMenu';
+import ChartMenu, { viewMenuItems } from './ChartMenu';
 
 // CATALYST PIT PRICE CHART — TradingView Lightweight Charts v5, on our own licensed data.
 //
@@ -57,9 +58,25 @@ export default function CPChart({
   showToolbar = true,
   transparent = false,
   onSymbolResolved = null,
+  // WHO OWNS THE SYMBOL. Unset (the Terminal case) the chart owns it: the in-panel search changes
+  // this panel and nothing else. Provided (the ticker page) the HOST owns it, because there the
+  // symbol is the whole page — a chart quietly showing a different ticker from the headlines and
+  // financials around it would be worse than no search at all.
+  onSymbolPick = null,
 }) {
   const theme = useTheme();
   const [tf, setTf] = useState(initialTimeframe);
+
+  /**
+   * THE SYMBOL THIS PANEL IS SHOWING.
+   *
+   * Local state seeded from the prop, NOT the prop itself, so the in-chart symbol search can put
+   * this panel on a different ticker from the rest of the workspace without navigating the app or
+   * republishing to the Terminal symbol bus. A selection arriving from OUTSIDE still wins: when the
+   * prop changes, link groups and click-to-load behave exactly as they did.
+   */
+  const [sym, setSym] = useState(symbol);
+  useEffect(() => { setSym(symbol); }, [symbol]);
 
   const [status, setStatus] = useState('loading');   // loading | ready | empty | error
   const [meta, setMeta] = useState(null);
@@ -86,7 +103,12 @@ export default function CPChart({
    * for a 280px-wide panel. Measuring the element is the only thing that answers the real question:
    * is there room for these controls?
    */
-  const [narrow, setNarrow] = useState(false);
+  const [toolbarWidth, setToolbarWidth] = useState(9999);
+  // Two thresholds, both measured against the CHART's width rather than the window's. `narrow`
+  // shrinks the wordy controls and collapses the drawing rail; `overflowed` is where even those no
+  // longer fit, and the lower-priority controls move into the ⋯ menu.
+  const narrow = toolbarWidth < 460;
+  const overflowed = toolbarWidth < 330;
   const [browserOpen, setBrowserOpen] = useState(false);
 
   // Derived BEFORE the refs below, which read chartType during their own initialisation.
@@ -124,16 +146,16 @@ export default function CPChart({
   // DRAWINGS ARE PER SYMBOL: reloaded whenever the symbol changes, and the selection is dropped
   // because the drawing it referred to belongs to a different chart now.
   useEffect(() => {
-    setDrawings(loadDrawings(symbol));
+    setDrawings(loadDrawings(sym));
     setSelectedDrawing(null);
     setActiveTool(null);
-  }, [symbol]);
+  }, [sym]);
 
   const drawingsDirty = useRef(false);
   useEffect(() => {
     if (!drawingsDirty.current) return;
-    saveDrawings(symbol, drawings);
-  }, [drawings, symbol]);
+    saveDrawings(sym, drawings);
+  }, [drawings, sym]);
 
   const updateDrawings = useCallback((next) => { drawingsDirty.current = true; setDrawings(next); }, []);
 
@@ -389,7 +411,7 @@ export default function CPChart({
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect?.width ?? 0;
-      setNarrow(w > 0 && w < 460);
+      if (w > 0) setToolbarWidth(w);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -422,8 +444,8 @@ export default function CPChart({
 
   // ── load bars for the current symbol + timeframe ──
   const load = useCallback(async ({ incremental = false } = {}) => {
-    if (!isValidSymbol(symbol)) { setStatus('error'); return; }
-    const url = barsUrl(symbol, tf, { session: extended ? 'extended' : 'regular' });
+    if (!isValidSymbol(sym)) { setStatus('error'); return; }
+    const url = barsUrl(sym, tf, { session: extended ? 'extended' : 'regular' });
     if (!url) { setStatus('error'); return; }
     if (!incremental) setStatus('loading');
     try {
@@ -454,11 +476,11 @@ export default function CPChart({
         draw();
       }
       setStatus('ready');
-      if (onSymbolResolved) onSymbolResolved(symbol);
+      if (onSymbolResolved) onSymbolResolved(sym);
     } catch {
       setStatus('error');
     }
-  }, [symbol, tf, extended, draw, onSymbolResolved]);
+  }, [sym, tf, extended, draw, onSymbolResolved]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -509,8 +531,21 @@ export default function CPChart({
       {/* TOP TOOLBAR — chart-level controls only. Drawing tools live on the left rail; the
           indicator controls live behind the Indicators button rather than spilling across here. */}
       {showToolbar && (
+        // SYMBOL → TIMEFRAME → CHART TYPE → INDICATORS, hard left, then the view controls pushed
+        // right. That is the order a trader's hand already knows, and it is why the symbol is the
+        // first control rather than a label in the panel's title bar: the thing you change most
+        // often should be the thing nearest where you are looking.
+        //
+        // NOWRAP, NEVER TWO ROWS. A second toolbar row steals chart height, which is the one thing
+        // a panel has least of. When the panel is too narrow, lower-priority controls move into the
+        // ⋯ menu instead — symbol, timeframe and chart type always survive.
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 2px 6px',
-          overflowX: 'auto', flexShrink: 0 }}>
+          flexWrap: 'nowrap', minWidth: 0, flexShrink: 0 }}>
+          <SymbolSearch theme={theme} symbol={sym} onPick={onSymbolPick || setSym}
+            width={narrow ? 64 : 84} />
+
+          <div style={{ width: 1, height: 16, background: p.border, margin: '0 4px', flexShrink: 0 }} />
+
           {/* TIMEFRAME → CHART TYPE → INDICATORS → the rest, in that order.
 
               ONE COMPACT CONTROL, AT EVERY WIDTH, showing the selected interval. The row of nine
@@ -543,8 +578,6 @@ export default function CPChart({
             ))}
           </Dropdown>
 
-          <div style={{ width: 1, height: 16, background: p.border, margin: '0 6px 0 auto', flexShrink: 0 }} />
-
           {/* ONE chart-type control, rendered from the registry — adding Heikin Ashi later puts it
               in this menu with no toolbar change, and nothing unsupported is ever listed.
 
@@ -567,15 +600,39 @@ export default function CPChart({
           </Dropdown>
 
           {/* The prominent Indicators button. Everything about indicators lives behind it. */}
-          <ToolButton theme={theme} width={narrow ? 30 : 92} title="Indicators"
-            active={browserOpen || active.length > 0} onClick={() => setBrowserOpen(true)}>
-            {narrow ? 'ƒ' : <><span>ƒ</span><span>Indicators{active.length ? ` ${active.length}` : ''}</span></>}
-          </ToolButton>
+          {!overflowed && (
+            <ToolButton theme={theme} width={narrow ? 30 : 92} title="Indicators"
+              active={browserOpen || active.length > 0} onClick={() => setBrowserOpen(true)}>
+              {narrow ? 'ƒ' : <><span>ƒ</span><span>Indicators{active.length ? ` ${active.length}` : ''}</span></>}
+            </ToolButton>
+          )}
 
-          {/* The remaining chart controls, grouped rather than strung out as a row of text buttons. */}
-          <ChartMenu theme={theme} view={view} canExtend={canExtend}
-            onPatch={patchView} onReset={resetView} />
-          {btn(fullscreen ? '⤢' : '⛶', fullscreen, () => setFullscreen((v) => !v), 'full')}
+          {/* Everything from here is pushed to the right-hand end of the same toolbar. */}
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+            {overflowed
+              // THE OVERFLOW MENU, not a second row. Indicators leads it because it is the first
+              // thing dropped and the first thing wanted back. The view rows are the SAME rows the
+              // settings menu renders — shared, not copied, so the two cannot drift apart.
+              ? (
+                <Dropdown theme={theme} title="More chart controls" menuLabel="More chart controls"
+                  align="right" width={198} label="⋯">
+                  <MenuItem theme={theme} role="menuitem" left="ƒ"
+                    active={active.length > 0} onClick={() => setBrowserOpen(true)}
+                    right={active.length ? String(active.length) : undefined}>Indicators</MenuItem>
+                  <MenuItem theme={theme} role="menuitemcheckbox" active={fullscreen}
+                    closeOnPick={false} onClick={() => setFullscreen((v) => !v)}
+                    right={fullscreen ? 'On' : 'Off'}>Fullscreen</MenuItem>
+                  {viewMenuItems({ theme, view, canExtend, onPatch: patchView, onReset: resetView })}
+                </Dropdown>
+              )
+              : (
+                <>
+                  <ChartMenu theme={theme} view={view} canExtend={canExtend}
+                    onPatch={patchView} onReset={resetView} />
+                  {btn(fullscreen ? '⤢' : '⛶', fullscreen, () => setFullscreen((v) => !v), 'full')}
+                </>
+              )}
+          </span>
         </div>
       )}
 
@@ -603,7 +660,7 @@ export default function CPChart({
         {chartReady > 0 && chartRef.current && priceRef.current && (
           <DrawingLayer
             chart={chartRef.current} series={priceRef.current} theme={theme}
-            symbol={symbol} bars={barsRef.current}
+            symbol={sym} bars={barsRef.current}
             drawings={drawings} onChange={updateDrawings}
             activeTool={activeTool} onToolUsed={() => setActiveTool(null)}
             selectedId={selectedDrawing} onSelect={setSelectedDrawing}

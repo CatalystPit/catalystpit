@@ -1130,5 +1130,109 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
     boxOf(tall, { width: 1440, height: 500 }).bottom <= 500 - EDGE + 0.5);
 }
 
+section('20. the chart header: symbol first, one compact row, overflow before wrapping');
+{
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const bar = cmp.slice(cmp.indexOf('{showToolbar && ('), cmp.indexOf('{/* THE RAIL IS A SIBLING'));
+  ok('the toolbar block was located', bar.length > 800);
+
+  // ── ORDER: symbol → timeframe → chart type → indicators ─────────────────────────────────────
+  // Asserted by position in the toolbar, because this order IS the requirement: a trader who knows
+  // one charting platform should find these controls where their hand already goes.
+  const at = (needle) => bar.indexOf(needle);
+  // indexOf returns -1 for something that is ABSENT, and -1 sorts before everything — so comparing
+  // raw indices would call a deleted control "first". Presence is asserted separately, and the order
+  // check requires each index to be both present and strictly after the one before it.
+  const primary = [
+    ['symbol', at('<SymbolSearch')],
+    ['timeframe', at('menuLabel="Timeframe"')],
+    ['chart type', at('menuLabel="Chart type"')],
+    ['indicators', at('title="Indicators"')],
+  ];
+  for (const [name, i] of primary) ok(`the ${name} control is in the toolbar`, i >= 0);
+  ok('they run symbol → timeframe → chart type → indicators',
+    primary.every(([, i], k) => i >= 0 && (k === 0 || primary[k - 1][1] < i)),
+    primary.map(([n, i]) => `${n}@${i}`).join(' '));
+  const iSym = primary[0][1], iType = primary[2][1];
+  // The view controls are pushed to the far end of the SAME row, not onto a second one.
+  ok('the settings and fullscreen controls are pushed right', /marginLeft: 'auto'/.test(bar));
+  ok('...after the primary controls', at("marginLeft: 'auto'") > iType);
+
+  // ── ONE ROW, ALWAYS ─────────────────────────────────────────────────────────────────────────
+  // A wrapped toolbar steals chart height, which is the thing a Terminal panel has least of.
+  ok('the toolbar never wraps to a second row', /flexWrap: 'nowrap'/.test(bar));
+  ok('...and does not simply scroll sideways instead', !/overflowX: 'auto'/.test(bar));
+
+  // ── OVERFLOW, BY PRIORITY ───────────────────────────────────────────────────────────────────
+  ok('there are two width thresholds, not one', /const narrow = toolbarWidth </.test(cmp)
+    && /const overflowed = toolbarWidth </.test(cmp));
+  ok('overflow kicks in before narrow does',
+    Number(cmp.match(/const overflowed = toolbarWidth < (\d+)/)[1])
+      < Number(cmp.match(/const narrow = toolbarWidth < (\d+)/)[1]));
+  ok('width is measured on the chart, never the window',
+    /new ResizeObserver/.test(cmp) && !/window\.matchMedia/.test(cmp));
+  ok('indicators is the control that gives way', /\{!overflowed && \(/.test(bar));
+  ok('...into a ⋯ menu', /label="⋯"/.test(bar));
+  ok('...which leads with Indicators', bar.indexOf('>Indicators</MenuItem>') > at('label="⋯"'));
+  ok('...and carries fullscreen too', /Fullscreen<\/MenuItem>/.test(bar));
+  // PRIORITY: the three controls that must never be collapsed are outside the overflow branch.
+  const overflowBlock = bar.slice(at('label="⋯"'), bar.indexOf('</Dropdown>', at('label="⋯"')));
+  ok('the symbol never collapses into the overflow', !overflowBlock.includes('SymbolSearch'));
+  ok('nor does the timeframe', !overflowBlock.includes('menuLabel="Timeframe"'));
+  ok('nor does the chart type', !overflowBlock.includes('menuLabel="Chart type"'));
+  // The overflow's view rows are the SAME rows the settings menu renders, not a second copy.
+  ok('the overflow shares the settings rows', /viewMenuItems\(\{ theme, view, canExtend/.test(bar));
+  const menuSrc = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  ok('...which the settings menu renders from the same function', /export function viewMenuItems/.test(menuSrc)
+    && /\{viewMenuItems\(\{ theme, view, canExtend, onPatch, onReset \}\)\}/.test(menuSrc));
+
+  // ── THE SYMBOL IS NO LONGER IN THE PANEL TITLE BAR ──────────────────────────────────────────
+  const term = await readFile(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8');
+  ok('the Terminal chart panel no longer prints the symbol top-right',
+    !/headerRightOf = \(def\) => \(def\.id === 'chart'/.test(term));
+  ok('the chart panel still receives the bus symbol', /<ChartBody symbol=\{selectedSymbol\} \/>/.test(term));
+
+  // ── EACH PANEL CAN HOLD ITS OWN SYMBOL ──────────────────────────────────────────────────────
+  ok('the chart keeps its own symbol state', /const \[sym, setSym\] = useState\(symbol\);/.test(cmp));
+  ok('...seeded and re-synced from the prop, so link groups still win',
+    /useEffect\(\(\) => \{ setSym\(symbol\); \}, \[symbol\]\);/.test(cmp));
+  ok('the data path uses the panel symbol', /barsUrl\(sym, tf,/.test(cmp));
+  ok('...and so do the drawings, which are per symbol', /loadDrawings\(sym\)/.test(cmp) && /saveDrawings\(sym, drawings\)/.test(cmp));
+  // WHO OWNS THE SYMBOL is a prop, not a hard-coded choice: unset, the chart owns it and a pick
+  // writes local state only (the Terminal panel); provided, the host owns it (the ticker page, where
+  // the symbol is the whole page and a pick must take the page with it).
+  ok('a pick writes local state by default', /onPick=\{onSymbolPick \|\| setSym\}/.test(cmp));
+  ok('...and the host can take ownership instead', /onSymbolPick = null,/.test(cmp));
+  const tpc = await readFile(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8');
+  ok('the ticker page takes that ownership', /onSymbolPick=\{\(s\) => router\.push/.test(tpc));
+  ok('...so its chart cannot drift from the page around it', /\/ticker\/\$\{encodeURIComponent\(s\)\}/.test(tpc));
+  ok('the Terminal panel does NOT, so its chart keeps its own symbol',
+    !/onSymbolPick/.test(term));
+
+  // ── THE SYMBOL SEARCH ───────────────────────────────────────────────────────────────────────
+  const ss = await readFile(new URL('../src/components/chart/SymbolSearch.jsx', import.meta.url), 'utf8');
+  ok('it reuses the existing symbol-search endpoint', /\/api\/symbol-search\?q=/.test(ss));
+  // NO SECOND SECURITY DATABASE: nothing here may carry its own list of tickers.
+  ok('it keeps no ticker list of its own', !/\[\s*'[A-Z]{1,5}'\s*,\s*'[A-Z]{1,5}'/.test(ss));
+  ok('it does not navigate the application', !/useRouter|router\.push|window\.location|<a /.test(ss));
+  ok('the input takes focus the moment it opens', /if \(el\) el\.focus\(\)/.test(ss));
+  ok('typing is debounced', /setTimeout\(async \(\) =>/.test(ss));
+  ok('...and a stale response cannot overwrite a newer one', /mine !== reqRef\.current/.test(ss));
+  ok('up and down move the highlight', /'ArrowDown'/.test(ss) && /'ArrowUp'/.test(ss));
+  ok('Enter selects the highlighted match', /if \(e\.key === 'Enter'\)/.test(ss));
+  ok('...or a symbol typed out in full', /pick\(results\[hi\]\?\.ticker \|\| q\)/.test(ss));
+  ok('only a valid symbol is ever picked', /if \(!isValidSymbol\(up\)\) return;/.test(ss));
+  ok('the ticker is shown prominently', /fontWeight: 700[^}]*\}\}>\{r\.ticker\}/.test(ss));
+  ok('...with the company name beside it', /\{r\.name \|\| ''\}/.test(ss));
+  ok('it is the shared portalled popover, so the panel cannot clip it', /<Popover anchorRef=\{anchorRef\}/.test(ss));
+  ok('Escape and outside-click come from that popover', /Escape is left to the Popover/.test(ss));
+  ok('a fresh open does not show the last search', /setQ\(''\); setResults\(\[\]\)/.test(ss));
+
+  // ── the rail is unchanged and still on the left ─────────────────────────────────────────────
+  ok('the drawing rail is still a left-hand sibling of the chart',
+    cmp.indexOf('<DrawingRail') < cmp.indexOf('<div ref={hostRef}'));
+  ok('...and still collapses on a narrow panel', /compact=\{narrow\}/.test(cmp));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
