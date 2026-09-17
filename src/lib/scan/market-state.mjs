@@ -42,6 +42,23 @@ export function etMinutesOf(ms) {
   return (+p.hour) * 60 + (+p.minute);
 }
 
+const ET_DATE = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * WHICH TRADING DAY an epoch belongs to, in ET. 'YYYY-MM-DD'.
+ *
+ * A minute-of-day on its own does not identify a session: 09:35 happened yesterday too. Any adapter
+ * that hands us more than one day of intraday bars — which is the normal way to fetch them — would
+ * otherwise fold yesterday's prints into today's session high, and a level that never traded today is
+ * a breakout that never happened.
+ */
+export function etDateKey(ms) {
+  if (!Number.isFinite(ms)) return null;
+  return ET_DATE.format(ms);
+}
+
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -55,25 +72,52 @@ const num = (v) => {
  * from them is computed here ONCE so that twenty signals reading the same symbol do not each walk
  * the bar list again — which is the difference between scanning forty symbols and four thousand.
  */
+/**
+ * Bars as the rest of the module promises them: oldest → newest, one per timestamp.
+ *
+ * A feed does not deliver them that way. A websocket reconnect replays bars that already arrived, a
+ * late bar lands after its successor, and a provider revising a print re-sends the same minute with
+ * different numbers. Each of those corrupts something different and quietly: a duplicate is counted
+ * twice by every volume-weighted figure, and an out-of-order bar makes `priceAt` walk past the
+ * window it was asked for and report no move at all.
+ *
+ * So the disagreement stops here, at the boundary, which is the one place that is allowed to know
+ * about it. LAST WRITE WINS for a repeated timestamp: when a provider re-sends a bar it is correcting
+ * it, and the correction is the one we want.
+ */
+export function normalizeBars(input) {
+  if (!Array.isArray(input)) return [];
+  const byTime = new Map();
+  for (const b of input) {
+    if (b && Number.isFinite(b.t)) byTime.set(b.t, b);
+  }
+  return [...byTime.values()].sort((a, b) => a.t - b.t);
+}
+
 export function buildSymbolState(input, { now = Date.now() } = {}) {
   if (!input || !input.symbol) return null;
-  const bars = Array.isArray(input.bars) ? input.bars.filter((b) => b && Number.isFinite(b.t)) : [];
+  const bars = normalizeBars(input.bars);
   const last = bars.length ? bars[bars.length - 1] : null;
   const price = num(input.price) ?? (last ? num(last.c) : null);
 
   const phase = input.phase || sessionPhase(etMinutesOf(now));
 
-  // Session extremes are taken from the REGULAR-session bars only. Folding pre-market into "session
-  // high" is the most common way a scanner reports a breakout that never happened: almost every gap
-  // -up opens below its own pre-market high.
-  const regular = bars.filter((b) => {
+  // Session extremes are taken from the REGULAR-session bars of TODAY only. Two separate mistakes are
+  // being avoided here and both produce a level that never traded:
+  //
+  //   FOLDING PRE-MARKET IN is the most common way a scanner reports a breakout that never happened —
+  //   almost every gap-up opens below its own pre-market high.
+  //   FOLDING YESTERDAY IN is the same error one axis over. A minute-of-day does not identify a
+  //   session, and an adapter asked for intraday bars will quite reasonably return several days of
+  //   them, so the ET calendar date has to be part of the test.
+  const sessionDate = etDateKey(now);
+  const inSession = (b, from, to) => {
+    if (etDateKey(b.t) !== sessionDate) return false;
     const m = etMinutesOf(b.t);
-    return m != null && m >= SESSION.REGULAR_OPEN && m < SESSION.REGULAR_CLOSE;
-  });
-  const pre = bars.filter((b) => {
-    const m = etMinutesOf(b.t);
-    return m != null && m >= SESSION.PREMARKET_OPEN && m < SESSION.REGULAR_OPEN;
-  });
+    return m != null && m >= from && m < to;
+  };
+  const regular = bars.filter((b) => inSession(b, SESSION.REGULAR_OPEN, SESSION.REGULAR_CLOSE));
+  const pre = bars.filter((b) => inSession(b, SESSION.PREMARKET_OPEN, SESSION.REGULAR_OPEN));
 
   const sessionHigh = input.sessionHigh != null ? num(input.sessionHigh) : highOf(regular);
   const sessionLow = input.sessionLow != null ? num(input.sessionLow) : lowOf(regular);
