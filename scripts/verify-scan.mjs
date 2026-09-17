@@ -48,7 +48,9 @@ import {
   contextBadge, newsContext, insiderContext, earningsContext, composeEnrichment, FRESH_NEWS_MINUTES,
 } from '../src/lib/scan/enrichment.mjs';
 import { allScenarios, SCENARIOS, at, bar, flat, ramp, volumeSession, DAY } from '../src/lib/scan/fixtures.mjs';
+import { readFileSync } from 'node:fs';
 import { relativeStrength, benchmarksFor, SECTOR_ETF } from '../src/lib/scan/relative-strength.mjs';
+import { LIVE_FIELDS, liveFieldsWithAvailability } from '../src/lib/scan/scanner-fields.mjs';
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => {
@@ -773,5 +775,76 @@ section('20. one cycle serves every product');
   ok('...and a quiet universe produces no rows', big.rows.length === 0);
 }
 
+section('21. the Custom Scanner vocabulary: Finviz on the surface, the engine underneath');
+{
+  const dailySrc = readFileSync(new URL('../src/lib/screener-filters.js', import.meta.url), 'utf8');
+  const live = liveFieldsWithAvailability(INTERIM_PROVIDER, signalAvailability);
+
+  // ONE SHAPE, TWO SOURCES. The panel renders both from one list, so a live field must look exactly
+  // like a daily one — a second dialect would mean a second UI.
+  ok('every live field has a label, category and type',
+    Object.values(live).every((x) => x.label && x.category && x.type));
+  ok('every live field offers dropdown presets',
+    Object.values(live).every((x) => Array.isArray(x.opts) && x.opts.length >= 2),
+    Object.entries(live).filter(([, x]) => !(x.opts || []).length).map(([k]) => k).join());
+  ok('every preset carries the condition it sets',
+    Object.values(live).every((x) => x.opts.every((o) => o && o.label && o.cond && typeof o.cond === 'object')));
+  ok('...in the same shape the daily filters already use',
+    Object.values(live).every((x) => x.opts.every((o) => ['min', 'max', 'eq'].some((k) => k in o.cond))));
+  // A collision would mean one field silently shadowing another in the merged menu. Checked against
+  // the daily registry's own declarations rather than by importing it, since that module needs the
+  // database layer to load.
+  const dailyKeys = new Set([...dailySrc.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9]*):\s/gm)].map((m) => m[1]));
+  ok('the daily registry was read', dailyKeys.size > 40, String(dailyKeys.size));
+  ok('a merged vocabulary has no key collisions',
+    Object.keys(live).every((k) => !dailyKeys.has(k)),
+    Object.keys(live).filter((k) => dailyKeys.has(k)).join());
+  ok('the categories a trader scans are all present',
+    ['Momentum', 'Volume', 'Structure', 'Premarket', 'Relative Strength', 'Volatility', 'Liquidity', 'Catalyst']
+      .every((c) => Object.values(live).some((x) => x.category === c)));
+
+  // CAPABILITY GATING. None of the market-dependent ones can run on the interim feed.
+  const marketFields = Object.entries(live).filter(([, x]) => Object.keys(x.requires).length);
+  ok('every market-dependent live field is unavailable on the interim feed',
+    marketFields.every(([, x]) => x.available === false),
+    marketFields.filter(([, x]) => x.available).map(([k]) => k).join());
+  ok('...and each says which capability it needs',
+    marketFields.every(([, x]) => typeof x.unavailableReason === 'string' && x.unavailableReason.length > 6));
+  ok('the 30-second window demands more than the one-minute one',
+    live.vel30s.available === false
+      && JSON.stringify(live.vel30s.requires) !== JSON.stringify(live.vel1m.requires));
+  ok('RVOL needs time-of-day history, not merely volume', live.rvol.requires.intradayVolumeHistory === true);
+  ok('VWAP needs consolidated volume', live.vwapSide.requires.consolidatedVolume === true);
+  ok('the spread filter needs a quote', live.spreadPct.requires.bidAsk === true);
+  // The intelligence filters read our OWN data, so they are usable today.
+  ok('Catalyst Pit intelligence filters need no market capability',
+    live.newsAge.available === true && live.hasInsiderBuy.available === true);
+
+  // EVERYTHING COMES ALIVE on a capable feed — proving they are gated, not broken.
+  const full = liveFieldsWithAvailability(FULL_PROVIDER, signalAvailability);
+  ok('every live field is available on a capable feed',
+    Object.values(full).every((x) => x.available === true),
+    Object.entries(full).filter(([, x]) => !x.available).map(([k]) => k).join());
+
+  // THE DAILY SCANNER MUST NOT BREAK. A live field has no column, so it must never reach the SQL
+  // builder even if a saved scan carries one.
+  // THE GUARD. A live field has no column to compile against, so buildConds must refuse it — and the
+  // `live` flag is what it keys on. Both halves are asserted: the flag on every live field, and the
+  // guard that reads it.
+  ok('every live field is marked live', Object.values(live).every((x) => x.live === true));
+  ok('the SQL builder skips live fields', /if \(f\.live\) continue;/.test(dailySrc));
+  ok('...after it has already skipped unavailable ones',
+    dailySrc.indexOf('if (!f || !f.available || !cond) continue;') < dailySrc.indexOf('if (f.live) continue;'));
+  ok('no daily field declares itself live', !/^\s{2}[a-zA-Z0-9]+:.*live: true/m.test(dailySrc));
+
+  // Presets are professional values, not round numbers for their own sake.
+  ok('RVOL presets run from 1 to 20',
+    live.rvol.opts[0].cond.min === 1 && live.rvol.opts[live.rvol.opts.length - 1].cond.min === 20);
+  ok('movement presets cover both directions',
+    live.vel5m.opts.some((o) => o.cond.min > 0) && live.vel5m.opts.some((o) => o.cond.max < 0));
+  ok('news-age presets are minutes, freshest first',
+    live.newsAge.opts[0].cond.max === 5
+      && live.newsAge.opts.every((o, i, arr) => i === 0 || arr[i - 1].cond.max <= o.cond.max));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

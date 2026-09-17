@@ -4,6 +4,9 @@ import { screenerStocks } from '../../../lib/schema';
 import { buildConds, SORT_MAP, FILTERS } from '../../../lib/screener-filters';
 import { ensureScreenerTables } from '../../../lib/screener-data';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
+import { liveFieldsWithAvailability } from '../../../lib/scan/scanner-fields.mjs';
+import { signalAvailability } from '../../../lib/scan/market-capabilities.mjs';
+import { activeCapabilities } from '../../../lib/scan/runtime';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -20,7 +23,25 @@ export async function GET(request) {
     const sp = new URL(request.url).searchParams;
 
     if (sp.get('meta') === '1') {
-      return Response.json({ filters: FILTERS }, { headers: NO_STORE });
+      // ONE VOCABULARY, TWO SOURCES. The daily filters compile to SQL against screener_stocks; the
+      // live ones are computed from market state and cannot. They are merged for DISPLAY only — the
+      // Custom Scanner renders both from one list without needing to know which half a field is
+      // from, while buildConds below still only ever sees the daily half.
+      const caps = activeCapabilities();
+      const live = liveFieldsWithAvailability(caps, signalAvailability);
+      return Response.json({
+        filters: { ...FILTERS, ...live },
+        capabilities: {
+          provider: caps.id,
+          label: caps.label,
+          quoteFreshness: caps.quoteFreshness,
+          streaming: caps.streaming,
+          liveVolume: caps.liveVolume,
+          consolidatedVolume: caps.consolidatedVolume,
+          bidAsk: caps.bidAsk,
+          extendedHours: caps.extendedHours,
+        },
+      }, { headers: NO_STORE });
     }
 
     let active = {};

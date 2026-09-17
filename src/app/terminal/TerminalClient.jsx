@@ -2,6 +2,7 @@
 import ErrorState from '../../components/ErrorState';
 import CPChart from '../../components/chart/CPChart';
 import PitScanPanel from '../../components/scan/PitScanPanel';
+import CustomScannerPanel from '../../components/scan/CustomScannerPanel';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
@@ -1300,7 +1301,7 @@ function Workspace() {
     : def.id === 'tape' ? <XTape bare />
     : def.id === 'newswire' ? <NewsWireBody onPick={(s) => linkSymbol('newswire', s)} />
     : def.id === 'pitscan' ? <PitScanPanel onPick={(s) => linkSymbol('pitscan', s)} />
-    : def.id === 'scanner' ? <CustomScannerBody onPick={(s) => linkSymbol('scanner', s)} />
+    : def.id === 'scanner' ? <CustomScannerPanel onPick={(s) => linkSymbol('scanner', s)} />
     : def.id === 'movers' ? <MoversBody onPick={(s) => linkSymbol('movers', s)} />
     : def.id === 'why' ? <WhyMovingBody symbol={selectedSymbol} />
     : def.id === 'convergence' ? <ConvergenceBody onPick={(s) => linkSymbol('convergence', s)} />

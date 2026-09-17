@@ -227,6 +227,10 @@ export function buildConds(active) {
   for (const [key, cond] of Object.entries(active || {})) {
     const f = FILTERS[key];
     if (!f || !f.available || !cond) continue;
+    // A LIVE field is computed from market state and has no column to compile against. The meta
+    // endpoint merges them into the same vocabulary for display; this guard is what keeps one from
+    // reaching the SQL builder if a saved scan carries one.
+    if (f.live) continue;
     const c = screenerStocks[f.col];
     if (f.type === 'range') {
       if (cond.min != null && cond.min !== '') conds.push(gte(c, Number(cond.min)));
