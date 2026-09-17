@@ -1503,9 +1503,10 @@ section('22. context menu, magnet, drawing manager, panes');
   ok('pane options sit under layout, where the library reads them',
     theme.indexOf('panes: {') > theme.indexOf('layout: {')
       && theme.indexOf('panes: {') < theme.indexOf('grid: {'));
-  ok('a redraw captures the pane heights first', /for \(const pane of chart\.panes\(\)\) keptHeights\.push\(pane\.getHeight\(\)\)/.test(cmp));
-  ok('...and restores them instead of forcing the default',
-    /Number\.isFinite\(kept\) && kept > 0 \? kept : 110/.test(cmp));
+  // Pane SIZES moved to shares in chart-panes.mjs; the pixel-height restore these lines used to
+  // assert was the bug that made RSI open at half the chart. Section 35 measures the replacement.
+  ok('a redraw records any separator drag before tearing panes down',
+    /capturePaneDrags\(\);\s*\n\s*for \(const s of overlaysRef\.current\)/.test(cmp));
   ok('no hand-rolled drag handle was bolted on', !/separatorDrag|onPaneResize|paneDragHandle/.test(cmp));
 
   // ── 6. THE AREA PERSISTENCE BUG ─────────────────────────────────────────────────────────────
@@ -2918,6 +2919,255 @@ section('34. the line tools: one-click and two-click creation, end to end');
   ok('...still materially wide', widestSpan(project1(fb.made[0])) > 50);
   ok('...and still between its own anchors',
     TOOLS.fib.segments(fb.made[0].points, view, fb.made[0])[0][0].time === fb.made[0].points[0].time);
+}
+
+section('35. lower indicator panes: compact defaults, shares that do not drift, drags that stick');
+{
+  const P = await import('../src/lib/chart/chart-panes.mjs');
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const settingsMod = await import('../src/lib/chart/chart-settings.mjs');
+  const near = (a, b, eps = 0.005) => Number.isFinite(a) && Math.abs(a - b) <= eps;
+
+  // ── A STAND-IN FOR THE LIBRARY'S PANE MODEL ────────────────────────────────────────────────
+  // The two parts of Lightweight Charts v5.2 that decide pane heights, reproduced from its source:
+  // layout() hands each pane factor/total of the plot (the last pane takes the remainder), and
+  // changePanesHeight() is what IPaneApi.setHeight() calls — converting pixels to stretch factors
+  // with the panes' CURRENT heights. A new pane starts at stretch 1 and height 0; the first pane is
+  // created at stretch 2. Nothing is laid out until layout() runs, as in the browser.
+  function makeChart(plotHeight) {
+    const panes = [{ stretch: 2, height: 0 }];
+    const api = (p) => ({
+      getStretchFactor: () => p.stretch,
+      setStretchFactor: (f) => { p.stretch = f; },
+      getHeight: () => p.height,
+      setHeight: (h) => setHeight(panes.indexOf(p), h),
+    });
+    function setHeight(idx, height) {
+      if (panes.length < 2) return;
+      const target = panes[idx];
+      const totalStretch = panes.reduce((a, p) => a + p.stretch, 0);
+      const totalHeight = panes.reduce((a, p) => a + p.height, 0);
+      const maxPaneHeight = totalHeight - 30 * (panes.length - 1);
+      height = Math.min(maxPaneHeight, Math.max(30, height));
+      const px = totalStretch / totalHeight;
+      const old = target.height;
+      target.stretch = height * px;
+      let change = height - old;
+      let count = panes.length - 1;
+      for (const p of panes) {
+        if (p === target) continue;
+        const nh = Math.min(maxPaneHeight, Math.max(30, p.height - change / count));
+        change -= (p.height - nh);
+        count -= 1;
+        p.stretch = nh * px;
+      }
+    }
+    const chart = {
+      plotHeight,
+      panes: () => panes.map(api),
+      addPane: () => { panes.push({ stretch: 1, height: 0 }); },
+      removePane: (i) => { if (panes.length > 1) panes.splice(i, 1); },
+      layout() {
+        const total = panes.reduce((a, p) => a + p.stretch, 0);
+        let acc = 0;
+        panes.forEach((p, i) => {
+          p.height = i === panes.length - 1 ? chart.plotHeight - acc : Math.round((p.stretch / total) * chart.plotHeight);
+          acc += p.height;
+        });
+      },
+      share: (i) => panes[i].height / chart.plotHeight,
+      // A separator drag, as the library performs it: the two neighbours trade stretch, sum kept.
+      drag(upperIdx, lowerShare) {
+        const total = panes.reduce((a, p) => a + p.stretch, 0);
+        const pair = panes[upperIdx].stretch + panes[upperIdx + 1].stretch;
+        panes[upperIdx + 1].stretch = lowerShare * total;
+        panes[upperIdx].stretch = pair - lowerShare * total;
+      },
+    };
+    chart.layout();
+    return chart;
+  }
+
+  // THE OLD REDRAW, as CPChart ran it: read pixel heights, tear the lower panes down, add them back,
+  // setHeight(kept || 110).
+  function oldRedraw(chart, lowerCount) {
+    const kept = chart.panes().map((p) => p.getHeight());
+    for (let i = chart.panes().length - 1; i >= 1; i -= 1) chart.removePane(i);
+    for (let i = 1; i <= lowerCount; i += 1) {
+      chart.addPane();
+      const k = kept[i];
+      chart.panes()[i].setHeight(Number.isFinite(k) && k > 0 ? k : 110);
+    }
+    chart.layout();
+  }
+
+  // THE NEW REDRAW, as CPChart runs it now: capture drags, tear down, add back, size from shares.
+  function newRedraw(chart, keys, state) {
+    const changed = P.manualPaneChanges(state.applied, P.readPaneShares(chart));
+    Object.assign(state.saved, changed);
+    for (let i = chart.panes().length - 1; i >= 1; i -= 1) chart.removePane(i);
+    for (let i = 0; i < keys.length; i += 1) chart.addPane();
+    const sum = chart.panes().reduce((a, p) => a + p.getHeight(), 0);
+    const shares = P.resolvePaneShares(keys, state.saved, sum > 0 ? sum : chart.plotHeight);
+    const written = P.applyPaneShares(chart, shares);
+    state.applied = written ? { keys: [...keys], shares: P.readPaneShares(chart) } : null;
+    chart.layout();
+  }
+
+  // ── the diagnosis, reproduced ──────────────────────────────────────────────────────────────
+  {
+    const c = makeChart(600);
+    oldRedraw(c, 1);
+    const first = c.share(1);
+    for (let i = 0; i < 4; i += 1) oldRedraw(c, 1);
+    ok('DIAGNOSIS: the old pixel restore started RSI compact...', first > 0.15 && first < 0.25, first.toFixed(3));
+    ok('...and grew it on every redraw until it held half the chart or more', c.share(1) >= 0.45, c.share(1).toFixed(3));
+    const m = makeChart(600);
+    oldRedraw(m, 0); m.addPane(); m.layout();
+    ok('DIAGNOSIS: a pane that was never given a height (MACD, ATR) took a third', near(m.share(1), 1 / 3, 0.01), m.share(1).toFixed(3));
+  }
+
+  // ── 1, 2, 3: one lower pane ────────────────────────────────────────────────────────────────
+  for (const H of [400, 600, 900]) {
+    const c = makeChart(H);
+    const st = { saved: {}, applied: null };
+    newRedraw(c, ['rsi-1'], st);
+    ok(`one lower pane does not open near half the chart (${H}px)`, c.share(1) < 0.35, c.share(1).toFixed(3));
+    ok(`...the price pane is dominant, 70–80% (${H}px)`, c.share(0) >= 0.7 && c.share(0) <= 0.8, c.share(0).toFixed(3));
+    ok(`...and RSI gets a compact, readable height (${H}px)`, c.panes()[1].getHeight() >= 60 && c.share(1) >= 0.2,
+      String(c.panes()[1].getHeight()));
+  }
+
+  // ── 4: every separate-pane study goes through the same model ──────────────────────────────
+  const separateIds = Object.values(INDICATORS).filter((d) => d.pane === 'separate').map((d) => d.id);
+  ok('RSI, MACD and ATR are all separate-pane studies', ['rsi', 'macd', 'atr'].every((id) => separateIds.includes(id)),
+    separateIds.join());
+  const rsiShares = P.resolvePaneShares(['rsi-1'], {}, 600);
+  ok('MACD gets the same default as RSI', JSON.stringify(P.resolvePaneShares(['macd-1'], {}, 600)) === JSON.stringify(rsiShares));
+  ok('...and so does ATR', JSON.stringify(P.resolvePaneShares(['atr-1'], {}, 600)) === JSON.stringify(rsiShares));
+  ok('the chart sizes panes once, for the whole set, not per indicator',
+    (cmp.match(/sizePanes\(lowerKeys\)/g) || []).length === 1);
+  ok('...and every separate pane is counted, with no `scale` gate deciding which get a size',
+    /if \(separate\) \{ paneIndex \+= 1; lowerKeys\.push\(entry\.key \|\| entry\.id\); \}/.test(cmp)
+      && !/separate && scale/.test(cmp));
+  ok('the pixel setHeight path is gone from the chart', !/setHeight/.test(cmp));
+
+  // ── 5, 6: several lower panes ──────────────────────────────────────────────────────────────
+  {
+    const c = makeChart(700);
+    const st = { saved: {}, applied: null };
+    newRedraw(c, ['rsi-1', 'macd-1'], st);
+    ok('two lower panes do not split the chart into equal thirds',
+      c.share(0) > 0.55 && c.share(1) < 0.25 && c.share(2) < 0.25, [0, 1, 2].map((i) => c.share(i).toFixed(3)).join());
+    ok('...the price pane still leads', c.share(0) > 2 * c.share(1));
+  }
+  let floorsHold = true, sumsHold = true, worst = '';
+  for (const n of [1, 2, 3, 4, 5, 6, 8]) {
+    for (const H of [180, 250, 400, 600, 900, 1400]) {
+      const s = P.resolvePaneShares(Array.from({ length: n }, (_, i) => `k${i}`), {}, H);
+      const total = s.price + s.lower.reduce((a, b) => a + b, 0);
+      if (!near(total, 1, 1e-9)) { sumsHold = false; worst = `${n}@${H} sums ${total}`; }
+      // THE REQUIREMENT, NOT THE CONSTANT: comparing against P.PRICE_MIN_SHARE would move the bar
+      // whenever the constant moved, and could never fail.
+      if (s.price < 0.5 - 1e-9) { floorsHold = false; worst = `${n}@${H} price ${s.price}`; }
+    }
+  }
+  ok('the price pane keeps at least half the plot by default, for any count and any height', floorsHold, worst);
+  ok('shares always sum to the whole plot', sumsHold, worst);
+  const threeShares = P.resolvePaneShares(['a', 'b', 'c'], {}, 900);
+  ok('it degrades gradually: three studies still leave the price pane over half',
+    threeShares.price > 0.5 && P.resolvePaneShares(['a', 'b'], {}, 900).price > threeShares.price);
+  const shortPlot = P.resolvePaneShares(['a'], {}, 200);
+  ok('on a short plot a lower pane is lifted to a readable minimum', shortPlot.lower[0] * 200 >= 60 - 1e-9,
+    String(shortPlot.lower[0] * 200));
+
+  // ── 7, 8, 9, 10: manual sizes win and survive redraws ─────────────────────────────────────
+  {
+    const c = makeChart(600);
+    const st = { saved: {}, applied: null };
+    newRedraw(c, ['rsi-1'], st);
+    c.drag(0, 0.4);                                         // the user drags RSI up to 40%
+    c.layout();
+    const dragged = c.share(1);
+    // Ticker change, timeframe change, a data refresh, a theme switch: each is a full redraw.
+    for (let i = 0; i < 10; i += 1) newRedraw(c, ['rsi-1'], st);
+    ok('a manual drag overrides the default', near(c.share(1), dragged, 0.01), `${dragged.toFixed(3)} -> ${c.share(1).toFixed(3)}`);
+    ok('...is captured as a saved share for that indicator', near(st.saved['rsi-1'], 0.4, 0.01), JSON.stringify(st.saved));
+    ok('...and does not drift across ten redraws', near(c.share(1), 0.4, 0.01), c.share(1).toFixed(3));
+    const d = makeChart(600);
+    const ds = { saved: {}, applied: null };
+    for (let i = 0; i < 10; i += 1) newRedraw(d, ['rsi-1'], ds);
+    ok('a default-sized pane does not drift across ten redraws either',
+      near(d.share(1), P.resolvePaneShares(['rsi-1'], {}, 600).lower[0], 0.01), d.share(1).toFixed(3));
+    ok('...and redraws alone never invent a manual size', Object.keys(ds.saved).length === 0, JSON.stringify(ds.saved));
+    // Adding MACD later keeps RSI where the user put it and gives MACD the default.
+    newRedraw(c, ['rsi-1', 'macd-1'], st);
+    ok('adding a second study keeps the dragged RSI share', near(c.share(1), 0.4, 0.01), c.share(1).toFixed(3));
+    ok('...and gives the new one a compact default', c.share(2) < 0.25, c.share(2).toFixed(3));
+  }
+  // The saved shares ride the view, which is global — not per symbol, not per timeframe — and is
+  // loaded once at mount (section 33 asserts that), so a ticker or timeframe change cannot reset it.
+  {
+    const store = new Map();
+    globalThis.window = { localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+    } };
+    try {
+      settingsMod.saveView({ ...settingsMod.DEFAULT_VIEW, paneShares: { 'rsi-1': 0.31, 'macd-1': 0.2 } });
+      const back = settingsMod.loadView().paneShares;
+      ok('a dragged pane size survives a reload', back?.['rsi-1'] === 0.31 && back?.['macd-1'] === 0.2, JSON.stringify(back));
+      store.set(settingsMod.VIEW_STORAGE_KEY, JSON.stringify({ v: 1, view: { paneShares: { a: 'x', b: 7, c: -1, d: 0.3, '': 0.2 } } }));
+      ok('junk in a saved size is dropped, the good entry kept', JSON.stringify(settingsMod.loadView().paneShares) === '{"d":0.3}',
+        JSON.stringify(settingsMod.loadView().paneShares));
+      store.set(settingsMod.VIEW_STORAGE_KEY, JSON.stringify({ v: 1, view: { logScale: true } }));
+      ok('a view saved before pane sizes existed opens with defaults', JSON.stringify(settingsMod.loadView().paneShares) === '{}');
+    } finally { delete globalThis.window; }
+  }
+  ok('the default view carries no manual sizes', JSON.stringify(settingsMod.DEFAULT_VIEW.paneShares) === '{}');
+  ok('a drag is saved through the view preference, not a new store', /patchView\(\{ paneShares: next \}\)/.test(cmp));
+  ok('a drag is read when the pointer is released, anywhere in the window',
+    /window\.addEventListener\('pointerup', onRelease\)/.test(cmp) && /window\.removeEventListener\('pointerup', onRelease\)/.test(cmp));
+
+  // ── 11: the outer panel changes size ───────────────────────────────────────────────────────
+  {
+    const c = makeChart(800);
+    const st = { saved: {}, applied: null };
+    newRedraw(c, ['rsi-1', 'macd-1'], st);
+    const before = [c.share(0), c.share(1), c.share(2)];
+    c.plotHeight = 1200; c.layout();
+    ok('a taller panel keeps the proportions', near(c.share(0), before[0], 0.01) && near(c.share(1), before[1], 0.01));
+    c.plotHeight = 220; c.layout();
+    const sh = P.resolvePaneShares(['rsi-1', 'macd-1'], st.saved, 220);
+    P.applyPaneShares(c, sh); c.layout();
+    ok('a much shorter panel keeps the price pane at half or more', c.share(0) >= 0.5 - 0.01, c.share(0).toFixed(3));
+    ok('...while its lower panes stay readable', c.panes()[1].getHeight() >= 50 && c.panes()[2].getHeight() >= 50,
+      `${c.panes()[1].getHeight()},${c.panes()[2].getHeight()}`);
+    ok('...and the shrink invented no manual size', Object.keys(P.manualPaneChanges(
+      { keys: ['rsi-1', 'macd-1'], shares: P.readPaneShares(c) }, P.readPaneShares(c))).length === 0);
+  }
+  const clamped = P.resolvePaneShares(['a', 'b'], { a: 0.5, b: 0.45 }, 300);
+  ok('saved sizes too large for a shrunken plot are clamped, not discarded',
+    clamped.price >= 0.25 - 1e-9 && clamped.lower[0] > clamped.lower[1] && clamped.lower[1] > 0.2,
+    JSON.stringify(clamped));
+  const tiny = P.resolvePaneShares(['a'], { a: 0.02 }, 300);
+  ok('a saved size below the library floor is lifted to it', tiny.lower[0] * 300 >= 30 - 1e-9, String(tiny.lower[0] * 300));
+  ok('the chart re-sizes panes when its host resizes',
+    /new ResizeObserver\(/.test(cmp) && /ro\.observe\(hostRef\.current\)/.test(cmp) && /sizePanes\(paneAppliedRef\.current\.keys\)/.test(cmp));
+  ok('...and releases that observer with the chart', /if \(ro\) ro\.disconnect\(\);/.test(cmp) && /if \(detachPanes\) detachPanes\(\);/.test(cmp));
+  const terminalSrc = await readFile(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8');
+  ok('the Terminal panel resizing is untouched by pane sizing', !/paneShares|sizePanes|setStretchFactor/.test(terminalSrc));
+
+  // ── 12, 13: both hosts share the one implementation ───────────────────────────────────────
+  const tickerSrc = await readFile(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8');
+  ok('the Terminal chart panel renders the shared CPChart', /<CPChart symbol=\{symbol\}/.test(terminalSrc));
+  ok('the ticker Price Chart renders the shared CPChart', /<CPChart symbol=\{symbol\}/.test(tickerSrc));
+  ok('...and neither host sizes panes on its own',
+    !/setHeight|setStretchFactor|panes\(\)/.test(tickerSrc) && !/setStretchFactor|\.panes\(\)/.test(terminalSrc));
+
+  // ── 14: the legend is a separate concern ───────────────────────────────────────────────────
+  const sizeBody = cmp.slice(cmp.indexOf('function sizePanes('), cmp.indexOf('function sizePanes(') + 600);
+  ok('pane sizing never reads the legend collapse flag', sizeBody.length > 100 && !/legendCollapsed|indicatorsCollapsed/.test(sizeBody));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

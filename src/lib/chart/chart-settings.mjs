@@ -13,6 +13,7 @@ import {
   INDICATORS, sanitizeParams, defaultParams, isMultiInstance,
   MAX_INSTANCES_PER_INDICATOR, nextInstanceKey,
 } from './chart-indicators.mjs';
+import { sanitizePaneShares } from './chart-panes.mjs';
 
 const KEY = 'cp_chart_indicators';
 
@@ -137,6 +138,9 @@ export const DEFAULT_VIEW = {
   // The indicator band of the legend, folded away. Expanded by default: a reader who has not asked
   // for a collapsed legend should be able to see what is plotted on their chart.
   legendCollapsed: false,
+  // Lower-pane sizes the user has DRAGGED to, as a share of the plot per indicator instance key.
+  // Empty by default: a pane nobody has resized takes the compact default in chart-panes.mjs.
+  paneShares: {},
 };
 
 export function loadView() {
@@ -163,6 +167,8 @@ export function loadView() {
       // A saved view from before this existed therefore opens expanded rather than mysteriously
       // hiding the reader's indicators.
       legendCollapsed: v.legendCollapsed === true,
+      // Absent or junk means no manual sizes, so every pane takes its default rather than a bad one.
+      paneShares: sanitizePaneShares(v.paneShares),
     };
   } catch {
     return { ...DEFAULT_VIEW };

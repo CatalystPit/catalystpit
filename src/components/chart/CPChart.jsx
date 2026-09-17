@@ -8,6 +8,7 @@ import {
 } from '../../lib/chart/chart-source.mjs';
 import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
+import { resolvePaneShares, applyPaneShares, readPaneShares, manualPaneChanges } from '../../lib/chart/chart-panes.mjs';
 import {
   loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW,
   loadToolDefaults, saveToolDefaults, rememberToolDefaults,
@@ -179,6 +180,9 @@ export default function CPChart({
   // key -> the indicator's FIRST plot, so the legend can read its value under the cursor. Kept in a
   // ref and not in state: it holds live series objects, which are not React data.
   const legendSeriesRef = useRef(new Map());
+  // What the lower panes were last sized to — { keys, shares } — so a separator drag can be told
+  // apart from the sizes the chart itself applied.
+  const paneAppliedRef = useRef(null);
   const activeRef = useRef([]);
   const tfRef = useRef(initialTimeframe);
   const volumeOnRef = useRef(true);
@@ -580,12 +584,11 @@ export default function CPChart({
     const bars = barsRef.current;
     const th = themeRef.current;
 
-    // PANE HEIGHTS SURVIVE A REDRAW. Lightweight Charts v5 makes pane separators draggable, but a
-    // redraw (a theme switch, an indicator setting) tears every series down and rebuilds the panes at
-    // their default height — so the height a user had just dragged to was thrown away seconds later.
-    // Captured here and restored after the rebuild.
-    const keptHeights = [];
-    try { for (const pane of chart.panes()) keptHeights.push(pane.getHeight()); } catch { /* optional */ }
+    // PANE SIZES SURVIVE A REDRAW. A redraw tears every lower pane down, so a separator the user has
+    // dragged since the last one is read NOW, while those panes still exist, and saved as a share of
+    // the plot. The rebuilt panes are then sized from shares — see chart-panes.mjs for why pixel
+    // heights compounded and made RSI open at half the chart.
+    capturePaneDrags();
     for (const s of overlaysRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
     overlaysRef.current = [];
     legendSeriesRef.current = new Map();
@@ -593,9 +596,10 @@ export default function CPChart({
     const panes = chart.panes();
     for (let i = panes.length - 1; i >= 1; i -= 1) { try { chart.removePane(i); } catch { /* ignore */ } }
 
-    if (!bars.length) return;
+    if (!bars.length) { paneAppliedRef.current = null; return; }
     const ctx = { intraday: kindRef.current === 'intraday', sessionKey: sessionKeyFor(tfRef.current) };
     let paneIndex = 0;
+    const lowerKeys = [];                                   // one per lower pane, top to bottom
     const legendOut = [];
 
     for (const entry of activeRef.current) {
@@ -603,11 +607,11 @@ export default function CPChart({
       if (!def || def.builtin) continue;                    // volume is the chart's own series
       if (entry.visible === false) continue;                // parked, but its settings are kept
       if (def.intradayOnly && !ctx.intraday) continue;      // VWAP on a daily chart is meaningless
-      const { plots, guides, scale } = computeIndicator(entry.id, bars, entry.params, ctx);
+      const { plots, guides } = computeIndicator(entry.id, bars, entry.params, ctx);
       if (!plots.length || plots.every((pl) => !pl.data.length)) continue;
 
       const separate = def.pane === 'separate';
-      if (separate) paneIndex += 1;
+      if (separate) { paneIndex += 1; lowerKeys.push(entry.key || entry.id); }
       const target = separate ? paneIndex : 0;
 
       let firstSeries = null;
@@ -648,14 +652,6 @@ export default function CPChart({
           } catch { /* a guide is decoration; never fail the chart for one */ }
         }
       }
-      if (separate && scale) {
-        // The default only applies to a pane that did not exist before this redraw; one the user has
-        // already dragged keeps the height captured above.
-        try {
-          const kept = keptHeights[target];
-          chart.panes()[target]?.setHeight?.(Number.isFinite(kept) && kept > 0 ? kept : 110);
-        } catch { /* optional */ }
-      }
       legendOut.push({
         key: entry.key || entry.id,
         label: indicatorLabel(entry.id, entry.params),
@@ -663,13 +659,48 @@ export default function CPChart({
         visible: entry.visible !== false,
       });
     }
+    // EVERY lower pane, whatever the study — RSI, MACD, ATR and anything added later go through the
+    // same allocation, once the full set is known, because each pane's default depends on how many.
+    sizePanes(lowerKeys);
     setIndicatorLegend(legendOut);
+  }
+
+  /** The plot's height: the panes' own, once laid out; the host's before the first layout. */
+  function plotHeightNow() {
+    let sum = 0;
+    try { for (const pane of chartRef.current?.panes?.() || []) sum += Number(pane.getHeight()) || 0; } catch { /* optional */ }
+    if (sum > 0) return sum;
+    return Math.max(0, (hostRef.current?.clientHeight || 0) - 28);
+  }
+
+  /** Record any separator the user dragged since panes were last sized, as a saved share. */
+  function capturePaneDrags() {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const changed = manualPaneChanges(paneAppliedRef.current, readPaneShares(chart));
+    if (!Object.keys(changed).length) return;
+    const next = { ...(viewRef.current?.paneShares || {}), ...changed };
+    // Written through to the ref at once, so a redraw in this same tick sizes from the drag rather
+    // than from a view React has not re-rendered yet.
+    viewRef.current = { ...viewRef.current, paneShares: next };
+    patchView({ paneShares: next });
+    paneAppliedRef.current = { ...paneAppliedRef.current, shares: readPaneShares(chart) };
+  }
+
+  /** Size the price pane and the given lower panes: a saved share where there is one, else the default. */
+  function sizePanes(keys) {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const shares = resolvePaneShares(keys, viewRef.current?.paneShares, plotHeightNow());
+    const written = applyPaneShares(chart, shares);
+    paneAppliedRef.current = written ? { keys: [...keys], shares: readPaneShares(chart) } : null;
   }
 
   // ── create once; never rebuilt on theme or timeframe change (that would lose zoom/pan) ──
   useEffect(() => {
     let disposed = false;
     let chart = null;
+    let detachPanes = null;
     (async () => {
       const lwc = await import('lightweight-charts');
       if (disposed || !hostRef.current) return;
@@ -729,10 +760,38 @@ export default function CPChart({
         setScrolledBack(range.to < n - 1.5);
       });
 
+      // PANE SIZES FOLLOW THE USER AND THE PANEL.
+      //   A separator drag has no event of its own, so it is read when the pointer is released —
+      //   on the window, because a drag can end outside the chart.
+      //   An outer resize (a Terminal panel dragged taller or shorter, a window resize) keeps every
+      //   share, and the defaults are re-applied so a short plot lifts its lower panes to a readable
+      //   height without taking the price pane below its floor. The panel's own resizing is only
+      //   observed here, never touched.
+      const onRelease = () => capturePaneDrags();
+      window.addEventListener('pointerup', onRelease);
+      let frame = 0;
+      const ro = typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+          cancelAnimationFrame(frame);
+          frame = requestAnimationFrame(() => {
+            if (!chartRef.current || !paneAppliedRef.current) return;
+            capturePaneDrags();
+            sizePanes(paneAppliedRef.current.keys);
+          });
+        })
+        : null;
+      if (ro && hostRef.current) ro.observe(hostRef.current);
+      detachPanes = () => {
+        window.removeEventListener('pointerup', onRelease);
+        cancelAnimationFrame(frame);
+        if (ro) ro.disconnect();
+      };
+
       if (barsRef.current.length) draw();
     })();
     return () => {
       disposed = true;
+      if (detachPanes) detachPanes();
       if (chart) chart.remove();
       chartRef.current = null; priceRef.current = null; volumeRef.current = null;
       overlaysRef.current = []; lwcRef.current = null;
