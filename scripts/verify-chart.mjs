@@ -2481,6 +2481,65 @@ section('33. the indicator legend collapses without collapsing the indicators');
     /\{indicators\.length > 0 && \(\s*\n\s*<LegendToggle/.test(legend));
   ok('the control toggles the preference', /onClick=\{\(\) => onToggleIndicators\?\.\(\)\}/.test(legend));
 
+  // ── placement: header, then the rows, then the control ──────────────────────────────────────
+  // RENDERED, not matched. The legend is bundled and rendered to HTML, and the ORDER of what comes
+  // out is asserted — the studies read first and the control sits under the last one, the way the
+  // reference chart does it. Collapsed, the rows are gone and the control must still be there,
+  // directly under the price row.
+  {
+    const { build } = await import('esbuild');
+    const path = await import('node:path');
+    const fs = await import('node:fs');
+    const { pathToFileURL } = await import('node:url');
+    const tmp = path.join(process.cwd(), 'node_modules', '.cache', 'cp-legend');
+    fs.mkdirSync(tmp, { recursive: true });
+    const outfile = path.join(tmp, 'ChartLegend.mjs');
+    let html = { open: '', shut: '' };
+    try {
+      await build({
+        entryPoints: [path.join(process.cwd(), 'src/components/chart/ChartLegend.jsx')],
+        bundle: true, format: 'esm', platform: 'node', outfile, jsx: 'automatic',
+        external: ['react', 'react-dom', 'react/jsx-runtime'], logLevel: 'silent',
+      });
+      const Legend = (await import(pathToFileURL(outfile).href)).default;
+      const React = (await import('react')).default;
+      const { renderToString } = await import('react-dom/server');
+      const props = {
+        theme: 'dark', symbol: 'SPYX', intervalLabel: '5m', bar: { o: 1, h: 2, l: 0.5, c: 1.5, v: 1000 },
+        prevClose: 1.4,
+        indicators: [
+          { key: 'a', label: 'VWAPROW', color: '#f00', value: 1 },
+          { key: 'b', label: 'EMAROW', color: '#0f0', value: 1 },
+          { key: 'c', label: 'RSIROW', color: '#00f', value: 1 },
+        ],
+      };
+      html.open = renderToString(React.createElement(Legend, { ...props, indicatorsCollapsed: false }));
+      html.shut = renderToString(React.createElement(Legend, { ...props, indicatorsCollapsed: true }));
+    } catch (e) {
+      ok('the legend renders for the placement check', false, `${e.name}: ${e.message}`);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+    const at = (s, needle) => s.indexOf(needle);
+    const header = at(html.open, 'SPYX');
+    const first = at(html.open, 'VWAPROW');
+    const lastRow = at(html.open, 'RSIROW');
+    const toggle = at(html.open, 'data-cp-legend-toggle');
+    // Every index is checked for presence first, so a missing piece fails rather than letting -1
+    // satisfy an ordering comparison vacuously.
+    ok('expanded: header, rows and control are all rendered',
+      header >= 0 && first >= 0 && lastRow >= 0 && toggle >= 0, JSON.stringify({ header, first, lastRow, toggle }));
+    ok('expanded: the rows come after the header', header >= 0 && first > header);
+    ok('expanded: the control comes AFTER the last indicator row', lastRow >= 0 && toggle > lastRow,
+      JSON.stringify({ lastRow, toggle }));
+    ok('expanded: exactly one collapse control is rendered',
+      (html.open.match(/data-cp-legend-toggle/g) || []).length === 1);
+    ok('collapsed: the rows are gone', html.shut.length > 0 && at(html.shut, 'VWAPROW') < 0 && at(html.shut, 'RSIROW') < 0);
+    ok('collapsed: the control is still there, after the header',
+      at(html.shut, 'SPYX') >= 0 && at(html.shut, 'data-cp-legend-toggle') > at(html.shut, 'SPYX'));
+    ok('collapsed: it still states the count', /aria-expanded="false"/.test(html.shut) && /<b[^>]*>3<\/b>/.test(html.shut));
+  }
+
   // ── 26, 27: collapsing must not touch the plots or the panes ────────────────────────────────
   // The proof is structural and it is the point of the feature: the flag reaches ChartLegend and
   // NOTHING else. If redrawIndicators ever read it, a collapsed legend would stop drawing RSI.

@@ -157,12 +157,8 @@ export default function ChartLegend({
         </div>
       )}
 
-      {/* 3. INDICATORS — one row each, with the value under the cursor and its own controls, behind
-          a collapse control that folds the whole band away without touching the studies. */}
-      {indicators.length > 0 && (
-        <LegendToggle theme={theme} collapsed={indicatorsCollapsed}
-          count={indicators.length} onClick={() => onToggleIndicators?.()} />
-      )}
+      {/* 3. INDICATORS — one row each, with the value under the cursor and its own controls, followed
+          by a collapse control that folds the whole band away without touching the studies. */}
       {!indicatorsCollapsed && indicators.map((ind) => {
         const on = ind.visible !== false;
         const show = hoveredRow === ind.key;
@@ -190,6 +186,13 @@ export default function ChartLegend({
           </div>
         );
       })}
+      {/* UNDER THE LAST ROW, not above the first: the studies read first and the control closes the
+          band. Collapsed, the rows are gone and it sits directly under the price row — the same
+          place in the same stack, so it is always where the band was. */}
+      {indicators.length > 0 && (
+        <LegendToggle theme={theme} collapsed={indicatorsCollapsed}
+          count={indicators.length} onClick={() => onToggleIndicators?.()} />
+      )}
     </div>
   );
 }
