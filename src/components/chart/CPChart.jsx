@@ -1124,6 +1124,11 @@ export default function CPChart({
             delayed={meta?.delayed === true}
             bar={(cursor || tail).bar} prevClose={(cursor || tail).prevClose}
             compact={narrow}
+            // THE STUDIES THEMSELVES ARE UNTOUCHED by this flag — it reaches only the legend rows.
+            // The plots, the guides and the separate RSI/MACD panes are built in redrawIndicators,
+            // which never reads it.
+            indicatorsCollapsed={view.legendCollapsed === true}
+            onToggleIndicators={() => patchView({ legendCollapsed: !viewRef.current.legendCollapsed })}
             indicators={indicatorLegend.map((l) => ({ ...l, value: cursor?.values?.[l.key] ?? null }))}
             onToggleIndicator={(key) => setActive((list) => list.map(
               (a) => (a.key === key ? { ...a, visible: a.visible === false } : a)))}

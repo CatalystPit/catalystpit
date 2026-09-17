@@ -32,6 +32,10 @@ import { CHART_TYPES, CHART_TYPE_IDS, chartTypeOf, PLANNED_CHART_TYPES } from '.
 import { INDICATOR_CATEGORIES, indicatorMeta, searchIndicators } from '../src/lib/chart/chart-indicators.mjs';
 import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../src/lib/chart/chart-drawings.mjs';
 import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover.mjs';
+import {
+  projectDrawings, resolveAnchor, widestSpan, labelX, isEdgeAnchor,
+  EDGE_LEFT, EDGE_RIGHT, EDGE_TOP, EDGE_BOTTOM,
+} from '../src/lib/chart/chart-project.mjs';
 import { cloneDrawing, barLevels, snapToLevel, MAGNET_PX } from '../src/lib/chart/chart-drawings.mjs';
 import { measureBetween, formatDuration } from '../src/lib/chart/chart-drawings.mjs';
 import { reorderDrawing, canReorder, constrainAngle, sanitizeFibLevels, DEFAULT_FIB_LEVELS } from '../src/lib/chart/chart-drawings.mjs';
@@ -526,12 +530,18 @@ section('11. drawings live in DATA space, so they survive zoom, pan and reload')
   const h = createDrawing('horizontal', [P(500, 42)]);
   ok('a horizontal line is created from a single click', h !== null);
   const hs = h ? tool('horizontal').segments(h.points, view) : [[P(NaN, NaN), P(NaN, NaN)]];
-  ok('a horizontal line spans the visible window', hs[0][0].time === 0 && hs[0][1].time === 1000);
+  // ITS SPAN IS THE PLOT, IN PIXELS, not two manufactured times. That is the whole fix: a plot edge
+  // cannot fail to resolve and needs no candle under it.
+  ok('a horizontal line spans the plot, edge to edge',
+    hs[0][0].edgeX === EDGE_LEFT && hs[0][1].edgeX === EDGE_RIGHT);
+  ok('...and states no time at all, so none can be missing',
+    hs[0][0].time === undefined && hs[0][1].time === undefined);
   ok('...at a constant price', hs[0][0].price === 42 && hs[0][1].price === 42);
   const v = createDrawing('vertical', [P(500, 42)]);
   ok('a vertical line is created from a single click', v !== null);
   const vs = v ? tool('vertical').segments(v.points, view) : [[P(NaN, NaN), P(NaN, NaN)]];
-  ok('a vertical line spans the visible prices', vs[0][0].price === 0 && vs[0][1].price === 100);
+  ok('a vertical line spans the plot, top to bottom',
+    vs[0][0].edgeY === EDGE_TOP && vs[0][1].edgeY === EDGE_BOTTOM);
   ok('...at a constant time', vs[0][0].time === 500 && vs[0][1].time === 500);
 
   // A ray extends past its second anchor, along its own slope.
@@ -2061,12 +2071,16 @@ section('27. a horizontal line is a price level and cannot tilt');
   const byHandle = moveDrawing(hline, { dTime: 99999, dPrice: -2 }, 0);
   ok('dragging its handle behaves the same', byHandle.points[0].time === 5000 && byHandle.points[0].price === 40);
 
-  // It spans whatever is visible, future space included — it is drawn from the VIEW, not the data.
+  // It spans the PLOT, future space included, and takes nothing from the data to do it.
   const view = { from: 1000, to: 99999, high: 100, low: 0 };
   const seg = TOOLS.horizontal.segments(line.points, view)[0];
-  ok('it spans the visible window', seg[0].time === view.from && seg[1].time === view.to);
+  ok('it spans the plot from edge to edge', seg[0].edgeX === EDGE_LEFT && seg[1].edgeX === EDGE_RIGHT);
   ok('...at one single price', seg[0].price === seg[1].price);
   ok('...which is the price it was placed at', seg[0].price === 42);
+  // The view is now irrelevant to it, which is why it cannot be broken by an unresolvable time.
+  ok('...whatever the visible window happens to be',
+    JSON.stringify(TOOLS.horizontal.segments(line.points, { from: 'x', to: null, high: 0, low: 0 }))
+      === JSON.stringify(TOOLS.horizontal.segments(line.points, view)));
   const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
   ok('the visible window comes from the logical range, so it reaches future space',
     /getVisibleLogicalRange\(\)/.test(layer));
@@ -2111,10 +2125,16 @@ section('28. Fibonacci in future space, with its settings intact');
   const levels = fibLevels(fib.points, fib.levels);
   ok('levels are computed from the two anchor PRICES', levels[0].price === 80 && levels[levels.length - 1].price === 100);
   ok('...regardless of the anchors being in empty space', levels.length === 7);
-  // And they span the visible window, so they carry across future space.
+  // AND THEY RUN BETWEEN THE FIB'S OWN ANCHORS — the same anchors a trendline uses, which already
+  // reach into empty space. Manufacturing two times from the visible window is what left a fib with
+  // labels and no lines: those times are not in the data, and whatever could not be resolved was
+  // dropped in silence while the labels, read from these anchors, carried on drawing.
   const view = { from: bars[0].time, to: future + 900, high: 200, low: 0 };
   const segs = TOOLS.fib.segments(fib.points, view, fib);
-  ok('each level spans the visible window', segs.every((sg) => sg[0].time === view.from && sg[1].time === view.to));
+  ok('each level runs between the fib’s own two anchors',
+    segs.every((sg) => sg[0].time === fib.points[0].time && sg[1].time === fib.points[1].time));
+  ok('...so the second anchor being in empty space is the only thing that carries it there',
+    segs[0][1].time === future);
   ok('...one segment per visible level', segs.length === levels.length);
 }
 
@@ -2190,6 +2210,286 @@ section('30. the earlier drawing behaviour still holds');
   ok('...and is still the same tool', back.type === 'trend');
   ok('a horizontal line survives it too',
     coerceDrawing(JSON.parse(JSON.stringify(createDrawing('horizontal', [{ time: 500, price: 7 }], {}, [])))).points[0].price === 7);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// A DETERMINISTIC STAND-IN FOR THE CHART'S SCALES.
+//
+// Faithful to Lightweight Charts in the one respect that caused the bug: timeToCoordinate resolves
+// ONLY an exact bar time and returns null for everything else, so a manufactured moment has to go
+// the long way round through the logical axis. plotWidth is the PLOT, narrower than the canvas by
+// the price-scale gutter — which is where the fib labels had been landing.
+//
+// With this, the pixels a browser would actually stroke can be asserted without a browser. Every
+// check below measures geometry rather than reading the source for a phrase that describes it.
+function fakeScale(bars, { lr = { from: 0, to: bars.length - 1 }, plotWidth = 800, plotHeight = 400,
+  high = 120, low = 80 } = {}) {
+  const logicalToCoordinate = (l) => (l - lr.from) * (plotWidth / (lr.to - lr.from));
+  return {
+    plotWidth,
+    plotHeight,
+    // The arithmetic, unguarded — NaN in, NaN out, exactly as a real price scale behaves. Guarding
+    // here instead would let the renderer's own guard be removed with nothing noticing.
+    toY: (price) => plotHeight - ((price - low) / (high - low)) * plotHeight,
+    toX: (time) => {
+      const i = bars.findIndex((b) => b.time === time);
+      if (i >= 0) return logicalToCoordinate(i);
+      const l = logicalOfTime(time, bars);
+      return l == null ? null : logicalToCoordinate(l);
+    },
+  };
+}
+const finitePt = (pt) => !!pt && Number.isFinite(pt.x) && Number.isFinite(pt.y);
+const allFinite = (item) => item.segments.every(([a, b]) => finitePt(a) && finitePt(b))
+  && item.handles.every(finitePt);
+
+section('31. Fibonacci renders the lines it calculates');
+{
+  const bars = Array.from({ length: 200 }, (_, i) => ({ time: 1_700_000_000 + i * 60, o: 100, h: 101, l: 99, c: 100 }));
+  const last = bars[bars.length - 1].time;
+  const view = { from: bars[0].time, to: last, high: 120, low: 80 };
+
+  // ── 1, 2, 3, 4: a plain historical fib produces real, wide, finite geometry ──────────────────
+  const fib = createDrawing('fib', [{ time: bars[40].time, price: 90 }, { time: bars[120].time, price: 110 }], {}, []);
+  const sc = fakeScale(bars);
+  const hist = projectDrawings([fib], view, sc, tool);
+  ok('a fib projects one item', hist.items.length === 1);
+  ok('...and drops nothing on the way', hist.dropped === 0);
+  const item = hist.items[0];
+  ok('every default level becomes a drawn segment', item.segments.length === 7, String(item.segments.length));
+  ok('no NaN or null coordinate reaches the renderer', allFinite(item));
+  ok('its two anchors land on DIFFERENT x coordinates', item.segments[0][0].x !== item.segments[0][1].x);
+  // THE FAILURE THAT WAS REPORTED: labels at the right heights, and geometry of no width at all.
+  ok('a level is materially wide, not collapsed', widestSpan(item) > 50, String(widestSpan(item)));
+  ok('...and every level is the same width', new Set(item.segments.map(([a, b]) => Math.round(b.x - a.x))).size === 1);
+  ok('levels sit at different heights', new Set(item.segments.map(([a]) => Math.round(a.y))).size === 7);
+  ok('...and each level is horizontal', item.segments.every(([a, b]) => a.y === b.y));
+
+  // ── 5: historical -> future ─────────────────────────────────────────────────────────────────
+  const future = last + 60 * 30;
+  const fwd = createDrawing('fib', [{ time: bars[150].time, price: 95 }, { time: future, price: 115 }], {}, []);
+  const fwdView = { from: bars[0].time, to: future, high: 120, low: 80 };
+  const fp = projectDrawings([fwd], fwdView, fakeScale(bars, { lr: { from: 0, to: 260 } }), tool);
+  ok('a fib drawn into empty space still projects', fp.items.length === 1 && fp.dropped === 0);
+  ok('...with all seven levels', fp.items[0].segments.length === 7);
+  ok('...none of them collapsed', widestSpan(fp.items[0]) > 50, String(widestSpan(fp.items[0])));
+  ok('...and no coordinate lost on the way', allFinite(fp.items[0]));
+  ok('its far anchor really is past the last candle', isFutureTime(future, bars));
+
+  // ── 6: dragging the future anchor keeps the levels visible ──────────────────────────────────
+  const dragged = moveDrawing(fwd, { dTime: 60 * 20, dPrice: 3 }, 1);
+  const dp = projectDrawings([dragged], fwdView, fakeScale(bars, { lr: { from: 0, to: 300 } }), tool);
+  ok('dragging the future anchor keeps every level', dp.items[0].segments.length === 7);
+  ok('...still wide', widestSpan(dp.items[0]) > 50, String(widestSpan(dp.items[0])));
+  ok('...and the drag genuinely moved it', dragged.points[1].time > fwd.points[1].time);
+
+  // ── 8, 9, 10: the settings that already existed are untouched by the geometry change ─────────
+  const custom = createDrawing('fib', fib.points, {}, [], { levels: [{ ratio: 0 }, { ratio: 0.5, color: 3 }, { ratio: 1 }], fill: true });
+  const cp2 = projectDrawings([custom], view, sc, tool);
+  ok('a custom level set draws exactly its own levels', cp2.items[0].segments.length === 3);
+  ok('...keeping the per-level colour', fibLevels(custom.points, custom.levels)[1].color === 3);
+  ok('...and shading is a separate flag that hides no line', custom.fill === true && cp2.items[0].segments.length === 3);
+  const hidden = createDrawing('fib', fib.points, {}, [], { levels: [{ ratio: 0 }, { ratio: 0.5, visible: false }, { ratio: 1 }] });
+  ok('a hidden level draws no line', projectDrawings([hidden], view, sc, tool).items[0].segments.length === 2);
+
+  // ── 11: zoom and pan ────────────────────────────────────────────────────────────────────────
+  const zoomed = projectDrawings([fib], view, fakeScale(bars, { lr: { from: 60, to: 100 } }), tool);
+  ok('zooming in keeps every level', zoomed.items[0].segments.length === 7 && zoomed.dropped === 0);
+  ok('...and makes them wider, as a zoom must', widestSpan(zoomed.items[0]) > widestSpan(item));
+  ok('...with nothing non-finite', allFinite(zoomed.items[0]));
+
+  // ── 12: new bars must not move a future-space fib ───────────────────────────────────────────
+  const grown = [...bars, ...Array.from({ length: 10 }, (_, i) => ({ time: last + (i + 1) * 60, o: 1, h: 2, l: 0, c: 1 }))];
+  ok('new bars leave a future anchor on the same moment', isFutureTime(fwd.points[1].time, grown));
+  ok('...and it still resolves against the longer series',
+    Number.isFinite(fakeScale(grown, { lr: { from: 0, to: 300 } }).toX(fwd.points[1].time)));
+  const after = projectDrawings([fwd], fwdView, fakeScale(grown, { lr: { from: 0, to: 300 } }), tool);
+  ok('...so the fib still draws all seven levels once bars arrive', after.items[0].segments.length === 7);
+
+  // ── THE LABELS. Pinned to the panel's right edge by a Math.min of a value with itself. ───────
+  const seg = item.segments[0];
+  ok('a level label sits inside its own level', labelX(seg, 60, sc.plotWidth) <= Math.max(seg[0].x, seg[1].x));
+  ok('...not jammed against the right of the panel',
+    labelX(seg, 60, sc.plotWidth) + 60 <= Math.max(seg[0].x, seg[1].x) + 7,
+    String(labelX(seg, 60, sc.plotWidth)));
+  ok('...and never off the left', labelX(seg, 60, sc.plotWidth) >= 2);
+  // A level too narrow to hold its text puts the label just past the end, still inside the plot.
+  const narrow = [{ x: 770, y: 5 }, { x: 790, y: 5 }];
+  ok('a narrow level at the right edge still labels inside the plot',
+    labelX(narrow, 60, sc.plotWidth) + 60 <= sc.plotWidth, String(labelX(narrow, 60, sc.plotWidth)));
+  const drawingLayer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  ok('the label is placed from its own segment, not the panel width', /labelX\(seg, w, plotW\)/.test(drawingLayer));
+  ok('the layer projects through the shared module',
+    /projectDrawings\(stateRef\.current\.drawings, view, sc, tool\)/.test(drawingLayer));
+  ok('...and resolves its draft through the same one', /resolveAnchor\(a, sc\), p2 = resolveAnchor\(b, sc\)/.test(drawingLayer));
+  // Scoped to the call itself: a bare search for the old expression is satisfied by the sentence
+  // above it that explains why the old expression is gone, so it could never have failed.
+  ok('...and the self-comparing Math.min is gone',
+    !/ctx\.fillText\(label, Math\.max/.test(drawingLayer));
+}
+
+section('32. a horizontal line is a plot-wide price level');
+{
+  const bars = Array.from({ length: 120 }, (_, i) => ({ time: 1_700_000_000 + i * 60, o: 100, h: 101, l: 99, c: 100 }));
+  // The view's price window is deliberately NARROWER than the plot's: a vertical line stretched
+  // between view.low and view.high would then stop short of the plot edges, which is what makes the
+  // two models distinguishable in pixels rather than only in prose.
+  const view = { from: bars[0].time, to: bars[119].time, high: 110, low: 90 };
+  const sc = fakeScale(bars);
+
+  // ── 13, 14, 15, 16 ──────────────────────────────────────────────────────────────────────────
+  ok('one anchor is all the tool asks for', TOOLS.horizontal.points === 1);
+  const line = createDrawing('horizontal', [{ time: bars[60].time, price: 104 }], {}, []);
+  ok('one click creates it', line !== null && line.points.length === 1);
+  const pr = projectDrawings(line ? [line] : [], view, sc, tool);
+  ok('...and it projects', pr.items.length === 1 && pr.dropped === 0);
+  // Standing in for a missing projection keeps every check below FAILING rather than throwing.
+  const blank = { segments: [], handles: [] };
+  const hz = pr.items[0] || blank;
+  ok('it produces one visible segment', hz.segments.length === 1);
+  ok('...spanning the full plot width', Math.abs(hz.segments[0][1].x - hz.segments[0][0].x) === sc.plotWidth);
+  ok('...from the very left edge', hz.segments[0][0].x === 0);
+  ok('...with finite coordinates', allFinite(hz));
+
+  // ── 17: it cannot tilt ──────────────────────────────────────────────────────────────────────
+  ok('both ends are at the same height', hz.segments[0][0].y === hz.segments[0][1].y);
+  const tilted = moveDrawing(line, { dTime: 99_999, dPrice: 0 }, 0);
+  ok('dragging a handle sideways changes nothing', tilted.points[0].time === line.points[0].time);
+  const tp = projectDrawings(tilted ? [tilted] : [], view, sc, tool).items[0] || blank;
+  ok('...so it still cannot tilt', !!tp.segments[0] && tp.segments[0][0].y === tp.segments[0][1].y);
+
+  // THE ONE THAT MATTERS: no candle under the click. A time nothing in the series knows used to be
+  // the end of it; now the span is the plot and the anchor's own time only places the handle.
+  const orphan = createDrawing('horizontal', [{ time: 1, price: 104 }], {}, []);
+  const oi = projectDrawings(orphan ? [orphan] : [], view, sc, tool).items[0] || blank;
+  ok('a price clicked where no candle exists still draws', oi.segments.length === 1);
+  ok('...at full width',
+    !!oi.segments[0] && Math.abs(oi.segments[0][1].x - oi.segments[0][0].x) === sc.plotWidth);
+
+  // ── 18: vertical dragging changes the price ─────────────────────────────────────────────────
+  const down = line ? moveDrawing(line, { dTime: 0, dPrice: -6 }) : null;
+  ok('dragging it vertically changes its price', down?.points[0].price === 98);
+  ok('...and only its price', down?.points[0].time === line?.points[0].time);
+
+  // ── 19, 20: zoom, pan and a timeframe change preserve the price ─────────────────────────────
+  const zi = projectDrawings(line ? [line] : [], view, fakeScale(bars, { lr: { from: 30, to: 50 } }), tool).items[0] || blank;
+  ok('zoomed in it still spans the plot',
+    !!zi.segments[0] && Math.abs(zi.segments[0][1].x - zi.segments[0][0].x) === 800);
+  ok('...at the same price', !!zi.segments[0] && zi.segments[0][0].y === hz.segments[0][0].y);
+  const hourly = Array.from({ length: 40 }, (_, i) => ({ time: 1_700_000_000 + i * 3600, o: 1, h: 2, l: 0, c: 1 }));
+  const other = projectDrawings(line ? [line] : [], view, fakeScale(hourly), tool);
+  const oth = other.items[0] || blank;
+  ok('a timeframe change keeps its price', !!oth.segments[0] && oth.segments[0][0].y === hz.segments[0][0].y);
+  ok('...and keeps it spanning the plot', oth.segments.length === 1 && other.dropped === 0);
+
+  // ── 21, 22: undo/redo and persistence are the existing machinery, unchanged ──────────────────
+  ok('it survives a round trip through storage',
+    !!line && coerceDrawing(JSON.parse(JSON.stringify(line))).points[0].price === 104);
+  ok('...as a one-anchor drawing',
+    !!line && coerceDrawing(JSON.parse(JSON.stringify(line))).points.length === 1);
+
+  // The vertical line is the mirror, and proving it keeps the mechanism generic.
+  const vert = createDrawing('vertical', [{ time: bars[60].time, price: 104 }], {}, []);
+  const vp = projectDrawings([vert], view, sc, tool);
+  ok('a vertical line spans the plot height', Math.abs(vp.items[0].segments[0][1].y - vp.items[0].segments[0][0].y) === 400);
+  ok('...at one x', vp.items[0].segments[0][0].x === vp.items[0].segments[0][1].x);
+
+  // NOTHING IS DISCARDED IN SILENCE ANY MORE. An anchor that cannot be placed is counted, which is
+  // what turns "the lines just are not there" into something a test can see.
+  const broken = projectDrawings(
+    [{ id: 'x', type: 'trend', visible: true, style: { color: 0, width: 1, dash: 'solid' },
+      points: [{ time: bars[10].time, price: 104 }, { time: bars[20].time, price: NaN }] }],
+    view, sc, tool);
+  ok('an unplaceable anchor is counted, not swallowed', broken.dropped >= 1);
+  ok('a plot edge can never be unplaceable',
+    resolveAnchor({ edgeX: EDGE_LEFT, price: 104 }, sc) !== null
+      && resolveAnchor({ edgeX: EDGE_RIGHT, price: 104 }, sc) !== null);
+  ok('...and is recognised as a viewport anchor', isEdgeAnchor({ edgeX: EDGE_LEFT, price: 1 }) === true);
+  ok('...while a data anchor is not', isEdgeAnchor({ time: 1, price: 1 }) === false);
+  ok('a non-finite price is refused outright', resolveAnchor({ time: bars[0].time, price: NaN }, sc) === null);
+}
+
+section('33. the indicator legend collapses without collapsing the indicators');
+{
+  const legend = await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8');
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const bodyOf = (src, name) => {
+    const i = src.indexOf(name);
+    return i < 0 ? '' : src.slice(i, src.indexOf('\n  }', i) + 4);
+  };
+
+  // ── 23: the count comes from the indicator model ────────────────────────────────────────────
+  // The legend rows ARE the studies drawn on the chart: redrawIndicators skips builtins (volume is
+  // the chart's own series), skips the ones parked as hidden, and skips an intraday study on a
+  // daily chart. Counting the rows therefore counts studies and nothing else.
+  ok('the redraw skips builtins, so volume is never a study', /if \(!def \|\| def\.builtin\) continue;/.test(cmp));
+  ok('the count handed to the control is the legend list itself', /count=\{indicators\.length\}/.test(legend));
+  ok('...and that list is what the chart built from its active indicators',
+    /indicators=\{indicatorLegend\.map/.test(cmp));
+  ok('a drawing is not an indicator and cannot reach the list', !/drawings/.test(legend));
+
+  // ── 24, 25, 29: expanded renders rows, collapsed does not ───────────────────────────────────
+  ok('the rows are rendered only while expanded',
+    /\{!indicatorsCollapsed && indicators\.map\(\(ind\) => \{/.test(legend));
+  ok('the control itself is always there when there are studies',
+    /\{indicators\.length > 0 && \(\s*\n\s*<LegendToggle/.test(legend));
+  ok('the control toggles the preference', /onClick=\{\(\) => onToggleIndicators\?\.\(\)\}/.test(legend));
+
+  // ── 26, 27: collapsing must not touch the plots or the panes ────────────────────────────────
+  // The proof is structural and it is the point of the feature: the flag reaches ChartLegend and
+  // NOTHING else. If redrawIndicators ever read it, a collapsed legend would stop drawing RSI.
+  const redraw = bodyOf(cmp, 'function drawIndicators() {');
+  ok('the redraw is a real function body to search', redraw.length > 500, String(redraw.length));
+  ok('...that really is the one building the panes', /addSeries/.test(redraw) && /setIndicatorLegend/.test(redraw));
+  ok('the redraw never reads the collapse flag', !/legendCollapsed/.test(redraw));
+  ok('...nor the collapsed prop name', !/indicatorsCollapsed/.test(redraw));
+  ok('the legend never removes a series', !/removeSeries|removePane/.test(legend));
+  ok('...and never touches the panes', !/panes\(\)/.test(legend));
+
+  // ── 28: the collapsed control still says how many ───────────────────────────────────────────
+  ok('the control shows the count', /<b style=\{\{ fontWeight: 600 \}\}>\{count\}<\/b>/.test(legend));
+  ok('...beside a chevron that states the direction', /collapsed \? CHEVRON_RIGHT : CHEVRON_DOWN/.test(legend));
+  ok('the chevron is a vector, not an emoji', /VectorIcon shapes=\{collapsed/.test(legend));
+  ok('...drawn from primitives like every other chart icon',
+    /CHEVRON_DOWN = \[\['polyline'/.test(legend) && /CHEVRON_RIGHT = \[\['polyline'/.test(legend));
+  ok('it carries a tooltip that says what it will do', /title=\{title\} aria-label=\{title\}/.test(legend));
+  ok('...and reports its state to assistive tech', /aria-expanded=\{!collapsed\}/.test(legend));
+  ok('it has a hover state', /background: hover \? pal\.tooltipBg : 'transparent'/.test(legend));
+  ok('...and accepts the pointer, over a legend that otherwise does not',
+    /pointerEvents: 'auto'/.test(legend) && /zIndex: 4, pointerEvents: 'none'/.test(legend));
+
+  // ── 30, 31, 32: persistence through the existing preference architecture ────────────────────
+  ok('the preference has a default', DEFAULT_VIEW.legendCollapsed === false);
+  ok('...which is expanded, so nobody meets a chart with its indicators hidden',
+    DEFAULT_VIEW.legendCollapsed !== true);
+  ok('it rides the same key as every other view preference', VIEW_STORAGE_KEY === 'cp_chart_view');
+  // A REAL ROUND TRIP through the same storage the browser uses, so the field has to be written AND
+  // read back. Asserting the default alone would let loadView drop it with nothing noticing.
+  const store = new Map();
+  globalThis.window = { localStorage: {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+  } };
+  try {
+    saveView({ ...DEFAULT_VIEW, legendCollapsed: true });
+    ok('a collapsed legend survives a reload', loadView().legendCollapsed === true);
+    saveView({ ...DEFAULT_VIEW, legendCollapsed: false });
+    ok('...and so does an expanded one', loadView().legendCollapsed === false);
+    // BACKWARD COMPATIBILITY: a view saved before this existed must open expanded, not collapsed.
+    store.set(VIEW_STORAGE_KEY, JSON.stringify({ v: 1, view: { chartType: 'Candles', logScale: true } }));
+    ok('a saved view from before the control opens expanded', loadView().legendCollapsed === false);
+    ok('...without losing the preferences it did carry', loadView().logScale === true);
+  } finally { delete globalThis.window; }
+  // Symbol and timeframe changes do not touch the view: the chart reads it once, at mount.
+  ok('the view is loaded once, not per symbol',
+    /useEffect\(\(\) => \{ setActive\(loadIndicators\(\)\); setView\(loadView\(\)\); \}, \[\]\);/.test(cmp));
+  ok('...so changing symbol or timeframe cannot reset it',
+    (cmp.match(/setView\(loadView\(\)\)/g) || []).length === 1);
+
+  // ── 34: the toolbar button is a different thing and is untouched ────────────────────────────
+  ok('the Indicators button still opens the browser', /setBrowserOpen\(true\)/.test(cmp));
+  ok('...and the collapse control opens nothing', !/setBrowserOpen/.test(legend));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -10,6 +10,7 @@ import { gestureToken } from '../../lib/chart/chart-history.mjs';
 import {
   logicalOfTime, timeOfLogical, timeDeltaSeconds,
 } from '../../lib/chart/chart-coords.mjs';
+import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
 
 // The drawing surface: one canvas sitting over the chart.
 //
@@ -96,7 +97,50 @@ function DrawingLayerBase({
     return { time, price };
   }, [chart, series]);
 
-  /** The visible window, in data space — what a ray or a horizontal line extends across. */
+  /**
+   * THE PLOT'S OWN MEASUREMENTS, not the canvas's.
+   *
+   * The canvas is inset:0 over the whole chart, so it also covers the price-scale gutter and the
+   * time axis; anything pinned to ITS width lands out over the price scale. The time scale reports
+   * the plot, which is the space the chart's own coordinates are expressed in.
+   */
+  const plotSize = useCallback(() => {
+    const cv = canvasRef.current;
+    // clientWidth/Height, never width/height: the backing store is multiplied by devicePixelRatio,
+    // and feeding that to coordinateToPrice asks for a price far below the bottom of the chart.
+    const cssW = cv?.clientWidth || 0;
+    const cssH = cv?.clientHeight || 0;
+    let w = cssW, h = cssH;
+    try {
+      const tw = chart?.timeScale?.().width?.();
+      const th = chart?.timeScale?.().height?.();
+      if (Number.isFinite(tw) && tw > 0) w = tw;
+      if (Number.isFinite(th) && th > 0 && cssH > th) h = cssH - th;
+    } catch { /* the time scale is optional here; the canvas box is a safe fallback */ }
+    return { plotWidth: w, plotHeight: h };
+  }, [chart]);
+
+  /** How this chart converts, handed to the pure projection so the geometry needs no chart at all. */
+  const scale = useCallback(() => {
+    if (!chart || !series) return null;
+    const { plotWidth, plotHeight } = plotSize();
+    return {
+      plotWidth,
+      plotHeight,
+      toY: (price) => series.priceToCoordinate(price),
+      toX: (time) => {
+        // A time the scale knows resolves directly. One it does NOT — an anchor drawn into empty
+        // space past the last candle — goes through the logical axis instead, which is unbounded.
+        const direct = chart.timeScale().timeToCoordinate(time);
+        if (direct != null) return direct;
+        const logical = logicalOfTime(time, stateRef.current.bars || []);
+        if (logical == null) return null;
+        return chart.timeScale().logicalToCoordinate(logical);
+      },
+    };
+  }, [chart, series, plotSize]);
+
+  /** The visible window, in data space — what a ray extends across. */
   const currentView = useCallback(() => {
     const list = stateRef.current.bars || [];
     if (!chart || !series || !list.length) return null;
@@ -106,34 +150,28 @@ function DrawingLayerBase({
     const lr = chart.timeScale().getVisibleLogicalRange();
     const from = lr ? timeOfLogical(lr.from, list) : list[0].time;
     const to = lr ? timeOfLogical(lr.to, list) : list[list.length - 1].time;
-    const h = canvasRef.current?.height || 0;
+    const { plotHeight } = plotSize();
     const high = series.coordinateToPrice(0);
-    const low = series.coordinateToPrice(h);
+    const low = series.coordinateToPrice(plotHeight);
     return { from, to, high: high ?? 0, low: low ?? 0 };
-  }, [chart, series]);
+  }, [chart, series, plotSize]);
 
-  /** Every visible drawing, resolved to pixels, ready to paint or hit-test. */
+  /**
+   * Every visible drawing, resolved to pixels, ready to paint or hit-test.
+   *
+   * The geometry itself lives in chart-project.mjs and knows nothing about Lightweight Charts, which
+   * is what lets the pixels a browser actually strokes be asserted in a test without a browser.
+   */
   const project = useCallback(() => {
     const view = currentView();
-    if (!view) return [];
-    const out = [];
-    for (const d of stateRef.current.drawings || []) {
-      const def = tool(d.type);
-      if (!def) continue;
-      // The DRAWING is passed too: extension flags and a custom level set belong to the drawing,
-      // not to the tool, so the tool cannot resolve its own geometry without it.
-      const segs = def.segments(d.points, view, d);
-      const screenSegs = [];
-      for (const [a, b] of segs) {
-        const p1 = toScreen(a), p2 = toScreen(b);
-        if (p1 && p2) screenSegs.push([p1, p2]);
-      }
-      const handles = d.points.map(toScreen).filter(Boolean);
-      if (!screenSegs.length && !handles.length) continue;
-      out.push({ id: d.id, type: d.type, visible: d.visible, style: d.style, segments: screenSegs, handles, source: d });
-    }
-    return out;
-  }, [toScreen, currentView]);
+    const sc = scale();
+    if (!view || !sc) return [];
+    const { items, dropped } = projectDrawings(stateRef.current.drawings, view, sc, tool);
+    // Anything unplaceable is a bug, not a silent omission — that silence is exactly how a Fibonacci
+    // came to show labels with no lines under them.
+    stateRef.current.dropped = dropped;
+    return items;
+  }, [currentView, scale]);
 
   // ── paint ──
   const paint = useCallback(() => {
@@ -150,7 +188,6 @@ function DrawingLayerBase({
     if (!stateRef.current.visible) return;
 
     const p = palette(stateRef.current.theme);
-    const cw = w;
     for (const d of project()) {
       if (d.visible === false) continue;
       const colour = indicatorColor(stateRef.current.theme, d.style.color);
@@ -198,7 +235,9 @@ function DrawingLayerBase({
             if (i % 2 === 1) continue;
             ctx.fillStyle = indicatorColor(stateRef.current.theme, rows[i].color ?? d.style.color);
             const top = Math.min(rows[i].y, rows[i + 1].y);
-            ctx.fillRect(0, top, cw, Math.abs(rows[i + 1].y - rows[i].y));
+            // Across the plot, not across the panel: cw includes the price-scale gutter, and a wash
+            // running under the axis reads as a rendering fault.
+            ctx.fillRect(0, top, plotSize().plotWidth, Math.abs(rows[i + 1].y - rows[i].y));
           }
           ctx.restore();
         }
@@ -206,16 +245,20 @@ function DrawingLayerBase({
         ctx.save();
         ctx.font = "10px 'DM Sans', sans-serif";
         ctx.textBaseline = 'bottom';
-        for (const lvl of rows) {
+        const plotW = plotSize().plotWidth;
+        rows.forEach((lvl, i) => {
           // PER-LEVEL COLOUR when the level declares one, the drawing's own colour otherwise — which
           // is what keeps the default a single clean hue.
           ctx.fillStyle = indicatorColor(stateRef.current.theme, lvl.color ?? d.style.color);
           const label = `${(lvl.ratio * 100).toFixed(1)}%  ${lvl.price.toFixed(2)}`;
-          // LABELS SIT AT THE RIGHT-HAND END OF THE LEVEL, not at x=6. They used to be pinned to the
-          // left edge, where they landed directly under the chart legend and the two overlapped.
+          // AT THE RIGHT-HAND END OF ITS OWN LEVEL. The previous expression was
+          // Math.max(4, Math.min(cw - w - 6, cw - w - 6)) — a Math.min of a value with itself — so
+          // every label was pinned to the far right of the PANEL, out over the price scale and
+          // nowhere near the drawing it belonged to.
           const w = ctx.measureText(label).width;
-          ctx.fillText(label, Math.max(4, Math.min(cw - w - 6, cw - w - 6)), lvl.y - 2);
-        }
+          const seg = d.segments[i];
+          ctx.fillText(label, seg ? labelX(seg, w, plotW) : Math.max(4, plotW - w - 6), lvl.y - 2);
+        });
         ctx.restore();
       }
 
@@ -315,18 +358,21 @@ function DrawingLayerBase({
       const pts = [...draft.points, draft.cursor].slice(0, def.points);
       if (pts.length === def.points) {
         const view = currentView();
+        const sc = scale();
         ctx.save();
         ctx.strokeStyle = indicatorColor(stateRef.current.theme, stateRef.current.style.color);
         ctx.lineWidth = stateRef.current.style.width;
         ctx.setLineDash([4, 4]);
         for (const [a, b] of def.segments(pts, view, stateRef.current.draftExtra)) {
-          const p1 = toScreen(a), p2 = toScreen(b);
+          // The same resolver the committed drawings use: a draft whose endpoints are plot edges
+          // has to be placeable too, or the tool would show nothing until the click landed.
+          const p1 = resolveAnchor(a, sc), p2 = resolveAnchor(b, sc);
           if (p1 && p2) { ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); }
         }
         ctx.restore();
       }
     }
-  }, [project, toScreen, currentView, series]);
+  }, [project, toScreen, currentView, scale, plotSize, series]);
 
   // Escape (handled by the chart, which owns the shortcuts) clears a measurement and any half-placed
   // shape. A counter rather than a callback: the layer keeps these in a ref, so there is no state to

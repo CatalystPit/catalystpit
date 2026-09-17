@@ -1,4 +1,5 @@
 import { shiftTime } from './chart-coords.mjs';
+import { atEdgeX, atEdgeY, EDGE_LEFT, EDGE_RIGHT, EDGE_TOP, EDGE_BOTTOM } from './chart-project.mjs';
 // THE DRAWING MODEL.
 //
 // Pure geometry and state. No canvas, no React, no Lightweight Charts — which is what makes all of
@@ -62,7 +63,11 @@ export const TOOLS = {
     // come out diagonal however it is dragged. It spans the visible window, future space included.
     lockTime: true,
     shapes: [['line', { x1: 2, y1: 8, x2: 14, y2: 8 }], ['rect', { x: 7, y: 6.5, width: 3, height: 3, fill: true }]],
-    segments: (p, view) => [[{ time: view.from, price: p[0].price }, { time: view.to, price: p[0].price }]],
+    // ITS SPAN IS THE PLOT, NOT A PAIR OF TIMES. It used to be stretched between two manufactured
+    // moments taken from the visible range; those are not in the data, so they resolved only through
+    // a fallback and the line vanished whenever either one failed. A plot edge is pixels, it cannot
+    // fail, and it needs no candle underneath it.
+    segments: (p) => [[atEdgeX(EDGE_LEFT, p[0].price), atEdgeX(EDGE_RIGHT, p[0].price)]],
     priceLabel: (p) => p[0].price,
   },
   vertical: {
@@ -70,7 +75,7 @@ export const TOOLS = {
     // The mirror of the horizontal line: a moment, with no price of its own to drag.
     lockPrice: true,
     shapes: [['line', { x1: 8, y1: 2, x2: 8, y2: 14 }], ['rect', { x: 6.5, y: 6.5, width: 3, height: 3, fill: true }]],
-    segments: (p, view) => [[{ time: p[0].time, price: view.low }, { time: p[0].time, price: view.high }]],
+    segments: (p) => [[atEdgeY(p[0].time, EDGE_TOP), atEdgeY(p[0].time, EDGE_BOTTOM)]],
   },
   rectangle: {
     id: 'rectangle', label: 'Rectangle', icon: '▭', points: 2,
@@ -126,8 +131,14 @@ export const TOOLS = {
     // The conventional set. 0 and 1 are the anchors themselves, so the tool is read as "the move"
     // plus its retracement levels rather than as seven unrelated lines.
     ratios: [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1],
+    // LEVELS RUN BETWEEN THE FIB'S OWN TWO ANCHORS — the same anchors a trendline uses, which
+    // already reach into empty space. They used to be stretched between two moments manufactured
+    // from the visible range, which is how a fib ended up with labels and no lines: the labels are
+    // computed from these anchors and kept drawing while the manufactured geometry was discarded.
+    // Levels that span the move are also what the tool means; a retracement is read against its own
+    // swing, not against the whole screen.
     segments: (pt, view, d) => fibLevels(pt, d?.levels).map((l) => [
-      { time: view.from, price: l.price }, { time: view.to, price: l.price },
+      { time: pt[0].time, price: l.price }, { time: pt[1].time, price: l.price },
     ]),
     levels: true,
     editableLevels: true,

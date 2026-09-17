@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { palette } from '../../lib/chart/chart-theme.mjs';
+import { VectorIcon } from './ChartUI';
 
 // THE CHART LEGEND — the readout in the chart's top-left corner.
 //
@@ -19,6 +20,14 @@ import { palette } from '../../lib/chart/chart-theme.mjs';
 // POINTER-TRANSPARENT EXCEPT WHERE IT IS NOT. The whole block sits over the canvas, so it is
 // pointerEvents:none by default and only the indicator rows opt back in — otherwise the legend would
 // eat the drags and clicks that pan the chart underneath it.
+//
+// THE INDICATOR BAND COLLAPSES. Seven studies is seven rows across the candles, and the top-left is
+// the busiest part of a chart. Collapsed, the whole band becomes one control that still says how
+// many studies are running, so nothing is hidden from the reader — only folded away.
+//
+// IT COLLAPSES THE LABELS, NOT THE STUDIES. The plots, the bands and the separate RSI/MACD panes are
+// untouched; this is decluttering, and a control that quietly stopped calculating an indicator would
+// be a different and much worse feature.
 
 const fmtPrice = (v) => (Number.isFinite(v) ? v.toFixed(2) : '—');
 const fmtVol = (v) => {
@@ -29,6 +38,42 @@ const fmtVol = (v) => {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return String(Math.round(n));
 };
+
+// Drawn from primitives like every other icon on the chart: it inherits currentColor, so it needs no
+// theme plumbing, and it stays crisp where a glyph would sit on the font's own baseline.
+const CHEVRON_DOWN = [['polyline', { points: '4,6.5 8,10.5 12,6.5' }]];
+const CHEVRON_RIGHT = [['polyline', { points: '6.5,4 10.5,8 6.5,12' }]];
+
+/**
+ * The collapse control: a chevron and the number of studies running.
+ *
+ * It is the only thing left of the band when collapsed, which is why it carries the count — a bare
+ * chevron would leave the reader with no idea whether anything was folded away behind it.
+ */
+function LegendToggle({ theme, collapsed, count, onClick }) {
+  const pal = palette(theme);
+  const [hover, setHover] = useState(false);
+  const title = collapsed
+    ? `Show ${count} indicator${count === 1 ? '' : 's'}`
+    : `Hide ${count} indicator${count === 1 ? '' : 's'} from the legend`;
+  return (
+    <button type="button" title={title} aria-label={title} aria-expanded={!collapsed}
+      onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      data-cp-legend-toggle=""
+      style={{
+        pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 2,
+        width: 'fit-content', padding: '0 4px 0 1px', height: 15,
+        background: hover ? pal.tooltipBg : 'transparent',
+        border: 'none', borderRadius: 3, cursor: 'pointer',
+        color: hover ? pal.textStrong : pal.text,
+        font: 'inherit', fontVariantNumeric: 'tabular-nums',
+        opacity: hover || collapsed ? 1 : 0.55, transition: 'opacity 90ms ease',
+      }}>
+      <VectorIcon shapes={collapsed ? CHEVRON_RIGHT : CHEVRON_DOWN} size={11} />
+      <b style={{ fontWeight: 600 }}>{count}</b>
+    </button>
+  );
+}
 
 /** A miniature legend-row button. Only visible while the row is hovered, like every charting app. */
 function RowButton({ theme, title, onClick, children, danger, show }) {
@@ -53,7 +98,7 @@ function RowButton({ theme, title, onClick, children, danger, show }) {
 export default function ChartLegend({
   theme, symbol, intervalLabel, chartTypeLabel, delayed, bar, prevClose,
   indicators = [], onToggleIndicator, onSettingsIndicator, onRemoveIndicator,
-  compact = false,
+  compact = false, indicatorsCollapsed = false, onToggleIndicators,
 }) {
   const p = palette(theme);
   const [hoveredRow, setHoveredRow] = useState(null);
@@ -112,8 +157,13 @@ export default function ChartLegend({
         </div>
       )}
 
-      {/* 3. INDICATORS — one row each, with the value under the cursor and its own controls. */}
-      {indicators.map((ind) => {
+      {/* 3. INDICATORS — one row each, with the value under the cursor and its own controls, behind
+          a collapse control that folds the whole band away without touching the studies. */}
+      {indicators.length > 0 && (
+        <LegendToggle theme={theme} collapsed={indicatorsCollapsed}
+          count={indicators.length} onClick={() => onToggleIndicators?.()} />
+      )}
+      {!indicatorsCollapsed && indicators.map((ind) => {
         const on = ind.visible !== false;
         const show = hoveredRow === ind.key;
         return (

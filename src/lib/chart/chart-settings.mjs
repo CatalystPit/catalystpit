@@ -134,6 +134,9 @@ export const DEFAULT_VIEW = {
   // Magnet is off by default, as it is on every platform that has one: it changes where an anchor
   // lands, and a user who has not asked for that should not meet it.
   magnet: false,
+  // The indicator band of the legend, folded away. Expanded by default: a reader who has not asked
+  // for a collapsed legend should be able to see what is plotted on their chart.
+  legendCollapsed: false,
 };
 
 export function loadView() {
@@ -156,6 +159,10 @@ export function loadView() {
       showDrawings: v.showDrawings !== false,
       magnet: v.magnet === true,
       invertScale: v.invertScale === true,
+      // Absent means "never chosen", which is expanded — the same rule the other opt-in flags use.
+      // A saved view from before this existed therefore opens expanded rather than mysteriously
+      // hiding the reader's indicators.
+      legendCollapsed: v.legendCollapsed === true,
     };
   } catch {
     return { ...DEFAULT_VIEW };
