@@ -1,6 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { publishPendingFacebook, publishFacebookTest, facebookStatus, queueRewordedFacebook,
-  facebookAuthHealth } from '../../../../lib/facebook-publisher';
+  queueTrustedFacebook, facebookAuthHealth } from '../../../../lib/facebook-publisher';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -65,6 +65,16 @@ export async function GET(request) {
       } catch { /* diagnostics must never fail the run */ }
     }
 
+    // Events a TRUSTED source reported after another wire had already created them. Queued here for
+    // the same reason as the reworded sources: at ingest the canonical event has no wording of ours
+    // to publish yet. Failing here must never stop the drain either.
+    let trusted = null;
+    try { trusted = await queueTrustedFacebook(); }
+    catch (e) {
+      trusted = { error: String(e?.message || e).slice(0, 200) };
+      console.error('[facebook] trusted-evidence queue failed:', trusted.error);
+    }
+
     const res = await publishPendingFacebook();
     if (res.sent) console.log(`[facebook] published ${res.sent}`);
     // A CREDENTIAL OUTAGE MUST NOT LOOK LIKE A HEALTHY RUN. On 2026-09-16 a wrong-type token was
@@ -79,7 +89,7 @@ export async function GET(request) {
       return Response.json({ ok: false, credentialAlarm: true, ...counts,
         ...(await facebookAuthHealth()) }, { status: 503 });
     }
-    return Response.json({ ok: true, ...res, reworded });
+    return Response.json({ ok: true, ...res, reworded, trusted });
   } catch (e) {
     // Meta's error text can be long; the message is capped and never carries a credential.
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 160) }, { status: 500 });

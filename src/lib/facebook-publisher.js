@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { facebookText, facebookEligibility, facebookConfig, facebookReadiness,
   isPermanentFailure, failureSpendsAttempt, redactCredential, isAuthFailure,
-  FB_REWORDED_SOURCES, FB_CATALYST_WORDING, withoutHashtags,
+  FB_REWORDED_SOURCES, FB_CATALYST_WORDING, FB_SOURCE_WHITELIST, withoutHashtags,
   META_OAUTH_ERROR_CODE } from './facebook-post.mjs';
 import { resolvePageToken, invalidatePageToken, graphUrl as GRAPH } from './facebook-page-token.mjs';
 import { sameTopic } from './facebook-relevance.mjs';
@@ -283,6 +283,56 @@ export async function queueRewordedFacebook({ limit = 20 } = {}) {
   return out;
 }
 
+/**
+ * Queue canonical events that a TRUSTED source reported after another wire had already created them.
+ *
+ * THE HOLE THIS CLOSES. insertEvents queues Facebook only for a trusted source's own row and only
+ * when that row is canonical. When Walter Bloomberg filed the Standard Chartered Fed story twenty
+ * seconds after FinancialJuice, his copy folded into FinancialJuice's event and the Facebook path
+ * vanished — the story never reached the Page, and nothing recorded why. Arrival order decided
+ * publication, which is the bug.
+ *
+ * Trust now lives on the canonical event (`trusted_source`, set wherever the trusted copy appears in
+ * the cluster), so this scan reconsiders those events once Catalyst Pit wording exists. It queues;
+ * it never publishes, and it never uses the trusted source's own words.
+ *
+ * ONE POST PER EVENT, still. A candidate on the event OR on any member of its cluster excludes it,
+ * `sameTopic` in queueFacebookPost catches the same story from another source, and the unique
+ * indexes on (event_seq) and (content_hash) catch the rest.
+ */
+export async function queueTrustedFacebook({ limit = 20 } = {}) {
+  await ensureFacebookTable();
+  const rows = (await db.execute(sql`
+    select e.seq, e.source, e.source_uid, e.headline, e.source_headline, e.content_hash,
+           e.headline_status, e.tickers, e.trusted_source, e.trusted_seen_at
+      from primary_events e
+     where e.cluster_id is null
+       and e.trusted_source is not null
+       -- Its own source is not whitelisted: those are queued at ingest and must not be reconsidered
+       -- here, which is what keeps "Walter arrived first" on exactly one path.
+       and not (e.source = any(${`{${[...FB_SOURCE_WHITELIST].join(',')}}`}::text[]))
+       and e.headline_status = any(${`{${[...FB_CATALYST_WORDING].join(',')}}`}::text[])
+       -- The same freshness window the drain uses, measured from when the trust evidence arrived.
+       and coalesce(e.trusted_seen_at, e.received_at) > now() - (${MAX_AGE_MINUTES} || ' minutes')::interval
+       -- Nothing already queued or posted for this event, or for any copy of it.
+       and not exists (select 1 from fb_post_candidates c
+                        where c.event_seq = e.seq
+                           or c.event_seq in (select m.seq from primary_events m where m.cluster_id = e.seq))
+     order by e.trusted_seen_at desc
+     limit ${Math.max(1, Math.min(100, limit))}`)).rows ?? [];
+
+  let queued = 0;
+  const skipped = [];
+  for (const r of rows) {
+    // The SAME eligibility and the SAME text builder as every other post.
+    const res = await queueFacebookPost({ ...r, _seq: r.seq }, { isNew: true, isCanonical: true });
+    if (res.queued) queued += 1; else skipped.push(res.reason);
+  }
+  const out = { queued, examined: rows.length, skipped };
+  await recordScan('_facebook_trusted', out).catch(() => {});
+  return out;
+}
+
 /** Record that the scan THREW, so a swallowed error is still visible. Best effort. */
 export async function recordRewordedScanError(message) {
   await db.execute(sql`
@@ -294,17 +344,18 @@ export async function recordRewordedScanError(message) {
            note = ${'ERROR: ' + String(message).slice(0, 280)}`);
 }
 
-/** Store the last reworded-scan outcome alongside the feed health rows. Best effort. */
-async function recordRewordedScan({ queued, examined, skipped }) {
+/** Store a queue scan's outcome alongside the feed health rows. Best effort. */
+async function recordScan(feedKey, { queued, examined, skipped }) {
   const note = `examined ${examined}, queued ${queued}`
     + (skipped.length ? `, skipped: ${[...new Set(skipped)].join(' | ')}` : '');
   await db.execute(sql`
     insert into feed_state (feed_key, last_polled_at, last_success_at, last_status, events_seen, note)
-    values ('_facebook_reworded', now(), now(), 200, ${examined}::int, ${note.slice(0, 300)})
+    values (${feedKey}, now(), now(), 200, ${examined}::int, ${note.slice(0, 300)})
     on conflict (feed_key) do update
        set last_polled_at = now(), last_success_at = now(), last_status = 200,
            events_seen = ${examined}::int, note = ${note.slice(0, 300)}`);
 }
+const recordRewordedScan = (out) => recordScan('_facebook_reworded', out);
 
 /** Drain the queue. Bounded per run and age-limited; publishes nothing when the switch is off. */
 export async function publishPendingFacebook({ limit = MAX_PER_RUN, fetchImpl = fetch } = {}) {

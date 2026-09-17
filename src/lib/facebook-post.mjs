@@ -31,6 +31,27 @@ export const FB_CATALYST_WORDING = new Set(['original', 'composed']);
 export const isRewordedSource = (ev) =>
   FB_REWORDED_SOURCES.has(String(ev?.source || '').toUpperCase());
 
+/**
+ * TRUST IS EVIDENCE ABOUT THE EVENT, NOT ABOUT WHICH COPY ARRIVED FIRST.
+ *
+ * A trusted source that reports a story another wire filed seconds earlier folds into the existing
+ * canonical event, and the Facebook path used to disappear with it — that is how the Standard
+ * Chartered Fed story was lost. The canonical event now carries `trusted_source`, recorded wherever
+ * the trusted copy appears in its cluster, and that evidence QUALIFIES the event.
+ *
+ * It does not decide the WORDING. An event qualifying this way publishes Catalyst Pit's own
+ * sentence, never the trusted source's raw copy, so it waits for the rewrite exactly as a reworded
+ * source does. Corroboration by ordinary sources grants nothing: only a trusted source counts.
+ */
+export const FB_TRUSTED_EVIDENCE_SOURCES = new Set(['WALTERBLOOMBERG']);
+export const trustedEvidence = (ev) => {
+  const s = String(ev?.trusted_source || '').toUpperCase();
+  return FB_TRUSTED_EVIDENCE_SOURCES.has(s) ? s : null;
+};
+/** Qualifies through evidence rather than through its own source. */
+export const qualifiesByEvidence = (ev) =>
+  !FB_SOURCE_WHITELIST.has(String(ev?.source || '').toUpperCase()) && !!trustedEvidence(ev);
+
 // Facebook's own ceiling is ~63k characters. This is far below it and exists for a different reason:
 // a post longer than this is not a Walter flash, it is something that went wrong upstream, and
 // publishing it unread is worse than skipping it. Nothing is ever truncated — truncating a headline
@@ -98,7 +119,9 @@ export function facebookText(ev) {
   // A REWORDED SOURCE PUBLISHES OUR SENTENCE, NOT THEIRS. `headline` is the model's rewrite; it is
   // only Catalyst Pit's wording once enrichment has run, which facebookEligibility enforces, so
   // there is no path here that puts a publisher's prose on the Page as our own.
-  const raw = isRewordedSource(ev)
+  // An event qualifying on trusted EVIDENCE publishes our sentence too: the canonical row is another
+  // publisher's copy, and the trusted source is why we are looking at the event, not what we quote.
+  const raw = (isRewordedSource(ev) || qualifiesByEvidence(ev))
     ? String(ev?.headline ?? '')
     : (String(ev?.source_headline ?? '') || String(ev?.headline ?? ''));
   if (!raw) return null;
@@ -161,11 +184,19 @@ export function withHashtags(text) {
 export function facebookEligibility(ev, { isNew, isCanonical, isBackfill = false } = {}) {
   const no = (reason) => ({ eligible: false, reason });
   if (!ev) return no('no event');
-  if (!FB_SOURCE_WHITELIST.has(String(ev.source || '').toUpperCase())) return no('source not whitelisted');
+  // Either the event's OWN source is whitelisted, or a trusted source reported the same event and
+  // the evidence was recorded on the canonical row. Ordinary corroboration is not evidence.
+  const byEvidence = qualifiesByEvidence(ev);
+  if (!FB_SOURCE_WHITELIST.has(String(ev.source || '').toUpperCase()) && !byEvidence) {
+    return no('source not whitelisted');
+  }
   // A REWORDED SOURCE WAITS FOR OUR SENTENCE. Until enrichment has produced Catalyst Pit wording,
   // `headline` still holds the publisher's line, and publishing that as our own is the one thing
   // this path exists to prevent. Not a rejection — a wait; queueRewordedFacebook() reconsiders it.
-  if (isRewordedSource(ev) && !FB_CATALYST_WORDING.has(String(ev.headline_status || ''))) {
+  //
+  // An event qualifying on trusted EVIDENCE waits for the same reason: the canonical row belongs to
+  // another publisher, so only Catalyst Pit's own sentence may be published for it.
+  if ((isRewordedSource(ev) || byEvidence) && !FB_CATALYST_WORDING.has(String(ev.headline_status || ''))) {
     return no(`awaiting Catalyst wording (${ev.headline_status || 'none'})`);
   }
   if (isBackfill) return no('backfill or replay, not a live ingest');

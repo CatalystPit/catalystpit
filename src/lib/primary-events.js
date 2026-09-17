@@ -10,7 +10,7 @@ import { canonicalUrl, eventKey, factKey, findCluster, normHash, PROXIMITY_MS } 
 import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDisplayable } from './news-normalize.mjs';
 import { isNonEnglish } from './language.mjs';
 import { generateBatch, validateHeadline, validateFacts, BATCH_SIZE } from './headline-writer.mjs';
-import { TRUSTED_SOURCES, TRUSTED_REWRITE_ATTEMPTS, TRUSTED_MIN_IMPORTANCE } from './trusted-sources.mjs';
+import { TRUSTED_SOURCES, TRUSTED_REWRITE_ATTEMPTS, TRUSTED_MIN_IMPORTANCE, isTrustedSource } from './trusted-sources.mjs';
 import { randomUUID } from 'node:crypto';
 import { claimSql, releaseSql, backlogSql, eligibleWhere } from './enrich-claim.mjs';
 import { retryDecision } from './enrich-policy.mjs';
@@ -39,7 +39,7 @@ export async function insertEvents(events) {
         headline, source_headline, summary, published_at, original_url, canonical_url, tickers,
         category, importance, content_hash, headline_status, pipeline_status, event_key,
         fact_key, fact_sig, norm_hash, display_hash, entity, display_ready, first_seen_at, last_seen_at,
-        cluster_id, raw)
+        trusted_source, trusted_seen_at, cluster_id, raw)
       values (${e.source}, ${e.source_name ?? e.source}, ${e.source_kind ?? 'external'},
         ${e.source_type}, ${e.source_uid}, ${e.headline}, ${e.source_headline ?? e.headline},
         ${e.summary ?? null}, ${e.published_at ?? null}::timestamptz, ${e.original_url},
@@ -54,6 +54,10 @@ export async function insertEvents(events) {
         -- must never appear twice. Rewritten again whenever enrichment changes the headline.
         ${e.display_hash ?? null}, ${e.entity ?? null},
         ${e.display_ready ?? true}, now(), now(),
+        -- Event-level trust evidence, recorded here when the trusted source's own copy IS the
+        -- canonical event. When it arrives later instead, the fold below records it on the head.
+        ${isTrustedSource(e.source) ? String(e.source).toUpperCase() : null},
+        ${isTrustedSource(e.source) ? sql`now()` : sql`null`},
         -- NULL = this row is the canonical event. Set = it folded into an existing one. Decided
         -- by the INSERT itself, so a row is never visible without its cluster already resolved.
         ${e.cluster_id ?? null}::bigint,
@@ -86,6 +90,12 @@ export async function insertEvents(events) {
       // The canonical event learns from its duplicates: another source corroborating it, the time
       // it was most recently reported, and a ticker or figure this member resolved that the head
       // did not have. The head's own headline and provenance are never overwritten.
+      //
+      // TRUST IS A PROPERTY OF THE EVENT. A trusted source reporting a story that another wire filed
+      // first used to lose its Facebook qualification entirely, because the queue above only fires
+      // for a trusted source's OWN canonical row. The evidence is recorded on the canonical event
+      // instead, so arrival order stops deciding whether the event can qualify. coalesce keeps the
+      // FIRST trusted sighting, which makes re-ingest and re-runs idempotent.
       await db.execute(sql`
         update primary_events
            set source_count = source_count + 1,
@@ -95,7 +105,10 @@ export async function insertEvents(events) {
                fact_sig = coalesce(nullif(fact_sig, ''), ${e.fact_sig ?? null}),
                fact_key = coalesce(fact_key, ${e.fact_key ?? null}),
                importance = greatest(importance, ${e.importance ?? 0}::smallint),
-               display_ready = display_ready or ${e.display_ready ?? true}
+               display_ready = display_ready or ${e.display_ready ?? true},
+               trusted_source = coalesce(trusted_source, ${isTrustedSource(e.source) ? String(e.source).toUpperCase() : null}),
+               trusted_seen_at = case when trusted_source is null and ${isTrustedSource(e.source)}
+                                      then now() else trusted_seen_at end
          where seq = ${e.cluster_id}`);
     }
   }
@@ -758,7 +771,8 @@ export async function rewriteHealth() {
 // the trader has already seen keeps its seq, its position and its timestamp, and the late arrival
 // becomes a member of it. Never touches SEC, never merges a row into itself or into one of its own
 // members, and never fires on a headline too short to be a safe identity.
-async function foldOnDisplayHeadline(seq, headline, publishedAt) {
+// Exported for scripts/verify-facebook-trust.mjs: the rewrite-time fold must carry trust evidence too.
+export async function foldOnDisplayHeadline(seq, headline, publishedAt) {
   const hash = normHash(headline);
   if (!hash || hash.split(' ').length < 4) return 0;   // too thin to assert two events are one
   const res = await db.execute(sql`
@@ -781,10 +795,18 @@ async function foldOnDisplayHeadline(seq, headline, publishedAt) {
     returning p.seq`);
   const folded = (res.rows ?? res)?.length || 0;
   if (folded) {
+    // The folded row's trust evidence moves to the event it joined, exactly as it does at ingest —
+    // otherwise a trusted row that becomes a duplicate only AFTER its rewrite would take the event's
+    // Facebook qualification with it.
     await db.execute(sql`
-      update primary_events
-         set source_count = source_count + 1, last_seen_at = now()
-       where seq = (select cluster_id from primary_events where seq = ${seq})`);
+      update primary_events head
+         set source_count = head.source_count + 1,
+             last_seen_at = now(),
+             trusted_source = coalesce(head.trusted_source, folded.trusted_source),
+             trusted_seen_at = case when head.trusted_source is null and folded.trusted_source is not null
+                                    then coalesce(folded.trusted_seen_at, now()) else head.trusted_seen_at end
+        from primary_events folded
+       where folded.seq = ${seq} and head.seq = folded.cluster_id`);
   }
   return folded;
 }
