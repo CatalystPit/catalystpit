@@ -34,6 +34,8 @@ import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../
 import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover.mjs';
 import { cloneDrawing, barLevels, snapToLevel, MAGNET_PX } from '../src/lib/chart/chart-drawings.mjs';
 import { measureBetween, formatDuration } from '../src/lib/chart/chart-drawings.mjs';
+import { reorderDrawing, canReorder, constrainAngle, sanitizeFibLevels, DEFAULT_FIB_LEVELS } from '../src/lib/chart/chart-drawings.mjs';
+import { exportLayout, captionFor, exportFilename, CAPTION_HEIGHT } from '../src/lib/chart/chart-export.mjs';
 import { emptyHistory, record, undo, redo, canUndo, canRedo, MAX_HISTORY } from '../src/lib/chart/chart-history.mjs';
 import { TIMEFRAME_GROUPS, timeframesByGroup, ADAPTER, isServable, unavailableReason,
   PLANNED_TIMEFRAMES } from '../src/lib/chart/chart-source.mjs';
@@ -748,7 +750,11 @@ section('15. the indicator browser: searchable, categorised, registry-driven');
 
   const br = await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8');
   ok('the browser has a search box', /Search indicators/.test(br));
-  ok('it renders categories from the registry', /INDICATOR_CATEGORIES\.map/.test(br));
+  // Still driven by the registry; Favourites is appended as a filter over the same search rather
+  // than being a hard-coded category the registry does not know about.
+  ok('it renders categories from the registry', /\[\.\.\.INDICATOR_CATEGORIES, \{ id: 'favorites'/.test(br));
+  ok('...and favourites filters that same search, not a second list',
+    /category === 'favorites' \? found\.filter/.test(br));
   ok('it renders results from the search, not a hard-coded list', /searchIndicators\(/.test(br));
   ok('a click adds immediately', /onClick=\{\(\) => add\(def\.id\)\}/.test(br));
   ok('multi-instance is respected', /MAX_INSTANCES_PER_INDICATOR/.test(br));
@@ -1405,8 +1411,12 @@ section('22. context menu, magnet, drawing manager, panes');
   ok('a locked drawing cannot be moved', moveDrawing(locked, { dPrice: 5 }) === locked);
   ok('...nor by a handle pull', moveDrawing(locked, { dPrice: 5 }, 0) === locked);
   ok('an unlocked one still moves', moveDrawing(d, { dPrice: 5 }).points[0].price === 15);
-  ok('the layer also refuses to arm a drag on a locked drawing', /if \(d && !d\.locked\) \{/.test(layer));
-  ok('...but still selects it, so it can be unlocked', /onSelect\(hit \? hit\.id : null\);/.test(layer));
+  // A locked drawing is filtered out of the drag group, so a group drag cannot carry one along.
+  ok('the layer also refuses to arm a drag on a locked drawing',
+    /s\.drawings\.filter\(\(x\) => x\.id === hit\.id && !x\.locked\)/.test(layer));
+  ok('...nor can a group drag carry one along',
+    /s\.drawings\.filter\(\(x\) => s\.selected\.has\(x\.id\) && !x\.locked\)/.test(layer));
+  ok('...but it is still selectable, so it can be unlocked', /onSelect\(hit \? hit\.id : null, additive\);/.test(layer));
   ok('a lock survives a reload', coerceDrawing({ ...locked }).locked === true);
   ok('...and an older stored drawing without one stays movable',
     coerceDrawing({ type: 'trend', points: d.points }).locked === false);
@@ -1418,10 +1428,10 @@ section('22. context menu, magnet, drawing manager, panes');
   ok('...and is never born locked', cloneDrawing(locked, [locked]).locked === false);
   ok('cloning an unknown type produces nothing', cloneDrawing({ type: 'nope', points: [] }, []) === null);
   ok('duplication goes through the model, not the UI', /cloneDrawing\(src, ds\)/.test(cmp));
-  ok('...and selects the copy, since it sits on the original', /setSelectedDrawing\(copy\.id\)/.test(cmp));
+  ok('...and selects the copy, since it sits on the original', /setSelectedIds\(\[copy\.id\]\)/.test(cmp));
 
-  ok('the object tree lists every drawing on the symbol', /drawings=\{drawings\} selectedId=\{selectedDrawing\}/.test(cmp));
-  ok('a row selects the drawing on the chart', /onClick=\{\(\) => onSelect\(d\.id\)\}/.test(mgr));
+  ok('the object tree lists every drawing on the symbol', /drawings=\{drawings\} selectedIds=\{selectedIds\}/.test(cmp));
+  ok('a row selects the drawing on the chart', /onClick=\{\(e\) => onSelect\(d\.id, e\.shiftKey/.test(mgr));
   ok('...can hide it', /patch\(d\.id, \{ visible: !on \}\)/.test(mgr));
   ok('...lock it', /patch\(d\.id, \{ locked: !d\.locked \}\)/.test(mgr));
   ok('...duplicate it', /onDuplicate\?\.\(d\.id\)/.test(mgr));
@@ -1589,7 +1599,7 @@ section('23. undo/redo, the ruler, notes, the price scale and nudge');
   ok('the note editor focuses immediately', (cmp.match(/if \(el\) el\.focus\(\)/g) || []).length >= 1);
   ok('a note is painted, since it draws no segments', /tool\(d\.source\.type\)\?\.hasText/.test(layer));
   ok('the object tree shows a note by its words', /if \(typeof d\.text === 'string'\) return d\.text \|\| '\(empty\)';/.test(mgr));
-  ok('...and can reopen it for editing', /onEditText\?\.\(d\.id, d\.text\)/.test(mgr));
+  ok('...and can reopen it through its settings', /onSettings\?\.\(d\.id\)/.test(mgr));
 
   // ── 4. THE PRICE SCALE ──────────────────────────────────────────────────────────────────────
   // The CONDITION, not just the call: asserting the call alone passes happily while the branch that
@@ -1618,9 +1628,164 @@ section('23. undo/redo, the ruler, notes, the price scale and nudge');
   ok('the price step is read off the live scale', /series\.coordinateToPrice\(mid - steps\)/.test(cmp));
   ok('a horizontal nudge lands on a bar', /list\[j\]\.time - list\[i\]\.time/.test(cmp));
   ok('...and is refused where time is a date string', /typeof target\.points\[0\]\.time !== 'number'/.test(cmp));
-  ok('a locked drawing is never nudged', /!target \|\| target\.locked/.test(cmp));
+  ok('a locked drawing is never nudged', /ids\.has\(x\.id\) && !x\.locked/.test(cmp));
   ok('an unhandled arrow falls through rather than being swallowed', /if \(moved\) \{ e\.preventDefault\(\); return; \}/.test(cmp));
-  ok('a nudge is undoable like any other change', /updateDrawings\(\(ds\) => ds\.map\(\(x\) => \(x\.id === target\.id/.test(cmp));
+  ok('a nudge is undoable like any other change', /updateDrawings\(\(ds\) => ds\.map\(\(x\) => \(ids\.has\(x\.id\)/.test(cmp));
+}
+
+section('24. z-order, multi-select, editable fibs, trendline options, export');
+{
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
+  const set = await readFile(new URL('../src/components/chart/DrawingSettings.jsx', import.meta.url), 'utf8');
+  const br = await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8');
+
+  // ── 1. Z-ORDER ──────────────────────────────────────────────────────────────────────────────
+  // THE ARRAY IS THE ORDER. A z-index field beside it would be a second source of truth, and the
+  // two would disagree the first time a drawing was deleted.
+  const L = ['a', 'b', 'c'].map((id) => ({ id, type: 'trend', points: [{ time: 1, price: 1 }, { time: 2, price: 2 }] }));
+  ok('bring to front moves it last, where the renderer paints it on top',
+    reorderDrawing(L, 'a', 'front').map((d) => d.id).join('') === 'bca');
+  ok('send to back moves it first', reorderDrawing(L, 'c', 'back').map((d) => d.id).join('') === 'cab');
+  ok('bring forward is one step', reorderDrawing(L, 'a', 'forward').map((d) => d.id).join('') === 'bac');
+  ok('send backward is one step', reorderDrawing(L, 'c', 'backward').map((d) => d.id).join('') === 'acb');
+  ok('a move that would change nothing returns the same array', reorderDrawing(L, 'c', 'front') === L);
+  ok('an unknown id changes nothing', reorderDrawing(L, 'zz', 'front') === L);
+  // 'b', not 'a': the first element is already at the back, so an unknown direction that wrongly
+  // fell through to "send to back" would be a no-op on it and the test would pass regardless.
+  ok('an unknown direction changes nothing', reorderDrawing(L, 'b', 'sideways') === L);
+  ok('the original array is never mutated', L.map((d) => d.id).join('') === 'abc');
+  ok('canReorder is honest at the top', !canReorder(L, 'c', 'front') && !canReorder(L, 'c', 'forward'));
+  ok('...and at the bottom', !canReorder(L, 'a', 'back') && !canReorder(L, 'a', 'backward'));
+  ok('...and in the middle', canReorder(L, 'b', 'front') && canReorder(L, 'b', 'back'));
+  ok('the object tree lists top-of-chart first, so raise and lower read correctly',
+    /\[\.\.\.drawings\]\.reverse\(\)/.test(mgr));
+  ok('its buttons disable themselves honestly', /disabled=\{!canReorder\(drawings, d\.id, 'forward'\)\}/.test(mgr));
+  ok('reordering goes through the undoable path', /updateDrawings\(\(ds\) => reorderDrawing\(ds, id, where\)\)/.test(cmp));
+
+  // ── 2. MULTI-SELECT ─────────────────────────────────────────────────────────────────────────
+  ok('the selection is a list', /const \[selectedIds, setSelectedIds\] = useState\(\[\]\);/.test(cmp));
+  ok('shift adds to it rather than replacing it', /return prev\.includes\(id\) \? prev\.filter\(\(x\) => x !== id\) : \[\.\.\.prev, id\];/.test(cmp));
+  ok('...and clicking without it starts fresh', /if \(!additive\) return \[id\];/.test(cmp));
+  ok('the canvas is what reads the modifier', /const additive = !!e\.shiftKey;/.test(layer));
+  // A BULK ACTION IS ONE CHANGE, therefore one undo step. That is the whole reason it is written as
+  // a single updateDrawings call rather than a loop of them.
+  const bulk = cmp.slice(cmp.indexOf('const bulkAction'), cmp.indexOf('const undoDrawings'));
+  ok('a bulk action is a single change', (bulk.match(/updateDrawings\(/g) || []).length === 1);
+  for (const what of ['delete', 'front', 'back', 'hide', 'show', 'lock', 'unlock'])
+    ok(`bulk "${what}" is handled`, bulk.includes(`'${what}'`));
+  ok('a group send-to-front keeps the group’s own stacking',
+    /\[\.\.\.ordered\]\.reverse\(\)/.test(bulk));
+  ok('deleting clears the selection, since those drawings are gone', /if \(what === 'delete'\) setSelectedIds\(\[\]\);/.test(cmp));
+  // GROUP MOVE: one delta, measured once, applied from each drawing's own original — so a group
+  // keeps its shape however long the drag runs.
+  ok('dragging one of several moves the whole selection',
+    /s\.selected\.has\(hit\.id\) && s\.selected\.size > 1 && hit\.handle == null/.test(layer));
+  ok('...but a handle drag stays singular, because resizing is about one anchor',
+    /hit\.handle == null/.test(layer));
+  ok('every drawing takes the same delta from its own original', /for \(const orig of s\.drag\.originals\)/.test(layer));
+  ok('a locked drawing is never carried along', /s\.selected\.has\(x\.id\) && !x\.locked/.test(layer));
+  ok('restyling applies to the whole selection', /ids\.has\(d\.id\) \? \{ \.\.\.d, style: next \}/.test(cmp));
+  ok('so does delete', /updateDrawings\(\(ds\) => ds\.filter\(\(d\) => !ids\.has\(d\.id\)\)\)/.test(cmp));
+  // Both of these used to bypass updateDrawings, which meant a delete could not be undone at all.
+  ok('delete is undoable', !/setDrawings\(\(ds\) => ds\.filter/.test(cmp));
+  ok('...and so is delete-all', !/setDrawings\(\[\]\)/.test(cmp));
+  ok('the bulk bar appears only when something is selected', /\{sel\.size > 0 && \(/.test(mgr));
+
+  // ── 3. EDITABLE FIBONACCI ───────────────────────────────────────────────────────────────────
+  ok('the default set is the conventional one', DEFAULT_FIB_LEVELS.length === 7);
+  ok('a fib drawing carries its own levels',
+    createDrawing('fib', [{ time: 1, price: 1 }, { time: 2, price: 2 }], {}, []).levels.length === 7);
+  ok('...and other tools do not',
+    !('levels' in createDrawing('rectangle', [{ time: 1, price: 1 }, { time: 2, price: 2 }], {}, [])));
+  ok('the drawing’s own levels are what gets drawn',
+    fibLevels([{ price: 10 }, { price: 0 }], [{ ratio: 0.5, visible: true }]).length === 1);
+  ok('a hidden level is not drawn',
+    fibLevels([{ price: 10 }, { price: 0 }], [{ ratio: 0.5, visible: true }, { ratio: 0.25, visible: false }]).length === 1);
+  ok('prices are computed from the ratio',
+    fibLevels([{ price: 10 }, { price: 0 }], [{ ratio: 0.5, visible: true }])[0].price === 5);
+  ok('no levels falls back to the default set', fibLevels([{ price: 10 }, { price: 0 }]).length === 7);
+  // Levels are user-edited and persisted, so they come back as anything at all.
+  ok('a non-numeric level is dropped, not repaired', sanitizeFibLevels([{ ratio: 'x' }, { ratio: 0.5 }]).length === 1);
+  ok('duplicates are collapsed', sanitizeFibLevels([{ ratio: 0.8 }, { ratio: 0.8 }]).length === 1);
+  ok('the list is sorted', sanitizeFibLevels([{ ratio: 0.8 }, { ratio: 0.2 }]).map((l) => l.ratio).join() === '0.2,0.8');
+  ok('an empty list falls back rather than drawing nothing', sanitizeFibLevels([]).length === 7);
+  ok('a bare number is accepted as a ratio', sanitizeFibLevels([0.5])[0].ratio === 0.5);
+  // Optional chaining: if levels stopped being coerced at all this must FAIL, not throw and take
+  // every assertion after it down with it.
+  ok('levels survive a reload',
+    coerceDrawing({ type: 'fib', points: [{ time: 1, price: 1 }, { time: 2, price: 2 }], levels: [{ ratio: 0.33 }] })?.levels?.[0]?.ratio === 0.33);
+  ok('the renderer reads the drawing’s levels', /fibLevels\(d\.source\.points, d\.source\.levels\)/.test(layer));
+  ok('the settings dialog can add a level', /const addLevel = \(\) => \{/.test(set));
+  ok('...remove one', /const removeLevel = \(i\) =>/.test(set));
+  ok('...edit its value', /aria-label=\{`Level \$\{i \+ 1\} ratio`\}/.test(set));
+  ok('...and hide one', /setLevel\(i, \{ visible: l\.visible === false \}\)/.test(set));
+
+  // ── 4. TRENDLINE OPTIONS ────────────────────────────────────────────────────────────────────
+  const view = { from: 0, to: 100, high: 100, low: 0 };
+  const pts = [{ time: 10, price: 10 }, { time: 20, price: 20 }];
+  const plain = TOOLS.trend.segments(pts, view, { extendLeft: false, extendRight: false });
+  ok('an unextended trend line stops at its anchors',
+    plain[0][0].time === 10 && plain[0][1].time === 20);
+  const right = TOOLS.trend.segments(pts, view, { extendRight: true });
+  ok('extend right reaches the edge of the view', right[0][1].time === 100);
+  ok('...along the same slope', right[0][1].price === 100);
+  const left = TOOLS.trend.segments(pts, view, { extendLeft: true });
+  ok('extend left reaches the other edge', left[0][0].time === 0);
+  ok('...and both together make it infinite',
+    TOOLS.trend.segments(pts, view, { extendLeft: true, extendRight: true })[0][0].time === 0);
+  ok('a trend line carries the flags', 'extendLeft' in createDrawing('trend', pts, {}, []));
+  ok('a rectangle does not', !('extendRight' in createDrawing('rectangle', pts, {}, [])));
+  ok('the flags survive a reload', coerceDrawing({ type: 'trend', points: pts, extendRight: true }).extendRight === true);
+  ok('a ray can extend backwards too', TOOLS.ray.segments(pts, view, { extendLeft: true })[0][0].time === 0);
+  // 45° CONSTRAINT, in screen space — an angle is judged against pixels, and the same two anchors
+  // subtend a different angle at every zoom level.
+  const near = constrainAngle({ x: 0, y: 0 }, { x: 100, y: 10 });
+  ok('a near-horizontal drag snaps flat', Math.round(near.y) === 0 && Math.round(near.x) === 100);
+  const diag = constrainAngle({ x: 0, y: 0 }, { x: 100, y: 90 });
+  ok('a near-diagonal drag snaps to 45°', Math.round(diag.x) === Math.round(diag.y));
+  const vert = constrainAngle({ x: 5, y: 0 }, { x: 10, y: 100 });
+  ok('a near-vertical drag snaps upright', Math.round(vert.x) === 5);
+  ok('a zero-length drag is left alone', constrainAngle({ x: 3, y: 4 }, { x: 3, y: 4 }).x === 3);
+  ok('the length along the snapped direction is preserved',
+    Math.round(Math.hypot(diag.x, diag.y)) === Math.round(100 * Math.cos(Math.PI / 4) + 90 * Math.sin(Math.PI / 4)));
+  ok('shift is what applies it, while placing', /if \(!e\?\.shiftKey \|\| !first\) return toData\(pt\.x, pt\.y\);/.test(layer));
+  ok('...and it is converted back to data space', /const c = constrainAngle\(from, pt\);\s*\n\s*return toData\(c\.x, c\.y\);/.test(layer));
+  ok('double-clicking a drawing opens its settings', /const onDoubleClick = \(e\) => \{/.test(layer));
+
+  // ── 5. INDICATOR UX ─────────────────────────────────────────────────────────────────────────
+  ok('the active list can be reordered', /const move = \(idx, delta\) => \{/.test(br));
+  ok('...which genuinely changes draw and legend order', /\[next\[idx\], next\[to\]\] = \[next\[to\], next\[idx\]\];/.test(br));
+  ok('...and the ends are not movable further', /disabled=\{idx === 0\}/.test(br) && /disabled=\{idx === active\.length - 1\}/.test(br));
+  ok('indicators can be starred', /toggleFavorite\(def\.id\)/.test(br));
+  ok('...persisted as ids only', /export const FAVORITES_KEY/.test(await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')));
+  ok('the star is a sibling of the row, not a button inside a button',
+    br.indexOf('</button>\n      <button type="button" onClick={() => toggleFavorite') > 0);
+
+  // ── 6. EXPORT ───────────────────────────────────────────────────────────────────────────────
+  const lay = exportLayout(800, 400, { caption: true });
+  ok('the export makes room for its caption', lay.height === 400 + CAPTION_HEIGHT);
+  ok('...and the chart still gets its full size', lay.chart.width === 800 && lay.chart.height === 400);
+  ok('...with the caption below it, not over it', lay.caption.y === 400);
+  ok('no caption means no extra height', exportLayout(800, 400, { caption: false }).height === 400);
+  ok('a zero size cannot produce a zero canvas', exportLayout(0, 0).width === 1);
+  ok('the caption names the symbol and interval',
+    captionFor({ symbol: 'AAPL', interval: '1 day', chartType: 'Candlestick' }) === 'AAPL  ·  1 day  ·  Candlestick');
+  ok('...and says so when the feed is delayed',
+    captionFor({ symbol: 'AAPL', interval: '1m', delayed: true }).endsWith('delayed'));
+  ok('a filename sorts and does not collide',
+    exportFilename('AAPL', '1D', new Date(2024, 4, 7, 9, 5)) === 'AAPL_1D_2024-05-07_0905.png');
+  ok('...and cannot escape its directory', !exportFilename('../../etc', '1D').includes('/'));
+  ok('the export composes the chart and the drawing overlay', /overlayCanvas: overlay/.test(cmp));
+  ok('...found by its marker', /canvas\[data-cp-drawings\]/.test(cmp) && /data-cp-drawings=""/.test(layer));
+  // NOTHING OUTSIDE THE CHART: no page rasteriser, no panel chrome, no other panels.
+  ok('nothing outside the chart is captured', !/html2canvas|document\.body/.test(cmp.slice(cmp.indexOf('const exportPng'), cmp.indexOf('const undoDrawings'))));
+  ok('the licence attribution travels with the image', /attribution: CHART_ATTRIBUTION/.test(cmp));
+  // The WHOLE-CANVAS fill specifically. A bare search for the fill style also matches the caption
+  // strip, which would pass while the area behind the chart stayed transparent.
+  ok('the exported PNG is never transparent',
+    /ctx\.fillRect\(0, 0, layout\.width, layout\.height\);/.test(await readFile(new URL('../src/lib/chart/chart-export.mjs', import.meta.url), 'utf8')));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

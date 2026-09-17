@@ -173,3 +173,28 @@ export const STORAGE_KEY = KEY;
 export const STORAGE_VERSION = VERSION;
 export const VIEW_STORAGE_KEY = VIEW_KEY;
 export { coerceInstance as __coerceInstance, enforce as __enforce };
+
+// ── favourite indicators ─────────────────────────────────────────────────────
+// A LIST OF IDS, nothing more. Favourites are a shortcut into the catalogue, not a second copy of
+// it — so what is stored is which registry entries are starred, and an id the registry no longer
+// knows is dropped on read rather than kept as a row that cannot be added.
+
+export const FAVORITES_KEY = 'cp_chart_favorites';
+
+export function loadFavorites() {
+  if (!isBrowser()) return [];
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(FAVORITES_KEY) || 'null');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((id) => typeof id === 'string');
+  } catch {
+    return [];
+  }
+}
+
+export function saveFavorites(ids) {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(FAVORITES_KEY, JSON.stringify((ids || []).filter((x) => typeof x === 'string')));
+  } catch { /* ignore */ }
+}

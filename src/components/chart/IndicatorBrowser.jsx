@@ -7,6 +7,7 @@ import {
 } from '../../lib/chart/chart-indicators.mjs';
 import { palette, indicatorColor, indicatorColors } from '../../lib/chart/chart-theme.mjs';
 import { Modal, ToolButton } from './ChartUI';
+import { loadFavorites, saveFavorites } from '../../lib/chart/chart-settings.mjs';
 
 // The indicator browser.
 //
@@ -21,6 +22,18 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [expanded, setExpanded] = useState(null);
+  // Read on mount, for the same reason the rest of the saved state is: localStorage does not exist
+  // while the server renders, and reading it in the initial value would make the first client render
+  // disagree with the server's.
+  const [favorites, setFavorites] = useState([]);
+  useEffect(() => { setFavorites(loadFavorites()); }, []);
+  const toggleFavorite = (id) => {
+    setFavorites((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      saveFavorites(next);
+      return next;
+    });
+  };
   const inputRef = useRef(null);
   const p = palette(theme);
   const swatches = indicatorColors(theme);
@@ -32,10 +45,12 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
   // open, rather than making the user find it again in a list they did not ask to see.
   useEffect(() => { if (open && focusKey) setExpanded(focusKey); }, [open, focusKey]);
 
-  const results = useMemo(
-    () => searchIndicators(query, { intraday, category }),
-    [query, intraday, category],
-  );
+  const results = useMemo(() => {
+    const found = searchIndicators(query, { intraday, category: category === 'favorites' ? 'all' : category });
+    // FAVOURITES IS A FILTER OVER THE SAME SEARCH, not a separate list — so searching inside it
+    // still works and a starred indicator cannot drift out of step with the catalogue.
+    return category === 'favorites' ? found.filter((d) => favorites.includes(d.id)) : found;
+  }, [query, intraday, category, favorites]);
 
   const countOf = (id) => active.filter((a) => a.id === id).length;
   const nextColorIndex = () => {
@@ -61,6 +76,14 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
     if (def.params.length) setExpanded(inst.key);
   };
   const remove = (key) => onChange(active.filter((a) => a.key !== key));
+  /** Swap a row with its neighbour. Clamped, so the ends are simply not movable further. */
+  const move = (idx, delta) => {
+    const to = idx + delta;
+    if (to < 0 || to >= active.length) return;
+    const next = active.slice();
+    [next[idx], next[to]] = [next[to], next[idx]];
+    onChange(next);
+  };
   const patch = (key, next) => onChange(active.map((a) => (a.key === key ? { ...a, ...next } : a)));
   const setParam = (inst, k, v) => patch(inst.key, { params: sanitizeParams(inst.id, { ...inst.params, [k]: v }) });
 
@@ -68,8 +91,12 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
     const n = countOf(def.id);
     const cap = isMultiInstance(def.id) ? MAX_INSTANCES_PER_INDICATOR : 1;
     const full = n >= cap;
+    const fav = favorites.includes(def.id);
     return (
-      <button key={def.id} type="button" onClick={() => add(def.id)} disabled={full}
+      <div key={def.id} style={{ display: 'flex', alignItems: 'center' }}>
+      {/* The star is a SIBLING of the row, not a child: a button inside a button is invalid markup
+          and the inner one does not reliably receive its own click. */}
+      <button type="button" onClick={() => add(def.id)} disabled={full}
         title={full ? `Maximum ${cap}` : `Add ${def.label}`}
         style={{
           display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
@@ -88,6 +115,14 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
         )}
         {n > 0 && <span style={{ fontSize: 10, color: p.up, fontWeight: 600 }}>{n} added</span>}
       </button>
+      <button type="button" onClick={() => toggleFavorite(def.id)}
+        title={fav ? 'Remove from favourites' : 'Add to favourites'}
+        aria-pressed={fav}
+        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 6px',
+          fontSize: 12, lineHeight: 1, color: fav ? p.up : p.text, opacity: fav ? 1 : 0.5 }}>
+        {fav ? '★' : '☆'}
+      </button>
+      </div>
     );
   };
 
@@ -135,7 +170,7 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
             fontFamily: "'DM Sans',sans-serif", fontSize: 12, marginBottom: 8 }} />
 
         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 8 }}>
-          {INDICATOR_CATEGORIES.map((c) => (
+          {[...INDICATOR_CATEGORIES, { id: 'favorites', label: 'Favourites' }].map((c) => (
             <button key={c.id} type="button" onClick={() => setCategory(c.id)}
               style={{ background: category === c.id ? p.grid : 'transparent',
                 border: `1px solid ${category === c.id ? p.up : p.border}`, borderRadius: 999,
@@ -165,7 +200,7 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
             padding: '6px 2px' }}>Nothing added yet — pick one above.</div>
         )}
 
-        {active.map((inst) => {
+        {active.map((inst, idx) => {
           const def = INDICATORS[inst.id];
           if (!def) return null;
           const hiddenByTimeframe = def.intradayOnly && !intraday;
@@ -186,6 +221,12 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
                     <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>needs intraday</span>
                   )}
                 </span>
+                {/* ORDER MATTERS: the active list is the order indicators are drawn and the order
+                    the chart legend lists them, so moving a row genuinely changes the chart. */}
+                <ToolButton theme={theme} title="Move up" disabled={idx === 0}
+                  onClick={() => move(idx, -1)}>▲</ToolButton>
+                <ToolButton theme={theme} title="Move down" disabled={idx === active.length - 1}
+                  onClick={() => move(idx, 1)}>▼</ToolButton>
                 {def.params.length > 0 && (
                   <ToolButton theme={theme} active={expanded === inst.key} title="Settings"
                     onClick={() => setExpanded(expanded === inst.key ? null : inst.key)}>⚙</ToolButton>

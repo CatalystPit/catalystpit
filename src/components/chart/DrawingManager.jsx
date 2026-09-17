@@ -1,5 +1,5 @@
 'use client';
-import { TOOLS, tool } from '../../lib/chart/chart-drawings.mjs';
+import { TOOLS, tool, canReorder } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
 import { Modal, ToolButton, VectorIcon } from './ChartUI';
 
@@ -18,6 +18,11 @@ import { Modal, ToolButton, VectorIcon } from './ChartUI';
 // naming or grouping, because the model has neither and inventing one here would be a second source
 // of truth that the persistence layer could not round-trip.
 
+const bulkBtn = (p) => ({
+  background: 'transparent', border: `1px solid ${p.border}`, borderRadius: 4, cursor: 'pointer',
+  padding: '3px 9px', color: p.text, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+});
+
 /** A drawing's anchors, short enough to read at a glance and precise enough to tell two apart. */
 function summarize(d) {
   const pts = d.points || [];
@@ -33,16 +38,19 @@ function summarize(d) {
 }
 
 export default function DrawingManager({
-  open, onClose, theme, symbol, drawings, selectedId,
-  onSelect, onChange, onDuplicate, onEditText, onClearAll,
+  open, onClose, theme, symbol, drawings, selectedIds = [],
+  onSelect, onChange, onDuplicate, onSettings, onReorder, onBulk, onClearAll,
 }) {
   const p = palette(theme);
 
   const patch = (id, next) => onChange(drawings.map((d) => (d.id === id ? { ...d, ...next } : d)));
   const remove = (id) => onChange(drawings.filter((d) => d.id !== id));
 
-  // Newest first: the thing you just drew is the thing you are most likely looking for.
+  // TOP OF THE CHART FIRST. The array IS the z-order — the renderer paints through it and the last
+  // element is on top — so reversing shows the list the way the chart is stacked, which is what makes
+  // the raise and lower buttons read correctly. It also happens to put the newest drawing first.
   const rows = [...drawings].reverse();
+  const sel = new Set(selectedIds);
 
   return (
     <Modal theme={theme} open={open} onClose={onClose} width={440}
@@ -58,7 +66,7 @@ export default function DrawingManager({
         {rows.map((d) => {
           const def = tool(d.type) || {};
           const on = d.visible !== false;
-          const isSel = d.id === selectedId;
+          const isSel = sel.has(d.id);
           return (
             <div key={d.id}
               style={{
@@ -67,8 +75,8 @@ export default function DrawingManager({
                 borderLeft: `2.5px solid ${isSel ? p.up : 'transparent'}`,
               }}>
               {/* The row itself selects — the same selection a click on the chart makes. */}
-              <button type="button" onClick={() => onSelect(d.id)}
-                title={`Select this ${def.label || d.type}`}
+              <button type="button" onClick={(e) => onSelect(d.id, e.shiftKey || e.metaKey || e.ctrlKey)}
+                title={`Select this ${def.label || d.type} — shift-click to add to the selection`}
                 style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0,
                   background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
                   textAlign: 'left', fontFamily: "'DM Sans',sans-serif", opacity: on ? 1 : 0.5 }}>
@@ -82,10 +90,14 @@ export default function DrawingManager({
                   textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summarize(d)}</span>
               </button>
 
-              {typeof d.text === 'string' && (
-                <ToolButton theme={theme} title="Edit text"
-                  onClick={() => onEditText?.(d.id, d.text)}>✎</ToolButton>
-              )}
+              {/* Z-ORDER. These reorder the ARRAY, which is the z-order itself — there is no second
+                  ordering model to fall out of step with what is drawn or what is stored. */}
+              <ToolButton theme={theme} title="Bring forward" disabled={!canReorder(drawings, d.id, 'forward')}
+                onClick={() => onReorder?.(d.id, 'forward')}>▲</ToolButton>
+              <ToolButton theme={theme} title="Send backward" disabled={!canReorder(drawings, d.id, 'backward')}
+                onClick={() => onReorder?.(d.id, 'backward')}>▼</ToolButton>
+              <ToolButton theme={theme} title="Settings"
+                onClick={() => onSettings?.(d.id)}>⚙</ToolButton>
               <ToolButton theme={theme} title={on ? 'Hide' : 'Show'}
                 onClick={() => patch(d.id, { visible: !on })}>{on ? '👁' : '◦'}</ToolButton>
               {/* LOCK is enforced in moveDrawing, not just here, so there is no path around it. */}
@@ -99,6 +111,33 @@ export default function DrawingManager({
             </div>
           );
         })}
+
+        {/* BULK ACTIONS, only once there is a selection to act on — a toolbar of buttons that would
+            do nothing is worse than no toolbar. Each is ONE change, so each is ONE undo step. */}
+        {sel.size > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap',
+            borderTop: `1px solid ${p.border}`, paddingTop: 9 }}>
+            <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>
+              {sel.size} selected
+            </span>
+            <button type="button" onClick={() => onBulk?.('show')}
+              style={bulkBtn(p)}>Show</button>
+            <button type="button" onClick={() => onBulk?.('hide')}
+              style={bulkBtn(p)}>Hide</button>
+            <button type="button" onClick={() => onBulk?.('lock')}
+              style={bulkBtn(p)}>Lock</button>
+            <button type="button" onClick={() => onBulk?.('unlock')}
+              style={bulkBtn(p)}>Unlock</button>
+            <button type="button" onClick={() => onBulk?.('front')}
+              style={bulkBtn(p)}>To front</button>
+            <button type="button" onClick={() => onBulk?.('back')}
+              style={bulkBtn(p)}>To back</button>
+            <button type="button" onClick={() => onBulk?.('delete')}
+              style={{ ...bulkBtn(p), color: p.down }}>Delete</button>
+            <button type="button" onClick={() => onSelect(null)}
+              style={{ ...bulkBtn(p), marginLeft: 'auto' }}>Clear selection</button>
+          </div>
+        )}
 
         {rows.length > 0 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10,

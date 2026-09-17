@@ -2,6 +2,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import {
   TOOLS, tool, hitTest, createDrawing, moveDrawing, fibLevels, barLevels, snapToLevel, measureBetween,
+  constrainAngle,
   HANDLE_RADIUS, DEFAULT_STYLE,
 } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
@@ -25,13 +26,15 @@ const dashFor = (dash) => (dash === 'dashed' ? [7, 5] : dash === 'dotted' ? [2, 
 export default function DrawingLayer({
   chart, series, theme, symbol, bars,
   drawings, onChange, activeTool, onToolUsed,
-  selectedId, onSelect, visible = true, style = DEFAULT_STYLE, magnet = false,
-  onRequestText, clearSignal = 0,
+  selectedIds = [], onSelect, visible = true, style = DEFAULT_STYLE, magnet = false,
+  onRequestText, onOpenSettings, clearSignal = 0,
 }) {
   const canvasRef = useRef(null);
   const stateRef = useRef({});
   const s = stateRef.current;
-  s.drawings = drawings; s.activeTool = activeTool; s.selected = selectedId;
+  s.drawings = drawings; s.activeTool = activeTool;
+  // A Set, so the paint loop asks "is this one selected" once per drawing rather than scanning.
+  s.selected = new Set(selectedIds);
   s.theme = theme; s.visible = visible; s.style = style; s.bars = bars; s.magnet = magnet;
 
   // ── data space <-> screen space ──
@@ -92,7 +95,9 @@ export default function DrawingLayer({
     for (const d of stateRef.current.drawings || []) {
       const def = tool(d.type);
       if (!def) continue;
-      const segs = def.segments(d.points, view);
+      // The DRAWING is passed too: extension flags and a custom level set belong to the drawing,
+      // not to the tool, so the tool cannot resolve its own geometry without it.
+      const segs = def.segments(d.points, view, d);
       const screenSegs = [];
       for (const [a, b] of segs) {
         const p1 = toScreen(a), p2 = toScreen(b);
@@ -123,7 +128,7 @@ export default function DrawingLayer({
     for (const d of project()) {
       if (d.visible === false) continue;
       const colour = indicatorColor(stateRef.current.theme, d.style.color);
-      const isSel = d.id === stateRef.current.selected;
+      const isSel = stateRef.current.selected.has(d.id);
 
       // A rectangle gets a wash so it reads as a zone rather than four lines.
       if (tool(d.type)?.fill && d.handles.length === 2) {
@@ -149,7 +154,7 @@ export default function DrawingLayer({
         ctx.save();
         ctx.fillStyle = colour;
         ctx.font = "10px 'DM Sans', sans-serif";
-        for (const lvl of fibLevels(d.source.points)) {
+        for (const lvl of fibLevels(d.source.points, d.source.levels)) {
           const y = series?.priceToCoordinate(lvl.price);
           if (y == null) continue;
           ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%  ${lvl.price.toFixed(2)}`, 6, y - 3);
@@ -254,7 +259,7 @@ export default function DrawingLayer({
         ctx.strokeStyle = indicatorColor(stateRef.current.theme, stateRef.current.style.color);
         ctx.lineWidth = stateRef.current.style.width;
         ctx.setLineDash([4, 4]);
-        for (const [a, b] of def.segments(pts, view)) {
+        for (const [a, b] of def.segments(pts, view, stateRef.current.draftExtra)) {
           const p1 = toScreen(a), p2 = toScreen(b);
           if (p1 && p2) { ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); }
         }
@@ -288,7 +293,7 @@ export default function DrawingLayer({
     };
   }, [chart, paint]);
 
-  useEffect(() => { paint(); }, [drawings, selectedId, theme, visible, bars, activeTool, paint]);
+  useEffect(() => { paint(); }, [drawings, selectedIds, theme, visible, bars, activeTool, paint]);
 
   /**
    * SELECTION COMES FROM THE CHART'S OWN CLICK, not from the canvas.
@@ -304,7 +309,9 @@ export default function DrawingLayer({
       if (stateRef.current.activeTool || !stateRef.current.visible) return;
       if (!param?.point) { onSelect(null); return; }
       const hit = hitTest(param.point, project());
-      onSelect(hit ? hit.id : null);
+      // Always a fresh selection: the chart's own click carries no modifier we can read, and the
+      // canvas (which does) is what handles shift-clicking a second drawing.
+      onSelect(hit ? hit.id : null, false);
     };
     chart.subscribeClick(onClick);
     return () => { try { chart.unsubscribeClick(onClick); } catch { /* chart gone */ } };
@@ -316,12 +323,28 @@ export default function DrawingLayer({
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
+  /**
+   * The pointer position, with SHIFT snapping the segment to the nearest 45°.
+   *
+   * Constrained in screen space and then converted back, because an angle is something the eye
+   * judges against pixels — the same two anchors subtend a different angle at every zoom level, so
+   * snapping in price/time space would produce a line that looks like no particular angle at all.
+   */
+  const anchorAt = (pt, e) => {
+    const first = s.draft?.points?.[0];
+    if (!e?.shiftKey || !first) return toData(pt.x, pt.y);
+    const from = toScreen(first);
+    if (!from) return toData(pt.x, pt.y);
+    const c = constrainAngle(from, pt);
+    return toData(c.x, c.y);
+  };
+
   const onPointerDown = (e) => {
     const pt = localPoint(e);
     // PLACING a new drawing.
     if (s.activeTool) {
       const def = tool(s.activeTool);
-      const data = toData(pt.x, pt.y);
+      const data = anchorAt(pt, e);
       if (!data) return;
       s.draft = s.draft?.type === s.activeTool ? s.draft : { type: s.activeTool, points: [] };
       s.draft.points.push(data);
@@ -349,30 +372,40 @@ export default function DrawingLayer({
     // A click anywhere with no tool armed dismisses a measurement — the same gesture that dismisses
     // it on every platform that has one.
     if (s.measure) { s.measure = null; paint(); }
-    // SELECTING or starting a drag.
+    // SELECTING or starting a drag. Shift adds to the selection rather than replacing it, which is
+    // the gesture every drawing program uses.
     const hit = hitTest(pt, project());
-    onSelect(hit ? hit.id : null);
-    if (hit) {
-      const d = s.drawings.find((x) => x.id === hit.id);
-      // A LOCKED DRAWING IS STILL SELECTABLE — that is how you reach the control that unlocks it —
-      // but no drag begins, so it cannot be nudged while you are trying to click something behind
-      // it. moveDrawing refuses too; this just avoids arming a drag that would do nothing.
-      if (d && !d.locked) {
+    const additive = !!e.shiftKey;
+    onSelect(hit ? hit.id : null, additive);
+    if (hit && !additive) {
+      // Dragging one of several selected drawings moves THE WHOLE SELECTION, by one delta computed
+      // once — which is what makes a group move robust: there is no accumulated per-item drift.
+      // A HANDLE drag is different: resizing is about one drawing's anchor, so it stays singular.
+      const group = (s.selected.has(hit.id) && s.selected.size > 1 && hit.handle == null)
+        ? s.drawings.filter((x) => s.selected.has(x.id) && !x.locked)
+        : s.drawings.filter((x) => x.id === hit.id && !x.locked);
+      if (group.length) {
         const data = toData(pt.x, pt.y);
         // ONE TOKEN FOR THE WHOLE DRAG. Every pointer move reports a change; tagging them all with
         // the same token collapses them into the single undo step a user expects, instead of a
         // hundred one-pixel steps.
-        s.drag = { id: hit.id, handle: hit.handle, from: data, original: d, token: gestureToken('drag') };
+        s.drag = { handle: hit.handle, from: data, originals: group, token: gestureToken('drag') };
         e.currentTarget.setPointerCapture?.(e.pointerId);
       }
     }
     paint();
   };
 
+  // Double-clicking a drawing opens its settings, which is where every charting tool puts them.
+  const onDoubleClick = (e) => {
+    const hit = hitTest(localPoint(e), project());
+    if (hit) onOpenSettings?.(hit.id);
+  };
+
   const onPointerMove = (e) => {
     const pt = localPoint(e);
     if (s.draft?.points?.length) {
-      s.draft.cursor = toData(pt.x, pt.y);
+      s.draft.cursor = anchorAt(pt, e);
       // A ruler that only reports once both ends are placed is far less useful than one that counts
       // as you move, so the measurement updates live from the first anchor to the cursor.
       if (tool(s.draft.type)?.transient && s.draft.cursor) {
@@ -386,8 +419,13 @@ export default function DrawingLayer({
     if (!now || !s.drag.from) return;
     const dTime = (typeof now.time === 'number' && typeof s.drag.from.time === 'number') ? now.time - s.drag.from.time : 0;
     const dPrice = now.price - s.drag.from.price;
-    const moved = moveDrawing(s.drag.original, { dTime, dPrice }, s.drag.handle);
-    onChange(s.drawings.map((d) => (d.id === moved.id ? moved : d)), s.drag.token);
+    // Every drawing in the group takes the SAME delta, each measured from its own original — so a
+    // group keeps its shape exactly, however far or long the drag runs.
+    const movedById = new Map();
+    for (const orig of s.drag.originals) {
+      movedById.set(orig.id, moveDrawing(orig, { dTime, dPrice }, s.drag.handle));
+    }
+    onChange(s.drawings.map((d) => movedById.get(d.id) || d), s.drag.token);
   };
 
   const endDrag = (e) => {
@@ -396,19 +434,22 @@ export default function DrawingLayer({
 
   // The overlay is INERT unless it is doing something: no armed tool, no selection and no draft means
   // the chart underneath owns the pointer and keeps its native zoom, pan and crosshair.
-  const interactive = !!activeTool || !!selectedId || !!s.draft;
+  const interactive = !!activeTool || selectedIds.length > 0 || !!s.draft;
 
   return (
     <canvas
       ref={canvasRef}
+      // Marked so the export can find it without a ref being threaded through three components.
+      data-cp-drawings=""
       onPointerDown={onPointerDown}
+      onDoubleClick={onDoubleClick}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 3,
         pointerEvents: interactive ? 'auto' : 'none',
-        cursor: activeTool ? 'crosshair' : (selectedId ? 'move' : 'default'),
+        cursor: activeTool ? 'crosshair' : (selectedIds.length ? 'move' : 'default'),
       }}
     />
   );

@@ -32,18 +32,27 @@ export const TOOLS = {
   trend: {
     id: 'trend', label: 'Trend line', icon: '╱', points: 2,
     shapes: [['line', { x1: 2.5, y1: 13, x2: 13.5, y2: 3 }]],
-    segments: (p) => [[p[0], p[1]]],
+    // EXTENSION IS PER DRAWING, not per tool. One trend line can run to the right edge while the
+    // next stops at its anchors, which is how a trader actually uses them — so the flags live on the
+    // drawing and this reads them rather than the registry deciding for every line at once.
+    segments: (pt, view, d) => {
+      const a = d?.extendLeft ? extendRay(pt[1], pt[0], view) : pt[0];
+      const b = d?.extendRight ? extendRay(pt[0], pt[1], view) : pt[1];
+      return [[a, b]];
+    },
+    extendable: true,
   },
   ray: {
     id: 'ray', label: 'Ray', icon: '→', points: 2,
     shapes: [['line', { x1: 2.5, y1: 12, x2: 13.5, y2: 5 }], ['polyline', { points: '10.5,3.5 13.8,4.8 11.6,7.4' }]],
     // Extends past the second anchor to the right edge of the visible range. Recomputed from the
     // view on every paint, so it stays "infinite" however far the user scrolls.
-    segments: (p, view) => {
-      const [a, b] = p;
-      const end = extendRay(a, b, view);
-      return [[a, end]];
+    segments: (pt, view, d) => {
+      const [a, b] = pt;
+      const start = d?.extendLeft ? extendRay(b, a, view) : a;
+      return [[start, extendRay(a, b, view)]];
     },
+    extendable: true,
   },
   horizontal: {
     id: 'horizontal', label: 'Horizontal line', icon: '─', points: 1,
@@ -110,10 +119,11 @@ export const TOOLS = {
     // The conventional set. 0 and 1 are the anchors themselves, so the tool is read as "the move"
     // plus its retracement levels rather than as seven unrelated lines.
     ratios: [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1],
-    segments: (p, view) => fibLevels(p).map((l) => [
+    segments: (pt, view, d) => fibLevels(pt, d?.levels).map((l) => [
       { time: view.from, price: l.price }, { time: view.to, price: l.price },
     ]),
     levels: true,
+    editableLevels: true,
   },
 };
 
@@ -161,12 +171,47 @@ export function extendRay(a, b, view) {
   return { time: edge, price: a.price + slope * (edge - a.time) };
 }
 
-/** The Fibonacci levels of a two-anchor move, from the second anchor back toward the first. */
-export function fibLevels(points) {
+/** The conventional set, used when a drawing does not carry its own. */
+export const DEFAULT_FIB_LEVELS = TOOLS.fib.ratios.map((ratio) => ({ ratio, visible: true }));
+
+/**
+ * A stored level list, made safe.
+ *
+ * Levels are user-editable and persisted, so they come back as anything at all. A ratio that is not
+ * a finite number is dropped rather than repaired — a Fibonacci line at NaN draws nowhere and is
+ * worse than a missing one. Duplicates are collapsed because two lines at the same price are one
+ * line the user cannot select separately, and the result is sorted so the editor reads in order.
+ */
+export function sanitizeFibLevels(raw) {
+  if (!Array.isArray(raw)) return DEFAULT_FIB_LEVELS.map((l) => ({ ...l }));
+  const seen = new Set();
+  const out = [];
+  for (const l of raw) {
+    const ratio = Number(typeof l === 'object' && l !== null ? l.ratio : l);
+    if (!Number.isFinite(ratio)) continue;
+    const key = ratio.toFixed(6);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ratio, visible: (typeof l === 'object' && l !== null) ? l.visible !== false : true });
+  }
+  if (!out.length) return DEFAULT_FIB_LEVELS.map((l) => ({ ...l }));
+  out.sort((x, y) => x.ratio - y.ratio);
+  return out;
+}
+
+/**
+ * The Fibonacci levels of a two-anchor move, from the second anchor back toward the first.
+ *
+ * Takes the DRAWING's own level list when it has one, so a user's set is what gets drawn; hidden
+ * levels are left out here rather than at paint time, which keeps the renderer from having to know
+ * what a level is.
+ */
+export function fibLevels(points, levels = null) {
   const [a, b] = points;
   if (!a || !b) return [];
   const span = a.price - b.price;
-  return TOOLS.fib.ratios.map((r) => ({ ratio: r, price: b.price + span * r }));
+  const list = levels ? sanitizeFibLevels(levels) : DEFAULT_FIB_LEVELS;
+  return list.filter((l) => l.visible !== false).map((l) => ({ ratio: l.ratio, price: b.price + span * l.ratio }));
 }
 
 // ── measurement ──────────────────────────────────────────────────────────────
@@ -267,6 +312,69 @@ export function snapToLevel(cursorY, levels, tolerance = MAGNET_PX) {
   return bestD <= tolerance ? best : null;
 }
 
+// ── z-order ──────────────────────────────────────────────────────────────────
+// THERE IS NO SEPARATE ORDERING MODEL. The array IS the z-order: the renderer paints front to back
+// through it, so the last element is on top, and hit testing already searches from the end so the
+// drawing you see on top is the one you grab. Persistence stores the array as it is.
+//
+// That is why these are array moves and nothing else — a z-index field alongside the array would be
+// a second source of truth, and the two would disagree the first time a drawing was deleted.
+
+/** Move the drawing at `from` to `to`, clamped. Returns the same array when nothing would change. */
+function moveIndex(list, from, to) {
+  if (from < 0 || from >= list.length) return list;
+  const target = Math.max(0, Math.min(list.length - 1, to));
+  if (target === from) return list;
+  const out = list.slice();
+  const [item] = out.splice(from, 1);
+  out.splice(target, 0, item);
+  return out;
+}
+
+/** 'front' | 'back' | 'forward' | 'backward' — the four moves every drawing program offers. */
+export function reorderDrawing(drawings, id, where) {
+  const list = Array.isArray(drawings) ? drawings : [];
+  const i = list.findIndex((d) => d.id === id);
+  if (i < 0) return list;
+  if (where === 'front') return moveIndex(list, i, list.length - 1);
+  if (where === 'back') return moveIndex(list, i, 0);
+  if (where === 'forward') return moveIndex(list, i, i + 1);
+  if (where === 'backward') return moveIndex(list, i, i - 1);
+  return list;
+}
+
+/** Whether a move would actually do anything — so a control can disable itself honestly. */
+export function canReorder(drawings, id, where) {
+  const list = Array.isArray(drawings) ? drawings : [];
+  const i = list.findIndex((d) => d.id === id);
+  if (i < 0) return false;
+  if (where === 'front' || where === 'forward') return i < list.length - 1;
+  return i > 0;
+}
+
+// ── angle constraint ─────────────────────────────────────────────────────────
+
+/**
+ * Snap a segment to the nearest 45°, in SCREEN space.
+ *
+ * Screen space is the only space this makes sense in: "45 degrees" is a thing the eye judges against
+ * the pixels it can see, and the same two anchors subtend a completely different angle once the
+ * chart is zoomed. Snapping in price/time space would give a line that looks like any angle at all.
+ *
+ * Returns the constrained end point, in pixels, preserving the length along the chosen direction so
+ * the line does not jump as it snaps.
+ */
+export function constrainAngle(from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (dx === 0 && dy === 0) return { ...to };
+  const step = Math.PI / 4;
+  const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+  // Project the drag onto the snapped direction, so a long drag stays long.
+  const len = dx * Math.cos(angle) + dy * Math.sin(angle);
+  return { x: from.x + Math.cos(angle) * len, y: from.y + Math.sin(angle) * len };
+}
+
 // ── hit testing ──────────────────────────────────────────────────────────────
 // Done in SCREEN space, because "near enough to click" is a pixel judgement: eight pixels is eight
 // pixels whether the chart is showing a day or five years.
@@ -330,6 +438,10 @@ export function createDrawing(type, points, style = {}, existing = [], extra = {
     // Only a tool that declares text carries any: an arbitrary payload on every drawing would
     // round-trip through storage and become a place for junk to accumulate.
     ...(def.hasText ? { text: typeof extra.text === 'string' ? extra.text : '' } : {}),
+    // Only a tool that CAN extend carries the flags, and only one with editable levels carries them;
+    // an extendLeft on a rectangle would be a field nothing reads and everything has to preserve.
+    ...(def.extendable ? { extendLeft: extra.extendLeft === true, extendRight: extra.extendRight === true } : {}),
+    ...(def.editableLevels ? { levels: sanitizeFibLevels(extra.levels) } : {}),
     id: newDrawingId(type, existing),
     type,
     points: points.map((p) => ({ time: p.time, price: Number(p.price) })),
@@ -417,5 +529,7 @@ export function coerceDrawing(raw, existing = []) {
     // Absent means unlocked: a stored drawing from before locks existed must stay movable.
     locked: raw?.locked === true,
     ...(def.hasText ? { text: typeof raw?.text === 'string' ? raw.text : '' } : {}),
+    ...(def.extendable ? { extendLeft: raw?.extendLeft === true, extendRight: raw?.extendRight === true } : {}),
+    ...(def.editableLevels ? { levels: sanitizeFibLevels(raw?.levels) } : {}),
   };
 }

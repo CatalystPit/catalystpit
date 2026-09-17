@@ -10,13 +10,17 @@ import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBU
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
 import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from '../../lib/chart/chart-settings.mjs';
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
-import { DEFAULT_STYLE, sanitizeStyle, cloneDrawing, moveDrawing, createDrawing } from '../../lib/chart/chart-drawings.mjs';
+import {
+  DEFAULT_STYLE, sanitizeStyle, cloneDrawing, moveDrawing, createDrawing, reorderDrawing,
+} from '../../lib/chart/chart-drawings.mjs';
 import { emptyHistory, record, undo, redo, canUndo, canRedo } from '../../lib/chart/chart-history.mjs';
+import { composeExport, captionFor, exportFilename } from '../../lib/chart/chart-export.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
 import { Dropdown, MenuItem, MenuLabel, Popover, ToolButton, VectorIcon } from './ChartUI';
 import SymbolSearch from './SymbolSearch';
 import ChartLegend from './ChartLegend';
 import DrawingManager from './DrawingManager';
+import DrawingSettings from './DrawingSettings';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingRail from './DrawingRail';
@@ -112,7 +116,15 @@ export default function CPChart({
   const [view, setView] = useState(DEFAULT_VIEW);
   const [drawings, setDrawings] = useState([]);
   const [activeTool, setActiveTool] = useState(null);
-  const [selectedDrawing, setSelectedDrawing] = useState(null);
+  /**
+   * THE SELECTION IS A LIST, not an id.
+   *
+   * Shift-clicking adds to it, the object tree can select several, and a drag moves all of them at
+   * once. Everything that used to act on "the selected drawing" now acts on the list, which is what
+   * makes a bulk action a single change — and therefore a single undo step.
+   */
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [settingsId, setSettingsId] = useState(null);
   const [drawStyle, setDrawStyle] = useState(DEFAULT_STYLE);
   const [fullscreen, setFullscreen] = useState(false);
   const [chartReady, setChartReady] = useState(0);   // bumps when the chart instance exists
@@ -169,7 +181,7 @@ export default function CPChart({
   // because the drawing it referred to belongs to a different chart now.
   useEffect(() => {
     setDrawings(loadDrawings(sym));
-    setSelectedDrawing(null);
+    setSelectedIds([]);
     setActiveTool(null);
     // THE HISTORY IS PER SYMBOL. Undoing into a stack of another symbol's drawings would paste them
     // onto this chart, so the stack is dropped when the symbol changes rather than carried over.
@@ -196,8 +208,8 @@ export default function CPChart({
    */
   const drawingsRef = useRef([]);
   drawingsRef.current = drawings;
-  const selectedDrawingRef = useRef(null);
-  selectedDrawingRef.current = selectedDrawing;
+  const selectedIdsRef = useRef([]);
+  selectedIdsRef.current = selectedIds;
   const historyRef = useRef(emptyHistory());
   const [histTick, setHistTick] = useState(0);
   const bumpHistory = useCallback(() => setHistTick((t) => t + 1), []);
@@ -231,8 +243,12 @@ export default function CPChart({
   const nudgeSelected = useCallback((key, steps) => {
     const series = priceRef.current;
     const chart = chartRef.current;
-    const target = drawingsRef.current.find((x) => x.id === selectedDrawingRef.current);
-    if (!series || !chart || !target || target.locked) return false;
+    // EVERY unlocked drawing in the selection moves, by one delta measured from the first — the same
+    // rule a group drag follows, so the keyboard and the pointer agree.
+    const ids = new Set(selectedIdsRef.current);
+    const targets = drawingsRef.current.filter((x) => ids.has(x.id) && !x.locked);
+    const target = targets[0];
+    if (!series || !chart || !target) return false;
 
     if (key === 'ArrowUp' || key === 'ArrowDown') {
       // Price per pixel, read off the live scale rather than assumed.
@@ -242,8 +258,7 @@ export default function CPChart({
       const a2 = series.coordinateToPrice(mid - steps);
       if (a1 == null || a2 == null) return false;
       const dPrice = (a2 - a1) * (key === 'ArrowUp' ? 1 : -1);
-      updateDrawings((ds) => ds.map((x) => (x.id === target.id
-        ? moveDrawing(x, { dPrice }) : x)), null);
+      updateDrawings((ds) => ds.map((x) => (ids.has(x.id) ? moveDrawing(x, { dPrice }) : x)), null);
       return true;
     }
 
@@ -256,7 +271,7 @@ export default function CPChart({
     const j = Math.max(0, Math.min(list.length - 1, i + (key === 'ArrowRight' ? steps : -steps)));
     const dTime = list[j].time - list[i].time;
     if (!dTime) return false;
-    updateDrawings((ds) => ds.map((x) => (x.id === target.id ? moveDrawing(x, { dTime }) : x)), null);
+    updateDrawings((ds) => ds.map((x) => (ids.has(x.id) ? moveDrawing(x, { dTime }) : x)), null);
     return true;
   }, [updateDrawings]);
 
@@ -273,10 +288,102 @@ export default function CPChart({
       else updateDrawings((ds) => ds.filter((d) => d.id !== noteDraft.id));
     } else if (noteDraft?.points && text) {
       const made = createDrawing('text', noteDraft.points, drawStyle, drawingsRef.current, { text });
-      if (made) { updateDrawings([...drawingsRef.current, made]); setSelectedDrawing(made.id); }
+      if (made) { updateDrawings([...drawingsRef.current, made]); setSelectedIds([made.id]); }
     }
     setNoteDraft(null); setNoteText('');
   }, [noteDraft, noteText, drawStyle, updateDrawings]);
+
+  /** Replace the selection, or add to and remove from it when the gesture is additive. */
+  const selectDrawing = useCallback((id, additive = false) => {
+    setSelectedIds((prev) => {
+      if (id == null) return [];
+      if (!additive) return [id];
+      return prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+    });
+  }, []);
+
+  /** Move one drawing through the z-order. The array IS the order, so this is an array move. */
+  const reorder = useCallback((id, where) => {
+    updateDrawings((ds) => reorderDrawing(ds, id, where));
+  }, [updateDrawings]);
+
+  /**
+   * A bulk action over the whole selection, applied as ONE change.
+   *
+   * That is the point: one call to updateDrawings means one history entry, so hiding nine drawings
+   * is undone by one Ctrl+Z rather than nine.
+   */
+  const bulkAction = useCallback((what) => {
+    const ids = new Set(selectedIdsRef.current);
+    if (!ids.size) return;
+    updateDrawings((ds) => {
+      if (what === 'delete') return ds.filter((d) => !ids.has(d.id));
+      if (what === 'front' || what === 'back') {
+        // Applied one at a time in order so the group keeps its internal stacking rather than being
+        // reversed by each move landing on top of the last.
+        let out = ds;
+        const ordered = ds.filter((d) => ids.has(d.id));
+        for (const d of (what === 'front' ? ordered : [...ordered].reverse())) {
+          out = reorderDrawing(out, d.id, what);
+        }
+        return out;
+      }
+      const patch = what === 'hide' ? { visible: false }
+        : what === 'show' ? { visible: true }
+          : what === 'lock' ? { locked: true }
+            : what === 'unlock' ? { locked: false } : null;
+      if (!patch) return ds;
+      return ds.map((d) => (ids.has(d.id) ? { ...d, ...patch } : d));
+    });
+    if (what === 'delete') setSelectedIds([]);
+  }, [updateDrawings]);
+
+  /**
+   * Save the chart as a PNG.
+   *
+   * Composes the library's own canvas with our drawing overlay and a caption — see chart-export.
+   * NOTHING OUTSIDE THE CHART IS CAPTURED: not the Terminal panel's chrome, not other panels, not
+   * the rest of the app. That is a privacy property as much as a tidiness one, because an exported
+   * image is the thing that gets pasted into a chat.
+   */
+  const exportPng = useCallback(() => {
+    const chart = chartRef.current;
+    const host = hostRef.current;
+    if (!chart || !host) return;
+    let shot = null;
+    try { shot = chart.takeScreenshot(); } catch { shot = null; }
+    if (!shot) return;
+    const overlay = host.parentElement?.querySelector('canvas[data-cp-drawings]') || null;
+    const pal = palette(themeRef.current);
+    const canvas = composeExport({
+      chartCanvas: shot,
+      overlayCanvas: overlay,
+      width: host.clientWidth,
+      height: host.clientHeight,
+      caption: captionFor({
+        symbol: sym,
+        interval: timeframe(tf)?.label ?? tf,
+        chartType: chartTypeOf(view.chartType).label,
+        delayed: meta?.delayed === true,
+      }),
+      background: pal.background,
+      textColor: pal.textStrong,
+      subColor: pal.text,
+      attribution: CHART_ATTRIBUTION,
+    });
+    if (!canvas) return;
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = exportFilename(sym, timeframe(tf)?.short ?? tf);
+      a.click();
+      // Revoked on the next turn of the loop: revoking synchronously can beat the download in some
+      // browsers and produce an empty file.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }, 'image/png');
+  }, [sym, tf, view.chartType, meta]);
 
   const undoDrawings = useCallback(() => {
     const r = undo(historyRef.current, drawingsRef.current);
@@ -284,7 +391,7 @@ export default function CPChart({
     historyRef.current = r.history;
     drawingsDirty.current = true;
     // The selection is dropped: the drawing it pointed at may not exist in the restored state.
-    setSelectedDrawing(null);
+    setSelectedIds([]);
     setDrawings(r.state);
     bumpHistory();
   }, [bumpHistory]);
@@ -294,7 +401,7 @@ export default function CPChart({
     if (!r) return;
     historyRef.current = r.history;
     drawingsDirty.current = true;
-    setSelectedDrawing(null);
+    setSelectedIds([]);
     setDrawings(r.state);
     bumpHistory();
   }, [bumpHistory]);
@@ -308,7 +415,7 @@ export default function CPChart({
       const copy = src ? cloneDrawing(src, ds) : null;
       if (!copy) return ds;
       drawingsDirty.current = true;
-      setSelectedDrawing(copy.id);
+      setSelectedIds([copy.id]);
       return [...ds, copy];
     });
   }, []);
@@ -325,26 +432,31 @@ export default function CPChart({
   const applyStyle = useCallback((patch) => {
     setDrawStyle((prev) => {
       const next = sanitizeStyle({ ...prev, ...patch });
-      if (selectedDrawing) {
-        drawingsDirty.current = true;
-        setDrawings((ds) => ds.map((d) => (d.id === selectedDrawing ? { ...d, style: next } : d)));
+      // Restyling applies to EVERY selected drawing, in one change — recolouring six lines is one
+      // action and one undo step, not six.
+      if (selectedIds.length) {
+        const ids = new Set(selectedIds);
+        updateDrawings((ds) => ds.map((d) => (ids.has(d.id) ? { ...d, style: next } : d)));
       }
       return next;
     });
-  }, [selectedDrawing]);
+  }, [selectedIds, updateDrawings]);
 
+  // EVERY path that changes drawings goes through updateDrawings, or it is not in the history.
+  // These two used to call setDrawings directly, which meant a delete could not be undone at all.
   const deleteSelected = useCallback(() => {
-    if (!selectedDrawing) return;
-    drawingsDirty.current = true;
-    setDrawings((ds) => ds.filter((d) => d.id !== selectedDrawing));
-    setSelectedDrawing(null);
-  }, [selectedDrawing]);
+    if (!selectedIds.length) return;
+    const ids = new Set(selectedIds);
+    updateDrawings((ds) => ds.filter((d) => !ids.has(d.id)));
+    setSelectedIds([]);
+  }, [selectedIds, updateDrawings]);
 
   const clearAllDrawings = useCallback(() => {
-    drawingsDirty.current = true;
-    setDrawings([]);
-    setSelectedDrawing(null);
-  }, []);
+    // Through updateDrawings, so "delete all" is one undo away — which is exactly the action a user
+    // is most likely to want back.
+    updateDrawings([]);
+    setSelectedIds([]);
+  }, [updateDrawings]);
 
   // Persist whatever the user lands on. Skips the pre-load empty state so a first paint cannot
   // overwrite a saved set with nothing.
@@ -638,16 +750,16 @@ export default function CPChart({
       // NUDGE. Arrow keys move the selected drawing by a pixel, shift by ten — a PIXEL step rather
       // than a price step, because the same nudge then feels identical at every zoom level and on
       // every symbol, whether the price is 3 or 3000.
-      if (selectedDrawing && e.key.startsWith('Arrow')) {
+      if (selectedIds.length && e.key.startsWith('Arrow')) {
         const moved = nudgeSelected(e.key, e.shiftKey ? 10 : 1);
         if (moved) { e.preventDefault(); return; }
       }
 
       if (e.key === 'Escape') {
-        setActiveTool(null); setSelectedDrawing(null); setClearSignal((n) => n + 1);
+        setActiveTool(null); setSelectedIds([]); setClearSignal((n) => n + 1);
         if (fullscreen) setFullscreen(false);
       }
-      else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedDrawing) { e.preventDefault(); deleteSelected(); } }
+      else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedIds.length) { e.preventDefault(); deleteSelected(); } }
       else if (e.key === 'r' || e.key === 'R') resetView();
       else if (e.key === 'l' || e.key === 'L') patchView({ logScale: !view.logScale });
       else if (e.key === 'f' || e.key === 'F') setFullscreen((v) => !v);
@@ -655,7 +767,7 @@ export default function CPChart({
     };
     el.addEventListener('keydown', onKey);
     return () => el.removeEventListener('keydown', onKey);
-  }, [selectedDrawing, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen,
+  }, [selectedIds, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen,
     undoDrawings, redoDrawings, nudgeSelected]);
 
   // ── theme: applied to the live chart, then the series are recoloured ──
@@ -874,7 +986,7 @@ export default function CPChart({
           <DrawingRail
             theme={theme} activeTool={activeTool} onPick={setActiveTool}
             style={drawStyle} onStyle={applyStyle}
-            selected={selectedDrawing} onDelete={deleteSelected}
+            selected={selectedIds.length > 0} onDelete={deleteSelected}
             count={drawings.length} showDrawings={view.showDrawings}
             onToggleShow={() => patchView({ showDrawings: !view.showDrawings })}
             onClearAll={clearAllDrawings}
@@ -913,7 +1025,8 @@ export default function CPChart({
             symbol={sym} bars={barsRef.current}
             drawings={drawings} onChange={updateDrawings}
             activeTool={activeTool} onToolUsed={() => setActiveTool(null)}
-            selectedId={selectedDrawing} onSelect={setSelectedDrawing}
+            selectedIds={selectedIds} onSelect={selectDrawing}
+            onOpenSettings={(id) => setSettingsId(id)}
             visible={view.showDrawings} style={drawStyle} magnet={view.magnet === true}
             clearSignal={clearSignal}
             onRequestText={(points) => { setNoteDraft({ points }); setNoteText(''); }}
@@ -977,10 +1090,19 @@ export default function CPChart({
 
       <DrawingManager
         open={managerOpen} onClose={() => setManagerOpen(false)}
-        theme={theme} symbol={sym} drawings={drawings} selectedId={selectedDrawing}
-        onSelect={setSelectedDrawing} onChange={updateDrawings}
+        theme={theme} symbol={sym} drawings={drawings} selectedIds={selectedIds}
+        onSelect={selectDrawing} onChange={updateDrawings}
         onDuplicate={duplicateDrawing} onClearAll={() => { clearAllDrawings(); setManagerOpen(false); }}
-        onEditText={(id, text) => { setManagerOpen(false); setNoteDraft({ id }); setNoteText(text || ''); }}
+        onSettings={(id) => { setManagerOpen(false); setSettingsId(id); }}
+        onReorder={reorder} onBulk={bulkAction}
+      />
+
+      {/* ONE SETTINGS DIALOG for whichever drawing is open — what it shows is decided by what that
+          TOOL declares it supports, so a new tool needs no change here. */}
+      <DrawingSettings
+        open={!!settingsId} onClose={() => setSettingsId(null)} theme={theme}
+        drawing={drawings.find((d) => d.id === settingsId) || null}
+        onChange={(next) => updateDrawings((ds) => ds.map((d) => (d.id === next.id ? next : d)), `settings:${next.id}`)}
       />
 
       {/* THE CHART CONTEXT MENU — opens AT THE CURSOR, over the chart, and lists only actions this
@@ -1013,6 +1135,29 @@ export default function CPChart({
             onClick={() => patchView({ extended: !view.extended })}
             right={view.extended ? 'On' : 'Off'}>Extended hours</MenuItem>
         )}
+        {selectedIds.length > 0 && (
+          <>
+            <MenuLabel theme={theme}>
+              {selectedIds.length > 1 ? `${selectedIds.length} selected` : 'Selected drawing'}
+            </MenuLabel>
+            {selectedIds.length === 1 && (
+              <MenuItem theme={theme} role="menuitem"
+                onClick={() => setSettingsId(selectedIds[0])}>Settings…</MenuItem>
+            )}
+            <MenuItem theme={theme} role="menuitem" onClick={() => bulkAction('front')}>Bring to front</MenuItem>
+            <MenuItem theme={theme} role="menuitem" onClick={() => bulkAction('back')}>Send to back</MenuItem>
+            {selectedIds.length === 1 && (
+              <>
+                <MenuItem theme={theme} role="menuitem"
+                  onClick={() => reorder(selectedIds[0], 'forward')}>Bring forward</MenuItem>
+                <MenuItem theme={theme} role="menuitem"
+                  onClick={() => reorder(selectedIds[0], 'backward')}>Send backward</MenuItem>
+              </>
+            )}
+            <MenuItem theme={theme} role="menuitem" onClick={() => bulkAction('lock')}>Lock</MenuItem>
+            <MenuItem theme={theme} role="menuitem" onClick={deleteSelected}>Delete</MenuItem>
+          </>
+        )}
         <MenuLabel theme={theme}>Drawings</MenuLabel>
         <MenuItem theme={theme} role="menuitemcheckbox" active={view.magnet === true} closeOnPick={false}
           onClick={() => patchView({ magnet: !view.magnet })}
@@ -1023,6 +1168,7 @@ export default function CPChart({
         <MenuItem theme={theme} role="menuitem" onClick={() => setManagerOpen(true)}
           right={drawings.length ? String(drawings.length) : undefined}>Manage drawings…</MenuItem>
         <MenuLabel theme={theme}>View</MenuLabel>
+        <MenuItem theme={theme} role="menuitem" onClick={exportPng}>Save chart image…</MenuItem>
         <MenuItem theme={theme} role="menuitemcheckbox" active={fullscreen} closeOnPick={false}
           onClick={() => setFullscreen((v) => !v)}
           right={fullscreen ? 'On' : 'Off'}>Fullscreen</MenuItem>
