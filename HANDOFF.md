@@ -1,325 +1,312 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-17 08:50 ET · **HEAD:** see `git log -1` (this file is committed on top of
-`16b62b7`) · `main`. Point a new session at this file (`read HANDOFF.md`), then check `git status` and
-`git log --oneline -15`, because a commit made after this file was last updated won't be listed here.
+**Last updated:** 2026-09-17 17:50 UTC · **Deployed HEAD:** `4de460d` on `main` (this file is committed on
+top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
+`git log --oneline -15`: a commit made after this file was written will not be listed here.
 
 ---
 
 ## Where things stand right now
 
-### 1. Chart / Terminal: waiting on the user's manual QA in production
+### 1. News pipeline: optimised and running (deployed 2026-09-17 ~13:54 UTC)
 
-Everything below is committed. Nothing is half-done. **Do not redo these fixes.** Wait for the user
-to report back.
+Anthropic spend was ~97% headline rewriting. Measured over the 48h before that day's credit outage:
+77% of rewrite submissions went to importance-0 items that can never reach X, 34% to rows that failed
+validation three times within seconds, 9% to duplicates already folded into a canonical event, and
+nothing stopped two workers paying for the same row. `4de460d` addresses all four.
 
-| Commit | What | Production status |
+**Measured after the deploy** (3h47m of production usage, from `anthropic_usage`):
+
+| Feature | Calls | Items | Cost | Rate |
+|---|---|---|---|---|
+| news-headline-rewrite | 220 | 342 | $0.245 | ~$1.55/day |
+| top-stories-tagging | 8 | – | $0.092 | ~$0.21/day |
+| bulls-bears | 1 | 1 | $0.005 | traffic-driven |
+
+Before: ~$5–6/day estimated (the user's bill ran $7–10/day). Now ~**$1.8/day**, ~$54/month.
+**A full day of `anthropic_usage` data is the basis for the next cost decision — do not tune budgets
+before reading it.**
+
+### 2. Company descriptions: measured, NOT shipped
+
+The About card slot exists and renders nothing, because no source is connected. Two rounds of
+validation are done (see "SEC description validation"). **v3's holdout GOOD rate on U.S.
+operating-company 10-Ks is 43.5%, with 10.1% WRONG. That is below any defensible ship bar, so SEC
+descriptions are NOT recommended as the primary source yet.** The launch decision is the user's.
+
+### 3. Chart / Terminal: still waiting on the user's manual QA
+
+Nothing half-done; **do not redo these fixes**.
+
+| Commit | What | Status |
 |---|---|---|
 | `51f3320` | Repair Ray / Horizontal / Vertical geometry, explicit tool lifecycle | awaiting QA |
-| `d2f3c13` | Popover joins the dismissal stack once mounted. **This was the real reason** Ray/Horizontal/Vertical couldn't be armed from the Lines flyout (the menu closed on mousedown before the row's click landed). | awaiting QA |
-| `c574476` | Legend: indicator collapse control sits under the last indicator row | awaiting QA |
-| `0d80670` | Legend: collapse control is a visible chip in dark mode (4 new theme tokens) | awaiting QA |
-| `2c42720` | Lower indicator panes (RSI/MACD/ATR) open compact, sized by share, drags persist (`chart-panes.mjs`) | awaiting QA |
-| `eb7c58f` | Ticker About: company description slot, **renders nothing** until a real source exists | nothing visible by design |
-| `16b62b7` | Housekeeping: raw control chars in company-description files → escapes (git saw them as binary) | no behaviour change |
+| `d2f3c13` | Popover joins the dismissal stack once mounted — the real reason those tools could not be armed | awaiting QA |
+| `c574476`, `0d80670` | Legend collapse control: position, then dark-mode chip | awaiting QA |
+| `2c42720` | Lower indicator panes sized by share; drags persist (`chart-panes.mjs`) | awaiting QA |
 
-What the user should check: the three line tools pick and draw from the Lines flyout; the legend
-control's position and dark-mode visibility; RSI/MACD/ATR open compact and dragged heights survive
-ticker/timeframe/theme change and reload; the ticker About card looks exactly as before.
-
-Previously confirmed working in production by the user: Fibonacci, Terminal panel resizing,
-Trendline (incl. future space), typed timeframe entry.
-
-The earlier caveat ("couldn't reproduce a Horizontal/Vertical *creation* failure, cause must be
-browser-side") was resolved by `d2f3c13`. If a line tool still misbehaves, start from Popover
-dismissal and the tool lifecycle, not the geometry (covered by tests).
-
-### 2. Company descriptions: SEC investigation done, validation is the NEXT TASK
-
-**Status (agreed with the user):**
-
-- The UI slot exists (`eb7c58f`): `src/lib/company-description.mjs` (normaliser),
-  `src/components/CompanyDescription.jsx`, wired into `TickerPage.jsx` About. It renders nothing
-  without `data.description`, so nothing is displayed today.
-- **No legitimate description source is connected. No backfill has run. No product implementation
-  until extraction quality is measured.**
-- Catalyst Pit's current SEC usage: submissions API, XBRL companyfacts, `company_tickers.json`, and
-  filing documents/indexes for Form 4, 13F and 8-K. We do **not** fetch, store or parse 10-K text or
-  Item 1 Business.
-- SEC structured APIs have no short business-description field.
-- Finnhub profile2 (the About facts) has no description. Polygon v3 ticker-details returns one, but it
-  is discarded and its public-display rights under our plan are unconfirmed, so **don't use it**.
-- Item 1 Business looks promising for U.S. operating companies, but its reliability is **unmeasured**.
-- Estimated useful SEC coverage: roughly 4,000–5,000 U.S. operating companies.
-- ETFs need a different source. Foreign issuers need different handling (20-F Item 4.B; 40-F puts the
-  business description in an exhibit, the Annual Information Form). SPACs and unusual/multi-registrant
-  filings are special cases.
-- **Proposed architecture (not committed to):** hybrid. PRIMARY: SEC-derived descriptions for
-  eligible U.S. operating companies. FALLBACK LATER: a licensed commercial provider for ETFs, foreign
-  issuers, extraction failures and unsupported securities. Storage, if we proceed: issuer-level, keyed
-  by **CIK**, with full provenance (accession, form, filing date, section, extraction version). Not
-  per ticker.
-- **No AI summarization initially.** The candidate is deterministic extraction of a concise *verbatim*
-  factual excerpt from Item 1. An AI layer needs explicit user approval and should only be considered
-  if deterministic quality is insufficient.
-
-**NEXT TASK: validate Item 1 extraction quality on ~200 representative companies** before committing
-to the architecture. The sample should span market caps, sectors, banks, biotech, industrials, utilities,
-holding companies, multi-segment businesses, long/short Item 1, SPACs, new and old companies, and
-different filing structures. Classify every result:
-
-- **GOOD**: usable on the About card as is
-- **TRIM**: right content, trimming needs work
-- **WRONG**: wrong section, TOC, boilerplate, unrelated
-- **NO RESULT**: couldn't confidently extract
-- **SPECIAL CASE**: correct extraction, but the issuer structure makes it unsuitable as a normal description
-
-Report: attempted, fetch successes and failures, count and % per class, recurring failure patterns,
-and practical universe coverage.
-
-**Execution environment: decide first.** This machine's SEC access returned 403 / Access Denied
-(to the previous session and to the user's own local probe). That was SEC/Akamai, not a sandbox: no
-Claude Code sandbox or network restriction is configured, and non-SEC hosts return 200. **Do not
-hammer SEC from here.** At most one probe per 10 minutes (the pattern in
-`scripts/resume-when-sec-clears.sh`). Requirements for any run: company-identifying User-Agent,
-conservative throttle well under SEC's 10 req/s, retry with backoff, stop on persistent 403/429, no
-concurrency, cache every download (never refetch), no production DB writes, no public SEC proxy
-endpoint, no backfill, no user-facing change, and remove any temporary infrastructure afterwards.
-Don't force Vercel if it's a poor fit (see the environment-decision notes, if present, at the end of
-this file).
-
-Prior-session artefacts (outside the repo, may be cleaned up by the OS):
-`%TEMP%\claude\C--Users-bcogh\6313d637-…\scratchpad\sec-item1-probe.mjs` (a 13-company local probe
-with a naive `^item 1 business$` heading regex plus a longest-candidate TOC heuristic). Its only output
-was a run where `company_tickers.json` yielded 0 entries, followed by 403s. **Zero companies were
-actually measured.** `coverage-probe.mjs` has read-only DB count queries; no saved output.
+Confirmed in production earlier: Fibonacci, Terminal panel resizing, Trendline (incl. future space),
+typed timeframe entry.
 
 ---
 
-## The project
+## Standing constraints (permanent; the user has repeated these)
 
-Next.js 15 (App Router) / Neon Postgres / Drizzle / Clerk / Vercel. A market-intelligence product.
-Working dir `C:\Users\bcogh\Documents\dev\catalystpit`. Mixed LF/CRLF line endings throughout.
-
-| Area | State |
-|---|---|
-| **Chart** | Feature-complete at `e4e2480`; in manual QA. Fix batches in scope, new features are not. |
-| **Pit Scan / scanner** | Engine complete at `048e223`. Not connected to live provider data yet. |
-| **Terminal** | Panel resizing rebuilt at `b34731e`. |
-| **Company descriptions** | UI slot only (`eb7c58f`). Source undecided; SEC Item 1 validation is next. |
-
-The user's workflow: they test in production, then send a focused fix batch. Each batch ends with
-"Then STOP so I can manually test." Honour that: finish the batch, verify, commit/push, report, stop.
-Pushing to `main` triggers a Vercel deploy.
-
----
-
-## Standing constraints (the user has repeated these; treat as permanent)
-
-- **Never expose, print, log, echo or return tokens, credentials, or secrets.** Don't touch Meta
+- **Never expose, print, log, echo or return tokens, credentials or secrets.** Don't touch Meta
   configuration or Vercel environment variables.
-- **Do not touch Facebook. Do not touch X.** Stated in essentially every task.
-- **Never fabricate market data.** Only use Catalyst Pit data sources/endpoints that exist today and
-  that we're permitted to display. No fake timeframes, no fake real-time, no fake live data in
-  production. Don't present delayed or incomplete data as real-time/consolidated. The same applies to
-  company descriptions: nothing shown without a legitimate, attributable source.
-- **Do not reopen chart feature development.** Deliberately deferred until the commercial market-data
-  provider is chosen: chart alerts, real-time streaming, consolidated volume, weekly/monthly bars,
-  extended hours beyond intraday, futures/options/FX/crypto. Explicitly unwanted: exotic drawing
-  tools (Gann, pitchfork) and a multi-chart layout system (the Terminal owns panel layout).
-- **Follow TradingView Lightweight Charts licensing/attribution correctly.** Never copy TradingView
-  branding, logos or proprietary assets.
-- **Keep the Custom Scanner's Finviz-style compact dropdown UX.** Do not replace it with a generic
-  `Field | Operator | Value` rule-builder. The engine may use that model internally; the UX must not.
+- **Do not touch Facebook or X** — publishing rules and editorial rules included — unless the task is
+  explicitly about them or a regression is traced to today's changes.
+- **Never fabricate market data.** Only sources/endpoints that exist today and that we may display.
+  The same rule governs company descriptions: nothing displayed without a legitimate, attributable
+  source.
+- **Do not reopen chart feature development.** Deferred until the commercial market-data provider is
+  chosen: chart alerts, real-time streaming, consolidated volume, weekly/monthly bars, extended hours
+  beyond intraday, futures/options/FX/crypto. Unwanted outright: exotic drawing tools (Gann,
+  pitchfork), multi-chart layout (the Terminal owns panel layout).
+- **Follow TradingView Lightweight Charts licensing/attribution.** Never copy TradingView branding.
+- **Keep the Custom Scanner's Finviz-style compact dropdown UX.** The engine may use a
+  `Field | Operator | Value` model internally; the UX must not.
 - **Do not remove the legacy scanner path yet** (`CustomScannerBody`, `PitScanBody`,
-  `/api/scan?mode=pit`, `lib/pitscan.js`). Retire only after the replacement is connected to live
-  provider data and proven stable.
-- **Don't touch market-data provider integration** unless the task is explicitly about it.
-- **Don't hide an exception behind another try/catch** without fixing the underlying cause.
-- **Don't roll back architecture** to make a symptom go away.
+  `/api/scan?mode=pit`, `lib/pitscan.js`).
+- **Don't hide an exception behind another try/catch**; don't roll back architecture to hide a symptom.
 
 ---
 
-## Verification discipline: this is the important part
+## The news pipeline as it stands
 
-Suites that must pass before any deploy (counts at `16b62b7`, all 0 failed):
+### Ingestion (unchanged)
+`/api/cron/primary-sources` every minute sweeps for ~50s. Feeds in `primary-sources.mjs`; trusted
+flash sources are read from Telegram (`telegram_walterbloomberg`, `telegram_financialjuice`,
+`telegram_bmn`). Rows land in `primary_events`, deduped and clustered at insert.
+
+### Rewrite tiers (`enrich-policy.mjs`) — the importance-0 architecture
+- **IMMEDIATE**: importance >= 1, a trusted source, any cluster containing one, or a source Facebook
+  only posts in Catalyst wording (`FB_REWORDED_SOURCES` = ZEROHEDGE). Rewritten the moment it lands,
+  inline in the ingest sweep (`runEnrichment({ scope: 'fresh' })`), same speed as before.
+- **DEFERRED**: importance 0 otherwise. No model call. Pit Wire shows the normalised source line the
+  row was ingested with (already language- and display-gated), exactly as it did while waiting for a
+  rewrite. Social qualification is unchanged, so a deferred row can never post.
+- **Transition**: eligibility is evaluated from the row's CURRENT importance, so a merge that raises
+  importance, or a trusted source joining the cluster (`applyTrustedFloor`), moves the canonical event
+  into the queue with no status flip and no separate code path to forget.
+- Foreign-language importance-0 rows stay hidden, as before: only an English rewrite lifts them.
+
+### Claiming and locking (`enrich-claim.mjs`)
+One `UPDATE ... FROM (SELECT ... FOR UPDATE SKIP LOCKED)` claims rows and stamps `enrich_claim_token`.
+The result write is guarded on that token (a stolen claim's late result is discarded, counted as
+`lostClaim`). `enrich_claimed_at` older than `CLAIM_STALE_SECONDS` (180) is reclaimed, so a crashed
+worker strands nothing. Every exit path releases (`releaseSql`).
+
+### Retries
+`enrich_last_error` records the reason; `enrich_next_at` schedules the next attempt (`infinity` = no
+retry). HIGH/trusted: first retry immediate, then 2 min, 10 min, 30 min, 60 min. Ordinary items: ONE
+delayed resample (10 min) and only for output-shape failures (`RESAMPLE_REASONS`); grounding failures
+(ungrounded number/name, unresolved ticker, invented cause, reversed direction) are final.
+**The user asked that importance >=2 and trusted budgets stay as they are until a full day of usage
+data exists.**
+
+### Backlog batching
+`/api/cron/news-enrich` runs `scope: 'backlog'`, `limit 45`, waiting for `MIN_BATCH` (5) due rows
+unless one is urgent (HIGH, trusted, or waiting > 180s). New items never wait — they go inline.
+
+### Outage visibility
+`anthropic-errors.mjs` classifies failures: `insufficient_credits`, `authentication`, `permission`,
+`rate_limit`, `overloaded`, `server_error`, `timeout`, `network`, `invalid_request`.
+- `feed_state._anthropic` holds the state; a log line is written only on a CHANGE of state.
+- `modelCircuit()` short-circuits a known outage (one probe a minute for blocking classes).
+- `feed_state._rewrite_health` holds the **INGESTION RUNNING + REWRITES STALLED** verdict, computed
+  every minute by the enrichment cron and logged on change. `GET /api/cron/news-enrich?health=1`
+  (cron auth) returns it.
+- `generateBatch` has a 45s timeout. A billed but unparseable reply consumes an attempt instead of
+  being re-sent forever.
+
+### Usage accounting
+`anthropic_usage`: one row per call — feature, model, ok, status, error class, input/output/cache
+tokens, items, ms. **No prompt or response content.** Covers news rewrite, bulls-bears and
+top-stories-tagging. `congress-ocr` (Opus 4.8) and `x-reply-context` are script-only; they are not
+production paths.
+
+### Known remaining Anthropic waste (deliberately NOT changed yet)
+- Top Stories asks the model to echo every article back (~4,200 output tokens/run).
+- Small batches: new items go out immediately, so calls average ~1.6 items.
+- importance >=2 retries every failure reason; trusted sources keep 12 attempts.
+
+---
+
+## Social publishing
+
+**Both platforms are live and posting.** In the six hours to 17:50 UTC: X posted 32, Facebook 9.
+
+- **X** (`x-autopost.mjs`, `x-publisher.js`): requires Catalyst wording (`original`/`composed`), then
+  CRITICAL or a Walter Bloomberg cluster, then the editorial gate. Stale after 2h (`x-quality.mjs`).
+  `X_AUTOPOST_MODE` must be exactly `live`.
+- **Facebook** (`facebook-publisher.js`, `facebook-post.mjs`): queues a Walter Bloomberg story ONLY at
+  ingest and ONLY when Walter's row is canonical (`primary-events.js:71`). **If another source files
+  the same story first, Walter's row folds into it and Facebook never hears about it** — that is why
+  the Standard Chartered story never reached the Page. Roughly 7 of 44 Walter rows in 24h were lost
+  that way. The ZeroHedge path (`queueRewordedFacebook`) needs Catalyst wording and a 30-minute
+  freshness window. **Fix not implemented; it needs a product decision** (queue when a trusted source
+  is anywhere in the cluster, and decide which wording posts).
+
+### The $BP basis-points fix
+"25 BP" / "50 BPS" after a figure is basis points, not BP p.l.c. `maskUnitsAfterNumbers` in
+`company-symbols.mjs` masks only that position; "BP shares fall" still resolves. BP was the only one
+of ~55 unit abbreviations that collided with the real reference index. Three stored rows had the
+wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
+whether to delete it.**
+
+---
+
+## SEC description validation (method and results)
+
+**Method.** 218 companies: 100 drawn at random within market-cap buckets, 96 from targeted groups
+(banks, biotech, utilities, REITs, insurance, blank checks, recent IPOs, old listings, tech,
+energy/mining, foreign ADRs, ETFs, ETVs/ETNs, closed-end funds), 24 named structural cases. Filings
+were fetched once by a one-off GitHub Actions job (576 requests, all HTTP 200, no blocks, ~1 req/s,
+identifying User-Agent). That branch and the GitHub artifact are deleted; the filings live in
+`C:\Users\bcogh\Documents\dev\catalystpit-sec-validation\dataset` so no tuning needs SEC again.
+Classification follows `RUBRIC.md`, fixed before any filing was downloaded. **Classes were assigned by
+Claude, not a human.**
+
+**Fetch outcomes:** 184 annual reports (157 10-K, 23 20-F, 4 40-F); 13 companies had no CIK (foreign
+OTC ADRs, ETFs); 21 had no annual report (ETFs, closed-end funds, SPAC units/warrants, FDIC-filing
+banks, IPOs too recent). Zero fetch failures.
+
+**v2** (frozen): U.S. operating 10-Ks, all halves — GOOD 37.7%, TRIM 38.4%, WRONG 16.4%, NO RESULT 7.5%.
+
+**v3** (frozen at `extract.v3.frozen.mjs`, sha256 in `v3-freeze.sha256`; developed on the dev half,
+then evaluated on the untouched holdout half):
+
+| Population | GOOD | TRIM | WRONG | NO RESULT | SPECIAL |
+|---|---|---|---|---|---|
+| Tuning half, fetched (95) | 60.0% | 8.4% | 0.0% | 29.5% | 2.1% |
+| **Holdout half, fetched (89)** | **38.2%** | 14.6% | 7.9% | 33.7% | 5.6% |
+| **Holdout U.S. operating 10-K (69)** | **43.5%** | 15.9% | **10.1%** | 30.4% | – |
+| Dev U.S. operating 10-K (76) | 68.4% | 9.2% | 0.0% | 22.4% | – |
+
+All 7 WRONG results are in the holdout half — the dev/holdout gap is the tuning bias, and the holdout
+numbers are the ones to trust. v3 vs v2 on the same holdout population: GOOD 32.4% -> 43.5%,
+WRONG 16.9% -> 10.1%, NO RESULT 11.3% -> 30.4% (precision bought with coverage).
+
+**Caveat on the holdout:** it is blind with respect to v3's code, but not perfectly blind — the v2
+classification pass read excerpts from both halves, and the failure patterns v3 targets were drawn
+from all of them.
+
+Artifacts: review sheet https://claude.ai/artifact/CXSnVFcmzQnPogUj7KvJnH ·
+`classified-v3.json`, `sec-item1-review.csv`, `labels-v3.*.json`, `score-v3.cjs`.
+
+**Remaining extraction failures:** cross-reference-index 10-Ks (GE, Honeywell), 40-F filers whose
+business description is not in the filing, some 20-Fs, and sections whose opening paragraphs never
+state what the issuer does. ETFs, funds, SPACs, units and warrants have no SEC description at all.
+
+---
+
+## Verification discipline
+
+Suites for the areas touched (counts at `4de460d`, all 0 failed):
 
 ```bash
-node scripts/verify-chart.mjs                 # 1330
-node scripts/verify-scan.mjs                  # 287
-node scripts/verify-terminal.mjs              # 122
-node scripts/verify-render.mjs                # 40
-node scripts/verify-ticker-urls.mjs           # 187  (ticker page work)
-node scripts/verify-company-description.mjs   # 51   (About description)
+node scripts/verify-enrich-policy.mjs        # 125  (needs --env-file=.env.local for the live SQL half)
+node --import ./scripts/verify-enrich-e2e-register.mjs scripts/verify-enrich-e2e.mjs   # 31, needs --env-file
+node scripts/verify-enrich-claim.mjs         # 8
+node scripts/verify-company-symbols.mjs      # 69   (includes the $BP regressions)
+node scripts/verify-x-autopost.mjs           # 187
+node scripts/verify-facebook.mjs             # 299
+node scripts/verify-news-engine.mjs          # 63
+node scripts/verify-headline-complete.mjs    # 46
+node scripts/verify-chart.mjs                # 1337
+node scripts/verify-scan.mjs                 # 287
+node scripts/verify-terminal.mjs             # 122
+node scripts/verify-render.mjs               # 40
+node scripts/verify-company-description.mjs  # 51
 ```
 
-`scripts/` has ~47 `verify-*.mjs` suites in total; run the ones for the area you touch.
+`verify-x-tickers.mjs` fails 2 Kyndryl checks **on unmodified `main` as well** — pre-existing.
+`verify-pitwire.mjs`'s live check needs a dev server on localhost.
 
-A complete production build needs dummy Clerk keys, or it dies at prerender before reaching
-`/terminal`:
+A production build needs dummy Clerk keys:
 
 ```bash
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk \
-CLERK_SECRET_KEY=sk_test_00000000000000000000000000000000 \
-npx next build
+CLERK_SECRET_KEY=sk_test_00000000000000000000000000000000 npx next build
 ```
 
-### Every new assertion is mutation-tested before it is trusted
+### Every new assertion is mutation-tested
+Break the behaviour, confirm the suite prints a `FAIL` naming *that* assertion, restore. 20 mutations
+were run against the rewrite cost controls; all are caught. Assertions that could never fail have
+been found repeatedly — a negative regex matching its own explanatory comment, `indexOf` returning
+`-1`, a symmetric sample making median == mean, a trailing U+FEFF that `trim()` removes anyway, and a
+mutation that silently never applied (`sed` reading `\x00` as a NUL byte; use Node string replacement
+and check the pattern was found).
 
-Break the behaviour in the source, confirm the suite prints a `FAIL` naming *that* assertion, restore.
-Scratchpad harnesses (`mut*.cjs`) automate it. This is not optional ceremony. It has repeatedly
-caught assertions that could never fail:
+**Tests that CRASH instead of failing** silence every assertion after them. Guard every dereference;
+`ok()`'s third argument is evaluated eagerly.
 
-- matching their own explanatory comment (a negative regex defeated by the sentence explaining the
-  removal)
-- satisfied by a different part of the same file, or by a sibling component
-- `indexOf` returning `-1` making an order check pass vacuously
-- a symmetric sample making median == mean, so "uses median" couldn't fail
-- a fixture whose outlier sat outside the window the function actually reads
-- `x + w is unchanged`: true even with the clamp removed, since x runs one way and w the other
-- checks bound to module constants instead of the requirement's literal values (unfalsifiable)
-- a trailing U+FEFF in a "control chars are stripped" test: `trim()` removes it anyway
-- a mutation that silently didn't apply (`sed` reading `\x00` as a real NUL byte). Do mutations
-  with Node string replacement and check the pattern was actually found.
-
-**The recurring killer: tests that CRASH instead of failing.** A throw ends the run and silences
-every assertion after it, which makes a genuinely broken feature look untested. Guard every
-dereference; use the `seg0()` / sentinel-drawing helpers in `verify-chart.mjs`. `ok()`'s third
-argument (the diagnostic) is evaluated **eagerly**, so it must survive the failure it describes.
-
-**Prefer measuring behaviour to matching source.** The newest sections drive pure geometry modules
-through a deterministic stand-in for the browser API and assert the pixels that would be drawn;
-`verify-render` mounts the real `DrawingRail` with react-dom/client and delivers mousedown-then-click;
-section 35 of `verify-chart` reproduces Lightweight Charts' pane layout algorithm.
+### DATABASE TESTS: NEVER PUT SESSION STATE ON THE POOLED CONNECTION
+`DATABASE_URL` is a PgBouncer (`-pooler`) endpoint, and a pooled server session is shared between
+clients. A test that created a TEMP table named `primary_events` left it inside a pooled backend when
+the run failed before its cleanup, where it shadowed the real table for anything routed there
+(caught within minutes; no production impact). Session-scoped tests now use the DIRECT endpoint
+(`DATABASE_URL.replace(/-pooler(?=[.])/, '')`), create temp objects only INSIDE a transaction that is
+always rolled back, and assert afterwards that nothing survived. Cross-session tests (real locking)
+use an isolated `zz_verify_*` schema dropped in `finally`.
 
 ---
 
-## Chart architecture: the parts that took work to learn
+## Chart architecture (unchanged this cycle)
 
-Lightweight Charts **v5.2**. `addSeries`, `panes()`/`setHeight`, `logicalToCoordinate`,
-`coordinateToLogical`, `getVisibleLogicalRange`, `takeScreenshot()`.
+Lightweight Charts v5.2. Anchors are timestamps, not bar indices (`chart-coords.mjs`); endpoints
+resolve as a data anchor or a viewport edge and never a fabricated time (`chart-project.mjs`); tool
+lifecycle is explicit and a commit suppresses the chart's next click (`chart-tool-lifecycle.mjs`);
+every chart menu is portalled and registers in the dismissal stack once MOUNTED (`ChartUI.jsx`);
+panes are sized as a SHARE of the plot, never `setHeight(px)` restored across a redraw
+(`chart-panes.mjs`). `CPChart.jsx` has five callbacks deliberately declared below `patchView` — React
+evaluates hook dependency arrays eagerly, and that ordering is load-bearing (`verify-render.mjs`
+checks it statically).
 
-### Anchors are moments, not bar indices (`chart-coords.mjs`)
+## Terminal architecture (unchanged)
 
-An anchor is a **timestamp**: inside the data it's the bar's own time (so stored drawings are
-byte-identical), beyond it it's extrapolated from the **median** recent bar gap. A timestamp survives
-new bars arriving and timeframe changes; an index doesn't.
+Free-floating absolute positioning, not a grid: every panel is `{x, y, w, h, color}` in pixels.
+Keep the stored shape; `MIN_W = 240`, `MIN_H = 220`; clamp the DELTA, not the result. Layout persists
+to `localStorage` under `cp_terminal_layout`; stations to `/api/stations`.
 
-### Endpoints resolve two ways and no other (`chart-project.mjs`)
+## Scanner architecture (unchanged)
 
-Either a **data anchor** through the chart's scales, or a **viewport edge** in pixels. Manufacturing a
-time from the visible range (`view.from` / `view.to`) is what broke Fibonacci, the horizontal line and
-the ray: `timeToCoordinate()` returns null for anything that isn't an exact bar. Unplaceable geometry
-is **counted** (`dropped`), so a test can assert zero. **Never reintroduce a fabricated time.** Use an
-edge anchor or `extendToBox()`. `extendRay` was deleted.
-
-The canvas is `inset:0` over the whole chart (covers price-scale gutter and time axis). Use
-`plotSize()` (from `timeScale().width()/height()`), never the canvas box, never `canvas.height`.
-
-### Tool lifecycle is explicit (`chart-tool-lifecycle.mjs`)
-
-One-point tools (horizontal, vertical, text) commit on the **first** click and preview from the
-pointer alone. Two-point tools (trend, ray, rectangle, fib, measure) commit on the second and preview
-from their placed anchor. Committing **suppresses the chart's next click**; otherwise LWC's late click
-hit-tests and deselects the drawing just made.
-
-### Menus / Popover (`ChartUI.jsx`)
-
-Every chart menu is portalled. The Popover registers in the dismissal stack (`openPanels`) only once
-its panel is **actually mounted** (it renders on a second pass after `pos` is set). Keying that effect
-on `open` alone made every menu treat a mousedown on its own row as an outside click (`d2f3c13`).
-
-### Indicator panes (`chart-panes.mjs`)
-
-Every pane is a **share** of the plot, applied as a stretch factor. Never `setHeight(px)` restored from
-`getHeight()` across a redraw: LWC converts px against the panes' *current* heights, which are 0 right
-after re-adding, so panes grew f → f/(1-f) on every redraw. Defaults: one lower pane 22%, two 36%,
-three 45%, more capped at 50%; price pane never below half by default. Drags are read on pointer
-release and before any teardown, saved per indicator instance in `cp_chart_view`, and clamped (LWC
-30px floor, price pane ≥25%).
-
-### Other chart modules
-
-`chart-drawings.mjs` (tool registry, geometry, hit test), `chart-settings.mjs` (view prefs under
-`cp_chart_view`), `chart-drawing-store.mjs` (per-symbol drawings), `chart-source.mjs` (provider seam;
-every timeframe declares required bar resolution *and* display window; `barsUrl` refuses what the
-adapter can't serve), `chart-history.mjs` (undo/redo), `chart-indicators.mjs`, `chart-theme.mjs`
-(incl. `controlBg`/`controlBgHover`/`controlBorder`/`controlBorderHover`), `chart-types.mjs`,
-`chart-popover.mjs`, `chart-export.mjs`, `chart-quick-timeframe.mjs`.
-
-Components: `CPChart.jsx`, `DrawingLayer.jsx`, `DrawingRail.jsx`, `ChartLegend.jsx`, `ChartUI.jsx`,
-`ChartMenu.jsx`, `IndicatorBrowser.jsx`, `DrawingManager.jsx`, `DrawingSettings.jsx`,
-`SymbolSearch.jsx`, `TickerPriceChart.jsx`.
-
-### The TDZ landmine: this took production down once
-
-React evaluates hook **dependency arrays eagerly during render**. Listing a `useCallback` before its
-own `const` throws `Cannot access 'X' before initialization` and takes the page to the error boundary.
-`CPChart.jsx` has five callbacks deliberately declared *below* `patchView`; that ordering is
-load-bearing. `verify-render.mjs` checks this statically and SSR-renders the real components; it does
-**not** mount `DrawingLayer` (needs a live chart instance).
+`src/lib/scan/` — capability-gated: providers declare what they have, and anything unserviceable is
+refused rather than faked. Volume baselines use median/MAD.
 
 ---
 
-## Terminal architecture
+## Open dependencies and future work
 
-`src/app/terminal/TerminalClient.jsx` (~1500 lines) + `src/lib/terminal/panel-resize.mjs`.
-
-**Free-floating absolute positioning, not a grid.** Every panel is `{x, y, w, h, color}` in pixels and
-panels may overlap. `react-grid-layout` was removed (needs `findDOMNode`, gone in React 19). Shared-border
-resizing **derives** adjacency geometrically at pointer-down and stores nothing.
-
-- **Keep the stored shape `{x, y, w, h}`.** Saved stations, `sigOf`, Reset and user layouts read it.
-- Minimums are `MIN_W = 240, MIN_H = 220`. Reuse, don't invent.
-- **Clamp the delta, not the result**, or a panel at its minimum slides across the screen.
-- Layout persists to `localStorage` under `cp_terminal_layout`; stations go to `/api/stations`.
-
----
-
-## Scanner architecture
-
-`src/lib/scan/`: `market-capabilities.mjs`, `market-state.mjs`, `velocity.mjs`, `levels.mjs`,
-`volume-baseline.mjs`, `lifecycle.mjs`, `signals.mjs`, `engine.mjs`, `pulse.mjs`, `filters.mjs`,
-`presets.mjs`, `columns.mjs`, `enrichment.mjs`, `research.mjs`, `fixtures.mjs`, `runtime.js`,
-`scanner-fields.mjs`, `relative-strength.mjs`.
-
-Capability-gated: providers declare what they have; signals, filters and columns declare what they
-need; anything unserviceable is refused rather than faked. Volume baselines use **median/MAD**.
-
-**Next major scanner step (not started):** connect the selected commercial market-data provider.
-
----
-
-## SEC access: what exists
-
-- Production calls SEC **from Vercel** continuously: `/api/refresh?form4=1` and
-  `/api/cron/primary-sources` every minute, `/api/cron/eightk` every 5 min, institutions/13F daily and
-  hourly, plus on-demand `/api/earnings`, `/api/financials`, `/api/symbol-search`, `/api/ticker`.
-  They all send the same company-identifying User-Agent (see `SEC_HEADERS` in `src/lib/eightk.js`).
-- There is no shared SEC client or global throttle; each route sets its own headers.
-- `scripts/resume-when-sec-clears.sh` shows a past block during 13F ingest: at most one probe every
-  10 minutes, because polling harder extends a block.
-
----
+- **Market-data provider (not chosen).** Blocks: chart alerts, real-time streaming, consolidated
+  volume, weekly/monthly bars, extended hours, futures/options/FX/crypto.
+- **Pit Scan / Custom Scanner**: the engine is complete (`048e223`) and NOT connected to live provider
+  data. Connecting it is the next major scanner step, and it blocks retiring the legacy scanner path.
+- **Company descriptions**: source undecided. SEC deterministic extraction measured (above); a
+  licensed provider is required for ETFs, funds, foreign issuers and extraction failures whatever is
+  decided. No AI summarization without explicit approval.
+- **Facebook trusted-cluster queueing** (see Social publishing) — needs a product decision.
+- **Instagram and Threads automation**: on the future-work list, not started, not in scope.
+- **Anthropic cost**: revisit after a full day of `anthropic_usage`.
 
 ## Environment pitfalls
 
 - **The Write/Edit tools and Bash command strings decode backslash-u escapes into raw characters.**
-  That is how raw NUL/ZWSP/BOM bytes got into `company-description.mjs` (fixed in `16b62b7`), and a
-  raw U+2028 will break a regex. When source must contain such an escape, generate it from a Node
-  script using `String.fromCharCode(92)` for the backslash, then check with
-  `grep -cP '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'` and `git ls-files --eol` (must say `i/lf`, not `-text`).
-- **Bash heredocs mangle backslashes and backticks.** Write patch scripts containing regexes to a
-  `.cjs` file in the scratchpad with the Write tool, then run with `node`.
-- `$TMPDIR` is not set. Use the full scratchpad path.
-- Source-matching scripts must normalise with `.replace(/\r\n/g, '\n')` first.
-- No `eslint.config.*` exists, so `npx eslint` fails. The build is the lint signal.
-- General outbound network works from this machine (no Claude Code sandbox is configured).
-  **sec.gov specifically returns 403** to this machine's IP (see above).
-- Vercel deploys can't be confirmed from here, and `npx vercel ls` hangs waiting for login. Don't
-  run it. Say plainly that pushing to `main` triggers a deploy rather than claiming it succeeded.
-
----
+  That is how raw NUL/ZWSP/BOM bytes got into `company-description.mjs` (fixed in `16b62b7`). Generate
+  such escapes from a Node script using `String.fromCharCode(92)`, then check with
+  `grep -cP '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]'` and `git ls-files --eol` (must say `i/lf`).
+- **Bash heredocs mangle backslashes and backticks.** Write patch scripts to a `.cjs` file with the
+  Write tool and run them with `node`.
+- Source-matching scripts must normalise with `.replace(/\r\n/g, '\n')` first; the repo has mixed
+  line endings.
+- No `eslint.config.*` exists; the build is the lint signal.
+- Outbound network works from this machine, but **sec.gov returns 403 to this IP**. The SEC fetch ran
+  from GitHub Actions instead. Windows `curl` also fails TLS revocation checks — use Node `fetch`.
+- Vercel deploys cannot be confirmed from here (`npx vercel ls` hangs). Pushing to `main` triggers
+  one; detect arrival by its effects (e.g. the first `anthropic_usage` row).
+- Long-running background monitors on this machine have been killed for low memory. Prefer querying
+  `anthropic_usage` and `feed_state` on demand.
 
 ## Commits this cycle
 
@@ -327,12 +314,13 @@ need; anything unserviceable is refused rather than faked. Volume baselines use 
 |---|---|
 | `ec24aae` | Fix TDZ that took the Terminal down after `048e223` |
 | `77c537e` | Future-space drawing, true horizontal lines, typed timeframe entry |
-| `37e4ff1` | Fibonacci level rendering, horizontal line as plot-wide price level, collapsible indicator legend |
+| `37e4ff1` | Fibonacci levels, plot-wide horizontal line, collapsible indicator legend |
 | `b34731e` | Terminal: resize from any edge/corner, shared borders |
 | `51f3320` | Repair Ray / Horizontal / Vertical, explicit tool lifecycle |
 | `d2f3c13` | Popover dismissal-stack fix: flyout tools can be armed |
-| `c574476` | Legend collapse control under the last indicator row |
-| `0d80670` | Legend collapse control as a dark-mode chip |
+| `c574476`, `0d80670` | Legend collapse control: placement, then dark-mode chip |
 | `2c42720` | Indicator panes sized by share; drags persist |
 | `eb7c58f` | Ticker About company-description slot (hidden until a real source) |
 | `16b62b7` | Escape raw control chars in company-description files |
+| `ed760a4` | HANDOFF tracked in git |
+| `4de460d` | **Rewrite cost controls, outage visibility, usage accounting, $BP fix** (deployed) |
