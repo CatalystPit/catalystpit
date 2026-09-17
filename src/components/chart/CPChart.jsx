@@ -18,6 +18,9 @@ import {
 } from '../../lib/chart/chart-drawings.mjs';
 import { emptyHistory, record, undo, redo, canUndo, canRedo } from '../../lib/chart/chart-history.mjs';
 import { composeExport, captionFor, exportFilename } from '../../lib/chart/chart-export.mjs';
+import {
+  resolveTypedTimeframe, shouldOpenQuickTimeframe, isTypingTarget, QUICK_TIMEFRAME_TIMEOUT_MS,
+} from '../../lib/chart/chart-quick-timeframe.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
 import { Dropdown, MenuItem, MenuLabel, Popover, ToolButton, VectorIcon } from './ChartUI';
 import SymbolSearch from './SymbolSearch';
@@ -108,6 +111,12 @@ export default function CPChart({
   const [noteText, setNoteText] = useState('');
   // Bumped on Escape, which tells the drawing layer to drop a measurement or a half-placed shape.
   const [clearSignal, setClearSignal] = useState(0);
+  /**
+   * TYPE-A-TIMEFRAME. `null` when closed; otherwise what has been typed so far plus any refusal to
+   * show. The box is the only place raw digits are captured, and it opens only when the keystroke
+   * was not already going to a field that wanted it.
+   */
+  const [quickTf, setQuickTf] = useState(null);
   /**
    * WHAT EACH TOOL WAS LAST USED WITH.
    *
@@ -784,7 +793,18 @@ export default function CPChart({
     if (!el) return undefined;
     const onKey = (e) => {
       const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+      // One definition of "this keystroke belongs to a field", shared with the quick-timeframe gate,
+      // and it now covers contenteditable as well as the three form tags.
+      if (isTypingTarget(t)) return;
+      // A BARE DIGIT OPENS THE TIMEFRAME BOX. Checked before the letter shortcuts so it cannot be
+      // shadowed by one, and gated on the target not being a field — typing "5" into the symbol
+      // search or an indicator's period must reach that input, not the chart.
+      if (shouldOpenQuickTimeframe(e, t)) {
+        e.preventDefault();
+        setQuickTf({ text: e.key, error: null });
+        return;
+      }
+
       const mod = e.ctrlKey || e.metaKey;
 
       // UNDO / REDO. Bound on the chart element, so this never steals the browser's undo from a
@@ -817,7 +837,7 @@ export default function CPChart({
     };
     el.addEventListener('keydown', onKey);
     return () => el.removeEventListener('keydown', onKey);
-  }, [selectedIds, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen,
+  }, [selectedIds, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen, setQuickTf,
     undoDrawings, redoDrawings, nudgeSelected]);
 
   // ── theme: applied to the live chart, then the series are recoloured ──
@@ -1112,6 +1132,18 @@ export default function CPChart({
           />
         )}
 
+        {/* THE TIMEFRAME BOX. Small, centred over the chart, and gone the moment it is done with —
+            it is a keystroke accelerator, not a dialog. */}
+        {quickTf && (
+          <QuickTimeframe
+            theme={theme}
+            state={quickTf}
+            onChange={setQuickTf}
+            onCommit={(id) => { setTf(id); setQuickTf(null); }}
+            onClose={() => setQuickTf(null)}
+          />
+        )}
+
         {/* SCROLL TO THE LATEST BAR. Appears only once the user has scrolled away from it, sits
             clear of the time axis, and is the one control on the chart surface itself. */}
         {status === 'ready' && scrolledBack && (
@@ -1302,6 +1334,69 @@ export default function CPChart({
         {extended && canExtend ? 'Extended hours · ' : ''}
         <a href={CHART_ATTRIBUTION_HREF} target="_blank" rel="noopener noreferrer"
           style={{ color: 'inherit', textDecoration: 'none' }}>{CHART_ATTRIBUTION}</a>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The type-a-timeframe box.
+ *
+ * Autofocused, so the digit that opened it is followed straight into the field and the next
+ * keystrokes are ordinary typing rather than more global shortcuts. Enter applies, Escape cancels,
+ * Backspace on an empty box closes it, and an abandoned box closes itself — a stray keypress should
+ * not leave something sitting on the chart.
+ */
+function QuickTimeframe({ theme, state, onChange, onCommit, onClose }) {
+  const p = palette(theme);
+  const timer = useRef(null);
+
+  useEffect(() => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(onClose, QUICK_TIMEFRAME_TIMEOUT_MS);
+    return () => clearTimeout(timer.current);
+  }, [state.text, onClose]);
+
+  const commit = () => {
+    const result = resolveTypedTimeframe(state.text);
+    // A TIMEFRAME THE FEED CANNOT SERVE IS REFUSED WITH ITS REASON, never applied silently.
+    if (!result.ok) { onChange({ ...state, error: result.reason || 'Not a timeframe' }); return; }
+    onCommit(result.id);
+  };
+
+  return (
+    <div style={{
+      position: 'absolute', left: '50%', top: 14, transform: 'translateX(-50%)', zIndex: 8,
+      background: p.tooltipBg, border: `1px solid ${state.error ? p.down : p.tooltipBorder}`,
+      borderRadius: 7, boxShadow: '0 8px 28px rgba(0,0,0,0.24)', padding: '7px 9px',
+      display: 'flex', flexDirection: 'column', gap: 3, minWidth: 128,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9.5, color: p.text, letterSpacing: '0.5px' }}>
+          TIMEFRAME
+        </span>
+        <input
+          ref={(el) => { if (el) el.focus(); }}
+          value={state.text}
+          inputMode="numeric"
+          onChange={(e) => onChange({ text: e.target.value.replace(/[^0-9]/g, '').slice(0, 4), error: null })}
+          onKeyDown={(e) => {
+            // Stopped here so the chart's own shortcuts do not also see these keys.
+            e.stopPropagation();
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+            else if (e.key === 'Backspace' && !state.text) { e.preventDefault(); onClose(); }
+          }}
+          aria-label="Timeframe in minutes"
+          style={{
+            width: 54, background: 'transparent', color: p.textStrong, border: 'none', outline: 'none',
+            fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, textAlign: 'right',
+          }}
+        />
+        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>min</span>
+      </div>
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9.5, color: state.error ? p.down : p.text, opacity: state.error ? 1 : 0.75 }}>
+        {state.error || 'Enter to apply · Esc to cancel'}
       </div>
     </div>
   );

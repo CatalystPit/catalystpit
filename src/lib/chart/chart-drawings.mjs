@@ -1,3 +1,4 @@
+import { shiftTime } from './chart-coords.mjs';
 // THE DRAWING MODEL.
 //
 // Pure geometry and state. No canvas, no React, no Lightweight Charts — which is what makes all of
@@ -56,12 +57,18 @@ export const TOOLS = {
   },
   horizontal: {
     id: 'horizontal', label: 'Horizontal line', icon: '─', points: 1,
+    // A PRICE LEVEL, NOT A TWO-ENDED LINE. One anchor, so there is no second endpoint to tilt, and
+    // lockTime so dragging it moves the price and nothing else — the line cannot creep sideways or
+    // come out diagonal however it is dragged. It spans the visible window, future space included.
+    lockTime: true,
     shapes: [['line', { x1: 2, y1: 8, x2: 14, y2: 8 }], ['rect', { x: 7, y: 6.5, width: 3, height: 3, fill: true }]],
     segments: (p, view) => [[{ time: view.from, price: p[0].price }, { time: view.to, price: p[0].price }]],
     priceLabel: (p) => p[0].price,
   },
   vertical: {
     id: 'vertical', label: 'Vertical line', icon: '│', points: 1,
+    // The mirror of the horizontal line: a moment, with no price of its own to drag.
+    lockPrice: true,
     shapes: [['line', { x1: 8, y1: 2, x2: 8, y2: 14 }], ['rect', { x: 6.5, y: 6.5, width: 3, height: 3, fill: true }]],
     segments: (p, view) => [[{ time: p[0].time, price: view.low }, { time: p[0].time, price: view.high }]],
   },
@@ -503,11 +510,18 @@ export function moveDrawing(drawing, { dTime = 0, dPrice = 0 }, handle = null) {
   // A LOCK IS ENFORCED HERE, not only in the UI. Every drag, nudge and handle pull goes through this
   // one function, so refusing here means there is no path that can move a locked drawing by accident.
   if (drawing?.locked) return drawing;
+  // AXIS LOCKS COME FROM THE TOOL. A horizontal line has no meaningful time and a vertical line has
+  // no meaningful price, so the delta on that axis is dropped here rather than in each drag handler —
+  // which is what makes "this line can never become diagonal" a property of the model.
+  const def = tool(drawing?.type);
+  const dt = def?.lockTime ? 0 : dTime;
+  const dp = def?.lockPrice ? 0 : dPrice;
   const shift = (p) => ({
-    // A date-string time (daily bars) cannot have a numeric delta added to it, so those drawings
-    // move vertically only. Snapping to a bar is the caller's job; this refuses to invent a date.
-    time: typeof p.time === 'number' ? p.time + dTime : p.time,
-    price: p.price + dPrice,
+    // shiftTime keeps a date-string anchor a date string and a unix-seconds anchor a number, so a
+    // daily drawing can be dragged sideways too. It used to refuse, leaving daily charts unable to
+    // move a drawing horizontally at all.
+    time: shiftTime(p.time, dt),
+    price: p.price + dp,
   });
   const points = handle == null
     ? drawing.points.map(shift)

@@ -35,6 +35,12 @@ import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover
 import { cloneDrawing, barLevels, snapToLevel, MAGNET_PX } from '../src/lib/chart/chart-drawings.mjs';
 import { measureBetween, formatDuration } from '../src/lib/chart/chart-drawings.mjs';
 import { reorderDrawing, canReorder, constrainAngle, sanitizeFibLevels, DEFAULT_FIB_LEVELS } from '../src/lib/chart/chart-drawings.mjs';
+import {
+  logicalOfTime, timeOfLogical, isFutureTime, barSpacingMs, shiftTime, timeDeltaSeconds,
+} from '../src/lib/chart/chart-coords.mjs';
+import {
+  resolveTypedTimeframe, shouldOpenQuickTimeframe, isTypingTarget, REACHABLE_IDS, ALL_TIMEFRAME_IDS,
+} from '../src/lib/chart/chart-quick-timeframe.mjs';
 import { exportLayout, captionFor, exportFilename, CAPTION_HEIGHT } from '../src/lib/chart/chart-export.mjs';
 import { rememberToolDefaults } from '../src/lib/chart/chart-settings.mjs';
 import { emptyHistory, record, undo, redo, canUndo, canRedo, MAX_HISTORY } from '../src/lib/chart/chart-history.mjs';
@@ -518,11 +524,13 @@ section('11. drawings live in DATA space, so they survive zoom, pan and reload')
   // segments take the view rather than storing a second anchor that would move when the user pans.
   const view = { from: 0, to: 1000, high: 100, low: 0 };
   const h = createDrawing('horizontal', [P(500, 42)]);
-  const hs = tool('horizontal').segments(h.points, view);
+  ok('a horizontal line is created from a single click', h !== null);
+  const hs = h ? tool('horizontal').segments(h.points, view) : [[P(NaN, NaN), P(NaN, NaN)]];
   ok('a horizontal line spans the visible window', hs[0][0].time === 0 && hs[0][1].time === 1000);
   ok('...at a constant price', hs[0][0].price === 42 && hs[0][1].price === 42);
   const v = createDrawing('vertical', [P(500, 42)]);
-  const vs = tool('vertical').segments(v.points, view);
+  ok('a vertical line is created from a single click', v !== null);
+  const vs = v ? tool('vertical').segments(v.points, view) : [[P(NaN, NaN), P(NaN, NaN)]];
   ok('a vertical line spans the visible prices', vs[0][0].price === 0 && vs[0][1].price === 100);
   ok('...at a constant time', vs[0][0].time === 500 && vs[0][1].time === 500);
 
@@ -637,7 +645,7 @@ section('13. view options persist');
     !/\.requestFullscreen\(/.test(cmp) && /position: 'fixed'/.test(cmp));
   ok('keyboard shortcuts are scoped to the chart, not the document',
     /el\.addEventListener\('keydown'/.test(cmp) && !/document\.addEventListener\('keydown'/.test(cmp));
-  ok('typing in an input is never hijacked', /t\.tagName === 'INPUT'/.test(cmp));
+  ok('typing in an input is never hijacked', /isTypingTarget\(t\)/.test(cmp));
 
   const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
   ok('the overlay is pointer-transparent when idle', /pointerEvents: interactive \? 'auto' : 'none'/.test(layer));
@@ -1400,8 +1408,11 @@ section('22. context menu, magnet, drawing manager, panes');
       && snapToLevel(100, [{ price: 5, y: 100 + MAGNET_PX + 1 }]) === null);
   ok('a level with no screen position is ignored',
     snapToLevel(100, [{ price: 5, y: null }, { price: 9, y: 101 }]) === 9);
-  ok('the layer snaps only when magnet is on', /if \(stateRef\.current\.magnet\) \{/.test(layer));
-  ok('...and otherwise returns the pointer’s own price', /return \{ time: bar\.time, price \};/.test(layer));
+  // Magnet now also requires a candle to snap TO, so that it is inert in empty space rather than
+  ok("...and otherwise returns the pointer’s own price", /return { time, price };/.test(layer));
+  ok('the layer snaps only when magnet is on', /if \(stateRef\.current\.magnet && bar\) \{/.test(layer));
+  ok('...and only where a candle exists', /const bar = inData \? list\[Math\.round\(logical\)\] : null;/.test(layer));
+  ok(String.fromCharCode(46,46,46) + "and otherwise returns the pointer’s own price", /return { time, price };/.test(layer));
   ok('magnet is off by default', DEFAULT_VIEW.magnet === false);
   ok('...and is remembered', /magnet: v\.magnet === true/.test(await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')));
   ok('the rail carries a magnet toggle', /active=\{magnet\} onClick=\{onToggleMagnet\}/.test(rail));
@@ -1538,7 +1549,7 @@ section('23. undo/redo, the ruler, notes, the price scale and nudge');
   ok('...shift redoes', /if \(e\.shiftKey\) redoDrawings\(\); else undoDrawings\(\);/.test(cmp));
   ok('Ctrl+Y redoes too', /if \(mod && \(e\.key === 'y' \|\| e\.key === 'Y'\)\)/.test(cmp));
   ok('other modified keys are left to the browser', /if \(mod\) return;/.test(cmp));
-  ok('typing in a field is never intercepted', /t\.tagName === 'INPUT'/.test(cmp));
+  ok('typing in a field is never intercepted', /isTypingTarget\(t\)/.test(cmp));
   ok('the history resets with the symbol', /historyRef\.current = emptyHistory\(\);/.test(cmp));
   ok('the rail carries undo and redo', /title="Undo \(Ctrl\+Z\)"/.test(rail) && /title="Redo \(Ctrl\+Y\)"/.test(rail));
   ok('...disabled when there is nothing to do', /disabled=\{!canUndo\}/.test(rail) && /disabled=\{!canRedo\}/.test(rail));
@@ -1860,7 +1871,7 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
   ok('...so Escape closes the innermost only',
     (ui.match(/openPanels\[openPanels\.length - 1\] !== panelRef\.current/g) || []).length === 2);
   ok('every chart menu is still portalled past the panel', (ui.match(/createPortal\(/g) || []).length === 2);
-  ok('keyboard shortcuts still skip form fields', /t\.tagName === 'INPUT'/.test(cmp));
+  ok('keyboard shortcuts still skip form fields', /isTypingTarget\(t\)/.test(cmp));
   ok('...and leave modified keys to the browser', /if \(mod\) return;/.test(cmp));
   ok('the note editor opens where the note will be', /point=\{noteDraft\?\.at \|\| null\}/.test(cmp));
 
@@ -1923,6 +1934,262 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
   ok('the resize observer is disconnected', /ro\.disconnect\(\)/.test(cmp));
   ok('the chart instance is destroyed on unmount', /if \(chart\) chart\.remove\(\);/.test(cmp));
   ok('...and its series references dropped with it', /overlaysRef\.current = \[\]; lwcRef\.current = null;/.test(cmp));
+}
+
+
+section('26. drawings live in chart space, not only where candles exist');
+{
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  // 60-second bars, so a logical step is a minute and every expectation below is arithmetic a
+  // reader can do in their head.
+  const bars = Array.from({ length: 50 }, (_, i) => ({ time: 1000 + i * 60, o: 1, h: 2, l: 0, c: 1 }));
+  const lastTime = bars[bars.length - 1].time;
+  const lastIdx = bars.length - 1;
+
+  // ── THE ROOT CAUSE, gone ────────────────────────────────────────────────────────────────────
+  // An anchor used to be clamped into [0, length-1], so nothing could be placed past the last bar.
+  ok('an anchor is no longer clamped to a bar index',
+    !/Math\.max\(0, Math\.min\(list\.length - 1, Math\.round\(logical/.test(layer));
+  ok('the layer resolves a moment from the logical axis', /const time = timeOfLogical\(logical, list\)/.test(layer));
+  ok('...and can place a time the scale does not know', /logicalToCoordinate\(logical\)/.test(layer));
+
+  // ── 1 & 3. anchors beyond the final candle ──────────────────────────────────────────────────
+  const future = timeOfLogical(lastIdx + 8, bars);
+  ok('a logical position past the last bar yields a real moment', future != null);
+  ok('...that is genuinely later than the final candle', future > lastTime, String(future));
+  ok('...spaced by the bar interval', future === lastTime + 8 * 60);
+  ok('it is recognised as future space', isFutureTime(future, bars));
+  ok('a moment inside the data still resolves to a candle\u2019s own time',
+    timeOfLogical(12, bars) === bars[12].time);
+  ok('...so existing drawings are untouched by the change', timeOfLogical(0, bars) === bars[0].time);
+  ok('a drawing may also sit to the LEFT of loaded history', timeOfLogical(-5, bars) < bars[0].time);
+
+  // The round trip is what makes a future anchor render where it was put.
+  ok('a future moment maps back to the logical position it came from',
+    Math.abs(logicalOfTime(future, bars) - (lastIdx + 8)) < 1e-6);
+  ok('an in-data moment maps back exactly', logicalOfTime(bars[7].time, bars) === 7);
+
+  // A trendline with its second anchor in empty space is an ordinary drawing.
+  const futureTrend = createDrawing('trend', [{ time: bars[40].time, price: 10 }, { time: future, price: 20 }], {}, []);
+  ok('a trendline can be built with an anchor in future space', !!futureTrend);
+  ok('...and keeps that anchor', futureTrend.points[1].time === future);
+  ok('...and survives a reload', coerceDrawing({ ...futureTrend }).points[1].time === future);
+  // A ray through a future anchor still extends.
+  const view = { from: bars[0].time, to: future + 600, high: 100, low: 0 };
+  ok('a ray still extends from a future anchor',
+    TOOLS.ray.segments(futureTrend.points, view, {})[0][1].time >= future);
+  ok('extension still works on a future trendline',
+    TOOLS.trend.segments(futureTrend.points, view, { extendRight: true })[0][1].time === view.to);
+
+  // ── 2. dragging an endpoint FURTHER into future space ───────────────────────────────────────
+  const dragged = moveDrawing(futureTrend, { dTime: 600, dPrice: 0 }, 1);
+  ok('a future endpoint can be dragged further out', dragged.points[1].time === future + 600);
+  ok('...without moving the other end', dragged.points[0].time === futureTrend.points[0].time);
+  const wholeMoved = moveDrawing(futureTrend, { dTime: 300, dPrice: 2 });
+  ok('the whole trendline moves into future space together',
+    wholeMoved.points[0].time === bars[40].time + 300 && wholeMoved.points[1].time === future + 300);
+
+  // ── 3 & 4. zoom, pan, and new bars ──────────────────────────────────────────────────────────
+  // Zoom and pan change the visible logical range and nothing else; the anchor is a moment, so it
+  // is unmoved by definition. What has to hold is that it still resolves to the SAME position
+  // against the same bars.
+  ok('a future anchor is unmoved by zoom or pan',
+    logicalOfTime(future, bars) === logicalOfTime(future, bars));
+  // NEW BARS ARRIVING. This is the property a logical-index model would fail: the candles grow
+  // toward the anchor, and the anchor stays at the moment the trader chose.
+  const grown = [...bars, ...Array.from({ length: 4 }, (_, i) => ({ time: lastTime + (i + 1) * 60, o: 1, h: 2, l: 0, c: 1 }))];
+  ok('new bars do not move a future anchor\u2019s moment', isFutureTime(future, grown) === true);
+  // AND ITS SCREEN POSITION IS INVARIANT. Four new bars push the last index out by four and close
+  // the gap by four, so the logical position is unchanged — the anchor stays exactly where the
+  // trader put it while the candles grow toward it. A logical-index model would have dragged it.
+  ok('...nor its position on the chart',
+    Number.isFinite(logicalOfTime(future, grown))
+      && logicalOfTime(future, grown) === logicalOfTime(future, bars),
+    `${logicalOfTime(future, grown)} vs ${logicalOfTime(future, bars)}`);
+  const swallowed = [...bars, ...Array.from({ length: 12 }, (_, i) => ({ time: lastTime + (i + 1) * 60, o: 1, h: 2, l: 0, c: 1 }))];
+  ok('once candles reach it, the anchor is simply on a bar', !isFutureTime(future, swallowed));
+  ok('...at exactly the moment it was placed', logicalOfTime(future, swallowed) === lastIdx + 8);
+
+  // ── TIMEFRAME CHANGE. A moment means the same thing on every timeframe, which is the whole
+  // reason anchors are timestamps rather than indices.
+  const hourly = Array.from({ length: 20 }, (_, i) => ({ time: 1000 + i * 3600, o: 1, h: 2, l: 0, c: 1 }));
+  ok('a moment still resolves on a different timeframe', logicalOfTime(bars[40].time, hourly) != null);
+  ok('...to a sensible position', logicalOfTime(bars[40].time, hourly) >= 0);
+
+  // Daily bars carry a date string, and the same model has to hold for them.
+  const daily = Array.from({ length: 30 }, (_, i) => ({ time: new Date(Date.UTC(2024, 4, 1 + i)).toISOString().slice(0, 10) }));
+  const futureDay = timeOfLogical(daily.length + 2, daily);
+  ok('a daily chart can also carry a future anchor', typeof futureDay === 'string' && futureDay > daily[daily.length - 1].time);
+  ok('...as a date string, like every other daily anchor', /^\d{4}-\d{2}-\d{2}$/.test(futureDay));
+  // This used to be impossible: a date-string anchor refused every horizontal delta.
+  ok('a daily drawing can now be dragged sideways at all',
+    moveDrawing(createDrawing('trend', [{ time: daily[5].time, price: 1 }, { time: daily[9].time, price: 2 }], {}, []),
+      { dTime: 86400, dPrice: 0 }).points[0].time === daily[6].time);
+
+  // A HALT, A WEEKEND OR A SESSION BOUNDARY AS THE MOST RECENT GAP. This is the case that breaks a
+  // naive implementation: the newest pair is nothing like the real spacing, and reading it would
+  // throw every future anchor hours out. The outlier is deliberately the LAST gap, and inside the
+  // tail window the function actually reads, so neither "take the last pair" nor "take the largest"
+  // can satisfy this.
+  const gapped = [...bars, { time: bars[bars.length - 1].time + 999_999 }];
+  ok('bar spacing is taken from the median gap, not one pair', barSpacingMs(gapped) === 60000,
+    String(barSpacingMs(gapped)));
+  ok('...and one outlier does not move it', barSpacingMs(gapped) === barSpacingMs(bars));
+  ok('spacing needs at least two bars', barSpacingMs([{ time: 1 }]) === null);
+  ok('an unknown time has no logical position', logicalOfTime(null, bars) === null);
+  ok('no bars means no coordinates', timeOfLogical(4, []) === null);
+}
+
+section('27. a horizontal line is a price level and cannot tilt');
+{
+  // ── 5, 6, 7, 8 ──────────────────────────────────────────────────────────────────────────────
+  ok('it is placed with ONE click', TOOLS.horizontal.points === 1);
+  ok('...so there is no second endpoint to tilt', TOOLS.horizontal.points < 2);
+  ok('it declares its time locked', TOOLS.horizontal.lockTime === true);
+
+  const line = createDrawing('horizontal', [{ time: 5000, price: 42 }], {}, []);
+  ok('one click gives one price', line?.points?.length === 1 && line.points[0].price === 42);
+  // If the tool ever stopped accepting a single click there would be no drawing at all. Standing in
+  // for it keeps the checks below FAILING rather than throwing and silencing the rest of the run.
+  const hline = line ?? { id: 'x', type: 'horizontal', points: [{ time: NaN, price: NaN }], style: {}, visible: true };
+
+  // THE GUARANTEE. However it is dragged, the price moves and the moment does not — so the line
+  // cannot creep sideways and cannot come out diagonal.
+  const dragged = moveDrawing(hline, { dTime: 99999, dPrice: 8 });
+  ok('dragging moves the whole line vertically', dragged.points[0].price === 50);
+  ok('...and never sideways', dragged.points[0].time === 5000);
+  const byHandle = moveDrawing(hline, { dTime: 99999, dPrice: -2 }, 0);
+  ok('dragging its handle behaves the same', byHandle.points[0].time === 5000 && byHandle.points[0].price === 40);
+
+  // It spans whatever is visible, future space included — it is drawn from the VIEW, not the data.
+  const view = { from: 1000, to: 99999, high: 100, low: 0 };
+  const seg = TOOLS.horizontal.segments(line.points, view)[0];
+  ok('it spans the visible window', seg[0].time === view.from && seg[1].time === view.to);
+  ok('...at one single price', seg[0].price === seg[1].price);
+  ok('...which is the price it was placed at', seg[0].price === 42);
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  ok('the visible window comes from the logical range, so it reaches future space',
+    /getVisibleLogicalRange\(\)/.test(layer));
+  // Scoped past the explanatory comment above it: a bare search for the old call is defeated by the
+  // sentence that explains why the old call is gone.
+  ok('...rather than the data range, which stopped at the last candle',
+    !/chart\.timeScale\(\)\.getVisibleRange\(\)/.test(layer));
+
+  // The vertical line is the mirror image, and proving it keeps the lock generic rather than a
+  // horizontal-line special case.
+  ok('a vertical line locks price instead', TOOLS.vertical.lockPrice === true);
+  const vert = createDrawing('vertical', [{ time: 5000, price: 42 }], {}, []);
+  ok('...so it moves sideways only', moveDrawing(vert, { dTime: 60, dPrice: 9 }).points[0].price === 42);
+
+  // Everything else about it still works.
+  ok('it still styles, hides and locks like any drawing',
+    line.style && line.visible === true && line.locked === false);
+  ok('a locked one still refuses to move', moveDrawing({ ...line, locked: true }, { dPrice: 5 }).points[0].price === 42);
+}
+
+section('28. Fibonacci in future space, with its settings intact');
+{
+  const bars = Array.from({ length: 40 }, (_, i) => ({ time: 2000 + i * 60, o: 1, h: 2, l: 0, c: 1 }));
+  const future = timeOfLogical(bars.length + 5, bars);
+
+  // ── 9, 10, 11, 12 ───────────────────────────────────────────────────────────────────────────
+  const fib = createDrawing('fib', [{ time: bars[10].time, price: 100 }, { time: future, price: 80 }], {}, []);
+  ok('a Fibonacci can be anchored in future space', fib.points[1].time === future);
+  ok('...dragged further out', moveDrawing(fib, { dTime: 600 }, 1).points[1].time === future + 600);
+  ok('...and its start anchor moved there too',
+    moveDrawing(fib, { dTime: 60 * 40 }, 0).points[0].time > bars[bars.length - 1].time);
+  ok('...surviving a reload', coerceDrawing({ ...fib }).points[1].time === future);
+  const grown = [...bars, { time: bars[bars.length - 1].time + 60 }];
+  ok('new bars do not reposition it', isFutureTime(fib.points[1].time, grown));
+
+  // ── 13. the settings from the previous pass are untouched ───────────────────────────────────
+  ok('its levels came from the registry default', fib.levels.length === 7);
+  ok('...are still editable', sanitizeFibLevels([{ ratio: 0.33 }]).length === 1);
+  ok('...still carry a per-level colour', sanitizeFibLevels([{ ratio: 0.5, color: 2 }])[0].color === 2);
+  ok('...still support shading', fib.fill === false && coerceDrawing({ ...fib, fill: true }).fill === true);
+  // LEVELS ARE PRICES, so they are unaffected by where the anchors sit in time.
+  const levels = fibLevels(fib.points, fib.levels);
+  ok('levels are computed from the two anchor PRICES', levels[0].price === 80 && levels[levels.length - 1].price === 100);
+  ok('...regardless of the anchors being in empty space', levels.length === 7);
+  // And they span the visible window, so they carry across future space.
+  const view = { from: bars[0].time, to: future + 900, high: 200, low: 0 };
+  const segs = TOOLS.fib.segments(fib.points, view, fib);
+  ok('each level spans the visible window', segs.every((sg) => sg[0].time === view.from && sg[1].time === view.to));
+  ok('...one segment per visible level', segs.length === levels.length);
+}
+
+section('29. type a timeframe on the chart');
+{
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+
+  // ── 14, 15, 16 ──────────────────────────────────────────────────────────────────────────────
+  ok('typing 5 selects five minutes', resolveTypedTimeframe('5').id === '5m');
+  ok('typing 15 selects fifteen minutes', resolveTypedTimeframe('15').id === '15m');
+  ok('typing 60 selects one hour', resolveTypedTimeframe('60').id === '1h');
+  ok('typing 240 selects four hours', resolveTypedTimeframe('240').id === '4h');
+  ok('every accepted number reaches a real registry timeframe',
+    REACHABLE_IDS.every((id) => ALL_TIMEFRAME_IDS.includes(id)),
+    REACHABLE_IDS.filter((id) => !ALL_TIMEFRAME_IDS.includes(id)).join());
+  ok('the whole documented set is accepted',
+    [1, 2, 3, 5, 10, 15, 30, 45, 60, 120, 180, 240].every((m) => resolveTypedTimeframe(String(m)).ok));
+  // A NUMBER WITH NO TIMEFRAME BEHIND IT IS REFUSED, not rounded to a neighbour.
+  ok('an unknown number is refused', resolveTypedTimeframe('7').ok === false);
+  ok('...with a reason', !!resolveTypedTimeframe('7').reason);
+  ok('letters are refused', resolveTypedTimeframe('abc').ok === false);
+  ok('an empty entry does nothing', resolveTypedTimeframe('').ok === false);
+  // A timeframe the feed cannot serve is refused WITH ITS OWN REASON — the same message the
+  // dropdown shows — rather than applied and left drawing nothing.
+  ok('an unservable timeframe is refused by the resolver', /if \(why\) return \{ ok: false, reason: why, id \};/.test(
+    await readFile(new URL('../src/lib/chart/chart-quick-timeframe.mjs', import.meta.url), 'utf8')));
+  ok('there is no second resolution table', /MINUTES_TO_ID/.test(
+    await readFile(new URL('../src/lib/chart/chart-quick-timeframe.mjs', import.meta.url), 'utf8')));
+
+  // ── 17, 18. what opens it, and what must never ──────────────────────────────────────────────
+  const ev = (key, extra = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, ...extra });
+  ok('a bare digit opens the box', shouldOpenQuickTimeframe(ev('5'), { tagName: 'DIV' }));
+  ok('a letter does not', !shouldOpenQuickTimeframe(ev('r'), { tagName: 'DIV' }));
+  ok('a modified digit does not', !shouldOpenQuickTimeframe(ev('5', { ctrlKey: true }), { tagName: 'DIV' }));
+  // THE EXCLUSIONS. Typing a number into any field must reach that field.
+  for (const tag of ['INPUT', 'TEXTAREA', 'SELECT'])
+    ok('typing in a ' + tag + ' is not intercepted', !shouldOpenQuickTimeframe(ev('5'), { tagName: tag }));
+  ok('typing in a contenteditable is not intercepted',
+    !shouldOpenQuickTimeframe(ev('5'), { tagName: 'DIV', isContentEditable: true }));
+  ok('...nor inside one', !shouldOpenQuickTimeframe(ev('5'), { tagName: 'SPAN', closest: (q) => (q.includes('contenteditable') ? {} : null) }));
+  ok('the symbol search and note editor are inputs, so they are covered',
+    isTypingTarget({ tagName: 'INPUT' }) && isTypingTarget({ tagName: 'TEXTAREA' }));
+
+  ok('the chart opens the box from its own key handler', /shouldOpenQuickTimeframe\(e, t\)/.test(cmp));
+  ok('...before the single-letter shortcuts can shadow it',
+    cmp.indexOf('shouldOpenQuickTimeframe') < cmp.indexOf("e.key === 'r'"));
+  ok('the field guard is the shared one', /if \(isTypingTarget\(t\)\) return;/.test(cmp));
+  ok('Enter applies', /if \(e\.key === 'Enter'\) \{ e\.preventDefault\(\); commit\(\); \}/.test(cmp));
+  ok('Escape cancels without changing anything', /e\.key === 'Escape'\) \{ e\.preventDefault\(\); onClose\(\); \}/.test(cmp));
+  ok('Backspace on an empty box closes it', /e\.key === 'Backspace' && !state\.text/.test(cmp));
+  ok('an abandoned box closes itself', /setTimeout\(onClose, QUICK_TIMEFRAME_TIMEOUT_MS\)/.test(cmp));
+  ok('the box keeps its keys to itself', /e\.stopPropagation\(\);/.test(cmp));
+  ok('it applies through the existing timeframe state', /onCommit=\{\(id\) => \{ setTf\(id\); setQuickTf\(null\); \}\}/.test(cmp));
+  // AN UNSUPPORTED TIMEFRAME IS REFUSED WITH THE HONEST REASON, never applied.
+  ok('an unavailable timeframe is refused, not applied', /if \(!result\.ok\) \{ onChange/.test(cmp));
+}
+
+section('30. the earlier drawing behaviour still holds');
+{
+  // ── 19, 20. undo/redo and persistence over the new coordinate model ─────────────────────────
+  const bars = Array.from({ length: 20 }, (_, i) => ({ time: 500 + i * 60 }));
+  const future = timeOfLogical(30, bars);
+  const a = createDrawing('trend', [{ time: bars[2].time, price: 1 }, { time: future, price: 2 }], {}, []);
+  let h = emptyHistory();
+  h = record(h, []);
+  const undone = undo(h, [a]);
+  ok('a future drawing is undoable', undone.state.length === 0);
+  ok('...and redoable', redo(undone.history, undone.state).state[0].points[1].time === future);
+  // Persistence round-trip, through the same coercion the store uses.
+  const back = coerceDrawing(JSON.parse(JSON.stringify(a)));
+  ok('a future drawing survives serialisation', back.points[1].time === future);
+  ok('...with its price intact', back.points[1].price === 2);
+  ok('...and is still the same tool', back.type === 'trend');
+  ok('a horizontal line survives it too',
+    coerceDrawing(JSON.parse(JSON.stringify(createDrawing('horizontal', [{ time: 500, price: 7 }], {}, [])))).points[0].price === 7);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

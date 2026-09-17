@@ -7,6 +7,9 @@ import {
 } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
 import { gestureToken } from '../../lib/chart/chart-history.mjs';
+import {
+  logicalOfTime, timeOfLogical, timeDeltaSeconds,
+} from '../../lib/chart/chart-coords.mjs';
 
 // The drawing surface: one canvas sitting over the chart.
 //
@@ -41,9 +44,19 @@ function DrawingLayerBase({
   // ── data space <-> screen space ──
   const toScreen = useCallback((pt) => {
     if (!chart || !series) return null;
-    const x = chart.timeScale().timeToCoordinate(pt.time);
     const y = series.priceToCoordinate(pt.price);
-    return (x == null || y == null) ? null : { x, y };
+    if (y == null) return null;
+    // A time the scale knows resolves directly. One it does NOT — an anchor drawn into empty space
+    // past the last candle — is placed through the logical axis instead, which is unbounded. Without
+    // this second path a future anchor simply vanished, because timeToCoordinate returns null for
+    // anything outside the data.
+    let x = chart.timeScale().timeToCoordinate(pt.time);
+    if (x == null) {
+      const logical = logicalOfTime(pt.time, stateRef.current.bars || []);
+      if (logical == null) return null;
+      x = chart.timeScale().logicalToCoordinate(logical);
+    }
+    return x == null ? null : { x, y };
   }, [chart, series]);
 
   const toData = useCallback((x, y) => {
@@ -55,9 +68,15 @@ function DrawingLayerBase({
     // tool behaves: a level belongs to a candle.
     const logical = chart.timeScale().coordinateToLogical(x);
     const list = stateRef.current.bars || [];
-    if (!list.length) return null;
-    const idx = Math.max(0, Math.min(list.length - 1, Math.round(logical ?? 0)));
-    const bar = list[idx];
+    if (!list.length || logical == null) return null;
+    // NOT CLAMPED TO A BAR ANY MORE. Inside the data this still resolves to a candle's own time, so
+    // anchors keep landing on bars and every stored drawing is unaffected; beyond it the moment is
+    // extrapolated from the bar spacing. That single change is what lets a trendline, a ray or a
+    // Fibonacci be drawn into empty chart space at all.
+    const time = timeOfLogical(logical, list);
+    if (time == null) return null;
+    const inData = logical >= 0 && logical <= list.length - 1;
+    const bar = inData ? list[Math.round(logical)] : null;
 
     // MAGNET. With it on, an anchor placed near a candle's open, high, low or close lands exactly on
     // it. Off — the default — this whole branch is skipped and the price is wherever the pointer is,
@@ -65,23 +84,28 @@ function DrawingLayerBase({
     //
     // The nearness test is done in PIXELS, so it means the same thing at every zoom level, and the
     // decision itself lives in chart-drawings.mjs where it can be tested without a browser.
-    if (stateRef.current.magnet) {
+    // Magnet needs a candle to snap TO, so it applies only where one exists. In empty space it is
+    // simply inert — which is what keeps magnet from making future-space drawing impossible.
+    if (stateRef.current.magnet && bar) {
       const levels = barLevels(bar)
-        .map((price) => ({ price, y: series.priceToCoordinate(price) }))
+        .map((lvl) => ({ price: lvl, y: series.priceToCoordinate(lvl) }))
         .filter((l) => l.y != null);
       const snapped = snapToLevel(y, levels);
       if (snapped != null) return { time: bar.time, price: snapped, snapped: true };
     }
-    return { time: bar.time, price };
+    return { time, price };
   }, [chart, series]);
 
   /** The visible window, in data space — what a ray or a horizontal line extends across. */
   const currentView = useCallback(() => {
     const list = stateRef.current.bars || [];
     if (!chart || !series || !list.length) return null;
-    const range = chart.timeScale().getVisibleRange();
-    const from = range?.from ?? list[0].time;
-    const to = range?.to ?? list[list.length - 1].time;
+    // THE LOGICAL RANGE, NOT THE DATA RANGE. The time-based window reports only where bars exist,
+    // so a horizontal line or a Fibonacci level stopped dead at the last candle instead of carrying
+    // on across the empty space the trader is looking at.
+    const lr = chart.timeScale().getVisibleLogicalRange();
+    const from = lr ? timeOfLogical(lr.from, list) : list[0].time;
+    const to = lr ? timeOfLogical(lr.to, list) : list[list.length - 1].time;
     const h = canvasRef.current?.height || 0;
     const high = series.coordinateToPrice(0);
     const low = series.coordinateToPrice(h);
@@ -455,7 +479,7 @@ function DrawingLayerBase({
     if (!s.drag) return;
     const now = toData(pt.x, pt.y);
     if (!now || !s.drag.from) return;
-    const dTime = (typeof now.time === 'number' && typeof s.drag.from.time === 'number') ? now.time - s.drag.from.time : 0;
+    const dTime = timeDeltaSeconds(s.drag.from.time, now.time);
     const dPrice = now.price - s.drag.from.price;
     // Every drawing in the group takes the SAME delta, each measured from its own original — so a
     // group keeps its shape exactly, however far or long the drag runs.
