@@ -10,6 +10,8 @@ import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
 import ConsensusBadge from '../../../components/ConsensusBadge';
+import CompanyDescription from '../../../components/CompanyDescription';
+import { normalizeDescription } from '../../../lib/company-description.mjs';
 
 // ── formatters (null/NaN → "—", per the null-rather-than-guess rule) ──
 const usd      = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -916,10 +918,23 @@ function OverviewTab({ data, insider, gov, onTab }) {
       <BullsBears ticker={data.symbol} />
 
       <Section title="About">
-        <div style={{ maxWidth: 640 }}>
-          {about.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
-          <DefRow label="Website" value={data.weburl ? cleanUrl(data.weburl) : '—'} link={data.weburl || null} />
-        </div>
+        {/* TWO COLUMNS ONLY WHEN THERE IS A DESCRIPTION. Without one the card is exactly what it was.
+            auto-fit with a 300px floor puts facts and description side by side where both fit and
+            stacks them — facts first — where they do not, so the text never lands in a sliver. */}
+        {normalizeDescription(data.description) ? (
+          <div data-cp-about-grid="" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: '4px 32px', alignItems: 'start' }}>
+            <div>
+              {about.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
+              <DefRow label="Website" value={data.weburl ? cleanUrl(data.weburl) : '—'} link={data.weburl || null} />
+            </div>
+            <CompanyDescription text={data.description} />
+          </div>
+        ) : (
+          <div style={{ maxWidth: 640 }}>
+            {about.map(([label, value]) => <DefRow key={label} label={label} value={value} />)}
+            <DefRow label="Website" value={data.weburl ? cleanUrl(data.weburl) : '—'} link={data.weburl || null} />
+          </div>
+        )}
       </Section>
 
       <Section title="News" action={<ViewAll label="View all news" onClick={() => onTab('news')} />}>
