@@ -153,6 +153,171 @@ console.log('\nchecking hook dependency arrays for forward references');
   }
 }
 
+// ── can a menu row actually be clicked? ──────────────────────────────────────
+// Rendering to a string proves a component does not throw; it cannot prove a menu WORKS. A popover
+// that registered itself in the dismissal stack from an effect keyed on `open` ran that effect before
+// its panel existed, so a mousedown on its own row counted as an outside click and shut the menu
+// before the row's click landed. Every chart menu was affected, and it surfaced as "Ray, Horizontal
+// Line and Vertical Line do nothing" — the three tools that can only be picked from the Lines flyout.
+//
+// So this MOUNTS the real rail with react-dom/client over a deliberately tiny DOM and delivers the
+// gesture the way a browser does: mousedown, let React flush, then click — and, as a browser does,
+// no click at all if the row was removed in between.
+console.log('\nmounting the drawing rail and picking tools from its flyout');
+{
+  class FakeNode {
+    constructor(nodeType, name, doc) {
+      this.nodeType = nodeType; this.nodeName = name; this.tagName = name; this.ownerDocument = doc;
+      this.childNodes = []; this.parentNode = null; this.style = {}; this.attributes = {};
+      this.listeners = []; this.namespaceURI = 'http://www.w3.org/1999/xhtml'; this._text = '';
+    }
+    get firstChild() { return this.childNodes[0] || null; }
+    get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
+    get nextSibling() {
+      const p = this.parentNode; if (!p) return null;
+      return p.childNodes[p.childNodes.indexOf(this) + 1] || null;
+    }
+    appendChild(c) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = this; this.childNodes.push(c); return c; }
+    insertBefore(c, ref) {
+      if (!ref) return this.appendChild(c);
+      if (c.parentNode) c.parentNode.removeChild(c);
+      c.parentNode = this; this.childNodes.splice(this.childNodes.indexOf(ref), 0, c); return c;
+    }
+    removeChild(c) { const i = this.childNodes.indexOf(c); if (i >= 0) this.childNodes.splice(i, 1); c.parentNode = null; return c; }
+    contains(n) { for (let x = n; x; x = x.parentNode) if (x === this) return true; return false; }
+    closest(sel) {
+      const attr = sel.replace(/^\[|\]$/g, '');
+      for (let x = this; x && x.nodeType === 1; x = x.parentNode) if (attr in x.attributes) return x;
+      return null;
+    }
+    setAttribute(k, v) { this.attributes[k] = String(v); }
+    removeAttribute(k) { delete this.attributes[k]; }
+    getAttribute(k) { return this.attributes[k] ?? null; }
+    hasAttribute(k) { return k in this.attributes; }
+    addEventListener(type, fn) { this.listeners.push({ type, fn }); }
+    removeEventListener(type, fn) { this.listeners = this.listeners.filter((l) => !(l.type === type && l.fn === fn)); }
+    getBoundingClientRect() { return { top: 40, bottom: 66, left: 0, right: 34, width: 34, height: 26 }; }
+    set textContent(v) { this.childNodes = []; this._text = String(v); }
+    get textContent() { return this._text + this.childNodes.map((c) => c.textContent ?? c.nodeValue ?? '').join(''); }
+  }
+  const doc = new FakeNode(9, '#document', null);
+  doc.createElement = (t) => new FakeNode(1, t.toUpperCase(), doc);
+  doc.createTextNode = (t) => { const n = new FakeNode(3, '#text', doc); n.nodeValue = t; return n; };
+  doc.createElementNS = (ns, t) => { const n = new FakeNode(1, t, doc); n.namespaceURI = ns; return n; };
+  doc.documentElement = doc.createElement('html');
+  doc.body = doc.createElement('body');
+  doc.appendChild(doc.documentElement);
+  doc.documentElement.appendChild(doc.body);
+  const win = {
+    document: doc, event: undefined, innerWidth: 1400, innerHeight: 900, devicePixelRatio: 1,
+    addEventListener() {}, removeEventListener() {}, getComputedStyle: () => ({}),
+    HTMLIFrameElement: function HTMLIFrameElement() {}, HTMLElement: FakeNode,
+  };
+  doc.defaultView = win;
+  globalThis.window = win;
+  globalThis.document = doc;
+  globalThis.HTMLIFrameElement = win.HTMLIFrameElement;
+
+  const all = (node, pred, acc = []) => {
+    if (pred(node)) acc.push(node);
+    for (const c of node.childNodes) all(c, pred, acc);
+    return acc;
+  };
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  // Bubble from the target to the document, as the browser would, with window.event set so React
+  // assigns the same (discrete) priority a real pointer gesture gets.
+  const dispatch = (type, target) => {
+    const ev = {
+      type, target, srcElement: target, bubbles: true, cancelable: true, defaultPrevented: false,
+      button: 0, buttons: 1, detail: 1, timeStamp: Date.now(), isTrusted: true,
+      preventDefault() { this.defaultPrevented = true; }, stopPropagation() {},
+    };
+    win.event = ev;
+    const path = [];
+    for (let x = target; x; x = x.parentNode) path.push(x);
+    for (const node of path) for (const l of [...node.listeners]) if (l.type === type) l.fn(ev);
+    win.event = undefined;
+  };
+  const press = async (target) => {
+    dispatch('mousedown', target);
+    await tick();
+    // A row that was unmounted by its own mousedown never receives the click.
+    if (doc.contains(target)) dispatch('click', target);
+    await tick();
+  };
+
+  const railOut = path.join(TMP, 'DrawingRail.client.mjs');
+  let DrawingRail = null;
+  let ReactDOMClient = null;
+  try {
+    await build({
+      entryPoints: [path.join(ROOT, 'src/components/chart/DrawingRail.jsx')],
+      bundle: true, format: 'esm', platform: 'node', outfile: railOut, jsx: 'automatic',
+      external: ['react', 'react-dom', 'react/jsx-runtime'], logLevel: 'silent', absWorkingDir: ROOT,
+    });
+    DrawingRail = (await import(pathToFileURL(railOut).href)).default;
+    ReactDOMClient = await import('react-dom/client');
+  } catch (e) {
+    ok('the drawing rail mounts in a DOM', false, `${e.name}: ${e.message}`);
+  }
+
+  if (DrawingRail && ReactDOMClient) {
+    const picks = [];
+    const noop = () => {};
+    const container = doc.createElement('div');
+    doc.body.appendChild(container);
+    let mountError = null;
+    // React reports a render error through this hook rather than by throwing out of render(), so
+    // without it a rail that crashed on mount would read as one that mounted.
+    const root = ReactDOMClient.createRoot(container, { onUncaughtError: (e) => { mountError = mountError || e; } });
+    try {
+      root.render(React.createElement(DrawingRail, {
+        theme: 'dark', activeTool: null, onPick: (t) => picks.push(t),
+        style: { color: 0, width: 2, dash: 'solid' }, onStyle: noop, selected: false, onDelete: noop,
+        count: 0, showDrawings: true, onToggleShow: noop, onClearAll: noop, onToggleMagnet: noop,
+        onOpenManager: noop, onUndo: noop, onRedo: noop,
+      }));
+      await tick(); await tick();
+    } catch (e) { mountError = e; }
+    ok('the drawing rail mounts in a DOM', !mountError && container.childNodes.length > 0, mountError ? `${mountError.name}: ${mountError.message}` : '');
+
+    const flyoutArrow = () => all(doc, (n) => n.attributes?.['aria-label'] === 'Lines tools' && n.nodeName === 'BUTTON')[0] || null;
+    const openMenu = () => all(doc.body, (n) => n.attributes?.role === 'menu' && n.attributes?.['aria-label'] === 'Lines tools')[0] || null;
+    const rowFor = (label) => all(doc.body, (n) => n.nodeName === 'BUTTON' && n.attributes?.role === 'menuitemradio'
+      && n.textContent.includes(label))[0] || null;
+
+    for (const [label, id] of [['Ray', 'ray'], ['Horizontal line', 'horizontal'], ['Vertical line', 'vertical'], ['Trend line', 'trend']]) {
+      picks.length = 0;
+      const arrow = flyoutArrow();
+      if (arrow) await press(arrow);
+      ok(`the Lines flyout opens (for ${label})`, !!openMenu());
+      const row = rowFor(label);
+      ok(`the Lines flyout lists ${label}`, !!row);
+      if (row) await press(row);
+      ok(`picking ${label} from the Lines flyout arms '${id}'`, picks.length === 1 && picks[0] === id,
+        `onPick received ${JSON.stringify(picks)}`);
+      ok(`the Lines flyout closes after picking ${label}`, !openMenu());
+    }
+
+    // THE OTHER HALF OF DISMISSAL. A fix that simply never closed would pass everything above; an
+    // outside mousedown must still shut the menu.
+    const arrow = flyoutArrow();
+    if (arrow) await press(arrow);
+    const wasOpen = !!openMenu();
+    const outside = doc.createElement('div');
+    doc.body.appendChild(outside);
+    dispatch('mousedown', outside);
+    await tick();
+    ok('an outside mousedown still closes the Lines flyout', wasOpen && !openMenu(),
+      `open before: ${wasOpen}, open after: ${!!openMenu()}`);
+
+    try { root.unmount(); } catch { /* the fake DOM is disposable */ }
+  }
+  delete globalThis.window;
+  delete globalThis.document;
+  delete globalThis.HTMLIFrameElement;
+}
+
 fs.rmSync(TMP, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

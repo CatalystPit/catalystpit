@@ -95,13 +95,21 @@ export function Popover({
     };
   }, [open, place, anchorRef]);
 
-  // Join the stack while open, leave on close — order of open, not order in the DOM.
+  // Join the stack while MOUNTED, leave on close — order of open, not order in the DOM.
+  //
+  // KEYED ON THE PANEL EXISTING, NOT ON `open`. The panel renders only once `pos` is set, and `pos`
+  // is set by a layout effect — a second render. When a click opens the menu, React flushes this
+  // render's passive effects BEFORE that second render, so an effect keyed on `open` ran while
+  // panelRef was still null, pushed nothing, and never ran again. The menu was then missing from the
+  // stack, a mousedown on its own rows counted as an outside click, and it closed before the row's
+  // click could land — which is why no tool could be picked from the Lines flyout.
+  const mounted = open && pos != null;
   useEffect(() => {
-    if (!open) return undefined;
+    if (!mounted) return undefined;
     const el = panelRef.current;
     if (el) openPanels.push(el);
     return () => { const i = openPanels.indexOf(el); if (i !== -1) openPanels.splice(i, 1); };
-  }, [open]);
+  }, [mounted]);
 
   useEffect(() => {
     if (!open) return undefined;
