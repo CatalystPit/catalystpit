@@ -84,11 +84,15 @@ export function projectDrawings(drawings, view, scale, toolOf) {
     // The DRAWING is passed too: extension flags and a custom level set belong to the drawing, not
     // to the tool, so the tool cannot resolve its own geometry without it.
     const segments = [];
+    // A tool that extends says so, and says which ends; the drawing's own flags decide the rest.
+    const ext = typeof def.extend === 'function' ? (def.extend(d) || {}) : null;
     for (const [a, b] of def.segments(d.points, view, d) || []) {
       const p1 = resolveAnchor(a, scale);
       const p2 = resolveAnchor(b, scale);
-      if (p1 && p2) segments.push([p1, p2]);
-      else dropped += 1;
+      if (!p1 || !p2) { dropped += 1; continue; }
+      const end = ext?.right ? extendToBox(p1, p2, scale.plotWidth, scale.plotHeight) : p2;
+      const start = ext?.left ? extendToBox(p2, p1, scale.plotWidth, scale.plotHeight) : p1;
+      segments.push([start, end]);
     }
     const handles = [];
     for (const pt of d.points) {
@@ -101,6 +105,38 @@ export function projectDrawings(drawings, view, scale, toolOf) {
     });
   }
   return { items, dropped };
+}
+
+/**
+ * Extend the line a->b past b until it leaves the plot.
+ *
+ * IN PIXELS, which is the whole point. A ray used to be extended by inventing a TIME for its far end
+ * — `extendRay` walked the slope out to `view.to`, a moment manufactured from the visible range —
+ * and that had two failures. `view.to` is the last CANDLE, so a ray stopped dead there instead of
+ * carrying on across the empty space beside it; and when the ray's own second anchor was already
+ * past that moment, the "extension" pointed BACKWARDS and came out shorter than a plain trendline.
+ * On a daily chart it did nothing at all, because `view.to` is a date string and the slope
+ * arithmetic refused it.
+ *
+ * The plot's boundary is pixels. Both anchors are already resolved to pixels by the time we get
+ * here, so extending to it is exact, needs no time arithmetic, works in empty space for free, and
+ * cannot fail on a chart whose bar times are strings.
+ */
+export function extendToBox(a, b, plotWidth, plotHeight) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  // The nearest boundary the ray reaches, as a multiple of the a->b step. A zero-length or
+  // non-finite step matches none of the four tests below, leaves t at Infinity and falls through to
+  // returning b untouched — so it needs no guard of its own, and a guard here would be a line no
+  // test could ever hold to account.
+  let t = Infinity;
+  if (dx > 0) t = Math.min(t, (plotWidth - a.x) / dx);
+  if (dx < 0) t = Math.min(t, -a.x / dx);
+  if (dy > 0) t = Math.min(t, (plotHeight - a.y) / dy);
+  if (dy < 0) t = Math.min(t, -a.y / dy);
+  // t < 1 means b is already outside the plot; extending to the edge would SHORTEN the line, which
+  // is what the old time-based version did whenever the anchor sat in future space.
+  if (!Number.isFinite(t) || t < 1) return b;
+  return { x: a.x + dx * t, y: a.y + dy * t };
 }
 
 /** The widest horizontal run in a projected drawing — what "is this actually visible" measures. */

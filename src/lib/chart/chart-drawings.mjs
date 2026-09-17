@@ -37,11 +37,11 @@ export const TOOLS = {
     // EXTENSION IS PER DRAWING, not per tool. One trend line can run to the right edge while the
     // next stops at its anchors, which is how a trader actually uses them — so the flags live on the
     // drawing and this reads them rather than the registry deciding for every line at once.
-    segments: (pt, view, d) => {
-      const a = d?.extendLeft ? extendRay(pt[1], pt[0], view) : pt[0];
-      const b = d?.extendRight ? extendRay(pt[0], pt[1], view) : pt[1];
-      return [[a, b]];
-    },
+    // THE TWO ANCHORS, AND NOTHING ELSE. Extension is a RENDER concern — the projector walks the
+    // line out to the edge of the plot in pixels — so the geometry here stays the two moments the
+    // user actually placed. That is the model that already works in empty space.
+    segments: (pt) => [[pt[0], pt[1]]],
+    extend: (d) => ({ left: d?.extendLeft === true, right: d?.extendRight === true }),
     extendable: true,
   },
   ray: {
@@ -49,11 +49,13 @@ export const TOOLS = {
     shapes: [['line', { x1: 2.5, y1: 12, x2: 13.5, y2: 5 }], ['polyline', { points: '10.5,3.5 13.8,4.8 11.6,7.4' }]],
     // Extends past the second anchor to the right edge of the visible range. Recomputed from the
     // view on every paint, so it stays "infinite" however far the user scrolls.
-    segments: (pt, view, d) => {
-      const [a, b] = pt;
-      const start = d?.extendLeft ? extendRay(b, a, view) : a;
-      return [[start, extendRay(a, b, view)]];
-    },
+    // A RAY IS A TRENDLINE THAT DOES NOT STOP. Identical geometry to the trendline — the two anchors
+    // the user placed — with the right-hand extension always on. It used to walk its slope out to a
+    // manufactured `view.to`: the last CANDLE, so the ray halted there rather than carrying on
+    // across empty space, and if its own second anchor was already past that moment the extension
+    // ran backwards and made the ray SHORTER than a plain trendline.
+    segments: (pt) => [[pt[0], pt[1]]],
+    extend: (d) => ({ left: d?.extendLeft === true, right: true }),
     extendable: true,
   },
   horizontal: {
@@ -178,16 +180,6 @@ export function categoryOfTool(toolId) {
   return TOOL_CATEGORIES.find((c) => c.tools.includes(toolId)) || null;
 }
 
-/** Where a ray leaves the visible window. Null view means "stop at the second anchor". */
-export function extendRay(a, b, view) {
-  if (!view || typeof a.time !== 'number' || typeof b.time !== 'number') return b;
-  const dt = b.time - a.time;
-  if (dt === 0) return { time: b.time, price: view.high };      // straight up: clamp to the top
-  const slope = (b.price - a.price) / dt;
-  const edge = dt > 0 ? view.to : view.from;
-  if (typeof edge !== 'number') return b;
-  return { time: edge, price: a.price + slope * (edge - a.time) };
-}
 
 /** The conventional set, used when a drawing does not carry its own. */
 export const DEFAULT_FIB_LEVELS = TOOLS.fib.ratios.map((ratio) => ({ ratio, visible: true }));

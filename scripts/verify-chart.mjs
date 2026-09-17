@@ -23,17 +23,21 @@ import { loadIndicators, saveIndicators, DEFAULT_ACTIVE, STORAGE_KEY, STORAGE_VE
   __coerceInstance, __enforce } from '../src/lib/chart/chart-settings.mjs';
 import { indicatorColor, indicatorColors } from '../src/lib/chart/chart-theme.mjs';
 import { sessionKeyFor } from '../src/lib/chart/chart-source.mjs';
-import { TOOLS, tool, createDrawing, coerceDrawing, moveDrawing, fibLevels, extendRay,
+import { TOOLS, tool, createDrawing, coerceDrawing, moveDrawing, fibLevels,
   hitTest, distanceToSegment, sanitizeStyle, DEFAULT_STYLE } from '../src/lib/chart/chart-drawings.mjs';
 import { loadDrawings, saveDrawings, MAX_PER_SYMBOL, MAX_SYMBOLS,
   DRAWINGS_STORAGE_KEY } from '../src/lib/chart/chart-drawing-store.mjs';
 import { loadView, saveView, DEFAULT_VIEW, VIEW_STORAGE_KEY } from '../src/lib/chart/chart-settings.mjs';
 import { CHART_TYPES, CHART_TYPE_IDS, chartTypeOf, PLANNED_CHART_TYPES } from '../src/lib/chart/chart-types.mjs';
+ import {
+  idleTool, armTool, clickTool, hoverTool, cancelDraft, clearSuppression, draftPreview, hasDraft,
+  isOnePoint, clicksNeeded,
+} from '../src/lib/chart/chart-tool-lifecycle.mjs';
 import { INDICATOR_CATEGORIES, indicatorMeta, searchIndicators } from '../src/lib/chart/chart-indicators.mjs';
 import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../src/lib/chart/chart-drawings.mjs';
 import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover.mjs';
 import {
-  projectDrawings, resolveAnchor, widestSpan, labelX, isEdgeAnchor,
+  projectDrawings, resolveAnchor, widestSpan, labelX, isEdgeAnchor, extendToBox,
   EDGE_LEFT, EDGE_RIGHT, EDGE_TOP, EDGE_BOTTOM,
 } from '../src/lib/chart/chart-project.mjs';
 import { cloneDrawing, barLevels, snapToLevel, MAGNET_PX } from '../src/lib/chart/chart-drawings.mjs';
@@ -544,13 +548,19 @@ section('11. drawings live in DATA space, so they survive zoom, pan and reload')
     vs[0][0].edgeY === EDGE_TOP && vs[0][1].edgeY === EDGE_BOTTOM);
   ok('...at a constant time', vs[0][0].time === 500 && vs[0][1].time === 500);
 
-  // A ray extends past its second anchor, along its own slope.
-  const end = extendRay(P(0, 0), P(100, 10), view);
-  ok('a ray reaches the right edge', end.time === 1000);
-  ok('...following its slope', Math.abs(end.price - 100) < 1e-9, String(end.price));
-  const back = extendRay(P(100, 10), P(0, 0), view);
-  ok('a leftward ray reaches the left edge', back.time === 0);
-  ok('a vertical ray does not divide by zero', Number.isFinite(extendRay(P(5, 1), P(5, 2), view).price));
+  // A RAY EXTENDS PAST ITS SECOND ANCHOR, ALONG ITS OWN SLOPE — in pixels, to the edge of the plot.
+  // It used to be walked out to a time manufactured from the visible range, which is why it stopped
+  // at the last candle and ran backwards from an anchor already in empty space.
+  const end = extendToBox({ x: 0, y: 400 }, { x: 100, y: 350 }, 800, 400);
+  ok('a ray reaches the right edge', end.x === 800);
+  ok('...following its slope', Math.abs(end.y - 0) < 1e-9, String(end.y));
+  const back = extendToBox({ x: 100, y: 350 }, { x: 0, y: 400 }, 800, 400);
+  ok('a leftward ray reaches the left edge', back.x === 0);
+  ok('a vertical ray does not divide by zero',
+    Number.isFinite(extendToBox({ x: 400, y: 300 }, { x: 400, y: 200 }, 800, 400).y));
+  ok('...and goes straight up', extendToBox({ x: 400, y: 300 }, { x: 400, y: 200 }, 800, 400).y === 0);
+  ok('a zero-length ray is left alone rather than producing NaN',
+    extendToBox({ x: 5, y: 5 }, { x: 5, y: 5 }, 800, 400).x === 5);
 
   const r = createDrawing('rectangle', [P(10, 5), P(20, 15)]);
   ok('a rectangle is four sides', tool('rectangle').segments(r.points, view).length === 4);
@@ -1597,7 +1607,7 @@ section('23. undo/redo, the ruler, notes, the price scale and nudge');
   ok('createDrawing refuses to persist one',
     createDrawing('measure', [{ time: 1, price: 1 }, { time: 2, price: 2 }], {}, []) === null);
   ok('the layer holds it instead', /s\.measure = \{ type: def\.id, points: pts \};/.test(layer));
-  ok('it reads live while the second point is chosen', /tool\(s\.draft\.type\)\?\.transient && s\.draft\.cursor/.test(layer));
+  ok('it reads live while the second point is chosen', /tool\(s\.life\.activeTool\)\?\.transient && s\.life\.cursor/.test(layer));
   ok('a click dismisses it', /if \(s\.measure\) \{ s\.measure = null; paint\(\); \}/.test(layer));
   ok('...and so does Escape', /stateRef\.current\.measure = null;/.test(layer) && /setClearSignal\(\(n\) => n \+ 1\)/.test(cmp));
   // Volume over a range is not something this chart can total honestly, so it is not claimed. The
@@ -1758,17 +1768,39 @@ section('24. z-order, multi-select, editable fibs, trendline options, export');
   const plain = TOOLS.trend.segments(pts, view, { extendLeft: false, extendRight: false });
   ok('an unextended trend line stops at its anchors',
     plain[0][0].time === 10 && plain[0][1].time === 20);
-  const right = TOOLS.trend.segments(pts, view, { extendRight: true });
-  ok('extend right reaches the edge of the view', right[0][1].time === 100);
-  ok('...along the same slope', right[0][1].price === 100);
-  const left = TOOLS.trend.segments(pts, view, { extendLeft: true });
-  ok('extend left reaches the other edge', left[0][0].time === 0);
-  ok('...and both together make it infinite',
-    TOOLS.trend.segments(pts, view, { extendLeft: true, extendRight: true })[0][0].time === 0);
+  // EXTENSION IS A RENDER CONCERN NOW. The tool reports the two anchors the user placed and the
+  // projector walks the line out to the edge of the PLOT in pixels, so an extension no longer
+  // depends on a time manufactured from the visible range — which is what made a ray stop at the
+  // last candle, run backwards from a future anchor, and do nothing at all on a daily chart.
+  ok('an extended trend line still reports its own anchors',
+    TOOLS.trend.segments(pts, view, { extendRight: true })[0][1].time === 20);
+  ok('the tool declares which ends extend', TOOLS.trend.extend({ extendRight: true }).right === true);
+  ok('...and which do not', TOOLS.trend.extend({ extendRight: true }).left === false);
+  ok('a ray always extends to the right', TOOLS.ray.extend({}).right === true);
+  ok('...whatever its flags say', TOOLS.ray.extend({ extendRight: false }).right === true);
+  ok('...and only leftward when asked', TOOLS.ray.extend({}).left === false
+    && TOOLS.ray.extend({ extendLeft: true }).left === true);
+  // Walked out in pixels to the boundary of an 800x400 plot. A shallow slope so the line leaves
+  // through the SIDE — steep enough and it exits the bottom first, which is correct but tests
+  // something else.
+  const far = extendToBox({ x: 100, y: 200 }, { x: 200, y: 220 }, 800, 400);
+  const back = extendToBox({ x: 200, y: 220 }, { x: 100, y: 200 }, 800, 400);
+  ok('extend right reaches the edge of the plot', far.x === 800, JSON.stringify(far));
+  ok('...along the same slope', Math.abs((far.y - 200) / (far.x - 100) - 0.2) < 1e-9);
+  ok('extend left reaches the other edge', back.x === 0, JSON.stringify(back));
+  ok('...and both together make it infinite', back.x === 0 && far.x === 800);
+  // A line steep enough to leave through the bottom does so, rather than running off the plot.
+  const steep = extendToBox({ x: 100, y: 100 }, { x: 200, y: 150 }, 800, 400);
+  ok('a steep line leaves through the nearest edge, not the far one', steep.y === 400 && steep.x === 700);
+  ok('...and never outside the plot', steep.x <= 800 && steep.y <= 400);
+  // An anchor already beyond the plot is left alone: extending to the edge would SHORTEN the line,
+  // which is exactly what the old time-based extension did to a ray drawn into future space.
+  ok('an anchor already past the edge is not pulled back',
+    extendToBox({ x: 100, y: 200 }, { x: 980, y: 260 }, 800, 400).x === 980);
   ok('a trend line carries the flags', 'extendLeft' in createDrawing('trend', pts, {}, []));
   ok('a rectangle does not', !('extendRight' in createDrawing('rectangle', pts, {}, [])));
   ok('the flags survive a reload', coerceDrawing({ type: 'trend', points: pts, extendRight: true }).extendRight === true);
-  ok('a ray can extend backwards too', TOOLS.ray.segments(pts, view, { extendLeft: true })[0][0].time === 0);
+  ok('a ray can extend backwards too', TOOLS.ray.extend({ extendLeft: true }).left === true);
   // 45° CONSTRAINT, in screen space — an angle is judged against pixels, and the same two anchors
   // subtend a different angle at every zoom level.
   const near = constrainAngle({ x: 0, y: 0 }, { x: 100, y: 10 });
@@ -1845,7 +1877,7 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
   ok('one tool’s settings never touch another’s',
     !('rectangle' in rememberToolDefaults({}, { type: 'trend', style: { color: 1 } })));
   ok('a new drawing starts from its tool’s defaults',
-    /createDrawing\(s\.activeTool, pts, s\.style, s\.drawings, s\.toolDefaults\?\.\[s\.activeTool\] \|\| \{\}\)/.test(layer));
+    /createDrawing\(toolId, pts, s\.style, s\.drawings, s\.toolDefaults\?\.\[toolId\] \|\| \{\}\)/.test(layer));
   ok('the settings dialog records what was chosen', /rememberToolDefaults\(prev, next\)/.test(cmp));
   ok('...and so does the rail’s style panel, while a tool is armed',
     /rememberToolDefaults\(prevMap, \{ type: activeTool, style: next \}\)/.test(cmp));
@@ -1984,12 +2016,12 @@ section('26. drawings live in chart space, not only where candles exist');
   ok('a trendline can be built with an anchor in future space', !!futureTrend);
   ok('...and keeps that anchor', futureTrend.points[1].time === future);
   ok('...and survives a reload', coerceDrawing({ ...futureTrend }).points[1].time === future);
-  // A ray through a future anchor still extends.
+  // A ray through a future anchor still extends — and now it extends PAST it, in pixels, rather
+  // than being walked back to the last candle by a time taken from the visible range.
   const view = { from: bars[0].time, to: future + 600, high: 100, low: 0 };
-  ok('a ray still extends from a future anchor',
-    TOOLS.ray.segments(futureTrend.points, view, {})[0][1].time >= future);
-  ok('extension still works on a future trendline',
-    TOOLS.trend.segments(futureTrend.points, view, { extendRight: true })[0][1].time === view.to);
+  ok('a ray keeps its future anchor as its own second point',
+    TOOLS.ray.segments(futureTrend.points, view, {})[0][1].time === future);
+  ok('extension still applies to a future trendline', TOOLS.trend.extend({ extendRight: true }).right === true);
 
   // ── 2. dragging an endpoint FURTHER into future space ───────────────────────────────────────
   const dragged = moveDrawing(futureTrend, { dTime: 600, dPrice: 0 }, 1);
@@ -2073,14 +2105,14 @@ section('27. a horizontal line is a price level and cannot tilt');
 
   // It spans the PLOT, future space included, and takes nothing from the data to do it.
   const view = { from: 1000, to: 99999, high: 100, low: 0 };
-  const seg = TOOLS.horizontal.segments(line.points, view)[0];
+  const seg = TOOLS.horizontal.segments(hline.points, view)[0];
   ok('it spans the plot from edge to edge', seg[0].edgeX === EDGE_LEFT && seg[1].edgeX === EDGE_RIGHT);
   ok('...at one single price', seg[0].price === seg[1].price);
   ok('...which is the price it was placed at', seg[0].price === 42);
   // The view is now irrelevant to it, which is why it cannot be broken by an unresolvable time.
   ok('...whatever the visible window happens to be',
-    JSON.stringify(TOOLS.horizontal.segments(line.points, { from: 'x', to: null, high: 0, low: 0 }))
-      === JSON.stringify(TOOLS.horizontal.segments(line.points, view)));
+    JSON.stringify(TOOLS.horizontal.segments(hline.points, { from: 'x', to: null, high: 0, low: 0 }))
+      === JSON.stringify(TOOLS.horizontal.segments(hline.points, view)));
   const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
   ok('the visible window comes from the logical range, so it reaches future space',
     /getVisibleLogicalRange\(\)/.test(layer));
@@ -2093,12 +2125,14 @@ section('27. a horizontal line is a price level and cannot tilt');
   // horizontal-line special case.
   ok('a vertical line locks price instead', TOOLS.vertical.lockPrice === true);
   const vert = createDrawing('vertical', [{ time: 5000, price: 42 }], {}, []);
-  ok('...so it moves sideways only', moveDrawing(vert, { dTime: 60, dPrice: 9 }).points[0].price === 42);
+  ok('a vertical line is placed with ONE click too', vert !== null);
+  const vline = vert ?? { id: 'y', type: 'vertical', points: [{ time: NaN, price: NaN }], style: {}, visible: true };
+  ok('...so it moves sideways only', moveDrawing(vline, { dTime: 60, dPrice: 9 }).points[0].price === 42);
 
   // Everything else about it still works.
   ok('it still styles, hides and locks like any drawing',
-    line.style && line.visible === true && line.locked === false);
-  ok('a locked one still refuses to move', moveDrawing({ ...line, locked: true }, { dPrice: 5 }).points[0].price === 42);
+    hline.style && hline.visible === true && hline.locked === false);
+  ok('a locked one still refuses to move', moveDrawing({ ...hline, locked: true }, { dPrice: 5 }).points[0].price === 42);
 }
 
 section('28. Fibonacci in future space, with its settings intact');
@@ -2208,8 +2242,11 @@ section('30. the earlier drawing behaviour still holds');
   ok('a future drawing survives serialisation', back.points[1].time === future);
   ok('...with its price intact', back.points[1].price === 2);
   ok('...and is still the same tool', back.type === 'trend');
-  ok('a horizontal line survives it too',
-    coerceDrawing(JSON.parse(JSON.stringify(createDrawing('horizontal', [{ time: 500, price: 7 }], {}, [])))).points[0].price === 7);
+  // Optional-chained throughout: if the tool ever stopped accepting one click there would be no
+  // drawing to serialise, and reaching in would throw rather than fail this check.
+  const hRound = coerceDrawing(JSON.parse(JSON.stringify(
+    createDrawing('horizontal', [{ time: 500, price: 7 }], {}, []) ?? null)) ?? null);
+  ok('a horizontal line survives it too', hRound?.points?.[0]?.price === 7);
 }
 
 
@@ -2240,6 +2277,10 @@ function fakeScale(bars, { lr = { from: 0, to: bars.length - 1 }, plotWidth = 80
     },
   };
 }
+const NO_SEG = [{ x: NaN, y: NaN }, { x: NaN, y: NaN }];
+// The first segment of a projected drawing, or a NaN stand-in. Every comparison against NaN is
+// false, so a missing segment fails the assertion that wanted it instead of throwing out of the run.
+const seg0 = (item) => item?.segments?.[0] || NO_SEG;
 const finitePt = (pt) => !!pt && Number.isFinite(pt.x) && Number.isFinite(pt.y);
 const allFinite = (item) => item.segments.every(([a, b]) => finitePt(a) && finitePt(b))
   && item.handles.every(finitePt);
@@ -2259,7 +2300,7 @@ section('31. Fibonacci renders the lines it calculates');
   const item = hist.items[0];
   ok('every default level becomes a drawn segment', item.segments.length === 7, String(item.segments.length));
   ok('no NaN or null coordinate reaches the renderer', allFinite(item));
-  ok('its two anchors land on DIFFERENT x coordinates', item.segments[0][0].x !== item.segments[0][1].x);
+  ok('its two anchors land on DIFFERENT x coordinates', seg0(item)[0].x !== seg0(item)[1].x);
   // THE FAILURE THAT WAS REPORTED: labels at the right heights, and geometry of no width at all.
   ok('a level is materially wide, not collapsed', widestSpan(item) > 50, String(widestSpan(item)));
   ok('...and every level is the same width', new Set(item.segments.map(([a, b]) => Math.round(b.x - a.x))).size === 1);
@@ -2348,16 +2389,17 @@ section('32. a horizontal line is a plot-wide price level');
   const blank = { segments: [], handles: [] };
   const hz = pr.items[0] || blank;
   ok('it produces one visible segment', hz.segments.length === 1);
-  ok('...spanning the full plot width', Math.abs(hz.segments[0][1].x - hz.segments[0][0].x) === sc.plotWidth);
-  ok('...from the very left edge', hz.segments[0][0].x === 0);
+  ok('...spanning the full plot width',
+    !!hz.segments[0] && Math.abs(seg0(hz)[1].x - seg0(hz)[0].x) === sc.plotWidth);
+  ok('...from the very left edge', !!hz.segments[0] && seg0(hz)[0].x === 0);
   ok('...with finite coordinates', allFinite(hz));
 
   // ── 17: it cannot tilt ──────────────────────────────────────────────────────────────────────
-  ok('both ends are at the same height', hz.segments[0][0].y === hz.segments[0][1].y);
-  const tilted = moveDrawing(line, { dTime: 99_999, dPrice: 0 }, 0);
-  ok('dragging a handle sideways changes nothing', tilted.points[0].time === line.points[0].time);
+  ok('both ends are at the same height', !!hz.segments[0] && seg0(hz)[0].y === seg0(hz)[1].y);
+  const tilted = line ? moveDrawing(line, { dTime: 99_999, dPrice: 0 }, 0) : null;
+  ok('dragging a handle sideways changes nothing', !!tilted && tilted.points[0].time === line.points[0].time);
   const tp = projectDrawings(tilted ? [tilted] : [], view, sc, tool).items[0] || blank;
-  ok('...so it still cannot tilt', !!tp.segments[0] && tp.segments[0][0].y === tp.segments[0][1].y);
+  ok('...so it still cannot tilt', !!tp.segments[0] && seg0(tp)[0].y === seg0(tp)[1].y);
 
   // THE ONE THAT MATTERS: no candle under the click. A time nothing in the series knows used to be
   // the end of it; now the span is the plot and the anchor's own time only places the handle.
@@ -2365,7 +2407,7 @@ section('32. a horizontal line is a plot-wide price level');
   const oi = projectDrawings(orphan ? [orphan] : [], view, sc, tool).items[0] || blank;
   ok('a price clicked where no candle exists still draws', oi.segments.length === 1);
   ok('...at full width',
-    !!oi.segments[0] && Math.abs(oi.segments[0][1].x - oi.segments[0][0].x) === sc.plotWidth);
+    !!oi.segments[0] && Math.abs(seg0(oi)[1].x - seg0(oi)[0].x) === sc.plotWidth);
 
   // ── 18: vertical dragging changes the price ─────────────────────────────────────────────────
   const down = line ? moveDrawing(line, { dTime: 0, dPrice: -6 }) : null;
@@ -2375,12 +2417,13 @@ section('32. a horizontal line is a plot-wide price level');
   // ── 19, 20: zoom, pan and a timeframe change preserve the price ─────────────────────────────
   const zi = projectDrawings(line ? [line] : [], view, fakeScale(bars, { lr: { from: 30, to: 50 } }), tool).items[0] || blank;
   ok('zoomed in it still spans the plot',
-    !!zi.segments[0] && Math.abs(zi.segments[0][1].x - zi.segments[0][0].x) === 800);
-  ok('...at the same price', !!zi.segments[0] && zi.segments[0][0].y === hz.segments[0][0].y);
+    !!zi.segments[0] && Math.abs(seg0(zi)[1].x - seg0(zi)[0].x) === 800);
+  ok('...at the same price', !!zi.segments[0] && !!hz.segments[0] && seg0(zi)[0].y === seg0(hz)[0].y);
   const hourly = Array.from({ length: 40 }, (_, i) => ({ time: 1_700_000_000 + i * 3600, o: 1, h: 2, l: 0, c: 1 }));
   const other = projectDrawings(line ? [line] : [], view, fakeScale(hourly), tool);
   const oth = other.items[0] || blank;
-  ok('a timeframe change keeps its price', !!oth.segments[0] && oth.segments[0][0].y === hz.segments[0][0].y);
+  ok('a timeframe change keeps its price',
+    !!oth.segments[0] && !!hz.segments[0] && seg0(oth)[0].y === seg0(hz)[0].y);
   ok('...and keeps it spanning the plot', oth.segments.length === 1 && other.dropped === 0);
 
   // ── 21, 22: undo/redo and persistence are the existing machinery, unchanged ──────────────────
@@ -2392,8 +2435,10 @@ section('32. a horizontal line is a plot-wide price level');
   // The vertical line is the mirror, and proving it keeps the mechanism generic.
   const vert = createDrawing('vertical', [{ time: bars[60].time, price: 104 }], {}, []);
   const vp = projectDrawings([vert], view, sc, tool);
-  ok('a vertical line spans the plot height', Math.abs(vp.items[0].segments[0][1].y - vp.items[0].segments[0][0].y) === 400);
-  ok('...at one x', vp.items[0].segments[0][0].x === vp.items[0].segments[0][1].x);
+  const vi = vp.items[0] || blank;
+  ok('a vertical line spans the plot height',
+    !!vi.segments[0] && Math.abs(seg0(vi)[1].y - seg0(vi)[0].y) === 400);
+  ok('...at one x', !!vi.segments[0] && seg0(vi)[0].x === seg0(vi)[1].x);
 
   // NOTHING IS DISCARDED IN SILENCE ANY MORE. An anchor that cannot be placed is counted, which is
   // what turns "the lines just are not there" into something a test can see.
@@ -2490,6 +2535,253 @@ section('33. the indicator legend collapses without collapsing the indicators');
   // ── 34: the toolbar button is a different thing and is untouched ────────────────────────────
   ok('the Indicators button still opens the browser', /setBrowserOpen\(true\)/.test(cmp));
   ok('...and the collapse control opens nothing', !/setBrowserOpen/.test(legend));
+}
+
+
+section('34. the line tools: one-click and two-click creation, end to end');
+{
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const bars = Array.from({ length: 200 }, (_, i) => ({ time: 1_700_000_000 + i * 60, o: 100, h: 101, l: 99, c: 100 }));
+  const last = bars[bars.length - 1].time;
+  const future = last + 60 * 30;
+  const view = { from: bars[0].time, to: last, high: 120, low: 80 };
+  const sc = fakeScale(bars, { lr: { from: 0, to: 230 } });
+  const A = (i, price) => ({ time: bars[i].time, price });
+
+  /**
+   * THE WHOLE GESTURE, not the helpers underneath it.
+   *
+   * Arms the tool, feeds it clicks one at a time, and commits through exactly the path the layer
+   * takes — so "a one-click tool commits on one click" is a thing this suite can actually observe
+   * rather than infer from a points count.
+   */
+  const place = (toolId, clicks) => {
+    let st = armTool(idleTool(), toolId);
+    const armedAt = [];
+    const made = [];
+    for (const c of clicks) {
+      armedAt.push(st.activeTool);
+      st = hoverTool(st, c);
+      const preview = draftPreview(st);
+      const step = clickTool(st, c);
+      st = step.state;
+      if (step.commit) {
+        const d = createDrawing(toolId, step.commit, { color: 0, width: 1, dash: 'solid' }, made);
+        if (d) made.push(d);
+      }
+      made.previewBefore = preview;
+    }
+    // STANDING IN FOR A DRAWING THAT WAS NEVER MADE. Without this, every check below reaches into
+    // made[0] and throws — which silences the rest of the run instead of failing one assertion, and
+    // makes a tool that stopped committing look like a tool nobody tested.
+    if (!made.length) {
+      made.push({ id: '(never committed)', type: null, style: {}, visible: true, locked: false,
+        points: [{ time: 0, price: 0 }, { time: 0, price: 0 }] });
+      made.missing = true;
+    }
+    return { state: st, made, armedAt };
+  };
+  // NEVER UNDEFINED. A tool that stopped committing leaves nothing to project, and reaching into
+  // `items[0].segments` would throw and silence every check after it rather than failing one.
+  const BLANK = { segments: [], handles: [] };
+  const project1 = (d, scale = sc) => (d ? projectDrawings([d], view, scale, tool).items[0] : null) || BLANK;
+
+  // ── 1-5: TRENDLINE, the known-good reference ────────────────────────────────────────────────
+  const tl = place('trend', [A(40, 95), A(120, 110)]);
+  ok('a trendline is armed by the tool id', TOOLS.trend.points === 2);
+  ok('...the first click does not commit', tl.armedAt[1] === 'trend');
+  ok('...the second click does', !tl.made.missing && tl.made[0].type === 'trend');
+  ok('...and it disarms afterwards', tl.state.activeTool === null);
+  const tlP = project1(tl.made[0]);
+  ok('a trendline has visible geometry', tlP.segments.length === 1 && Math.abs(seg0(tlP)[1].x - seg0(tlP)[0].x) > 10);
+  // AND IT STOPS THERE. Extension is the projector's job now, so "does an unextended line stay put"
+  // is a question about pixels — the tool reporting its own two anchors is true either way.
+  // The DIAGNOSTIC is evaluated eagerly, so it has to survive the failure it describes — reaching
+  // into a segment that is not there would throw from inside the failure message itself.
+  ok('...that stops at its second anchor',
+    !!tlP.segments[0] && Math.abs(seg0(tlP)[1].x - sc.toX(tl.made[0].points[1].time)) < 0.5,
+    tlP.segments[0] ? `${Math.round(seg0(tlP)[1].x)} vs ${Math.round(sc.toX(tl.made[0].points[1].time))}` : 'no segment');
+  const tlF = place('trend', [A(150, 95), { time: future, price: 115 }]);
+  ok('a trendline still reaches future space', !tlF.made.missing && isFutureTime(tlF.made[0].points[1].time, bars));
+  ok('...and projects there', project1(tlF.made[0]).segments.length === 1);
+
+  // ── 6-12: RAY ───────────────────────────────────────────────────────────────────────────────
+  const ry = place('ray', [A(40, 95), A(120, 110)]);
+  ok('a ray needs two clicks', TOOLS.ray.points === 2 && ry.armedAt[1] === 'ray');
+  ok('...and commits on the second', !ry.made.missing && ry.made[0].type === 'ray');
+  const ryP = project1(ry.made[0]);
+  ok('a ray has visible geometry', ryP.segments.length === 1);
+  ok('...with finite coordinates', allFinite(ryP));
+  // THE DEFINING PROPERTY: it goes PAST its second anchor, out to the plot boundary.
+  const secondX = sc.toX(ry.made[0].points[1].time);
+  ok('a ray extends beyond its second anchor', seg0(ryP)[1].x > secondX + 20,
+    `end ${Math.round(seg0(ryP)[1].x)} vs anchor ${Math.round(secondX)}`);
+  ok('...reaching the edge of the plot',
+    Math.abs(seg0(ryP)[1].x - sc.plotWidth) < 0.5 || Math.abs(seg0(ryP)[1].y) < 0.5
+      || Math.abs(seg0(ryP)[1].y - sc.plotHeight) < 0.5, JSON.stringify(seg0(ryP)[1]));
+  ok('...while its first anchor stays the origin',
+    Math.abs(seg0(ryP)[0].x - sc.toX(ry.made[0].points[0].time)) < 0.5);
+  // A ray whose direction anchor is in EMPTY SPACE — the case the old time-based extension ran
+  // backwards on, coming out shorter than a plain trendline.
+  const ryF = place('ray', [A(150, 95), { time: future, price: 115 }]);
+  ok('a ray can be aimed into future space', !ryF.made.missing);
+  const ryFP = project1(ryF.made[0]);
+  ok('...and is not shortened by it',
+    seg0(ryFP)[1].x >= sc.toX(ryF.made[0].points[1].time) - 0.5,
+    `${Math.round(seg0(ryFP)[1].x)} vs ${Math.round(sc.toX(ryF.made[0].points[1].time))}`);
+  ok('...keeping the anchor the user placed', ryF.made[0].points[1].time === future);
+  ok('a ray survives a reload', coerceDrawing(JSON.parse(JSON.stringify(ry.made[0])))?.type === 'ray');
+  // Round-tripped once and reused: coerceDrawing returns null for a drawing the registry no longer
+  // accepts, and reaching into that null would throw instead of failing these two.
+  const ryBack = coerceDrawing(JSON.parse(JSON.stringify(ry.made[0])));
+  ok('...with both its anchors', ryBack?.points.length === 2);
+  ok('...and still extends after it', seg0(project1(ryBack))[1].x > secondX + 20);
+  // EXTENSION IS DECLARED, NOT COMPUTED FROM A FABRICATED TIME. The old slope-to-view.to helper is
+  // gone rather than left sitting there to be reused — it is the thing that made a ray stop at the
+  // last candle. Scoped to a CALL, so the sentence explaining its removal cannot satisfy this.
+  const drawSrc = await readFile(new URL('../src/lib/chart/chart-drawings.mjs', import.meta.url), 'utf8');
+  ok('no tool extends through a manufactured view time', !/extendRay\(\w/.test(drawSrc));
+  ok('...and the helper itself is gone', !/export function extendRay/.test(drawSrc));
+  ok('the ray declares its extension', typeof TOOLS.ray.extend === 'function');
+  ok('...and the projector is what applies it', /extendToBox\(p1, p2, scale\.plotWidth, scale\.plotHeight\)/.test(
+    await readFile(new URL('../src/lib/chart/chart-project.mjs', import.meta.url), 'utf8')));
+
+  // ── 13-21: HORIZONTAL LINE ──────────────────────────────────────────────────────────────────
+  ok('a horizontal line is a one-point tool', isOnePoint('horizontal') === true);
+  const hz = place('horizontal', [A(60, 104)]);
+  ok('ONE click commits it', !hz.made.missing && hz.made[0].type === 'horizontal');
+  ok('...and no second click is waited for', hz.state.activeTool === null && hz.state.points.length === 0);
+  ok('...leaving exactly one anchor', hz.made[0].points.length === 1);
+  const hzP = project1(hz.made[0]);
+  ok('it has visible geometry', hzP.segments.length === 1);
+  ok('...spanning the whole plot width',
+    Math.abs(seg0(hzP)[1].x - seg0(hzP)[0].x) === sc.plotWidth);
+  ok('...perfectly level', seg0(hzP)[0].y === seg0(hzP)[1].y);
+  ok('...and it cannot be made diagonal', (() => {
+    const dragged = moveDrawing(hz.made[0], { dTime: 99_999, dPrice: 0 }, 0);
+    const q = project1(dragged);
+    // BOTH halves: the rendered line is level AND the anchor refused the sideways delta. The
+    // geometry alone is level whatever the anchor does, so on its own it could never have failed.
+    return !!q.segments[0] && seg0(q)[0].y === seg0(q)[1].y
+      && dragged.points[0].time === hz.made[0].points[0].time;
+  })());
+  ok('dragging it vertically changes the price', moveDrawing(hz.made[0], { dTime: 0, dPrice: -6 }).points[0].price === 98);
+  ok('...and nothing else', moveDrawing(hz.made[0], { dTime: 0, dPrice: -6 }).points[0].time === hz.made[0].points[0].time);
+  ok('persistence restores the price',
+    coerceDrawing(JSON.parse(JSON.stringify(hz.made[0]))).points[0].price === 104);
+  // No candle under the click — the case a two-point trendline model could never have served.
+  const hzOrphan = place('horizontal', [{ time: future, price: 104 }]);
+  ok('a price clicked in empty space still commits', !hzOrphan.made.missing);
+  ok('...and still spans the plot', (() => {
+    const q = project1(hzOrphan.made[0]);
+    return Math.abs(seg0(q)[1].x - seg0(q)[0].x) === sc.plotWidth;
+  })());
+
+  // ── 22-31: VERTICAL LINE ────────────────────────────────────────────────────────────────────
+  ok('a vertical line is a one-point tool', isOnePoint('vertical') === true);
+  const vt = place('vertical', [A(60, 104)]);
+  ok('ONE click commits it', !vt.made.missing && vt.made[0].type === 'vertical');
+  ok('...and no second click is waited for', vt.state.activeTool === null && vt.state.points.length === 0);
+  ok('...leaving exactly one anchor', vt.made[0].points.length === 1);
+  const vtP = project1(vt.made[0]);
+  ok('it has visible geometry', vtP.segments.length === 1);
+  ok('...spanning the whole plot height',
+    Math.abs(seg0(vtP)[1].y - seg0(vtP)[0].y) === sc.plotHeight);
+  ok('...perfectly upright', seg0(vtP)[0].x === seg0(vtP)[1].x);
+  ok('...and it cannot be made diagonal', (() => {
+    const dragged = moveDrawing(vt.made[0], { dTime: 0, dPrice: 40 }, 0);
+    const q = project1(dragged);
+    return seg0(q)[0].x === seg0(q)[1].x;
+  })());
+  ok('dragging it sideways changes its moment',
+    moveDrawing(vt.made[0], { dTime: 600, dPrice: 0 }).points[0].time === bars[70].time);
+  ok('...and its price is locked, so it cannot tilt',
+    moveDrawing(vt.made[0], { dTime: 600, dPrice: 40 }).points[0].price === vt.made[0].points[0].price);
+  // FUTURE SPACE: no candle is required under the click.
+  const vtF = place('vertical', [{ time: future, price: 104 }]);
+  ok('a vertical line can be placed in empty space', !vtF.made.missing);
+  ok('...keeping the moment clicked', vtF.made[0].points[0].time === future);
+  ok('...and drawing there', (() => {
+    const q = project1(vtF.made[0]);
+    return q.segments.length === 1 && Number.isFinite(seg0(q)[0].x) && seg0(q)[0].x > sc.toX(last);
+  })());
+  ok('persistence restores the position',
+    coerceDrawing(JSON.parse(JSON.stringify(vt.made[0]))).points[0].time === bars[60].time);
+
+  // ── 32, 33: cancelling ──────────────────────────────────────────────────────────────────────
+  let half = armTool(idleTool(), 'trend');
+  half = clickTool(half, A(40, 95)).state;
+  ok('a two-point tool holds a half-placed shape', hasDraft(half) === true);
+  ok('Escape throws the geometry away', hasDraft(cancelDraft(half)) === false);
+  ok('...but leaves the tool armed', cancelDraft(half).activeTool === 'trend');
+  ok('switching tools discards it too', hasDraft(armTool(half, 'ray')) === false);
+  ok('...and arms the new one', armTool(half, 'ray').activeTool === 'ray');
+  ok('picking the same tool again disarms', armTool(armTool(idleTool(), 'ray'), null).activeTool === null);
+  ok('an unknown tool cannot be armed', armTool(idleTool(), 'spiral').activeTool === null);
+  ok('a one-point tool never holds a half-placed shape', hasDraft(place('horizontal', [A(60, 104)]).state) === false);
+
+  // ── THE PREVIEW. A one-point tool used to show nothing at all until it committed. ────────────
+  const hoverH = hoverTool(armTool(idleTool(), 'horizontal'), A(60, 104));
+  ok('a one-point tool previews from the pointer alone', draftPreview(hoverH)?.points.length === 1);
+  ok('...of the right type', draftPreview(hoverH).type === 'horizontal');
+  const hoverT = hoverTool(armTool(idleTool(), 'trend'), A(60, 104));
+  ok('a two-point tool shows nothing before its first anchor', draftPreview(hoverT) === null);
+  let oneDown = clickTool(armTool(idleTool(), 'trend'), A(40, 95)).state;
+  oneDown = hoverTool(oneDown, A(120, 110));
+  ok('...and previews once it has one', draftPreview(oneDown)?.points.length === 2);
+  ok('nothing previews when no tool is armed', draftPreview(idleTool()) === null);
+  ok('the renderer draws whatever the lifecycle offers', /const draft = draftPreview\(stateRef\.current\.life\);/.test(layer));
+
+  // ── THE DESELECT RACE. The chart reports its click after we have already committed. ──────────
+  ok('a commit suppresses the next chart click', place('horizontal', [A(60, 104)]).state.suppressClick === true);
+  ok('...and a two-point commit does the same', place('trend', [A(40, 95), A(120, 110)]).state.suppressClick === true);
+  ok('...but a first click of two does not',
+    clickTool(armTool(idleTool(), 'trend'), A(40, 95)).state.suppressClick === false);
+  ok('the suppression is consumed once', clearSuppression({ ...idleTool(), suppressClick: true }).suppressClick === false);
+  ok('the layer honours it', /if \(stateRef\.current\.life\?\.suppressClick\) \{/.test(layer));
+  ok('...and clears it rather than latching', /stateRef\.current\.life = clearSuppression\(stateRef\.current\.life\);/.test(layer));
+
+  // ── 34-39: the rest of the machinery treats all four alike ──────────────────────────────────
+  const all = ['trend', 'ray', 'horizontal', 'vertical'];
+  ok('all four line tools are in the Lines category',
+    TOOL_CATEGORIES.find((c) => c.id === 'lines').tools.filter((t) => all.includes(t)).length === 4);
+  ok('...and each resolves to a real tool', all.every((t) => !!tool(t)));
+  ok('...each with an icon the rail can draw', all.every((t) => Array.isArray(TOOLS[t].shapes) && TOOLS[t].shapes.length));
+  ok('...and each belongs to that category', all.every((t) => categoryOfTool(t)?.id === 'lines'));
+  const built = all.map((t) => {
+    const r = place(t, t === 'horizontal' || t === 'vertical' ? [A(60, 104)] : [A(40, 95), A(120, 110)]);
+    return r.made.missing ? null : r.made[0];
+  });
+  ok('every line tool creates a drawing', built.every((d) => d && d.type));
+  ok('...every one of them projects to something visible',
+    built.every((d) => (project1(d)?.segments.length || 0) > 0));
+  ok('...every one is hit-testable', built.every((d) => {
+    if (!d) return false;
+    const it = project1(d);
+    const mid = { x: (seg0(it)[0].x + seg0(it)[1].x) / 2, y: (seg0(it)[0].y + seg0(it)[1].y) / 2 };
+    return hitTest(mid, [it])?.id === d.id;
+  }));
+  ok('...every one survives a reload', built.every((d) => !!d && !!coerceDrawing(JSON.parse(JSON.stringify(d)))));
+  ok('...every one can be deleted from a list',
+    built.every((d) => !!d && [...built].filter((x) => x?.id !== d.id).length === built.length - 1));
+  ok('...every one appears in the object tree',
+    built.every((d) => !!d && !!tool(d.type)?.label && d.visible === true && d.locked === false));
+  ok('...and every one keeps its geometry through a zoom',
+    built.every((d) => (projectDrawings([d], view, fakeScale(bars, { lr: { from: 30, to: 90 } }), tool).items[0]?.segments.length || 0) > 0));
+  ok('...and through a timeframe change', (() => {
+    const hourly = Array.from({ length: 40 }, (_, i) => ({ time: 1_700_000_000 + i * 3600, o: 1, h: 2, l: 0, c: 1 }));
+    return built.every((d) => (projectDrawings([d], view, fakeScale(hourly), tool).items[0]?.segments.length || 0) > 0);
+  })());
+  ok('nothing is dropped for any of them',
+    projectDrawings(built, view, sc, tool).dropped === 0);
+
+  // ── 40: Fibonacci is untouched by all of this ───────────────────────────────────────────────
+  const fb = place('fib', [A(40, 90), A(120, 110)]);
+  ok('Fibonacci still needs two clicks', !fb.made.missing && fb.armedAt[1] === 'fib');
+  ok('...and still draws all seven levels', project1(fb.made[0]).segments.length === 7);
+  ok('...still materially wide', widestSpan(project1(fb.made[0])) > 50);
+  ok('...and still between its own anchors',
+    TOOLS.fib.segments(fb.made[0].points, view, fb.made[0])[0][0].time === fb.made[0].points[0].time);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

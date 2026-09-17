@@ -11,6 +11,9 @@ import {
   logicalOfTime, timeOfLogical, timeDeltaSeconds,
 } from '../../lib/chart/chart-coords.mjs';
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
+import {
+  idleTool, armTool, clickTool, hoverTool, cancelDraft, clearSuppression, draftPreview, hasDraft,
+} from '../../lib/chart/chart-tool-lifecycle.mjs';
 
 // The drawing surface: one canvas sitting over the chart.
 //
@@ -41,6 +44,11 @@ function DrawingLayerBase({
   s.selected = new Set(selectedIds);
   s.theme = theme; s.visible = visible; s.style = style; s.bars = bars; s.magnet = magnet;
   s.toolDefaults = toolDefaults;
+  // THE PLACEMENT STATE MACHINE lives in chart-tool-lifecycle.mjs. Re-armed only when the prop
+  // actually names a different tool, so a half-placed two-point shape survives the re-renders that
+  // a crosshair move causes — and is discarded the moment the user picks a different tool.
+  if (!s.life) s.life = idleTool();
+  if (s.life.activeTool !== activeTool) s.life = armTool(s.life, activeTool);
 
   // ── data space <-> screen space ──
   const toScreen = useCallback((pt) => {
@@ -351,12 +359,14 @@ function DrawingLayerBase({
       }
     }
 
-    // The in-progress shape, drawn from the anchors placed so far plus the cursor.
-    const draft = stateRef.current.draft;
-    if (draft?.points?.length && draft.cursor) {
+    // THE IN-PROGRESS SHAPE. For a two-point tool that is the placed anchor plus the cursor; for a
+    // ONE-POINT tool it is the cursor alone, which is the case that used to draw nothing at all —
+    // arming Horizontal Line or Vertical Line gave no feedback whatsoever until the click landed.
+    const draft = draftPreview(stateRef.current.life);
+    if (draft) {
       const def = tool(draft.type);
-      const pts = [...draft.points, draft.cursor].slice(0, def.points);
-      if (pts.length === def.points) {
+      const pts = draft.points;
+      {
         const view = currentView();
         const sc = scale();
         ctx.save();
@@ -380,7 +390,7 @@ function DrawingLayerBase({
   useEffect(() => {
     if (!clearSignal) return;
     stateRef.current.measure = null;
-    stateRef.current.draft = null;
+    stateRef.current.life = cancelDraft(stateRef.current.life || idleTool());
     paint();
   }, [clearSignal, paint]);
 
@@ -412,7 +422,14 @@ function DrawingLayerBase({
   useEffect(() => {
     if (!chart) return undefined;
     const onClick = (param) => {
-      if (stateRef.current.activeTool || !stateRef.current.visible) return;
+      // COMMITTING SWALLOWS THE NEXT CHART CLICK. Lightweight Charts reports this click AFTER our
+      // pointerdown has already committed and disarmed the tool, so without this the handler saw no
+      // armed tool, hit-tested, missed, and deselected the drawing made a moment earlier.
+      if (stateRef.current.life?.suppressClick) {
+        stateRef.current.life = clearSuppression(stateRef.current.life);
+        return;
+      }
+      if (stateRef.current.life?.activeTool || !stateRef.current.visible) return;
       if (!param?.point) { onSelect(null); return; }
       const hit = hitTest(param.point, project());
       // Always a fresh selection: the chart's own click carries no modifier we can read, and the
@@ -437,7 +454,7 @@ function DrawingLayerBase({
    * snapping in price/time space would produce a line that looks like no particular angle at all.
    */
   const anchorAt = (pt, e) => {
-    const first = s.draft?.points?.[0];
+    const first = s.life?.points?.[0];
     if (!e?.shiftKey || !first) return toData(pt.x, pt.y);
     const from = toScreen(first);
     if (!from) return toData(pt.x, pt.y);
@@ -447,16 +464,17 @@ function DrawingLayerBase({
 
   const onPointerDown = (e) => {
     const pt = localPoint(e);
-    // PLACING a new drawing.
-    if (s.activeTool) {
-      const def = tool(s.activeTool);
+    // PLACING a new drawing. WHEN it commits is the lifecycle's decision, and it is the same
+    // decision for every tool: a one-point tool commits on this click, a two-point tool on the next.
+    if (s.life?.activeTool) {
+      const toolId = s.life.activeTool;
+      const def = tool(toolId);
       const data = anchorAt(pt, e);
       if (!data) return;
-      s.draft = s.draft?.type === s.activeTool ? s.draft : { type: s.activeTool, points: [] };
-      s.draft.points.push(data);
-      if (s.draft.points.length >= def.points) {
-        const pts = s.draft.points;
-        s.draft = null;
+      const step = clickTool(s.life, data);
+      s.life = step.state;
+      if (step.commit) {
+        const pts = step.commit;
         if (def.transient) {
           // A MEASUREMENT IS NOT A DRAWING. It answers a question and is then done with, so it is
           // held here and painted, never stored and never in the object tree.
@@ -468,7 +486,7 @@ function DrawingLayerBase({
           // be rather than hanging off the bottom of the chart.
           onRequestText?.(pts, { x: e.clientX, y: e.clientY });
         } else {
-          const made = createDrawing(s.activeTool, pts, s.style, s.drawings, s.toolDefaults?.[s.activeTool] || {});
+          const made = createDrawing(toolId, pts, s.style, s.drawings, s.toolDefaults?.[toolId] || {});
           if (made) { onChange([...s.drawings, made]); onSelect(made.id); }
         }
         onToolUsed();
@@ -512,12 +530,12 @@ function DrawingLayerBase({
 
   const onPointerMove = (e) => {
     const pt = localPoint(e);
-    if (s.draft?.points?.length) {
-      s.draft.cursor = anchorAt(pt, e);
+    if (s.life?.activeTool) {
+      s.life = hoverTool(s.life, anchorAt(pt, e));
       // A ruler that only reports once both ends are placed is far less useful than one that counts
       // as you move, so the measurement updates live from the first anchor to the cursor.
-      if (tool(s.draft.type)?.transient && s.draft.cursor) {
-        s.measure = { type: s.draft.type, points: [s.draft.points[0], s.draft.cursor] };
+      if (tool(s.life.activeTool)?.transient && s.life.cursor && s.life.points[0]) {
+        s.measure = { type: s.life.activeTool, points: [s.life.points[0], s.life.cursor] };
       }
       paint();
       return;
@@ -542,7 +560,7 @@ function DrawingLayerBase({
 
   // The overlay is INERT unless it is doing something: no armed tool, no selection and no draft means
   // the chart underneath owns the pointer and keeps its native zoom, pan and crosshair.
-  const interactive = !!activeTool || selectedIds.length > 0 || !!s.draft;
+  const interactive = !!activeTool || selectedIds.length > 0 || hasDraft(s.life);
 
   return (
     <canvas
