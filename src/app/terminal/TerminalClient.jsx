@@ -1,5 +1,8 @@
 'use client';
 import ErrorState from '../../components/ErrorState';
+import {
+  cursorFor, moveRect, applyResize, findSharedEdge, resizeStrips, isResizeHandle,
+} from '../../lib/terminal/panel-resize.mjs';
 import CPChart from '../../components/chart/CPChart';
 import PitScanPanel from '../../components/scan/PitScanPanel';
 import CustomScannerPanel from '../../components/scan/CustomScannerPanel';
@@ -38,6 +41,7 @@ const PANELS = [
 const PANEL_BY_ID = Object.fromEntries(PANELS.map((p) => [p.id, p]));
 const DEFAULT_VISIBLE = ['pitwire', 'tape', 'halts', 'chart', 'newswire', 'watchlist', 'chat'];
 const MIN_W = 240, MIN_H = 220;
+const PANEL_MIN = { minW: MIN_W, minH: MIN_H };
 
 // Link groups (Benzinga-style): panels sharing a color sync — click a symbol in one and it loads
 // in linked chart panels. Click the header chip to cycle a panel's group.
@@ -1034,6 +1038,34 @@ function BottomTape() {
 }
 
 // ── Panel chrome ──
+/**
+ * THE BORDER IS THE RESIZE CONTROL.
+ *
+ * Eight invisible strips — four edges and four corners — each with the cursor that says what it will
+ * do before the user commits to it. They sit OUTSIDE the card rather than inside it: the card is
+ * overflow:hidden, and a band that reaches a few pixels into the gap between panels is what makes
+ * the border grabbable without pixel-perfect aim.
+ *
+ * Deliberately thin. They must be easy to find and impossible to hit by accident — a panel whose
+ * scrollbar could not be used because a resize strip was sitting on it would be a worse panel.
+ */
+function PanelResizeFrame({ w, h, onStart }) {
+  return (
+    <>
+      {resizeStrips(w, h).map((strip) => (
+        <div key={strip.handle}
+          data-cp-resize={strip.handle}
+          onPointerDown={(e) => onStart(strip.handle, e)}
+          style={{
+            position: 'absolute', left: strip.left, top: strip.top,
+            width: strip.width, height: strip.height,
+            cursor: cursorFor(strip.handle), touchAction: 'none', zIndex: 6,
+          }} />
+      ))}
+    </>
+  );
+}
+
 function PanelCard({ def, colorKey, onSetColor, onMoveStart, onResizeStart, draggable, headerRight, onRemove, children }) {
   const [colorMenu, setColorMenu] = useState(false);
   return (
@@ -1070,6 +1102,8 @@ function PanelCard({ def, colorKey, onSetColor, onMoveStart, onResizeStart, drag
         </span>
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>{children}</div>
+      {/* The old corner grip, kept as a visual hint that a panel is resizable at all. It is no
+          longer the only way in — the whole border is — so it does not need to be large. */}
       {draggable && (
         <div onPointerDown={onResizeStart}
           style={{ position: 'absolute', right: 0, bottom: 0, width: 22, height: 22, cursor: 'se-resize', touchAction: 'none', zIndex: 5 }}>
@@ -1134,7 +1168,9 @@ function Workspace() {
   const layoutRef = useRef(null);           // always-current layout for pointer math
   const [layout, setLayoutState] = useState(null);
   const [mobile, setMobile] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  // The cursor of the gesture in flight, or null. It was a boolean; the overlay needs to show
+  // ns-resize or nwse-resize rather than always a grabbing hand.
+  const [dragging, setDragging] = useState(null);
   const [selectedSymbol, setSelectedSymbol] = useState('SPY');   // centralized Terminal symbol
   const [visible, setVisibleState] = useState(DEFAULT_VISIBLE);
   const visibleRef = useRef(DEFAULT_VISIBLE);
@@ -1182,18 +1218,56 @@ function Workspace() {
 
   const persist = (l) => { try { localStorage.setItem('cp_terminal_layout', JSON.stringify(l)); } catch { /* ignore */ } };
 
+  /**
+   * ONE GESTURE, EIGHT DIRECTIONS.
+   *
+   * `mode` used to be 'move' or 'resize', and 'resize' meant exactly one formula: grow the width and
+   * the height. That is only meaningful from the bottom-right, which is why the bottom-right corner
+   * was the only place a panel could be resized from. It now carries a HANDLE, and the handle says
+   * which edges move — the opposite edges stay put, which is the whole difference between resizing
+   * a window and moving one.
+   *
+   * The baseline layout is captured ONCE at pointer-down and every frame is computed from the
+   * original rectangle plus the total delta. Accumulating per-move deltas instead would let rounding
+   * and a clamped minimum drift the panel a pixel at a time across a long drag.
+   */
   const start = (id, e, mode) => {
     e.preventDefault(); e.stopPropagation();
     const sx = e.clientX, sy = e.clientY;
-    const o = { ...layoutRef.current[id] };   // real current position (from the ref)
-    setDragging(true);
+    const base = layoutRef.current;
+    const o = { ...base[id] };   // real current position (from the ref)
+    // Adjacency is derived HERE, once, and used for this gesture only — nothing about it is stored,
+    // and a panel is never relocated behind the user's back on some later drag.
+    const shared = isResizeHandle(mode) ? findSharedEdge(id, base, mode) : null;
+    const sharedBase = shared ? { ...base[shared.id] } : null;
+    setDragging(cursorFor(mode));
+    // COALESCED TO ONE LAYOUT WRITE PER FRAME. A pointermove stream can outrun React by several
+    // times over, and every write here re-renders every panel in the workspace — including the
+    // chart. One frame is all a resize can show anyway.
+    let raf = 0;
+    let pending = null;
+    const flush = () => {
+      raf = 0;
+      if (!pending) return;
+      const { dx, dy } = pending;
+      pending = null;
+      if (mode === 'move') {
+        setLayout({ ...layoutRef.current, [id]: moveRect(o, dx, dy) });
+        return;
+      }
+      // Rebuilt from the captured baselines, so the pair stays welded however far the drag goes.
+      const from = sharedBase
+        ? { ...layoutRef.current, [id]: o, [shared.id]: sharedBase }
+        : { ...layoutRef.current, [id]: o };
+      setLayout(applyResize(from, id, mode, dx, dy, PANEL_MIN, { shared }));
+    };
     const move = (ev) => {
-      const next = mode === 'move'
-        ? { ...o, x: Math.max(0, o.x + (ev.clientX - sx)), y: Math.max(0, o.y + (ev.clientY - sy)) }
-        : { ...o, w: Math.max(MIN_W, o.w + (ev.clientX - sx)), h: Math.max(MIN_H, o.h + (ev.clientY - sy)) };
-      setLayout({ ...layoutRef.current, [id]: next });
+      pending = { dx: ev.clientX - sx, dy: ev.clientY - sy };
+      if (!raf) raf = window.requestAnimationFrame(flush);
     };
     const up = () => {
+      if (raf) { window.cancelAnimationFrame(raf); raf = 0; }
+      flush();
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       // pointerup is not guaranteed. A cancelled gesture (touch turning into a scroll, a context
@@ -1202,7 +1276,10 @@ function Workspace() {
       // page was reloaded. Every path that can end a drag clears it.
       window.removeEventListener('pointercancel', up);
       window.removeEventListener('blur', up);
-      setDragging(false);
+      setDragging(null);
+      // The SAME persistence path a corner drag always used, writing the same { x, y, w, h } shape —
+      // so saved layouts, the unsaved-changes signature and Reset all keep working untouched, and a
+      // layout saved before any of this loads exactly as it did.
       persist(layoutRef.current);
     };
     window.addEventListener('pointermove', move);
@@ -1406,13 +1483,18 @@ function Workspace() {
             <div key={id} onPointerDownCapture={() => bringToFront(id)}
               style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, zIndex: zOf(id) }}>
               <PanelCard def={def} draggable colorKey={p.color} onSetColor={(key) => setColor(id, key)}
-                onMoveStart={(e) => start(id, e, 'move')} onResizeStart={(e) => start(id, e, 'resize')}
+                onMoveStart={(e) => start(id, e, 'move')} onResizeStart={(e) => start(id, e, 'se')}
                 headerRight={headerRightOf(def)} onRemove={() => removePanel(id)}>{bodyOf(def)}</PanelCard>
+              <PanelResizeFrame w={p.w} h={p.h} onStart={(handle, e) => start(id, e, handle)} />
             </div>
           );
         })}
-        {/* transparent overlay during drag/resize so pointer moves aren't swallowed by the chart iframe */}
-        {dragging && <div style={{ position: 'fixed', inset: 0, zIndex: 50, cursor: 'grabbing', userSelect: 'none' }} />}
+        {/* A transparent sheet over everything for the duration of the gesture. It is what keeps
+            pointer moves from being swallowed by a panel's own content — and it is also why chart
+            drawing cannot start while the chart panel is being resized: the chart never sees the
+            pointer at all. It carries the gesture's cursor, so the feedback survives the drag even
+            once the pointer has left the border it started on. */}
+        {dragging && <div style={{ position: 'fixed', inset: 0, zIndex: 50, cursor: dragging, userSelect: 'none' }} />}
       </div>
     </>
   );
