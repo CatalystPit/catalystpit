@@ -29,7 +29,16 @@ export default function DrawingSettings({ open, onClose, theme, drawing, onChang
   const patch = (next) => onChange({ ...drawing, ...next });
   const levels = def.editableLevels ? sanitizeFibLevels(drawing.levels) : [];
 
-  const setLevel = (i, next) => patch({ levels: levels.map((l, k) => (k === i ? { ...l, ...next } : l)) });
+  const setLevel = (i, next) => patch({
+    levels: levels.map((l, k) => {
+      if (k !== i) return l;
+      const merged = { ...l, ...next };
+      // An explicit undefined MEANS "drop this field" — a level with color: undefined would survive
+      // a merge and then be sanitised away inconsistently.
+      for (const key of Object.keys(next)) if (next[key] === undefined) delete merged[key];
+      return merged;
+    }),
+  });
   const removeLevel = (i) => patch({ levels: levels.filter((_, k) => k !== i) });
   const addLevel = () => {
     const r = Number(newLevel);
@@ -119,10 +128,27 @@ export default function DrawingSettings({ open, onClose, theme, drawing, onChang
                     fontFamily: "'DM Sans',sans-serif", fontSize: 11.5 }} />
                 <span style={{ flex: 1, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
                   color: p.text, opacity: 0.85 }}>{pct(l.ratio)}</span>
+                {/* PER-LEVEL COLOUR, and a way back to none. Cycling through the palette and then
+                    returning to "same as the drawing" keeps one control for both, and keeps the
+                    default a single clean hue rather than a rainbow nobody asked for. */}
+                <button type="button"
+                  title={l.color == null ? 'Give this level its own colour' : 'Next colour (cycles back to default)'}
+                  onClick={() => {
+                    const nextIdx = l.color == null ? 0 : l.color + 1;
+                    setLevel(i, { color: nextIdx >= swatches.length ? undefined : nextIdx });
+                  }}
+                  style={{ width: 16, height: 16, borderRadius: 3, cursor: 'pointer', flexShrink: 0,
+                    background: l.color == null ? 'transparent' : swatches[l.color % swatches.length],
+                    border: `1px solid ${l.color == null ? p.border : p.textStrong}` }} />
                 <ToolButton theme={theme} title="Remove level" danger
                   onClick={() => removeLevel(i)}>✕</ToolButton>
               </div>
             ))}
+            {/* OPTIONAL BANDS, off by default. A filled Fibonacci over candles is the fastest way
+                to make a chart unreadable, so the clean set of lines is what you get unless you ask
+                for more; when on, alternating bands are shaded at a very low alpha. */}
+            {row('Shade between levels', toggle(drawing.fill === true,
+              () => patch({ fill: !drawing.fill }), drawing.fill ? 'On' : 'Off'))}
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
               <input type="number" step="0.001" value={newLevel} placeholder="0.618"
                 aria-label="New level ratio"

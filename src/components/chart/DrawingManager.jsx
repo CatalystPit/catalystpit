@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { TOOLS, tool, canReorder } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
 import { Modal, ToolButton, VectorIcon } from './ChartUI';
@@ -42,6 +43,7 @@ export default function DrawingManager({
   onSelect, onChange, onDuplicate, onSettings, onReorder, onBulk, onClearAll,
 }) {
   const p = palette(theme);
+  const [hovered, setHovered] = useState(null);
 
   const patch = (id, next) => onChange(drawings.map((d) => (d.id === id ? { ...d, ...next } : d)));
   const remove = (id) => onChange(drawings.filter((d) => d.id !== id));
@@ -53,7 +55,7 @@ export default function DrawingManager({
   const sel = new Set(selectedIds);
 
   return (
-    <Modal theme={theme} open={open} onClose={onClose} width={440}
+    <Modal theme={theme} open={open} onClose={onClose} width={560}
       title={`Drawings on ${symbol}${drawings.length ? ` (${drawings.length})` : ''}`}>
       <div style={{ padding: 10 }}>
         {rows.length === 0 && (
@@ -69,9 +71,11 @@ export default function DrawingManager({
           const isSel = sel.has(d.id);
           return (
             <div key={d.id}
+              onMouseEnter={() => setHovered(d.id)} onMouseLeave={() => setHovered(null)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8, padding: '6px 7px', borderRadius: 5,
-                background: isSel ? p.menuActive : 'transparent',
+                background: isSel ? p.menuActive : (hovered === d.id ? p.menuHover : 'transparent'),
+                transition: 'background 90ms ease',
                 borderLeft: `2.5px solid ${isSel ? p.up : 'transparent'}`,
               }}>
               {/* The row itself selects — the same selection a click on the chart makes. */}

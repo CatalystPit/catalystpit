@@ -198,3 +198,51 @@ export function saveFavorites(ids) {
     window.localStorage.setItem(FAVORITES_KEY, JSON.stringify((ids || []).filter((x) => typeof x === 'string')));
   } catch { /* ignore */ }
 }
+
+// ── per-tool last-used settings ───────────────────────────────────────────────
+// WHAT A TOOL REMEMBERS, not a template system.
+//
+// Drawing a second trend line should not mean setting the colour, the width and the extensions
+// again — so each TOOL remembers the settings it was last used with, and the next drawing of that
+// type starts there. Keyed by tool id, so changing a Fibonacci's levels never changes what a
+// rectangle looks like.
+//
+// Only fields a tool actually reads are kept. Anything else would round-trip through storage
+// forever and become a place for junk to accumulate.
+
+export const TOOL_DEFAULTS_KEY = 'cp_chart_tool_defaults';
+const REMEMBERED = ['style', 'extendLeft', 'extendRight', 'levels', 'fill'];
+
+export function loadToolDefaults() {
+  if (!isBrowser()) return {};
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(TOOL_DEFAULTS_KEY) || 'null');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [toolId, v] of Object.entries(raw)) {
+      if (!v || typeof v !== 'object') continue;
+      const kept = {};
+      for (const k of REMEMBERED) if (v[k] !== undefined) kept[k] = v[k];
+      if (Object.keys(kept).length) out[toolId] = kept;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveToolDefaults(map) {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(TOOL_DEFAULTS_KEY, JSON.stringify(map || {}));
+  } catch { /* ignore */ }
+}
+
+/** Fold one drawing's current settings back in as its tool's defaults. */
+export function rememberToolDefaults(map, drawing) {
+  if (!drawing?.type) return map || {};
+  const kept = {};
+  for (const k of REMEMBERED) if (drawing[k] !== undefined) kept[k] = drawing[k];
+  if (!Object.keys(kept).length) return map || {};
+  return { ...(map || {}), [drawing.type]: kept };
+}

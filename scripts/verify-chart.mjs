@@ -36,6 +36,7 @@ import { cloneDrawing, barLevels, snapToLevel, MAGNET_PX } from '../src/lib/char
 import { measureBetween, formatDuration } from '../src/lib/chart/chart-drawings.mjs';
 import { reorderDrawing, canReorder, constrainAngle, sanitizeFibLevels, DEFAULT_FIB_LEVELS } from '../src/lib/chart/chart-drawings.mjs';
 import { exportLayout, captionFor, exportFilename, CAPTION_HEIGHT } from '../src/lib/chart/chart-export.mjs';
+import { rememberToolDefaults } from '../src/lib/chart/chart-settings.mjs';
 import { emptyHistory, record, undo, redo, canUndo, canRedo, MAX_HISTORY } from '../src/lib/chart/chart-history.mjs';
 import { TIMEFRAME_GROUPS, timeframesByGroup, ADAPTER, isServable, unavailableReason,
   PLANNED_TIMEFRAMES } from '../src/lib/chart/chart-source.mjs';
@@ -1009,7 +1010,9 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
   ok('...and when the panel is resized by drag', /new ResizeObserver\(place\)/.test(ui));
   ok('an outside click closes it', /addEventListener\('mousedown', onDown\)/.test(ui));
   ok('Escape closes it', /e\.key !== 'Escape'/.test(ui));
-  ok('...the innermost one only, so nested menus peel', /openPanels\[openPanels\.length - 1\]/.test(ui));
+  // SCOPED to the popover. The modal joins the same stack, so a file-wide search would be satisfied
+  // by the modal's copy while the popover had lost its own.
+  ok('...the innermost one only, so nested menus peel', /openPanels\[openPanels\.length - 1\]/.test(popoverBody));
   ok('a click in a menu opened from another does not close the parent',
     /hit !== -1 && hit >= mine/.test(ui));
   ok('the trigger stays clickable to toggle its own menu',
@@ -1592,7 +1595,10 @@ section('23. undo/redo, the ruler, notes, the price scale and nudge');
     !('text' in createDrawing('trend', [{ time: 1, price: 1 }, { time: 2, price: 2 }], {}, [])));
   ok('a non-string note is not trusted',
     createDrawing('text', [{ time: 1, price: 5 }], {}, [], { text: { evil: 1 } }).text === '');
-  ok('the note is written before it exists', /onRequestText\?\.\(pts\)/.test(layer));
+  ok('the note is written before it exists', /onRequestText\?\.\(pts, \{ x: e\.clientX, y: e\.clientY \}\)/.test(layer));
+  // The editor opens AT THE CLICK rather than hanging off the bottom of the chart.
+  ok('...in an editor anchored where the note will be',
+    /point=\{noteDraft\?\.at \|\| null\}/.test(cmp));
   ok('...and an empty one is never created', /if \(noteDraft\?\.points && text\)/.test(cmp));
   ok('...while clearing an existing one deletes it', /else updateDrawings\(\(ds\) => ds\.filter\(\(d\) => d\.id !== noteDraft\.id\)\);/.test(cmp));
   ok('Enter commits the note', /if \(e\.key === 'Enter'\) \{ e\.preventDefault\(\); commitNote\(\); \}/.test(cmp));
@@ -1716,7 +1722,10 @@ section('24. z-order, multi-select, editable fibs, trendline options, export');
   // every assertion after it down with it.
   ok('levels survive a reload',
     coerceDrawing({ type: 'fib', points: [{ time: 1, price: 1 }, { time: 2, price: 2 }], levels: [{ ratio: 0.33 }] })?.levels?.[0]?.ratio === 0.33);
-  ok('the renderer reads the drawing’s levels', /fibLevels\(d\.source\.points, d\.source\.levels\)/.test(layer));
+  // BOTH places the renderer resolves levels — the lines and the labels. Checking for one match is
+  // satisfied while the other has quietly gone back to the default set.
+  ok('the renderer reads the drawing’s levels',
+    (layer.match(/fibLevels\(d\.source\.points, d\.source\.levels\)/g) || []).length === 2);
   ok('the settings dialog can add a level', /const addLevel = \(\) => \{/.test(set));
   ok('...remove one', /const removeLevel = \(i\) =>/.test(set));
   ok('...edit its value', /aria-label=\{`Level \$\{i \+ 1\} ratio`\}/.test(set));
@@ -1786,6 +1795,134 @@ section('24. z-order, multi-select, editable fibs, trendline options, export');
   // strip, which would pass while the area behind the chart stayed transparent.
   ok('the exported PNG is never transparent',
     /ctx\.fillRect\(0, 0, layout\.width, layout\.height\);/.test(await readFile(new URL('../src/lib/chart/chart-export.mjs', import.meta.url), 'utf8')));
+}
+
+section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
+{
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  const leg = await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8');
+  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
+  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
+  const set = await readFile(new URL('../src/components/chart/DrawingSettings.jsx', import.meta.url), 'utf8');
+  const settings = await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8');
+
+  // ── 1. WHAT EACH TOOL REMEMBERS ─────────────────────────────────────────────────────────────
+  // Not a template system: each TOOL remembers what it was last used with, keyed by tool id.
+  ok('tool defaults are stored per tool', /export const TOOL_DEFAULTS_KEY/.test(settings));
+  const remembered = rememberToolDefaults({}, {
+    type: 'trend', style: { color: 3, width: 2, dash: 'solid' }, extendRight: true, id: 'x', points: [],
+  });
+  ok('a drawing folds its settings back in as its tool’s defaults', remembered.trend.extendRight === true);
+  ok('...including its style', remembered.trend.style.color === 3);
+  // ONLY fields a tool actually reads: anything else would round-trip through storage forever.
+  ok('...but not its identity or geometry', !('id' in remembered.trend) && !('points' in remembered.trend));
+  ok('a drawing with nothing worth remembering changes nothing',
+    rememberToolDefaults({ a: 1 }, { type: 'trend' }).a === 1 && !('trend' in rememberToolDefaults({ a: 1 }, { type: 'trend' })));
+  ok('a typeless drawing is ignored', rememberToolDefaults({ a: 1 }, {}).a === 1);
+  ok('one tool’s settings never touch another’s',
+    !('rectangle' in rememberToolDefaults({}, { type: 'trend', style: { color: 1 } })));
+  ok('a new drawing starts from its tool’s defaults',
+    /createDrawing\(s\.activeTool, pts, s\.style, s\.drawings, s\.toolDefaults\?\.\[s\.activeTool\] \|\| \{\}\)/.test(layer));
+  ok('the settings dialog records what was chosen', /rememberToolDefaults\(prev, next\)/.test(cmp));
+  ok('...and so does the rail’s style panel, while a tool is armed',
+    /rememberToolDefaults\(prevMap, \{ type: activeTool, style: next \}\)/.test(cmp));
+
+  // ── 2. FIBONACCI PRESENTATION ───────────────────────────────────────────────────────────────
+  ok('a level may carry its own colour', sanitizeFibLevels([{ ratio: 0.5, color: 2 }])[0].color === 2);
+  // ABSENT, not null: absent means "use the drawing's colour", which keeps the default one hue.
+  ok('...and usually does not', !('color' in sanitizeFibLevels([{ ratio: 0.5 }])[0]));
+  ok('a nonsense colour is dropped rather than stored', !('color' in sanitizeFibLevels([{ ratio: 0.5, color: 'red' }])[0]));
+  ok('the colour reaches the renderer', fibLevels([{ price: 10 }, { price: 0 }], [{ ratio: 0.5, color: 1 }])[0].color === 1);
+  ok('level LINES take that colour too, not just the labels',
+    /ctx\.strokeStyle = segColours\?\.\[i\] \|\| colour;/.test(layer));
+  ok('...falling back to the drawing’s colour', /l\.color \?\? d\.style\.color/.test(layer));
+  // LABELS MOVED OFF THE LEFT EDGE, where they sat underneath the chart legend.
+  ok('level labels no longer print at the left edge', !/ctx\.fillText\(`\$\{\(lvl\.ratio \* 100\)[^)]*\)`, 6,/.test(layer));
+  ok('...they are placed against the right-hand end of the level', /cw - w - 6/.test(layer));
+  // BANDS ARE OPT-IN. A filled Fibonacci over candles is the fastest way to make a chart unreadable.
+  ok('shading between levels is off by default',
+    createDrawing('fib', [{ time: 1, price: 1 }, { time: 2, price: 2 }], {}, []).fill === false);
+  ok('...can be turned on', /patch\(\{ fill: !drawing\.fill \}\)/.test(set));
+  ok('...survives a reload', coerceDrawing({ type: 'fib', points: [{ time: 1, price: 1 }, { time: 2, price: 2 }], fill: true }).fill === true);
+  ok('...and is drawn faintly, alternating, when it is on',
+    /ctx\.globalAlpha = 0\.07;/.test(layer) && /if \(i % 2 === 1\) continue;/.test(layer));
+  ok('the settings dialog can colour a level', /Give this level its own colour/.test(set));
+  ok('...and clear that colour again', /nextIdx >= swatches\.length \? undefined : nextIdx/.test(set));
+  ok('clearing a field really removes it', /if \(next\[key\] === undefined\) delete merged\[key\];/.test(set));
+
+  // ── 3. INTERACTION CONSISTENCY ──────────────────────────────────────────────────────────────
+  // Escape must peel one layer at a time whatever the layer is — a modal with a menu open inside it
+  // had two independent handlers racing, and the winner depended on registration order.
+  ok('modals are on the same dismissal stack as menus',
+    ui.slice(ui.indexOf('export function Modal')).includes('openPanels.push(el)'));
+  ok('...so Escape closes the innermost only',
+    (ui.match(/openPanels\[openPanels\.length - 1\] !== panelRef\.current/g) || []).length === 2);
+  ok('every chart menu is still portalled past the panel', (ui.match(/createPortal\(/g) || []).length === 2);
+  ok('keyboard shortcuts still skip form fields', /t\.tagName === 'INPUT'/.test(cmp));
+  ok('...and leave modified keys to the browser', /if \(mod\) return;/.test(cmp));
+  ok('the note editor opens where the note will be', /point=\{noteDraft\?\.at \|\| null\}/.test(cmp));
+
+  // ── CONTROLS MUST NOT JUMP ──────────────────────────────────────────────────────────────────
+  ok('the indicator count sits in a fixed-width slot', /width: 10, textAlign: 'right', opacity: active\.length \? 1 : 0/.test(cmp));
+  ok('the legend uses tabular figures, so its numbers do not shuffle',
+    /fontVariantNumeric: 'tabular-nums'/.test(leg));
+  ok('menu row controls fade rather than mount', /opacity: show \? 1 : 0/.test(leg));
+
+  // ── HOVER AND SELECTED STATES ARE THE SAME EVERYWHERE ───────────────────────────────────────
+  ok('toolbar buttons have a hover state', /hover && !disabled \? p\.menuHover/.test(ui));
+  ok('menu rows do too', (ui.match(/p\.menuHover/g) || []).length >= 2);
+  ok('object-tree rows do too', /hovered === d\.id \? p\.menuHover/.test(mgr));
+  ok('the rail’s flyout arrow shows when its menu is open', /openCat === cat\.id \? p\.up : p\.text/.test(rail));
+  ok('transitions are the same length throughout',
+    (ui.match(/90ms ease/g) || []).length >= 2 && /90ms ease/.test(mgr));
+  // Six row controls plus a label and an anchor summary do not fit in the old width.
+  ok('the object tree is wide enough for its controls', /open=\{open\} onClose=\{onClose\} width=\{560\}/.test(mgr));
+
+  // ── 4. RESPONSIVE ───────────────────────────────────────────────────────────────────────────
+  ok('two thresholds still drive the toolbar', /const narrow = toolbarWidth </.test(cmp) && /const overflowed = toolbarWidth </.test(cmp));
+  ok('the toolbar still never wraps', /flexWrap: 'nowrap'/.test(cmp));
+  // The four priority controls must fit the narrowest panel that still shows a toolbar.
+  const NARROWEST = Number(cmp.match(/const overflowed = toolbarWidth < (\d+)/)[1]);
+  const widths = { symbol: 64, divider: 9, timeframe: 44, chartType: 26, overflow: 26, gaps: 5 * 2 };
+  const used = Object.values(widths).reduce((a, b) => a + b, 0);
+  ok('symbol, timeframe, chart type and the overflow fit below the collapse point',
+    used < NARROWEST, `${used}px of ${NARROWEST}px`);
+  ok('...with room left for the chart itself', NARROWEST - used > 100, `${NARROWEST - used}px spare`);
+  // Menus are placed against the WINDOW, so panel size cannot clip them — proved in section 18.
+  ok('menu placement is still window-relative, not panel-relative', /viewport\?\.width \?\? globalThis\.innerWidth/.test(
+    await readFile(new URL('../src/lib/chart/chart-popover.mjs', import.meta.url), 'utf8')));
+
+  // ── 6. COST ─────────────────────────────────────────────────────────────────────────────────
+  // THE CROSSHAIR RUNS ON EVERY POINTER MOVE. It used to scan the whole bar list backwards for the
+  // previous close — five thousand comparisons per mouse move on a five-year daily chart.
+  ok('the previous close is an index lookup, not a scan', /barIndexRef\.current\.get\(param\.time\)/.test(cmp));
+  ok('...with the index rebuilt only when the bars are', /barIndexRef\.current = new Map\(bars\.map\(\(b, i\) => \[b\.time, i\]\)\)/.test(cmp));
+  ok('no per-move scan of the bar list remains', !/for \(let i = bars\.length - 1; i >= 0; i -= 1\)/.test(cmp));
+  // The chart re-renders per pointer move by design, to keep the legend live; the heavy children
+  // must not re-render with it.
+  ok('the drawing rail is memoised', /const DrawingRail = memo\(DrawingRailBase\);/.test(rail));
+  ok('the drawing layer is memoised', /const DrawingLayer = memo\(DrawingLayerBase\);/.test(layer));
+  // A memo is worthless if its props are new objects every render.
+  for (const cb of ['toggleShowDrawings', 'toggleMagnet', 'openManager', 'openSettingsFor', 'requestNote'])
+    ok(`${cb} is a stable callback`, new RegExp(`const ${cb} = useCallback\\(`).test(cmp));
+  for (const prop of ['onToggleShow={toggleShowDrawings}', 'onToggleMagnet={toggleMagnet}',
+    'onOpenManager={openManager}', 'onOpenSettings={openSettingsFor}', 'onRequestText={requestNote}'])
+    ok(`...and is passed as one (${prop.split('=')[0]})`, cmp.includes(prop));
+  ok('no inline arrow is passed to the memoised children',
+    !/onToggleMagnet=\{\(\) =>/.test(cmp) && !/onRequestText=\{\(points\) =>/.test(cmp));
+  // Listener hygiene: everything registered on the document is removed again.
+  const adds = (ui.match(/document\.addEventListener/g) || []).length;
+  const removes = (ui.match(/document\.removeEventListener/g) || []).length;
+  ok('every document listener is removed again', adds === removes, `${adds} added, ${removes} removed`);
+  const wAdds = (ui.match(/window\.addEventListener/g) || []).length;
+  const wRemoves = (ui.match(/window\.removeEventListener/g) || []).length;
+  ok('every window listener is too', wAdds === wRemoves, `${wAdds} added, ${wRemoves} removed`);
+  ok('the chart’s own key handler is removed on unmount', /el\.removeEventListener\('keydown', onKey\)/.test(cmp));
+  ok('the resize observer is disconnected', /ro\.disconnect\(\)/.test(cmp));
+  ok('the chart instance is destroyed on unmount', /if \(chart\) chart\.remove\(\);/.test(cmp));
+  ok('...and its series references dropped with it', /overlaysRef\.current = \[\]; lwcRef\.current = null;/.test(cmp));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -8,7 +8,10 @@ import {
 } from '../../lib/chart/chart-source.mjs';
 import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
-import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from '../../lib/chart/chart-settings.mjs';
+import {
+  loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW,
+  loadToolDefaults, saveToolDefaults, rememberToolDefaults,
+} from '../../lib/chart/chart-settings.mjs';
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
 import {
   DEFAULT_STYLE, sanitizeStyle, cloneDrawing, moveDrawing, createDrawing, reorderDrawing,
@@ -105,6 +108,16 @@ export default function CPChart({
   const [noteText, setNoteText] = useState('');
   // Bumped on Escape, which tells the drawing layer to drop a measurement or a half-placed shape.
   const [clearSignal, setClearSignal] = useState(0);
+  /**
+   * WHAT EACH TOOL WAS LAST USED WITH.
+   *
+   * Drawing a second trend line should not mean choosing the colour, the width and the extensions
+   * again. Read on mount like the rest of the saved state, updated whenever a drawing's settings
+   * change, and applied to the next drawing of that type. Keyed by tool, so editing a Fibonacci's
+   * levels never changes what a rectangle looks like.
+   */
+  const [toolDefaults, setToolDefaults] = useState({});
+  useEffect(() => { setToolDefaults(loadToolDefaults()); }, []);
   // Saved selections are read once on mount rather than at module scope: localStorage does not exist
   // during server rendering, and reading it in the initial state would make the first client render
   // disagree with the server's.
@@ -161,6 +174,14 @@ export default function CPChart({
   const tfRef = useRef(initialTimeframe);
   const volumeOnRef = useRef(true);
   const barsRef = useRef([]);
+  /**
+   * time -> index, rebuilt whenever the bars are.
+   *
+   * The crosshair handler needs the PREVIOUS bar's close on every pointer move, and it used to find
+   * it by scanning the bar list backwards — five thousand comparisons per mouse move on a five-year
+   * daily chart, for one number. Built once per load instead.
+   */
+  const barIndexRef = useRef(new Map());
   const kindRef = useRef('daily');
   const themeRef = useRef(theme);
   const typeRef = useRef(chartType);
@@ -208,6 +229,8 @@ export default function CPChart({
    */
   const drawingsRef = useRef([]);
   drawingsRef.current = drawings;
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const selectedIdsRef = useRef([]);
   selectedIdsRef.current = selectedIds;
   const historyRef = useRef(emptyHistory());
@@ -385,6 +408,15 @@ export default function CPChart({
     }, 'image/png');
   }, [sym, tf, view.chartType, meta]);
 
+  // STABLE IDENTITIES. The crosshair sets state on every pointer move, so this component re-renders
+  // constantly; an inline arrow prop would be a new function each time and would defeat the memo on
+  // the rail and the drawing layer entirely.
+  const toggleShowDrawings = useCallback(() => patchView({ showDrawings: !viewRef.current.showDrawings }), [patchView]);
+  const toggleMagnet = useCallback(() => patchView({ magnet: !viewRef.current.magnet }), [patchView]);
+  const openManager = useCallback(() => setManagerOpen(true), []);
+  const openSettingsFor = useCallback((id) => setSettingsId(id), []);
+  const requestNote = useCallback((points, at) => { setNoteDraft({ points, at }); setNoteText(''); }, []);
+
   const undoDrawings = useCallback(() => {
     const r = undo(historyRef.current, drawingsRef.current);
     if (!r) return;
@@ -432,6 +464,15 @@ export default function CPChart({
   const applyStyle = useCallback((patch) => {
     setDrawStyle((prev) => {
       const next = sanitizeStyle({ ...prev, ...patch });
+      // A style chosen with a tool armed is that tool's style from now on — the same rule the
+      // settings dialog follows, so the two cannot disagree about what "last used" means.
+      if (activeTool) {
+        setToolDefaults((prevMap) => {
+          const map = rememberToolDefaults(prevMap, { type: activeTool, style: next });
+          saveToolDefaults(map);
+          return map;
+        });
+      }
       // Restyling applies to EVERY selected drawing, in one change — recolouring six lines is one
       // action and one undo step, not six.
       if (selectedIds.length) {
@@ -440,7 +481,7 @@ export default function CPChart({
       }
       return next;
     });
-  }, [selectedIds, updateDrawings]);
+  }, [selectedIds, updateDrawings, activeTool]);
 
   // EVERY path that changes drawings goes through updateDrawings, or it is not in the history.
   // These two used to call setDrawings directly, which meant a delete could not be undone at all.
@@ -645,10 +686,8 @@ export default function CPChart({
         // The PREVIOUS bar's close, for the change and percent. Found by time rather than by index
         // because param carries no index, and the bars are already sorted and deduplicated.
         const bars = barsRef.current;
-        let prev = null;
-        for (let i = bars.length - 1; i >= 0; i -= 1) {
-          if (bars[i].time === param.time) { prev = i > 0 ? bars[i - 1].close : null; break; }
-        }
+        const idx = barIndexRef.current.get(param.time);
+        const prev = (idx > 0) ? bars[idx - 1].close : null;
         const values = {};
         for (const [key, series] of legendSeriesRef.current) {
           const d = param.seriesData?.get(series);
@@ -799,6 +838,7 @@ export default function CPChart({
       // that only appends or updates the live bar is applied through update() instead.
       const delta = incremental ? diffBars(barsRef.current, bars) : null;
       barsRef.current = bars;
+      barIndexRef.current = new Map(bars.map((b, i) => [b.time, i]));
       // The at-rest readout: the last bar, and the close before it for the change.
       const lastBar = bars[bars.length - 1];
       setTail({
@@ -945,7 +985,16 @@ export default function CPChart({
           {!overflowed && (
             <ToolButton theme={theme} width={narrow ? 30 : 92} title="Indicators"
               active={browserOpen || active.length > 0} onClick={() => setBrowserOpen(true)}>
-              {narrow ? 'ƒ' : <><span>ƒ</span><span>Indicators{active.length ? ` ${active.length}` : ''}</span></>}
+              {narrow ? 'ƒ' : (
+              <>
+                <span>ƒ</span><span>Indicators</span>
+                {/* The count sits in a FIXED-WIDTH slot. Letting it widen the button shifted every
+                    control to its right the moment an indicator was added or removed. */}
+                <span style={{ width: 10, textAlign: 'right', opacity: active.length ? 1 : 0 }}>
+                  {active.length || ''}
+                </span>
+              </>
+            )}
             </ToolButton>
           )}
 
@@ -988,11 +1037,11 @@ export default function CPChart({
             style={drawStyle} onStyle={applyStyle}
             selected={selectedIds.length > 0} onDelete={deleteSelected}
             count={drawings.length} showDrawings={view.showDrawings}
-            onToggleShow={() => patchView({ showDrawings: !view.showDrawings })}
+            onToggleShow={toggleShowDrawings}
             onClearAll={clearAllDrawings}
             magnet={view.magnet === true}
-            onToggleMagnet={() => patchView({ magnet: !view.magnet })}
-            onOpenManager={() => setManagerOpen(true)}
+            onToggleMagnet={toggleMagnet}
+            onOpenManager={openManager}
             onUndo={undoDrawings} onRedo={redoDrawings}
             canUndo={canUndo(historyRef.current)} canRedo={canRedo(historyRef.current)}
             compact={narrow}
@@ -1026,10 +1075,10 @@ export default function CPChart({
             drawings={drawings} onChange={updateDrawings}
             activeTool={activeTool} onToolUsed={() => setActiveTool(null)}
             selectedIds={selectedIds} onSelect={selectDrawing}
-            onOpenSettings={(id) => setSettingsId(id)}
+            onOpenSettings={openSettingsFor}
             visible={view.showDrawings} style={drawStyle} magnet={view.magnet === true}
-            clearSignal={clearSignal}
-            onRequestText={(points) => { setNoteDraft({ points }); setNoteText(''); }}
+            clearSignal={clearSignal} toolDefaults={toolDefaults}
+            onRequestText={requestNote}
           />
         )}
 
@@ -1102,7 +1151,11 @@ export default function CPChart({
       <DrawingSettings
         open={!!settingsId} onClose={() => setSettingsId(null)} theme={theme}
         drawing={drawings.find((d) => d.id === settingsId) || null}
-        onChange={(next) => updateDrawings((ds) => ds.map((d) => (d.id === next.id ? next : d)), `settings:${next.id}`)}
+        onChange={(next) => {
+          updateDrawings((ds) => ds.map((d) => (d.id === next.id ? next : d)), `settings:${next.id}`);
+          // The settings a user just chose become that tool's defaults, so the next one starts here.
+          setToolDefaults((prev) => { const map = rememberToolDefaults(prev, next); saveToolDefaults(map); return map; });
+        }}
       />
 
       {/* THE CHART CONTEXT MENU — opens AT THE CURSOR, over the chart, and lists only actions this
@@ -1195,7 +1248,9 @@ export default function CPChart({
       {/* THE NOTE EDITOR. A note is placed, then written — an empty label on the chart is an
           invisible object the user would have to hunt for to remove, so nothing is created until
           there is something to show. Anchored at the chart so it cannot be clipped by the panel. */}
-      <Popover theme={theme} open={!!noteDraft} anchorRef={rootRef} onClose={() => { setNoteDraft(null); setNoteText(''); }}
+      <Popover theme={theme} open={!!noteDraft}
+        point={noteDraft?.at || null} anchorRef={noteDraft?.at ? null : rootRef}
+        onClose={() => { setNoteDraft(null); setNoteText(''); }}
         width={248} label="Note text">
         <MenuLabel theme={theme}>{noteDraft?.id ? 'Edit note' : 'New note'}</MenuLabel>
         <div style={{ padding: '2px 6px 7px' }}>

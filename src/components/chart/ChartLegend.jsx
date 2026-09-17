@@ -78,6 +78,9 @@ export default function ChartLegend({
       position: 'absolute', left: 8, top: 6, zIndex: 4, pointerEvents: 'none',
       display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 'calc(100% - 16px)',
       fontFamily: "'DM Sans',sans-serif", fontSize: 10.5, color: p.text, lineHeight: 1.35,
+      // TABULAR FIGURES. These numbers change on every pointer move, and proportional digits make
+      // the whole row shuffle sideways as they do — a 1 is far narrower than a 0 in this face.
+      fontVariantNumeric: 'tabular-nums',
     }}>
       {/* 1. IDENTITY */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>

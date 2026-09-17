@@ -285,15 +285,30 @@ export function MenuItem({
  */
 export function Modal({ theme, open, onClose, title, width = 460, children }) {
   const p = palette(theme);
+  const panelRef = useRef(null);
+  // ON THE SAME STACK AS THE POPOVERS. A modal with a menu open inside it must lose the menu first
+  // and itself second; two independent Escape handlers raced and the order depended on which
+  // listener happened to be registered first.
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    const el = panelRef.current;
+    if (el) openPanels.push(el);
+    return () => { const i = openPanels.indexOf(el); if (i !== -1) openPanels.splice(i, 1); };
+  }, [open]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (openPanels.length && openPanels[openPanels.length - 1] !== panelRef.current) return;
+      e.stopPropagation();
+      onClose();
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
   if (!open || typeof document === 'undefined') return null;
   return createPortal(
-    <div
+    <div ref={panelRef}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
         position: 'fixed', inset: 0, zIndex: MODAL_Z, background: 'rgba(0,0,0,0.42)',

@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   TOOLS, tool, activeCategories, categoryOfTool, LINE_WIDTHS, LINE_DASHES,
 } from '../../lib/chart/chart-drawings.mjs';
@@ -23,7 +23,7 @@ import { ToolButton, Popover, MenuItem, MenuLabel, VectorIcon } from './ChartUI'
 
 const RAIL_W = 34;
 
-export default function DrawingRail({
+function DrawingRailBase({
   theme, activeTool, onPick, style, onStyle,
   selected, onDelete, count, showDrawings, onToggleShow, onClearAll,
   magnet = false, onToggleMagnet, onOpenManager,
@@ -84,7 +84,8 @@ export default function DrawingRail({
             onClick={() => setOpenCat(openCat === cat.id ? null : cat.id)}
             style={{ position: 'absolute', right: -1, bottom: -1, width: 10, height: 10, padding: 0,
               lineHeight: '8px', fontSize: 7, background: 'transparent', border: 'none',
-              cursor: 'pointer', color: p.text }}>▸</button>
+              cursor: 'pointer', borderRadius: 2, transition: 'color 90ms ease',
+              color: openCat === cat.id ? p.up : p.text }}>▸</button>
         )}
         {/* BESIDE THE ICON, over the chart — the rail's equivalent of the toolbar dropdown. */}
         <Popover anchorRef={ref} open={openCat === cat.id} onClose={closeCat} theme={theme}
@@ -225,3 +226,9 @@ export default function DrawingRail({
 }
 
 export { RAIL_W };
+
+// MEMOISED. The chart re-renders on every crosshair move — that is one setState per pointer move by
+// design, to keep the legend live — and without this, DrawingRail re-rendered with it even though
+// none of its props had changed. Its callers pass stable callbacks for the same reason.
+const DrawingRail = memo(DrawingRailBase);
+export default DrawingRail;

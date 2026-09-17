@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useCallback } from 'react';
+import { memo, useEffect, useRef, useCallback } from 'react';
 import {
   TOOLS, tool, hitTest, createDrawing, moveDrawing, fibLevels, barLevels, snapToLevel, measureBetween,
   constrainAngle,
@@ -23,11 +23,11 @@ import { gestureToken } from '../../lib/chart/chart-history.mjs';
 
 const dashFor = (dash) => (dash === 'dashed' ? [7, 5] : dash === 'dotted' ? [2, 4] : []);
 
-export default function DrawingLayer({
+function DrawingLayerBase({
   chart, series, theme, symbol, bars,
   drawings, onChange, activeTool, onToolUsed,
   selectedIds = [], onSelect, visible = true, style = DEFAULT_STYLE, magnet = false,
-  onRequestText, onOpenSettings, clearSignal = 0,
+  onRequestText, onOpenSettings, clearSignal = 0, toolDefaults = null,
 }) {
   const canvasRef = useRef(null);
   const stateRef = useRef({});
@@ -36,6 +36,7 @@ export default function DrawingLayer({
   // A Set, so the paint loop asks "is this one selected" once per drawing rather than scanning.
   s.selected = new Set(selectedIds);
   s.theme = theme; s.visible = visible; s.style = style; s.bars = bars; s.magnet = magnet;
+  s.toolDefaults = toolDefaults;
 
   // ── data space <-> screen space ──
   const toScreen = useCallback((pt) => {
@@ -125,6 +126,7 @@ export default function DrawingLayer({
     if (!stateRef.current.visible) return;
 
     const p = palette(stateRef.current.theme);
+    const cw = w;
     for (const d of project()) {
       if (d.visible === false) continue;
       const colour = indicatorColor(stateRef.current.theme, d.style.color);
@@ -141,23 +143,54 @@ export default function DrawingLayer({
       }
 
       ctx.save();
-      ctx.strokeStyle = colour;
       ctx.lineWidth = d.style.width;
       ctx.setLineDash(dashFor(d.style.dash));
-      for (const [a, b] of d.segments) {
+      // A LEVEL'S OWN COLOUR applies to its line as well as its label; segments come back in the
+      // same order the levels do, so the two line up without the renderer knowing what a level is.
+      const segColours = tool(d.type)?.levels
+        ? fibLevels(d.source.points, d.source.levels).map((l) => indicatorColor(stateRef.current.theme, l.color ?? d.style.color))
+        : null;
+      d.segments.forEach(([a, b], i) => {
+        ctx.strokeStyle = segColours?.[i] || colour;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      }
+      });
       ctx.restore();
 
       // Fibonacci prints its ratio and price, which is the entire point of the tool.
       if (tool(d.type)?.levels && d.source.points.length === 2) {
+        const lv = fibLevels(d.source.points, d.source.levels);
+        const rows = lv
+          .map((l) => ({ ...l, y: series?.priceToCoordinate(l.price) }))
+          .filter((l) => l.y != null);
+
+        // OPTIONAL BANDS between adjacent levels. Off by default — the clean look is a set of lines,
+        // and a filled Fibonacci over candles is the fastest way to make a chart unreadable. When it
+        // is on the alpha is deliberately tiny, and alternating bands are skipped so the zones read
+        // as separate rather than as one wash.
+        if (d.source.fill && rows.length > 1) {
+          ctx.save();
+          ctx.globalAlpha = 0.07;
+          for (let i = 0; i < rows.length - 1; i += 1) {
+            if (i % 2 === 1) continue;
+            ctx.fillStyle = indicatorColor(stateRef.current.theme, rows[i].color ?? d.style.color);
+            const top = Math.min(rows[i].y, rows[i + 1].y);
+            ctx.fillRect(0, top, cw, Math.abs(rows[i + 1].y - rows[i].y));
+          }
+          ctx.restore();
+        }
+
         ctx.save();
-        ctx.fillStyle = colour;
         ctx.font = "10px 'DM Sans', sans-serif";
-        for (const lvl of fibLevels(d.source.points, d.source.levels)) {
-          const y = series?.priceToCoordinate(lvl.price);
-          if (y == null) continue;
-          ctx.fillText(`${(lvl.ratio * 100).toFixed(1)}%  ${lvl.price.toFixed(2)}`, 6, y - 3);
+        ctx.textBaseline = 'bottom';
+        for (const lvl of rows) {
+          // PER-LEVEL COLOUR when the level declares one, the drawing's own colour otherwise — which
+          // is what keeps the default a single clean hue.
+          ctx.fillStyle = indicatorColor(stateRef.current.theme, lvl.color ?? d.style.color);
+          const label = `${(lvl.ratio * 100).toFixed(1)}%  ${lvl.price.toFixed(2)}`;
+          // LABELS SIT AT THE RIGHT-HAND END OF THE LEVEL, not at x=6. They used to be pinned to the
+          // left edge, where they landed directly under the chart legend and the two overlapped.
+          const w = ctx.measureText(label).width;
+          ctx.fillText(label, Math.max(4, Math.min(cw - w - 6, cw - w - 6)), lvl.y - 2);
         }
         ctx.restore();
       }
@@ -231,7 +264,10 @@ export default function DrawingLayer({
         if (second.length) lines.push(second.join('  ·  '));
 
         if (lines.length) {
+          // Tabular figures: the numbers change on every pointer move, and proportional digits make
+          // the whole box breathe in and out as they do.
           ctx.font = "600 11.5px 'DM Sans', sans-serif";
+          ctx.letterSpacing = '0px';
           const w = Math.max(...lines.map((t) => ctx.measureText(t).width)) + 16;
           const h = lines.length * 15 + 9;
           // Clamped into the canvas, so a measurement taken at the edge still reads.
@@ -358,9 +394,11 @@ export default function DrawingLayer({
         } else if (def.hasText) {
           // A note needs its text before it exists — an empty label on the chart is just a dot the
           // user has to go and find again. The caller opens the editor and creates it on commit.
-          onRequestText?.(pts);
+          // The click's VIEWPORT position travels with it, so the editor opens where the note will
+          // be rather than hanging off the bottom of the chart.
+          onRequestText?.(pts, { x: e.clientX, y: e.clientY });
         } else {
-          const made = createDrawing(s.activeTool, pts, s.style, s.drawings);
+          const made = createDrawing(s.activeTool, pts, s.style, s.drawings, s.toolDefaults?.[s.activeTool] || {});
           if (made) { onChange([...s.drawings, made]); onSelect(made.id); }
         }
         onToolUsed();
@@ -454,3 +492,9 @@ export default function DrawingLayer({
     />
   );
 }
+
+// MEMOISED. The chart re-renders on every crosshair move — that is one setState per pointer move by
+// design, to keep the legend live — and without this, DrawingLayer re-rendered with it even though
+// none of its props had changed. Its callers pass stable callbacks for the same reason.
+const DrawingLayer = memo(DrawingLayerBase);
+export default DrawingLayer;

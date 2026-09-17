@@ -192,7 +192,16 @@ export function sanitizeFibLevels(raw) {
     const key = ratio.toFixed(6);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ ratio, visible: (typeof l === 'object' && l !== null) ? l.visible !== false : true });
+    const obj = (typeof l === 'object' && l !== null) ? l : {};
+    // A per-level colour is an INDEX into the theme palette, like every other colour in the chart,
+    // and is optional: absent means "use the drawing's own colour", which is what keeps the default
+    // appearance a single clean hue rather than a rainbow.
+    const color = Number(obj.color);
+    out.push({
+      ratio,
+      visible: obj.visible !== false,
+      ...(Number.isFinite(color) ? { color: Math.max(0, Math.round(color)) } : {}),
+    });
   }
   if (!out.length) return DEFAULT_FIB_LEVELS.map((l) => ({ ...l }));
   out.sort((x, y) => x.ratio - y.ratio);
@@ -211,7 +220,8 @@ export function fibLevels(points, levels = null) {
   if (!a || !b) return [];
   const span = a.price - b.price;
   const list = levels ? sanitizeFibLevels(levels) : DEFAULT_FIB_LEVELS;
-  return list.filter((l) => l.visible !== false).map((l) => ({ ratio: l.ratio, price: b.price + span * l.ratio }));
+  return list.filter((l) => l.visible !== false)
+    .map((l) => ({ ratio: l.ratio, price: b.price + span * l.ratio, color: l.color }));
 }
 
 // ── measurement ──────────────────────────────────────────────────────────────
@@ -441,7 +451,7 @@ export function createDrawing(type, points, style = {}, existing = [], extra = {
     // Only a tool that CAN extend carries the flags, and only one with editable levels carries them;
     // an extendLeft on a rectangle would be a field nothing reads and everything has to preserve.
     ...(def.extendable ? { extendLeft: extra.extendLeft === true, extendRight: extra.extendRight === true } : {}),
-    ...(def.editableLevels ? { levels: sanitizeFibLevels(extra.levels) } : {}),
+    ...(def.editableLevels ? { levels: sanitizeFibLevels(extra.levels), fill: extra.fill === true } : {}),
     id: newDrawingId(type, existing),
     type,
     points: points.map((p) => ({ time: p.time, price: Number(p.price) })),
@@ -530,6 +540,6 @@ export function coerceDrawing(raw, existing = []) {
     locked: raw?.locked === true,
     ...(def.hasText ? { text: typeof raw?.text === 'string' ? raw.text : '' } : {}),
     ...(def.extendable ? { extendLeft: raw?.extendLeft === true, extendRight: raw?.extendRight === true } : {}),
-    ...(def.editableLevels ? { levels: sanitizeFibLevels(raw?.levels) } : {}),
+    ...(def.editableLevels ? { levels: sanitizeFibLevels(raw?.levels), fill: raw?.fill === true } : {}),
   };
 }
