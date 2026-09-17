@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "verify:render": "node scripts/verify-render.mjs",
+    "verify:chart": "node scripts/verify-chart.mjs",
+    "verify:scan": "node scripts/verify-scan.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.3",

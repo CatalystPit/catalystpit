@@ -408,15 +408,6 @@ export default function CPChart({
     }, 'image/png');
   }, [sym, tf, view.chartType, meta]);
 
-  // STABLE IDENTITIES. The crosshair sets state on every pointer move, so this component re-renders
-  // constantly; an inline arrow prop would be a new function each time and would defeat the memo on
-  // the rail and the drawing layer entirely.
-  const toggleShowDrawings = useCallback(() => patchView({ showDrawings: !viewRef.current.showDrawings }), [patchView]);
-  const toggleMagnet = useCallback(() => patchView({ magnet: !viewRef.current.magnet }), [patchView]);
-  const openManager = useCallback(() => setManagerOpen(true), []);
-  const openSettingsFor = useCallback((id) => setSettingsId(id), []);
-  const requestNote = useCallback((points, at) => { setNoteDraft({ points, at }); setNoteText(''); }, []);
-
   const undoDrawings = useCallback(() => {
     const r = undo(historyRef.current, drawingsRef.current);
     if (!r) return;
@@ -458,6 +449,26 @@ export default function CPChart({
     saveView(view);
   }, [view]);
   const patchView = useCallback((next) => { viewDirty.current = true; setView((v) => ({ ...v, ...next })); }, []);
+
+  /**
+   * STABLE IDENTITIES for the props handed to the memoised children.
+   *
+   * The crosshair sets state on every pointer move, so this component re-renders constantly; an
+   * inline arrow prop would be a new function each time and would defeat the memo on the drawing
+   * rail and the drawing layer entirely.
+   *
+   * DECLARED AFTER patchView, AND THAT ORDERING IS load-bearing. A hook's dependency array is
+   * evaluated EAGERLY during render, so listing `patchView` above its own `const` threw
+   * "Cannot access 'patchView' before initialization" on the very first render — taking the whole
+   * chart, and therefore the whole Terminal, into the error boundary. The callback bodies would have
+   * been fine, because those only run later; it is the dependency array that reaches the temporal
+   * dead zone.
+   */
+  const toggleShowDrawings = useCallback(() => patchView({ showDrawings: !viewRef.current.showDrawings }), [patchView]);
+  const toggleMagnet = useCallback(() => patchView({ magnet: !viewRef.current.magnet }), [patchView]);
+  const openManager = useCallback(() => setManagerOpen(true), []);
+  const openSettingsFor = useCallback((id) => setSettingsId(id), []);
+  const requestNote = useCallback((points, at) => { setNoteDraft({ points, at }); setNoteText(''); }, []);
 
   // Style edits apply to the SELECTION when there is one, and otherwise set the style of the next
   // drawing — which is how every charting tool behaves and avoids a separate edit mode.
