@@ -1,10 +1,11 @@
 'use client';
 import { useEffect, useRef, useCallback } from 'react';
 import {
-  TOOLS, tool, hitTest, createDrawing, moveDrawing, fibLevels, barLevels, snapToLevel,
+  TOOLS, tool, hitTest, createDrawing, moveDrawing, fibLevels, barLevels, snapToLevel, measureBetween,
   HANDLE_RADIUS, DEFAULT_STYLE,
 } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
+import { gestureToken } from '../../lib/chart/chart-history.mjs';
 
 // The drawing surface: one canvas sitting over the chart.
 //
@@ -25,6 +26,7 @@ export default function DrawingLayer({
   chart, series, theme, symbol, bars,
   drawings, onChange, activeTool, onToolUsed,
   selectedId, onSelect, visible = true, style = DEFAULT_STYLE, magnet = false,
+  onRequestText, clearSignal = 0,
 }) {
   const canvasRef = useRef(null);
   const stateRef = useRef({});
@@ -155,6 +157,28 @@ export default function DrawingLayer({
         ctx.restore();
       }
 
+      // A TEXT NOTE IS ITS STRING. It draws no segments, so without this it would be invisible.
+      if (tool(d.source.type)?.hasText) {
+        const anchor = d.handles[0];
+        if (anchor) {
+          ctx.save();
+          ctx.font = "600 12px 'DM Sans', sans-serif";
+          ctx.textBaseline = 'middle';
+          const label = d.source.text || 'Note';
+          const w = ctx.measureText(label).width;
+          // A backing plate, so a note stays readable over candles rather than fighting them.
+          ctx.fillStyle = p.tooltipBg;
+          ctx.strokeStyle = colour;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect?.(anchor.x + 6, anchor.y - 10, w + 12, 20, 4);
+          if (ctx.roundRect) { ctx.fill(); ctx.stroke(); }
+          ctx.fillStyle = colour;
+          ctx.fillText(label, anchor.x + 12, anchor.y);
+          ctx.restore();
+        }
+      }
+
       if (isSel) {
         ctx.save();
         ctx.fillStyle = p.background;
@@ -162,6 +186,58 @@ export default function DrawingLayer({
         ctx.lineWidth = 2;
         for (const hnd of d.handles) {
           ctx.beginPath(); ctx.arc(hnd.x, hnd.y, HANDLE_RADIUS, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    // THE MEASUREMENT. Painted over everything because it is what the user is reading right now.
+    const meas = stateRef.current.measure;
+    if (meas?.points?.length === 2) {
+      const list = stateRef.current.bars || [];
+      const r = measureBetween(meas.points[0], meas.points[1], list);
+      const p1 = toScreen(meas.points[0]);
+      const p2 = toScreen(meas.points[1]);
+      if (p1 && p2 && r) {
+        const pal = palette(stateRef.current.theme);
+        const tone = r.up ? pal.up : pal.down;
+        ctx.save();
+        // The shaded span, then its outline: the shape says "from here to here" at a glance.
+        ctx.fillStyle = r.up ? pal.volumeUp : pal.volumeDown;
+        ctx.globalAlpha = 0.45;
+        ctx.fillRect(Math.min(p1.x, p2.x), Math.min(p1.y, p2.y), Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y));
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = tone;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(Math.min(p1.x, p2.x), Math.min(p1.y, p2.y), Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y));
+        // The direction arrow, down the middle.
+        ctx.beginPath(); ctx.moveTo((p1.x + p2.x) / 2, p1.y); ctx.lineTo((p1.x + p2.x) / 2, p2.y); ctx.stroke();
+
+        // EVERY FIGURE IS DERIVED, AND A MISSING ONE IS OMITTED — never shown as zero. Volume is not
+        // reported at all: summing it over a range needs data this chart does not hold.
+        const lines = [];
+        if (r.change != null) {
+          lines.push(`${r.change >= 0 ? '+' : '−'}${Math.abs(r.change).toFixed(2)}`
+            + (r.pct != null ? `  (${r.change >= 0 ? '+' : '−'}${Math.abs(r.pct).toFixed(2)}%)` : ''));
+        }
+        const second = [];
+        if (r.bars != null) second.push(`${r.bars} bar${r.bars === 1 ? '' : 's'}`);
+        if (r.duration) second.push(r.duration);
+        if (second.length) lines.push(second.join('  ·  '));
+
+        if (lines.length) {
+          ctx.font = "600 11.5px 'DM Sans', sans-serif";
+          const w = Math.max(...lines.map((t) => ctx.measureText(t).width)) + 16;
+          const h = lines.length * 15 + 9;
+          // Clamped into the canvas, so a measurement taken at the edge still reads.
+          const bx = Math.max(4, Math.min((p1.x + p2.x) / 2 - w / 2, (canvasRef.current?.clientWidth || 0) - w - 4));
+          const by = Math.max(4, Math.min(p2.y + (p2.y >= p1.y ? 8 : -h - 8), (canvasRef.current?.clientHeight || 0) - h - 4));
+          ctx.fillStyle = tone;
+          ctx.beginPath();
+          if (ctx.roundRect) { ctx.roundRect(bx, by, w, h, 5); ctx.fill(); } else ctx.fillRect(bx, by, w, h);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.textBaseline = 'top';
+          lines.forEach((t, i) => ctx.fillText(t, bx + 8, by + 6 + i * 15));
         }
         ctx.restore();
       }
@@ -186,6 +262,16 @@ export default function DrawingLayer({
       }
     }
   }, [project, toScreen, currentView, series]);
+
+  // Escape (handled by the chart, which owns the shortcuts) clears a measurement and any half-placed
+  // shape. A counter rather than a callback: the layer keeps these in a ref, so there is no state to
+  // lift and nothing to keep in sync.
+  useEffect(() => {
+    if (!clearSignal) return;
+    stateRef.current.measure = null;
+    stateRef.current.draft = null;
+    paint();
+  }, [clearSignal, paint]);
 
   // Repaint whenever the chart moves. Subscribing to the chart's own events keeps the overlay in
   // lockstep with it instead of guessing with a timer.
@@ -240,15 +326,29 @@ export default function DrawingLayer({
       s.draft = s.draft?.type === s.activeTool ? s.draft : { type: s.activeTool, points: [] };
       s.draft.points.push(data);
       if (s.draft.points.length >= def.points) {
-        const made = createDrawing(s.activeTool, s.draft.points, s.style, s.drawings);
+        const pts = s.draft.points;
         s.draft = null;
-        if (made) { onChange([...s.drawings, made]); onSelect(made.id); }
+        if (def.transient) {
+          // A MEASUREMENT IS NOT A DRAWING. It answers a question and is then done with, so it is
+          // held here and painted, never stored and never in the object tree.
+          s.measure = { type: def.id, points: pts };
+        } else if (def.hasText) {
+          // A note needs its text before it exists — an empty label on the chart is just a dot the
+          // user has to go and find again. The caller opens the editor and creates it on commit.
+          onRequestText?.(pts);
+        } else {
+          const made = createDrawing(s.activeTool, pts, s.style, s.drawings);
+          if (made) { onChange([...s.drawings, made]); onSelect(made.id); }
+        }
         onToolUsed();
       }
       e.currentTarget.setPointerCapture?.(e.pointerId);
       paint();
       return;
     }
+    // A click anywhere with no tool armed dismisses a measurement — the same gesture that dismisses
+    // it on every platform that has one.
+    if (s.measure) { s.measure = null; paint(); }
     // SELECTING or starting a drag.
     const hit = hitTest(pt, project());
     onSelect(hit ? hit.id : null);
@@ -259,7 +359,10 @@ export default function DrawingLayer({
       // it. moveDrawing refuses too; this just avoids arming a drag that would do nothing.
       if (d && !d.locked) {
         const data = toData(pt.x, pt.y);
-        s.drag = { id: hit.id, handle: hit.handle, from: data, original: d };
+        // ONE TOKEN FOR THE WHOLE DRAG. Every pointer move reports a change; tagging them all with
+        // the same token collapses them into the single undo step a user expects, instead of a
+        // hundred one-pixel steps.
+        s.drag = { id: hit.id, handle: hit.handle, from: data, original: d, token: gestureToken('drag') };
         e.currentTarget.setPointerCapture?.(e.pointerId);
       }
     }
@@ -268,14 +371,23 @@ export default function DrawingLayer({
 
   const onPointerMove = (e) => {
     const pt = localPoint(e);
-    if (s.draft?.points?.length) { s.draft.cursor = toData(pt.x, pt.y); paint(); return; }
+    if (s.draft?.points?.length) {
+      s.draft.cursor = toData(pt.x, pt.y);
+      // A ruler that only reports once both ends are placed is far less useful than one that counts
+      // as you move, so the measurement updates live from the first anchor to the cursor.
+      if (tool(s.draft.type)?.transient && s.draft.cursor) {
+        s.measure = { type: s.draft.type, points: [s.draft.points[0], s.draft.cursor] };
+      }
+      paint();
+      return;
+    }
     if (!s.drag) return;
     const now = toData(pt.x, pt.y);
     if (!now || !s.drag.from) return;
     const dTime = (typeof now.time === 'number' && typeof s.drag.from.time === 'number') ? now.time - s.drag.from.time : 0;
     const dPrice = now.price - s.drag.from.price;
     const moved = moveDrawing(s.drag.original, { dTime, dPrice }, s.drag.handle);
-    onChange(s.drawings.map((d) => (d.id === moved.id ? moved : d)));
+    onChange(s.drawings.map((d) => (d.id === moved.id ? moved : d)), s.drag.token);
   };
 
   const endDrag = (e) => {

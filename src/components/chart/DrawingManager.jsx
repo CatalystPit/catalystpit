@@ -26,13 +26,15 @@ function summarize(d) {
   // A horizontal line is a price; a vertical line is a time; everything else is a span of prices.
   if (d.type === 'horizontal') return price(pts[0].price);
   if (d.type === 'vertical') return typeof pts[0].time === 'string' ? pts[0].time : '';
+  // A note is its words: the price it sits at says far less about which note this is.
+  if (typeof d.text === 'string') return d.text || '(empty)';
   if (pts.length >= 2) return `${price(pts[0].price)} → ${price(pts[pts.length - 1].price)}`;
   return price(pts[0].price);
 }
 
 export default function DrawingManager({
   open, onClose, theme, symbol, drawings, selectedId,
-  onSelect, onChange, onDuplicate, onClearAll,
+  onSelect, onChange, onDuplicate, onEditText, onClearAll,
 }) {
   const p = palette(theme);
 
@@ -80,6 +82,10 @@ export default function DrawingManager({
                   textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summarize(d)}</span>
               </button>
 
+              {typeof d.text === 'string' && (
+                <ToolButton theme={theme} title="Edit text"
+                  onClick={() => onEditText?.(d.id, d.text)}>✎</ToolButton>
+              )}
               <ToolButton theme={theme} title={on ? 'Hide' : 'Show'}
                 onClick={() => patch(d.id, { visible: !on })}>{on ? '👁' : '◦'}</ToolButton>
               {/* LOCK is enforced in moveDrawing, not just here, so there is no path around it. */}

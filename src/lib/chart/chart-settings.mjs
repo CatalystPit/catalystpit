@@ -129,6 +129,8 @@ export const DEFAULT_VIEW = {
   autoScale: true,
   extended: false,
   showDrawings: true,
+  // A flipped price scale. Off by default: it is a deliberate choice, never a default view.
+  invertScale: false,
   // Magnet is off by default, as it is on every platform that has one: it changes where an anchor
   // lands, and a user who has not asked for that should not meet it.
   magnet: false,
@@ -153,6 +155,7 @@ export function loadView() {
       extended: v.extended === true,
       showDrawings: v.showDrawings !== false,
       magnet: v.magnet === true,
+      invertScale: v.invertScale === true,
     };
   } catch {
     return { ...DEFAULT_VIEW };

@@ -67,6 +67,38 @@ export const TOOLS = {
     },
     fill: true,
   },
+  text: {
+    id: 'text', label: 'Text note', icon: 'T', points: 1,
+    shapes: [
+      ['line', { x1: 3, y1: 4, x2: 13, y2: 4 }],
+      ['line', { x1: 8, y1: 4, x2: 8, y2: 13 }],
+    ],
+    // A note is an anchor and a string. It draws no segments; the renderer paints its text and the
+    // hit test uses the anchor handle, which is why 'segments' returns nothing rather than faking a
+    // zero-length line that would be invisible to click.
+    segments: () => [],
+    hasText: true,
+  },
+  measure: {
+    id: 'measure', label: 'Measure', icon: '⇱', points: 2,
+    shapes: [
+      ['rect', { x: 2.5, y: 3.5, width: 11, height: 9, faint: true, fill: true }],
+      ['line', { x1: 8, y1: 3.5, x2: 8, y2: 12.5 }],
+      ['polyline', { points: '6,5.5 8,3.5 10,5.5' }],
+      ['polyline', { points: '6,10.5 8,12.5 10,10.5' }],
+    ],
+    segments: (pt) => {
+      const [a, b] = pt;
+      const c1 = { time: a.time, price: a.price }, c2 = { time: b.time, price: a.price };
+      const c3 = { time: b.time, price: b.price }, c4 = { time: a.time, price: b.price };
+      return [[c1, c2], [c2, c3], [c3, c4], [c4, c1]];
+    },
+    fill: true,
+    // TRANSIENT. A measurement answers a question and is then done with; TradingView's behaves the
+    // same way. It is never persisted, never appears in the object tree, and the next click or
+    // Escape clears it — which is why it must not go through createDrawing at all.
+    transient: true,
+  },
   fib: {
     id: 'fib', label: 'Fibonacci retracement', icon: '≡', points: 2,
     shapes: [
@@ -104,8 +136,10 @@ export const TOOL_CATEGORIES = [
   { id: 'shapes', label: 'Shapes', icon: '▭', tools: ['rectangle'],
     shapes: [['rect', { x: 2.5, y: 4, width: 11, height: 8 }]] },
   // Declared for later. Rendered only once they have tools.
-  { id: 'text', label: 'Text & notes', icon: 'T', tools: [], shapes: [] },
-  { id: 'measure', label: 'Measure', icon: '⇱', tools: [], shapes: [] },
+  { id: 'text', label: 'Text & notes', icon: 'T', tools: ['text'],
+    shapes: [['line', { x1: 3, y1: 4, x2: 13, y2: 4 }], ['line', { x1: 8, y1: 4, x2: 8, y2: 13 }]] },
+  { id: 'measure', label: 'Measure', icon: '⇱', tools: ['measure'],
+    shapes: [['line', { x1: 8, y1: 3, x2: 8, y2: 13 }], ['polyline', { points: '5.5,5.5 8,3 10.5,5.5' }], ['polyline', { points: '5.5,10.5 8,13 10.5,10.5' }]] },
 ];
 
 /** Only the categories that actually have something in them. */
@@ -133,6 +167,65 @@ export function fibLevels(points) {
   if (!a || !b) return [];
   const span = a.price - b.price;
   return TOOLS.fib.ratios.map((r) => ({ ratio: r, price: b.price + span * r }));
+}
+
+// ── measurement ──────────────────────────────────────────────────────────────
+
+/** A time in bar-list form turned into milliseconds, or null when it cannot be. */
+function timeMs(t) {
+  if (typeof t === 'number') return t * 1000;              // UNIX seconds, the intraday shape
+  if (typeof t === 'string') {                             // 'YYYY-MM-DD', the daily shape
+    const ms = Date.parse(`${t}T00:00:00Z`);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+/** A duration in the largest unit that still reads naturally. */
+export function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return null;
+  const abs = Math.abs(ms);
+  const m = abs / 60000;
+  if (m < 60) return `${Math.round(m)}m`;
+  const h = m / 60;
+  if (h < 24) return h < 10 ? `${h.toFixed(1)}h` : `${Math.round(h)}h`;
+  const d = h / 24;
+  if (d < 31) return d < 10 ? `${d.toFixed(1)}d` : `${Math.round(d)}d`;
+  const mo = d / 30.44;
+  if (mo < 12) return `${mo.toFixed(1)}mo`;
+  return `${(d / 365.25).toFixed(1)}y`;
+}
+
+/**
+ * What a measurement between two anchors reports.
+ *
+ * Every field is derived from data the chart already has, and any field that CANNOT be derived is
+ * null rather than zero — a measurement that quietly reports "0 bars" because it could not find the
+ * anchors is worse than one that reports nothing.
+ *
+ *   change   the price difference, signed
+ *   pct      that as a percentage OF THE FIRST ANCHOR, which is what "up 2%" means
+ *   bars     how many bars lie between the anchors, by index, not by arithmetic on timestamps —
+ *            weekends, holidays and half-days make any time-based bar count wrong
+ *   ms       elapsed wall-clock time, which is a different and also useful question
+ */
+export function measureBetween(a, b, bars = []) {
+  if (!a || !b) return null;
+  const from = Number(a.price);
+  const to = Number(b.price);
+  const change = (Number.isFinite(from) && Number.isFinite(to)) ? to - from : null;
+  // Percent is meaningless against a zero or missing base, so it is null rather than Infinity.
+  const pct = (change != null && Number.isFinite(from) && from !== 0) ? (change / from) * 100 : null;
+
+  const ia = bars.findIndex((x) => x.time === a.time);
+  const ib = bars.findIndex((x) => x.time === b.time);
+  const barCount = (ia >= 0 && ib >= 0) ? Math.abs(ib - ia) : null;
+
+  const ma = timeMs(a.time);
+  const mb = timeMs(b.time);
+  const ms = (ma != null && mb != null) ? Math.abs(mb - ma) : null;
+
+  return { change, pct, bars: barCount, ms, duration: formatDuration(ms), up: change == null ? null : change >= 0 };
 }
 
 // ── magnet ───────────────────────────────────────────────────────────────────
@@ -226,11 +319,17 @@ export function newDrawingId(type, existing = []) {
   return `${type}-x${seq}`;
 }
 
-export function createDrawing(type, points, style = {}, existing = []) {
+export function createDrawing(type, points, style = {}, existing = [], extra = {}) {
   const def = tool(type);
   if (!def || !Array.isArray(points) || points.length !== def.points) return null;
   if (points.some((p) => !p || !Number.isFinite(Number(p.price)) || p.time == null)) return null;
+  // A transient tool answers a question rather than leaving something behind, so it never becomes a
+  // stored drawing. Refusing here means no caller can persist one by accident.
+  if (def.transient) return null;
   return {
+    // Only a tool that declares text carries any: an arbitrary payload on every drawing would
+    // round-trip through storage and become a place for junk to accumulate.
+    ...(def.hasText ? { text: typeof extra.text === 'string' ? extra.text : '' } : {}),
     id: newDrawingId(type, existing),
     type,
     points: points.map((p) => ({ time: p.time, price: Number(p.price) })),
@@ -317,5 +416,6 @@ export function coerceDrawing(raw, existing = []) {
     visible: raw?.visible !== false,
     // Absent means unlocked: a stored drawing from before locks existed must stay movable.
     locked: raw?.locked === true,
+    ...(def.hasText ? { text: typeof raw?.text === 'string' ? raw.text : '' } : {}),
   };
 }

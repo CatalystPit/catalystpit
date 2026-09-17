@@ -33,6 +33,8 @@ import { INDICATOR_CATEGORIES, indicatorMeta, searchIndicators } from '../src/li
 import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../src/lib/chart/chart-drawings.mjs';
 import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover.mjs';
 import { cloneDrawing, barLevels, snapToLevel, MAGNET_PX } from '../src/lib/chart/chart-drawings.mjs';
+import { measureBetween, formatDuration } from '../src/lib/chart/chart-drawings.mjs';
+import { emptyHistory, record, undo, redo, canUndo, canRedo, MAX_HISTORY } from '../src/lib/chart/chart-history.mjs';
 import { TIMEFRAME_GROUPS, timeframesByGroup, ADAPTER, isServable, unavailableReason,
   PLANNED_TIMEFRAMES } from '../src/lib/chart/chart-source.mjs';
 
@@ -770,9 +772,14 @@ section('16. drawing tools are grouped into categories on a left rail');
     TOOL_CATEGORIES.find((c) => c.id === 'lines').tools.join(',') === 'trend,ray,horizontal,vertical');
   ok('categoryOfTool resolves', categoryOfTool('ray')?.id === 'lines');
   ok('an unknown tool has no category', categoryOfTool('nope') === null);
-  // Empty categories are declared for the roadmap but must not put a dead button on the chart.
-  ok('empty categories are declared', TOOL_CATEGORIES.some((c) => c.tools.length === 0));
-  ok('...but are not rendered', activeCategories().every((c) => c.tools.length > 0));
+  // A category with no REAL tool must not put a dead button on the chart. Every declared category
+  // now has one — text and measure were the last two empty ones — so the filter is proved against a
+  // category invented here rather than by requiring the product to keep an empty one forever.
+  ok('every declared category is now populated', TOOL_CATEGORIES.every((c) => c.tools.length > 0));
+  ok('...and all of them render', activeCategories().length === TOOL_CATEGORIES.length);
+  ok('a category naming only tools that do not exist would not render',
+    activeCategories.call(null) && [{ id: 'ghost', label: 'Ghost', tools: ['nope'] }]
+      .filter((c) => c.tools.some((t) => !!TOOLS[t])).length === 0);
   ok('every rendered category has a real tool',
     activeCategories().every((c) => c.tools.some((t) => !!TOOLS[t])));
 
@@ -1341,7 +1348,8 @@ section('22. context menu, magnet, drawing manager, panes');
 
   // ── 1. THE CONTEXT MENU ─────────────────────────────────────────────────────────────────────
   ok('right-clicking the chart opens our menu, not the browser’s',
-    /onContextMenu=\{\(e\) => \{ e\.preventDefault\(\); setMenuAt\(\{ x: e\.clientX, y: e\.clientY \}\); \}\}/.test(cmp));
+    /onContextMenu=\{\(e\) => \{\s*\n\s*e\.preventDefault\(\);/.test(cmp)
+      && /setMenuAt\(\{ x: e\.clientX, y: e\.clientY \}\)/.test(cmp));
   // Only over the chart: "copy" and "inspect" are sometimes genuinely wanted on the toolbar.
   ok('...only over the chart surface', (cmp.match(/onContextMenu=/g) || []).length === 1);
   ok('it opens AT the cursor', /<Popover theme=\{theme\} open=\{!!menuAt\} point=\{menuAt\}/.test(cmp));
@@ -1463,6 +1471,156 @@ section('22. context menu, magnet, drawing manager, panes');
   ok('the saved chart type is validated against the registry',
     /CHART_TYPE_IDS\.includes\(v\.chartType\)/.test(settings));
   ok('...so Area is no longer thrown away on reload', !/v\.chartType === 'Line' \? 'Line' : 'Candles'/.test(settings));
+}
+
+section('23. undo/redo, the ruler, notes, the price scale and nudge');
+{
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
+  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
+  const settings = await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8');
+
+  // ── 1. UNDO / REDO ──────────────────────────────────────────────────────────────────────────
+  let h = emptyHistory();
+  ok('a fresh history can do neither', !canUndo(h) && !canRedo(h));
+  h = record(h, ['a']);
+  h = record(h, ['b']);
+  ok('recording enables undo', canUndo(h) && h.past.length === 2);
+  const u1 = undo(h, ['c']);
+  ok('undo returns the previous state', u1.state[0] === 'b');
+  ok('...and makes the current one redoable', canRedo(u1.history) && u1.history.future.length === 1);
+  // Null-guarded: if undo stopped filling the redo stack this must FAIL, not throw and take every
+  // assertion after it down with it.
+  const r1 = redo(u1.history, u1.state);
+  ok('redo returns what undo took away', r1?.state?.[0] === 'c');
+  ok('undo on an empty history is null, not a crash', undo(emptyHistory(), []) === null);
+  ok('redo on an empty history likewise', redo(emptyHistory(), []) === null);
+  // Branching: once you undo and then make a new edit, the old future is gone — every editor does
+  // this, and keeping it would mean two conflicting futures.
+  ok('a new edit after an undo clears the redo stack', record(u1.history, ['d']).future.length === 0);
+  // COALESCING is what makes a drag one undo step instead of a hundred.
+  let g = emptyHistory();
+  g = record(g, ['x'], 'drag:1'); g = record(g, ['y'], 'drag:1'); g = record(g, ['z'], 'drag:1');
+  ok('one gesture records once', g.past.length === 1);
+  ok('...and records the state from BEFORE the gesture', g.past[0][0] === 'x');
+  ok('a second gesture records again', record(g, ['w'], 'drag:2').past.length === 2);
+  ok('untagged edits never coalesce',
+    record(record(emptyHistory(), [1]), [2]).past.length === 2);
+  ok('a gesture cannot span an undo', undo(g, ['q']).history.tag === null);
+  // Bounded, or a long session grows without limit.
+  let big = emptyHistory();
+  for (let i = 0; i < MAX_HISTORY + 25; i += 1) big = record(big, [i]);
+  ok('the stack is capped', big.past.length === MAX_HISTORY);
+  ok('...dropping the oldest, not the newest', big.past[big.past.length - 1][0] === MAX_HISTORY + 24);
+  ok('history is a value, so panels never share one', emptyHistory() !== emptyHistory());
+
+  ok('every drawing change records, so the history is complete',
+    /historyRef\.current = record\(historyRef\.current, prev, tag\);/.test(cmp));
+  ok('a drag passes one token for its whole duration', /token: gestureToken\('drag'\)/.test(layer));
+  ok('...and every move of that drag carries it', /onChange\(s\.drawings\.map\([^\n]*\), s\.drag\.token\);/.test(layer));
+  ok('undo is bound on the chart, not the document',
+    /const mod = e\.ctrlKey \|\| e\.metaKey;/.test(cmp) && /el\.addEventListener\('keydown', onKey\)/.test(cmp));
+  ok('Ctrl\\/Cmd+Z undoes', /if \(mod && \(e\.key === 'z' \|\| e\.key === 'Z'\)\)/.test(cmp));
+  ok('...shift redoes', /if \(e\.shiftKey\) redoDrawings\(\); else undoDrawings\(\);/.test(cmp));
+  ok('Ctrl+Y redoes too', /if \(mod && \(e\.key === 'y' \|\| e\.key === 'Y'\)\)/.test(cmp));
+  ok('other modified keys are left to the browser', /if \(mod\) return;/.test(cmp));
+  ok('typing in a field is never intercepted', /t\.tagName === 'INPUT'/.test(cmp));
+  ok('the history resets with the symbol', /historyRef\.current = emptyHistory\(\);/.test(cmp));
+  ok('the rail carries undo and redo', /title="Undo \(Ctrl\+Z\)"/.test(rail) && /title="Redo \(Ctrl\+Y\)"/.test(rail));
+  ok('...disabled when there is nothing to do', /disabled=\{!canUndo\}/.test(rail) && /disabled=\{!canRedo\}/.test(rail));
+
+  // ── 2. THE RULER ────────────────────────────────────────────────────────────────────────────
+  const mbars = [{ time: 100 }, { time: 200 }, { time: 300 }, { time: 400 }];
+  const m = measureBetween({ time: 100, price: 50 }, { time: 400, price: 55 }, mbars);
+  ok('a measurement reports the price change', m.change === 5);
+  ok('...as a percentage of the first anchor', m.pct === 10);
+  ok('...the bar count', m.bars === 3);
+  ok('...and the elapsed time', m.ms === 300000 && m.duration === '5m');
+  ok('direction is reported', m.up === true
+    && measureBetween({ time: 400, price: 55 }, { time: 100, price: 50 }, mbars).up === false);
+  // A FIGURE THAT CANNOT BE DERIVED IS NULL, never zero — "0 bars" would be a lie, not a gap.
+  ok('an unknown anchor yields no bar count',
+    measureBetween({ time: 1, price: 1 }, { time: 2, price: 2 }, mbars).bars === null);
+  ok('a zero base yields no percentage',
+    measureBetween({ time: 100, price: 0 }, { time: 400, price: 5 }, mbars).pct === null);
+  ok('a missing anchor yields nothing at all', measureBetween(null, { time: 1, price: 1 }, []) === null);
+  // Daily bars carry a date string, and the duration still works.
+  const daily = measureBetween({ time: '2024-01-01', price: 10 }, { time: '2024-03-01', price: 12 }, []);
+  ok('a daily measurement still reports time', daily.ms === 60 * 86400000 && daily.duration === '2.0mo');
+  ok('...and its percentage', daily.pct === 20);
+  ok('durations scale to a readable unit',
+    formatDuration(90 * 60000) === '1.5h' && formatDuration(5 * 86400000) === '5.0d'
+      && formatDuration(400 * 86400000) === '1.1y');
+  // BAR COUNT COMES FROM INDEX, not from arithmetic on time: weekends and half-days make any
+  // time-derived bar count wrong.
+  const gapped = [{ time: 100 }, { time: 200 }, { time: 100000 }];
+  ok('bars are counted by index, so a market gap does not inflate them',
+    measureBetween({ time: 100, price: 1 }, { time: 100000, price: 2 }, gapped).bars === 2);
+
+  ok('measure is a real tool', !!TOOLS.measure && TOOLS.measure.points === 2);
+  ok('...and is transient, so it is never stored', TOOLS.measure.transient === true);
+  ok('createDrawing refuses to persist one',
+    createDrawing('measure', [{ time: 1, price: 1 }, { time: 2, price: 2 }], {}, []) === null);
+  ok('the layer holds it instead', /s\.measure = \{ type: def\.id, points: pts \};/.test(layer));
+  ok('it reads live while the second point is chosen', /tool\(s\.draft\.type\)\?\.transient && s\.draft\.cursor/.test(layer));
+  ok('a click dismisses it', /if \(s\.measure\) \{ s\.measure = null; paint\(\); \}/.test(layer));
+  ok('...and so does Escape', /stateRef\.current\.measure = null;/.test(layer) && /setClearSignal\(\(n\) => n \+ 1\)/.test(cmp));
+  // Volume over a range is not something this chart can total honestly, so it is not claimed. The
+  // check is on the RESULT, not on whether the word appears in the source — the renderer mentions
+  // `volumeUp` as a colour, which a text search would wrongly flag.
+  ok('a measurement reports no volume figure at all',
+    !('volume' in measureBetween({ time: 100, price: 1 }, { time: 200, price: 2 }, mbars)));
+
+  // ── 3. NOTES ────────────────────────────────────────────────────────────────────────────────
+  ok('text is a real tool', !!TOOLS.text && TOOLS.text.points === 1 && TOOLS.text.hasText === true);
+  const note = createDrawing('text', [{ time: 1, price: 5 }], {}, [], { text: 'support' });
+  ok('a note carries its words', note.text === 'support');
+  ok('...and survives a reload', coerceDrawing({ ...note }).text === 'support');
+  // Only a tool that declares text carries any, or every drawing becomes a place for junk.
+  ok('other drawings carry no text field',
+    !('text' in createDrawing('trend', [{ time: 1, price: 1 }, { time: 2, price: 2 }], {}, [])));
+  ok('a non-string note is not trusted',
+    createDrawing('text', [{ time: 1, price: 5 }], {}, [], { text: { evil: 1 } }).text === '');
+  ok('the note is written before it exists', /onRequestText\?\.\(pts\)/.test(layer));
+  ok('...and an empty one is never created', /if \(noteDraft\?\.points && text\)/.test(cmp));
+  ok('...while clearing an existing one deletes it', /else updateDrawings\(\(ds\) => ds\.filter\(\(d\) => d\.id !== noteDraft\.id\)\);/.test(cmp));
+  ok('Enter commits the note', /if \(e\.key === 'Enter'\) \{ e\.preventDefault\(\); commitNote\(\); \}/.test(cmp));
+  ok('the note editor focuses immediately', (cmp.match(/if \(el\) el\.focus\(\)/g) || []).length >= 1);
+  ok('a note is painted, since it draws no segments', /tool\(d\.source\.type\)\?\.hasText/.test(layer));
+  ok('the object tree shows a note by its words', /if \(typeof d\.text === 'string'\) return d\.text \|\| '\(empty\)';/.test(mgr));
+  ok('...and can reopen it for editing', /onEditText\?\.\(d\.id, d\.text\)/.test(mgr));
+
+  // ── 4. THE PRICE SCALE ──────────────────────────────────────────────────────────────────────
+  // The CONDITION, not just the call: asserting the call alone passes happily while the branch that
+  // reaches it has been disabled.
+  ok('right-clicking the scale asks about the scale',
+    /if \(onScale\) setScaleMenuAt\(\{ x: e\.clientX, y: e\.clientY \}\);/.test(cmp));
+  ok('...and that test is what the scale width decides',
+    /const onScale = scaleW > 0 && \(e\.clientX - box\.left\) > \(box\.width - scaleW\);/.test(cmp));
+  ok('...decided by the scale’s live width, not a guess',
+    /chartRef\.current\?\.priceScale\('right'\)\.width\(\)/.test(cmp));
+  ok('...and the plot still gets the chart menu', /else setMenuAt\(\{ x: e\.clientX, y: e\.clientY \}\);/.test(cmp));
+  const scaleMenu = cmp.slice(cmp.indexOf('open={!!scaleMenuAt}'), cmp.indexOf('</Popover>', cmp.indexOf('open={!!scaleMenuAt}')));
+  for (const item of ['Auto scale', 'Logarithmic', 'Invert scale', 'Reset scale'])
+    ok(`the scale menu offers "${item}"`, scaleMenu.includes(item));
+  // Inversion is a real library option; faking it by negating data would break indicators, drawing
+  // anchors and the legend at once.
+  ok('inversion uses the library option', /invertScale: view\.invertScale === true/.test(cmp));
+  ok('...and is remembered', /invertScale: v\.invertScale === true/.test(settings));
+  ok('...defaulting to off', DEFAULT_VIEW.invertScale === false);
+
+  // ── 5. NUDGE ────────────────────────────────────────────────────────────────────────────────
+  ok('arrow keys nudge the selection', /e\.key\.startsWith\('Arrow'\)/.test(cmp));
+  ok('...by a pixel, ten with shift', /nudgeSelected\(e\.key, e\.shiftKey \? 10 : 1\)/.test(cmp));
+  // A PIXEL step, converted through the live scale, so a nudge feels the same at any zoom and on a
+  // $3 stock as on a $3000 one.
+  ok('the price step is read off the live scale', /series\.coordinateToPrice\(mid - steps\)/.test(cmp));
+  ok('a horizontal nudge lands on a bar', /list\[j\]\.time - list\[i\]\.time/.test(cmp));
+  ok('...and is refused where time is a date string', /typeof target\.points\[0\]\.time !== 'number'/.test(cmp));
+  ok('a locked drawing is never nudged', /!target \|\| target\.locked/.test(cmp));
+  ok('an unhandled arrow falls through rather than being swallowed', /if \(moved\) \{ e\.preventDefault\(\); return; \}/.test(cmp));
+  ok('a nudge is undoable like any other change', /updateDrawings\(\(ds\) => ds\.map\(\(x\) => \(x\.id === target\.id/.test(cmp));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

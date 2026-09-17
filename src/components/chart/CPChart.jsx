@@ -10,7 +10,8 @@ import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBU
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
 import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from '../../lib/chart/chart-settings.mjs';
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
-import { DEFAULT_STYLE, sanitizeStyle, cloneDrawing } from '../../lib/chart/chart-drawings.mjs';
+import { DEFAULT_STYLE, sanitizeStyle, cloneDrawing, moveDrawing, createDrawing } from '../../lib/chart/chart-drawings.mjs';
+import { emptyHistory, record, undo, redo, canUndo, canRedo } from '../../lib/chart/chart-history.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
 import { Dropdown, MenuItem, MenuLabel, Popover, ToolButton, VectorIcon } from './ChartUI';
 import SymbolSearch from './SymbolSearch';
@@ -92,6 +93,14 @@ export default function CPChart({
   // The right-click menu's position, in VIEWPORT coordinates, or null when it is closed. The
   // position IS the open state: a context menu without a point has nowhere to be.
   const [menuAt, setMenuAt] = useState(null);
+  // The price-scale menu is a SECOND menu at the same cursor: right-clicking the scale asks about
+  // the scale, not about the chart, which is what every platform does.
+  const [scaleMenuAt, setScaleMenuAt] = useState(null);
+  // A note being written, or edited. { points } while new, { id } while editing.
+  const [noteDraft, setNoteDraft] = useState(null);
+  const [noteText, setNoteText] = useState('');
+  // Bumped on Escape, which tells the drawing layer to drop a measurement or a half-placed shape.
+  const [clearSignal, setClearSignal] = useState(0);
   // Saved selections are read once on mount rather than at module scope: localStorage does not exist
   // during server rendering, and reading it in the initial state would make the first client render
   // disagree with the server's.
@@ -162,6 +171,10 @@ export default function CPChart({
     setDrawings(loadDrawings(sym));
     setSelectedDrawing(null);
     setActiveTool(null);
+    // THE HISTORY IS PER SYMBOL. Undoing into a stack of another symbol's drawings would paste them
+    // onto this chart, so the stack is dropped when the symbol changes rather than carried over.
+    historyRef.current = emptyHistory();
+    setHistTick((t) => t + 1);
   }, [sym]);
 
   const drawingsDirty = useRef(false);
@@ -170,7 +183,121 @@ export default function CPChart({
     saveDrawings(sym, drawings);
   }, [drawings, sym]);
 
-  const updateDrawings = useCallback((next) => { drawingsDirty.current = true; setDrawings(next); }, []);
+  /**
+   * UNDO / REDO, per chart panel.
+   *
+   * The stack lives in a ref rather than in state so the undo and redo callbacks never change
+   * identity — they are bound to the chart's keydown handler, and a callback that changed on every
+   * edit would re-bind the listener on every edit. A counter bumps alongside it purely so the
+   * toolbar buttons re-render enabled or disabled.
+   *
+   * Both refs mirror current state so a callback can read "what is on the chart right now" without
+   * being rebuilt when it changes.
+   */
+  const drawingsRef = useRef([]);
+  drawingsRef.current = drawings;
+  const selectedDrawingRef = useRef(null);
+  selectedDrawingRef.current = selectedDrawing;
+  const historyRef = useRef(emptyHistory());
+  const [histTick, setHistTick] = useState(0);
+  const bumpHistory = useCallback(() => setHistTick((t) => t + 1), []);
+
+  /**
+   * Every drawing change goes through here, which is what makes the history complete: create,
+   * delete, move, resize, clone, lock, hide and restyle all land in one place.
+   *
+   * The tag coalesces a gesture — a drag passes one token for its whole duration, so the hundred
+   * changes a pointer-move produces collapse into the single undo step a user expects.
+   */
+  const updateDrawings = useCallback((next, tag = null) => {
+    drawingsDirty.current = true;
+    const prev = drawingsRef.current;
+    const resolved = typeof next === 'function' ? next(prev) : next;
+    historyRef.current = record(historyRef.current, prev, tag);
+    bumpHistory();
+    setDrawings(resolved);
+  }, [bumpHistory]);
+
+  /**
+   * Move the selected drawing by N screen pixels.
+   *
+   * Converted to a PRICE delta through the series' own scale, so a pixel means a pixel whatever the
+   * chart is showing — and to a TIME delta through the bar list, because a horizontal nudge has to
+   * land on a bar exactly as a drag does.
+   *
+   * Returns false when it could not act, so the key event falls through to whatever else wants it
+   * rather than being silently swallowed.
+   */
+  const nudgeSelected = useCallback((key, steps) => {
+    const series = priceRef.current;
+    const chart = chartRef.current;
+    const target = drawingsRef.current.find((x) => x.id === selectedDrawingRef.current);
+    if (!series || !chart || !target || target.locked) return false;
+
+    if (key === 'ArrowUp' || key === 'ArrowDown') {
+      // Price per pixel, read off the live scale rather than assumed.
+      const mid = series.priceToCoordinate(target.points[0].price);
+      if (mid == null) return false;
+      const a1 = series.coordinateToPrice(mid);
+      const a2 = series.coordinateToPrice(mid - steps);
+      if (a1 == null || a2 == null) return false;
+      const dPrice = (a2 - a1) * (key === 'ArrowUp' ? 1 : -1);
+      updateDrawings((ds) => ds.map((x) => (x.id === target.id
+        ? moveDrawing(x, { dPrice }) : x)), null);
+      return true;
+    }
+
+    // HORIZONTAL NUDGE NEEDS A NUMERIC TIME. Daily bars carry a date string, which cannot take an
+    // arithmetic delta — the same limitation a drag has, and moveDrawing refuses it there too.
+    const list = barsRef.current;
+    if (!list.length || typeof target.points[0].time !== 'number') return false;
+    const i = list.findIndex((x) => x.time === target.points[0].time);
+    if (i < 0) return false;
+    const j = Math.max(0, Math.min(list.length - 1, i + (key === 'ArrowRight' ? steps : -steps)));
+    const dTime = list[j].time - list[i].time;
+    if (!dTime) return false;
+    updateDrawings((ds) => ds.map((x) => (x.id === target.id ? moveDrawing(x, { dTime }) : x)), null);
+    return true;
+  }, [updateDrawings]);
+
+  /**
+   * Commit the note being written.
+   *
+   * An EMPTY note is not created, and clearing an existing one deletes it — a blank label on a chart
+   * is an invisible object the user then has to hunt for in the object tree to get rid of.
+   */
+  const commitNote = useCallback(() => {
+    const text = noteText.trim();
+    if (noteDraft?.id) {
+      if (text) updateDrawings((ds) => ds.map((d) => (d.id === noteDraft.id ? { ...d, text } : d)));
+      else updateDrawings((ds) => ds.filter((d) => d.id !== noteDraft.id));
+    } else if (noteDraft?.points && text) {
+      const made = createDrawing('text', noteDraft.points, drawStyle, drawingsRef.current, { text });
+      if (made) { updateDrawings([...drawingsRef.current, made]); setSelectedDrawing(made.id); }
+    }
+    setNoteDraft(null); setNoteText('');
+  }, [noteDraft, noteText, drawStyle, updateDrawings]);
+
+  const undoDrawings = useCallback(() => {
+    const r = undo(historyRef.current, drawingsRef.current);
+    if (!r) return;
+    historyRef.current = r.history;
+    drawingsDirty.current = true;
+    // The selection is dropped: the drawing it pointed at may not exist in the restored state.
+    setSelectedDrawing(null);
+    setDrawings(r.state);
+    bumpHistory();
+  }, [bumpHistory]);
+
+  const redoDrawings = useCallback(() => {
+    const r = redo(historyRef.current, drawingsRef.current);
+    if (!r) return;
+    historyRef.current = r.history;
+    drawingsDirty.current = true;
+    setSelectedDrawing(null);
+    setDrawings(r.state);
+    bumpHistory();
+  }, [bumpHistory]);
 
   // Duplicating goes through cloneDrawing so the id rules stay in the drawing model, and the copy is
   // selected immediately — it sits exactly on the original, so the selection is what tells the user
@@ -451,8 +578,12 @@ export default function CPChart({
     chart.priceScale('right').applyOptions({
       mode: view.logScale ? lwcRef.current.PriceScaleMode.Logarithmic : lwcRef.current.PriceScaleMode.Normal,
       autoScale: view.autoScale,
+      // Inversion is a first-class price-scale option in the library, so it is applied here with the
+      // rest rather than being faked by negating the data — which would break every indicator, every
+      // drawing anchor and the legend at once.
+      invertScale: view.invertScale === true,
     });
-  }, [view.logScale, view.autoScale, chartReady]);
+  }, [view.logScale, view.autoScale, view.invertScale, chartReady]);
 
   /** Fit the data back into the frame and clear any manual scaling the user has done. */
   const resetView = useCallback(() => {
@@ -492,7 +623,30 @@ export default function CPChart({
     const onKey = (e) => {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
-      if (e.key === 'Escape') { setActiveTool(null); setSelectedDrawing(null); if (fullscreen) setFullscreen(false); }
+      const mod = e.ctrlKey || e.metaKey;
+
+      // UNDO / REDO. Bound on the chart element, so this never steals the browser's undo from a
+      // text field elsewhere in the app, and two chart panels undo independently.
+      if (mod && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) redoDrawings(); else undoDrawings();
+        return;
+      }
+      if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redoDrawings(); return; }
+      if (mod) return;                       // leave every other modified key to the browser
+
+      // NUDGE. Arrow keys move the selected drawing by a pixel, shift by ten — a PIXEL step rather
+      // than a price step, because the same nudge then feels identical at every zoom level and on
+      // every symbol, whether the price is 3 or 3000.
+      if (selectedDrawing && e.key.startsWith('Arrow')) {
+        const moved = nudgeSelected(e.key, e.shiftKey ? 10 : 1);
+        if (moved) { e.preventDefault(); return; }
+      }
+
+      if (e.key === 'Escape') {
+        setActiveTool(null); setSelectedDrawing(null); setClearSignal((n) => n + 1);
+        if (fullscreen) setFullscreen(false);
+      }
       else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedDrawing) { e.preventDefault(); deleteSelected(); } }
       else if (e.key === 'r' || e.key === 'R') resetView();
       else if (e.key === 'l' || e.key === 'L') patchView({ logScale: !view.logScale });
@@ -501,7 +655,8 @@ export default function CPChart({
     };
     el.addEventListener('keydown', onKey);
     return () => el.removeEventListener('keydown', onKey);
-  }, [selectedDrawing, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen]);
+  }, [selectedDrawing, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen,
+    undoDrawings, redoDrawings, nudgeSelected]);
 
   // ── theme: applied to the live chart, then the series are recoloured ──
   useEffect(() => {
@@ -726,6 +881,8 @@ export default function CPChart({
             magnet={view.magnet === true}
             onToggleMagnet={() => patchView({ magnet: !view.magnet })}
             onOpenManager={() => setManagerOpen(true)}
+            onUndo={undoDrawings} onRedo={redoDrawings}
+            canUndo={canUndo(historyRef.current)} canRedo={canRedo(historyRef.current)}
             compact={narrow}
           />
         )}
@@ -734,7 +891,18 @@ export default function CPChart({
           // THE CHART GETS ITS OWN CONTEXT MENU. Suppressed only over the chart surface, so the
           // browser's menu still works everywhere else in the app — including on the toolbar, where
           // "copy" and "inspect" are sometimes genuinely wanted.
-          onContextMenu={(e) => { e.preventDefault(); setMenuAt({ x: e.clientX, y: e.clientY }); }}>
+          onContextMenu={(e) => {
+            e.preventDefault();
+            // WHICH MENU depends on where the click landed. Inside the right-hand price scale the
+            // question is about the scale; over the plot it is about the chart. The scale's width
+            // is read from the live chart rather than assumed, because it grows with the price.
+            const box = e.currentTarget.getBoundingClientRect();
+            let scaleW = 0;
+            try { scaleW = chartRef.current?.priceScale('right').width() ?? 0; } catch { scaleW = 0; }
+            const onScale = scaleW > 0 && (e.clientX - box.left) > (box.width - scaleW);
+            if (onScale) setScaleMenuAt({ x: e.clientX, y: e.clientY });
+            else setMenuAt({ x: e.clientX, y: e.clientY });
+          }}>
         <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
 
         {/* Drawings live on a canvas over the chart, sharing its scales. Mounted once the chart
@@ -747,6 +915,8 @@ export default function CPChart({
             activeTool={activeTool} onToolUsed={() => setActiveTool(null)}
             selectedId={selectedDrawing} onSelect={setSelectedDrawing}
             visible={view.showDrawings} style={drawStyle} magnet={view.magnet === true}
+            clearSignal={clearSignal}
+            onRequestText={(points) => { setNoteDraft({ points }); setNoteText(''); }}
           />
         )}
 
@@ -810,6 +980,7 @@ export default function CPChart({
         theme={theme} symbol={sym} drawings={drawings} selectedId={selectedDrawing}
         onSelect={setSelectedDrawing} onChange={updateDrawings}
         onDuplicate={duplicateDrawing} onClearAll={() => { clearAllDrawings(); setManagerOpen(false); }}
+        onEditText={(id, text) => { setManagerOpen(false); setNoteDraft({ id }); setNoteText(text || ''); }}
       />
 
       {/* THE CHART CONTEXT MENU — opens AT THE CURSOR, over the chart, and lists only actions this
@@ -817,6 +988,10 @@ export default function CPChart({
           it cannot be clipped by the Terminal panel and it dismisses identically. */}
       <Popover theme={theme} open={!!menuAt} point={menuAt} onClose={() => setMenuAt(null)}
         width={212} label="Chart actions">
+        <MenuItem theme={theme} role="menuitem" disabled={!canUndo(historyRef.current)}
+          onClick={undoDrawings} right="Ctrl+Z">Undo</MenuItem>
+        <MenuItem theme={theme} role="menuitem" disabled={!canRedo(historyRef.current)}
+          onClick={redoDrawings} right="Ctrl+Y">Redo</MenuItem>
         <MenuItem theme={theme} role="menuitem" onClick={resetView}>Reset view</MenuItem>
         {scrolledBack && (
           <MenuItem theme={theme} role="menuitem"
@@ -851,6 +1026,56 @@ export default function CPChart({
         <MenuItem theme={theme} role="menuitemcheckbox" active={fullscreen} closeOnPick={false}
           onClick={() => setFullscreen((v) => !v)}
           right={fullscreen ? 'On' : 'Off'}>Fullscreen</MenuItem>
+      </Popover>
+
+      {/* THE PRICE-SCALE MENU. Right-clicking the right-hand scale asks about the SCALE, which is a
+          different question from the one the chart menu answers. Only options Lightweight Charts
+          supports directly are here — there is no half-working entry. */}
+      <Popover theme={theme} open={!!scaleMenuAt} point={scaleMenuAt} onClose={() => setScaleMenuAt(null)}
+        width={196} label="Price scale">
+        <MenuLabel theme={theme}>Price scale</MenuLabel>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={!!view.autoScale} closeOnPick={false}
+          onClick={() => patchView({ autoScale: !view.autoScale })}
+          right={view.autoScale ? 'On' : 'Off'}>Auto scale</MenuItem>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={!!view.logScale} closeOnPick={false}
+          onClick={() => patchView({ logScale: !view.logScale })}
+          right={view.logScale ? 'Log' : 'Linear'}>Logarithmic</MenuItem>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={!!view.invertScale} closeOnPick={false}
+          onClick={() => patchView({ invertScale: !view.invertScale })}
+          right={view.invertScale ? 'On' : 'Off'}>Invert scale</MenuItem>
+        <MenuItem theme={theme} role="menuitem" onClick={resetView}>Reset scale</MenuItem>
+      </Popover>
+
+      {/* THE NOTE EDITOR. A note is placed, then written — an empty label on the chart is an
+          invisible object the user would have to hunt for to remove, so nothing is created until
+          there is something to show. Anchored at the chart so it cannot be clipped by the panel. */}
+      <Popover theme={theme} open={!!noteDraft} anchorRef={rootRef} onClose={() => { setNoteDraft(null); setNoteText(''); }}
+        width={248} label="Note text">
+        <MenuLabel theme={theme}>{noteDraft?.id ? 'Edit note' : 'New note'}</MenuLabel>
+        <div style={{ padding: '2px 6px 7px' }}>
+          <input
+            ref={(el) => { if (el) el.focus(); }}
+            value={noteText} onChange={(e) => setNoteText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitNote(); }
+            }}
+            placeholder="Note…" aria-label="Note text" autoComplete="off"
+            style={{ width: '100%', boxSizing: 'border-box', background: 'transparent', color: p.textStrong,
+              border: `1px solid ${p.border}`, borderRadius: 5, padding: '7px 9px',
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12.5 }} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
+            <button type="button" onClick={commitNote}
+              style={{ flex: 1, background: 'transparent', border: `1px solid ${p.up}`, borderRadius: 4,
+                cursor: 'pointer', padding: '4px 0', color: p.textStrong,
+                fontFamily: "'DM Sans',sans-serif", fontSize: 11 }}>
+              {noteDraft?.id ? 'Save' : 'Add note'}
+            </button>
+            <button type="button" onClick={() => { setNoteDraft(null); setNoteText(''); }}
+              style={{ flex: 1, background: 'transparent', border: `1px solid ${p.border}`, borderRadius: 4,
+                cursor: 'pointer', padding: '4px 0', color: p.text,
+                fontFamily: "'DM Sans',sans-serif", fontSize: 11 }}>Cancel</button>
+          </div>
+        </div>
       </Popover>
 
       <IndicatorBrowser

@@ -27,6 +27,7 @@ export default function DrawingRail({
   theme, activeTool, onPick, style, onStyle,
   selected, onDelete, count, showDrawings, onToggleShow, onClearAll,
   magnet = false, onToggleMagnet, onOpenManager,
+  onUndo, onRedo, canUndo = false, canRedo = false,
   compact = false,
 }) {
   const p = palette(theme);
@@ -108,6 +109,13 @@ export default function DrawingRail({
   const buttons = [
     <ToolButton key="select" theme={theme} active={!activeTool} onClick={() => onPick(null)}
       title="Select / edit (Esc)">↖</ToolButton>,
+    // UNDO / REDO sit with the drawing tools because that is what the history covers — this is a
+    // drawing history, not an application one, and putting them in the chart toolbar would imply
+    // they undo a timeframe or an indicator too.
+    <ToolButton key="undo" theme={theme} onClick={onUndo} disabled={!canUndo}
+      title="Undo (Ctrl+Z)">↶</ToolButton>,
+    <ToolButton key="redo" theme={theme} onClick={onRedo} disabled={!canRedo}
+      title="Redo (Ctrl+Y)">↷</ToolButton>,
     divider('d1'),
     ...cats.map(categoryButton),
     divider('d2'),
