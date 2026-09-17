@@ -6,7 +6,7 @@
 //
 // Run: node scripts/verify-company-symbols.mjs
 
-import { buildIndex, resolveCompanies, tokens, pickOne, looksLikeIndustry } from '../src/lib/company-symbols.mjs';
+import { buildIndex, resolveCompanies, tokens, pickOne, looksLikeIndustry, maskUnitsAfterNumbers } from '../src/lib/company-symbols.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -151,6 +151,40 @@ ok('a bare single-word head never resolves by rename',
 ok('the old single-word false positives stay refused',
   resolveCompanies('Ready To Take Flight', idx).length === 0
   && resolveCompanies('Stanley said the plan works', idx).length === 0);
+
+console.log('\n=== basis points are not BP p.l.c. ===');
+// "STANDARD CHARTERED EXPECTS US FED TO DELIVER A 25 BP RATE HIKE" went out on X as $BP. BP p.l.c.'s
+// registered name reduces to the single token BP, so the unit after a figure read as the company.
+const bp = buildIndex([
+  { ticker: 'BP', company: 'BP PLC' },
+  { ticker: 'SHEL', company: 'Shell plc' },
+  { ticker: 'STAN', company: 'Standard Chartered PLC' },
+]);
+for (const h of [
+  'Fed raises rates 25 BP',
+  'Fed raises rates 25 BPS',
+  'Fed raises rates 25 basis points',
+  'STANDARD CHARTERED EXPECTS US FED TO DELIVER A 25 BP RATE HIKE IN DECEMBER 2026 VS PRIOR FORECAST OF NO POLICY CHANGE THIS YEAR',
+  'ECB to cut by 50 Bps in October',
+  'BoE hikes 25-BP to 5.5%',
+  'Yields jump 12.5 BP after payrolls',
+  'Spreads widen 1,000 BPS in stress scenario',
+]) {
+  const got = resolveCompanies(h, bp);
+  ok(`no $BP from basis points: "${h.slice(0, 60)}"`, !got.includes('BP'), JSON.stringify(got));
+}
+for (const [h, want] of [
+  ['BP shares fall after refinery outage', 'BP'],
+  ['BP to sell stake in Castrol', 'BP'],
+  ['Shell and BP report earnings', 'SHEL,BP'],
+  ['BP raises dividend by 10%', 'BP'],
+  ['BP cuts 25 jobs', 'BP'],
+]) {
+  const got = resolveCompanies(h, bp).join(',');
+  ok(`BP p.l.c. still resolves: "${h}"`, got === want, got);
+}
+ok('the mask only touches a unit that directly follows a figure',
+  maskUnitsAfterNumbers('BP up 25 BP; BPS 3 bps') === 'BP up 25 bp; BPS 3 bps', maskUnitsAfterNumbers('BP up 25 BP; BPS 3 bps'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

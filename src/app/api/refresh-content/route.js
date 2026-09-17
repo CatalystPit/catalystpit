@@ -1,3 +1,6 @@
+import { recordUsage, recordModelState } from '../../../lib/anthropic-usage';
+import { classifyAnthropicFailure, usageOf } from '../../../lib/anthropic-errors.mjs';
+
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
@@ -26,6 +29,7 @@ async function kvGet(key) {
 }
 
 async function claude(prompt, maxTokens=1500) {
+  const t0 = Date.now();
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'x-api-key':process.env.ANTHROPIC_API_KEY, 'anthropic-version':'2023-06-01' },
@@ -33,9 +37,16 @@ async function claude(prompt, maxTokens=1500) {
   });
   if (!res.ok) {
     const errBody = await res.text();
+    let parsed = null; try { parsed = JSON.parse(errBody); } catch {}
+    const errorClass = classifyAnthropicFailure({ status: res.status, body: parsed });
+    await recordUsage({ feature: 'top-stories-tagging', model: 'claude-haiku-4-5-20251001', ok: false, status: res.status, errorClass, ms: Date.now() - t0 });
+    await recordModelState({ feature: 'top-stories-tagging', reachable: false, errorClass, status: res.status, message: parsed?.error?.message });
     throw new Error(`Claude ${res.status}: ${errBody.slice(0, 300)}`);
   }
   const data  = await res.json();
+  // Accounting only: token counts, never content.
+  await recordUsage({ feature: 'top-stories-tagging', model: 'claude-haiku-4-5-20251001', ok: true, status: res.status, usage: usageOf(data), ms: Date.now() - t0 });
+  await recordModelState({ feature: 'top-stories-tagging', reachable: true });
   const text  = data.content.filter(b=>b.type==='text').map(b=>b.text).join('');
   const clean = text.replace(/```json\n?|```\n?/g,'').trim();
   const match = clean.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);

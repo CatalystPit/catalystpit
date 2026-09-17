@@ -32,9 +32,12 @@ export async function GET(request) {
     const res = await runPrimarySources({
       only,
       budgetMs,
+      // Scope 'fresh': only rows captured in the last few minutes, so a new event is worded the moment
+      // it lands. Older due rows are the enrichment cron's backlog, sent in full batches.
       onNew: async () => {
-        const r = await runEnrichment();
+        const r = await runEnrichment({ scope: 'fresh' });
         enrich.runs++; enrich.ready += r.ready; enrich.original += r.original; enrich.fallback += r.fallback;
+        if (r.unavailable) enrich.unavailable = r.unavailable;
       },
     });
     const parked = await parkExhausted();

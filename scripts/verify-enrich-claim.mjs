@@ -15,11 +15,14 @@ let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
 
 const src = readFileSync(new URL('../src/lib/primary-events.js', import.meta.url), 'utf8');
+// The claim statement moved to enrich-claim.mjs (atomic claim + rewrite tiers); the lesson moved with it.
+const claimSrc = readFileSync(new URL('../src/lib/enrich-claim.mjs', import.meta.url), 'utf8').replace(/\s+/g, ' ');
 
 console.log('\n=== the cast that makes the query runnable ===');
-ok('the CASE result is cast to int', /else \$\{MAX_REWRITE_ATTEMPTS\} end\)::int/.test(src)
-  || /else \$\{MAX_REWRITE_ATTEMPTS\} end\)::int/.test(src.replace(/\s+/g, ' ')));
-ok('the trusted array is still cast to text[]', /any\(\$\{TRUSTED\}::text\[\]\)/.test(src));
+// Every branch of the attempt-budget CASE is a bind parameter, so every branch carries its own cast.
+const budgetCase = (claimSrc.match(/enrich_attempts < \(case .*? end\)/) || [''])[0];
+ok('every attempt-budget CASE branch is cast to int', (budgetCase.match(/\$\{ATTEMPTS_[A-Z]+\}::int/g) || []).length === 3, budgetCase.slice(0, 220));
+ok('the trusted array is still cast to text[]', /any\(\$\{TRUSTED\}::text\[\]\)/.test(claimSrc));
 
 console.log('\n=== failures are reported, never swallowed ===');
 ok('a claim failure returns claimError instead of throwing', /claimError/.test(src));

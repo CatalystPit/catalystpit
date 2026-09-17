@@ -14,6 +14,7 @@
 
 import { valuesIn, validateBullet } from './grounding.mjs';
 import { validatePredicate } from './predicate-grounding.mjs';
+import { classifyAnthropicFailure, describeFailure, usageOf } from './anthropic-errors.mjs';
 
 export const MODEL = 'claude-haiku-4-5-20251001';   // same model the rest of the app uses
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
@@ -136,21 +137,39 @@ export function validateFacts(facts, sourceText) {
 }
 
 // ── model call ───────────────────────────────────────────────────────────────
-// Returns { results, available }. `available: false` means the MODEL never spoke — no key, no
-// credits, HTTP error, timeout, rate limit, unparseable response. That is an infrastructure outage,
-// not a judgement about the item, so the caller must not spend the item's retry budget on it.
-// `available: true` with a missing entry means the model genuinely returned nothing for that row.
-export async function generateBatch(items, { apiKey = process.env.ANTHROPIC_API_KEY, signal } = {}) {
+// Returns { results, available, error, errorClass, status, usage, ms, model }.
+//
+// `available: false` means the MODEL never produced a response — no key, no credits, auth, rate
+// limit, overload, server error, timeout, network. That is an infrastructure outage, not a judgement
+// about the item, so the caller must not spend the item's retry budget on it. `errorClass` says
+// which (see anthropic-errors.mjs), so an outage is diagnosable instead of a bare "HTTP 400".
+//
+// A response that ARRIVED but cannot be parsed is different: it was billed, and treating it as an
+// outage meant the same batch was paid for again on every pass. It returns `available: true` with
+// no results and errorClass 'unparseable', so each row consumes an attempt like any other failure.
+//
+// `usage` carries the response's token counts (null fields when the call never completed) so the
+// caller can record real consumption. No prompt or response content leaves this function.
+export const CALL_TIMEOUT_MS = 45_000;
+export async function generateBatch(items, { apiKey = process.env.ANTHROPIC_API_KEY, signal, fetchImpl = fetch, timeoutMs = CALL_TIMEOUT_MS } = {}) {
   const out = new Map();
-  const unavailable = (error) => ({ results: out, available: false, error });
-  if (!apiKey) return unavailable('no ANTHROPIC_API_KEY');
-  if (!items.length) return { results: out, available: true };
+  const t0 = Date.now();
+  const base = { results: out, model: MODEL, usage: null, status: null };
+  const unavailable = (error, errorClass, status = null) =>
+    ({ ...base, available: false, error, errorClass, status, ms: Date.now() - t0 });
+  if (!apiKey) return unavailable('no ANTHROPIC_API_KEY', 'authentication');
+  if (!items.length) return { ...base, available: true, errorClass: null, ms: 0 };
 
-  let text = '';
+  // A hung call used to hold the ingest sweep for its whole duration. The caller's own signal still
+  // applies; whichever fires first aborts.
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+
+  let text = '', usage = null, status = null;
   try {
-    const r = await fetch(ENDPOINT, {
+    const r = await fetchImpl(ENDPOINT, {
       method: 'POST',
-      signal,
+      signal: combined,
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: MODEL,
@@ -163,19 +182,30 @@ export async function generateBatch(items, { apiKey = process.env.ANTHROPIC_API_
         ],
       }),
     });
-    if (!r.ok) return unavailable('HTTP ' + r.status);
+    status = r.status;
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      const errorClass = classifyAnthropicFailure({ status: r.status, body });
+      return unavailable(describeFailure(errorClass, r.status, body?.error?.message), errorClass, r.status);
+    }
     const data = await r.json();
+    usage = usageOf(data);
     text = '[' + (data?.content?.[0]?.text || '');
-  } catch (e) { return unavailable(String(e?.message || e).slice(0, 80)); }
+  } catch (e) {
+    const errorClass = classifyAnthropicFailure({ error: e });
+    return unavailable(describeFailure(errorClass, status, e?.message), errorClass, status);
+  }
 
+  const billedFailure = (error) =>
+    ({ ...base, usage, status, available: true, error, errorClass: 'unparseable', ms: Date.now() - t0 });
   let parsed;
-  try { parsed = JSON.parse(stripFences(text)); } catch { return unavailable('unparseable response'); }
-  if (!Array.isArray(parsed)) return unavailable('unexpected response shape');
+  try { parsed = JSON.parse(stripFences(text)); } catch { return billedFailure('unparseable response'); }
+  if (!Array.isArray(parsed)) return billedFailure('unexpected response shape');
 
   for (const row of parsed) {
     const i = Number(row?.i);
     if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
     out.set(i, { headline: String(row.headline || '').trim(), facts: row.facts ?? null });
   }
-  return { results: out, available: true };
+  return { ...base, usage, status, available: true, errorClass: null, ms: Date.now() - t0 };
 }

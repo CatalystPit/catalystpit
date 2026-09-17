@@ -325,8 +325,19 @@ export function candidateSpans(headline) {
 const VENUE = /\bat\s+$/i;
 const VENUE_EVENT = /\b(?:conference|summit|forum|symposium|expo|event|day)\b/i;
 
+// UNITS WRITTEN AFTER A NUMBER ARE NOT NAMES. "STANDARD CHARTERED EXPECTS US FED TO DELIVER A 25 BP
+// RATE HIKE" went out on the live account as $BP, because BP p.l.c.'s whole registered name reduces
+// to the token BP and a capitalised token is exactly what a span is built from. "BP" straight after a
+// figure is basis points. Only that position is neutralised: "BP shares fall", "Shell and BP report
+// earnings" still resolve. Measured against the full reference index, BP was the only unit
+// abbreviation (of ~55 rates, volumes, energy, time and currency units tried after a number) that
+// collided with a company name, so the set stays that narrow until there is evidence for another.
+const UNIT_AFTER_NUMBER = /(\d(?:[\d,.]*\d)?%?\s*-?\s*)(BPS?)\b/gi;
+export const maskUnitsAfterNumbers = (s) => String(s || '').replace(UNIT_AFTER_NUMBER, (_, n, unit) => n + unit.toLowerCase());
+
 export function resolveCompanies(headline, index, max = 3) {
   if (!index || !index.size) return [];
+  headline = maskUnitsAfterNumbers(headline);
   const text = String(headline || '');
   const venueContext = VENUE_EVENT.test(text);
   const out = [];

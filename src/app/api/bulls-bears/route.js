@@ -5,6 +5,8 @@
 // its real date so the model never improvises one. 8-K is not wired anywhere yet → passed empty.
 
 import { resolveUserTier, FREE_BULLSBEARS_VISIBLE } from '../../../lib/entitlements';
+import { recordUsage, recordModelState } from '../../../lib/anthropic-usage';
+import { classifyAnthropicFailure, usageOf } from '../../../lib/anthropic-errors.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -238,6 +240,7 @@ async function generate(origin, ticker) {
 
   const userMessage = buildUserMessage(ctx);
   let text = '';
+  const t0 = Date.now();
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -250,8 +253,18 @@ async function generate(origin, ticker) {
         ],
       }),
     });
-    if (!res.ok) { console.log(`[bulls_bears] ${ticker} anthropic HTTP ${res.status}`); return { error: 'synthesis_unavailable', reason: `http_${res.status}` }; }
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const errorClass = classifyAnthropicFailure({ status: res.status, body });
+      console.log(`[bulls_bears] ${ticker} anthropic HTTP ${res.status} ${errorClass}`);
+      await recordUsage({ feature: 'bulls-bears', model: MODEL, ok: false, status: res.status, errorClass, items: 1, ms: Date.now() - t0 });
+      await recordModelState({ feature: 'bulls-bears', reachable: false, errorClass, status: res.status, message: body?.error?.message });
+      return { error: 'synthesis_unavailable', reason: `http_${res.status}` };
+    }
     const data = await res.json();
+    // Accounting only: token counts, never content.
+    await recordUsage({ feature: 'bulls-bears', model: MODEL, ok: true, status: res.status, usage: usageOf(data), items: 1, ms: Date.now() - t0 });
+    await recordModelState({ feature: 'bulls-bears', reachable: true });
     text = (data.content || []).map((b) => (b.type === 'text' ? b.text : '')).join('');
     text = '{' + text;                                   // prepend the prefilled '{'
   } catch (e) {

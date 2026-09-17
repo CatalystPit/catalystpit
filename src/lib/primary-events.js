@@ -11,6 +11,10 @@ import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDispl
 import { isNonEnglish } from './language.mjs';
 import { generateBatch, validateHeadline, validateFacts, BATCH_SIZE } from './headline-writer.mjs';
 import { TRUSTED_SOURCES, TRUSTED_REWRITE_ATTEMPTS, TRUSTED_MIN_IMPORTANCE } from './trusted-sources.mjs';
+import { randomUUID } from 'node:crypto';
+import { claimSql, releaseSql, backlogSql, eligibleWhere } from './enrich-claim.mjs';
+import { retryDecision } from './enrich-policy.mjs';
+import { recordUsage, recordModelState, modelCircuit, checkRewriteHealth } from './anthropic-usage';
 
 // The trusted list as a Postgres array LITERAL with an explicit cast, matching how every other
 // array is bound in this file. Passing the JS array straight into any() leaves the parameter
@@ -551,167 +555,201 @@ export async function detectedHalts({ withinMinutes = 240 } = {}) {
 // SEC CAN NEVER APPEAR HERE. SEC rows are inserted as 'ready', so the queue below — which selects
 // only 'pending' — has no way to reach them. The source_kind guard is a second, independent lock.
 
-async function claimPending(limit) {
-  // Newest first: a breaking item is enriched before any backlog drains.
-  const res = await db.execute(sql`
-    select seq, source, source_name, source_type, headline, source_headline, summary, published_at,
-           original_url, tickers, entity, fact_sig, category, importance, enrich_attempts, cluster_id,
-           headline_status
-      from primary_events
-     -- headline_status is the AUTHORITATIVE eligibility signal. It used to be pipeline_status, and
-     -- the two drifted apart: enrichment runs during the credit outage marked rows 'ready' while
-     -- their headline was still the publisher's, stranding 1,468 events that no worker would ever
-     -- look at again. A row needing Catalyst Pit wording says so in one place now.
-     where headline_status = 'rewrite_pending'
-       and source_kind <> 'sec'
-       -- A trusted source keeps trying long after an ordinary event would have been parked. Its
-       -- wording must never be what the tape settles on, so it does not get three attempts and a
-       -- shrug; it stays in the queue until a Catalyst Pit headline exists.
-       -- The ::int below is LOAD-BEARING. Both branches of this CASE are bind parameters, so
-       -- Postgres has nothing to infer their type from and defaults them to text, and there is no
-       -- smallint-less-than-text operator, so the whole query threw on every call. The caller
-       -- treats a throw the same way it treats a model outage, which is why this looked exactly
-       -- like an Anthropic problem: ingest kept running, enrich_attempts never moved, and
-       -- enriched_at simply stopped. A bare comparison to one parameter infers from the column and
-       -- is fine; a CASE is not.
-       -- The budget follows the CLUSTER, not the row that happened to arrive first. A trusted flash
-       -- that merges into an earlier wire story inherits that story's three attempts and strands at
-       -- rewrite_pending forever, which takes the whole event out of X eligibility even though the
-       -- trusted source is right there in the cluster.
-       and enrich_attempts < (case when source = any(${TRUSTED}::text[])
-                                     or exists (select 1 from primary_events m
-                                                 where m.cluster_id = primary_events.seq
-                                                   and m.source = any(${TRUSTED}::text[]))
-                                   then ${TRUSTED_REWRITE_ATTEMPTS}
-                                   else ${MAX_REWRITE_ATTEMPTS} end)::int
-     -- Trusted first, then newest. A breaking flash is rewritten before anything else waiting.
-     order by (source = any(${TRUSTED}::text[])) desc, seq desc
-     limit ${Math.max(1, Math.min(60, limit))}`);
-  return res.rows ?? res;
-}
-
 // `generate` is injectable so the enrichment write path can be verified without spending an API
 // call, and so a future model change is a parameter rather than an edit here. It defaults to the
 // real batch generator.
-export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generateBatch } = {}) {
+//
+// SCOPES. The ingest sweep's inline worker runs with scope 'fresh': it claims only rows captured in
+// the last few minutes, so a new event is rewritten the moment it lands, exactly as before. The
+// enrichment cron runs with scope 'backlog': everything else that is due — delayed retries, rows the
+// inline worker missed — sent in full batches, because a model call carries ~430 tokens of fixed
+// instructions and fifteen items share them far more cheaply than fifteen calls do. A backlog pass
+// waits for at least `minBatch` due rows unless something urgent (HIGH importance, trusted, or
+// already waiting too long) is among them.
+export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generateBatch, scope = 'all',
+  minBatch = 0, maxWaitSeconds = 180, feature = 'news-headline-rewrite' } = {}) {
   const t0 = Date.now();
+  const empty = { claimed: 0, ready: 0, original: 0, fallback: 0, tickers: 0 };
+
+  // An outage already known to the pipeline is not re-discovered with a request on every pass.
+  const circuit = await modelCircuit();
+  if (circuit.open) return { ...empty, unavailable: circuit.errorClass, circuitOpen: true, ms: Date.now() - t0 };
+
+  if (scope === 'backlog' && minBatch > 1) {
+    try {
+      const due = ((await db.execute(backlogSql({ maxWaitSeconds }))).rows ?? [])[0] || {};
+      if (!due.urgent && (due.n || 0) < minBatch) return { ...empty, waitingForBatch: due.n || 0, ms: Date.now() - t0 };
+    } catch { /* a failed pre-check simply means no batching wait */ }
+  }
+
   // A claim that throws is reported, not propagated as a mystery. It is a different failure from a
   // model outage and has to be readable as one: `claimError` in the cron's own JSON says the queue
   // could not even be read, where `unavailable` says the model could not be reached.
+  const token = randomUUID();
   let rows;
   try {
-    rows = await claimPending(limit);
+    const res = await db.execute(claimSql({ limit, token, scope: scope === 'fresh' ? 'fresh' : 'all' }));
+    rows = res.rows ?? res;
   } catch (e) {
     const claimError = String(e?.message || e).slice(0, 160);
     console.error('[enrich] claimPending failed:', claimError);
-    return { claimed: 0, ready: 0, original: 0, fallback: 0, tickers: 0, claimError, ms: Date.now() - t0 };
+    return { ...empty, claimError, ms: Date.now() - t0 };
   }
-  const stats = { claimed: rows.length, ready: 0, original: 0, fallback: 0, tickers: 0 };
+  const stats = { ...empty, claimed: rows.length, calls: 0 };
   if (!rows.length) return { ...stats, ms: Date.now() - t0 };
+  // RETURNING has no order; restore the claim's priority so the first batch holds the most urgent rows.
+  rows.sort((a, b) => (Number(!!b.cluster_trusted) - Number(!!a.cluster_trusted))
+    || ((Number(b.importance) || 0) - (Number(a.importance) || 0)) || (Number(b.seq) - Number(a.seq)));
+  const release = async () => { try { await db.execute(releaseSql(token)); } catch { /* stale window reclaims it */ } };
 
-  // 1) Any ticker the ingest pass could not resolve. Same two-gate conservative path.
-  const pend = rows.map((r) => ({ source: r.source, source_headline: r.source_headline, headline: r.headline, tickers: r.tickers || [] }));
-  await resolveTickers(pend);
-  rows.forEach((r, i) => { r.tickers = pend[i].tickers; });
+  try {
+    // 1) Any ticker the ingest pass could not resolve. Same two-gate conservative path.
+    const pend = rows.map((r) => ({ source: r.source, source_headline: r.source_headline, headline: r.headline, tickers: r.tickers || [] }));
+    await resolveTickers(pend);
+    rows.forEach((r, i) => { r.tickers = pend[i].tickers; });
 
-  // 2) Headline + facts, in batches.
-  //
-  // `available` separates an INFRASTRUCTURE failure (no credits, API down, timeout, rate limit)
-  // from the model genuinely judging an item. An outage must not burn the item's retry budget or
-  // mark it finished — otherwise a billing lapse silently retires the whole backlog, which is
-  // exactly how 1,468 events were stranded. A Map return is still accepted so older callers and
-  // test stubs keep working.
-  const generated = new Map();
-  let modelAvailable = true;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const res = await generate(rows.slice(i, i + BATCH_SIZE));
-    const map = res instanceof Map ? res : (res?.results ?? new Map());
-    if (!(res instanceof Map) && res?.available === false) {
-      modelAvailable = false;
-      stats.unavailable = String(res.error || 'model unavailable').slice(0, 80);
-      break;                                   // no point asking again this pass
+    // 2) Headline + facts, in batches.
+    //
+    // `available` separates an INFRASTRUCTURE failure (no credits, API down, timeout, rate limit)
+    // from the model genuinely judging an item. An outage must not burn the item's retry budget or
+    // mark it finished — otherwise a billing lapse silently retires the whole backlog, which is
+    // exactly how 1,468 events were stranded. A Map return is still accepted so older callers and
+    // test stubs keep working.
+    const generated = new Map();
+    const chunkFailure = new Map();          // row index -> billed failure class for its whole batch
+    let modelAvailable = true;
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const chunk = rows.slice(i, i + BATCH_SIZE);
+      const res = await generate(chunk);
+      const isMap = res instanceof Map;
+      const map = isMap ? res : (res?.results ?? new Map());
+      if (!isMap) {
+        stats.calls++;
+        if (res?.status != null || res?.usage) {
+          await recordUsage({ feature, model: res.model, ok: res.available !== false && !res.errorClass,
+            status: res.status, errorClass: res.errorClass ?? null, usage: res.usage, items: chunk.length, ms: res.ms });
+        }
+        await recordModelState({ feature, reachable: res?.available !== false, errorClass: res?.errorClass ?? null,
+          status: res?.status ?? null, message: res?.error ?? null });
+      }
+      if (!isMap && res?.available === false) {
+        modelAvailable = false;
+        stats.unavailable = String(res.errorClass || res.error || 'model unavailable').slice(0, 80);
+        break;                                   // no point asking again this pass
+      }
+      if (!isMap && res?.errorClass) for (let k = 0; k < chunk.length; k++) chunkFailure.set(i + k, res.errorClass);
+      for (const [idx, val] of map) generated.set(i + idx, val);
     }
-    for (const [idx, val] of map) generated.set(i + idx, val);
-  }
 
-  // Nothing to apply and nothing was the item's fault: leave every claimed row exactly as it is,
-  // still rewrite_pending, attempts untouched, so the next run with credits picks all of them up.
-  if (!modelAvailable && !generated.size) {
-    return { ...stats, ready: 0, skipped: rows.length, modelAvailable: false, ms: Date.now() - t0 };
-  }
-
-  // 3) Validate and persist. Clustering already happened at ingest; enrichment only updates the
-  //    event in place, so a canonical event never changes identity after it becomes visible.
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    const sourceText = `HEADLINE: ${r.source_headline || r.headline}\n${r.summary || ''}`;
-    const gen = generated.get(i);
-
-    // The model never reached this row because the API was down. Leave it completely untouched —
-    // no write, no attempt consumed — so an outage costs nothing but time.
-    if (!gen && !modelAvailable) { stats.skipped = (stats.skipped || 0) + 1; continue; }
-
-    // A row arrives here already displaying either a composed Catalyst Pit sentence or the
-    // source's wording marked rewrite_pending. If the model's output cannot be grounded, that
-    // status is PRESERVED — a pending rewrite is never quietly relabelled as ours, and the row
-    // stays eligible for another attempt.
-    let headline = r.headline || canonicalHeadline(r.source_headline, r.tickers || []);
-    let headlineStatus = r.headline_status === 'composed' ? 'composed' : 'rewrite_pending';
-    let facts = null;
-    if (gen?.headline) {
-      const v = validateHeadline(gen.headline, sourceText, r.tickers || []);
-      if (v.ok) { headline = gen.headline.trim().replace(/\s+/g, ' '); headlineStatus = 'original'; stats.original++; }
-      else stats.fallback++;
-      facts = validateFacts(gen.facts, sourceText);
-    } else stats.fallback++;
-
-    // A ticker resolved just now belongs in the displayed headline too.
-    if ((r.tickers || []).length) {
-      stats.tickers++;
-      if (headlineStatus === 'normalized') headline = canonicalHeadline(r.source_headline, r.tickers);
+    // Nothing to apply and nothing was the item's fault: give every claimed row back untouched,
+    // still rewrite_pending, attempts unchanged, so the next run with credits picks all of them up.
+    if (!modelAvailable && !generated.size) {
+      await release();
+      return { ...stats, ready: 0, skipped: rows.length, modelAvailable: false, ms: Date.now() - t0 };
     }
-    // Recomputed because a ticker resolved just now can make an item identifiable that was not
-    // identifiable at ingest — which lets later reports of the same event still fold into it.
-    const key = eventKey({
-      tickers: r.tickers || [], headline: r.source_headline || r.headline,
-      summary: r.summary, publishedAt: r.published_at,
-    });
-    const fkey = factKey({
-      entity: (r.tickers || [])[0] || r.entity, headline: r.source_headline || r.headline,
-      summary: r.summary, factSig: r.fact_sig,
-    });
 
-    await db.execute(sql`
-      update primary_events
-         set headline = ${headline},
-             headline_status = ${headlineStatus},
-             facts = ${facts ? JSON.stringify(facts) : null}::jsonb,
-             tickers = ${`{${(r.tickers || []).join(',')}}`}::text[],
-             event_key = coalesce(${key}, event_key),
-             fact_key = coalesce(${fkey}, fact_key),
-             importance = greatest(importance, ${r.importance ?? 0}::smallint),
-             display_hash = ${normHash(headline) || null},
-             -- A rewrite is the ONE moment a suppressed foreign row can earn its way onto the public
-             -- wire: if what Catalyst Pit now holds is English, it displays. If the rewrite failed
-             -- and the source's own foreign wording is still standing, it stays off. The OR keeps
-             -- the historical "never lower a row that already displays" behaviour; the AND is the
-             -- language gate, which is allowed to lower it, because raw foreign text on the public
-             -- wire is the defect being fixed.
-             display_ready = (display_ready or ${isDisplayable(r.source_headline || r.headline)})
-                             and ${!isNonEnglish(headline, r.summary)},
-             pipeline_status = 'ready',
-             enrich_attempts = enrich_attempts + 1,
-             enriched_at = now()
-       where seq = ${r.seq}`);
-    stats.ready++;
-    // Rewriting can CREATE a duplicate that did not exist at ingest. Four language editions of one
-    // press release, or two outlets whose phrasings missed the similarity threshold, all become the
-    // same English sentence once Catalyst Pit has worded them. Dedupe ran before that happened, so
-    // this is the only place that collapse can be caught.
-    if (!r.cluster_id) stats.foldedAfterRewrite = (stats.foldedAfterRewrite || 0) + await foldOnDisplayHeadline(r.seq, headline, r.published_at);
+    // 3) Validate and persist. Clustering already happened at ingest; enrichment only updates the
+    //    event in place, so a canonical event never changes identity after it becomes visible.
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const sourceText = `HEADLINE: ${r.source_headline || r.headline}\n${r.summary || ''}`;
+      const gen = generated.get(i);
+
+      // The model never reached this row because the API went down mid-pass. Leave it untouched —
+      // no attempt consumed — and give the claim back.
+      if (!gen && !modelAvailable) { stats.skipped = (stats.skipped || 0) + 1; continue; }
+
+      // A row arrives here already displaying either a composed Catalyst Pit sentence or the
+      // source's wording marked rewrite_pending. If the model's output cannot be grounded, that
+      // status is PRESERVED — a pending rewrite is never quietly relabelled as ours.
+      let headline = r.headline || canonicalHeadline(r.source_headline, r.tickers || []);
+      let headlineStatus = r.headline_status === 'composed' ? 'composed' : 'rewrite_pending';
+      let facts = null;
+      let reason = null;
+      if (gen?.headline) {
+        const v = validateHeadline(gen.headline, sourceText, r.tickers || []);
+        if (v.ok) { headline = gen.headline.trim().replace(/\s+/g, ' '); headlineStatus = 'original'; stats.original++; }
+        else { stats.fallback++; reason = v.reason || 'invalid'; }
+        facts = validateFacts(gen.facts, sourceText);
+      } else { stats.fallback++; reason = chunkFailure.get(i) || 'no_output'; }
+
+      // What happens next is decided by policy, not by the next pass happening to come round: a
+      // failure that another sample could fix is retried after a delay, one that would fail the
+      // same way is not, and an important item's first retry is still immediate.
+      const attempts = (Number(r.enrich_attempts) || 0) + 1;
+      const decision = reason
+        ? retryDecision({ importance: Number(r.importance) || 0, trusted: !!r.cluster_trusted, attempts, reason })
+        : null;
+      const nextAt = !decision ? null : decision.retry ? new Date(Date.now() + decision.delaySeconds * 1000).toISOString() : 'infinity';
+      const lastError = reason ? `${reason}${decision?.final ? ' (final)' : ''}`.slice(0, 120) : null;
+      if (decision?.final) stats.final = (stats.final || 0) + 1;
+      else if (decision?.retry) stats.retryScheduled = (stats.retryScheduled || 0) + 1;
+
+      // A ticker resolved just now belongs in the displayed headline too.
+      if ((r.tickers || []).length) {
+        stats.tickers++;
+        if (headlineStatus === 'normalized') headline = canonicalHeadline(r.source_headline, r.tickers);
+      }
+      // Recomputed because a ticker resolved just now can make an item identifiable that was not
+      // identifiable at ingest — which lets later reports of the same event still fold into it.
+      const key = eventKey({
+        tickers: r.tickers || [], headline: r.source_headline || r.headline,
+        summary: r.summary, publishedAt: r.published_at,
+      });
+      const fkey = factKey({
+        entity: (r.tickers || [])[0] || r.entity, headline: r.source_headline || r.headline,
+        summary: r.summary, factSig: r.fact_sig,
+      });
+
+      // Guarded on this worker's claim token: if the claim went stale and another worker took the
+      // row over, this result is discarded rather than overwriting the newer one.
+      const upd = await db.execute(sql`
+        update primary_events
+           set headline = ${headline},
+               headline_status = ${headlineStatus},
+               facts = ${facts ? JSON.stringify(facts) : null}::jsonb,
+               tickers = ${`{${(r.tickers || []).join(',')}}`}::text[],
+               event_key = coalesce(${key}, event_key),
+               fact_key = coalesce(${fkey}, fact_key),
+               importance = greatest(importance, ${r.importance ?? 0}::smallint),
+               display_hash = ${normHash(headline) || null},
+               -- A rewrite is the ONE moment a suppressed foreign row can earn its way onto the public
+               -- wire: if what Catalyst Pit now holds is English, it displays. If the rewrite failed
+               -- and the source's own foreign wording is still standing, it stays off. The OR keeps
+               -- the historical "never lower a row that already displays" behaviour; the AND is the
+               -- language gate, which is allowed to lower it, because raw foreign text on the public
+               -- wire is the defect being fixed.
+               display_ready = (display_ready or ${isDisplayable(r.source_headline || r.headline)})
+                               and ${!isNonEnglish(headline, r.summary)},
+               pipeline_status = 'ready',
+               enrich_attempts = enrich_attempts + 1,
+               enriched_at = now(),
+               enrich_next_at = ${nextAt}::text::timestamptz,
+               enrich_last_error = ${lastError},
+               enrich_claimed_at = null,
+               enrich_claim_token = null
+         where seq = ${r.seq} and enrich_claim_token = ${token}
+        returning seq`);
+      if (!((upd.rows ?? upd)?.length)) { stats.lostClaim = (stats.lostClaim || 0) + 1; continue; }
+      stats.ready++;
+      // Rewriting can CREATE a duplicate that did not exist at ingest. Four language editions of one
+      // press release, or two outlets whose phrasings missed the similarity threshold, all become the
+      // same English sentence once Catalyst Pit has worded them. Dedupe ran before that happened, so
+      // this is the only place that collapse can be caught.
+      if (!r.cluster_id) stats.foldedAfterRewrite = (stats.foldedAfterRewrite || 0) + await foldOnDisplayHeadline(r.seq, headline, r.published_at);
+    }
+  } finally {
+    // Anything still held — rows skipped mid-outage, or a throw part-way — goes back to the queue
+    // now rather than waiting out the stale window.
+    await release();
   }
 
   return { ...stats, ms: Date.now() - t0 };
+}
+
+/** The INGESTION RUNNING + REWRITES STALLED signal, over the queue's own eligibility rule. */
+export async function rewriteHealth() {
+  return checkRewriteHealth(eligibleWhere);
 }
 
 // Fold a freshly-reworded event into an older canonical event that now reads identically.
@@ -848,7 +886,12 @@ export async function requeueRewrites({ resetAttempts = true } = {}) {
   const res = await db.execute(sql`
     update primary_events
        set pipeline_status = 'pending',
-           enrich_attempts = ${resetAttempts ? 0 : sql`enrich_attempts`}
+           enrich_attempts = ${resetAttempts ? 0 : sql`enrich_attempts`},
+           -- A manual requeue means "try again now": scheduled retries, final verdicts and any
+           -- leftover claim are cleared with it. The last error is kept for diagnosis.
+           enrich_next_at = null,
+           enrich_claimed_at = null,
+           enrich_claim_token = null
      where headline_status = 'rewrite_pending'
        and source_kind <> 'sec'
     returning seq`);
