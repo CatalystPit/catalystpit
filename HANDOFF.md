@@ -160,6 +160,45 @@ of ~55 unit abbreviations that collided with the real reference index. Three sto
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
 
+## Pit Scan provider readiness (investigated; no provider selected)
+
+**Pit Scan runs on nothing today, by design.** `scanState()` returns `rows: []` as a literal
+(`runtime.js:107-109`) and never calls `runCycle`. Fixtures are never served. The interim descriptor
+is Polygon Starter: delayed, no stream, single-venue volume, no intraday volume history — so
+`scanReadiness()` reports `live: false` with four named needs and the panel says so.
+
+**The capability architecture is real, not aspirational.** Signals, columns, filter fields, presets
+and the Finviz-style live dropdowns all declare `requires` and are partitioned through one
+`signalAvailability()`. On `NO_PROVIDER` nothing claims to work; on `FULL_PROVIDER` all 31 signals
+come alive, which proves they are gated rather than broken. `src/lib/scan/` contains no vendor field
+names at all.
+
+**The one vendor conditional** is `activeCapabilities()` (`runtime.js:31-33`): it equates "a Polygon
+key exists" with "Polygon Starter's exact capability set". A different vendor, or a better Polygon
+tier, is described wrongly. This is the single line to change when a provider is chosen — it should
+become a descriptor registry keyed by `MARKET_DATA_PROVIDER`.
+
+**The gap between "provider connected" and "Pit Scan live"** is NOT the adapter. `runCycle` populates
+no `velocity`, `rvol` or `relativeStrength` on its rows, while the capability layer declares those
+columns available on a capable feed — measured: 10 of 23 offered columns and 11 filter fields read
+`undefined`. `velocityProfile()` and `relativeStrengthProfile()` exist but are called only by tests.
+Also missing: an ingestion worker, a baseline builder, `state.sectorEtf` (so sector RS is dead), and
+an `enrich` callback (so every Catalyst field is dark). `scripts/verify-scan-provider.mjs` pins the
+exact unpopulated list — **it must shrink to empty before Pit Scan goes live.**
+
+**Volume methodology needs a product decision.** One `consolidatedVolume` flag covers both realtime
+and historical volume. Tiingo-style feeds are IEX-only realtime with consolidated history, which the
+single flag cannot express: `true` compares a partial numerator against a consolidated baseline (the
+thing that must never happen), `false` darkens RVOL entirely. Split it before connecting such a feed.
+
+**Fixed this cycle** (`c6792de9`, local): session/premarket extremes ignored the ET calendar date, so
+any multi-day bar fetch folded yesterday into today; and bars are now deduped and ordered at the
+boundary, since duplicates double-counted volume in VWAP and out-of-order bars nulled velocity.
+
+**Local builds cannot complete**: `.env.local` has no Clerk publishable key, so prerendering
+`/account`, `/contact`, `/crypto` fails. Compile and type-check pass. Piping `npm run build` into
+`tail` reports tail's exit status — check the output text, not the code.
+
 ## Instagram and Threads (investigated and designed; NOT connected)
 
 Investigation only. No Meta configuration was touched, no token was created, nothing was published,
@@ -319,7 +358,8 @@ refused rather than faked. Volume baselines use median/MAD.
 
 ## Open dependencies and future work
 
-- **Market-data provider (not chosen).** Blocks: chart alerts, real-time streaming, consolidated
+- **Market-data provider (not chosen).** See "Pit Scan provider readiness" above for the exact
+  switch cost. Blocks: chart alerts, real-time streaming, consolidated
   volume, weekly/monthly bars, extended hours, futures/options/FX/crypto.
 - **Pit Scan / Custom Scanner**: the engine is complete (`048e223`) and NOT connected to live provider
   data. Connecting it is the next major scanner step, and it blocks retiring the legacy scanner path.
