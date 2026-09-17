@@ -1234,5 +1234,93 @@ section('20. the chart header: symbol first, one compact row, overflow before wr
   ok('...and still collapses on a narrow panel', /compact=\{narrow\}/.test(cmp));
 }
 
+section('21. the chart surface: legend, crosshair and the readout that is always there');
+{
+  const leg = await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8');
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+
+  // ── THE LEGEND IS ALWAYS POPULATED ──────────────────────────────────────────────────────────
+  // It used to exist only while the pointer was over the chart, so at rest — which is most of the
+  // time — the chart showed no numbers at all. Off the crosshair it now falls back to the last bar.
+  ok('the legend reads from the cursor when there is one, and the last bar otherwise',
+    /bar=\{\(cursor \|\| tail\)\.bar\} prevClose=\{\(cursor \|\| tail\)\.prevClose\}/.test(cmp));
+  ok('the last bar is captured whenever the bars are', /setTail\(\{/.test(cmp));
+  ok('...along with the close before it, which the change is measured against',
+    /prevClose: bars\.length > 1 \? bars\[bars\.length - 2\]\.close : null/.test(cmp));
+  ok('leaving the chart clears only the cursor, never the fallback',
+    /if \(off\) \{ setCursor\(null\); return; \}/.test(cmp));
+
+  // ── WHAT IT SHOWS ───────────────────────────────────────────────────────────────────────────
+  ok('the legend names the symbol', /\{symbol\}<\/span>/.test(leg));
+  ok('...the interval', /\{intervalLabel\}/.test(leg));
+  ok('...and the chart type', /\{chartTypeLabel\}/.test(leg));
+  ok('it shows O, H, L and C', ["'O'", "'H'", "'L'", "'C'"].every((k) => leg.includes(`cell(${k}`)));
+  ok('...the change and the percent', /\$\{Math\.abs\(pct\)\.toFixed\(2\)\}%/.test(leg));
+  ok('...and volume', /cell\('V', vol\)/.test(leg));
+  ok('change is measured against the previous close, not the open',
+    /const change = \(Number\.isFinite\(close\) && Number\.isFinite\(prevClose\)\) \? close - prevClose : null;/.test(leg));
+  ok('direction colours the close and the change', /const dir = change == null \? null : change >= 0 \? p\.up : p\.down;/.test(leg));
+  // A line or area chart has no open/high/low. Those cells are omitted, never filled with the close.
+  ok('O/H/L are omitted on a series that has no such values',
+    /\{Number\.isFinite\(bar\.o\) && cell\('O'/.test(leg));
+  // The 15-minute delay is a fact about the feed and the reader has to be told.
+  ok('a delayed feed is badged', /DELAYED<\/span>/.test(leg));
+  ok('...only when the feed actually says so', /delayed=\{meta\?\.delayed === true\}/.test(cmp));
+
+  // ── IT MUST NOT EAT THE CHART ───────────────────────────────────────────────────────────────
+  ok('the legend is pointer-transparent', /pointerEvents: 'none'/.test(leg));
+  ok('...except the indicator rows, which have controls', /pointerEvents: 'auto'/.test(leg));
+
+  // ── INDICATOR ROWS ──────────────────────────────────────────────────────────────────────────
+  ok('each indicator gets its value under the cursor',
+    /indicators=\{indicatorLegend\.map\(\(l\) => \(\{ \.\.\.l, value: cursor\?\.values\?\.\[l\.key\] \?\? null \}\)\)\}/.test(cmp));
+  ok('...read from that indicator’s own series', /legendSeriesRef\.current\.set\(entry\.key \|\| entry\.id, firstSeries\)/.test(cmp));
+  ok('...and collected on every crosshair move', /for \(const \[key, series\] of legendSeriesRef\.current\)/.test(cmp));
+  ok('a row can hide its indicator', /onToggleIndicator\?\.\(ind\.key\)/.test(leg));
+  ok('...open its settings', /onSettingsIndicator\?\.\(ind\.key\)/.test(leg));
+  ok('...and remove it', /onRemoveIndicator\?\.\(ind\.key\)/.test(leg));
+  ok('the controls appear on hover, not permanently', /opacity: show \? 1 : 0/.test(leg));
+  ok('...without reflowing the row when they do', /pointerEvents: show \? 'auto' : 'none'/.test(leg));
+  ok('a hidden indicator is dimmed rather than dropped', /opacity: on \? 1 : 0\.5/.test(leg));
+  // The ⚙ opens the browser ON that instance, rather than making the user find it again.
+  ok('settings opens the browser focused on that instance',
+    /setFocusIndicator\(key\); setBrowserOpen\(true\);/.test(cmp));
+  const br = await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8');
+  ok('...and the browser honours that focus', /if \(open && focusKey\) setExpanded\(focusKey\)/.test(br));
+  ok('the focus is cleared when the browser closes', /setBrowserOpen\(false\); setFocusIndicator\(null\);/.test(cmp));
+
+  // ── CROSSHAIR ───────────────────────────────────────────────────────────────────────────────
+  // The library defaults to MAGNET, which snaps to the nearest OHLC. Every platform a trader
+  // arrives from keeps that off until a drawing tool asks for it.
+  ok('the crosshair follows the pointer instead of snapping',
+    /crosshair: \{ mode: lwc\.CrosshairMode\.Normal \}/.test(cmp));
+  ok('...set from the library enum, not a magic number', !/mode: 0/.test(cmp));
+  const theme = await readFile(new URL('../src/lib/chart/chart-theme.mjs', import.meta.url), 'utf8');
+  ok('the crosshair axis chips are neutral, not brand-green',
+    /labelBackgroundColor: p\.crosshairLabel/.test(theme) && !/labelBackgroundColor: p\.up/.test(theme));
+  ok('both themes define that colour',
+    (theme.match(/crosshairLabel:/g) || []).length === 2);
+
+  // ── THE FLOATING TOOLTIP IS GONE ────────────────────────────────────────────────────────────
+  // Time and price are on the crosshair's own axis labels and everything else is in the legend, so
+  // the box that followed the cursor was a third copy that covered candles.
+  ok('no floating tooltip follows the cursor', !/tipRef/.test(cmp));
+  ok('...and its helper went with it', !/const fmtVolume/.test(cmp));
+
+  // ── SCROLL BACK TO THE LATEST BAR ───────────────────────────────────────────────────────────
+  ok('the chart notices when it has been scrolled back',
+    /subscribeVisibleLogicalRangeChange\(\(range\) => \{/.test(cmp));
+  ok('...compared against the bar count, so it holds on every timeframe',
+    /setScrolledBack\(range\.to < n - 1\.5\)/.test(cmp));
+  ok('...and offers a jump back only then', /status === 'ready' && scrolledBack && \(/.test(cmp));
+  ok('...which scrolls to real time', /timeScale\(\)\.scrollToRealTime\(\)/.test(cmp));
+
+  // ── THE UNMOUNT CRASH ───────────────────────────────────────────────────────────────────────
+  // overlaysRef holds an ARRAY. Calling .clear() on it threw a TypeError every time a chart
+  // unmounted — removing a Terminal panel, or navigating off the ticker page.
+  ok('the overlay list is emptied the way an array is', /overlaysRef\.current = \[\]; lwcRef\.current = null;/.test(cmp));
+  ok('...and never with a Map method', !/overlaysRef\.current\.clear\(\)/.test(cmp));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

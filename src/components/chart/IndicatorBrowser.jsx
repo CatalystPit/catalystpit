@@ -17,7 +17,7 @@ import { Modal, ToolButton } from './ChartUI';
 // A click in the catalogue adds immediately rather than opening a configuration step first: the
 // defaults are the conventional ones, and the settings are one row away in the added list.
 
-export default function IndicatorBrowser({ open, onClose, theme, intraday, active, onChange }) {
+export default function IndicatorBrowser({ open, onClose, theme, intraday, active, onChange, focusKey = null }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const [expanded, setExpanded] = useState(null);
@@ -28,6 +28,9 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
   // Focus the search box on open: the first thing a keyboard user wants is to type a name.
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 0); }, [open]);
   useEffect(() => { if (!open) { setQuery(''); setExpanded(null); } }, [open]);
+  // Opened from an indicator's ⚙ in the chart legend: land on THAT instance's settings already
+  // open, rather than making the user find it again in a list they did not ask to see.
+  useEffect(() => { if (open && focusKey) setExpanded(focusKey); }, [open, focusKey]);
 
   const results = useMemo(
     () => searchIndicators(query, { intraday, category }),

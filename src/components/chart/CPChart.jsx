@@ -14,6 +14,7 @@ import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs
 import IndicatorBrowser from './IndicatorBrowser';
 import { Dropdown, MenuItem, MenuLabel, ToolButton, VectorIcon } from './ChartUI';
 import SymbolSearch from './SymbolSearch';
+import ChartLegend from './ChartLegend';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingRail from './DrawingRail';
@@ -29,15 +30,6 @@ import ChartMenu, { viewMenuItems } from './ChartMenu';
 // registry of pure indicator functions, and Lightweight Charts v5 panes are addressable by index, so
 // SMA/EMA/VWAP land on the price pane and RSI/MACD/ATR get their own without this component
 // changing shape. Drawing tools attach to the same chart instance through its plugin API.
-
-const fmtVolume = (v) => {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return '';
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return String(Math.round(n));
-};
 
 // US Eastern for every viewer: a market chart is read in market time, not the reader's.
 const ET_HHMM = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -80,7 +72,21 @@ export default function CPChart({
 
   const [status, setStatus] = useState('loading');   // loading | ready | empty | error
   const [meta, setMeta] = useState(null);
-  const [legend, setLegend] = useState(null);
+  /**
+   * THE LEGEND READOUT. One object, set once per crosshair move rather than three separate
+   * setStates — a crosshair fires on every pointer move and three renders per move is three times
+   * the work for one visual result.
+   *
+   * `cursor` is what the pointer is over; `tail` is the last bar, which is what the legend shows
+   * when the pointer is off the chart. Both carry the PREVIOUS close, because change and percent
+   * are measured against it.
+   */
+  const [cursor, setCursor] = useState(null);
+  const [tail, setTail] = useState(null);
+  // True when the user has scrolled back in time, which is when an offer to jump to the latest bar
+  // is useful and not before.
+  const [scrolledBack, setScrolledBack] = useState(false);
+  const [focusIndicator, setFocusIndicator] = useState(null);
   // Saved selections are read once on mount rather than at module scope: localStorage does not exist
   // during server rendering, and reading it in the initial state would make the first client render
   // disagree with the server's.
@@ -117,12 +123,14 @@ export default function CPChart({
   const extended = view.extended;
 
   const hostRef = useRef(null);
-  const tipRef = useRef(null);
   const lwcRef = useRef(null);
   const chartRef = useRef(null);
   const priceRef = useRef(null);
   const volumeRef = useRef(null);
   const overlaysRef = useRef([]);            // every indicator series currently on the chart
+  // key -> the indicator's FIRST plot, so the legend can read its value under the cursor. Kept in a
+  // ref and not in state: it holds live series objects, which are not React data.
+  const legendSeriesRef = useRef(new Map());
   const activeRef = useRef([]);
   const tfRef = useRef(initialTimeframe);
   const volumeOnRef = useRef(true);
@@ -255,6 +263,7 @@ export default function CPChart({
 
     for (const s of overlaysRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
     overlaysRef.current = [];
+    legendSeriesRef.current = new Map();
     // Drop the extra panes too, highest index first so the remaining indices stay valid.
     const panes = chart.panes();
     for (let i = panes.length - 1; i >= 1; i -= 1) { try { chart.removePane(i); } catch { /* ignore */ } }
@@ -276,6 +285,7 @@ export default function CPChart({
       if (separate) paneIndex += 1;
       const target = separate ? paneIndex : 0;
 
+      let firstSeries = null;
       for (const plot of plots) {
         if (!plot.data.length) continue;
         // The INSTANCE's colour wins. Two EMAs differ only by their settings, so the colour has to
@@ -297,7 +307,11 @@ export default function CPChart({
           ? plot.data.map((d) => ({ ...d, color: d.value >= 0 ? palette(th).volumeUp : palette(th).volumeDown }))
           : plot.data);
         overlaysRef.current.push(series);
+        if (!firstSeries) firstSeries = series;
       }
+      // The legend shows ONE number per indicator: its primary plot. Bollinger's three bands would
+      // be three numbers for one row, and the middle band is the one that answers "where is it".
+      if (firstSeries) legendSeriesRef.current.set(entry.key || entry.id, firstSeries);
 
       // Reference levels — RSI's 30/50/70, MACD's zero. Attached to the pane's first series so they
       // move with it, and drawn flat because that is all they are.
@@ -316,6 +330,7 @@ export default function CPChart({
         key: entry.key || entry.id,
         label: indicatorLabel(entry.id, entry.params),
         color: indicatorColor(th, entry.color != null ? entry.color : (def.colors ? Object.values(def.colors)[0] : 0)),
+        visible: entry.visible !== false,
       });
     }
     setIndicatorLegend(legendOut);
@@ -343,32 +358,56 @@ export default function CPChart({
       chartRef.current = chart;
       setChartReady((n) => n + 1);
 
+      // THE CROSSHAIR FEEDS THE LEGEND, AND NOTHING ELSE.
+      //
+      // There used to be a floating box following the cursor repeating the time, price and volume.
+      // It is gone: the time and price are already on the crosshair's own axis labels, and every
+      // other number is in the top-left legend, so the box was a third copy that covered candles and
+      // sat where no charting platform puts one.
       chart.subscribeCrosshairMove((param) => {
-        const tip = tipRef.current;
         const off = !param.point || param.point.x < 0 || param.point.y < 0 || !param.time;
-        if (!tip) return;
-        if (off) { tip.style.display = 'none'; setLegend(null); return; }
+        // OFF THE CHART IS NOT "NO DATA". The legend falls back to the last bar, so the chart always
+        // carries its numbers instead of going blank the moment the pointer leaves.
+        if (off) { setCursor(null); return; }
         const pv = param.seriesData?.get(priceRef.current);
         const vv = volumeRef.current ? param.seriesData?.get(volumeRef.current) : null;
-        if (!pv) { tip.style.display = 'none'; return; }
+        if (!pv) { setCursor(null); return; }
         const o = pv.open, h = pv.high, l = pv.low, c = pv.close ?? pv.value;
-        setLegend({ o, h, l, c, v: vv?.value ?? null, up: o == null ? null : c >= o });
-        const p = palette(themeRef.current);
-        tip.innerHTML = `<div style="color:${p.text};font-size:10px">${fmtTime(param.time, kindRef.current === 'intraday')}</div>`
-          + `<div style="color:${p.textStrong};font-weight:600;font-size:12px;margin-top:2px">$${Number(c).toFixed(2)}</div>`
-          + (vv?.value ? `<div style="color:${p.text};font-size:10px;margin-top:2px">Vol ${fmtVolume(vv.value)}</div>` : '');
-        tip.style.display = 'block';
-        const w = hostRef.current.clientWidth;
-        tip.style.left = `${Math.max(6, Math.min(param.point.x + 14, w - 150))}px`;
-        tip.style.top = `${Math.max(6, param.point.y - 44)}px`;
+        // The PREVIOUS bar's close, for the change and percent. Found by time rather than by index
+        // because param carries no index, and the bars are already sorted and deduplicated.
+        const bars = barsRef.current;
+        let prev = null;
+        for (let i = bars.length - 1; i >= 0; i -= 1) {
+          if (bars[i].time === param.time) { prev = i > 0 ? bars[i - 1].close : null; break; }
+        }
+        const values = {};
+        for (const [key, series] of legendSeriesRef.current) {
+          const d = param.seriesData?.get(series);
+          const v = d?.value ?? d?.close;
+          if (Number.isFinite(v)) values[key] = v;
+        }
+        setCursor({ bar: { o, h, l, c, v: vv?.value ?? null }, prevClose: prev, values });
       });
+      // FOLLOW THE POINTER, DO NOT SNAP TO IT. The library defaults to magnet mode, which jumps the
+      // crosshair onto the nearest OHLC; every platform a trader arrives from keeps that off until a
+      // drawing tool asks for it. Set from the library's own enum rather than the literal 0.
+      try { chart.applyOptions({ crosshair: { mode: lwc.CrosshairMode.Normal } }); } catch { /* optional */ }
+
+      // "You have scrolled back in time" — the condition for offering a jump to the latest bar.
+      // Compared against the bar count rather than a time, so it holds on every timeframe.
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        const n = barsRef.current.length;
+        if (!range || !n) { setScrolledBack(false); return; }
+        setScrolledBack(range.to < n - 1.5);
+      });
+
       if (barsRef.current.length) draw();
     })();
     return () => {
       disposed = true;
       if (chart) chart.remove();
       chartRef.current = null; priceRef.current = null; volumeRef.current = null;
-      overlaysRef.current.clear(); lwcRef.current = null;
+      overlaysRef.current = []; lwcRef.current = null;
     };
     // Created once for the life of the component. Symbol, timeframe and theme are applied to the
     // live instance below rather than by recreating it.
@@ -463,6 +502,12 @@ export default function CPChart({
       // that only appends or updates the live bar is applied through update() instead.
       const delta = incremental ? diffBars(barsRef.current, bars) : null;
       barsRef.current = bars;
+      // The at-rest readout: the last bar, and the close before it for the change.
+      const lastBar = bars[bars.length - 1];
+      setTail({
+        bar: { o: lastBar.open, h: lastBar.high, l: lastBar.low, c: lastBar.close, v: lastBar.volume },
+        prevClose: bars.length > 1 ? bars[bars.length - 2].close : null,
+      });
       if (delta && priceRef.current) {
         for (const b of delta) {
           priceRef.current.update(chartTypeOf(typeRef.current).map(b));
@@ -668,24 +713,38 @@ export default function CPChart({
           />
         )}
 
-        {indicatorLegend.length > 0 && status === 'ready' && (
-          <div style={{ position: 'absolute', left: 8, top: legend ? 22 : 6, zIndex: 4, pointerEvents: 'none',
-            fontFamily: "'DM Sans',sans-serif", fontSize: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            {indicatorLegend.map((l) => (
-              <span key={l.key} style={{ color: l.color }}>{l.label}</span>
-            ))}
-          </div>
+        {/* THE LEGEND. Symbol, interval, O/H/L/C, change and every indicator's value, always
+            populated — from the crosshair when the pointer is on the chart, from the last bar when
+            it is not. See ChartLegend. */}
+        {status === 'ready' && (cursor || tail) && (
+          <ChartLegend
+            theme={theme} symbol={sym}
+            intervalLabel={timeframe(tf)?.short ?? tf}
+            chartTypeLabel={chartTypeOf(chartType).label}
+            delayed={meta?.delayed === true}
+            bar={(cursor || tail).bar} prevClose={(cursor || tail).prevClose}
+            compact={narrow}
+            indicators={indicatorLegend.map((l) => ({ ...l, value: cursor?.values?.[l.key] ?? null }))}
+            onToggleIndicator={(key) => setActive((list) => list.map(
+              (a) => (a.key === key ? { ...a, visible: a.visible === false } : a)))}
+            onSettingsIndicator={(key) => { setFocusIndicator(key); setBrowserOpen(true); }}
+            onRemoveIndicator={(key) => setActive((list) => list.filter((a) => a.key !== key))}
+          />
         )}
 
-        {legend && status === 'ready' && (
-          <div style={{ position: 'absolute', left: 8, top: 6, zIndex: 4, pointerEvents: 'none',
-            fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: p.text, display: 'flex', gap: 8 }}>
-            {legend.o != null && <span>O <b style={{ color: p.textStrong }}>{legend.o.toFixed(2)}</b></span>}
-            {legend.h != null && <span>H <b style={{ color: p.textStrong }}>{legend.h.toFixed(2)}</b></span>}
-            {legend.l != null && <span>L <b style={{ color: p.textStrong }}>{legend.l.toFixed(2)}</b></span>}
-            {legend.c != null && <span>C <b style={{ color: legend.up == null ? p.textStrong : legend.up ? p.up : p.down }}>{legend.c.toFixed(2)}</b></span>}
-            {legend.v ? <span>V <b style={{ color: p.textStrong }}>{fmtVolume(legend.v)}</b></span> : null}
-          </div>
+        {/* SCROLL TO THE LATEST BAR. Appears only once the user has scrolled away from it, sits
+            clear of the time axis, and is the one control on the chart surface itself. */}
+        {status === 'ready' && scrolledBack && (
+          <button type="button" title="Scroll to the most recent bar"
+            aria-label="Scroll to the most recent bar"
+            onClick={() => { try { chartRef.current?.timeScale().scrollToRealTime(); } catch { /* no-op */ } }}
+            style={{
+              position: 'absolute', right: 58, bottom: 26, zIndex: 6, width: 22, height: 22,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+              borderRadius: '50%', cursor: 'pointer', fontSize: 11, lineHeight: 1,
+              background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, color: p.text,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+            }}>›</button>
         )}
 
         {status === 'loading' && (
@@ -705,15 +764,13 @@ export default function CPChart({
           </div>
         )}
 
-        <div ref={tipRef} style={{ position: 'absolute', display: 'none', pointerEvents: 'none', zIndex: 5,
-          background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, borderRadius: 6, padding: '5px 9px',
-          fontFamily: "'DM Sans',sans-serif", lineHeight: 1.3, boxShadow: '0 4px 16px rgba(0,0,0,0.16)' }} />
       </div>
 
       </div>{/* rail + chart row */}
 
       <IndicatorBrowser
-        open={browserOpen} onClose={() => setBrowserOpen(false)}
+        open={browserOpen} onClose={() => { setBrowserOpen(false); setFocusIndicator(null); }}
+        focusKey={focusIndicator}
         theme={theme} intraday={intraday} active={active} onChange={setActive}
       />
 

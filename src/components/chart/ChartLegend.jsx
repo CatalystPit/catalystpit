@@ -1,0 +1,142 @@
+'use client';
+import { useState } from 'react';
+import { palette } from '../../lib/chart/chart-theme.mjs';
+
+// THE CHART LEGEND — the readout in the chart's top-left corner.
+//
+// This is the single most-read thing on a chart, and the part that most decides whether a platform
+// feels familiar. Three bands, in the order every trading platform puts them:
+//
+//   1. IDENTITY   symbol · interval · chart type, and a delayed-feed badge when the feed is delayed
+//   2. PRICE      O H L C with the change and percent, coloured by direction
+//   3. INDICATORS one row each, with its value AT THE CURSOR and its own hide/settings/remove
+//
+// IT IS ALWAYS POPULATED. Before this, the O/H/L/C line existed only while the pointer was over the
+// chart, so at rest — which is most of the time — the chart showed no numbers at all and the reader
+// had to hunt the right-hand axis for the last price. When the crosshair is off the chart the legend
+// falls back to the LAST BAR, which is what the chart is actually showing.
+//
+// POINTER-TRANSPARENT EXCEPT WHERE IT IS NOT. The whole block sits over the canvas, so it is
+// pointerEvents:none by default and only the indicator rows opt back in — otherwise the legend would
+// eat the drags and clicks that pan the chart underneath it.
+
+const fmtPrice = (v) => (Number.isFinite(v) ? v.toFixed(2) : '—');
+const fmtVol = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+};
+
+/** A miniature legend-row button. Only visible while the row is hovered, like every charting app. */
+function RowButton({ theme, title, onClick, children, danger, show }) {
+  const p = palette(theme);
+  const [hover, setHover] = useState(false);
+  return (
+    <button type="button" title={title} aria-label={title} onClick={onClick}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        // Kept in the layout at all times and only faded, so the row does not reflow — and the
+        // numbers beside it do not jump sideways — when the pointer arrives.
+        opacity: show ? 1 : 0, transition: 'opacity 90ms ease',
+        pointerEvents: show ? 'auto' : 'none',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        width: 15, height: 15, padding: 0, flexShrink: 0,
+        background: hover ? p.menuHover : 'transparent', border: 'none', borderRadius: 3,
+        cursor: 'pointer', color: danger ? p.down : p.text, fontSize: 10, lineHeight: 1,
+      }}>{children}</button>
+  );
+}
+
+export default function ChartLegend({
+  theme, symbol, intervalLabel, chartTypeLabel, delayed, bar, prevClose,
+  indicators = [], onToggleIndicator, onSettingsIndicator, onRemoveIndicator,
+  compact = false,
+}) {
+  const p = palette(theme);
+  const [hoveredRow, setHoveredRow] = useState(null);
+
+  const close = bar?.c;
+  const change = (Number.isFinite(close) && Number.isFinite(prevClose)) ? close - prevClose : null;
+  const pct = (change != null && prevClose) ? (change / prevClose) * 100 : null;
+  // Direction comes from the change against the previous close, not from open-vs-close: that is the
+  // number a reader compares against, and it is what the percent beside it is measuring.
+  const dir = change == null ? null : change >= 0 ? p.up : p.down;
+  const vol = fmtVol(bar?.v);
+
+  const cell = (k, v, color) => (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <span style={{ opacity: 0.75 }}>{k}</span>{' '}
+      <b style={{ color: color || p.textStrong, fontWeight: 600 }}>{v}</b>
+    </span>
+  );
+
+  return (
+    <div style={{
+      position: 'absolute', left: 8, top: 6, zIndex: 4, pointerEvents: 'none',
+      display: 'flex', flexDirection: 'column', gap: 2, maxWidth: 'calc(100% - 16px)',
+      fontFamily: "'DM Sans',sans-serif", fontSize: 10.5, color: p.text, lineHeight: 1.35,
+    }}>
+      {/* 1. IDENTITY */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+        <span className="cp-tkr" style={{ fontSize: 12.5, fontWeight: 700, color: p.textStrong }}>{symbol}</span>
+        <span style={{ opacity: 0.85 }}>{intervalLabel}</span>
+        {!compact && chartTypeLabel && <span style={{ opacity: 0.6 }}>{chartTypeLabel}</span>}
+        {/* An honest badge, not decoration: the feed IS 15 minutes behind and the reader must know. */}
+        {delayed && (
+          <span style={{ fontSize: 8.5, letterSpacing: '0.4px', padding: '1px 4px', borderRadius: 3,
+            border: `1px solid ${p.border}`, opacity: 0.9 }}>DELAYED</span>
+        )}
+      </div>
+
+      {/* 2. PRICE */}
+      {bar && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, flexWrap: 'wrap' }}>
+          {/* Line and area charts carry only a close, so O/H/L are omitted rather than faked. */}
+          {Number.isFinite(bar.o) && cell('O', fmtPrice(bar.o))}
+          {Number.isFinite(bar.h) && cell('H', fmtPrice(bar.h))}
+          {Number.isFinite(bar.l) && cell('L', fmtPrice(bar.l))}
+          {Number.isFinite(close) && cell('C', fmtPrice(close), dir || p.textStrong)}
+          {change != null && (
+            <span style={{ color: dir, fontWeight: 600, whiteSpace: 'nowrap' }}>
+              {change >= 0 ? '+' : '−'}{Math.abs(change).toFixed(2)}
+              {pct != null && ` (${change >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(2)}%)`}
+            </span>
+          )}
+          {!compact && vol && cell('V', vol)}
+        </div>
+      )}
+
+      {/* 3. INDICATORS — one row each, with the value under the cursor and its own controls. */}
+      {indicators.map((ind) => {
+        const on = ind.visible !== false;
+        const show = hoveredRow === ind.key;
+        return (
+          <div key={ind.key}
+            onMouseEnter={() => setHoveredRow(ind.key)} onMouseLeave={() => setHoveredRow(null)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5, width: 'fit-content',
+              // The rows are the only part of the legend that accepts the pointer; everything else
+              // stays transparent so panning still works where the legend overlaps the candles.
+              pointerEvents: 'auto', borderRadius: 3, padding: '0 3px 0 0',
+              background: show ? p.tooltipBg : 'transparent', opacity: on ? 1 : 0.5,
+            }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, flexShrink: 0, background: ind.color }} />
+            <span style={{ color: p.text, whiteSpace: 'nowrap' }}>{ind.label}</span>
+            {ind.value != null && (
+              <b style={{ color: ind.color, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtPrice(ind.value)}</b>
+            )}
+            <RowButton theme={theme} show={show} title={on ? 'Hide' : 'Show'}
+              onClick={() => onToggleIndicator?.(ind.key)}>{on ? '👁' : '◦'}</RowButton>
+            <RowButton theme={theme} show={show} title="Settings"
+              onClick={() => onSettingsIndicator?.(ind.key)}>⚙</RowButton>
+            <RowButton theme={theme} show={show} title="Remove" danger
+              onClick={() => onRemoveIndicator?.(ind.key)}>✕</RowButton>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

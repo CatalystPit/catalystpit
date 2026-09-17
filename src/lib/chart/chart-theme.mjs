@@ -38,6 +38,9 @@ export const CHART_THEMES = {
     // carry "this row is selected", so the menus get their own two values.
     menuHover: 'rgba(0,0,0,0.055)',
     menuActive: 'rgba(30,92,56,0.10)',
+    // The crosshair's axis chips. Neutral on purpose: they are a POSITION readout, and painting
+    // them brand-green made every hover look like an up-move.
+    crosshairLabel: '#2E3630',
   },
   dark: {
     background: '#0E1512',
@@ -57,6 +60,7 @@ export const CHART_THEMES = {
     tooltipBorder: '#243029',
     menuHover: 'rgba(255,255,255,0.07)',
     menuActive: 'rgba(79,179,124,0.14)',
+    crosshairLabel: '#46524A',
   },
 };
 
@@ -108,8 +112,11 @@ export function chartOptions(theme, { intraday = false, transparent = false } = 
       rightOffset: 2,
     },
     crosshair: {
-      vertLine: { color: p.crosshair, width: 1, style: 3, labelBackgroundColor: p.up },
-      horzLine: { color: p.crosshair, width: 1, style: 3, labelBackgroundColor: p.up },
+      // mode is set at creation from the library's own enum (0 = Normal): the crosshair FOLLOWS
+      // THE POINTER rather than snapping to the nearest OHLC. Snapping is the library default but
+      // it is magnet mode, which every other platform keeps off until a drawing tool asks for it.
+      vertLine: { color: p.crosshair, width: 1, style: 3, labelBackgroundColor: p.crosshairLabel },
+      horzLine: { color: p.crosshair, width: 1, style: 3, labelBackgroundColor: p.crosshairLabel },
     },
     handleScroll: true,
     handleScale: true,
