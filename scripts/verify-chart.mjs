@@ -2494,7 +2494,7 @@ section('33. the indicator legend collapses without collapsing the indicators');
     const tmp = path.join(process.cwd(), 'node_modules', '.cache', 'cp-legend');
     fs.mkdirSync(tmp, { recursive: true });
     const outfile = path.join(tmp, 'ChartLegend.mjs');
-    let html = { open: '', shut: '' };
+    let html = { open: '', shut: '', lightOpen: '', lightShut: '' };
     try {
       await build({
         entryPoints: [path.join(process.cwd(), 'src/components/chart/ChartLegend.jsx')],
@@ -2515,6 +2515,8 @@ section('33. the indicator legend collapses without collapsing the indicators');
       };
       html.open = renderToString(React.createElement(Legend, { ...props, indicatorsCollapsed: false }));
       html.shut = renderToString(React.createElement(Legend, { ...props, indicatorsCollapsed: true }));
+      html.lightOpen = renderToString(React.createElement(Legend, { ...props, theme: 'light', indicatorsCollapsed: false }));
+      html.lightShut = renderToString(React.createElement(Legend, { ...props, theme: 'light', indicatorsCollapsed: true }));
     } catch (e) {
       ok('the legend renders for the placement check', false, `${e.name}: ${e.message}`);
     } finally {
@@ -2538,6 +2540,71 @@ section('33. the indicator legend collapses without collapsing the indicators');
     ok('collapsed: the control is still there, after the header',
       at(html.shut, 'SPYX') >= 0 && at(html.shut, 'data-cp-legend-toggle') > at(html.shut, 'SPYX'));
     ok('collapsed: it still states the count', /aria-expanded="false"/.test(html.shut) && /<b[^>]*>3<\/b>/.test(html.shut));
+
+    // ── visibility: a chip, not faint text, in both themes and both states ─────────────────────
+    // Read off the RENDERED control's own style attribute, so a sibling's colours cannot satisfy it.
+    const chipStyle = (s) => {
+      const i = s.indexOf('data-cp-legend-toggle');
+      if (i < 0) return '';
+      const open = s.lastIndexOf('<button', i);
+      const tag = s.slice(open, s.indexOf('>', i));
+      return (tag.match(/style="([^"]*)"/) || [])[1] || '';
+    };
+    for (const [name, s, t] of [
+      ['dark expanded', html.open, 'dark'], ['dark collapsed', html.shut, 'dark'],
+      ['light expanded', html.lightOpen, 'light'], ['light collapsed', html.lightShut, 'light'],
+    ]) {
+      const st = chipStyle(s);
+      const pal = CHART_THEMES[t];
+      ok(`${name}: the control has an outline in the theme's control colour`,
+        !!pal.controlBorder && st.includes(`border:1px solid ${pal.controlBorder}`), st);
+      ok(`${name}: ...and its own background, not transparent`,
+        !!pal.controlBg && st.includes(`background:${pal.controlBg}`), st);
+      ok(`${name}: chevron and count use the strong text colour`, st.includes(`color:${pal.textStrong}`), st);
+      // The resting fade is what made it vanish on the dark canvas; a collapsed legend has nothing
+      // else to click, so neither state may be dimmed.
+      ok(`${name}: the control is not faded`, st.length > 0 && !/opacity:0\./.test(st), st);
+    }
+
+    // CONTRAST, MEASURED. WCAG relative luminance over the theme's own values: the text must be
+    // unmistakable, and the outline must stand off the canvas — clearly in dark, gently in light —
+    // with hover a real step stronger in both.
+    const lum = (hex) => {
+      const n = parseInt(String(hex).slice(1), 16);
+      return [n >> 16, (n >> 8) & 255, n & 255]
+        .map((c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; })
+        .reduce((a, c, i) => a + c * [0.2126, 0.7152, 0.0722][i], 0);
+    };
+    const contrast = (a, b) => {
+      const x = lum(a), y = lum(b);
+      return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+    };
+    const hexOk = (v) => /^#[0-9A-Fa-f]{6}$/.test(String(v));
+    for (const t of ['dark', 'light']) {
+      const pal = CHART_THEMES[t];
+      const tokens = ['controlBg', 'controlBgHover', 'controlBorder', 'controlBorderHover'];
+      ok(`${t}: the control tokens are all concrete hex`, tokens.every((k) => hexOk(pal[k])),
+        JSON.stringify(tokens.map((k) => pal[k])));
+      if (!tokens.every((k) => hexOk(pal[k]))) continue;
+      ok(`${t}: chevron and count read at 7:1 or better on the chip`,
+        contrast(pal.textStrong, pal.controlBg) >= 7 && contrast(pal.textStrong, pal.controlBgHover) >= 7);
+      ok(`${t}: hover lifts the outline a real step`,
+        contrast(pal.controlBorderHover, pal.background) - contrast(pal.controlBorder, pal.background) >= 0.4,
+        `${contrast(pal.controlBorder, pal.background).toFixed(2)} -> ${contrast(pal.controlBorderHover, pal.background).toFixed(2)}`);
+      ok(`${t}: hover lifts the background too`,
+        contrast(pal.controlBgHover, pal.background) > contrast(pal.controlBg, pal.background));
+    }
+    const dk = CHART_THEMES.dark;
+    const lt = CHART_THEMES.light;
+    ok('dark: the outline stands clearly off the canvas (≥ 2.2:1), unlike the panel border',
+      contrast(dk.controlBorder, dk.background) >= 2.2 && contrast(dk.border, dk.background) < 2.2,
+      contrast(dk.controlBorder, dk.background).toFixed(2));
+    ok('dark: ...without shouting (< 4.5:1 at rest)', contrast(dk.controlBorder, dk.background) < 4.5);
+    ok('light: the outline is visible but gentle (1.3–2.5:1)',
+      contrast(lt.controlBorder, lt.background) >= 1.3 && contrast(lt.controlBorder, lt.background) <= 2.5,
+      contrast(lt.controlBorder, lt.background).toFixed(2));
+    ok('light: the chip is a whisper off white, not a grey block (< 1.2:1)',
+      contrast(lt.controlBg, lt.background) < 1.2);
   }
 
   // ── 26, 27: collapsing must not touch the plots or the panes ────────────────────────────────
@@ -2559,7 +2626,17 @@ section('33. the indicator legend collapses without collapsing the indicators');
     /CHEVRON_DOWN = \[\['polyline'/.test(legend) && /CHEVRON_RIGHT = \[\['polyline'/.test(legend));
   ok('it carries a tooltip that says what it will do', /title=\{title\} aria-label=\{title\}/.test(legend));
   ok('...and reports its state to assistive tech', /aria-expanded=\{!collapsed\}/.test(legend));
-  ok('it has a hover state', /background: hover \? pal\.tooltipBg : 'transparent'/.test(legend));
+  // Hover is a state, so it cannot be rendered to a string; its two switches are checked in the
+  // toggle's own body, and the colours they switch between are measured above.
+  const toggleBody = legend.slice(legend.indexOf('function LegendToggle'), legend.indexOf('function RowButton'));
+  ok('it has a hover state: the background steps up',
+    /background: hover \? pal\.controlBgHover : pal\.controlBg/.test(toggleBody));
+  ok('...and so does the outline',
+    /border: `1px solid \$\{hover \? pal\.controlBorderHover : pal\.controlBorder\}`/.test(toggleBody));
+  ok('it shows a pointer cursor', /cursor: 'pointer'/.test(toggleBody));
+  ok('keyboard focus draws a ring, and only keyboard focus',
+    /matches\?\.\(':focus-visible'\)/.test(toggleBody) && /outline: focusRing \? `2px solid \$\{pal\.up\}` : 'none'/.test(toggleBody));
+  ok('...and the ring clears on blur', /onBlur=\{\(\) => setFocusRing\(false\)\}/.test(toggleBody));
   ok('...and accepts the pointer, over a legend that otherwise does not',
     /pointerEvents: 'auto'/.test(legend) && /zIndex: 4, pointerEvents: 'none'/.test(legend));
 

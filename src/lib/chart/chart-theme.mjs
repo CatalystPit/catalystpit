@@ -41,6 +41,13 @@ export const CHART_THEMES = {
     // The crosshair's axis chips. Neutral on purpose: they are a POSITION readout, and painting
     // them brand-green made every hover look like an up-move.
     crosshairLabel: '#2E3630',
+    // A SMALL CONTROL FLOATING ON THE PLOT (the legend's collapse chip). `border` and `tooltipBg`
+    // are tuned to separate panels, not to make a 17px control findable over candles, so it gets
+    // its own four: a faint lift off the canvas and an outline, each a step stronger on hover.
+    controlBg: '#F6F7F4',
+    controlBgHover: '#EEF0EB',
+    controlBorder: '#CFD3CA',
+    controlBorderHover: '#B4BAAE',
   },
   dark: {
     background: '#0E1512',
@@ -61,6 +68,12 @@ export const CHART_THEMES = {
     menuHover: 'rgba(255,255,255,0.07)',
     menuActive: 'rgba(79,179,124,0.14)',
     crosshairLabel: '#46524A',
+    // Stronger than the light values on purpose: `border` is 1.35:1 against this canvas and simply
+    // disappears. These outlines are ~2.6:1 at rest and ~3.6:1 on hover — findable, not loud.
+    controlBg: '#172019',
+    controlBgHover: '#1C2721',
+    controlBorder: '#4A5C51',
+    controlBorderHover: '#5E7266',
   },
 };
 

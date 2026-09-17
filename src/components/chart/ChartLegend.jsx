@@ -53,21 +53,31 @@ const CHEVRON_RIGHT = [['polyline', { points: '6.5,4 10.5,8 6.5,12' }]];
 function LegendToggle({ theme, collapsed, count, onClick }) {
   const pal = palette(theme);
   const [hover, setHover] = useState(false);
+  // KEYBOARD FOCUS ONLY. A ring on every mouse click is noise; :focus-visible is the browser's own
+  // judgement of when the ring is wanted, and inline styles cannot express it, so it is read here.
+  const [focusRing, setFocusRing] = useState(false);
   const title = collapsed
     ? `Show ${count} indicator${count === 1 ? '' : 's'}`
     : `Hide ${count} indicator${count === 1 ? '' : 's'} from the legend`;
   return (
     <button type="button" title={title} aria-label={title} aria-expanded={!collapsed}
       onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      onFocus={(e) => setFocusRing(!!e.currentTarget.matches?.(':focus-visible'))}
+      onBlur={() => setFocusRing(false)}
       data-cp-legend-toggle=""
       style={{
         pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: 2,
-        width: 'fit-content', padding: '0 4px 0 1px', height: 15,
-        background: hover ? pal.tooltipBg : 'transparent',
-        border: 'none', borderRadius: 3, cursor: 'pointer',
-        color: hover ? pal.textStrong : pal.text,
+        width: 'fit-content', padding: '0 5px 0 2px', height: 17, boxSizing: 'border-box',
+        // A CHIP, NOT FLOATING TEXT. It is the only way back to the rows once they are folded away,
+        // so it is equally findable in both states — no resting fade — and carries its own faint
+        // background and outline from the theme, which is what makes it read on the dark canvas.
+        background: hover ? pal.controlBgHover : pal.controlBg,
+        border: `1px solid ${hover ? pal.controlBorderHover : pal.controlBorder}`,
+        borderRadius: 4, cursor: 'pointer',
+        color: pal.textStrong,
         font: 'inherit', fontVariantNumeric: 'tabular-nums',
-        opacity: hover || collapsed ? 1 : 0.55, transition: 'opacity 90ms ease',
+        outline: focusRing ? `2px solid ${pal.up}` : 'none', outlineOffset: 1,
+        transition: 'background 90ms ease, border-color 90ms ease',
       }}>
       <VectorIcon shapes={collapsed ? CHEVRON_RIGHT : CHEVRON_DOWN} size={11} />
       <b style={{ fontWeight: 600 }}>{count}</b>
