@@ -57,16 +57,22 @@ const openPanels = [];
 export function Popover({
   anchorRef, open, onClose, theme, children,
   placement = 'bottom-start', gap = 4, width = 200, maxHeight = 360, label,
+  // A CONTEXT MENU IS ANCHORED TO A POINT, not to a control. Passing { x, y } in viewport
+  // coordinates opens the menu at the cursor; the same flip-and-clamp logic then applies, because a
+  // point is just a rect with no width — which is why placeFor needed no change to support it.
+  point = null,
 }) {
   const [pos, setPos] = useState(null);
   const panelRef = useRef(null);
   const p = palette(theme);
 
   const place = useCallback(() => {
-    const a = anchorRef.current;
-    if (!a) return;
-    setPos(placeFor(a.getBoundingClientRect(), placement, { gap, width, maxHeight }));
-  }, [anchorRef, placement, gap, width, maxHeight]);
+    const rect = point
+      ? { top: point.y, bottom: point.y, left: point.x, right: point.x }
+      : anchorRef?.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPos(placeFor(rect, placement, { gap, width, maxHeight }));
+  }, [anchorRef, point, placement, gap, width, maxHeight]);
 
   useIsoLayout(() => { if (open) place(); else setPos(null); }, [open, place]);
 
@@ -79,7 +85,7 @@ export function Popover({
     // A panel is also resized by dragging its corner, which moves the icon without firing either.
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null;
     if (ro) {
-      if (anchorRef.current) ro.observe(anchorRef.current);
+      if (anchorRef?.current) ro.observe(anchorRef.current);
       if (document.body) ro.observe(document.body);
     }
     return () => {
@@ -100,7 +106,7 @@ export function Popover({
   useEffect(() => {
     if (!open) return undefined;
     const onDown = (e) => {
-      if (anchorRef.current?.contains(e.target)) return;   // the trigger toggles itself
+      if (anchorRef?.current?.contains(e.target)) return;   // the trigger toggles itself
       const mine = openPanels.indexOf(panelRef.current);
       const hit = openPanels.findIndex((el) => el.contains(e.target));
       if (hit !== -1 && hit >= mine) return;               // inside me, or inside a menu I spawned

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useCallback } from 'react';
 import {
-  TOOLS, tool, hitTest, createDrawing, moveDrawing, fibLevels,
+  TOOLS, tool, hitTest, createDrawing, moveDrawing, fibLevels, barLevels, snapToLevel,
   HANDLE_RADIUS, DEFAULT_STYLE,
 } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
@@ -24,13 +24,13 @@ const dashFor = (dash) => (dash === 'dashed' ? [7, 5] : dash === 'dotted' ? [2, 
 export default function DrawingLayer({
   chart, series, theme, symbol, bars,
   drawings, onChange, activeTool, onToolUsed,
-  selectedId, onSelect, visible = true, style = DEFAULT_STYLE,
+  selectedId, onSelect, visible = true, style = DEFAULT_STYLE, magnet = false,
 }) {
   const canvasRef = useRef(null);
   const stateRef = useRef({});
   const s = stateRef.current;
   s.drawings = drawings; s.activeTool = activeTool; s.selected = selectedId;
-  s.theme = theme; s.visible = visible; s.style = style; s.bars = bars;
+  s.theme = theme; s.visible = visible; s.style = style; s.bars = bars; s.magnet = magnet;
 
   // ── data space <-> screen space ──
   const toScreen = useCallback((pt) => {
@@ -51,7 +51,22 @@ export default function DrawingLayer({
     const list = stateRef.current.bars || [];
     if (!list.length) return null;
     const idx = Math.max(0, Math.min(list.length - 1, Math.round(logical ?? 0)));
-    return { time: list[idx].time, price };
+    const bar = list[idx];
+
+    // MAGNET. With it on, an anchor placed near a candle's open, high, low or close lands exactly on
+    // it. Off — the default — this whole branch is skipped and the price is wherever the pointer is,
+    // which is why the crosshair and every existing drawing behave identically to before.
+    //
+    // The nearness test is done in PIXELS, so it means the same thing at every zoom level, and the
+    // decision itself lives in chart-drawings.mjs where it can be tested without a browser.
+    if (stateRef.current.magnet) {
+      const levels = barLevels(bar)
+        .map((price) => ({ price, y: series.priceToCoordinate(price) }))
+        .filter((l) => l.y != null);
+      const snapped = snapToLevel(y, levels);
+      if (snapped != null) return { time: bar.time, price: snapped, snapped: true };
+    }
+    return { time: bar.time, price };
   }, [chart, series]);
 
   /** The visible window, in data space — what a ray or a horizontal line extends across. */
@@ -239,9 +254,14 @@ export default function DrawingLayer({
     onSelect(hit ? hit.id : null);
     if (hit) {
       const d = s.drawings.find((x) => x.id === hit.id);
-      const data = toData(pt.x, pt.y);
-      s.drag = { id: hit.id, handle: hit.handle, from: data, original: d };
-      e.currentTarget.setPointerCapture?.(e.pointerId);
+      // A LOCKED DRAWING IS STILL SELECTABLE — that is how you reach the control that unlocks it —
+      // but no drag begins, so it cannot be nudged while you are trying to click something behind
+      // it. moveDrawing refuses too; this just avoids arming a drag that would do nothing.
+      if (d && !d.locked) {
+        const data = toData(pt.x, pt.y);
+        s.drag = { id: hit.id, handle: hit.handle, from: data, original: d };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+      }
     }
     paint();
   };

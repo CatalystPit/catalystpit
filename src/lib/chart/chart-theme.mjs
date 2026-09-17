@@ -102,6 +102,15 @@ export function chartOptions(theme, { intraday = false, transparent = false } = 
       fontFamily: "'DM Sans', sans-serif",
       fontSize: 11,
       attributionLogo: false,      // the visible credit is rendered by us; see CHART_ATTRIBUTION
+      // PANE SEPARATORS. v5 makes these draggable out of the box, so an RSI or MACD pane is already
+      // user-resizable — no drag handle of our own is needed and none should be bolted on. What the
+      // library does NOT get right for us is the colour: its stock separator is a dark navy that
+      // belongs to neither of our themes.
+      panes: {
+        enableResize: true,
+        separatorColor: p.border,
+        separatorHoverColor: p.menuActive,
+      },
     },
     grid: { vertLines: { visible: false }, horzLines: { color: p.grid } },
     rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.26 } },

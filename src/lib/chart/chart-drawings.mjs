@@ -31,10 +31,12 @@ export const LINE_DASHES = ['solid', 'dashed', 'dotted'];
 export const TOOLS = {
   trend: {
     id: 'trend', label: 'Trend line', icon: '╱', points: 2,
+    shapes: [['line', { x1: 2.5, y1: 13, x2: 13.5, y2: 3 }]],
     segments: (p) => [[p[0], p[1]]],
   },
   ray: {
     id: 'ray', label: 'Ray', icon: '→', points: 2,
+    shapes: [['line', { x1: 2.5, y1: 12, x2: 13.5, y2: 5 }], ['polyline', { points: '10.5,3.5 13.8,4.8 11.6,7.4' }]],
     // Extends past the second anchor to the right edge of the visible range. Recomputed from the
     // view on every paint, so it stays "infinite" however far the user scrolls.
     segments: (p, view) => {
@@ -45,15 +47,18 @@ export const TOOLS = {
   },
   horizontal: {
     id: 'horizontal', label: 'Horizontal line', icon: '─', points: 1,
+    shapes: [['line', { x1: 2, y1: 8, x2: 14, y2: 8 }], ['rect', { x: 7, y: 6.5, width: 3, height: 3, fill: true }]],
     segments: (p, view) => [[{ time: view.from, price: p[0].price }, { time: view.to, price: p[0].price }]],
     priceLabel: (p) => p[0].price,
   },
   vertical: {
     id: 'vertical', label: 'Vertical line', icon: '│', points: 1,
+    shapes: [['line', { x1: 8, y1: 2, x2: 8, y2: 14 }], ['rect', { x: 6.5, y: 6.5, width: 3, height: 3, fill: true }]],
     segments: (p, view) => [[{ time: p[0].time, price: view.low }, { time: p[0].time, price: view.high }]],
   },
   rectangle: {
     id: 'rectangle', label: 'Rectangle', icon: '▭', points: 2,
+    shapes: [['rect', { x: 2.5, y: 4, width: 11, height: 8, faint: true, fill: true }], ['rect', { x: 2.5, y: 4, width: 11, height: 8 }]],
     segments: (p) => {
       const [a, b] = p;
       const c1 = { time: a.time, price: a.price }, c2 = { time: b.time, price: a.price };
@@ -64,6 +69,12 @@ export const TOOLS = {
   },
   fib: {
     id: 'fib', label: 'Fibonacci retracement', icon: '≡', points: 2,
+    shapes: [
+      ['line', { x1: 2, y1: 3.5, x2: 14, y2: 3.5 }],
+      ['line', { x1: 2, y1: 7, x2: 14, y2: 7 }],
+      ['line', { x1: 2, y1: 10.5, x2: 14, y2: 10.5 }],
+      ['line', { x1: 2, y1: 14, x2: 14, y2: 14 }],
+    ],
     // The conventional set. 0 and 1 are the anchors themselves, so the tool is read as "the move"
     // plus its retracement levels rather than as seven unrelated lines.
     ratios: [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1],
@@ -86,12 +97,15 @@ export const tool = (id) => TOOLS[id] || null;
 // without putting an empty button on the chart.
 
 export const TOOL_CATEGORIES = [
-  { id: 'lines', label: 'Lines', icon: '╱', tools: ['trend', 'ray', 'horizontal', 'vertical'] },
-  { id: 'fib', label: 'Fibonacci', icon: '≡', tools: ['fib'] },
-  { id: 'shapes', label: 'Shapes', icon: '▭', tools: ['rectangle'] },
+  { id: 'lines', label: 'Lines', icon: '╱', tools: ['trend', 'ray', 'horizontal', 'vertical'],
+    shapes: [['line', { x1: 2.5, y1: 13, x2: 13.5, y2: 3 }]] },
+  { id: 'fib', label: 'Fibonacci', icon: '≡', tools: ['fib'],
+    shapes: [['line', { x1: 2, y1: 4, x2: 14, y2: 4 }], ['line', { x1: 2, y1: 8, x2: 14, y2: 8 }], ['line', { x1: 2, y1: 12, x2: 14, y2: 12 }]] },
+  { id: 'shapes', label: 'Shapes', icon: '▭', tools: ['rectangle'],
+    shapes: [['rect', { x: 2.5, y: 4, width: 11, height: 8 }]] },
   // Declared for later. Rendered only once they have tools.
-  { id: 'text', label: 'Text & notes', icon: 'T', tools: [] },
-  { id: 'measure', label: 'Measure', icon: '⇱', tools: [] },
+  { id: 'text', label: 'Text & notes', icon: 'T', tools: [], shapes: [] },
+  { id: 'measure', label: 'Measure', icon: '⇱', tools: [], shapes: [] },
 ];
 
 /** Only the categories that actually have something in them. */
@@ -119,6 +133,45 @@ export function fibLevels(points) {
   if (!a || !b) return [];
   const span = a.price - b.price;
   return TOOLS.fib.ratios.map((r) => ({ ratio: r, price: b.price + span * r }));
+}
+
+// ── magnet ───────────────────────────────────────────────────────────────────
+// SNAPPING IS A DRAWING BEHAVIOUR, NOT A CROSSHAIR ONE. The crosshair keeps following the pointer
+// exactly as it does with magnet off; all that changes is where an ANCHOR lands when one is placed
+// or dragged. That split is deliberate — a crosshair that jumps while you are only reading prices is
+// the thing people turn magnet off to escape.
+
+/** How near, in PIXELS, a candle level must be before it captures the anchor. */
+export const MAGNET_PX = 12;
+
+/** The levels one bar offers a magnet: its open, high, low and close, without duplicates. */
+export function barLevels(bar) {
+  if (!bar) return [];
+  const out = [];
+  for (const v of [bar.open, bar.high, bar.low, bar.close]) {
+    const n = Number(v);
+    if (Number.isFinite(n) && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * The level that captures the cursor, or null when none is near enough.
+ *
+ * Measured in PIXELS rather than in price, because "near enough to snap" is a thing the eye judges
+ * on screen: a $0.05 tolerance is invisible on a zoomed-out five-year chart and enormous on a
+ * one-minute one. Ties go to the first level, which is the order barLevels returns — open, high,
+ * low, close — so the result is deterministic rather than dependent on iteration order.
+ */
+export function snapToLevel(cursorY, levels, tolerance = MAGNET_PX) {
+  let best = null;
+  let bestD = Infinity;
+  for (const l of levels) {
+    if (!l || !Number.isFinite(l.y) || !Number.isFinite(l.price)) continue;
+    const d = Math.abs(l.y - cursorY);
+    if (d < bestD) { bestD = d; best = l.price; }
+  }
+  return bestD <= tolerance ? best : null;
 }
 
 // ── hit testing ──────────────────────────────────────────────────────────────
@@ -183,6 +236,27 @@ export function createDrawing(type, points, style = {}, existing = []) {
     points: points.map((p) => ({ time: p.time, price: Number(p.price) })),
     style: sanitizeStyle(style),
     visible: true,
+    locked: false,
+  };
+}
+
+/**
+ * A copy of a drawing, with a fresh id.
+ *
+ * DELIBERATELY IN PLACE, not nudged aside. A time offset can only be applied to a numeric time, and
+ * daily bars carry a date STRING — the same reason moveDrawing refuses to shift those horizontally.
+ * Offsetting only the ones it could would make clone mean two different things depending on the
+ * timeframe, so it means one: an exact copy, which the caller then selects for the user to drag.
+ * A clone is never born locked, or it could not be moved off the original.
+ */
+export function cloneDrawing(drawing, existing = []) {
+  if (!drawing || !tool(drawing.type)) return null;
+  return {
+    ...drawing,
+    id: newDrawingId(drawing.type, existing),
+    points: drawing.points.map((pt) => ({ ...pt })),
+    style: { ...drawing.style },
+    locked: false,
   };
 }
 
@@ -205,6 +279,9 @@ export function sanitizeStyle(raw) {
  * it that way keeps this function pure and means a drag behaves identically at any zoom level.
  */
 export function moveDrawing(drawing, { dTime = 0, dPrice = 0 }, handle = null) {
+  // A LOCK IS ENFORCED HERE, not only in the UI. Every drag, nudge and handle pull goes through this
+  // one function, so refusing here means there is no path that can move a locked drawing by accident.
+  if (drawing?.locked) return drawing;
   const shift = (p) => ({
     // A date-string time (daily bars) cannot have a numeric delta added to it, so those drawings
     // move vertically only. Snapping to a bar is the caller's job; this refuses to invent a date.
@@ -238,5 +315,7 @@ export function coerceDrawing(raw, existing = []) {
     points,
     style: sanitizeStyle(raw?.style),
     visible: raw?.visible !== false,
+    // Absent means unlocked: a stored drawing from before locks existed must stay movable.
+    locked: raw?.locked === true,
   };
 }

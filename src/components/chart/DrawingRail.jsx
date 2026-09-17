@@ -4,7 +4,7 @@ import {
   TOOLS, tool, activeCategories, categoryOfTool, LINE_WIDTHS, LINE_DASHES,
 } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColors } from '../../lib/chart/chart-theme.mjs';
-import { ToolButton, Popover, MenuItem, MenuLabel } from './ChartUI';
+import { ToolButton, Popover, MenuItem, MenuLabel, VectorIcon } from './ChartUI';
 
 // The vertical drawing rail.
 //
@@ -26,6 +26,7 @@ const RAIL_W = 34;
 export default function DrawingRail({
   theme, activeTool, onPick, style, onStyle,
   selected, onDelete, count, showDrawings, onToggleShow, onClearAll,
+  magnet = false, onToggleMagnet, onOpenManager,
   compact = false,
 }) {
   const p = palette(theme);
@@ -73,7 +74,9 @@ export default function DrawingRail({
     return (
       <div key={cat.id} ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
         <ToolButton theme={theme} active={isActive} title={`${cat.label} — ${def?.label ?? ''}`}
-          onClick={() => pickTool(cat.id, shown)}>{def?.icon ?? cat.icon}</ToolButton>
+          onClick={() => pickTool(cat.id, shown)}>
+          <VectorIcon shapes={def?.shapes ?? cat.shapes} glyph={def?.icon ?? cat.icon} />
+        </ToolButton>
         {tools.length > 1 && (
           <button type="button" title={`${cat.label} tools`} aria-label={`${cat.label} tools`}
             aria-haspopup="menu" aria-expanded={openCat === cat.id}
@@ -89,7 +92,7 @@ export default function DrawingRail({
           {tools.map((t) => (
             <MenuItem key={t} theme={theme} active={activeTool === t}
               onClick={() => pickTool(cat.id, t)}
-              left={<span style={{ fontSize: 13, lineHeight: 1 }}>{TOOLS[t].icon}</span>}>
+              left={<VectorIcon shapes={TOOLS[t].shapes} glyph={TOOLS[t].icon} />}>
               {TOOLS[t].label}
             </MenuItem>
           ))}
@@ -112,15 +115,21 @@ export default function DrawingRail({
       <ToolButton theme={theme} active={stylePanel} expanded={stylePanel}
         onClick={() => setStylePanel((v) => !v)} title="Colour, width and line style">🎨</ToolButton>
     </div>,
+    // MAGNET. Snapping is a DRAWING behaviour: with it on, an anchor lands exactly on a candle's
+    // open, high, low or close. The crosshair is untouched either way.
+    <ToolButton key="magnet" theme={theme} active={magnet} onClick={onToggleMagnet}
+      title={magnet ? 'Magnet on — anchors snap to candle prices' : 'Magnet off — anchors follow the pointer'}>🧲</ToolButton>,
     <ToolButton key="vis" theme={theme} active={!showDrawings} onClick={onToggleShow}
       title={showDrawings ? 'Hide all drawings' : 'Show all drawings'}>{showDrawings ? '👁' : '◦'}</ToolButton>,
+    // The object tree. Always present, because "I cannot find the drawing" is exactly the case where
+    // a count of zero is not the question being asked.
+    <ToolButton key="tree" theme={theme} onClick={onOpenManager}
+      title={count ? `Drawings on this symbol (${count})` : 'Drawings on this symbol'}>☰</ToolButton>,
     ...(selected ? [
       <ToolButton key="del" theme={theme} onClick={onDelete} title="Delete selected (Del)" danger>✕</ToolButton>,
     ] : []),
-    ...(count > 0 ? [
-      <ToolButton key="clear" theme={theme} onClick={onClearAll}
-        title={`Clear all ${count} drawings on this symbol`}>🗑</ToolButton>,
-    ] : []),
+    // "Delete all" moved into the object tree, beside the list of what would be deleted — a button
+    // that silently wipes every drawing is safer next to the thing it wipes.
   ];
 
   // The style panel is a flyout beside its own icon, on the same model as the category menus.

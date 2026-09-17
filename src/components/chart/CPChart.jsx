@@ -10,11 +10,12 @@ import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBU
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
 import { loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW } from '../../lib/chart/chart-settings.mjs';
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
-import { DEFAULT_STYLE, sanitizeStyle } from '../../lib/chart/chart-drawings.mjs';
+import { DEFAULT_STYLE, sanitizeStyle, cloneDrawing } from '../../lib/chart/chart-drawings.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
-import { Dropdown, MenuItem, MenuLabel, ToolButton, VectorIcon } from './ChartUI';
+import { Dropdown, MenuItem, MenuLabel, Popover, ToolButton, VectorIcon } from './ChartUI';
 import SymbolSearch from './SymbolSearch';
 import ChartLegend from './ChartLegend';
+import DrawingManager from './DrawingManager';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingRail from './DrawingRail';
@@ -87,6 +88,10 @@ export default function CPChart({
   // is useful and not before.
   const [scrolledBack, setScrolledBack] = useState(false);
   const [focusIndicator, setFocusIndicator] = useState(null);
+  const [managerOpen, setManagerOpen] = useState(false);
+  // The right-click menu's position, in VIEWPORT coordinates, or null when it is closed. The
+  // position IS the open state: a context menu without a point has nowhere to be.
+  const [menuAt, setMenuAt] = useState(null);
   // Saved selections are read once on mount rather than at module scope: localStorage does not exist
   // during server rendering, and reading it in the initial state would make the first client render
   // disagree with the server's.
@@ -166,6 +171,20 @@ export default function CPChart({
   }, [drawings, sym]);
 
   const updateDrawings = useCallback((next) => { drawingsDirty.current = true; setDrawings(next); }, []);
+
+  // Duplicating goes through cloneDrawing so the id rules stay in the drawing model, and the copy is
+  // selected immediately — it sits exactly on the original, so the selection is what tells the user
+  // which one their next drag will move.
+  const duplicateDrawing = useCallback((id) => {
+    setDrawings((ds) => {
+      const src = ds.find((d) => d.id === id);
+      const copy = src ? cloneDrawing(src, ds) : null;
+      if (!copy) return ds;
+      drawingsDirty.current = true;
+      setSelectedDrawing(copy.id);
+      return [...ds, copy];
+    });
+  }, []);
 
   const viewDirty = useRef(false);
   useEffect(() => {
@@ -261,6 +280,12 @@ export default function CPChart({
     const bars = barsRef.current;
     const th = themeRef.current;
 
+    // PANE HEIGHTS SURVIVE A REDRAW. Lightweight Charts v5 makes pane separators draggable, but a
+    // redraw (a theme switch, an indicator setting) tears every series down and rebuilds the panes at
+    // their default height — so the height a user had just dragged to was thrown away seconds later.
+    // Captured here and restored after the rebuild.
+    const keptHeights = [];
+    try { for (const pane of chart.panes()) keptHeights.push(pane.getHeight()); } catch { /* optional */ }
     for (const s of overlaysRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
     overlaysRef.current = [];
     legendSeriesRef.current = new Map();
@@ -324,7 +349,12 @@ export default function CPChart({
         }
       }
       if (separate && scale) {
-        try { chart.panes()[target]?.setHeight?.(110); } catch { /* optional */ }
+        // The default only applies to a pane that did not exist before this redraw; one the user has
+        // already dragged keeps the height captured above.
+        try {
+          const kept = keptHeights[target];
+          chart.panes()[target]?.setHeight?.(Number.isFinite(kept) && kept > 0 ? kept : 110);
+        } catch { /* optional */ }
       }
       legendOut.push({
         key: entry.key || entry.id,
@@ -693,11 +723,18 @@ export default function CPChart({
             count={drawings.length} showDrawings={view.showDrawings}
             onToggleShow={() => patchView({ showDrawings: !view.showDrawings })}
             onClearAll={clearAllDrawings}
+            magnet={view.magnet === true}
+            onToggleMagnet={() => patchView({ magnet: !view.magnet })}
+            onOpenManager={() => setManagerOpen(true)}
             compact={narrow}
           />
         )}
 
-        <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0 }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0 }}
+          // THE CHART GETS ITS OWN CONTEXT MENU. Suppressed only over the chart surface, so the
+          // browser's menu still works everywhere else in the app — including on the toolbar, where
+          // "copy" and "inspect" are sometimes genuinely wanted.
+          onContextMenu={(e) => { e.preventDefault(); setMenuAt({ x: e.clientX, y: e.clientY }); }}>
         <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
 
         {/* Drawings live on a canvas over the chart, sharing its scales. Mounted once the chart
@@ -709,7 +746,7 @@ export default function CPChart({
             drawings={drawings} onChange={updateDrawings}
             activeTool={activeTool} onToolUsed={() => setActiveTool(null)}
             selectedId={selectedDrawing} onSelect={setSelectedDrawing}
-            visible={view.showDrawings} style={drawStyle}
+            visible={view.showDrawings} style={drawStyle} magnet={view.magnet === true}
           />
         )}
 
@@ -767,6 +804,54 @@ export default function CPChart({
       </div>
 
       </div>{/* rail + chart row */}
+
+      <DrawingManager
+        open={managerOpen} onClose={() => setManagerOpen(false)}
+        theme={theme} symbol={sym} drawings={drawings} selectedId={selectedDrawing}
+        onSelect={setSelectedDrawing} onChange={updateDrawings}
+        onDuplicate={duplicateDrawing} onClearAll={() => { clearAllDrawings(); setManagerOpen(false); }}
+      />
+
+      {/* THE CHART CONTEXT MENU — opens AT THE CURSOR, over the chart, and lists only actions this
+          chart actually supports. Built on the same portalled Popover as every other chart menu, so
+          it cannot be clipped by the Terminal panel and it dismisses identically. */}
+      <Popover theme={theme} open={!!menuAt} point={menuAt} onClose={() => setMenuAt(null)}
+        width={212} label="Chart actions">
+        <MenuItem theme={theme} role="menuitem" onClick={resetView}>Reset view</MenuItem>
+        {scrolledBack && (
+          <MenuItem theme={theme} role="menuitem"
+            onClick={() => { try { chartRef.current?.timeScale().scrollToRealTime(); } catch { /* no-op */ } }}>
+            Scroll to latest bar
+          </MenuItem>
+        )}
+        <MenuItem theme={theme} role="menuitem" left="ƒ" onClick={() => setBrowserOpen(true)}
+          right={active.length ? String(active.length) : undefined}>Add indicator…</MenuItem>
+        <MenuLabel theme={theme}>Scale</MenuLabel>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={!!view.logScale} closeOnPick={false}
+          onClick={() => patchView({ logScale: !view.logScale })}
+          right={view.logScale ? 'Log' : 'Linear'}>Price scale</MenuItem>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={!!view.autoScale} closeOnPick={false}
+          onClick={() => patchView({ autoScale: !view.autoScale })}
+          right={view.autoScale ? 'On' : 'Off'}>Auto scale</MenuItem>
+        {canExtend && (
+          <MenuItem theme={theme} role="menuitemcheckbox" active={!!view.extended} closeOnPick={false}
+            onClick={() => patchView({ extended: !view.extended })}
+            right={view.extended ? 'On' : 'Off'}>Extended hours</MenuItem>
+        )}
+        <MenuLabel theme={theme}>Drawings</MenuLabel>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={view.magnet === true} closeOnPick={false}
+          onClick={() => patchView({ magnet: !view.magnet })}
+          right={view.magnet ? 'On' : 'Off'}>Magnet</MenuItem>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={view.showDrawings !== false} closeOnPick={false}
+          onClick={() => patchView({ showDrawings: !view.showDrawings })}
+          right={view.showDrawings === false ? 'Hidden' : 'Shown'}>Show drawings</MenuItem>
+        <MenuItem theme={theme} role="menuitem" onClick={() => setManagerOpen(true)}
+          right={drawings.length ? String(drawings.length) : undefined}>Manage drawings…</MenuItem>
+        <MenuLabel theme={theme}>View</MenuLabel>
+        <MenuItem theme={theme} role="menuitemcheckbox" active={fullscreen} closeOnPick={false}
+          onClick={() => setFullscreen((v) => !v)}
+          right={fullscreen ? 'On' : 'Off'}>Fullscreen</MenuItem>
+      </Popover>
 
       <IndicatorBrowser
         open={browserOpen} onClose={() => { setBrowserOpen(false); setFocusIndicator(null); }}

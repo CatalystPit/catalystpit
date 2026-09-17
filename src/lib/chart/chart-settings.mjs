@@ -1,3 +1,4 @@
+import { CHART_TYPE_IDS } from './chart-types.mjs';
 // Saved chart settings.
 //
 // Uses the storage the product already uses for per-user chart-shaped state: localStorage under a
@@ -123,11 +124,14 @@ const VIEW_KEY = 'cp_chart_view';
 const VIEW_VERSION = 1;
 
 export const DEFAULT_VIEW = {
-  chartType: 'Candles',     // 'Candles' | 'Line'
+  chartType: 'Candles',     // any id in the chart-type registry
   logScale: false,
   autoScale: true,
   extended: false,
   showDrawings: true,
+  // Magnet is off by default, as it is on every platform that has one: it changes where an anchor
+  // lands, and a user who has not asked for that should not meet it.
+  magnet: false,
 };
 
 export function loadView() {
@@ -137,13 +141,18 @@ export function loadView() {
     if (!parsed || parsed.v !== VIEW_VERSION) return { ...DEFAULT_VIEW };
     const v = parsed.view || {};
     return {
-      chartType: v.chartType === 'Line' ? 'Line' : 'Candles',
+      // VALIDATED AGAINST THE REGISTRY, not against a hard-coded pair of ids. The previous version
+      // tested for one id and fell back to the other, which silently threw Area away — choose Area,
+      // reload, and the chart came back as candles. Anything the registry does not know still falls
+      // back to the default rather than being trusted.
+      chartType: CHART_TYPE_IDS.includes(v.chartType) ? v.chartType : DEFAULT_VIEW.chartType,
       logScale: v.logScale === true,
       // Auto-scale defaults ON: a chart that opens without it looks broken until the user finds the
       // control, and absent means "not chosen" rather than "off".
       autoScale: v.autoScale !== false,
       extended: v.extended === true,
       showDrawings: v.showDrawings !== false,
+      magnet: v.magnet === true,
     };
   } catch {
     return { ...DEFAULT_VIEW };

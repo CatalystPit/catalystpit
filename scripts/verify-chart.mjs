@@ -32,6 +32,7 @@ import { CHART_TYPES, CHART_TYPE_IDS, chartTypeOf, PLANNED_CHART_TYPES } from '.
 import { INDICATOR_CATEGORIES, indicatorMeta, searchIndicators } from '../src/lib/chart/chart-indicators.mjs';
 import { TOOL_CATEGORIES, TOOL_IDS, activeCategories, categoryOfTool } from '../src/lib/chart/chart-drawings.mjs';
 import { placeFor, boxOf, EDGE, MIN_PANEL } from '../src/lib/chart/chart-popover.mjs';
+import { cloneDrawing, barLevels, snapToLevel, MAGNET_PX } from '../src/lib/chart/chart-drawings.mjs';
 import { TIMEFRAME_GROUPS, timeframesByGroup, ADAPTER, isServable, unavailableReason,
   PLANNED_TIMEFRAMES } from '../src/lib/chart/chart-source.mjs';
 
@@ -784,8 +785,11 @@ section('16. drawing tools are grouped into categories on a left rail');
   ok('a category counts only tools that exist', /cat\.tools\.filter\(\(t\) => TOOLS\[t\]\)/.test(rail));
   ok('a category with several tools gets a dropdown arrow', /\{tools\.length > 1 && \(/.test(rail));
   ok('there is a select/edit mode', /Select \/ edit/.test(rail));
-  ok('hide, delete and clear live on the rail',
-    /Hide all drawings/.test(rail) && /Delete selected/.test(rail) && /Clear all/.test(rail));
+  ok('hide and delete live on the rail',
+    /Hide all drawings/.test(rail) && /Delete selected/.test(rail));
+  // "Delete all" moved into the object tree, beside the list of what it would delete: a rail button
+  // that silently wipes every drawing on the symbol is the wrong place for it.
+  ok('...while delete-all lives beside the list it empties', !/Clear all \$\{count\}/.test(rail));
 
   // CONTEXTUAL, NOT A PERMANENT ROW.
   ok('style settings are a popover', /const \[stylePanel, setStylePanel\] = useState/.test(rail));
@@ -982,7 +986,11 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
   ok('menus are portalled out of the panel', /createPortal\(/.test(popoverBody));
   ok('...to the document body, escaping every overflow', /document\.body,\s*\n\s*\);/.test(popoverBody));
   ok('...and positioned against the viewport', /position: 'fixed'/.test(ui));
-  ok('the popover uses the shared placement module', /placeFor\(a\.getBoundingClientRect\(\)/.test(ui));
+  ok('the popover uses the shared placement module', /setPos\(placeFor\(rect, placement/.test(ui));
+  // A context menu anchors to a POINT rather than to a control. A point is a rect with no width, so
+  // the same placement, flipping and clamping applies with no second code path.
+  ok('...for a cursor point as well as a control',
+    /point\s*\n?\s*\? \{ top: point\.y, bottom: point\.y, left: point\.x, right: point\.x \}/.test(ui));
   ok('it follows its trigger when an ancestor scrolls',
     /addEventListener\('scroll', place, true\)/.test(ui));
   ok('...and when the panel is resized by drag', /new ResizeObserver\(place\)/.test(ui));
@@ -992,7 +1000,7 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
   ok('a click in a menu opened from another does not close the parent',
     /hit !== -1 && hit >= mine/.test(ui));
   ok('the trigger stays clickable to toggle its own menu',
-    /anchorRef\.current\?\.contains\(e\.target\)\) return/.test(ui));
+    /anchorRef\?\.current\?\.contains\(e\.target\)\) return/.test(ui));
   ok('picking a row closes the menu', /data-close-on-pick/.test(ui));
   ok('menu rows have a hover state', /hover && !disabled \? p\.menuHover/.test(itemBody));
   ok('toolbar buttons have one too', /hover && !disabled \? p\.menuHover/.test(buttonBody));
@@ -1320,6 +1328,141 @@ section('21. the chart surface: legend, crosshair and the readout that is always
   // unmounted — removing a Terminal panel, or navigating off the ticker page.
   ok('the overlay list is emptied the way an array is', /overlaysRef\.current = \[\]; lwcRef\.current = null;/.test(cmp));
   ok('...and never with a Map method', !/overlaysRef\.current\.clear\(\)/.test(cmp));
+}
+
+section('22. context menu, magnet, drawing manager, panes');
+{
+  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
+  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
+  const theme = await readFile(new URL('../src/lib/chart/chart-theme.mjs', import.meta.url), 'utf8');
+
+  // ── 1. THE CONTEXT MENU ─────────────────────────────────────────────────────────────────────
+  ok('right-clicking the chart opens our menu, not the browser’s',
+    /onContextMenu=\{\(e\) => \{ e\.preventDefault\(\); setMenuAt\(\{ x: e\.clientX, y: e\.clientY \}\); \}\}/.test(cmp));
+  // Only over the chart: "copy" and "inspect" are sometimes genuinely wanted on the toolbar.
+  ok('...only over the chart surface', (cmp.match(/onContextMenu=/g) || []).length === 1);
+  ok('it opens AT the cursor', /<Popover theme=\{theme\} open=\{!!menuAt\} point=\{menuAt\}/.test(cmp));
+  ok('...through the shared portalled popover, so the panel cannot clip it',
+    /point = null,/.test(ui));
+  ok('the position IS the open state', /const \[menuAt, setMenuAt\] = useState\(null\);/.test(cmp));
+  // EVERY ACTION IS ONE WE ACTUALLY SUPPORT. A context menu listing things that do nothing is worse
+  // than a short one.
+  const ctx = cmp.slice(cmp.indexOf('open={!!menuAt}'), cmp.indexOf('</Popover>', cmp.indexOf('open={!!menuAt}')));
+  for (const action of ['Reset view', 'Add indicator', 'Price scale', 'Auto scale', 'Magnet',
+    'Show drawings', 'Manage drawings', 'Fullscreen'])
+    ok(`the menu offers "${action}"`, ctx.includes(action));
+  ok('extended hours appears only where it means something', /\{canExtend && \(/.test(ctx));
+  ok('scroll-to-latest appears only when scrolled back', /\{scrolledBack && \(/.test(ctx));
+  ok('toggles keep the menu open', (ctx.match(/closeOnPick=\{false\}/g) || []).length >= 5);
+
+  // ── 2. MAGNET ───────────────────────────────────────────────────────────────────────────────
+  // SNAPPING IS A DRAWING BEHAVIOUR. The crosshair must behave identically either way — that is the
+  // whole reason magnet is a separate switch and not a crosshair mode.
+  ok('magnet never touches the crosshair mode',
+    /crosshair: \{ mode: lwc\.CrosshairMode\.Normal \}/.test(cmp) && !/magnet.*CrosshairMode/.test(cmp));
+  ok('the snap decision is pure and testable', typeof snapToLevel === 'function');
+  ok('a bar offers its open, high, low and close', barLevels({ open: 1, high: 4, low: 0, close: 3 }).length === 4);
+  ok('...without duplicates', barLevels({ open: 5, high: 9, low: 5, close: 9 }).join() === '5,9');
+  ok('...and nothing at all for a missing bar', barLevels(null).length === 0);
+  // Measured in PIXELS, so "near enough" means the same at every zoom level.
+  // BOTH ORDERINGS. With the nearest level last, "always take the last one" scores the same as
+  // "take the nearest" and the test proves nothing — so the winner is placed first here and last
+  // below, and only a real distance comparison satisfies both.
+  ok('the nearest level within tolerance captures the anchor',
+    snapToLevel(100, [{ price: 5, y: 90 }, { price: 7, y: 104 }]) === 7);
+  ok('...whichever order the levels arrive in',
+    snapToLevel(100, [{ price: 7, y: 104 }, { price: 5, y: 90 }]) === 7
+      && snapToLevel(100, [{ price: 9, y: 101 }, { price: 3, y: 108 }]) === 9);
+  ok('...and nothing captures it when all are too far',
+    snapToLevel(100, [{ price: 5, y: 50 }]) === null);
+  ok('the tolerance boundary is inclusive',
+    snapToLevel(100, [{ price: 5, y: 100 + MAGNET_PX }]) === 5
+      && snapToLevel(100, [{ price: 5, y: 100 + MAGNET_PX + 1 }]) === null);
+  ok('a level with no screen position is ignored',
+    snapToLevel(100, [{ price: 5, y: null }, { price: 9, y: 101 }]) === 9);
+  ok('the layer snaps only when magnet is on', /if \(stateRef\.current\.magnet\) \{/.test(layer));
+  ok('...and otherwise returns the pointer’s own price', /return \{ time: bar\.time, price \};/.test(layer));
+  ok('magnet is off by default', DEFAULT_VIEW.magnet === false);
+  ok('...and is remembered', /magnet: v\.magnet === true/.test(await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')));
+  ok('the rail carries a magnet toggle', /active=\{magnet\} onClick=\{onToggleMagnet\}/.test(rail));
+
+  // ── 3. LOCK, CLONE AND THE OBJECT TREE ──────────────────────────────────────────────────────
+  const d = createDrawing('trend', [{ time: 1, price: 10 }, { time: 2, price: 12 }], {}, []);
+  ok('a new drawing is unlocked', d.locked === false);
+  // THE LOCK IS ENFORCED IN THE MODEL, not only in the UI: every drag goes through moveDrawing.
+  const locked = { ...d, locked: true };
+  ok('a locked drawing cannot be moved', moveDrawing(locked, { dPrice: 5 }) === locked);
+  ok('...nor by a handle pull', moveDrawing(locked, { dPrice: 5 }, 0) === locked);
+  ok('an unlocked one still moves', moveDrawing(d, { dPrice: 5 }).points[0].price === 15);
+  ok('the layer also refuses to arm a drag on a locked drawing', /if \(d && !d\.locked\) \{/.test(layer));
+  ok('...but still selects it, so it can be unlocked', /onSelect\(hit \? hit\.id : null\);/.test(layer));
+  ok('a lock survives a reload', coerceDrawing({ ...locked }).locked === true);
+  ok('...and an older stored drawing without one stays movable',
+    coerceDrawing({ type: 'trend', points: d.points }).locked === false);
+
+  const copy = cloneDrawing(d, [d]);
+  ok('a clone gets a fresh id', copy.id !== d.id);
+  ok('...the same geometry', copy.points[0].price === d.points[0].price && copy.points.length === d.points.length);
+  ok('...deep-copied, so moving one does not move the other', copy.points[0] !== d.points[0]);
+  ok('...and is never born locked', cloneDrawing(locked, [locked]).locked === false);
+  ok('cloning an unknown type produces nothing', cloneDrawing({ type: 'nope', points: [] }, []) === null);
+  ok('duplication goes through the model, not the UI', /cloneDrawing\(src, ds\)/.test(cmp));
+  ok('...and selects the copy, since it sits on the original', /setSelectedDrawing\(copy\.id\)/.test(cmp));
+
+  ok('the object tree lists every drawing on the symbol', /drawings=\{drawings\} selectedId=\{selectedDrawing\}/.test(cmp));
+  ok('a row selects the drawing on the chart', /onClick=\{\(\) => onSelect\(d\.id\)\}/.test(mgr));
+  ok('...can hide it', /patch\(d\.id, \{ visible: !on \}\)/.test(mgr));
+  ok('...lock it', /patch\(d\.id, \{ locked: !d\.locked \}\)/.test(mgr));
+  ok('...duplicate it', /onDuplicate\?\.\(d\.id\)/.test(mgr));
+  ok('...and delete it', /onClick=\{\(\) => remove\(d\.id\)\}/.test(mgr));
+  ok('newest is listed first', /\[\.\.\.drawings\]\.reverse\(\)/.test(mgr));
+  ok('the tree is reachable from the rail', /onOpenManager/.test(rail));
+  ok('...and from the context menu', ctx.includes('Manage drawings'));
+
+  // ── 4. ONE VISUAL SYSTEM ────────────────────────────────────────────────────────────────────
+  // The chart types are vectors; the drawing tools were text glyphs, which render differently on
+  // every machine and sit at a different weight beside them.
+  ok('every drawing tool declares vector geometry',
+    TOOL_IDS.every((id) => Array.isArray(TOOLS[id].shapes) && TOOLS[id].shapes.length > 0));
+  ok('...and keeps a glyph fallback', TOOL_IDS.every((id) => typeof TOOLS[id].icon === 'string'));
+  ok('every tool icon is distinct',
+    new Set(TOOL_IDS.map((id) => JSON.stringify(TOOLS[id].shapes))).size === TOOL_IDS.length);
+  ok('every active category declares one too',
+    activeCategories().every((c) => Array.isArray(c.shapes) && c.shapes.length > 0));
+  ok('the rail renders them as vectors, not text', /<VectorIcon shapes=\{def\?\.shapes \?\? cat\.shapes\}/.test(rail));
+  ok('...and so do the flyout rows', /left=\{<VectorIcon shapes=\{TOOLS\[t\]\.shapes\}/.test(rail));
+  ok('...and the object tree', /<VectorIcon shapes=\{def\.shapes\} glyph=\{def\.icon\} \/>/.test(mgr));
+  // Every icon in the product is drawn by the one renderer, so they share stroke weight and size.
+  // Null-safe: a tool that has lost its geometry must fail the assertion above, not crash the run
+  // and take every check after it down with it.
+  const kinds = [...new Set(TOOL_IDS.flatMap((id) => (TOOLS[id].shapes || []).map((sh) => sh[0])))];
+  ok('the shared renderer handles every primitive the tools use',
+    kinds.every((k) => ui.includes(`kind === '${k}'`)), kinds.join());
+
+  // ── 5. PANES ────────────────────────────────────────────────────────────────────────────────
+  // v5 makes separators draggable already. The bug was ours: a redraw rebuilt the panes at their
+  // default height, throwing away the height the user had just dragged to.
+  ok('pane resizing is enabled', /enableResize: true/.test(theme));
+  ok('...and the separators are themed, not library navy',
+    /separatorColor: p\.border/.test(theme) && !/#2B2B43/.test(theme));
+  ok('pane options sit under layout, where the library reads them',
+    theme.indexOf('panes: {') > theme.indexOf('layout: {')
+      && theme.indexOf('panes: {') < theme.indexOf('grid: {'));
+  ok('a redraw captures the pane heights first', /for \(const pane of chart\.panes\(\)\) keptHeights\.push\(pane\.getHeight\(\)\)/.test(cmp));
+  ok('...and restores them instead of forcing the default',
+    /Number\.isFinite\(kept\) && kept > 0 \? kept : 110/.test(cmp));
+  ok('no hand-rolled drag handle was bolted on', !/separatorDrag|onPaneResize|paneDragHandle/.test(cmp));
+
+  // ── 6. THE AREA PERSISTENCE BUG ─────────────────────────────────────────────────────────────
+  // loadView hard-coded `=== 'Line' ? 'Line' : 'Candles'`, so choosing Area and reloading silently
+  // gave back candles. It is validated against the registry now.
+  const settings = await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8');
+  ok('the saved chart type is validated against the registry',
+    /CHART_TYPE_IDS\.includes\(v\.chartType\)/.test(settings));
+  ok('...so Area is no longer thrown away on reload', !/v\.chartType === 'Line' \? 'Line' : 'Candles'/.test(settings));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
