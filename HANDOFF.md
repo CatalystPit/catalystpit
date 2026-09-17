@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-17 17:50 UTC · **Deployed HEAD:** `4de460d` on `main` (this file is committed on
+**Last updated:** 2026-09-17 · **Deployed HEAD:** `9aac084b` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -140,13 +140,18 @@ production paths.
 - **X** (`x-autopost.mjs`, `x-publisher.js`): requires Catalyst wording (`original`/`composed`), then
   CRITICAL or a Walter Bloomberg cluster, then the editorial gate. Stale after 2h (`x-quality.mjs`).
   `X_AUTOPOST_MODE` must be exactly `live`.
-- **Facebook** (`facebook-publisher.js`, `facebook-post.mjs`): queues a Walter Bloomberg story ONLY at
-  ingest and ONLY when Walter's row is canonical (`primary-events.js:71`). **If another source files
-  the same story first, Walter's row folds into it and Facebook never hears about it** — that is why
-  the Standard Chartered story never reached the Page. Roughly 7 of 44 Walter rows in 24h were lost
-  that way. The ZeroHedge path (`queueRewordedFacebook`) needs Catalyst wording and a 30-minute
-  freshness window. **Fix not implemented; it needs a product decision** (queue when a trusted source
-  is anywhere in the cluster, and decide which wording posts).
+- **Facebook** (`facebook-publisher.js`, `facebook-post.mjs`): three entry points — inline at ingest
+  when a whitelisted source is canonical, `queueRewordedFacebook()` (ZeroHedge, needs Catalyst
+  wording, 30-minute window), and `queueTrustedFacebook()` (below).
+
+**Arrival order no longer decides qualification** (`9aac084b`, deployed). Trust is now recorded on the
+EVENT, not on whichever copy arrived first: `primary_events.trusted_source` / `trusted_seen_at`
+(migration `0026`) are set when a trusted source lands, whether its row becomes canonical or folds
+into an existing cluster. `queueTrustedFacebook()` then queues the canonical event once it has
+Catalyst wording, within 30 minutes of `trusted_seen_at`, and only when no candidate exists on the
+event *or any member of its cluster*. This is what the Standard Chartered story needed — it folded
+into FinancialJuice's canonical row and was invisible to the old ingest-time check (~7 of 44 Walter
+rows in 24h were lost that way). **The Page always posts Catalyst wording, never the source's copy.**
 
 ### The $BP basis-points fix
 "25 BP" / "50 BPS" after a figure is basis points, not BP p.l.c. `maskUnitsAfterNumbers` in
@@ -154,6 +159,41 @@ production paths.
 of ~55 unit abbreviations that collided with the real reference index. Three stored rows had the
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
+
+## Instagram and Threads (investigated and designed; NOT connected)
+
+Investigation only. No Meta configuration was touched, no token was created, nothing was published,
+nothing was deployed. What exists in the repo is three **pure, unimported** modules under
+`src/lib/social/` plus `scripts/verify-social-formatters.mjs` (96 assertions, 23 mutations caught).
+No route imports them, there is no migration, and no cron entry. Deleting them changes nothing.
+
+**Why they are separate platforms, not "post everywhere".** Instagram has no text-only post — every
+publish needs media on a public URL — and Threads is text-first with a 500-character ceiling.
+Sharing a publisher between them would couple two different failure modes to one queue.
+
+- **Instagram**: `POST /{ig-id}/media` (container) → poll `?fields=status_code` until `FINISHED` →
+  `POST /{ig-id}/media_publish`. JPEG only, ≤8MB, width 320–1440, aspect 4:5–1.91:1, public https URL.
+  Caption ≤2200 chars, ≤30 hashtags. Containers expire after 24h; 100 posts and 400 containers / 24h.
+  The container id is a real idempotency handle — a crashed worker republishes the SAME container
+  instead of creating a second post, which Facebook's `/feed` cannot offer.
+- **Threads**: `POST /{user-id}/threads` (`media_type: TEXT`) → wait ~30s → `POST /threads_publish`,
+  on `graph.threads.net`. 500 characters, 250 posts / 24h. **Separate credential**: Threads OAuth,
+  long-lived token expires in 60 days and must be refreshed (token must be ≥24h old to refresh). This
+  is the one piece that cannot ride the existing Facebook System User token.
+- **Editorial**: both publish the SAME canonical Catalyst sentence Facebook and X publish, gated on
+  `headline_status ∈ {original, composed}`. No emoji, no fabrication, no link in copy, and **no source
+  name on any Catalyst Pit graphic**. Instagram carries the existing fixed four-hashtag block;
+  Threads carries none. Nothing is ever truncated — an oversize line is skipped, because cutting a
+  headline changes what it says.
+- **Anthropic cost: zero.** Both reuse the headline the rewrite pipeline already produced. No new
+  model call, no per-platform rewrite. That is a hard constraint, not an optimisation.
+- **Blocked on the user** (cannot be done from here): create/link an Instagram professional account to
+  the Page, grant `instagram_basic` + `instagram_content_publish`, add the Threads use case and
+  complete its App Review, and set `INSTAGRAM_BUSINESS_ACCOUNT_ID`, `THREADS_USER_ID`,
+  `THREADS_ACCESS_TOKEN`. Both kill switches default OFF and accept only the literal string `true`.
+- **Still to build when unblocked**: the card renderer (there is no server-side image generation for
+  social today — `opengraph-image.jsx` is one static 1200×630 PNG), blob hosting for cards, the two
+  candidate tables, the two cron routes, and a Threads token-refresh job.
 
 ---
 
@@ -286,8 +326,8 @@ refused rather than faked. Volume baselines use median/MAD.
 - **Company descriptions**: source undecided. SEC deterministic extraction measured (above); a
   licensed provider is required for ETFs, funds, foreign issuers and extraction failures whatever is
   decided. No AI summarization without explicit approval.
-- **Facebook trusted-cluster queueing** (see Social publishing) — needs a product decision.
-- **Instagram and Threads automation**: on the future-work list, not started, not in scope.
+- **Instagram and Threads automation**: investigated and designed (above); formatters written and
+  tested, nothing connected. Blocked on Meta account/permission work only the user can do.
 - **Anthropic cost**: revisit after a full day of `anthropic_usage`.
 
 ## Environment pitfalls
@@ -324,3 +364,5 @@ refused rather than faked. Volume baselines use median/MAD.
 | `16b62b7` | Escape raw control chars in company-description files |
 | `ed760a4` | HANDOFF tracked in git |
 | `4de460d` | **Rewrite cost controls, outage visibility, usage accounting, $BP fix** (deployed) |
+| `19bcc86b` | HANDOFF through the rewrite optimisation and the SEC v3 measurement |
+| `9aac084b` | **Facebook: trust evidence belongs to the event, not to the first copy** (deployed) |
