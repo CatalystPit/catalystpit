@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `7c51999a` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `20656dae` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -159,6 +159,34 @@ rows in 24h were lost that way). **The Page always posts Catalyst wording, never
 of ~55 unit abbreviations that collided with the real reference index. Three stored rows had the
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
+
+## Chart long timeframes are intervals now (deployed — `20656dae`)
+
+**1M, 3M and 1Y mean one candle per calendar month / quarter / year, over the security's full
+history.** They used to be windows — every entry in the days group came from one helper that
+hard-coded `barSeconds: 86400`, so "1M" meant "the last month in daily candles" and drew ~21 candles.
+
+The fold lives in `chart-aggregate.mjs` and is applied inside `normalizeBars()`, at the provider
+boundary. That is deliberate: the series, the volume histogram, **every indicator** and the crosshair
+readout all receive monthly candles without knowing an aggregation happened. SMA 20 on 1M is 20
+months because it is handed 20 candles, not because anything special-cased it.
+
+- OPEN = first open, CLOSE = last close, HIGH/LOW = extremes, VOLUME = sum. Never sampled or averaged.
+- A period with no trading gets **no candle**, not a flat bar. Unreported volume stays **null**, not 0.
+- Buckets are read off the date CHARACTERS. Parsing `'2024-01-01'` into a `Date` attaches a zone, and
+  west of UTC it becomes 2023-12-31 — January's candle would join December. Do not "simplify" this.
+- **Two defaults moved with the semantics**: `DEFAULT_TIMEFRAME` and `TickerPriceChart` were both
+  `'3M'`, which now means a twenty-year quarterly chart. Both are `'6M'`.
+- 6M / YTD / All are still windows of daily candles. 1D / 1W are still intraday windows — see the
+  open question below.
+
+Verified on production data: AAPL 11,531 daily candles from 1980-12-12 → 550 monthly / 184 quarterly
+/ 47 yearly; MSFT from 1986; PLTR from 2020. `scripts/verify-chart-aggregate.mjs` (110 assertions,
+16/16 mutations caught); `verify-chart.mjs` is 1332 and green.
+
+**Open question for the user:** their spec described 1D as "one candle per trading day" and 1W as
+"one candle per trading week", but both are currently intraday WINDOWS (5-minute and 30-minute bars)
+and were explicitly out of scope. Weekly bars remain the only entry in `PLANNED_TIMEFRAMES`.
 
 ## Pit Consensus performance (fixed and deployed — `26ea8c02`)
 
