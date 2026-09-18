@@ -115,6 +115,10 @@
     {
       "path": "/api/cron/facebook",
       "schedule": "* * * * *"
+    },
+    {
+      "schedule": "20 7 * * *",
+      "path": "/api/cron/dividends"
     }
   ],
   "headers": [
