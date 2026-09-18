@@ -20,6 +20,9 @@
 import { partitionSignals } from './market-capabilities.mjs';
 import { SIGNALS } from './signals.mjs';
 import { advance, TRANSITIONS } from './lifecycle.mjs';
+import { deriveRow } from './derived.mjs';
+import { usableBenchmarks } from './provider-contract.mjs';
+import { SECTOR_ETF, CORE_BENCHMARKS } from './relative-strength.mjs';
 
 /**
  * Evaluate one symbol.
@@ -97,18 +100,24 @@ export function runCycle({
 
   for (const state of symbolStates || []) {
     if (!state) continue;
+    // A stale benchmark is worse than no benchmark: if SPY stopped updating and the symbol did not,
+    // every symbol on the board looks strong. Dropped rather than compared.
+    const bench = usableBenchmarks(benchmarksFor(state, benchmarks), now);
+    const baseline = baselines[state.symbol] || null;
     const result = evaluateSymbol(state, {
       signals: enabled,
       store,
       now,
-      ctx: {
-        benchmarks: benchmarksFor(state, benchmarks),
-        baseline: baselines[state.symbol] || null,
-      },
+      ctx: { benchmarks: bench, baseline },
     });
     if (!result) continue;
     events.push(...result.events);
     if (!result.states.length) continue;
+
+    // THE DERIVED BLOCK. Everything the columns, filters and dropdowns read — velocity, acceleration,
+    // RVOL, VWAP state, levels, volatility, relative strength — computed from calculations that
+    // already existed and were, until now, reachable only from tests.
+    const derivedValues = deriveRow(state, { capabilities, benchmarks: bench, baseline, now });
 
     rows.push({
       symbol: state.symbol,
@@ -123,6 +132,10 @@ export function runCycle({
       spreadPct: state.spreadPct,
       haltStatus: state.haltStatus,
       sector: state.sector,
+      // Spread over the row so `row.velocity`, `row.rvol`, `row.rsSpy` and the rest are where the
+      // registry says they are. Null inside means unknown; a key absent from FIELD_MAP means the
+      // engine does not implement it, and those are different statements.
+      ...derivedValues,
       // THE SIGNAL STACK. Not a score: the list of what is true, newest first, each able to explain
       // itself. This is the row a trader reads.
       signals: result.states.slice().sort((a, b) => b.since - a.since),
@@ -160,11 +173,19 @@ export function rankOf(states) {
   return total;
 }
 
-/** SPY and QQQ always; the symbol's sector ETF when we know its sector. */
+/**
+ * SPY and QQQ always; the symbol's sector ETF when we know its sector.
+ *
+ * THE DEAD PATH, FIXED. This read `state.sectorEtf`, which `buildSymbolState` never set — so sector
+ * relative strength could not fire for any symbol, ever. The mapping already existed in
+ * relative-strength.mjs, keyed by the sector names `screener_stocks` already stores, so the fix is to
+ * USE the existing classification rather than invent a second one: no new lookup, no vendor data, no
+ * guessed sector. A symbol whose sector we do not know keeps the two core benchmarks.
+ */
 function benchmarksFor(state, all) {
   const out = {};
-  for (const sym of ['SPY', 'QQQ']) if (all[sym]) out[sym] = all[sym];
-  const etf = state.sectorEtf;
+  for (const sym of CORE_BENCHMARKS) if (all[sym]) out[sym] = all[sym];
+  const etf = state.sectorEtf || (state.sector ? SECTOR_ETF[state.sector] : null);
   if (etf && all[etf]) out[etf] = all[etf];
   return out;
 }

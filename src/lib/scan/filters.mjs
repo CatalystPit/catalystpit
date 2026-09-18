@@ -62,7 +62,7 @@ export const FIELDS = {
   ...Object.fromEntries(['30s', '1m', '2m', '3m', '5m', '10m', '15m', '30m'].map((w) => [
     `vel_${w}`,
     numField(`vel_${w}`, `${w} change`, 'Momentum',
-      (r) => r.velocity?.[w]?.pct,
+      (r) => r.velocity?.[w]?.pct ?? null,
       w === '30s' ? { observationsPerMinute: 2, quoteFreshness: 'realtime' } : { quoteFreshness: 'near', minBarSeconds: 60 },
       '%'),
   ])),
@@ -73,10 +73,10 @@ export const FIELDS = {
 
   // ── relative strength ──
   rsSpread: numField('rsSpread', 'Relative strength', 'Relative',
-    (r) => r.relativeStrength?.spread, { quoteFreshness: 'near', minBarSeconds: 60 }, '%'),
+    (r) => r.relativeStrength?.spread ?? null, { quoteFreshness: 'near', minBarSeconds: 60 }, '%'),
 
   // ── enrichment. The differentiator: filter on Catalyst Pit's own intelligence. ──
-  newsAgeMinutes: numField('newsAgeMinutes', 'News age', 'Catalyst', (r) => r.context?.news?.ageMinutes, {}, 'min'),
+  newsAgeMinutes: numField('newsAgeMinutes', 'News age', 'Catalyst', (r) => r.context?.news?.ageMinutes ?? null, {}, 'min'),
   insiderBuy: {
     id: 'insiderBuy', label: 'Recent insider buying', group: 'Catalyst', type: 'bool',
     read: (r) => r.context?.insider?.recentBuy === true, requires: {},

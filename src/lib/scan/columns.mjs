@@ -43,7 +43,7 @@ export const COLUMNS = [
   // One per velocity window, each carrying that window's own requirement — so the 30-second column
   // simply does not exist until a feed observes fast enough to fill it.
   ...['30s', '1m', '2m', '3m', '5m', '10m', '15m', '30m'].map((w) => col(`vel_${w}`, w, {
-    read: (r) => r.velocity?.[w]?.pct,
+    read: (r) => r.velocity?.[w]?.pct ?? null,
     format: pct,
     signed: true,
     width: 58,
@@ -67,7 +67,7 @@ export const COLUMNS = [
     requires: { bidAsk: true },
   }),
   col('rsSpread', 'RS', {
-    read: (r) => r.relativeStrength?.spread, format: pct, signed: true,
+    read: (r) => r.relativeStrength?.spread ?? null, format: pct, signed: true,
     requires: { quoteFreshness: 'near', minBarSeconds: 60 },
   }),
   col('haltStatus', 'Status', {

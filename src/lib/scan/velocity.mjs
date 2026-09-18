@@ -62,6 +62,23 @@ export function velocity(bars, window, now) {
   const w = typeof window === 'string' ? WINDOW_BY_ID.get(window) : window;
   if (!w || !Array.isArray(bars) || bars.length < 2) return null;
   const from = now - w.seconds * 1000;
+
+  // ⚠️ STALE IS NOT FLAT.
+  //
+  // `priceAt` answers "the last price at or before X", so when a feed stops both ends of the window
+  // resolve to the SAME final bar and the move comes out as exactly 0%. A scanner that prints 0.00%
+  // for a symbol it has heard nothing about is stating a fact it does not have — and 0% is the most
+  // dangerous possible wrong answer, because it reads as a calm market rather than as a broken feed.
+  //
+  // A window with NO observation inside it is unknown. Measured on a replayed disconnect: without
+  // this, a feed frozen for fifteen minutes reported 0% on every window shorter than the gap.
+  //
+  // This also correctly darkens the 30-second window on minute bars — you cannot see half a minute
+  // with a one-minute instrument — which is the same thing the capability gate says, now enforced by
+  // the arithmetic rather than only by the registry.
+  const newest = bars[bars.length - 1]?.t;
+  if (!Number.isFinite(newest) || newest < from) return null;
+
   const start = priceAt(bars, from);
   const end = priceAt(bars, now);
   if (start == null || end == null) return null;

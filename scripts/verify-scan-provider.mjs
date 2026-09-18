@@ -173,11 +173,17 @@ console.log('\n=== a stale feed ===');
     bars: [bar(minsBefore(NOW, 25), 100, 100, 100, 100), bar(minsBefore(NOW, 20), 102, 102, 102, 102)],
   }, { now: NOW });
   const v = velocity(stale.bars, '5m', NOW);
-  // KNOWN GAP, pinned deliberately: there is no staleness guard, so a dead feed reports a confident
-  // 0% move rather than an unknown. It cannot fire a signal (every threshold is > 0), but it would
-  // render as "0.00%" in a velocity column, which reads as "flat" rather than "no data".
-  ok('[known gap] a stale feed still reports 0%, not null', v !== null && v.pct === 0, JSON.stringify(v));
-  ok('[known gap] and claims full coverage while doing it', v?.coverage === 1);
+  // CLOSED. This was pinned as a known gap: with no staleness guard a dead feed reported a confident
+  // 0% move, which renders as "0.00%" — a calm market — rather than as "no data". `velocity()` now
+  // refuses a window that contains no observation at all. Kept as an assertion so it cannot regress.
+  ok('a stale feed reports UNKNOWN, not a flat 0%', v === null, JSON.stringify(v));
+  // The guard is about ABSENCE, not about age: a longer window that still contains observations is
+  // measured normally, with `coverage` reporting how much of it the data actually spans.
+  const series = [];
+  for (let i = 40; i >= 20; i--) series.push(bar(minsBefore(NOW, i), 100, 100, 100, 100 + (40 - i) * 0.1));
+  ok('...while a longer window that still contains observations is measured',
+    velocity(series, '30m', NOW) !== null);
+  ok('...and the window shorter than the gap is still unknown', velocity(series, '5m', NOW) === null);
   // What DOES hold: nothing derived from the missing data is invented.
   ok('a stale feed does not invent a session high beyond its bars', stale.sessionHigh === 102);
 }
@@ -270,28 +276,34 @@ console.log('\n=== what the engine does NOT yet populate (characterization, not 
   const row = out.rows[0];
   ok('a fully-populated symbol does produce a row', !!row);
 
-  const UNPOPULATED = [
-    'vel_30s', 'vel_1m', 'vel_2m', 'vel_3m', 'vel_5m', 'vel_10m', 'vel_15m', 'vel_30m', 'rvol', 'rsSpread',
-  ];
+  // CLOSED. This list was ten columns long — every velocity window, RVOL and relative strength read
+  // `undefined` because runCycle never assembled them. `deriveRow()` now wires the calculations that
+  // already existed, and the assertion is inverted: the list must stay EMPTY.
+  //
+  // `undefined` and `null` are different verdicts here and the distinction is the whole point. Null
+  // means the market input is unknown right now (no baseline, no benchmark); undefined means nobody
+  // wired the field, which is a bug rather than a fact about the market.
   const offered = availableColumns(FULL_PROVIDER, signalAvailability)
     .filter((c) => c.format !== null && typeof c.read === 'function');
   const empty = offered.filter((c) => c.read(row) === undefined).map((c) => c.id).sort();
-  ok('the set of unpopulated columns is exactly the known list',
-    JSON.stringify(empty) === JSON.stringify([...UNPOPULATED].sort()), JSON.stringify(empty));
+  ok('NO offered column reads undefined on a fully capable feed', empty.length === 0, JSON.stringify(empty));
+  ok('...and the board really does offer the full set', offered.length >= 20, String(offered.length));
 
-  // The same gap seen from the filter side, plus the enrichment field.
+  // The same, from the filter side.
   const emptyFields = Object.values(FIELDS)
     .filter((f) => !f.requiresFor && signalAvailability({ requires: f.requires }, FULL_PROVIDER).available)
     .filter((f) => f.read(row) === undefined).map((f) => f.id).sort();
-  ok('and the unpopulated filter fields are that list plus news age',
-    JSON.stringify(emptyFields) === JSON.stringify([...UNPOPULATED, 'newsAgeMinutes'].sort()), JSON.stringify(emptyFields));
+  ok('NO available filter field reads undefined', emptyFields.length === 0, JSON.stringify(emptyFields));
 
   // What the engine DOES populate, so a regression would be caught.
   for (const k of ['price', 'changePct', 'gapPct', 'volume', 'dollarVolume', 'marketCap', 'float', 'spreadPct']) {
     ok(`the engine populates ${k}`, row[k] !== undefined);
   }
-  ok('[known gap] the engine drops the volume-quality tag the state carries',
-    row.volumeQuality === undefined && state.volumeQuality === 'consolidated');
+  // CLOSED. The tag now travels WITH the row, so a reader and a downstream consumer can both see
+  // what kind of volume the numbers were built from — which is the input to the RVOL methodology
+  // rule, and was previously dropped on the floor between the state and the row.
+  ok('the row carries the volume-quality tag the state carries',
+    row.volumeQuality === 'consolidated' && state.volumeQuality === 'consolidated');
 }
 
 console.log('\n=== session boundaries ===');
