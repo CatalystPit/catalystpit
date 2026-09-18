@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-17 · **Deployed HEAD:** `9aac084b` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `26ea8c02` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -159,6 +159,35 @@ rows in 24h were lost that way). **The Page always posts Catalyst wording, never
 of ~55 unit abbreviations that collided with the real reference index. Three stored rows had the
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
+
+## Pit Consensus performance (fixed and deployed — `26ea8c02`)
+
+**The board used to derive its 13F leg on the request path.** Measured on production: 3,090,516
+holding rows scanned across two quarters, hash-aggregated into 1,739,389 (ticker, cik) pairs,
+~145 MB spilled to disk, 14,474 tickers out — **5,994 ms in Postgres, ~8,200 ms to Node**. The other
+two aggregations were 102 ms and 47 ms. `fund_holdings` is 9.17M rows / 3.0 GB and still growing, so
+this was getting worse, not better.
+
+It was never only `/consensus`: the homepage `ConsensusTeaser` and the `ConsensusBadge` on **every
+ticker page** call the same route, and `?ticker=` computes BOTH boards. The KV entry lasts 30 minutes
+and had no single-flight, so each lapse hit the next visitor — and every concurrent visitor
+separately.
+
+**Now**: `fund_qoq` (migration `0027`) holds the identical numbers, refreshed by `refreshFundQoq()`
+at the end of the institutions ingest, with `/api/cron/fund-qoq` at 09:30 as a safety net. Production
+after: **~110 ms warm, ~450–560 ms both-caches-cold, ~1.9 s if the lambda is also cold.**
+
+Three things worth knowing before touching this:
+- **A missing summary is slow, never wrong.** `rollupFundQoqLive()` is the original query, kept as the
+  fallback for a new quarter or a mid-ingest gap. Do not delete it.
+- **The summary is read for ~1,100 candidate tickers, not all 14,474** — a ticker needs two aligned
+  signals, so a fund-only name can never reach the board. That equivalence is what makes it safe.
+- **Verified identical**, not assumed: all 14,474 tickers match the live roll-up, and both boards come
+  back byte for byte the same.
+
+`scripts/verify-confluence.mjs` (25 assertions, 8/8 mutations caught) guards the SHAPE — roll-up
+absent from the request path, bounded query count, no N+1, independent queries overlapping, fallback
+correct, methodology preserved. Deliberately no millisecond thresholds.
 
 ## Pit Scan provider readiness (investigated; no provider selected)
 
