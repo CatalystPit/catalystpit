@@ -179,5 +179,26 @@ console.log('\n=== only the tickers that could matter are fetched ===');
   ok('and an empty board, not a fund-only one', board.length === 0, JSON.stringify(board));
 }
 
+console.log('\n=== symbol search does not aggregate 9.17M rows either ===');
+{
+  // Same class of bug, bigger blast radius: this one ran on a KEYSTROKE in the nav search box, on
+  // every page, and measured 11.6 s cold in production.
+  const { readTickerIssuer } = await import('../src/lib/ticker-issuer.js');
+
+  // Stored lower-case on purpose: the matcher upper-cases the query, so a row that skipped
+  // normalisation would simply never match and the symbol would vanish from autocomplete.
+  reset({ ...DATA, issuerNames: [{ ticker: 'voo', name: 'VANGUARD INDEX FDS' }] });
+  const names = await readTickerIssuer();
+  ok('the precomputed issuer map is read', Array.isArray(names) && names.length === 1, JSON.stringify(names));
+  ok('tickers come back normalised for the matcher', names[0].ticker === 'VOO', JSON.stringify(names));
+  ok('reading it never touches fund_holdings', countOf('issuer_live_rollup') === 0, kinds().join(', '));
+  ok('and it is a single statement', __state.calls.length === 1, kinds().join(', '));
+
+  // An empty table must stay distinguishable from "there are no ETFs", or autocomplete quietly
+  // loses every symbol this augmentation exists to supply.
+  reset({ ...DATA, issuerNames: [] });
+  ok('an unbuilt map returns null so the caller can fall back', (await readTickerIssuer()) === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

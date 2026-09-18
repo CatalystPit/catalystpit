@@ -12,6 +12,7 @@ const state = {
   summary: [],            // rows fund_qoq holds
   insider: [],
   congress: [],
+  issuerNames: [],
   quarters: { q0: '2026-06-30', q1: '2026-03-31' },
   delayMs: 0,             // per-statement delay, for proving concurrency
 };
@@ -24,6 +25,7 @@ export function reset(over = {}) {
   state.summary = [];
   state.insider = [];
   state.congress = [];
+  state.issuerNames = [];
   state.quarters = { q0: '2026-06-30', q1: '2026-03-31' };
   state.delayMs = 0;
   Object.assign(state, over);
@@ -40,6 +42,9 @@ const textOf = (q) => {
 };
 
 function classify(text) {
+  if (text.includes('ticker_issuer') && text.includes('insert')) return 'ticker_issuer_refresh';
+  if (text.includes('ticker_issuer')) return 'ticker_issuer_read';
+  if (text.includes('array_agg') && text.includes('issuer')) return 'issuer_live_rollup';
   if (text.includes('fund_qoq') && text.includes('insert')) return 'fund_qoq_refresh';
   if (text.includes('per_fund')) return 'live_rollup';            // the expensive one
   if (text.includes('fund_qoq')) return text.includes('count(*)') && text.includes('fund_filings')
@@ -63,6 +68,8 @@ function rowsFor(kind) {
     case 'quarters_and_state':
       return [{ q0: state.quarters.q0, q1: state.quarters.q1, summary_rows: state.built ? state.summary.length : 0 }];
     case 'fund_qoq_read': return state.summary;
+    case 'ticker_issuer_read': return state.issuerNames;
+    case 'issuer_live_rollup': return state.issuerNames;
     case 'live_rollup': return state.holdings;
     case 'insider': return state.insider;
     case 'congress': return state.congress;

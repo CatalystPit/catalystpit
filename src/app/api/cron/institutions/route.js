@@ -2,6 +2,7 @@ import { db } from '../../../../lib/db';
 import { fundHoldings, fundFilings } from '../../../../lib/schema';
 import { INSTITUTIONS } from '../../../../lib/institutions.mjs';
 import { refreshFundQoq } from '../../../../lib/fund-qoq';
+import { refreshTickerIssuer } from '../../../../lib/ticker-issuer';
 import { and, eq, sql, inArray } from 'drizzle-orm';
 import { auth, clerkClient } from '@clerk/nextjs/server';
 
@@ -275,13 +276,15 @@ export async function GET(request) {
   // of visitors. Best effort — a failure leaves the previous summary in place and the board simply
   // falls back to computing live until the standalone cron catches it.
   let fundQoq = null;
+  let tickerNames = null;
   try {
     fundQoq = await refreshFundQoq();
+    tickerNames = await refreshTickerIssuer();
   } catch (e) {
     console.log(`[institutions] fund_qoq refresh error: ${e.message}`);
   }
 
-  const summary = { ok: true, funds: funds.length, done: done.length, skipped, tickersResolved, fundQoq, ms: Date.now() - startedAt };
+  const summary = { ok: true, funds: funds.length, done: done.length, skipped, tickersResolved, fundQoq, tickerNames, ms: Date.now() - startedAt };
   console.log(`[institutions] ${JSON.stringify(summary)}`);
   return Response.json(summary);
 }

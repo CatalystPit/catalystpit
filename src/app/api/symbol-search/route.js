@@ -1,6 +1,7 @@
 import { db } from '../../../lib/db';
 import { sql } from 'drizzle-orm';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
+import { readTickerIssuer } from '../../../lib/ticker-issuer';
 
 export const runtime = 'nodejs';
 
@@ -12,24 +13,55 @@ const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com', 'Acce
 const TTL_MS = 12 * 60 * 60 * 1000;   // refresh the symbol list twice a day
 let CACHE = null;
 let CACHE_AT = 0;
+let INFLIGHT = null;
 
-async function loadTickers() {
-  if (CACHE && (Date.now() - CACHE_AT) < TTL_MS) return CACHE;
+/**
+ * ONE REBUILD AT A TIME PER INSTANCE.
+ *
+ * The cache is a module-level variable, so a cold lambda has nothing — and the trigger is a search
+ * box with a 130 ms debounce. Typing "NVDA" on a cold instance used to start four independent
+ * rebuilds, each fetching SEC and each aggregating the holdings table. They now share one.
+ */
+function loadTickers() {
+  if (CACHE && (Date.now() - CACHE_AT) < TTL_MS) return Promise.resolve(CACHE);
+  if (INFLIGHT) return INFLIGHT;
+  INFLIGHT = buildTickers().finally(() => { INFLIGHT = null; });
+  return INFLIGHT;
+}
+
+/**
+ * The original inline roll-up, kept for the window before ingest has built the table.
+ *
+ * It is the expensive one — without it, a fresh database would silently drop every ETF out of
+ * autocomplete, which is worse than being slow once.
+ */
+async function legacyIssuerRollup() {
+  console.log('[symbol-search] ticker_issuer empty — falling back to the live roll-up');
+  const res = await db.execute(sql`
+    SELECT ticker, (array_agg(issuer ORDER BY n DESC))[1] AS name
+    FROM (SELECT ticker, issuer, count(*)::int AS n FROM fund_holdings WHERE ticker IS NOT NULL AND coalesce(put_call,'')='' AND issuer IS NOT NULL GROUP BY ticker, issuer) t
+    GROUP BY ticker`);
+  return (res?.rows || []).map((r) => ({ ticker: String(r.ticker).toUpperCase(), name: r.name || '' }));
+}
+
+async function buildTickers() {
   let sec = [];
   try {
     const r = await fetch('https://www.sec.gov/files/company_tickers.json', { headers: SEC_HEADERS });
     if (r.ok) sec = Object.values(await r.json()).map((x) => ({ ticker: String(x.ticker).toUpperCase(), name: x.title || '' }));
   } catch { sec = CACHE || []; }
 
-  // Augment with our own resolved tickers (ETFs + anything SEC's ticker file lacks) — dominant issuer as the name.
+  // Augment with our own resolved tickers (ETFs + anything SEC's ticker file lacks) — dominant issuer
+  // as the name.
+  //
+  // PRECOMPUTED AT INGEST. This used to be a two-level GROUP BY over all 9.17M rows of
+  // fund_holdings, unbounded, on every cold instance — 11.6 seconds measured in production, in front
+  // of somebody typing in the nav search box. `ticker_issuer` holds the same answer as ~14.5k small
+  // rows and is refreshed when ingest resolves a ticker.
   let ours = [];
   try {
-    const res = await db.execute(sql`
-      SELECT ticker, (array_agg(issuer ORDER BY n DESC))[1] AS name
-      FROM (SELECT ticker, issuer, count(*)::int AS n FROM fund_holdings WHERE ticker IS NOT NULL AND coalesce(put_call,'')='' AND issuer IS NOT NULL GROUP BY ticker, issuer) t
-      GROUP BY ticker`);
-    ours = (res?.rows || []).map((r) => ({ ticker: String(r.ticker).toUpperCase(), name: r.name || '' }));
-  } catch { /* SEC list still works */ }
+    ours = await readTickerIssuer() ?? await legacyIssuerRollup();
+  } catch { /* SEC list still works on its own */ }
 
   const seen = new Set(sec.map((x) => x.ticker));
   const merged = sec.length || ours.length ? [...sec, ...ours.filter((o) => o.ticker && !seen.has(o.ticker))] : (CACHE || []);
