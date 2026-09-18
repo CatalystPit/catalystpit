@@ -18,7 +18,51 @@ const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const pad2 = (n) => String(n).padStart(2, '0');
 
 /** The periods a long timeframe can fold into. Quarters are calendar quarters, not rolling ones. */
-export const PERIODS = new Set(['month', 'quarter', 'year']);
+export const PERIODS = new Set(['week', 'month', 'quarter', 'year']);
+
+// ── the calendar, as integers ────────────────────────────────────────────────
+// A week boundary cannot be found by string slicing the way a month can, and it must not be found
+// with a Date for the reason above. So the two conversions below are Hinnant's civil-date algorithm:
+// pure integer arithmetic, no zone, no clock, exact for every date either direction.
+
+/** Days since 1970-01-01 for a civil date. */
+export function daysFromCivil(y, m, d) {
+  const yy = y - (m <= 2 ? 1 : 0);
+  const era = Math.floor(yy / 400);
+  const yoe = yy - era * 400;                                   // [0, 399]
+  const doy = Math.floor((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+/** The inverse: a civil date from days since 1970-01-01. */
+export function civilFromDays(z) {
+  const zz = z + 719468;
+  const era = Math.floor(zz / 146097);
+  const doe = zz - era * 146097;                                // [0, 146096]
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const y = yoe + era * 400;
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp + (mp < 10 ? 3 : -9);
+  return { y: y + (m <= 2 ? 1 : 0), m, d };
+}
+
+/**
+ * The Monday that opens the trading week a date falls in.
+ *
+ * A TRADING WEEK IS MONDAY TO FRIDAY, and the candle is stamped with its Monday even when the market
+ * was shut that day. That is what makes a holiday-shortened week one candle rather than two, and it
+ * keeps every symbol's weekly candles on the same axis regardless of which days each happened to
+ * trade. 1970-01-01 was a Thursday, so shifting by 3 puts Monday at 0.
+ */
+export function weekStart(y, m, d) {
+  const z = daysFromCivil(y, m, d);
+  const monday = z - (((z + 3) % 7) + 7) % 7;
+  const c = civilFromDays(monday);
+  return `${c.y}-${pad2(c.m)}-${pad2(c.d)}`;
+}
 
 /**
  * Calendar parts of a bar's time, however the endpoint expressed it.
@@ -56,6 +100,7 @@ export function partsOf(time) {
 export function bucketStart(time, period) {
   const p = partsOf(time);
   if (!p || !PERIODS.has(period)) return null;
+  if (period === 'week') return weekStart(p.y, p.m, p.d);
   if (period === 'year') return `${p.y}-01-01`;
   if (period === 'quarter') {
     const startMonth = Math.floor((p.m - 1) / 3) * 3 + 1;   // 1, 4, 7, 10

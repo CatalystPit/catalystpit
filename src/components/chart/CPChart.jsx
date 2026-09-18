@@ -3,10 +3,40 @@ import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
 import { useTheme } from '../../lib/cp-shared';
 import {
   DEFAULT_TIMEFRAME, timeframe, timeframesByGroup, unavailableReason, isIntraday,
-  supportsExtendedHours, barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol,
+  supportsExtendedHours, barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol, initialBarsFor,
   sessionKeyFor,
 } from '../../lib/chart/chart-source.mjs';
 import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
+
+/**
+ * ONE DOWNLOAD PER UNDERLYING SERIES, shared across the intervals folded from it.
+ *
+ * 1W, 1M, 3M and 1Y all request the same thing — the security's full daily history — and differ only
+ * in how `normalizeBars` folds it. Without this, walking along the timeframe row would re-download
+ * eleven thousand daily candles four times over.
+ *
+ * Keyed on the URL, so it reuses a payload only when the request is genuinely identical, and never
+ * across symbols. Short-lived and capped: this is a tab-local convenience, not a data store, and the
+ * live-bar refresh path deliberately bypasses it.
+ */
+const PAYLOAD_TTL_MS = 5 * 60 * 1000;
+const PAYLOAD_MAX = 8;
+const payloadCache = new Map();   // url -> { at, json }
+
+async function fetchPayload(url, { fresh = false } = {}) {
+  if (!fresh) {
+    const hit = payloadCache.get(url);
+    if (hit && Date.now() - hit.at < PAYLOAD_TTL_MS) return hit.json;
+  }
+  const r = await fetch(url);
+  const json = await r.json();
+  // A failed or empty payload is not worth remembering; caching it would pin the error for a while.
+  if (json && !json.error) {
+    payloadCache.set(url, { at: Date.now(), json });
+    if (payloadCache.size > PAYLOAD_MAX) payloadCache.delete(payloadCache.keys().next().value);
+  }
+  return json;
+}
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
 import { resolvePaneShares, applyPaneShares, readPaneShares, manualPaneChanges } from '../../lib/chart/chart-panes.mjs';
 import {
@@ -563,7 +593,18 @@ export default function CPChart({
       })));
     }
     drawIndicators();
-    chart.timeScale().fitContent();
+
+    // THE DATASET IS NOT THE VIEWPORT. A weekly or monthly series carries the security's whole
+    // history — two and a half thousand weekly candles for a 1980 issuer — and fitting all of it
+    // into the frame renders a grey smear nobody can read. Each interval opens on a useful recent
+    // stretch instead, and the rest is there to scroll back through. A series already shorter than
+    // that stretch just fits.
+    const want = initialBarsFor(tfRef.current);
+    if (want && bars.length > want) {
+      chart.timeScale().setVisibleLogicalRange({ from: bars.length - want, to: bars.length - 1 });
+    } else {
+      chart.timeScale().fitContent();
+    }
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
@@ -914,8 +955,7 @@ export default function CPChart({
     if (!url) { setStatus('error'); return; }
     if (!incremental) setStatus('loading');
     try {
-      const r = await fetch(url);
-      const json = await r.json();
+      const json = await fetchPayload(url, { fresh: incremental });
       const { bars, meta: m } = normalizeBars(json, tf);
       setMeta(m);
       kindRef.current = m.kind;

@@ -70,7 +70,9 @@ section('1. the timeframe registry describes data we actually have');
   ok('an unknown timeframe resolves to nothing', timeframe('7Y') === null);
   ok('extended hours is claimed only for intraday',
     TIMEFRAMES.every((t) => !t.extendedCapable || t.kind === 'intraday'));
-  ok('supportsExtendedHours agrees', supportsExtendedHours('1D') && !supportsExtendedHours('1Y'));
+  // '5m', not '1D': 1D is one candle per trading DAY now, so it has no extended-hours session to ask
+  // for. The claim under test is unchanged — only intraday intervals can carry extended hours.
+  ok('supportsExtendedHours agrees', supportsExtendedHours('5m') && !supportsExtendedHours('1Y'));
 
   // NO TICKS, NO SECONDS. The product does not offer them and no entry may smuggle one in.
   ok('no timeframe is finer than a minute', TIMEFRAMES.every((t) => t.barSeconds >= 60));
@@ -79,9 +81,11 @@ section('1. the timeframe registry describes data we actually have');
   // it is what stops a five-year chart being asked for as a million one-minute bars.
   ok('every timeframe declares a display window', TIMEFRAMES.every((t) => t.window != null));
   ok('...and a bar resolution independent of it', TIMEFRAMES.every((t) => t.barSeconds > 0));
-  ok('a week and a 15-minute chart span the same sessions, differing only in resolution',
-    timeframe('1W').window.sessions === timeframe('15m').window.sessions
-      && timeframe('1W').barSeconds !== timeframe('15m').barSeconds);
+  // Two intraday intervals over the same number of sessions, differing only in candle width. (This
+  // compared 1W against 15m when 1W was a five-session WINDOW rather than a weekly candle.)
+  ok('two intraday charts can span the same sessions, differing only in resolution',
+    timeframe('30m').window.sessions === timeframe('45m').window.sessions
+      && timeframe('30m').barSeconds !== timeframe('45m').barSeconds);
   // Longer windows must use coarser bars, never the other way round.
   const dayEntries = TIMEFRAMES.filter((t) => t.group === 'days' && typeof t.window?.days === 'number');
   ok('a longer window never uses finer bars than a shorter one',
@@ -104,7 +108,10 @@ section('1. the timeframe registry describes data we actually have');
   ok('...and an unservable one would be reported', unavailableReason('7Y') !== null);
   // Monthly, quarterly and yearly bars used to be on this list. They are now real intervals in the
   // registry, so the roadmap is shorter by three — weekly bars remain.
-  ok('the roadmap records what we cannot yet produce', PLANNED_TIMEFRAMES.length >= 1);
+  // The roadmap is EMPTY: weekly, monthly, quarterly and yearly bars were all on it and are now real
+  // intervals in the registry. The shape is still enforced, because the next resolution we cannot
+  // serve belongs here rather than in the menu.
+  ok('the roadmap is a declared list', Array.isArray(PLANNED_TIMEFRAMES));
   ok('every planned timeframe states what it needs',
     PLANNED_TIMEFRAMES.every((t) => typeof t.needs === 'string' && t.needs.length > 0));
   // Weekly and monthly BARS are the planned ones; week- and month-long WINDOWS already exist.
@@ -114,7 +121,7 @@ section('1. the timeframe registry describes data we actually have');
 
 section('2. the URL is the whole of the vendor coupling');
 {
-  ok('intraday goes to the intraday route', barsUrl('AAPL', '1D').startsWith('/api/chart-intraday?'));
+  ok('intraday goes to the intraday route', barsUrl('AAPL', '5m').startsWith('/api/chart-intraday?'));
   ok('daily goes to the daily route', barsUrl('AAPL', '1Y').startsWith('/api/chart-daily?'));
   ok('the symbol is passed through', barsUrl('AAPL', '1Y').includes('ticker=AAPL'));
   ok('"All" is lowercased for the route', barsUrl('AAPL', 'All').includes('range=all'));
@@ -125,8 +132,8 @@ section('2. the URL is the whole of the vendor coupling');
     ok(`${JSON.stringify(bad)} produces no URL`, barsUrl(bad, '1Y') === null);
   ok('an unknown timeframe produces no URL', barsUrl('AAPL', 'nope') === null);
   ok('extended hours is requested only when asked for',
-    barsUrl('AAPL', '1D', { session: 'extended' }).includes('session=extended')
-    && !barsUrl('AAPL', '1D').includes('session='));
+    barsUrl('AAPL', '5m', { session: 'extended' }).includes('session=extended')
+    && !barsUrl('AAPL', '5m').includes('session='));
   ok('extended hours is NOT requested on a daily timeframe',
     !barsUrl('AAPL', '1Y', { session: 'extended' }).includes('session='));
 }
@@ -138,7 +145,7 @@ section('3. normalisation never invents or reorders a price');
     { time: 100, open: 1, high: 2, low: 0.5, close: 1.2, volume: 5 },
     { time: 200, open: 1, high: 2, low: 0.5, close: 1.3, volume: null },
   ], meta: { delayed: true, source: 'polygon' } };
-  const n = normalizeBars(intradayPayload, '1D');
+  const n = normalizeBars(intradayPayload, '5m');
   ok('bars come back ascending', n.bars.map((b) => b.time).join(',') === '100,200,300');
   ok('the delayed flag is carried, not guessed', n.meta.delayed === true);
   ok('the source is carried', n.meta.source === 'polygon');
@@ -176,7 +183,9 @@ section('3. normalisation never invents or reorders a price');
 section('4. refresh is honest about a delayed feed');
 {
   // There is no stream. Polling faster than the bar size buys load, not freshness.
-  ok('1D refreshes on its bar size', refreshIntervalMs('1D') === 300_000);
+  ok('a 5-minute chart refreshes on its bar size', refreshIntervalMs('5m') === 300_000);
+  // 1D is a daily candle now, and a daily series does not move during a session.
+  ok('a daily candle is not polled', refreshIntervalMs('1D') === null);
   ok('15m refreshes on its bar size', refreshIntervalMs('15m') === 900_000);
   ok('a 4-hour chart polls on its bar size, not on the minute', refreshIntervalMs('4h') === 4 * 3_600_000);
   ok('a 1-minute chart is floored at a minute', refreshIntervalMs('1m') === 60_000);
@@ -354,7 +363,7 @@ section('8b. session boundaries, including extended hours');
 {
   // 2026-09-15 ET (UTC-4 in September). Pre-market 08:00, regular 10:00, after-hours 18:00.
   const at = (h) => Math.floor(Date.UTC(2026, 8, 15, h + 4, 0) / 1000);
-  const key = sessionKeyFor('1D');
+  const key = sessionKeyFor('5m');
   ok('intraday timeframes get a session key', typeof key === 'function');
   ok('daily timeframes get none', sessionKeyFor('1Y') === null);
   ok('pre-market shares the session with the regular open', key({ time: at(8) }) === key({ time: at(10) }));

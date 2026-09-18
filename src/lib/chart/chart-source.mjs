@@ -33,15 +33,22 @@ import { aggregateBars } from './chart-aggregate.mjs';
  *   barSeconds    the spacing of one bar — the resolution the provider must deliver
  *   window        how much history to show, as { sessions } intraday or { days | 'ytd' | 'all' }
  *
- * The two groups read from opposite ends of that pair, which is the point:
- *   MINUTES / HOURS pick a RESOLUTION, and carry a sensible default window with them.
- *   6M / YTD / All pick a WINDOW, and carry the coarsest resolution that renders it honestly.
- * So "15 minutes" and "1 week" both show five sessions and differ only in candle width.
+ * EVERY INTERVAL BUTTON NAMES THE CANDLE, not the window. 1m is a one-minute candle; 1D is one
+ * trading day; 1W is one trading week; 1M, 3M and 1Y are one calendar month, quarter and year. A
+ * trader who picks a timeframe gets candles of that width — which is the whole point, and which the
+ * "days" group used to get wrong: each of those entries was a WINDOW of daily bars, so 1M meant "the
+ * last month, drawn in daily candles" and produced about twenty-one candles instead of one.
  *
- * 1M, 3M AND 1Y ARE RESOLUTIONS, NOT WINDOWS — one candle per calendar month, quarter and year, over
- * the security's whole available history. They used to be windows ("the last month, in daily
- * candles"), which is why picking 1M drew about twenty-one daily candles instead of one monthly one.
- * They carry `aggregate`, and `normalizeBars` folds the daily series into those calendar periods.
+ * 1W / 1M / 3M / 1Y carry `aggregate`, and `normalizeBars` folds the daily series into those calendar
+ * periods. They load the security's ENTIRE available history, because a yearly candle over a
+ * one-year window is a single candle. 1D loads five years — comfortably past the three-year floor,
+ * and far short of the eleven thousand daily bars a 1980 issuer would otherwise ship to the browser.
+ *
+ * 6M / YTD / All remain WINDOWS of daily candles: they answer "how much history", not "how wide is a
+ * candle", and both questions are worth asking.
+ *
+ * DATASET IS NOT VIEWPORT. `initialBars` says how much of a loaded series to show first; the rest is
+ * scrolled back through. Loading a decade and displaying a decade are different decisions.
  *
  * WHAT A PROVIDER ADAPTER NEEDS is entirely in `request`: for intraday, the bar multiplier in
  * minutes, how many trading sessions to keep, and how many calendar days to ask for (wider than the
@@ -90,14 +97,26 @@ const day = (id, label, short, window, range) => ({
 // `aggregate` names the calendar period each candle covers. `barSeconds` is the nominal width, used
 // for spacing and labelling, not for bucketing: the buckets are calendar periods, and a calendar
 // month is not 30 days.
-const longInterval = (id, label, short, period, barSeconds) => ({
+const longInterval = (id, label, short, period, barSeconds, initialBars) => ({
   id, label, short, group: 'days', kind: 'aggregated', endpoint: 'daily',
   barSeconds,
   window: 'all',
   request: { range: 'all' },
   aggregate: period,
+  initialBars,
   extendedCapable: false,
 });
+
+/**
+ * HOW MANY BARS TO SHOW FIRST — which is not the same question as how many to LOAD.
+ *
+ * The dataset is the security's whole history; the viewport is a reading position inside it. Fitting
+ * two and a half thousand weekly candles into eight hundred pixels renders a grey smear, so each
+ * interval opens on a useful recent stretch and the rest is there to scroll back through.
+ *
+ * Null means "fit everything", which is right for a series that is already small.
+ */
+export const initialBarsFor = (id) => timeframe(id)?.initialBars ?? null;
 
 export const TIMEFRAMES = [
   //     id      label          short  group      barMin  sessions  lookback
@@ -115,24 +134,27 @@ export const TIMEFRAMES = [
   intra('3h',  '3 hours',    '3h',  'hours',    180,    60,  95),
   intra('4h',  '4 hours',    '4h',  'hours',    240,    60,  95),
 
-  // A day and a week are WINDOWS, so they keep an intraday resolution — a one-day chart of daily
-  // bars is a single candle. From a month out, a daily bar is the honest unit.
-  intra('1D',  '1 day',      '1D',  'days',       5,     1,   5),
-  intra('1W',  '1 week',     '1W',  'days',      30,     5,   9),
-  // One candle per calendar month / quarter / year, over the full available history.
-  longInterval('1M', '1 month',   '1M', 'month',    2592000),
-  longInterval('3M', '3 months',  '3M', 'quarter',  7776000),
+  // ONE CANDLE PER TRADING DAY, and the default chart. Five years rather than the three-year floor
+  // because the daily route already serves 5Y as a named range and the extra years cost one request
+  // — but never the whole history: a daily series back to 1980 is eleven thousand bars in the
+  // browser for a resolution nobody reads that far back at.
+  day('1D',  '1 day',  '1D',  { days: 1825 }, '5Y'),
+  // One candle per trading week / calendar month / quarter / year, over the full available history.
+  longInterval('1W', '1 week',    '1W', 'week',      604800, 260),   // ~5 years of weeks
+  longInterval('1M', '1 month',   '1M', 'month',    2592000, 120),   // ~10 years of months
+  longInterval('3M', '3 months',  '3M', 'quarter',  7776000,  60),   // ~15 years of quarters
   day('6M',  '6 months', '6M',  { days: 180 }, '6M'),
   day('YTD', 'YTD',      'YTD', 'ytd',         'YTD'),
-  longInterval('1Y', '1 year',    '1Y', 'year',    31536000),
+  longInterval('1Y', '1 year',    '1Y', 'year',    31536000, null), // decades fit fine
   day('All', 'All',      'All', 'all',         'all'),
 ];
 
-// The default has to move with the semantics. It was '3M' when that meant "the last three months in
-// daily candles" — a reasonable first view. '3M' now means one candle per calendar QUARTER across
-// the whole history, so leaving the default alone would open every chart on a twenty-year quarterly
-// view. '6M' is the closest surviving equivalent: daily candles, half a year of them.
-export const DEFAULT_TIMEFRAME = '6M';
+// ONE CANDLE PER TRADING DAY is what a chart should open on, and '1D' now means exactly that.
+//
+// Nothing persists the chosen timeframe — chart-settings.mjs stores indicators, view options,
+// favourites and tool defaults, and deliberately not this — so there is no saved preference for this
+// default to override. If one is ever added, it belongs in that module and should win over this.
+export const DEFAULT_TIMEFRAME = '1D';
 const BY_ID = new Map(TIMEFRAMES.map((t) => [t.id, t]));
 
 export const timeframe = (id) => BY_ID.get(id) || null;
@@ -178,16 +200,16 @@ export function unavailableReason(id) {
 export const isServable = (id) => unavailableReason(id) === null;
 
 /**
- * Declared, not built. Weekly and monthly BARS (as distinct from week- and month-long windows, which
- * are in the registry above) need a resolution neither endpoint produces: they would have to be
- * folded up from daily candles. That is honest arithmetic, not invention, but it is a real piece of
- * work and it is written down here rather than being discovered when somebody picks it from a menu.
+ * Declared, not built — resolutions no endpoint can produce, written down here rather than being
+ * discovered when somebody picks one from a menu.
+ *
+ * CURRENTLY EMPTY. Weekly, monthly, quarterly and yearly bars were all on this list; every one of
+ * them is now a real interval in the registry, folded from daily candles by chart-aggregate.mjs. The
+ * export stays, with its shape still enforced by the suite, because the next resolution we cannot
+ * serve — ticks, seconds, or intraday history deeper than the current provider's — belongs here and
+ * not in the menu.
  */
-export const PLANNED_TIMEFRAMES = [
-  // Monthly, quarterly and yearly bars were on this list. They are now real — 1M, 3M and 1Y in the
-  // registry above, folded from daily candles by chart-aggregate.mjs.
-  { id: '1Wbar', label: 'Weekly bars', barSeconds: 604800, needs: 'daily candles folded into ISO weeks' },
-];
+export const PLANNED_TIMEFRAMES = [];
 
 // The daily route spells "all" in lowercase; the registry carries the exact spelling each range
 // wants, so no id has to be translated on its way out.

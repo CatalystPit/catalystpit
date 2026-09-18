@@ -9,8 +9,8 @@
 //
 // Run: node scripts/verify-chart-aggregate.mjs
 
-import { aggregateBars, bucketStart, partsOf, PERIODS } from '../src/lib/chart/chart-aggregate.mjs';
-import { timeframe, normalizeBars, barsUrl, isServable, DEFAULT_TIMEFRAME, TIMEFRAMES, isIntraday, supportsExtendedHours } from '../src/lib/chart/chart-source.mjs';
+import { aggregateBars, bucketStart, partsOf, PERIODS, weekStart, daysFromCivil, civilFromDays } from '../src/lib/chart/chart-aggregate.mjs';
+import { timeframe, normalizeBars, barsUrl, isServable, DEFAULT_TIMEFRAME, TIMEFRAMES, isIntraday, supportsExtendedHours, initialBarsFor } from '../src/lib/chart/chart-source.mjs';
 import { computeIndicator } from '../src/lib/chart/chart-indicators.mjs';
 
 let pass = 0, fail = 0;
@@ -37,7 +37,66 @@ console.log('\n=== which calendar period a date belongs to ===');
     && bucketStart('2024-12-31', 'year') === '2024-01-01');
   ok('an unreadable date belongs to no period', bucketStart('not-a-date', 'month') === null && bucketStart(null, 'month') === null);
   ok('an unknown period is refused', bucketStart('2024-03-07', 'fortnight') === null);
-  ok('the period vocabulary is exactly month/quarter/year', [...PERIODS].sort().join(',') === 'month,quarter,year');
+  ok('the period vocabulary is exactly week/month/quarter/year',
+    [...PERIODS].sort().join(',') === 'month,quarter,week,year', [...PERIODS].join(','));
+}
+
+console.log('\n=== the calendar, as integers ===');
+{
+  // The date conversions the week boundary rests on. Round-tripping every day across a leap year and
+  // a century boundary is cheap and catches an off-by-one that string math would hide.
+  let roundTrips = 0, bad = 0;
+  for (let z = daysFromCivil(1999, 12, 1); z <= daysFromCivil(2001, 1, 31); z++) {
+    const c = civilFromDays(z);
+    if (daysFromCivil(c.y, c.m, c.d) !== z) bad++;
+    roundTrips++;
+  }
+  ok('civil dates round-trip across the 2000 boundary', bad === 0 && roundTrips > 400, `${bad} bad of ${roundTrips}`);
+  ok('the epoch is where it should be', daysFromCivil(1970, 1, 1) === 0);
+  ok('the leap day exists', daysFromCivil(2024, 3, 1) - daysFromCivil(2024, 2, 28) === 2);
+  ok('and 1900 was not a leap year', daysFromCivil(1900, 3, 1) - daysFromCivil(1900, 2, 28) === 1);
+}
+
+console.log('\n=== weekly candles are trading weeks ===');
+{
+  // 2024-03-11 is a Monday; 03-15 the Friday; 03-16/17 the weekend; 03-18 the next Monday.
+  ok('Monday opens its own week', weekStart(2024, 3, 11) === '2024-03-11');
+  ok('Friday belongs to that Monday', weekStart(2024, 3, 15) === '2024-03-11');
+  ok('Saturday and Sunday still belong to it', weekStart(2024, 3, 16) === '2024-03-11' && weekStart(2024, 3, 17) === '2024-03-11');
+  ok('the next Monday starts a new week', weekStart(2024, 3, 18) === '2024-03-18');
+  // A week that straddles a month, a quarter and a year end — the case a naive grouping gets wrong.
+  ok('a week spanning a month end stays one week', weekStart(2024, 1, 31) === weekStart(2024, 2, 2));
+  ok('a week spanning a year end stays one week', weekStart(2024, 12, 31) === weekStart(2025, 1, 3),
+    `${weekStart(2024, 12, 31)} vs ${weekStart(2025, 1, 3)}`);
+
+  const week = aggregateBars([
+    bar('2024-03-11', 10, 12, 9, 11, 100),
+    bar('2024-03-12', 11, 15, 8, 14, 200),
+    bar('2024-03-15', 14, 14, 13, 13, 300),
+  ], 'week');
+  ok('a full week folds to one candle', week.length === 1 && week[0].time === '2024-03-11');
+  ok('…with the week\'s OHLCV', week[0].open === 10 && week[0].high === 15 && week[0].low === 8
+    && week[0].close === 13 && week[0].volume === 600, JSON.stringify(week[0]));
+
+  // A HOLIDAY-SHORTENED WEEK IS STILL ONE CANDLE. Good Friday 2024 fell on 03-29, so that week
+  // traded Monday to Thursday only.
+  const short = aggregateBars([
+    bar('2024-03-25', 20, 21, 19, 20, 10), bar('2024-03-26', 20, 22, 19, 21, 10),
+    bar('2024-03-27', 21, 23, 20, 22, 10), bar('2024-03-28', 22, 24, 21, 23, 10),
+  ], 'week');
+  ok('a four-day holiday week is one candle', short.length === 1 && short[0].time === '2024-03-25');
+  ok('…closing on the Thursday', short[0].close === 23 && short[0].volume === 40);
+
+  // A week the market opened mid-way through — an IPO on the Wednesday.
+  const ipoWeek = aggregateBars([bar('2024-03-13', 30, 33, 29, 32, 500), bar('2024-03-14', 32, 35, 31, 34, 600)], 'week');
+  ok('a partial IPO week is one candle stamped with its Monday',
+    ipoWeek.length === 1 && ipoWeek[0].time === '2024-03-11' && ipoWeek[0].open === 30, JSON.stringify(ipoWeek[0]));
+
+  // The current week, still filling.
+  const partial = [bar('2024-03-18', 1, 2, 1, 2, 5), bar('2024-03-19', 2, 3, 2, 3, 5)];
+  const grown = aggregateBars([...partial, bar('2024-03-20', 3, 9, 3, 8, 5)], 'week');
+  ok('the current week grows in place', aggregateBars(partial, 'week').length === 1 && grown.length === 1
+    && grown[0].close === 8 && grown[0].high === 9 && grown[0].volume === 15);
 }
 
 console.log('\n=== monthly OHLCV ===');
@@ -177,7 +236,7 @@ console.log('\n=== the series Lightweight Charts requires ===');
 
 console.log('\n=== the registry now says interval, not window ===');
 {
-  for (const [id, period, seconds] of [['1M', 'month', 2592000], ['3M', 'quarter', 7776000], ['1Y', 'year', 31536000]]) {
+  for (const [id, period, seconds] of [['1W', 'week', 604800], ['1M', 'month', 2592000], ['3M', 'quarter', 7776000], ['1Y', 'year', 31536000]]) {
     const tf = timeframe(id);
     ok(`${id} is an aggregated interval`, tf.kind === 'aggregated' && tf.aggregate === period, JSON.stringify(tf));
     ok(`${id} asks for the full history`, tf.request.range === 'all' && tf.window === 'all', JSON.stringify(tf.request));
@@ -192,14 +251,39 @@ console.log('\n=== the registry now says interval, not window ===');
     ok(`${id} is still a daily window`, tf.kind === 'daily' && tf.barSeconds === 86400 && !tf.aggregate, JSON.stringify(tf));
     ok(`${id} still requests its own range`, tf.request.range === range);
   }
-  // Shorter intervals must be untouched.
-  for (const [id, seconds, sessions] of [['1m', 60, 1], ['5m', 300, 1], ['15m', 900, 5], ['1h', 3600, 20], ['4h', 14400, 60], ['1D', 300, 1], ['1W', 1800, 5]]) {
+  // INTRADAY intervals must be untouched. 1D and 1W are no longer among them: they are a trading
+  // day and a trading week now, which is the point of this change.
+  for (const [id, seconds, sessions] of [['1m', 60, 1], ['5m', 300, 1], ['15m', 900, 5], ['1h', 3600, 20], ['4h', 14400, 60]]) {
     const tf = timeframe(id);
     ok(`${id} is unchanged`, tf.kind === 'intraday' && tf.barSeconds === seconds && tf.window.sessions === sessions,
       JSON.stringify({ kind: tf.kind, barSeconds: tf.barSeconds, window: tf.window }));
   }
-  ok('the default is a daily window, not a 20-year quarterly chart',
-    timeframe(DEFAULT_TIMEFRAME).kind === 'daily', DEFAULT_TIMEFRAME);
+  ok('every minute and hour interval is still intraday',
+    TIMEFRAMES.filter((t) => t.group === 'minutes' || t.group === 'hours').every((t) => t.kind === 'intraday'));
+
+  // 1D: one candle per TRADING DAY, and at least three years of them.
+  const oneDay = timeframe('1D');
+  ok('1D is a daily candle, not an intraday window', oneDay.kind === 'daily' && oneDay.barSeconds === 86400,
+    JSON.stringify({ kind: oneDay.kind, barSeconds: oneDay.barSeconds }));
+  ok('1D loads at least three years', oneDay.window.days >= 365 * 3, JSON.stringify(oneDay.window));
+  ok('1D asks the daily endpoint for a multi-year range',
+    barsUrl('AAPL', '1D') === '/api/chart-daily?ticker=AAPL&range=5Y', String(barsUrl('AAPL', '1D')));
+  ok('1D is not folded', !oneDay.aggregate);
+
+  // THE DEFAULT.
+  ok('the default interval is 1D', DEFAULT_TIMEFRAME === '1D', DEFAULT_TIMEFRAME);
+  ok('…and it is one candle per trading day', timeframe(DEFAULT_TIMEFRAME).barSeconds === 86400);
+
+  // Dataset is not viewport.
+  ok('a weekly chart opens on a readable slice, not its whole history', initialBarsFor('1W') === 260, String(initialBarsFor('1W')));
+  ok('a monthly chart too', initialBarsFor('1M') === 120, String(initialBarsFor('1M')));
+  ok('a quarterly chart too', initialBarsFor('3M') === 60, String(initialBarsFor('3M')));
+  ok('a yearly chart just fits — decades of yearly candles are few', initialBarsFor('1Y') === null);
+  ok('a daily chart fits its five years', initialBarsFor('1D') === null);
+
+  // The long intervals share one underlying request, which is what makes switching between them free.
+  const longs = ['1W', '1M', '3M', '1Y'].map((id) => barsUrl('AAPL', id));
+  ok('1W, 1M, 3M and 1Y all request the same underlying series', new Set(longs).size === 1, JSON.stringify(longs));
   ok('every registry entry is still servable', TIMEFRAMES.every((t) => isServable(t.id)),
     TIMEFRAMES.filter((t) => !isServable(t.id)).map((t) => t.id).join(', '));
 }
