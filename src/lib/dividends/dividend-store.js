@@ -74,9 +74,15 @@ const EVENT_COLUMNS = sql`
  * ANNOUNCED ONLY. An event with no issuer announcement behind it never leaves this function, which
  * is where "we do not predict dividends" stops being a promise and becomes a where clause.
  *
- * The join is to screener_stocks and screener_meta — tables a cron already maintains — so a row
- * arrives with its company name, sector, market cap and last price without a second query and
- * without an N+1. A ticker we do not track still appears; it simply has no metadata.
+ * The join is to screener_stocks, screener_meta and security_identity — tables a cron already
+ * maintains — so a row arrives with its company name, sector, market cap and last price without a
+ * second query and without an N+1. A ticker we do not track still appears; it simply has no metadata.
+ *
+ * THE NAME COMES FROM THE SECURITY MASTER, not from the screener alone. screener_stocks.company is
+ * derived from SEC filings, which closed-end funds, ETFs, ADRs and preferred lines do not make — so
+ * this board, which is largely funds, showed "—" for 3,343 tickers whose names we could resolve.
+ * The calendar does not decide what a ticker means; it reads the resolved identity. See
+ * security-identity.mjs for the precedence.
  */
 /**
  * The WHERE both the page of rows and the count are built from.
@@ -101,7 +107,9 @@ function calendarConditions({
   if (covered) conds.push(sql`s.ticker is not null`);
   if (search) {
     const like = `%${String(search).toUpperCase().slice(0, 40)}%`;
-    conds.push(sql`(d.ticker like ${like} or upper(coalesce(s.company, '')) like ${like})`);
+    // Searches the name the reader can SEE, which is the resolved one — a board that displays
+    // "Cohen & Steers Infrastructure Fund" and then finds nothing when you type it is broken.
+    conds.push(sql`(d.ticker like ${like} or upper(coalesce(s.company, i.name, '')) like ${like})`);
   }
   // Sector lives on both tables; screener_meta covers tickers the daily screener rebuild has not
   // reached yet, which is why this coalesces rather than picking one.
@@ -126,13 +134,14 @@ export async function calendarRange({ from, to, mode = 'ex', limit = 500, offset
 
   const res = await db.execute(sql`
     select ${EVENT_COLUMNS},
-           s.company as company,
+           coalesce(s.company, i.name) as company,
            coalesce(s.sector, m.sector) as sector,
            coalesce(s.market_cap, m.market_cap) as market_cap,
            s.price as price
       from dividend_events d
-      left join screener_stocks s on s.ticker = d.ticker
-      left join screener_meta   m on m.ticker = d.ticker
+      left join screener_stocks   s on s.ticker = d.ticker
+      left join screener_meta     m on m.ticker = d.ticker
+      left join security_identity i on i.ticker = d.ticker
      where ${where}
      order by ${dateCol} asc, d.ticker asc
      limit ${lim} offset ${off}`);
@@ -149,8 +158,9 @@ export async function calendarCount({ from, to, mode = 'ex', ...filters } = {}) 
   const res = await db.execute(sql`
     select count(*)::int as n
       from dividend_events d
-      left join screener_stocks s on s.ticker = d.ticker
-      left join screener_meta   m on m.ticker = d.ticker
+      left join screener_stocks   s on s.ticker = d.ticker
+      left join screener_meta     m on m.ticker = d.ticker
+      left join security_identity i on i.ticker = d.ticker
      where ${where}`);
   return Number((res.rows ?? res)[0]?.n) || 0;
 }

@@ -572,6 +572,22 @@ export const screenerMeta = pgTable('screener_meta', {
   sharesOut: doublePrecision('shares_out'),
   annualDividend: doublePrecision('annual_dividend'),
   ipoDate:   date('ipo_date', { mode: 'string' }),
+  // The vendor's own security name, returned by ticker-details on every call and previously thrown
+  // away. It is the only source that names ETFs. Feeds security_identity at the LOWEST precedence.
+  name:      text('name'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// THE SECURITY MASTER: one canonical display name per ticker, for the whole product.
+//
+// Company identity used to be derived inside the screener rebuild from SEC filings alone, so any
+// security that files neither a Form 4 nor an 8-K — closed-end funds, ETFs, ADRs, preferred lines —
+// had no name at all, and the Dividend Calendar (largely a board of funds) showed "—" for 3,343
+// tickers. Resolved once here instead, with a documented precedence; see security-identity.mjs.
+export const securityIdentity = pgTable('security_identity', {
+  ticker:    text('ticker').primaryKey(),
+  name:      text('name').notNull(),
+  source:    text('source').notNull(),     // form4 | registrant | sec_ticker | provider
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

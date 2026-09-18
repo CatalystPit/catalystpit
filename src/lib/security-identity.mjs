@@ -1,0 +1,154 @@
+// THE SECURITY MASTER: one canonical display name per ticker, for the whole product.
+//
+// WHY THIS EXISTS. Company identity used to be derived inside the screener rebuild, from SEC filings
+// only — the Form 4 issuer name, then the 8-K registrant name, then null. That hierarchy is right
+// about quality and wrong about COVERAGE, because it only knows securities that file those forms.
+// Closed-end funds, ETFs, ADRs, preferred lines and unit trusts file neither, so they resolved to
+// null — and the Dividend Calendar, which is largely a board of funds, printed "—" in the Company
+// column for 3,343 tickers while the correct names sat in SEC's own ticker file.
+//
+// The fix is not a bigger query inside the screener. It is admitting that "what is this ticker
+// called" is a question several parts of the product ask, and answering it in one place with a
+// stated precedence, so the calendar consumes an identity instead of deriving one.
+//
+// PURE. No database, no network, no clock. The store module supplies the rows; this decides.
+
+import { isSicDescription } from './sic-descriptions.mjs';
+
+/**
+ * PRECEDENCE, HIGHEST FIRST. The order is the whole design, so it is stated once, here.
+ *
+ *  1. form4       — the issuer name as the issuer itself filed it on a Form 4. The most specific
+ *                   claim available: the company naming itself in its own filing.
+ *  2. registrant  — the 8-K registrant name, for issuers with no Form 4 under that symbol. Same
+ *                   authority, one step less specific.
+ *  3. sec_ticker  — the registrant title in SEC's company_tickers.json, keyed by ticker. Still the
+ *                   name its owner filed; it is third only because the first two are tied to a
+ *                   dated filing and this is a standing list. THIS IS THE ROW THAT COVERS FUNDS —
+ *                   every one of the ten reported symbols resolves here and nowhere else.
+ *  4. provider    — the security name from the market-data vendor's ticker-details endpoint. LAST,
+ *                   always, and recorded as such: a vendor's name for a security is a vendor's
+ *                   opinion, it arrives under a licence whose terms are not ours, and the temporary
+ *                   provider currently behind it may be replaced. It is the only source that knows
+ *                   ETFs, which is why it is here at all rather than absent.
+ *
+ * Deliberately ABSENT, and staying absent:
+ *   - 13F issuer names (ticker_issuer). Measured against SEC names on the overlap they agree 60% of
+ *     the time; they are truncated to the filing's field width and carry raw HTML entities
+ *     ("FIRST TR INTER DURATN PFD &amp;"). A truncated name is a wrong name.
+ *   - FINRA security names: they name the SECURITY, not the company ("Apple Inc. Common Stock").
+ *   - SIC industry descriptions. These once filled the column and put "PHARMACEUTICAL PREPARATIONS"
+ *     under ZTS. A page titled with an industry is a false fact about a real company; a page with no
+ *     name is merely a page with no name. cleanIdentityName refuses them at the door.
+ */
+export const IDENTITY_SOURCES = Object.freeze(['form4', 'registrant', 'sec_ticker', 'provider']);
+const RANK = new Map(IDENTITY_SOURCES.map((s, i) => [s, i]));
+
+/** Where a source sits in the precedence, or Infinity if it is not one we recognise. */
+export const sourceRank = (s) => (RANK.has(s) ? RANK.get(s) : Number.POSITIVE_INFINITY);
+
+/**
+ * A name we are willing to print, or null.
+ *
+ * Whitespace is collapsed because filings pad and wrap. An SIC description is refused whatever
+ * source it arrives from — defence in depth, since the column must never be ABLE to carry one.
+ */
+export function cleanIdentityName(v) {
+  const t = String(v ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  if (isSicDescription(t)) return null;
+  return t;
+}
+
+/**
+ * The name to use for one ticker, given every candidate we hold.
+ *
+ * `candidates` is [{ name, source }]. Returns { name, source } or null when nothing survives
+ * cleaning — null is a real answer here, and preferable to a guess.
+ */
+export function pickIdentity(candidates) {
+  let best = null;
+  for (const c of candidates || []) {
+    const name = cleanIdentityName(c?.name);
+    if (!name) continue;
+    const rank = sourceRank(c?.source);
+    if (rank === Number.POSITIVE_INFINITY) continue;
+    if (!best || rank < best.rank) best = { name, source: c.source, rank };
+  }
+  return best ? { name: best.name, source: best.source } : null;
+}
+
+/**
+ * The filer name for one ticker, from its filings.
+ *
+ * WHY THIS IS NOT JUST "MOST RECENT". The obvious `distinct on (ticker) ... order by filing_date
+ * desc` is not a TOTAL order, and the ties are not hypothetical: VKI had three Form 4 rows on the
+ * same date, two naming the issuer ("Invesco Advantage Municipal Income Trust II") and one naming a
+ * 10% holder that had filed against it ("BANK OF AMERICA CORP /DE/"). Postgres picked the third
+ * arbitrarily, and the screener printed Bank of America on an Invesco municipal trust — a
+ * confidently wrong name, which is worse than the blank this whole module exists to fill.
+ *
+ * So: the latest filing date wins, because a company that renames files again. Among rows sharing
+ * that date, the name the MOST filings agree on wins, because an issuer files for itself far more
+ * often than any one holder files against it. Remaining ties break alphabetically, so the answer is
+ * total and the same rows always give the same name.
+ *
+ * `rows` is [{ name, date, count }] — count being how many filings carry that exact name.
+ */
+export function resolveFilerName(rows) {
+  const seen = new Map();
+  for (const r of rows || []) {
+    const name = cleanIdentityName(r?.name);
+    if (!name) continue;
+    const date = r?.date == null ? '' : String(r.date);
+    const count = Number(r?.count) || 1;
+    const prev = seen.get(name);
+    // One entry per distinct name: its best date, and its total weight across every date.
+    if (prev) { if (date > prev.date) prev.date = date; prev.count += count; }
+    else seen.set(name, { name, date, count });
+  }
+  if (!seen.size) return null;
+
+  const all = [...seen.values()];
+  const latest = all.reduce((a, b) => (b.date > a.date ? b : a)).date;
+  const tied = all.filter((x) => x.date === latest);
+  tied.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return tied[0].name;
+}
+
+/**
+ * SEC's company_tickers.json → [{ ticker, name }].
+ *
+ * The file is an object keyed by an opaque index, with { cik_str, ticker, title } values. Tolerant
+ * of shape: a malformed entry is skipped, not thrown on, because this runs inside a nightly rebuild
+ * that must not fail over one bad row in somebody else's file.
+ */
+export function parseSecTickerFile(json) {
+  const out = [];
+  for (const v of Object.values(json || {})) {
+    const ticker = String(v?.ticker ?? '').trim().toUpperCase();
+    const name = cleanIdentityName(v?.title);
+    if (ticker && name) out.push({ ticker, name });
+  }
+  return out;
+}
+
+/**
+ * Fold every source into one row per ticker.
+ *
+ * `sources` is { form4: Map, registrant: Map, sec_ticker: Map, provider: Map }, each ticker → name.
+ * Returns [{ ticker, name, source }] for every ticker ANY source can name — a ticker no source can
+ * name is simply absent, never present with a placeholder.
+ */
+export function buildIdentities(sources = {}) {
+  const tickers = new Set();
+  for (const key of IDENTITY_SOURCES) {
+    for (const t of (sources[key]?.keys?.() ?? [])) tickers.add(t);
+  }
+  const out = [];
+  for (const ticker of tickers) {
+    const picked = pickIdentity(IDENTITY_SOURCES.map((source) => ({ source, name: sources[source]?.get(ticker) })));
+    if (picked) out.push({ ticker, name: picked.name, source: picked.source });
+  }
+  return out.sort((a, b) => a.ticker.localeCompare(b.ticker));
+}

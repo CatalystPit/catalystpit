@@ -3,6 +3,7 @@ import ErrorState from '../../components/ErrorState';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
+import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
 
 // Stock Screener — composable filters over our screener_stocks universe (/api/screener). Proprietary
 // smart-money filters are live now; descriptive/fundamental filters render "coming soon" until a
@@ -128,29 +129,6 @@ function FilterControl({ def, val, onChange }) {
   );
 }
 
-// Small daily CANDLESTICK chart for the Finviz-style hover preview. Advanced-chart embed (mini widget
-// is line-only), stripped to just the candles. The classNames tradingview-widget-container(__widget)
-// are REQUIRED or it renders blank.
-function MiniChart({ symbol }) {
-  const host = useRef(null);
-  useEffect(() => {
-    const h = host.current; if (!h) return; h.innerHTML = '';
-    const c = document.createElement('div'); c.className = 'tradingview-widget-container'; c.style.height = '100%'; c.style.width = '100%';
-    const w = document.createElement('div'); w.className = 'tradingview-widget-container__widget'; w.style.height = '100%'; w.style.width = '100%'; c.appendChild(w);
-    const s = document.createElement('script');
-    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-    s.async = true;
-    s.innerHTML = JSON.stringify({
-      autosize: true, symbol, interval: 'D', range: '3M', timezone: 'America/New_York', theme: (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light',
-      style: '1', locale: 'en', hide_top_toolbar: true, hide_side_toolbar: true, hide_legend: true,
-      allow_symbol_change: false, save_image: false, withdateranges: false, support_host: 'https://www.tradingview.com',
-    });
-    c.appendChild(s); h.appendChild(c);
-    return () => { h.innerHTML = ''; };
-  }, [symbol]);
-  return <div ref={host} style={{ position: 'absolute', inset: 0 }} />;
-}
-
 export default function ScreenerClient() {
   const router = useRouter();
   const search = useSearchParams();
@@ -181,8 +159,8 @@ export default function ScreenerClient() {
   const [loadError, setLoadError] = useState(false);
   const [saved, setSaved] = useState([]);
   const [prices, setPrices] = useState({});   // on-demand quote overlay for the visible page
-  const [hover, setHover] = useState(null);   // Finviz-style ticker-hover daily-chart preview { sym, rect }
-  const hoverTimer = useRef(null);
+  // Finviz-style ticker-hover daily-chart preview. Shared with the Dividend Calendar.
+  const { hover, bind: bindHover } = useTickerHover();
   const debTimer = useRef(null);
 
   // Load registry + saved + initial state from URL.
@@ -369,8 +347,7 @@ export default function ScreenerClient() {
                     return (
                     <tr key={r.ticker} className="row-hov" onClick={() => router.push(`/ticker/${encodeURIComponent(r.ticker)}`)} style={{ borderBottom: `1px solid ${C.surface}`, cursor: 'pointer' }}>
                       <td className="cp-tkr" style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}
-                        onMouseEnter={(e) => { const rect = e.currentTarget.getBoundingClientRect(); const sym = r.ticker; clearTimeout(hoverTimer.current); hoverTimer.current = setTimeout(() => setHover({ sym, rect }), 220); }}
-                        onMouseLeave={() => { clearTimeout(hoverTimer.current); setHover(null); }}>
+                        {...bindHover(r.ticker)}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><TickerLogo symbol={r.ticker} size={18} />{r.ticker}</span>
                       </td>
                       {cols.map((ck) => { const c = COL[ck]; const v = r[ck];
@@ -412,20 +389,9 @@ export default function ScreenerClient() {
 
       </div>
 
-      {/* FINVIZ-STYLE HOVER PREVIEW — hovering a ticker pops a little daily chart. Non-interactive
-          (pointer-events none) so the row click still navigates to the stock page. Flips to stay on-screen. */}
-      {hover && (() => {
-        const W = 360, H = 224;
-        const rc = hover.rect;
-        let left = rc.right + 10; if (left + W > window.innerWidth - 8) left = Math.max(8, rc.left - W - 10);
-        let top = rc.top - 8; if (top + H > window.innerHeight - 8) top = window.innerHeight - H - 8; if (top < 8) top = 8;
-        return (
-          <div style={{ position: 'fixed', top, left, width: W, height: H, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 8px 28px rgba(0,0,0,0.18)', zIndex: 70, pointerEvents: 'none', overflow: 'hidden' }}>
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '5px 10px', fontSize: 11, fontWeight: 700, color: C.muted, borderBottom: `1px solid ${C.surface}`, background: C.surface }}>{hover.sym} · Daily · 3M</div>
-            <div style={{ position: 'absolute', top: 25, left: 0, right: 0, bottom: 0 }}><MiniChart symbol={hover.sym} /></div>
-          </div>
-        );
-      })()}
+      {/* Hovering a ticker pops a little daily chart. Non-interactive (pointer-events none) so the
+          row click still navigates to the stock page. Shared with the Dividend Calendar. */}
+      <TickerHoverPreview hover={hover} />
 
       <Footer />
       <style>{`.row-hov:hover{background:${C.surface}!important}`}</style>

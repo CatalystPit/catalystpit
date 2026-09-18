@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo } from '../../lib/cp-shared';
 import { frequencyLabel } from '../../lib/dividends/dividend-event.mjs';
 import { SECTORS } from '../../lib/screener-filters';
+import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
 import {
   iso, shiftDays, rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS,
 } from '../../lib/dividends/dividend-view.mjs';
@@ -60,6 +61,8 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
   const [sort, setSort] = useState({ key: null, dir: 'asc' });
   const [data, setData] = useState(initial);
   const [status, setStatus] = useState('ready');        // ready | loading | error
+  // Finviz-style ticker-hover daily-chart preview — the same component and behaviour as the Screener.
+  const { hover, bind: bindHover } = useTickerHover();
   const first = useRef(true);
 
   const range = useMemo(() => rangeFor(view, anchor), [view, anchor]);
@@ -124,7 +127,9 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
   const Row = ({ e }) => (
     <tr>
       <TD>
-        <a href={`/ticker/${encodeURIComponent(e.ticker)}`}
+        {/* Hovering pops the shared daily-chart preview; the link itself is untouched, so clicking
+            (or tabbing to and activating) the symbol still opens its Catalyst Pit page. */}
+        <a href={`/ticker/${encodeURIComponent(e.ticker)}`} {...bindHover(e.ticker)}
           style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
           <TickerLogo symbol={e.ticker} size={22} />
           <span className="cp-tkr" style={{ fontWeight: 700, color: C.ink }}>{e.ticker}</span>
@@ -321,6 +326,7 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
           </>
         )}
       </div>
+      <TickerHoverPreview hover={hover} />
       <Footer />
     </div>
   );

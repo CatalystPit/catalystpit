@@ -3,6 +3,7 @@ import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
+import { readSecurityIdentity, refreshSecurityIdentity, filerNameMap } from './security-identity';
 
 // Populates the screener_stocks universe from data we ALREADY own (no external provider):
 //  proprietary signals (insider/congress/13F/consensus/8-K) + price/volume/technicals computed
@@ -67,6 +68,11 @@ export async function ensureScreenerTables() {
   await db.execute(sql`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ`);
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS annual_dividend DOUBLE PRECISION`);
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS ipo_date DATE`);
+  // The vendor's security name, previously fetched and discarded on every ticker-details call.
+  await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS name TEXT`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS security_identity (
+    ticker TEXT PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS news_category TEXT`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS breaking_today BOOLEAN DEFAULT FALSE`);
   await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS candlestick TEXT`);
@@ -280,16 +286,28 @@ async function fetchDetail(t) {
       sharesOut: d.weighted_shares_outstanding ?? d.share_class_shares_outstanding ?? null,
       annualDividend,
       ipoDate: d.list_date || null,
+      // The vendor names every security it returns, including the ETFs and fund lines that file no
+      // Form 4 and appear in no SEC ticker file. We were discarding it on every one of these calls.
+      // Stored here, at the provider boundary, and consumed by security_identity at the LOWEST
+      // precedence — a vendor's name never outranks a name its owner filed.
+      name: typeof d.name === 'string' && d.name.trim() ? d.name.trim() : null,
     };
   } catch { return null; }
 }
 
 // Populate screener_meta from Polygon ticker-details. Bounded per run, prioritized by volume, skips
 // rows refreshed within staleDays — so it accumulates full coverage over a few runs and refreshes.
-export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14, force = false } = {}) {
+export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14, force = false, only = null } = {}) {
   await ensureScreenerTables();
   if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
-  const uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
+  let uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
+  // `only` narrows the run to named tickers. Added for the security-master backfill: the vendor's
+  // name field is the only source that knows ETFs, and we had been discarding it, so the rows that
+  // needed re-fetching were a known 2,700 rather than the whole universe.
+  if (only?.length) {
+    const want = new Set(only.map((t) => String(t).toUpperCase()));
+    uni = uni.filter((r) => want.has(String(r.t).toUpperCase()));
+  }
   const have = new Map((await db.select({ t: screenerMeta.ticker, u: screenerMeta.updatedAt }).from(screenerMeta)).map((r) => [r.t, r.u]));
   const cutoff = Date.now() - staleDays * 86400000;
   // force = re-fetch everything (to backfill newly-added fields), oldest/never-fetched first so
@@ -309,7 +327,7 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
     const batch = rows.slice(i, i + 300);
     await db.insert(screenerMeta).values(batch).onConflictDoUpdate({
       target: screenerMeta.ticker,
-      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, ipoDate: sql`excluded.ipo_date`, updatedAt: sql`now()` },
+      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, ipoDate: sql`excluded.ipo_date`, name: sql`coalesce(excluded.name, screener_meta.name)`, updatedAt: sql`now()` },
     });
     saved += batch.length;
   }
@@ -594,59 +612,63 @@ function eightkCategory(itemsCsv) {
 const CLEAN_SYM = /^[A-Z]{1,5}$/;
 const MIN_LIQUID_VOL = 50000;   // FINRA breadth floor: skip dead/thin names (signal tickers bypass)
 
-// CANONICAL COMPANY IDENTITY, from SEC filings only.
+// CANONICAL COMPANY IDENTITY — now read from the security master, not derived here.
 //
 // screener_stocks.company must hold a trustworthy issuer name or NOTHING. It previously fell back to
 // the SIC industry description when no name was at hand, which put "PHARMACEUTICAL PREPARATIONS"
 // under ZTS, "PETROLEUM REFINING" under XOM and "RADIO BROADCASTING STATIONS" under SIRI — 2,805
 // rows, 49% of every populated value. A page titled with an industry is a false fact about a real
-// company; a page with no name is merely a page with no name.
+// company; a page with no name is merely a page with no name. That rule is unchanged and is now
+// enforced inside the resolver.
 //
-// The hierarchy is short on purpose:
-//   1. the Form 4 issuer name, as the issuer itself filed it, most recent filing first
-//   2. the 8-K registrant name, for companies with no Form 4 under that symbol
-//   3. null
+// WHAT CHANGED, AND WHY. The hierarchy used to be Form 4 issuer name, then 8-K registrant name, then
+// null — SEC filings only, derived right here. Right about quality, wrong about COVERAGE: a security
+// that files neither form has no name at all, and that is every closed-end fund, ETF, ADR, preferred
+// line and unit trust. 3,343 covered tickers had no name, and the Dividend Calendar — largely a
+// board of funds — printed "—" for all of them while SEC's own ticker file named them.
 //
-// 13F issuer names, FINRA security names and the vendor's own name field are all DELIBERATELY absent.
-// Measured against the SEC names on the overlap, 13F agrees exactly 60% of the time (it carries
-// "SCHEIN HENRY INC", "BANK AMERICA CORP", HTML entities) and FINRA 26% (it names the security, not
-// the company: "Apple Inc. Common Stock"). Admitting either would buy about fifty extra symbols and
-// cost the guarantee that a name we print is a name its owner filed.
-//
-// ALL HISTORY, INDEPENDENT OF EVERY SIGNAL WINDOW. A company does not stop being itself because no
-// insider traded in the last quarter.
+// Identity is a question several parts of the product ask, so it is answered in ONE place with a
+// stated precedence (security-identity.mjs) and read here. 13F issuer names and FINRA security names
+// remain deliberately excluded, for the reasons recorded there.
 async function companyIdentity() {
-  const clean = (v) => {
-    const t = String(v || '').trim();
-    // Defence in depth. No SEC name in the live data is an SIC description — 5,542 Form 4 names and
-    // 1,010 registrant names, zero collisions — but an identity column must never be able to carry
-    // one, whatever arrives upstream later.
-    return t && !isSicDescription(t) ? t : null;
-  };
-  const byTicker = new Map();
-  const form4 = await db.execute(sql`
-    select distinct on (ticker) ticker, company from insider_trades
-     where ticker is not null and company is not null and company <> ''
-     order by ticker, filing_date desc nulls last, transaction_date desc nulls last`);
-  for (const r of (form4.rows ?? form4)) {
-    const nm = clean(r.company);
-    if (nm) byTicker.set(String(r.ticker).toUpperCase(), nm);
-  }
-  const eightk = await db.execute(sql`
-    select distinct on (ticker) ticker, company from eightk_filings
-     where ticker is not null and company is not null and company <> ''
-     order by ticker, filed_at desc nulls last`);
-  for (const r of (eightk.rows ?? eightk)) {
-    const t = String(r.ticker).toUpperCase();
-    if (byTicker.has(t)) continue;              // a Form 4 name outranks a registrant name
-    const nm = clean(r.company);
-    if (nm) byTicker.set(t, nm);
-  }
+  // The master, when it has been built. Falls through to the original derivation below on a fresh
+  // database, so a first run still names everything it previously could rather than nothing.
+  const master = await readSecurityIdentity();
+  if (master) return master;
+  console.log('[screener] security_identity empty — deriving names from filings inline');
+  return companyIdentityFromFilings();
+}
+
+/**
+ * The original filings-only derivation, kept for the window before the master has been built.
+ *
+ * It now shares the master's per-ticker resolver rather than using `distinct on`, because
+ * `distinct on (ticker) order by filing_date desc` is not a TOTAL order and the ties are not
+ * hypothetical: VKI had three Form 4 rows on one date, two naming the issuer and one naming a 10%
+ * holder that had filed against it, and Postgres picked the holder — "BANK OF AMERICA CORP /DE/"
+ * printed on an Invesco municipal trust. See resolveFilerName for how the tie is broken.
+ */
+async function companyIdentityFromFilings() {
+  const [form4, registrant] = await Promise.all([
+    filerNameMap(sql`insider_trades`, sql`filing_date`),
+    filerNameMap(sql`eightk_filings`, sql`filed_at`),
+  ]);
+  const byTicker = new Map(form4);
+  for (const [t, n] of registrant) if (!byTicker.has(t)) byTicker.set(t, n);   // Form 4 outranks registrant
   return byTicker;
 }
 
 export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   await ensureScreenerTables();
+  // IDENTITY FIRST, so the rebuild's company column is filled from the freshly-resolved master.
+  // Wrapped: identity is an improvement to the rebuild, never a precondition for it, and a bad night
+  // at SEC must not cost us the nightly screener.
+  try {
+    const id = await refreshSecurityIdentity();
+    console.log(`[screener] security identity: ${JSON.stringify(id)}`);
+  } catch (e) {
+    console.log(`[screener] security identity refresh failed, using the stored master: ${e.message}`);
+  }
   const runTs = new Date();     // rows written this run get this exact stamp; stale rows are pruned
   const since90 = sql`current_date - make_interval(days => ${WINDOW})`;
 
