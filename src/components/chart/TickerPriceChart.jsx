@@ -23,7 +23,10 @@ export default function TickerPriceChart({ symbol }) {
         {/* HERE the page owns the symbol, so picking one in the chart navigates to that ticker's
             page rather than leaving this chart on a symbol the rest of the page is not about. In a
             Terminal panel the chart owns it instead and nothing navigates — see CPChart. */}
-        <CPChart symbol={symbol} initialTimeframe="3M" transparent
+        {/* "6M", not "3M": 3M now means one candle per calendar QUARTER across the whole history,
+            so it would open this card on a twenty-year quarterly chart. 6M is the closest thing to
+            what this card showed before — daily candles, half a year of them. */}
+        <CPChart symbol={symbol} initialTimeframe="6M" transparent
           onSymbolPick={(s) => router.push(`/ticker/${encodeURIComponent(s)}`)} />
       </div>
     </div>

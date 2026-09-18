@@ -18,6 +18,8 @@
 // Polygon's plan is 15-minute delayed, which the endpoint reports as meta.delayed, and the chart
 // labels. There is no streaming source in this codebase — see REALTIME below.
 
+import { aggregateBars } from './chart-aggregate.mjs';
+
 /** One row, whatever the vendor. `time` follows Lightweight Charts' own convention. */
 /** @typedef {{ time: number|string, open: number, high: number, low: number, close: number, volume: number|null }} Bar */
 
@@ -33,8 +35,13 @@
  *
  * The two groups read from opposite ends of that pair, which is the point:
  *   MINUTES / HOURS pick a RESOLUTION, and carry a sensible default window with them.
- *   DAYS / LONGER pick a WINDOW, and carry the coarsest resolution that renders it honestly.
+ *   6M / YTD / All pick a WINDOW, and carry the coarsest resolution that renders it honestly.
  * So "15 minutes" and "1 week" both show five sessions and differ only in candle width.
+ *
+ * 1M, 3M AND 1Y ARE RESOLUTIONS, NOT WINDOWS — one candle per calendar month, quarter and year, over
+ * the security's whole available history. They used to be windows ("the last month, in daily
+ * candles"), which is why picking 1M drew about twenty-one daily candles instead of one monthly one.
+ * They carry `aggregate`, and `normalizeBars` folds the daily series into those calendar periods.
  *
  * WHAT A PROVIDER ADAPTER NEEDS is entirely in `request`: for intraday, the bar multiplier in
  * minutes, how many trading sessions to keep, and how many calendar days to ask for (wider than the
@@ -71,6 +78,27 @@ const day = (id, label, short, window, range) => ({
   extendedCapable: false,
 });
 
+// LONG INTERVALS ARE A RESOLUTION, NOT A WINDOW.
+//
+// "1 month" means one candle per calendar month, over everything the security has ever traded — the
+// same way "5 minutes" means one candle per five minutes. It does NOT mean "the last month, drawn in
+// daily candles", which is what these three entries used to mean and why 1M rendered ~21 candles of
+// one day each instead of a single monthly candle.
+//
+// The provider has no native monthly, quarterly or yearly bars, so they are folded from the daily
+// candles we already hold. The request therefore asks for `all` — the full available history — and
+// `aggregate` names the calendar period each candle covers. `barSeconds` is the nominal width, used
+// for spacing and labelling, not for bucketing: the buckets are calendar periods, and a calendar
+// month is not 30 days.
+const longInterval = (id, label, short, period, barSeconds) => ({
+  id, label, short, group: 'days', kind: 'aggregated', endpoint: 'daily',
+  barSeconds,
+  window: 'all',
+  request: { range: 'all' },
+  aggregate: period,
+  extendedCapable: false,
+});
+
 export const TIMEFRAMES = [
   //     id      label          short  group      barMin  sessions  lookback
   intra('1m',  '1 minute',   '1m',  'minutes',    1,     1,   5),
@@ -91,15 +119,20 @@ export const TIMEFRAMES = [
   // bars is a single candle. From a month out, a daily bar is the honest unit.
   intra('1D',  '1 day',      '1D',  'days',       5,     1,   5),
   intra('1W',  '1 week',     '1W',  'days',      30,     5,   9),
-  day('1M',  '1 month',  '1M',  { days: 30 },  '1M'),
-  day('3M',  '3 months', '3M',  { days: 90 },  '3M'),
+  // One candle per calendar month / quarter / year, over the full available history.
+  longInterval('1M', '1 month',   '1M', 'month',    2592000),
+  longInterval('3M', '3 months',  '3M', 'quarter',  7776000),
   day('6M',  '6 months', '6M',  { days: 180 }, '6M'),
   day('YTD', 'YTD',      'YTD', 'ytd',         'YTD'),
-  day('1Y',  '1 year',   '1Y',  { days: 365 }, '1Y'),
+  longInterval('1Y', '1 year',    '1Y', 'year',    31536000),
   day('All', 'All',      'All', 'all',         'all'),
 ];
 
-export const DEFAULT_TIMEFRAME = '3M';
+// The default has to move with the semantics. It was '3M' when that meant "the last three months in
+// daily candles" — a reasonable first view. '3M' now means one candle per calendar QUARTER across
+// the whole history, so leaving the default alone would open every chart on a twenty-year quarterly
+// view. '6M' is the closest surviving equivalent: daily candles, half a year of them.
+export const DEFAULT_TIMEFRAME = '6M';
 const BY_ID = new Map(TIMEFRAMES.map((t) => [t.id, t]));
 
 export const timeframe = (id) => BY_ID.get(id) || null;
@@ -151,8 +184,9 @@ export const isServable = (id) => unavailableReason(id) === null;
  * work and it is written down here rather than being discovered when somebody picks it from a menu.
  */
 export const PLANNED_TIMEFRAMES = [
+  // Monthly, quarterly and yearly bars were on this list. They are now real — 1M, 3M and 1Y in the
+  // registry above, folded from daily candles by chart-aggregate.mjs.
   { id: '1Wbar', label: 'Weekly bars', barSeconds: 604800, needs: 'daily candles folded into ISO weeks' },
-  { id: '1Mbar', label: 'Monthly bars', barSeconds: 2592000, needs: 'daily candles folded into calendar months' },
 ];
 
 // The daily route spells "all" in lowercase; the registry carries the exact spelling each range
@@ -219,11 +253,19 @@ export function normalizeBars(payload, timeframeId) {
   }
   // Ascending, and deduplicated on time: Lightweight Charts requires both and throws on either.
   bars.sort((a, b) => (typeof a.time === 'number' ? a.time - b.time : String(a.time).localeCompare(String(b.time))));
-  const out = [];
+  const deduped = [];
   for (const b of bars) {
-    if (out.length && out[out.length - 1].time === b.time) { out[out.length - 1] = b; continue; }
-    out.push(b);
+    if (deduped.length && deduped[deduped.length - 1].time === b.time) { deduped[deduped.length - 1] = b; continue; }
+    deduped.push(b);
   }
+
+  // A long interval folds those daily candles into calendar periods. It happens HERE, at the
+  // provider boundary, so everything downstream — the series, the volume histogram, every indicator,
+  // the crosshair readout — sees one monthly candle rather than a month of daily ones, without any
+  // of them needing to know that an aggregation took place. When a provider one day serves native
+  // monthly bars, this branch disappears and nothing above it changes.
+  const out = tf?.aggregate ? aggregateBars(deduped, tf.aggregate) : deduped;
+
   return {
     bars: out,
     meta: {

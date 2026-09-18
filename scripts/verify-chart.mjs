@@ -102,7 +102,9 @@ section('1. the timeframe registry describes data we actually have');
   // NOTHING IN THE MENU IS UNSERVABLE TODAY, and the check that proves it is not vacuous.
   ok('every listed timeframe can actually be served', TIMEFRAMES.every((t) => isServable(t.id)));
   ok('...and an unservable one would be reported', unavailableReason('7Y') !== null);
-  ok('the roadmap records what we cannot yet produce', PLANNED_TIMEFRAMES.length >= 2);
+  // Monthly, quarterly and yearly bars used to be on this list. They are now real intervals in the
+  // registry, so the roadmap is shorter by three — weekly bars remain.
+  ok('the roadmap records what we cannot yet produce', PLANNED_TIMEFRAMES.length >= 1);
   ok('every planned timeframe states what it needs',
     PLANNED_TIMEFRAMES.every((t) => typeof t.needs === 'string' && t.needs.length > 0));
   // Weekly and monthly BARS are the planned ones; week- and month-long WINDOWS already exist.
@@ -144,7 +146,10 @@ section('3. normalisation never invents or reorders a price');
   ok('a null volume stays null rather than becoming zero', n.bars[1].volume === null);
 
   // The daily route speaks a different dialect; it must come out identical in shape.
-  const daily = normalizeBars({ candles: [{ date: '2026-01-02', open: 1, high: 2, low: 0.5, close: 1.4, volume: 7 }] }, '1Y');
+  // '6M', not '1Y': 1Y is now a yearly INTERVAL and folds its candles into calendar years, which is
+  // its own suite. This assertion is about the daily dialect surviving normalisation unchanged, so
+  // it uses a timeframe that is still a plain daily window.
+  const daily = normalizeBars({ candles: [{ date: '2026-01-02', open: 1, high: 2, low: 0.5, close: 1.4, volume: 7 }] }, '6M');
   ok('daily candles normalise too', daily.bars.length === 1 && daily.bars[0].time === '2026-01-02');
   ok('daily kind is reported', daily.meta.kind === 'daily');
   ok('a missing delayed flag is unknown, not false', daily.meta.delayed === null);
@@ -1110,16 +1115,24 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
   ok('toolbar labels are unique too', new Set(TIMEFRAMES.map((t) => t.short)).size === TIMEFRAMES.length);
 
   // The ids the existing callers pass must keep working — the Terminal panel asks for 1D and the
-  // ticker page for 3M, and a rebuilt registry that dropped either would blank both charts.
+  // ticker page for 6M, and a rebuilt registry that dropped either would blank both charts.
   ok('the Terminal panel default still resolves', !!timeframe('1D'));
-  ok('the ticker page default still resolves', !!timeframe('3M'));
+  ok('the ticker page default still resolves', !!timeframe('6M'));
+  // Both defaults must be WINDOWS. Pointing either at 1M/3M/1Y would open the card on the security's
+  // entire history at one candle per month or year, which is not a default anybody asked for.
+  ok('the defaults are windows, not long intervals',
+    !timeframe('6M').aggregate && !timeframe('1D').aggregate);
 
   // ── requests: every interval reaches the right endpoint, and no unservable one is requested ──
   ok('a minute interval goes to the intraday endpoint',
     barsUrl('AAPL', '3m') === '/api/chart-intraday?ticker=AAPL&range=3m');
   ok('an hour interval does too', barsUrl('AAPL', '4h') === '/api/chart-intraday?ticker=AAPL&range=4h');
   ok('a long window goes to the daily endpoint',
-    barsUrl('AAPL', '1Y') === '/api/chart-daily?ticker=AAPL&range=1Y');
+    barsUrl('AAPL', '6M') === '/api/chart-daily?ticker=AAPL&range=6M');
+  // A long INTERVAL goes to the same endpoint but asks for everything, because one candle per year
+  // is meaningless over a one-year window.
+  ok('a long interval asks the daily endpoint for the full history',
+    barsUrl('AAPL', '1Y') === '/api/chart-daily?ticker=AAPL&range=all');
   ok('"All" is spelled the way its route wants', barsUrl('AAPL', 'All') === '/api/chart-daily?ticker=AAPL&range=all');
   // String(): barsUrl returns null for anything it refuses, and a bare .includes() on that throws,
   // which would take the rest of this section down with it instead of failing one assertion.
