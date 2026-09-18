@@ -326,6 +326,28 @@ console.log('\n=== normalizeBars folds at the provider boundary ===');
   ok('a duplicated day is counted once', fixed.bars[0].volume === 1500, String(fixed.bars[0].volume));
 }
 
+console.log('\n=== a shorter history than we asked for is stated, not implied ===');
+{
+  // A long interval requests the whole history. When the provider cannot supply it — an expired key,
+  // a rate limit, a cache that was never deepened — the series is still honest data, but it is
+  // SHORTER THAN REQUESTED, and a 40-year monthly chart rendering three years must say so.
+  const short = normalizeBars({
+    candles: [{ date: '2023-09-13', open: 1, high: 2, low: 1, close: 2, volume: 10 }],
+    meta: { historyTruncated: true, earliest: '2023-09-13', requestedFrom: '1960-01-01' },
+  }, '1M');
+  ok('the truncation is carried to the chart', short.meta.historyTruncated === true);
+  ok('…with the date the series actually starts', short.meta.earliest === '2023-09-13');
+
+  const full = normalizeBars({
+    candles: [{ date: '1980-12-12', open: 1, high: 2, low: 1, close: 2, volume: 10 }],
+    meta: { historyTruncated: false, earliest: '1980-12-12' },
+  }, '1M');
+  ok('a complete history is not flagged', full.meta.historyTruncated === false);
+  // Absent metadata must not read as truncated — that would put a provider warning on every chart.
+  ok('missing metadata is not a truncation claim',
+    normalizeBars({ candles: [{ date: '2024-01-02', open: 1, high: 1, low: 1, close: 1 }] }, '1M').meta.historyTruncated === false);
+}
+
 console.log('\n=== indicators read the aggregated candles ===');
 {
   // 26 monthly candles, rising by 1 a month, built from two daily bars each.

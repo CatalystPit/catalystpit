@@ -299,6 +299,10 @@ export function normalizeBars(payload, timeframeId) {
       source: payload?.meta?.source ?? null,
       session: payload?.meta?.session ?? 'regular',
       barSeconds: tf?.barSeconds ?? null,
+      // The series is shorter than the interval asked for — a provider limit, not a fact about the
+      // company. Carried so the chart can say "history from …" instead of implying this is all of it.
+      historyTruncated: payload?.meta?.historyTruncated === true,
+      earliest: payload?.meta?.earliest ?? null,
       error: payload?.error ? String(payload.error) : null,
     },
   };

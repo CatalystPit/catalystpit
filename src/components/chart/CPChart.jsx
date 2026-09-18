@@ -1436,6 +1436,9 @@ export default function CPChart({
       <div style={{ paddingTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: p.text, letterSpacing: '0.3px' }}>
         {meta?.delayed === true ? '15-min delayed · ' : ''}
         {extended && canExtend ? 'Extended hours · ' : ''}
+        {/* A weekly or monthly chart asks for the whole history; when the provider cannot supply it,
+            the shorter series is stated rather than passed off as the company's full record. */}
+        {meta?.historyTruncated && meta?.earliest ? `History from ${meta.earliest} (provider limit) · ` : ''}
         <a href={CHART_ATTRIBUTION_HREF} target="_blank" rel="noopener noreferrer"
           style={{ color: 'inherit', textDecoration: 'none' }}>{CHART_ATTRIBUTION}</a>
       </div>

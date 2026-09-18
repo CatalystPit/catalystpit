@@ -138,10 +138,33 @@ export async function GET(request) {
     }
 
     const cachedCount = Math.max(0, finalRows.length - fetched);
-    console.log(`[chart_daily] ${ticker} range=${range} candles=${finalRows.length} cached=${cachedCount} fetched=${fetched}${tiingoFailed ? ' (tiingo failed; served cache)' : ''}`);
+
+    // WE ASKED FOR MORE THAN WE ARE SERVING — say so.
+    //
+    // A long interval (1W/1M/3M/1Y) asks for `all` and shows one candle per week, month, quarter or
+    // year. When the head backfill cannot run — a provider error, an expired key, a rate limit — the
+    // route quietly serves whatever the cache already held, and a forty-year monthly chart renders
+    // three years without a word. Measured in production: 13,360 of 13,368 cached tickers hold under
+    // five years, so this is the normal case, not the rare one.
+    //
+    // The series is still honest data; what was missing is that it is SHORTER THAN REQUESTED. The
+    // chart says so rather than implying this is the company's whole history.
+    const servedStart = finalRows.length ? String(finalRows[0].date).slice(0, 10) : null;
+    const shortfallDays = servedStart ? daysBetween(startDate, servedStart) : 0;
+    const historyTruncated = !!servedStart && shortfallDays > 30;
+
+    console.log(`[chart_daily] ${ticker} range=${range} candles=${finalRows.length} cached=${cachedCount} fetched=${fetched}${tiingoFailed ? ' (tiingo failed; served cache)' : ''}${historyTruncated ? ` (history truncated: asked ${startDate}, served ${servedStart})` : ''}`);
     return Response.json({
       ticker, range, count: finalRows.length, candles: finalRows,
-      meta: { cached: cachedCount, fetched },
+      meta: {
+        cached: cachedCount,
+        fetched,
+        earliest: servedStart,
+        requestedFrom: startDate,
+        historyTruncated,
+        // Distinguishes "the provider just failed" from "we never held more than this".
+        providerError: tiingoFailed || undefined,
+      },
     });
   } catch (e) {
     // Never 503/500 for the chart — log and return an empty-but-valid payload.
