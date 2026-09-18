@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `c2a9d437` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `d0a3618d` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -211,16 +211,51 @@ raises dividend" and `SPGI` from "S&P Global to acquire OpenZeppelin".
 untouched. The incorrect live tweet (`2100951028984078416`) is being deleted manually by the user —
 X credentials are Vercel-only.
 
-## Dividend Calendar (deployed `112b76ce` — PUBLIC PAGE GATED OFF)
+## Dividend Calendar (deployed `112b76ce` + `d0a3618d` — PUBLIC PAGE GATED OFF)
 
-**Page and navigation are APPROVED by the user. Do not polish the "Coming soon" placeholder** — the
-final page replaces that whole area once the source is enabled. Locked product requirements, all
-already implemented: ex-dividend is the default axis; payment date shown whenever available; ex/payment
-toggle; Today / This Week / Next Week / This Month; date navigation; ticker+company search; filters
-from metadata we already maintain; every row links to its ticker page; only announced events appear
-as upcoming; never inferred from historical schedules; a missing payment date shows "—"; data comes
-from stored `dividend_events`, never a provider fetch on page load; the adapter stays replaceable;
-`/dividends` stays its own dedicated public page.
+**THE FEATURE IS FINISHED AND GATED OFF** (`d0a3618d`). Everything provider-independent is built,
+deployed and tested. `DIVIDENDS_PUBLIC_ENABLED` is unset → `/dividends` renders its gated state and
+the API returns `enabled: false`. **Do not flip it until the final source and its rights are
+approved.**
+
+**Data layer** (`112b76ce`): `dividend_events` + indexes on `ex_dividend_date`, `payment_date`,
+`(ticker, ex_dividend_date)`, `unique (source, source_event_id)`, plus partial indexes on the
+announced rows the calendar actually reads. Canonical model, Polygon adapter (TEMPORARY), registry,
+idempotent cron ingestion, indexed range API with every filter.
+
+**UI** (`d0a3618d`): all four dates (ex / payment / record / declaration), each "—" when unpublished
+and never inferred. Filters: search, sector, type, frequency, yield, amount, market cap — all applied
+in SQL against stored data. Sortable columns, Previous/Today/Next, date picker, ex/payment toggle,
+explicit loading / empty / **error** states, ticker links, responsive (horizontal scroll), dark mode
+free via CSS variables.
+
+Two design points worth keeping:
+- **Sorting and grouping are mutually exclusive.** The default board groups by day ("who goes
+  ex-dividend today"); choosing a column flattens it, because re-grouping a sorted board would
+  reimpose date order and undo the sort.
+- **Blanks sink in BOTH directions.** A dividend with no payment date is not the earliest-paying one,
+  and a yield sort must not open on a column of blanks.
+
+Date windows, sorting, grouping and query-building live in `dividend-view.mjs` — pure, so the Monday
+week start, inclusive Sunday, calendar-month end and leap-February boundary are all pinned by tests.
+
+**Yield calculation, documented**: `annualized_amount ÷ screener_stocks.price × 100`, where
+`annualized_amount = cash_amount × frequency` and only when both are known and frequency > 0. Omitted
+entirely when the stored price is absent or older than 5 days, or the result exceeds 100%. Never
+fetched, never manufactured.
+
+`scripts/verify-dividends.mjs`: **107 assertions, 10/10 mutations caught**.
+
+### What connecting the final provider requires
+1. Write `src/lib/dividends/providers/<vendor>-dividends.mjs` exposing
+   `fetchWindow({from,to,apiKey,fetchImpl,asOf}) → { events, pages, error }` returning **canonical**
+   events (use `canonicalEvent()`; map the vendor's type codes to our enum).
+2. Add it to `PROVIDERS` in `providers/index.mjs`.
+3. Set `DIVIDEND_PROVIDER=<vendor>`.
+4. Confirm rights, then set `DIVIDENDS_PUBLIC_ENABLED=true`.
+
+No schema, API, page, query or calendar test changes. Historical rows keep their own `source`, so
+both providers can coexist during a cutover.
 
 ### ⚠️ TEMPORARY DEVELOPMENT DATA SOURCE — POLYGON
 **PRODUCTION REDISTRIBUTION RIGHTS MUST BE CONFIRMED OR THE PROVIDER REPLACED BEFORE PUBLIC
