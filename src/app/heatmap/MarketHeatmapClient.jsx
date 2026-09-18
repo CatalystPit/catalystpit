@@ -65,6 +65,8 @@ export default function MarketHeatmapClient({ initial }) {
   const [data, setData] = useState(initial || null);
   const [status, setStatus] = useState('ready');
   const { hover, bind: bindHover } = useTickerHover();
+  // How much of the requested universe the board could actually draw, reported by the canvas.
+  const [coverage, setCoverage] = useState({ total: 0, drawn: 0, hidden: 0 });
 
   const load = useCallback(async (tf, uni) => {
     setStatus('loading');
@@ -224,40 +226,73 @@ export default function MarketHeatmapClient({ initial }) {
           </div>
         )}
 
-        {/* ── BOARD + LEADERS. Side by side on a desktop, stacked on a phone. ── */}
-        <div className="cp-hm-grid">
-          <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden', height: 560, minHeight: 0 }}>
-            <HeatmapCanvas rows={data ? rows : null} onPick={go} scale={scale} renderTooltip={renderTooltip}
-              emptyLabel="No securities match this filter." />
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <LeaderList title={`Top gainers · ${timeframe}`} items={gainers}
-              help={{ title: 'Top Gainers', body: `The largest positive returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
-            <LeaderList title={`Top losers · ${timeframe}`} items={losers}
-              help={{ title: 'Top Losers', body: `The largest negative returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
-            {/* Most Active is a SESSION measure, so it is labelled with the session rather than the
-                selected window — a "1Y most active" would be a number nobody asked for. Omitted
-                entirely when no row carries a real volume, rather than shown empty. */}
-            {active.length > 0 && (
-              <LeaderList title="Most active" items={active} metric="volume"
-                note={`Share volume, ${longDay(data?.asOf)} session`}
-                help={{ title: 'Most Active', body: 'Share volume for the most recent completed trading session. This is a session measure, so it does not change with the selected return window.' }} />
-            )}
-          </div>
+        {/* ── THE BOARD. Full width and the dominant element on the page: this is what the page is
+               for, and the leadership cards read as its summary rather than as its equal. The height
+               is a viewport-relative band with a floor and a ceiling, so a wide desktop gets a strong
+               landscape treemap without the page becoming a single tall screen of colour. ── */}
+        <div className="cp-hm-board" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+          <HeatmapCanvas rows={data ? rows : null} onPick={go} scale={scale} renderTooltip={renderTooltip}
+            onCoverage={setCoverage} emptyLabel="No securities match this filter." />
         </div>
 
-        <div style={{ fontSize: 11, color: C.dim, marginTop: 10, lineHeight: 1.6 }}>
-          Colour saturates at ±{scale}% for {timeframe}. Securities with no reliable sector are grouped under “{SECTOR_OTHER}” and are never
-          assigned a guessed one. A tile with no percentage had no honest starting price for this window — hover it for the reason.
-          Not investment advice.
+        {/* What did not fit. A board that quietly drops the bottom of its universe is lying by
+            omission; one that says how many and what to do about it is not. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'baseline',
+          fontSize: 11, color: C.dim, margin: '7px 2px 12px', lineHeight: 1.6 }}>
+          <span>
+            Showing <strong style={{ color: C.muted, fontWeight: 600 }}>{coverage.drawn.toLocaleString()}</strong> of{' '}
+            {coverage.total.toLocaleString()} securities
+            {sector !== ALL_SECTORS ? ` in ${sector}` : ''}.
+          </span>
+          {coverage.hidden > 0 && (
+            <span>
+              {coverage.hidden.toLocaleString()} are too small to draw at this size — choose a sector, or a smaller universe, to see them.
+            </span>
+          )}
+          <span>Colour saturates at ±{scale}% for {timeframe}.</span>
+        </div>
+
+        {/* ── LEADERSHIP. Three equal cards across the full width; wrapping at medium widths and
+               stacking on a phone. ── */}
+        <div className="cp-hm-cards">
+          <LeaderList title={`Top gainers · ${timeframe}`} items={gainers}
+            help={{ title: 'Top Gainers', body: `The largest positive returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
+          <LeaderList title={`Top losers · ${timeframe}`} items={losers}
+            help={{ title: 'Top Losers', body: `The largest negative returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
+          {/* Most Active is a SESSION measure, so it is labelled with its session rather than with the
+              selected window — "Most active 1M" would claim something we are not measuring. Omitted
+              entirely when no row carries a real volume, rather than shown empty. */}
+          {active.length > 0 && (
+            <LeaderList title="Most active" items={active} metric="volume"
+              note={`Share volume · ${longDay(data?.asOf)} session · end of day`}
+              help={{ title: 'Most Active', body: 'Share volume for the most recent completed trading session. This is a session measure, so it does NOT follow the selected return window. When a licensed live feed is connected this can become intraday volume.' }} />
+          )}
+        </div>
+
+        <div style={{ fontSize: 11, color: C.dim, marginTop: 12, lineHeight: 1.6 }}>
+          Securities with no reliable sector are grouped under “{SECTOR_OTHER}” and are never assigned a guessed one. A tile with no
+          percentage had no honest starting price for this window — hover it for the reason. Funds, warrants and units are excluded:
+          a fund holds securities already on this board. Not investment advice.
         </div>
       </div>
 
       <TickerHoverPreview hover={hover} />
       <Footer />
       <style>{`
-        .cp-hm-grid { display: grid; grid-template-columns: 1fr 320px; gap: 12px; align-items: start; }
-        @media (max-width: 1040px) { .cp-hm-grid { grid-template-columns: 1fr; } }
+        /* THE BOARD'S ASPECT RATIO. Tied to the viewport rather than to the page width, so a wider
+           screen buys more tiles rather than a taller page: 62vh keeps the leadership cards reachable
+           with one ordinary scroll, the 460px floor keeps a laptop usable, and the 760px ceiling stops
+           a tall monitor turning the treemap into a wall. */
+        .cp-hm-board { height: clamp(460px, 62vh, 760px); min-height: 0; }
+        /* Three equal leadership cards across the full width. */
+        .cp-hm-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
+        /* Medium widths: two across, the third wraps beneath. */
+        @media (max-width: 1100px) { .cp-hm-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        /* Phones: stacked, and a shorter board so the cards are not a scroll away. */
+        @media (max-width: 720px) {
+          .cp-hm-cards { grid-template-columns: 1fr; }
+          .cp-hm-board { height: clamp(360px, 52vh, 520px); }
+        }
       `}</style>
     </div>
   );

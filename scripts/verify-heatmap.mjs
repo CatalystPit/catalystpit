@@ -21,14 +21,15 @@
 
 import {
   TIMEFRAMES, DEFAULT_TIMEFRAME, isTimeframe, asDay, daysInMonth, shiftDays, shiftMonths,
-  anchorDateFor, sessionAtOrBefore, baselineFor, pctReturn, securityReturn, NO_RETURN,
+  anchorDateFor, sessionAtOrBefore, baselineFor, pctReturn, securityReturn, NO_RETURN, MAX_BASELINE_GAP_DAYS,
 } from '../src/lib/heatmap/heatmap-window.mjs';
 import {
-  heatColor, heatBucket, scaleFor, SCALE_BY_TIMEFRAME, groupBySector, layoutTiles,
-  showsTicker, showsPct, SECTOR_OTHER,
+  heatColor, heatBucket, scaleFor, SCALE_BY_TIMEFRAME, groupBySector, layoutTiles, tileCoverage,
+  MIN_TILE_AREA, showsTicker, showsPct, SECTOR_OTHER,
 } from '../src/lib/heatmap/heatmap-layout.mjs';
 import {
   UNIVERSES, DEFAULT_UNIVERSE, universeById, universeLimit, availableUniverses,
+  isTradeableAssetType, EXCLUDED_ASSET_REASONS,
   sectorOptions, filterBySector, topMovers, mostActive, ALL_SECTORS,
 } from '../src/lib/heatmap/heatmap-universe.mjs';
 
@@ -254,9 +255,65 @@ console.log('\n=== layout: tile area is market capitalisation ===');
     && showsPct({ w: 50, h: 40 }) && !showsPct({ w: 50, h: 20 }));
 }
 
+console.log('\n=== a baseline too far from its anchor is not the window it claims ===');
+{
+  // "Nearest session at or before" is right for a weekend or a holiday. It is WRONG for a security
+  // that stopped trading for months: its nearest session before "a year ago" might be sixteen months
+  // ago, and calling that a 1Y return mislabels the number rather than omitting it.
+  const lapsed = [
+    { date: '2025-01-15', close: 50 },     // ~8 months before the 1Y anchor of 2025-09-17
+    { date: '2026-09-16', close: 90 }, { date: '2026-09-17', close: 100 },
+  ];
+  const y = securityReturn({ sessions: lapsed, timeframe: '1Y', asOf: ASOF });
+  ok('a baseline months before the anchor is refused', y.pct === null && y.reason === NO_RETURN.NO_HISTORY);
+  // ...but a gap INSIDE the tolerance is exactly the weekend/holiday case and must still work.
+  const nearAnchor = [
+    { date: '2025-09-02', close: 50 },     // 15 days before the anchor — a real trading lapse, fine
+    { date: '2026-09-16', close: 90 }, { date: '2026-09-17', close: 100 },
+  ];
+  ok('a baseline within the tolerance is accepted',
+    near(securityReturn({ sessions: nearAnchor, timeframe: '1Y', asOf: ASOF }).pct, (100 / 50 - 1) * 100));
+  ok('the tolerance is longer than any market closure, and stated', MAX_BASELINE_GAP_DAYS === 45);
+}
+
+console.log('\n=== a legible board: what does not fit is disclosed, not dropped silently ===');
+{
+  // A realistic long tail: two mega-caps and a hundred small names on a modest board. Without a
+  // floor the tail renders as sub-pixel specks that cost DOM and show nobody anything.
+  const rows = [
+    { ticker: 'BIG1', sector: 'Technology', marketCap: 5e12, pct: 1 },
+    { ticker: 'BIG2', sector: 'Technology', marketCap: 4e12, pct: -1 },
+    ...Array.from({ length: 100 }, (_, i) => ({ ticker: `S${i}`, sector: 'Technology', marketCap: 1e8, pct: 0.5 })),
+  ];
+  const tiles = layoutTiles(rows, 900, 500);
+  const cov = tileCoverage(rows, tiles);
+  ok('the mega-caps are always drawn', ['BIG1', 'BIG2'].every((t) => tiles.some((x) => x.kind === 'tile' && x.ticker === t)));
+  ok('the illegible tail is not drawn', cov.drawn < cov.total);
+  // THE HONESTY REQUIREMENT: the omission is counted, so the page can say how many and why.
+  ok('...and the omission is counted', cov.hidden === cov.total - cov.drawn && cov.hidden > 0);
+  ok('every drawn tile is at least the legibility floor',
+    tiles.filter((t) => t.kind === 'tile').every((t) => t.w * t.h >= MIN_TILE_AREA - 1e-6));
+  // SECTOR FILTERING IS THE PATH BACK TO DEPTH: the same names on a board of their own all fit.
+  const justSmall = rows.slice(2);
+  ok('narrowing the board brings the small names back',
+    tileCoverage(justSmall, layoutTiles(justSmall, 900, 500)).hidden === 0);
+  ok('a board with everything visible hides nothing',
+    tileCoverage(rows.slice(0, 2), layoutTiles(rows.slice(0, 2), 900, 500)).hidden === 0);
+  ok('coverage of an empty board is zero, not NaN',
+    tileCoverage([], []).total === 0 && tileCoverage(null, null).hidden === 0);
+}
+
 console.log('\n=== universes: we do not claim membership we do not know ===');
 {
-  ok('the size-ranked universes are offered', availableUniverses().every((u) => /^top/.test(u.id)));
+  ok('the offered universes are size-ranked or the full eligible set',
+    availableUniverses().every((u) => /^top/.test(u.id) || u.id === 'all'));
+  // The depth the page needs: sector views are only useful if the universe can reach past the
+  // mega-caps. Measured coverage of the eligible universe is what these numbers mean.
+  ok('the universe reaches the whole eligible set', universeById('all').available && universeById('all').limit >= 5553);
+  ok('...through a ladder, not a cliff',
+    availableUniverses().map((u) => u.limit).join() === '100,150,300,500,1000,2000,6000');
+  ok('each size states what share of the market it is',
+    availableUniverses().every((u) => Number.isFinite(u.coverage) && u.coverage > 0 && u.coverage <= 100));
   // THE ONE THAT MATTERS. The largest 500 by market cap is NOT the S&P 500 — the index is a
   // committee's selection — and labelling it so would be a fabrication a reader could act on.
   ok('S&P 500 is declared unavailable', universeById('sp500').available === false);
@@ -265,9 +322,24 @@ console.log('\n=== universes: we do not claim membership we do not know ===');
     .every((u) => /licensed index constituent data/i.test(u.description)));
   ok('a gated universe falls back to the default limit rather than serving 500 mislabelled rows',
     universeLimit('sp500') === universeById(DEFAULT_UNIVERSE).limit);
-  ok('an unknown universe falls back too', universeLimit('nonsense') === 150 && universeLimit(null) === 150);
-  ok('the available ones use their own limit', universeLimit('top100') === 100 && universeLimit('top300') === 300);
+  const dflt = universeById(DEFAULT_UNIVERSE).limit;
+  ok('an unknown universe falls back too', universeLimit('nonsense') === dflt && universeLimit(null) === dflt);
+  ok('the available ones use their own limit',
+    universeLimit('top100') === 100 && universeLimit('top300') === 300 && universeLimit('top2000') === 2000);
   ok('every universe declares availability and a reason', UNIVERSES.every((u) => typeof u.available === 'boolean' && u.description));
+
+  // ELIGIBILITY IS A CLASSIFICATION RULE, not a list of tickers.
+  ok('operating companies and depositary receipts are eligible',
+    isTradeableAssetType('Stock') && isTradeableAssetType('ADRC'));
+  // A fund's market cap is the value of holdings ALREADY on the board: drawing both double-counts.
+  ok('funds are not — they double-count the board',
+    !isTradeableAssetType('FUND') && !isTradeableAssetType('ETF') && !isTradeableAssetType('ETV'));
+  ok('nor are warrants and units, which are not ownership sized by market cap',
+    !isTradeableAssetType('WARRANT') && !isTradeableAssetType('UNIT'));
+  ok('an unclassified asset type is not silently admitted',
+    !isTradeableAssetType(null) && !isTradeableAssetType('') && !isTradeableAssetType(undefined));
+  ok('every exclusion carries a stated reason',
+    Object.values(EXCLUDED_ASSET_REASONS).every((r) => typeof r === 'string' && r.length > 30));
 }
 
 console.log('\n=== sector filtering ===');

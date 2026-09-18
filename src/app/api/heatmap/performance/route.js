@@ -1,6 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { resolveUserAccess, isRealtime } from '../../../../lib/entitlements';
-import { heatmapBoard } from '../../../../lib/heatmap/heatmap-store';
+import { heatmapBoard, compactRows } from '../../../../lib/heatmap/heatmap-store';
 import { isTimeframe, DEFAULT_TIMEFRAME, TIMEFRAMES } from '../../../../lib/heatmap/heatmap-window.mjs';
 import { universeLimit, DEFAULT_UNIVERSE, UNIVERSES } from '../../../../lib/heatmap/heatmap-universe.mjs';
 
@@ -73,7 +73,7 @@ export async function GET(request) {
       counts: { rows: board.rows.length, measured, unmeasured: board.rows.length - measured },
       timeframes: TIMEFRAMES,
       universes: UNIVERSES,
-      rows: board.rows,
+      rows: compactRows(board.rows, { asOf: board.asOf, baselineDate: board.baselineDate }),
     }, { headers: freshness === 'eod' ? EOD_CACHE : PRIVATE });
   } catch (e) {
     console.log(`[heatmap-performance] ${e.message}`);

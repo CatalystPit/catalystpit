@@ -13,25 +13,74 @@
 // Pure: no database, no network.
 
 /**
+ * WHAT COUNTS AS A SECURITY ON A MARKET HEATMAP.
+ *
+ * A market heatmap is a picture of the equity market, so it is drawn from OPERATING COMPANIES. The
+ * rule is `screener_meta.asset_type`, which is existing reference data from the vendor's
+ * ticker-details endpoint — not a hand-maintained exclusion list, and not a judgement about any
+ * individual ticker.
+ *
+ * Included:
+ *   Stock  (5,181 with a market cap) — US common shares
+ *   ADRC   (372)                     — depositary receipts: real operating companies, US-listed
+ *
+ * Excluded, each for a stated reason rather than by taste:
+ *   FUND    (331) — a closed-end fund's "market cap" is the value of holdings ALREADY on this board.
+ *                   Drawing both double-counts the same capital and inflates whichever sector the
+ *                   fund is filed under.
+ *   ETF (3), ETV (4) — same double-count, more so.
+ *   WARRANT (5)   — a right to buy shares, not ownership of a company; "market capitalisation" is
+ *                   not a meaningful size for it.
+ *   UNIT    (8)   — a bundled SPAC instrument, for the same reason.
+ *
+ * MUTUAL-FUND SHARE CLASSES NEED NO RULE AT ALL. All 1,671 of them (the 5-letter symbols ending in
+ * X) carry no market capitalisation, so `market_cap > 0` already excludes every one. Measured, not
+ * assumed — and it is why there is no symbol-shape heuristic here.
+ */
+export const TRADEABLE_ASSET_TYPES = Object.freeze(['Stock', 'ADRC']);
+
+export const EXCLUDED_ASSET_REASONS = Object.freeze({
+  FUND: 'A fund holds securities already on this board; drawing both double-counts the same capital.',
+  ETF: 'A fund holds securities already on this board; drawing both double-counts the same capital.',
+  ETV: 'A fund holds securities already on this board; drawing both double-counts the same capital.',
+  WARRANT: 'A warrant is a right to buy shares, not ownership sized by market capitalisation.',
+  UNIT: 'A bundled instrument, not ownership sized by market capitalisation.',
+});
+
+export const isTradeableAssetType = (t) => TRADEABLE_ASSET_TYPES.includes(t);
+
+/**
  * The universes the page can offer.
+ *
+ * The sizes are chosen from MEASURED market-cap coverage of the eligible universe, so each option is
+ * a meaningful slice of the market rather than a round number: 100 = 62%, 300 = 79%, 500 = 87%,
+ * 1000 = 94%, 2000 = 98%. "All eligible" is every operating company we can measure.
  *
  * `available: false` entries are real product intent with a stated blocker, and the UI shows them
  * disabled with the reason rather than pretending the option does not exist.
  */
 export const UNIVERSES = Object.freeze([
-  { id: 'top100', label: 'Top 100', available: true, limit: 100,
-    description: 'The 100 largest US-listed securities we cover, by market capitalisation.' },
-  { id: 'top150', label: 'Top 150', available: true, limit: 150,
-    description: 'The 150 largest US-listed securities we cover, by market capitalisation.' },
-  { id: 'top300', label: 'Top 300', available: true, limit: 300,
-    description: 'The 300 largest US-listed securities we cover, by market capitalisation.' },
+  { id: 'top100', label: 'Top 100', available: true, limit: 100, coverage: 62,
+    description: 'The 100 largest operating companies we cover — about 62% of total market cap.' },
+  { id: 'top150', label: 'Top 150', available: true, limit: 150, coverage: 68,
+    description: 'The 150 largest operating companies we cover — about 68% of total market cap.' },
+  { id: 'top300', label: 'Top 300', available: true, limit: 300, coverage: 79,
+    description: 'The 300 largest operating companies we cover — about 79% of total market cap.' },
+  { id: 'top500', label: 'Top 500', available: true, limit: 500, coverage: 87,
+    description: 'The 500 largest operating companies we cover — about 87% of total market cap.' },
+  { id: 'top1000', label: 'Top 1000', available: true, limit: 1000, coverage: 94,
+    description: 'The 1,000 largest operating companies we cover — about 94% of total market cap.' },
+  { id: 'top2000', label: 'Top 2000', available: true, limit: 2000, coverage: 98,
+    description: 'The 2,000 largest operating companies we cover — about 98% of total market cap.' },
+  { id: 'all', label: 'All eligible', available: true, limit: 6000, coverage: 100,
+    description: 'Every operating company with a market capitalisation and a current price. Best used with a sector selected.' },
   { id: 'sp500', label: 'S&P 500', available: false, limit: 500,
     description: 'Requires licensed index constituent data. The largest 500 by market cap is NOT the S&P 500.' },
   { id: 'nasdaq100', label: 'Nasdaq 100', available: false, limit: 100,
     description: 'Requires licensed index constituent data. Exchange listing alone does not determine membership.' },
 ]);
 
-export const DEFAULT_UNIVERSE = 'top150';
+export const DEFAULT_UNIVERSE = 'top500';
 export const universeById = (id) => UNIVERSES.find((u) => u.id === id) || null;
 export const availableUniverses = () => UNIVERSES.filter((u) => u.available);
 

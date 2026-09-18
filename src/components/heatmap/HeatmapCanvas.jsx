@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { C } from '../../lib/cp-shared';
-import { heatColor, layoutTiles, showsTicker, showsPct, SECTOR_HEADER_PX } from '../../lib/heatmap/heatmap-layout.mjs';
+import { heatColor, layoutTiles, tileCoverage, showsTicker, showsPct, SECTOR_HEADER_PX } from '../../lib/heatmap/heatmap-layout.mjs';
 
 // THE TREEMAP SURFACE — drawn once, used by both heatmaps.
 //
@@ -12,7 +12,7 @@ import { heatColor, layoutTiles, showsTicker, showsPct, SECTOR_HEADER_PX } from 
 // Layout and colour are imported from heatmap-layout.mjs rather than living here, because they are
 // arithmetic and belong somewhere a test can reach without a browser.
 
-export default function HeatmapCanvas({ rows, onPick, scale = 3, renderTooltip = null, emptyLabel = 'No market data yet.' }) {
+export default function HeatmapCanvas({ rows, onPick, scale = 3, renderTooltip = null, emptyLabel = 'No market data yet.', onCoverage = null }) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState(null);      // { row, rect }
   const wrap = useRef(null);
@@ -28,6 +28,12 @@ export default function HeatmapCanvas({ rows, onPick, scale = 3, renderTooltip =
   }, []);
 
   const tiles = useMemo(() => layoutTiles(rows, size.w, size.h), [rows, size]);
+
+  // Report how much of the universe actually fitted, so the page can disclose the remainder. In an
+  // effect rather than during render, because it is a parent state update.
+  useEffect(() => {
+    if (onCoverage) onCoverage(tileCoverage(rows, tiles));
+  }, [tiles, rows, onCoverage]);
 
   return (
     <div ref={wrap} style={{ position: 'relative', width: '100%', height: '100%', minHeight: 0, overflow: 'hidden', background: C.bg }}>

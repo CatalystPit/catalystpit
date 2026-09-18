@@ -1,6 +1,6 @@
 import MarketHeatmapClient from './MarketHeatmapClient';
 import { pageMeta } from '../../lib/seo';
-import { heatmapBoard } from '../../lib/heatmap/heatmap-store';
+import { heatmapBoard, compactRows } from '../../lib/heatmap/heatmap-store';
 import { DEFAULT_TIMEFRAME, TIMEFRAMES } from '../../lib/heatmap/heatmap-window.mjs';
 import { DEFAULT_UNIVERSE, universeLimit, UNIVERSES } from '../../lib/heatmap/heatmap-universe.mjs';
 
@@ -37,7 +37,7 @@ export default async function HeatmapPage() {
       source: 'ticker_daily_candles',
       counts: { rows: board.rows.length, measured, unmeasured: board.rows.length - measured },
       timeframes: TIMEFRAMES, universes: UNIVERSES,
-      rows: board.rows,
+      rows: compactRows(board.rows, { asOf: board.asOf, baselineDate: board.baselineDate }),
     };
   } catch {
     initial = null;
