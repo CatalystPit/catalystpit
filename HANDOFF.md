@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `e677e65e` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `112b76ce` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -159,6 +159,45 @@ rows in 24h were lost that way). **The Page always posts Catalyst wording, never
 of ~55 unit abbreviations that collided with the real reference index. Three stored rows had the
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
+
+## Dividend Calendar (deployed `112b76ce` — PUBLIC PAGE GATED OFF)
+
+### ⚠️ TEMPORARY DEVELOPMENT DATA SOURCE — POLYGON
+**PRODUCTION REDISTRIBUTION RIGHTS MUST BE CONFIRMED OR THE PROVIDER REPLACED BEFORE PUBLIC
+COMMERCIAL LAUNCH.** The page and API are gated on `DIVIDENDS_PUBLIC_ENABLED`, which **fails closed**
+— set it to the literal string `true` in Vercel to launch. Ingestion and storage run regardless, so
+the product is finished and testable now. **Do not flip that flag until rights are settled.**
+
+`/dividends` · `/api/dividends/calendar` · `/api/cron/dividends` (daily 07:20 UTC).
+
+**Provider-neutral by construction.** `dividend_events` (migration `0029`) has no vendor-named
+column, and **exactly one file** knows Polygon's JSON: `providers/polygon-dividends.mjs`. `pay_date`
+becomes `payment_date` there and nowhere else; `CD`/`SC` become `regular`/`special` there and nowhere
+else. Swapping providers = a sibling adapter + one line in `providers/index.mjs`. No table, API, page
+or calendar test changes.
+
+**Nothing is inferred.** `announced` is a stored boolean set only from a declaration that has already
+happened, and the calendar query filters on it — so "we never predict dividends" is a where clause,
+not a convention. A quarterly payer gets **no row** for next quarter until it declares. A missing
+payment date renders `—` and is **never** copied from the record date, ex-date or last quarter's gap.
+
+- **Ingestion**: cron only, window −45d/+120d. The backward half is where revisions live (a payment
+  date missing at announcement usually arrives days later). Upsert keyed on `(source,
+  source_event_id)` → re-running is free and self-healing. **Verified: 22,731 events; a second
+  identical sync left the count unchanged.**
+- **Performance**: one indexed range query. Week ~50 ms, month count ~46 ms, payment mode ~91 ms. No
+  provider call, no aggregation, no N+1. CDN-cached (`s-maxage=300`) — safe because every viewer gets
+  the same answer, unlike the tier-sliced consensus board.
+- **`covered` defaults true**: the feed is global (NZ lines, foreign OTC, mutual-fund classes) and
+  only ~1/5 of raw rows match our universe. The rest would have no company, no price, and a dead
+  ticker link.
+- **Yield** comes from `screener_stocks.price` and is omitted when stale (>5d) or absent.
+- Ex-dividend is the default axis; the payment-date toggle is live (both columns indexed).
+
+`scripts/verify-dividends.mjs` — 75 assertions, 14/14 mutations caught.
+
+**Note:** the nav now shows "Dividends" for everyone while the page renders "Coming soon". If that
+is not wanted before launch, remove the entry from `links` in `cp-shared.jsx:659`.
 
 ## Chart timeframes are candle intervals (deployed — `e677e65e`)
 
