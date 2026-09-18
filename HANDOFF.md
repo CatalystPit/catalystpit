@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `112b76ce` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `e14fee88` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -160,7 +160,49 @@ of ~55 unit abbreviations that collided with the real reference index. Three sto
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
 
+## Ticker attribution integrity (deployed `e14fee88`)
+
+**"BREAKING: $WEN Meritage Hospitality Group files for bankruptcy" went out live.** It reads as
+Wendy's filing for bankruptcy; its franchisee did. Two causes, two layers, both in
+`company-symbols.mjs`:
+
+1. **Subject vs context** (`isRelationalContext`). A company immediately in front of a relationship
+   noun — franchisee, partner, supplier, unit, rival, licensee… — is modifying it, not acting. Same
+   for the mirror form "franchisee of Wendy's". **Three guards keep it from being a phrase
+   blacklist**, each with fixtures: a joint subject keeps every ticker ("Nvidia partnership **with**
+   Intel", "Microsoft **and** Palantir partner on…"); a relationship word inside the company's own
+   registered name is never masked ("Alaris Equity Partners"); adjacency is required.
+   - **The trap**: `candidateSpans` combines words by POSITION, not adjacency, so "…Group, a
+     franchisee of Wendy's" yields the span `"Group Wendy's"`, which is not in the sentence.
+     `indexOf` returned −1 and the guard passed silently. Phantom spans are located by their last
+     real word, and are **not** claimed — claiming one takes its own words down with it.
+2. **`tickersSupportedBy`** — before a ticker is persisted onto a rewritten event
+   (`primary-events.js`, the `original`/`composed` branch), it must be supported by **the wording we
+   publish**. Deliberately conservative, because a scan showed what overbreadth costs: it must NOT
+   strip `NVT` from `"NVT: nVent prices $800M"` (we write our own `TICKER:` prefix, not `$TICKER`)
+   nor `ASND` from `"Ascendis authorizes…"` (a single word that is only the PREFIX of a longer name
+   is refused by `resolveCompanies` on purpose). Survives if: the resolver confirms it, OR the symbol
+   is printed in either form, OR the company's leading name token appears **capitalised** —
+   capitalisation is what separates Root Inc from "root for a rate hike".
+
+**Measured: 44 distinct PUBLISHED events in 14 days carried a wrong ticker** ($GS on "FOMC raises
+funds rate 25bp", $V on "US announces visa curbs", $BILL on "anti-Russia sanctions bill"). **Stored
+rows were NOT rewritten — that decision is open.** 99 assertions, 13/13 mutations caught; the $BP
+regressions still pass. Suppression thresholds untouched.
+
+**Open:** the incorrect live tweet is `2100951028984078416`. X credentials are Vercel-only and there
+is no `CRON_SECRET` on the dev machine, so it cannot be deleted from here.
+
 ## Dividend Calendar (deployed `112b76ce` — PUBLIC PAGE GATED OFF)
+
+**Page and navigation are APPROVED by the user. Do not polish the "Coming soon" placeholder** — the
+final page replaces that whole area once the source is enabled. Locked product requirements, all
+already implemented: ex-dividend is the default axis; payment date shown whenever available; ex/payment
+toggle; Today / This Week / Next Week / This Month; date navigation; ticker+company search; filters
+from metadata we already maintain; every row links to its ticker page; only announced events appear
+as upcoming; never inferred from historical schedules; a missing payment date shows "—"; data comes
+from stored `dividend_events`, never a provider fetch on page load; the adapter stays replaceable;
+`/dividends` stays its own dedicated public page.
 
 ### ⚠️ TEMPORARY DEVELOPMENT DATA SOURCE — POLYGON
 **PRODUCTION REDISTRIBUTION RIGHTS MUST BE CONFIRMED OR THE PROVIDER REPLACED BEFORE PUBLIC
