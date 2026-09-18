@@ -754,3 +754,80 @@ refused rather than faked. Volume baselines use median/MAD.
 | `4de460d` | **Rewrite cost controls, outage visibility, usage accounting, $BP fix** (deployed) |
 | `19bcc86b` | HANDOFF through the rewrite optimisation and the SEC v3 measurement |
 | `9aac084b` | **Facebook: trust evidence belongs to the event, not to the first copy** (deployed) |
+
+## The security master: one canonical name per ticker (deployed `28b282df`)
+
+The Dividend Calendar showed "—" in the Company column for FPF, IDE, IGA, IHD, FOF, LDP, PTA, RFI,
+RNP, UTF and 3,333 other covered tickers. **The names were not missing from our data. They were
+missing from the one table the calendar asked.**
+
+`screener_stocks.company` was derived inside the screener rebuild from SEC filings only — Form 4
+issuer name, then 8-K registrant name, then null. That hierarchy is right about QUALITY and wrong
+about COVERAGE: closed-end funds, ETFs, ADRs, preferred lines and unit trusts file neither form, so
+they had no name anywhere. SEC's own `company_tickers.json` named every one of the ten.
+
+### Precedence (documented in `src/lib/security-identity.mjs`, enforced by tests)
+
+| # | source | what it is | covers |
+|---|---|---|---|
+| 1 | `form4` | the issuer naming itself on a Form 4 | 5,554 |
+| 2 | `registrant` | the 8-K registrant name | 211 |
+| 3 | `sec_ticker` | registrant title in SEC's `company_tickers.json` | 5,333 — **this is the rung that fixes funds** |
+| 4 | `provider` | the market-data vendor's ticker-details name | 2,141 — **the only rung that knows ETFs** |
+
+Deliberately excluded, and staying excluded: 13F issuer strings (`ticker_issuer` — truncated to the
+filing's field width, HTML-entity-escaped, agree with SEC 60% of the time), FINRA security names
+(they name the security, not the company), and SIC industry descriptions (refused at the door by
+`cleanIdentityName`, whatever source they arrive from).
+
+A vendor name can NEVER outrank a filed name, and `security_identity.source` records which rung
+answered — so vendor naming is auditable and removable in one statement if Polygon is replaced.
+
+### Two defects fixed on the way
+
+**The vendor names every security and we were discarding it.** `fetchDetail` calls Polygon
+ticker-details and never read `d.name`; 2,727 of the unnamed tickers already had a row fetched and
+thrown away. Now stored in `screener_meta.name` at the provider boundary, consumed at rung 4.
+
+**`distinct on (ticker) order by filing_date desc` is not a total order.** VKI had three Form 4 rows
+on one date, two naming the issuer and one naming a 10% holder that had filed against it — Postgres
+picked the holder, and the screener printed "BANK OF AMERICA CORP /DE/" on an Invesco municipal
+trust. `resolveFilerName` now takes the latest date, breaks ties on how many filings back each name,
+and breaks a dead heat alphabetically so the answer is total.
+
+### Measured
+
+Covered announced events with no display name: **4,906 → 632** (3,343 tickers → 607). Production
+Sep–Nov board: **98.1% named**. Today's board: 238 of 253. No existing name changed; SPY gained one
+it never had.
+
+The remaining 607 are **mutual-fund share classes** — 596 of them 5-letter symbols ending in X, all
+with no price, in no SEC ticker file, and the vendor returns nothing for them. That is a coverage
+limit of unlisted securities, not a lookup failure. They should probably not be on a calendar of
+listed securities at all; not changed here.
+
+### Rebuild
+
+`refreshSecurityIdentity()` runs at the top of the nightly screener cron (wrapped — identity is an
+improvement to the rebuild, never a precondition). Manual door:
+`node --env-file=.env.local scripts/build-security-identity.mjs`.
+
+`scripts/real-db-loader.mjs` is the resolution hook for running REAL server modules against the REAL
+database from a script (no db double) — extension resolution plus a `server-only` no-op.
+
+### Hover chart
+
+The Screener's ticker-hover daily chart is now `src/components/TickerHoverChart.jsx`
+(`useTickerHover()` + `<TickerHoverPreview>`), shared with the Dividend Calendar. One open delay
+(220ms), one flip-to-stay-on-screen rule, one teardown. The embed fetches its own data from
+TradingView, so a second table costs **no Catalyst Pit market-data request** and there is no cache to
+share. `pointer-events: none` keeps the ticker link clickable and keyboard focus untrapped.
+
+⚠️ **STILL NEEDS A HUMAN WITH A BROWSER**: that the popup actually renders on /dividends for AAPL,
+KO, SPY and the fund symbols, and dismisses the way it does on /screener.
+
+### Tests
+
+`scripts/verify-security-identity.mjs` — 43 assertions, **7/7 mutations caught** (vendor outranking a
+filed name; SIC descriptions admitted; the VKI tie-break; oldest-wins; unsanctioned sources;
+equal-rank overwrite; malformed SEC rows).
