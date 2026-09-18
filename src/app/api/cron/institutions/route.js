@@ -1,6 +1,7 @@
 import { db } from '../../../../lib/db';
 import { fundHoldings, fundFilings } from '../../../../lib/schema';
 import { INSTITUTIONS } from '../../../../lib/institutions.mjs';
+import { refreshFundQoq } from '../../../../lib/fund-qoq';
 import { and, eq, sql, inArray } from 'drizzle-orm';
 import { auth, clerkClient } from '@clerk/nextjs/server';
 
@@ -269,7 +270,18 @@ export async function GET(request) {
     }
   } catch (e) { console.log(`[institutions] ticker pass error: ${e.message}`); }
 
-  const summary = { ok: true, funds: funds.length, done: done.length, skipped, tickersResolved, ms: Date.now() - startedAt };
+  // The holdings just changed, so the summary Pit Consensus reads is now stale. Rebuilt HERE, at the
+  // end of ingest, which is the whole point: this is the ~8-second roll-up that used to run in front
+  // of visitors. Best effort — a failure leaves the previous summary in place and the board simply
+  // falls back to computing live until the standalone cron catches it.
+  let fundQoq = null;
+  try {
+    fundQoq = await refreshFundQoq();
+  } catch (e) {
+    console.log(`[institutions] fund_qoq refresh error: ${e.message}`);
+  }
+
+  const summary = { ok: true, funds: funds.length, done: done.length, skipped, tickersResolved, fundQoq, ms: Date.now() - startedAt };
   console.log(`[institutions] ${JSON.stringify(summary)}`);
   return Response.json(summary);
 }

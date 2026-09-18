@@ -53,6 +53,10 @@
       "schedule": "0 8 * * *"
     },
     {
+      "schedule": "30 9 * * *",
+      "path": "/api/cron/fund-qoq"
+    },
+    {
       "path": "/api/cron/eightk",
       "schedule": "*/5 * * * *"
     },

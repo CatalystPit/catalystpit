@@ -18,6 +18,36 @@ function Badge({ children, tone }) {
   return <span style={{ fontSize: 11, fontWeight: 600, color: fg, background: bg, border: `1px solid ${tone === 'bull' ? C.greenBorder : tone === 'bear' ? '#E4B4B4' : C.border}`, borderRadius: 5, padding: '3px 8px' }}>{children}</span>;
 }
 
+/**
+ * A row that has not arrived yet, at exactly the size of one that has.
+ *
+ * Built from the same padding, gaps and element sizes as `Row` below, so the board does not jump
+ * when the data lands. It is deliberately a dimmed outline of the real thing — rank, logo, ticker,
+ * two badges, score — rather than a spinner, because the shape tells you what is coming.
+ *
+ * This exists because the board used to show a single centred line of text on an otherwise empty
+ * page, which reads as broken. It is NOT the fix for slowness; the roll-up behind it was moved to
+ * ingestion. This is what honest waiting looks like for the ~300 ms that remain.
+ */
+function SkeletonRow() {
+  const bar = (w, h = 10) => (
+    <span style={{ display: 'inline-block', width: w, height: h, borderRadius: 4, background: C.surface }} />
+  );
+  return (
+    <div aria-hidden="true" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', background: C.white, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+      <div style={{ width: 22, display: 'flex', justifyContent: 'center' }}>{bar(10)}</div>
+      <span style={{ width: 30, height: 30, borderRadius: '50%', background: C.surface, flexShrink: 0 }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+          {bar(52, 12)}{bar(64, 12)}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>{bar(128, 18)}{bar(104, 18)}</div>
+      </div>
+      <div style={{ textAlign: 'right' }}>{bar(30, 18)}</div>
+    </div>
+  );
+}
+
 function Row({ r, dir, rank }) {
   const tone = dir === 'bear' ? 'bear' : 'bull';
   return (
@@ -99,7 +129,14 @@ export default function ConsensusClient() {
             onRetry={() => setReloadAt((n) => n + 1)}
           />
         ) : loading ? (
-          <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: 'center' }}>Scanning insiders · Congress · 13F…</div>
+          // The board's own shape, at its own size, so nothing moves when the rows arrive.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }} aria-busy="true" aria-live="polite">
+            {/* Announced to a screen reader, invisible on screen — the skeleton is aria-hidden. */}
+            <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }}>
+              Loading the confluence board
+            </span>
+            {Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)}
+          </div>
         ) : list.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
             No confluence right now. No names have two or more aligned {dir === 'bear' ? 'selling' : 'buying'} signals in the last 90 days.
