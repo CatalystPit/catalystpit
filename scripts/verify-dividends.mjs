@@ -19,7 +19,7 @@ import {
   canonicalEvent, isAnnounced, eventTiming, dividendYieldPct, frequencyLabel, asDate, DIVIDEND_TYPES,
 } from '../src/lib/dividends/dividend-event.mjs';
 import { toCanonical, fetchWindow, SOURCE_ID } from '../src/lib/dividends/providers/polygon-dividends.mjs';
-import { activeDividendProvider, dividendsPublicEnabled, PROVIDERS } from '../src/lib/dividends/providers/index.mjs';
+import { activeDividendProvider, dividendsPublicEnabled, dividendsVisible, dividendsDisplayMode, PROVIDERS } from '../src/lib/dividends/providers/index.mjs';
 import { rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS } from '../src/lib/dividends/dividend-view.mjs';
 
 let pass = 0, fail = 0;
@@ -215,10 +215,27 @@ console.log('\n=== the provider registry is the swap point ===');
   ok('every provider implements the interface',
     Object.values(PROVIDERS).every((p) => typeof p.fetchWindow === 'function' && typeof p.id === 'string'));
 
-  // The licensing gate, which fails closed.
-  ok('the public calendar is OFF unless explicitly enabled', dividendsPublicEnabled({}) === false);
-  ok('"TRUE" does not enable it', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: 'TRUE' }) === false);
-  ok('the literal string enables it', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: 'true' }) === true);
+  // THE GATE HAS THREE STATES, because "who is looking" is the question, not on-versus-off.
+  ok('unset is pre-launch — the real calendar on real data', dividendsDisplayMode({}) === 'prelaunch');
+  ok('true is cleared for public commercial display', dividendsDisplayMode({ DIVIDENDS_PUBLIC_ENABLED: 'true' }) === 'public');
+  ok('false is the kill switch', dividendsDisplayMode({ DIVIDENDS_PUBLIC_ENABLED: 'false' }) === 'off');
+
+  // The COMMERCIAL gate still fails closed. This is the one that must never open by accident, so it
+  // takes the exact literal `true` and nothing that merely looks affirmative.
+  ok('public display is OFF unless explicitly approved', dividendsPublicEnabled({}) === false);
+  ok('pre-launch is NOT public approval', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: '' }) === false);
+  ok('"TRUE" does not open the commercial gate', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: 'TRUE' }) === false);
+  ok('"yes" does not open it either', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: 'yes' }) === false);
+  ok('the literal string opens it', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: 'true' }) === true);
+
+  // Visibility renders pre-launch and public, never when killed — and the kill switch must not be
+  // defeated by a capital letter or a stray space.
+  ok('the calendar renders pre-launch', dividendsVisible({}) === true);
+  ok('…and when public', dividendsVisible({ DIVIDENDS_PUBLIC_ENABLED: 'true' }) === true);
+  ok('…and NOT when killed', dividendsVisible({ DIVIDENDS_PUBLIC_ENABLED: 'false' }) === false);
+  ok('the kill switch survives casing and whitespace',
+    dividendsVisible({ DIVIDENDS_PUBLIC_ENABLED: ' FALSE ' }) === false
+    && dividendsVisible({ DIVIDENDS_PUBLIC_ENABLED: 'False' }) === false);
 }
 
 console.log('\n=== the calendar\'s date windows ===');

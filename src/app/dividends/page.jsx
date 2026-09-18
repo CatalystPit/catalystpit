@@ -1,7 +1,7 @@
 import DividendsClient from './DividendsClient';
 import { pageMeta } from '../../lib/seo';
 import { calendarRange, calendarCount, dividendSyncState } from '../../lib/dividends/dividend-store';
-import { dividendsPublicEnabled } from '../../lib/dividends/providers/index.mjs';
+import { dividendsVisible, dividendsDisplayMode } from '../../lib/dividends/providers/index.mjs';
 import { dividendYieldPct } from '../../lib/dividends/dividend-event.mjs';
 
 export const metadata = pageMeta({
@@ -25,12 +25,13 @@ const shift = (base, days) => { const d = new Date(`${base}T00:00:00Z`); d.setUT
  * component takes over for tabs, filters and the date/payment toggles.
  */
 export default async function DividendsPage() {
-  const enabled = dividendsPublicEnabled();
+  const enabled = dividendsVisible();
+  const display = dividendsDisplayMode();
   const today = iso(new Date());
   const to = shift(today, 7);
 
   if (!enabled) {
-    return <DividendsClient enabled={false} initial={{ events: [], total: 0, from: today, to, mode: 'ex' }} />;
+    return <DividendsClient enabled={false} display={display} initial={{ events: [], total: 0, from: today, to, mode: 'ex' }} />;
   }
 
   let initial = { events: [], total: 0, from: today, to, mode: 'ex', asOf: null };
@@ -62,5 +63,5 @@ export default async function DividendsPage() {
     // A failed first paint is an empty table the client will refill, not a broken page.
   }
 
-  return <DividendsClient enabled initial={initial} />;
+  return <DividendsClient enabled display={display} initial={initial} />;
 }

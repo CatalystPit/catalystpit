@@ -52,7 +52,7 @@ const TD = ({ children, align = 'left', style }) => (
     borderTop: `1px solid ${C.border}`, whiteSpace: 'nowrap', ...style }}>{children}</td>
 );
 
-export default function DividendsClient({ enabled, initial }) {
+export default function DividendsClient({ enabled, display = 'prelaunch', initial }) {
   const [view, setView] = useState('week');
   const [anchor, setAnchor] = useState(initial?.from || iso(new Date()));
   const [mode, setMode] = useState(initial?.mode || 'ex');
@@ -181,11 +181,24 @@ export default function DividendsClient({ enabled, initial }) {
           Only events a company has actually declared — nothing here is estimated from past payments.
         </p>
 
+        {/* PRE-LAUNCH. Real data, from a TEMPORARY source whose redistribution rights are not
+            confirmed. Stated on the page rather than only in a config file, because the person
+            looking at it is the one who has to decide whether it may ever be published. */}
+        {enabled && display === 'prelaunch' && (
+          <div style={{ background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 8,
+            padding: '8px 12px', marginBottom: 12, fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
+            <strong style={{ color: C.ink, fontWeight: 600 }}>Pre-launch preview.</strong>{' '}
+            Live dividend data from a temporary development source. Redistribution rights are not
+            confirmed, so this must not be published commercially until the final market-data provider
+            is connected or those rights are cleared.
+          </div>
+        )}
+
         {!enabled ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center' }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Coming soon</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Temporarily unavailable</div>
             <div style={{ fontSize: 13, color: C.muted, maxWidth: 460, margin: '0 auto', lineHeight: 1.6 }}>
-              The dividend calendar is built and loading data. It opens once its market-data source is finalised.
+              The dividend calendar is switched off pending a licensed market-data source.
             </div>
           </div>
         ) : (

@@ -1,5 +1,5 @@
 import { calendarRange, calendarCount, dividendSyncState } from '../../../../lib/dividends/dividend-store';
-import { dividendsPublicEnabled } from '../../../../lib/dividends/providers/index.mjs';
+import { dividendsVisible, dividendsDisplayMode } from '../../../../lib/dividends/providers/index.mjs';
 import { dividendYieldPct } from '../../../../lib/dividends/dividend-event.mjs';
 
 // THE DIVIDEND CALENDAR API.
@@ -34,12 +34,12 @@ export async function GET(request) {
     const sp = new URL(request.url).searchParams;
     const today = new Date().toISOString().slice(0, 10);
 
-    if (!dividendsPublicEnabled()) {
+    if (!dividendsVisible()) {
       // Deliberately a 200 with an explicit flag rather than a 404: the page renders a clear
       // "not yet available" state, and nothing downstream has to treat this as an error.
       return Response.json({
         enabled: false,
-        reason: 'The dividend calendar is awaiting a licensed market-data source.',
+        reason: 'The dividend calendar is switched off pending a licensed market-data source.',
         events: [], total: 0, from: today, to: today, mode: 'ex',
       }, { headers: NO_STORE });
     }
@@ -98,6 +98,8 @@ export async function GET(request) {
 
     return Response.json({
       enabled: true, mode, from, to, total, events,
+      // 'prelaunch' means real data from a TEMPORARY source, not cleared for public redistribution.
+      display: dividendsDisplayMode(),
       asOf: sync.updatedAt, source: 'scheduled-ingest',
     }, { headers: CACHE });
   } catch (e) {
