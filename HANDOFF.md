@@ -1118,3 +1118,98 @@ never drawn as 0%.
 
 ⚠️ **Needs a human with a browser**: tile legibility at small sizes, hover-card feel, and the
 board/leaders layout at phone width.
+
+---
+
+## Market Heatmap v2 — full-width board, whole eligible universe (deployed `d9b7a361`)
+
+Layout: the heatmap is now the page. Full width at `clamp(460px, 62vh, 760px)` — tied to the viewport
+so a wider screen buys more tiles rather than a taller page — with Top Gainers / Top Losers / Most
+Active as three equal cards beneath (two-up ≤1100px, stacked ≤720px, where the board also shortens).
+
+### The eligible universe, audited
+
+| stage | count |
+|---|---|
+| rows in `screener_stocks` | 17,728 |
+| with a market cap > 0 | 5,904 |
+| **eligible operating companies** | **5,553** |
+| …with a price on the latest session | 5,436 |
+| measurable 1D / 1W / 1M / 1Y | 5,784 / 5,783 / 5,506 / 5,044 |
+
+**Eligibility is a classification rule, not a ticker list**: `asset_type IN (Stock, ADRC)`.
+
+- **FUND (331), ETF (3), ETV (4)** — a fund's market cap is the value of holdings *already on the
+  board*; drawing both double-counts the same capital and inflates whichever sector the fund is
+  filed under.
+- **WARRANT (5), UNIT (8)** — not ownership sized by market capitalisation.
+- **Mutual-fund share classes need no rule at all**: all 1,671 (the 5-letter symbols ending in X)
+  carry no market cap, so `market_cap > 0` already removes every one. Measured, not assumed — which
+  is why there is no symbol-shape heuristic anywhere in this code.
+
+Universe ladder, each labelled with its **measured** share of total market cap:
+100 (62%) · 150 (68%) · 300 (79%) · 500 (87%) · 1000 (94%) · 2000 (98%) · All eligible (100%).
+Default is **Top 500**.
+
+### The legibility floor, and why it is disclosed
+
+On a 1400×700 board the full universe's smallest tile is effectively **zero pixels**. Tiles below
+`MIN_TILE_AREA` (16px²) are not drawn, and `tileCoverage()` reports the remainder so the page states
+it: *"2,159 of 5,553 shown · 3,394 too small to draw at this size — choose a sector to see them."*
+
+**DOM is bounded at ~2,200 elements at any universe size** (~38ms VDOM, 10ms layout).
+
+This is what makes depth useful rather than decorative: **Technology is 33 securities in Top 150 and
+489 in All eligible.**
+
+### ⚠️ A baseline too far from its anchor is not the window it claims
+
+`MAX_BASELINE_GAP_DAYS = 45`. "Nearest session at or before" is right for a weekend or a holiday and
+wrong for a security that stopped trading for months — its nearest session before "a year ago" may be
+sixteen months ago. 45 days is comfortably longer than any market closure (the longest in modern
+history was ~2 weeks), so a gap this wide means the *security* stopped trading, not the market.
+Withholds exactly **2 of 4,802** one-year returns, both with baselines four months or more out.
+
+### Performance — measured end to end
+
+| universe | before | after | wire (uncompressed) |
+|---|---|---|---|
+| 300 | ~1,450ms | **~500ms** | 41KB |
+| 500 | ~1,950ms | **~540ms** | 68KB |
+| 1000 | ~2,400ms | **~630ms** | 136KB |
+| 2000 | ~3,280ms | **~640ms** | 272KB |
+| all 5,553 | ~5,570ms | **~780ms** | 753KB |
+
+Three changes got there:
+
+1. **`date = asOf` instead of a `distinct on` walk backwards** for the latest session: 2,033ms → 337ms.
+   Also *more honest* — a security with no print on the latest session now reports no price rather
+   than handing back a stale close to be displayed as current, which is the exact failure the audit
+   recorded.
+2. **Bounding the baseline scan** by `MAX_BASELINE_GAP_DAYS`: 1,650ms → 317ms. The correctness
+   argument came first; the speed is a consequence of asking a better-defined question.
+3. **`compactRows()`** — rounding float noise and dropping per-row dates that repeat the board's own:
+   **−40%** payload. Nothing the page displays is lost.
+
+Production-verified: Top 500 1D **486ms**, All eligible 1Y **782ms**, All eligible 1D **114ms** cached.
+
+### Unchanged on purpose
+
+Most Active remains a **session** measure, labelled with its session date and "end of day" so it can
+never imply "most active 1M" — it will become intraday when a licensed live feed lands. S&P 500 and
+Nasdaq 100 remain disabled with their reason. Freshness reporting, entitlement resolved-but-unenforced,
+and the **freshness-derived cache header** are all unchanged. The Terminal panel is untouched and
+verified still serving.
+
+### Future flow intelligence
+
+Dollar volume, RVOL, unusual volume, volume acceleration and sector volume activity all need live or
+licensed volume we do not have. The shape is ready — `volume` already flows per row from the session
+read, and the leaders component already renders a non-return metric — but **nothing is implemented or
+approximated**.
+
+### Tests
+
+`verify-heatmap.mjs` — **120 assertions, 19/19 mutations caught** across both rounds, now including
+the baseline-gap tolerance, the legibility floor, coverage disclosure, the fund double-count rule and
+"All eligible" silently capping.
