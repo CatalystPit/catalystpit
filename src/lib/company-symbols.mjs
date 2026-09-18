@@ -461,13 +461,24 @@ export function tickersSupportedBy(text, tickers, index) {
     // overbroad rule this guard must not become. The company's own leading name token appearing as
     // a CAPITALISED word is enough: capitalisation is what separates Root Inc from "root for".
     const hs = heads.get(tk);
-    if (hs) {
-      for (const h of hs) {
-        if (h.length < 3) continue;                      // two-letter heads collide with everything
-        const esc = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (new RegExp(`\\b${esc[0]}${esc.slice(1).toLowerCase()}\\b`).test(t)) return true;
-        if (new RegExp(`\\b${esc}\\b`).test(t)) return true;   // ALL-CAPS wording
-      }
+    // WE CANNOT JUDGE WHAT WE DO NOT KNOW. A ticker absent from the reference index — a fresh IPO
+    // the screener has not picked up, a foreign line — has no name to look for, and "unknown" is not
+    // "unsupported". This guard exists to remove symbols we can prove are wrong, so it fails OPEN.
+    if (!hs || !hs.size) return true;
+    for (const h of hs) {
+      if (h.length < 3) continue;                        // two-letter heads collide with everything
+      const esc = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Case-INSENSITIVE, because a registered name normalises to BETTERLIFE while the headline
+      // writes "BetterLife" — a fixed Capitalised form misses every camel-cased name there is.
+      const m = new RegExp(`\\b(${esc})\\b`, 'i').exec(t);
+      if (!m) continue;
+      // …but the occurrence must still LOOK like a name: "Root Inc" is a company, "root for a rate
+      // hike" is a verb, and capitalisation is the only thing separating them.
+      if (!/^[A-Z]/.test(m[1])) continue;
+      // PRESENT IS NOT THE SAME AS BEING THE SUBJECT. "Costco partner bankruptcy could benefit its
+      // biggest rival" names Costco, but as somebody else's partner — crediting the bare appearance
+      // would let exactly the attribution this guard exists to stop back in.
+      if (!isRelationalContext(t, m[1], index)) return true;
     }
     return false;
   });
