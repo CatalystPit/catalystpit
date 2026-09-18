@@ -1213,3 +1213,74 @@ approximated**.
 `verify-heatmap.mjs` — **120 assertions, 19/19 mutations caught** across both rounds, now including
 the baseline-gap tolerance, the legibility floor, coverage disclosure, the fund double-count rule and
 "All eligible" silently capping.
+
+---
+
+## Heatmap geometry: the clipped bottom row (fixed, deployed `75e7f4b4`)
+
+**The defect, measured on the live Top 500 board at 1400×700.** The squarified layout gave
+"Real Estate" — a single security — a band **7.7px tall at y=692.3**, flush with the bottom of the
+canvas. The header was rendered at a **fixed 13px** from the top of that band, so it painted from
+692.3 to **705.3: 5.3px past the canvas**, cut off by the container's `overflow: hidden`.
+
+The same band left `innerH = 7.7 − 13 = −5.3`, which the old `innerH < 8` guard turned into "draw no
+tiles at all" — so **that sector's security was silently missing**. Top 500 drew 499 tiles, and
+nothing checked the drawn count against the universe.
+
+Neither was a data problem. Both were geometry:
+
+1. the sector header was **never part of the layout calculation** — it was painted on top of a rect
+   it could exceed; and
+2. the board's height came from a CSS clamp, `clamp(460px, 62vh, 760px)`, **which knew nothing about
+   how many sectors were on it**.
+
+### What changed
+
+**The header is clamped to its sector** and emitted by the layout as `headerH`, so it can never paint
+outside its own band whatever height the board is forced to. The canvas renders it at that height
+instead of a constant.
+
+**The board sizes itself** (`fitBoardHeight`) from the width it measures, against two floors:
+
+- **density** — roughly `COMFORTABLE_TILE_AREA` (900px², ~30×30) per security, so a dense universe is
+  not a wall of slivers;
+- **sector fit** — walk upward until the thinnest sector band clears `MIN_SECTOR_HEIGHT`
+  (header + a 10px tile row = 23px).
+
+The page scrolls. The fixed CSS height is gone.
+
+### Measured after — zero escaping rectangles, zero clipped headers
+
+| universe | fitted H @1400 | tiles |
+|---|---|---|
+| Top 100 | 480px | 100/100 |
+| Top 150 | 460px | 150/150 |
+| Top 300 | 460px | 300/300 |
+| **Top 500** | **720px** | **500/500** (was 499, with a clipped header) |
+| Top 1000 | 680px | 1000/1000 |
+| Top 2000 | 1300px | **2000/2000** (was 1841 on a cramped board) |
+| All eligible | 2200px | 3030 drawn, remainder disclosed as before |
+
+Checked at **1920/1600/1400/1100/820/600/390px**: no rectangle escapes, no header is truncated.
+A narrower screen gets a **taller** board, never a horizontally clipped one — Top 500 at 390px is
+1160px tall and still draws all 500.
+
+Top 500 → Technology re-fits to its own 69 securities rather than keeping the geometry it had inside
+the full board.
+
+### Unchanged
+
+Returns, 1D/1W/1M/1Y semantics, market-cap weighting, sector classification, continuity protection,
+EOD freshness labelling, eligibility rules and provider architecture are all untouched — verified in
+production after the deploy (`asOf` 2026-09-17, baselines 09-16 / 08-17 / 2025-09-17, `freshness: eod`).
+The Terminal panel keeps its fixed-height box (`autoHeight` defaults off) and is verified still serving.
+
+### Tests
+
+`verify-heatmap.mjs` — **154 assertions**, including a fixture sized to reproduce the production
+overflow exactly (an 8.76px band whose fixed 13px header would reach 704.2 on a 700px canvas), bounds
+checks at seven widths, a dense filtered sector, and label suppression on two-dimensional thresholds.
+
+**25 of 26 mutations caught** across all rounds. The survivor is an **equivalent mutant**: restoring
+the old `innerH < 8` guard changes nothing, because at a fitted height no sector is ever that thin and
+on a forced-short board both values drop the tile identically.
