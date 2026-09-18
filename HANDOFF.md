@@ -267,17 +267,38 @@ recomputing every bucket's OHLCV independently from the raw daily series (open =
 open, close = last session's close, high/low = extremes, volume = exact sum). Indicators verified to
 consume the displayed interval; intraday intervals verified unchanged (modal spacing 60/300/900/3600s).
 
-### ⚠️ LIVE PRODUCTION ISSUE — the daily chart provider is failing
-**Tiingo refuses every `/api/chart-daily` request right now** (`providerStale: true`, `fetched: 0` on
-all tickers). The local key returns `403 Invalid token`; production behaves the same. Charts still
-render **from cache**, but:
-- the newest cached candle is **2026-09-16** and will drift further each session;
-- **deep history cannot be backfilled** — 13,360 of 13,368 cached tickers hold **under 5 years**, so
-  KO/JNJ/PG/XOM render ~3 years on a monthly chart. AAPL/MSFT/SPY/PLTR are deep only because they
-  were fetched deep earlier.
+### Tiingo is HEALTHY — an earlier entry here claimed an outage and was wrong
+**There is no credential problem and nothing to restore.** A previous version of this section
+reported that Tiingo was refusing every request. That conclusion came from evidence the QA itself had
+contaminated: a burst of `range=all` calls across six symbols tripped Tiingo's **free-tier hourly
+limit**, which surfaces as `403 Invalid token`. Verified afterwards with paced requests — five auth
+probes returned HTTP 200, and production returns `providerStale: false`, `fetched: 15528`.
 
-This needs a key check or the replacement provider. **It is not a code defect** and is unrelated to
-the timeframe work.
+**Deep history works, and is fetched LAZILY.** `range=all` backfills a ticker's full history the
+first time anyone asks for it: KO **16,284 candles back to 1962-01-02**, JNJ/PG/MMM 14,297 back to
+1970-01-02 (identical counts because all three predate 1970 — same NYSE trading-day count, not a
+bug). The "13,360 tickers under 5 years" figure simply meant most tickers had never had a long
+interval opened on them. **Do not build a backfill job for this.**
+
+Two consequences worth knowing:
+- **The free tier is 50 requests/hour.** Under real traffic the limit will be hit, and the chart will
+  honestly show "History from … · not refreshed" until the hour resets. That is the signal working,
+  not a fault.
+- **First view of an un-warmed ticker costs ~2.0 s** (cold backfill) and ~1.6 s warm, because a long
+  interval downloads the whole daily series (~14k candles, ~1 MB) and folds it in the browser. Fine
+  for now; server-side aggregation is the obvious fix and belongs with the final provider, not before.
+
+### Provider expectations — TEMPORARY vs FINAL
+- **TEMPORARY (Tiingo, now):** use the **maximum real history Tiingo supplies**, whatever that is per
+  ticker. Never manufacture or extrapolate older candles; never label a shortened dataset as
+  all-time; provider-limited depth is **not** an aggregation failure. Candle SEMANTICS are what must
+  be right: 1D daily, 1W weekly, 1M monthly, 3M quarterly, 1Y yearly, each folded correctly from
+  whatever legitimate history exists.
+- **FINAL commercial provider:** minimum **3 years** of daily, and **full available depth** for
+  weekly/monthly/quarterly/yearly. Because the fold happens at the provider boundary in
+  `normalizeBars`, deeper daily history extends every long interval automatically — **no chart UI
+  rewrite**. A new adapter is the only work.
+- **Do not block V1 chart development on temporary-provider depth.**
 
 ### The defect found and fixed
 The route served a short series silently. It now reports `providerStale` + `earliest`, and the chart
