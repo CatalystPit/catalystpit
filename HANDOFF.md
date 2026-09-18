@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `98393428` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `c2a9d437` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -258,6 +258,41 @@ payment date renders `—` and is **never** copied from the record date, ex-date
 
 **Note:** the nav now shows "Dividends" for everyone while the page renders "Coming soon". If that
 is not wanted before launch, remove the entry from `links` in `cp-shared.jsx:659`.
+
+## Chart QA (done — `97f708d6`, corrected by `c2a9d437`)
+
+**The approved timeframe work was already implemented and is correct.** QA'd against production data
+for AAPL (1980), KO, SPY (ETF, 1993), RDDT (2024 IPO) and PLTR: **210 checks, 0 failures**, including
+recomputing every bucket's OHLCV independently from the raw daily series (open = first session's
+open, close = last session's close, high/low = extremes, volume = exact sum). Indicators verified to
+consume the displayed interval; intraday intervals verified unchanged (modal spacing 60/300/900/3600s).
+
+### ⚠️ LIVE PRODUCTION ISSUE — the daily chart provider is failing
+**Tiingo refuses every `/api/chart-daily` request right now** (`providerStale: true`, `fetched: 0` on
+all tickers). The local key returns `403 Invalid token`; production behaves the same. Charts still
+render **from cache**, but:
+- the newest cached candle is **2026-09-16** and will drift further each session;
+- **deep history cannot be backfilled** — 13,360 of 13,368 cached tickers hold **under 5 years**, so
+  KO/JNJ/PG/XOM render ~3 years on a monthly chart. AAPL/MSFT/SPY/PLTR are deep only because they
+  were fetched deep earlier.
+
+This needs a key check or the replacement provider. **It is not a code defect** and is unrelated to
+the timeframe work.
+
+### The defect found and fixed
+The route served a short series silently. It now reports `providerStale` + `earliest`, and the chart
+prints "History from 2023-09-13 · not refreshed" **on long intervals only**.
+
+**A first attempt at this was wrong and was caught in production before it could mislead**: it
+compared what was served against the artificial `1960-01-01` floor that `all` is requested from, and
+flagged **every** security as truncated — including Apple, whose 1980-12-12 start is its real IPO.
+Nothing here knows when a company began trading, so **truncation is not knowable**; whether the
+refresh failed is. Do not reintroduce a "history truncated" claim.
+
+### Not verifiable from this environment
+No browser tooling is available, so the interactive Terminal QA items below (drawing-tool geometry,
+popover dismissal, legend chip, pane drags) were reviewed as code and are covered by the 1333-assertion
+chart suite, but **were not clicked**. They still need a human pass.
 
 ## Chart timeframes are candle intervals (deployed — `e677e65e`)
 
