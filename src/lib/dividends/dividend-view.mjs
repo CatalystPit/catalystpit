@@ -123,6 +123,24 @@ export const EMPTY_FILTERS = Object.freeze({
   q: '', sector: '', minYield: '', minAmount: '', frequency: '', type: '', minMarketCap: '',
 });
 
+/**
+ * A numeric query parameter, or null when it was not supplied.
+ *
+ * `Number(null)` and `Number('')` are both 0, and 0 is finite — so the obvious
+ * `Number.isFinite(Number(v)) ? Number(v) : null` turns an ABSENT filter into a real filter of zero.
+ * That is not a theoretical hazard: it shipped, and every calendar request silently carried
+ * `minYield: 0`, `minAmount: 0` and `minMarketCap: 0`. A yield floor of zero still demands a known
+ * frequency and a stored price, and a market-cap floor of zero still demands a market cap, so the
+ * board collapsed from 372 events to 21 and the coverage toggle appeared to do nothing.
+ *
+ * Absence is checked BEFORE conversion, which is the only order that can tell 0 from nothing.
+ */
+export function numParam(v) {
+  if (v === null || v === undefined || String(v).trim() === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 /** The query string for the calendar API. Empty values are omitted rather than sent as blanks. */
 export function calendarQuery({ from, to, mode = 'ex', limit = 500, filters = EMPTY_FILTERS } = {}) {
   const p = new URLSearchParams({ from, to, mode, limit: String(limit) });

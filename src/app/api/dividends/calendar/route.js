@@ -1,6 +1,7 @@
 import { calendarRange, calendarCount, dividendSyncState } from '../../../../lib/dividends/dividend-store';
 import { dividendsVisible, dividendsDisplayMode } from '../../../../lib/dividends/providers/index.mjs';
 import { dividendYieldPct } from '../../../../lib/dividends/dividend-event.mjs';
+import { numParam } from '../../../../lib/dividends/dividend-view.mjs';
 
 // THE DIVIDEND CALENDAR API.
 //
@@ -28,7 +29,8 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const day = (v, fallback) => (DAY.test(String(v || '')) ? String(v) : fallback);
-const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+// Absence must survive the trip: see numParam. An absent filter is null, never 0.
+const num = numParam;
 
 /** A price older than the screener's own refresh cadence cannot support a yield we would publish. */
 const YIELD_MAX_STALE_DAYS = 5;

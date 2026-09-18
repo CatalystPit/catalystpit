@@ -20,7 +20,7 @@ import {
 } from '../src/lib/dividends/dividend-event.mjs';
 import { toCanonical, fetchWindow, SOURCE_ID } from '../src/lib/dividends/providers/polygon-dividends.mjs';
 import { activeDividendProvider, dividendsPublicEnabled, dividendsVisible, dividendsDisplayMode, PROVIDERS } from '../src/lib/dividends/providers/index.mjs';
-import { rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS } from '../src/lib/dividends/dividend-view.mjs';
+import { rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, numParam, EMPTY_FILTERS } from '../src/lib/dividends/dividend-view.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -301,6 +301,22 @@ console.log('\n=== grouping, and a day with nothing on it ===');
     byPay.at(-1)[0] === 'unknown' && byPay.at(-1)[1][0].ticker === 'D', JSON.stringify(byPay.map(([d]) => d)));
   ok('an empty day is an empty board, not an error', groupByDate([], 'ex').length === 0);
   ok('missing input is handled', groupByDate(null, 'ex').length === 0);
+}
+
+console.log('\n=== an absent filter is not a filter of zero ===');
+{
+  // THE BUG THIS PINS: Number(null) and Number('') are both 0, and 0 is finite — so the obvious
+  // coercion turned every ABSENT filter into a real one. In production that meant every request
+  // carried minYield/minAmount/minMarketCap of 0, which still demand a known frequency, a stored
+  // price and a market cap. The board collapsed from 372 events to 21.
+  ok('an absent parameter is null', numParam(null) === null && numParam(undefined) === null);
+  ok('an empty control is null', numParam('') === null && numParam('   ') === null);
+  ok('a real zero is still zero', numParam(0) === 0 && numParam('0') === 0);
+  ok('a real value survives', numParam('4') === 4 && numParam('0.5') === 0.5);
+  ok('a negative survives', numParam('-2') === -2);
+  ok('nonsense is null, not NaN', numParam('abc') === null && numParam({}) === null);
+  // The distinction that matters, stated directly: nothing and zero are different answers.
+  ok('nothing and zero are distinguishable', numParam('') !== numParam('0'));
 }
 
 console.log('\n=== the query the UI sends ===');
