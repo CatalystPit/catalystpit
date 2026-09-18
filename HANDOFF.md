@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `e14fee88` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `98393428` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -160,7 +160,7 @@ of ~55 unit abbreviations that collided with the real reference index. Three sto
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
 
-## Ticker attribution integrity (deployed `e14fee88`)
+## Ticker attribution integrity (deployed `e14fee88` + `98393428`)
 
 **"BREAKING: $WEN Meritage Hospitality Group files for bankruptcy" went out live.** It reads as
 Wendy's filing for bankruptcy; its franchisee did. Two causes, two layers, both in
@@ -185,13 +185,31 @@ Wendy's filing for bankruptcy; its franchisee did. Two causes, two layers, both 
    is printed in either form, OR the company's leading name token appears **capitalised** —
    capitalisation is what separates Root Inc from "root for a rate hike".
 
-**Measured: 44 distinct PUBLISHED events in 14 days carried a wrong ticker** ($GS on "FOMC raises
-funds rate 25bp", $V on "US announces visa curbs", $BILL on "anti-Russia sanctions bill"). **Stored
-rows were NOT rewritten — that decision is open.** 99 assertions, 13/13 mutations caught; the $BP
-regressions still pass. Suppression thresholds untouched.
+**Three refinements came from running the cleanup against production first** (`98393428`) — each one
+prevented a false removal, and each is now the rule in `tickersSupportedBy`:
+- **An unknown ticker is not an unsupported one.** A symbol absent from the reference index (fresh
+  IPO, foreign line) has no name to match, so the guard **fails OPEN**. Otherwise it stripped `ETRA`
+  from "Electra Therapeutics prices $350M IPO".
+- **Case-insensitive match, then require a leading capital.** Registered names normalise to
+  `BETTERLIFE` while headlines write "BetterLife"; a fixed Capitalised form missed every camel-cased
+  company. The capital is what separates Root Inc from "root for a rate hike".
+- **Presence ≠ subjecthood.** The head-token credit runs through the relational check too, or
+  "Costco partner bankruptcy…" keeps `$COST`.
 
-**Open:** the incorrect live tweet is `2100951028984078416`. X credentials are Vercel-only and there
-is no `CRON_SECRET` on the dev machine, so it cannot be deleted from here.
+### Historical cleanup — DONE
+`scripts/cleanup-unsupported-tickers.mjs` (committed, **dry-run by default**, re-runnable).
+**25 published events corrected, 31 ticker associations removed, 3 retained a legitimate ticker**
+(HOOD, INTC, ETSY). Only the `tickers` column was written, guarded on the exact prior value. No event
+deleted, no headline rewritten, no timestamp changed; all 29,413 events in the window still present.
+Verified after: WEN/COST/PLTR/ROOT/RTX/BILL no longer resolve to those stories.
+
+The rule is **validate the EXISTING tickers against the event we published**. An earlier draft
+re-resolved the source headline and filtered that, which proposed stripping `TXN` from "TXN: TI
+raises dividend" and `SPGI` from "S&P Global to acquire OpenZeppelin".
+
+99 assertions, 13/13 mutations caught; the $BP regressions still pass. Suppression thresholds
+untouched. The incorrect live tweet (`2100951028984078416`) is being deleted manually by the user —
+X credentials are Vercel-only.
 
 ## Dividend Calendar (deployed `112b76ce` — PUBLIC PAGE GATED OFF)
 
