@@ -78,15 +78,18 @@ const EVENT_COLUMNS = sql`
  * arrives with its company name, sector, market cap and last price without a second query and
  * without an N+1. A ticker we do not track still appears; it simply has no metadata.
  */
-export async function calendarRange({
-  from, to, mode = 'ex', limit = 500, offset = 0,
+/**
+ * The WHERE both the page of rows and the count are built from.
+ *
+ * ONE BUILDER, TWO QUERIES, on purpose. When the count had its own narrower conditions the page
+ * reported "139 events" above an empty table — the rows honoured the filter and the total did not,
+ * so the calendar contradicted itself in the only two numbers a reader can compare.
+ */
+function calendarConditions({
+  from, to, dateCol,
   search = null, sector = null, minYield = null, minAmount = null,
   frequency = null, type = null, minMarketCap = null, covered = true,
 } = {}) {
-  const dateCol = mode === 'payment' ? sql`d.payment_date` : sql`d.ex_dividend_date`;
-  const lim = Math.max(1, Math.min(1000, Number(limit) || 500));
-  const off = Math.max(0, Number(offset) || 0);
-
   const conds = [sql`d.announced = true`, sql`${dateCol} >= ${from}::date`, sql`${dateCol} <= ${to}::date`];
   // TICKERS WE ACTUALLY COVER, by default.
   //
@@ -112,7 +115,14 @@ export async function calendarRange({
     conds.push(sql`(d.annualized_amount is not null and s.price > 0
       and (d.annualized_amount / s.price) * 100 >= ${Number(minYield)})`);
   }
-  const where = sql.join(conds, sql` and `);
+  return sql.join(conds, sql` and `);
+}
+
+export async function calendarRange({ from, to, mode = 'ex', limit = 500, offset = 0, ...filters } = {}) {
+  const dateCol = mode === 'payment' ? sql`d.payment_date` : sql`d.ex_dividend_date`;
+  const lim = Math.max(1, Math.min(1000, Number(limit) || 500));
+  const off = Math.max(0, Number(offset) || 0);
+  const where = calendarConditions({ from, to, dateCol, ...filters });
 
   const res = await db.execute(sql`
     select ${EVENT_COLUMNS},
@@ -131,15 +141,17 @@ export async function calendarRange({
 }
 
 /** How many announced events sit in a window — for paging, and for the empty state to be honest. */
-export async function calendarCount({ from, to, mode = 'ex', covered = true } = {}) {
+export async function calendarCount({ from, to, mode = 'ex', ...filters } = {}) {
   const dateCol = mode === 'payment' ? sql`d.payment_date` : sql`d.ex_dividend_date`;
-  // Counts the same population the range query returns, or the two disagree and the paging lies.
-  const coverage = covered
-    ? sql`and exists (select 1 from screener_stocks s where s.ticker = d.ticker)`
-    : sql``;
+  // The SAME conditions as the rows, over the same joins — the filters reach `s`, so the joins have
+  // to be here too even though nothing is selected from them.
+  const where = calendarConditions({ from, to, dateCol, ...filters });
   const res = await db.execute(sql`
-    select count(*)::int as n from dividend_events d
-     where d.announced = true and ${dateCol} >= ${from}::date and ${dateCol} <= ${to}::date ${coverage}`);
+    select count(*)::int as n
+      from dividend_events d
+      left join screener_stocks s on s.ticker = d.ticker
+      left join screener_meta   m on m.ticker = d.ticker
+     where ${where}`);
   return Number((res.rows ?? res)[0]?.n) || 0;
 }
 

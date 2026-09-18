@@ -66,7 +66,7 @@ export async function GET(request) {
 
     const [rows, total, sync] = await Promise.all([
       calendarRange({ from, to, mode, limit: num(sp.get('limit')) ?? 500, offset: num(sp.get('offset')) ?? 0, ...filters }),
-      calendarCount({ from, to, mode, covered: sp.get('covered') !== 'all' }),
+      calendarCount({ from, to, mode, ...filters }),
       dividendSyncState(),
     ]);
 
