@@ -875,3 +875,134 @@ which is the narrow-width check.
 
 ⚠️ **Still needs a human with a browser**: that the panel visually reads well in both themes, and the
 hover/tap feel. The structure is verified in production; the aesthetics are not.
+
+---
+
+# ⛔ FINAL MARKET-DATA PROVIDER ACTIVATION REQUIREMENTS — MARKET HEATMAP
+
+**Status: audited 2026-09-18, nothing changed. The heatmap MAY remain EOD through pre-launch.**
+**These items are MANDATORY and must be completed and verified when the commercial provider is connected.**
+
+## What the heatmap is today (audited, not inferred)
+
+`HeatMap.jsx` → `/api/heatmap` → one `SELECT` from `screener_stocks`. No external call, no price.
+
+| tile property | column | origin |
+|---|---|---|
+| price | *never selected* | the heatmap does not fetch or display price |
+| percent change | `change_pct` | last two daily closes in `ticker_daily_candles` |
+| market cap (tile weight) | `market_cap` | `screener_meta` ← Polygon ticker-details |
+| sector (tile grouping) | `sector` | `screener_meta`, derived from SIC code |
+
+**Freshness:** `screener_stocks` is rebuilt once daily by `/api/cron/screener` at `30 8 * * *`
+(08:30 UTC = 04:30 ET, **before the open**). At audit, all 17,728 rows were stamped
+`2026-09-18T08:30:09Z` and the newest candle was `2026-09-17`.
+
+**Refresh:** the client polls every 60 s (`setInterval(load, 60000)`, `no-store`) against a table that
+changes once a day. **No WebSocket, no SSE, no push anywhere in the codebase** — `chart-source.mjs`
+states this directly.
+
+**Percent-change definition:** previous regular-session close → most recent regular-session close,
+adjusted, regular session only. Extended-hours prints never enter it.
+
+**The reported discrepancy was NOT a calculation bug.** NVDA's stored `2.5432445%` is exactly
+`(219.34 − 213.90) / 213.90` — the 16th→17th move — against a live source's intraday `+0.21%`. The
+arithmetic is correct for what it computes; the data is a full session stale by design.
+
+## The four correctness issues (all survive a provider migration)
+
+### 1. `/api/heatmap` exposes no `asOf` / freshness timestamp
+
+The route returns `{ rows }` and nothing else. A tile reading "+2.5%" beside a live source reading
+"+0.21%" looks broken because nothing states it is yesterday's close. **Every heatmap response and
+its UI must carry enough freshness information to distinguish live / delayed / EOD / stale.** Worth
+fixing regardless of which provider lands.
+
+### 2. The EOD fallback has a permanent one-day floor
+
+`polygonEod()` loops `for (let i = 1; i <= 6; i++)` and walks back from **yesterday** — today is
+never fetched. Correct at 08:30 UTC, when today has no data yet, but it means a post-close run still
+cannot pick up the session that just ended. Independent of vendor.
+
+### 3. ⚠️ Live quotes currently LOSE to stale candles — the migration landmine
+
+The rebuild merges `tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct`: daily candles
+first, cached quote LAST. **Connect a real-time feed into the existing quote path and the heatmap
+would still show EOD candles for exactly the mega-caps a trader is watching.** Verified at audit:
+NVDA/AAPL/MSFT/GOOGL had no cached quote at all, so the live rung never fires today.
+
+**Live data MUST take precedence over stale daily-candle `change_pct` whenever live data is available.**
+
+### 4. A null rebuild silently carries the old `change_pct` forward
+
+`changePct: coalesce(excluded.change_pct, screener_stocks.change_pct)` preserves a stale percentage
+when a run yields null, while `updated_at` still reads fresh — staleness that is invisible by
+construction. Latent today (the rebuild `DELETE`s the table first, `screener-data.js` line 973) but
+it survives a provider swap. **A null must not be laundered into a fresh-looking value.**
+
+## The two architectural requirements
+
+### 5. Route the heatmap through the provider-neutral boundary
+
+`src/lib/market-data.js` **already is** that boundary: `getQuotes(symbols, { realtime })`, provider
+chosen by `MARKET_DATA_PROVIDER`, and `/api/quotes` already resolves the entitlement
+(`isRealtime(tier) && !beta`) — the Pro-live / Free-delayed split is built and proven, used by
+`/api/quotes` and `lib/alerts.js`.
+
+**The heatmap bypasses it entirely.** `screener-data.js` calls `api.polygon.io` and `finnhub.io`
+inline, and `/api/heatmap` reads only the cached table. Dynamic market values (price, percent change)
+must come through `getQuotes`; `screener_stocks` stays correct only for reference data.
+
+### 6. Centralized server-side streaming fan-out
+
+```
+provider WebSocket/feed → Catalyst Pit backend → normalized/cached state → connected clients
+```
+
+**One upstream subscription for the platform. NEVER one vendor subscription per browser or per tile.**
+
+None of this exists yet — no WS, no SSE, no fan-out. It must not be built before the provider is
+chosen, because the normalization layer is shaped by the feed's message contract.
+
+## LOCKED final heatmap semantics
+
+- **Percent change = latest eligible market price vs PREVIOUS REGULAR-SESSION CLOSE.** This is already
+  the definition and is **not to be changed** — only the price on the left-hand side becomes live.
+- **Pro = real-time** where licensed and the provider supports it.
+- **Free = the licensed delayed feed.**
+- **Market-cap weighting stays static reference data**, never recomputed per tick. (`screener_meta` is
+  already a separate table on a separate cron — this part is already right.)
+- **Sector grouping stays reference metadata.**
+- **Tiles update automatically while the heatmap is open. No manual browser refresh.**
+- **Extended-hours behaviour must be EXPLICITLY defined when the provider is connected** — decided and
+  documented, never accidentally mixed into the regular-session percentage.
+- **Freshness must be exposed** on every response and in the UI: live vs delayed vs EOD vs stale.
+
+## Prohibited until the provider is selected
+
+- ❌ No temporary polling workaround.
+- ❌ No provider-specific streaming code.
+- ❌ No heatmap redesign.
+- ❌ No faking live behaviour with the temporary source.
+
+---
+
+## Separate issue: missing sector classification (reference data, not freshness)
+
+**32 of the current top 150 heatmap securities have no sector** and collapse into a single "Other"
+block, visibly distorting the treemap's sector layout. Disproportionately foreign issuers:
+**TSM, ASML, HSBC, ARM, BABA, SHEL, NVS, SAP**, plus RY, MUFG, AZN and others.
+
+**Checked at audit — no canonical source currently makes this trivial.** `screener_meta.sector` AND
+`screener_meta.industry` are both null for every one of them, and no other table in the database
+holds a sector (only `institution_heatmap.sector`, `screener_meta.*` and `screener_stocks.*` exist,
+the last being a copy of the first). The cause: sector is derived via `sicToSector(d.sic_code)` from
+Polygon ticker-details, and foreign private issuers file 20-F rather than 10-K, so they carry no SIC
+code to derive from.
+
+**Deliberately NOT fixed.** Resolving it needs either a sector/GICS field from the final provider or a
+new classification source — a reference-data decision to make alongside provider selection, not a
+patch. Most of the affected names are typed `ADRC` in `screener_meta`, so the set is identifiable
+without guessing at classifications.
+
+⚠️ **Never invent a sector.** "Other" is honest; a wrong sector is a false fact on a trading surface.
