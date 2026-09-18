@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `26ea8c02` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `7c51999a` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -188,6 +188,41 @@ Three things worth knowing before touching this:
 `scripts/verify-confluence.mjs` (25 assertions, 8/8 mutations caught) guards the SHAPE — roll-up
 absent from the request path, bounded query count, no N+1, independent queries overlapping, fallback
 correct, methodology preserved. Deliberately no millisecond thresholds.
+
+### Symbol search had the same bug, worse (fixed, `7c51999a`)
+
+The nav autocomplete grouped **all 9.17M rows of `fund_holdings`**, unbounded, to augment SEC's
+ticker file with the ETFs it omits (VOO/VTI/SPY file under the fund registrant). Cached only in a
+module-level variable, no in-flight dedupe, and triggered by a **keystroke in the TopNav search box
+on every page**. `api-guard.mjs` had recorded "13.1s cold"; measured **11,604 ms** in production.
+
+Now `ticker_issuer` (migration `0028`), refreshed by the same ingest crons, verified identical across
+all 15,844 tickers. **11,604 ms → 781 ms cold, ~120 ms warm.** Single-flight added. The original
+roll-up remains the fallback for an unbuilt table — losing every ETF from autocomplete is worse than
+being slow once.
+
+### Known request-path costs NOT yet fixed (audited, ranked)
+
+Highest first. None is in the 8-second class; these are the next tier.
+- `/api/institutions?ticker=` pulls every `fund_holdings` row for a symbol with **no LIMIT and no
+  quarter filter**, then does the latest-quarter filter in a JS loop (`route.js:391-417`). Lazy — only
+  on the Institutions tab — which is what keeps it off the top of this list.
+- `/api/institutions` corporate-activity: multi-CTE window self-join over `fund_holdings` on every
+  `/institutions` load; CDN-cached 1h, so it is a cache-miss cliff, not a per-user cost.
+- `familyDetail`: six **sequential** window-function queries over `fund_holdings` (`route.js:192-235`).
+- `/api/insiders`: unbounded `COUNT(*)` issued sequentially with the rows; `cluster_buys` (fired on
+  the **homepage**) and `trends` have no KV cache while the neighbouring views do.
+- `/api/insiders?ac=`: `%term%` ILIKE + GROUP BY over 266k rows per keystroke, on an unindexed
+  `executive` column, and it returns **before** auth.
+- Two sequential Clerk `users.getUser()` round trips for the same user on `/api/feed` and
+  `/api/confluence` (`entitlements.js:38-44` + `pit.js:90-94`).
+- `/api/wire` polls every 3s with `seq > cursor` against a `published_at DESC` index, so the planner
+  cannot stop early at `LIMIT 200`.
+- `/api/watchlist?prices=1` does N Upstash GETs where `/api/ticker` already has an `kvMGet()` helper.
+
+Confirmed healthy, do not "optimise": `/api/screener` (precomputed table, one indexed select +
+count in a `Promise.all`), `/api/ticker` (one MGET, six independently-cached fetchers), `/api/news`,
+`/api/feed` query shape, `/api/congress-trades`, `/api/institutions-heatmap`.
 
 ## Pit Scan provider readiness (investigated; no provider selected)
 
