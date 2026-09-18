@@ -127,6 +127,47 @@ const TARGETS = [
   // The other page that mounts the shared tooltip. It was not covered before, which is precisely why
   // merging its private copy into a shared component needed it to be.
   { file: 'src/app/insiders/InsidersClient.jsx', props: {} },
+  // The heatmap surface, shared by the Terminal panel and the dedicated page. It lays out on a
+  // ResizeObserver, so on the server it has no measured box and must render the tiles' container
+  // without throwing rather than drawing a zero-sized board.
+  { file: 'src/components/heatmap/HeatmapCanvas.jsx', props: { rows: [], onPick: () => {} } },
+  { file: 'src/components/HeatMap.jsx', props: { limit: 20 } },
+  {
+    file: 'src/app/heatmap/MarketHeatmapClient.jsx',
+    props: {
+      initial: {
+        timeframe: '1D', universe: 'top150', asOf: '2026-09-17', baselineDate: '2026-09-16',
+        anchorDate: null, freshness: 'eod',
+        access: { realtime: false, applied: false, note: 'Pre-launch: every viewer sees end-of-day data.' },
+        source: 'ticker_daily_candles',
+        counts: { rows: 3, measured: 2, unmeasured: 1 },
+        rows: [
+          { ticker: 'NVDA', company: 'NVIDIA CORP', sector: 'Technology', marketCap: 5.4e12, price: 219.34, volume: 9.2e7, pct: 2.54, latestDate: '2026-09-17', baselineDate: '2026-09-16', reason: null },
+          { ticker: 'TSM', company: 'Taiwan Semiconductor', sector: null, marketCap: 2.26e12, price: 300, volume: 1e7, pct: -1.2, latestDate: '2026-09-17', baselineDate: '2026-09-16', reason: null },
+          { ticker: 'BNY', company: 'Bank of New York', sector: 'Financial', marketCap: 1.1e11, price: 153, volume: 5e6, pct: null, latestDate: '2026-09-17', baselineDate: '2025-09-17', reason: 'series_break' },
+        ],
+      },
+    },
+    assert: (html, check) => {
+      // React splits adjacent text nodes with `<!-- -->` in SSR, so a sentence assembled from an
+      // expression and a literal is not contiguous in the markup. Stripped before matching.
+      const text = html.replace(/<!--\s*-->/g, '');
+      // The freshness strip is the audit's first finding made visible: a board that cannot say how
+      // old it is must not be shipped.
+      check('the board states what kind of data it is', /End of day/.test(text));
+      check('...and the two sessions it measures between',
+        /Sep 16, 2026/.test(text) && /Sep 17, 2026/.test(text));
+      check('...and how much of the board is measurable', /2 of 3 securities measurable/.test(text));
+      // Windows are offered as returns, not as candle intervals.
+      check('all four windows are offered', ['1D', '1W', '1M', '1Y'].every((t) => html.includes(`>${t}</button>`)));
+      check('the leaders follow the selected window', /Top gainers · 1D/.test(html) && /Top losers · 1D/.test(html));
+      // We never claim index membership we do not hold.
+      check('index universes are offered but disabled with a reason',
+        /needs licensed index data/.test(html) && /disabled/.test(html));
+      // A security we could not measure keeps its tile and is never shown as 0%.
+      check('an unmeasurable security is not rendered as a percentage', !/BNY[^<]*0\.0%/.test(html));
+    },
+  },
 ];
 
 console.log('rendering the components a failure would take a page down with\n');
