@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `20656dae` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `e677e65e` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -160,7 +160,44 @@ of ~55 unit abbreviations that collided with the real reference index. Three sto
 wrong ticker cleared. **The incorrect 13:08 UTC `$BP` post is still live on X — the user decides
 whether to delete it.**
 
-## Chart long timeframes are intervals now (deployed — `20656dae`)
+## Chart timeframes are candle intervals (deployed — `e677e65e`)
+
+**Every interval button names the CANDLE, not the window.**
+
+| id | one candle = | history loaded | opens showing |
+|---|---|---|---|
+| 1m…4h | that many minutes | intraday sessions | all |
+| **1D** | one trading day | **5 years** | all (~1,254) |
+| 1W | one trading week | all, back to IPO | last 260 |
+| 1M | one calendar month | all | last 120 |
+| 3M | one calendar quarter | all | last 60 |
+| 1Y | one calendar year | all | all |
+
+`6M` / `YTD` / `All` remain WINDOWS of daily candles — they answer "how much history", which is a
+different and still-useful question.
+
+- **1D is the default** (`DEFAULT_TIMEFRAME`, and `TickerPriceChart`). The timeframe is **not**
+  persisted — `chart-settings.mjs` stores indicators, view options, favourites and tool defaults and
+  deliberately not this — so the default overrides no saved preference. If persistence is ever added,
+  it belongs there and should win.
+- **1D loads 5 years, not everything**: past the 3-year floor, and far short of the 11k daily bars a
+  1980 issuer would otherwise ship to the browser.
+- **A trading week is Monday–Friday**, stamped with its Monday even when the market was shut that
+  day — that is what makes a holiday-shortened week ONE candle. Week boundaries use integer
+  civil-date arithmetic (`daysFromCivil`/`civilFromDays`), never a `Date`, for the same reason month
+  buckets read the characters: a `Date` attaches a zone and west of UTC a Monday becomes Sunday.
+- **Dataset ≠ viewport.** `initialBars` per entry; `CPChart` sets a visible logical range instead of
+  `fitContent()` when the series is longer. `fitContent()` remains for short series and for the
+  user's own reset button.
+- **1W/1M/3M/1Y share one `range=all` download**, cached per URL in `CPChart` (5 min, 8 entries), so
+  switching between them re-fetches nothing. Measured: 2 requests per symbol, not 5.
+
+Verified on production across five IPO dates — AAPL (1980), MSFT (1986), SPY (ETF, 1993), PLTR
+(2020), RDDT (2024, only 2.5y exists so 1D returns 2.5y and invents nothing). Every first weekly
+candle lands on a Monday. `verify-chart-aggregate.mjs` 142 assertions, 19 mutations caught;
+`verify-chart.mjs` 1333 green. `PLANNED_TIMEFRAMES` is now empty — every planned resolution shipped.
+
+## Chart long timeframes are intervals now (superseded by the above — `20656dae`)
 
 **1M, 3M and 1Y mean one candle per calendar month / quarter / year, over the security's full
 history.** They used to be windows — every entry in the days group came from one helper that
@@ -184,7 +221,7 @@ Verified on production data: AAPL 11,531 daily candles from 1980-12-12 → 550 m
 / 47 yearly; MSFT from 1986; PLTR from 2020. `scripts/verify-chart-aggregate.mjs` (110 assertions,
 16/16 mutations caught); `verify-chart.mjs` is 1332 and green.
 
-**Open question for the user:** their spec described 1D as "one candle per trading day" and 1W as
+**Resolved:** 1D and 1W are now candle intervals too — see the section above. (Their spec described 1D as
 "one candle per trading week", but both are currently intraday WINDOWS (5-minute and 30-minute bars)
 and were explicitly out of scope. Weekly bars remain the only entry in `PLANNED_TIMEFRAMES`.
 
