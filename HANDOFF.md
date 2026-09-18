@@ -831,3 +831,47 @@ KO, SPY and the fund symbols, and dismisses the way it does on /screener.
 `scripts/verify-security-identity.mjs` — 43 assertions, **7/7 mutations caught** (vendor outranking a
 filed name; SIC descriptions admitted; the VKI tie-break; oldest-wins; unsanctioned sources;
 equal-rank overwrite; malformed SEC rows).
+
+## Column help on the Dividend Calendar (deployed `c45c2199`)
+
+Eight small "i" triggers — Amount, Yield, Ex-Div, Payment, Record, Declared, Frequency, Mkt cap.
+Symbol and Company deliberately have none.
+
+**Reused, not rebuilt.** Two things already existed and are now joined up:
+
+- `src/components/InfoTip.jsx` is the Insiders page's private tooltip promoted to a shared component.
+  `InsidersClient` imports it; its copy is gone. One implementation, two pages.
+- Placement comes from `chart-popover.mjs` `placeFor()` via a new **`bottom-center`** — what a 13px
+  trigger with a 270px panel wants. The existing flip-and-clamp still governs.
+
+**Three defects fixed in the promotion.** The private version was positioned *inside* its trigger, so
+it clipped at a table's right edge and inside a horizontally-scrolling table — now portalled to the
+body in viewport coordinates. It was a `<span>` with a mouse handler, so it was unreachable by
+keyboard and dead on touch — now a real `<button>` with `aria-expanded`/`aria-describedby`, a
+`role="tooltip"` panel, Escape-to-close, tap-to-toggle and outside-tap-to-dismiss. Clicks are stopped
+at the trigger so the icon inside a sortable header does not also sort the column.
+
+**The copy is data, not markup.** `COLUMN_HELP` in `dividend-view.mjs`, keyed by the sort key the
+column already has — a column cannot acquire an explanation without being a real column. Yield and
+market cap both state what a dash means, because a dash is our data limit and not a fact about the
+security; a test asserts no explanation promises an estimate or a prediction.
+
+### verify-render.mjs grew teeth
+
+It covered neither the Dividend Calendar nor the Insiders page, which is exactly why merging their
+tooltips needed it to. Both are now targets (Clerk is stubbed the way `next/navigation` already was —
+it ships CJS and broke the bundle), and the eight triggers are asserted **against the rendered
+markup**: correct labels, none on Symbol/Company, closed on first paint, real buttons in the tab
+order, themed from `var(--cp-*)` design tokens so **dark mode cannot drift**.
+
+A target may now declare `export` (a named export) and `expectEmpty` (SSR renders nothing — the
+hover preview's real contract, since it reads `window.innerWidth`).
+
+### Coverage
+
+dividends 135 · chart 1338 · render 63 · **11/11 mutations caught**. The chart placement sweep now
+includes `bottom-center` at every viewport down to **390px**, plus an explicit phone-edge assertion,
+which is the narrow-width check.
+
+⚠️ **Still needs a human with a browser**: that the panel visually reads well in both themes, and the
+hover/tap feel. The structure is verified in production; the aesthetics are not.
