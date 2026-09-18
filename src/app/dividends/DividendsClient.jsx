@@ -3,30 +3,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo } from '../../lib/cp-shared';
 import { frequencyLabel } from '../../lib/dividends/dividend-event.mjs';
+import { SECTORS } from '../../lib/screener-filters';
+import {
+  iso, shiftDays, rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS,
+} from '../../lib/dividends/dividend-view.mjs';
 
 // THE DIVIDEND CALENDAR.
 //
-// Organised by EX-DIVIDEND DATE, which is the date that decides who receives the dividend and the
-// one a trader acts on. The payment date sits beside it in its own column, because they are
-// different questions and conflating them is the mistake this page exists to avoid.
+// Organised by EX-DIVIDEND DATE, because that is the date that decides who receives the dividend and
+// the one a trader acts on. The payment date sits beside it in its own column — they are different
+// questions, and conflating them is the mistake this page exists to avoid.
 //
-// A row is an ANNOUNCED event. Nothing here is projected from a company's history: if an issuer has
-// not declared its next dividend, it has no row, however reliably it has paid for thirty years.
-// A payment date the provider has not published renders as "—" and is never inferred.
-
-const iso = (d) => d.toISOString().slice(0, 10);
-const shift = (base, days) => { const d = new Date(`${base}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return iso(d); };
-const monthEnd = (base) => { const d = new Date(`${base}T00:00:00Z`); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0))); };
-/** Monday of the week a date falls in — the calendar's week runs with the market's. */
-const weekStart = (base) => { const d = new Date(`${base}T00:00:00Z`); const dow = (d.getUTCDay() + 6) % 7; return shift(base, -dow); };
+// Every row is an ANNOUNCED event. Nothing is projected from a company's history: a business that
+// has paid quarterly for thirty years has no row here until it declares. A date the provider has not
+// published renders "—" and is never inferred from the others.
+//
+// The date logic, sorting and grouping live in dividend-view.mjs so they can be tested without a
+// browser; this file is layout, controls and state.
 
 const fmtDay = (s) => (s ? new Date(`${s}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }) : '—');
-const fmtDow = (s) => (s ? new Date(`${s}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' }) : '');
+const fmtLong = (s) => (s ? new Date(`${s}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' }) : '');
 const money = (v, cur) => {
   if (v == null || !Number.isFinite(v)) return '—';
   const sym = !cur || cur === 'USD' ? '$' : '';
   const s = v < 1 ? v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : v.toFixed(2);
-  return `${sym}${s}${sym ? '' : ` ${cur}`}`;
+  return sym ? `${sym}${s}` : `${s} ${cur}`;
 };
 const bigCap = (v) => {
   if (v == null || !Number.isFinite(v)) return '—';
@@ -36,33 +37,16 @@ const bigCap = (v) => {
   return String(Math.round(v));
 };
 
-/** The four ranges a reader actually asks for, plus explicit navigation for anything else. */
-function rangeFor(view, anchor) {
-  switch (view) {
-    case 'today': return { from: anchor, to: anchor };
-    case 'week': { const s = weekStart(anchor); return { from: s, to: shift(s, 6) }; }
-    case 'next': { const s = shift(weekStart(anchor), 7); return { from: s, to: shift(s, 6) }; }
-    case 'month': return { from: anchor, to: monthEnd(anchor) };
-    default: return { from: anchor, to: shift(anchor, 6) };
-  }
-}
-
-const TYPE_TONE = { special: { bg: C.greenLight, fg: C.green, border: C.greenBorder } };
-
 function Tag({ children, tone }) {
-  const t = TYPE_TONE[tone] || { bg: C.surface, fg: C.muted, border: C.border };
+  const t = tone === 'special'
+    ? { bg: C.greenLight, fg: C.green, border: C.greenBorder }
+    : { bg: C.surface, fg: C.muted, border: C.border };
   return (
     <span style={{ fontSize: 10, fontWeight: 600, color: t.fg, background: t.bg,
-      border: `1px solid ${t.border}`, borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap' }}>
-      {children}
-    </span>
+      border: `1px solid ${t.border}`, borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap' }}>{children}</span>
   );
 }
 
-const TH = ({ children, align = 'left', width }) => (
-  <th style={{ textAlign: align, width, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
-    color: C.dim, textTransform: 'uppercase', padding: '0 10px 7px', whiteSpace: 'nowrap' }}>{children}</th>
-);
 const TD = ({ children, align = 'left', style }) => (
   <td style={{ textAlign: align, padding: '9px 10px', fontSize: 13, color: C.ink,
     borderTop: `1px solid ${C.border}`, whiteSpace: 'nowrap', ...style }}>{children}</td>
@@ -72,49 +56,47 @@ export default function DividendsClient({ enabled, initial }) {
   const [view, setView] = useState('week');
   const [anchor, setAnchor] = useState(initial?.from || iso(new Date()));
   const [mode, setMode] = useState(initial?.mode || 'ex');
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [sort, setSort] = useState({ key: null, dir: 'asc' });
   const [data, setData] = useState(initial);
-  const [loading, setLoading] = useState(false);
-  const [q, setQ] = useState('');
-  const [type, setType] = useState('');
-  const [minYield, setMinYield] = useState('');
+  const [status, setStatus] = useState('ready');        // ready | loading | error
   const first = useRef(true);
 
   const range = useMemo(() => rangeFor(view, anchor), [view, anchor]);
+  const setFilter = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
 
   const load = useCallback(async () => {
     if (!enabled) return;
-    setLoading(true);
-    const p = new URLSearchParams({ from: range.from, to: range.to, mode, limit: '500' });
-    if (q.trim()) p.set('q', q.trim());
-    if (type) p.set('type', type);
-    if (minYield) p.set('minYield', minYield);
+    setStatus('loading');
     try {
-      const r = await fetch(`/api/dividends/calendar?${p}`);
+      const r = await fetch(`/api/dividends/calendar?${calendarQuery({ ...range, mode, filters })}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       setData(j);
-    } catch { /* keep what is on screen rather than blanking it */ }
-    setLoading(false);
-  }, [enabled, range.from, range.to, mode, q, type, minYield]);
+      setStatus('ready');
+    } catch {
+      // The board is not blanked on a failure — the previous answer stays on screen and the state is
+      // named, because an empty table and a broken request look identical and mean opposite things.
+      setStatus('error');
+    }
+  }, [enabled, range.from, range.to, mode, filters]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The server already rendered the opening week, so the first effect must not refetch it.
+  // The server already rendered the opening week; the first effect must not refetch it.
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    const t = setTimeout(load, q ? 250 : 0);   // debounce only the text field
+    const t = setTimeout(load, filters.q ? 250 : 0);     // debounce only the text field
     return () => clearTimeout(t);
-  }, [load, q]);
+  }, [load, filters.q]);
 
   const events = data?.events || [];
-  // Grouped by the date the calendar is organised on, so the eye scans days, not rows.
-  const groups = useMemo(() => {
-    const key = mode === 'payment' ? 'paymentDate' : 'exDividendDate';
-    const m = new Map();
-    for (const e of events) {
-      const k = e[key] || 'unknown';
-      if (!m.has(k)) m.set(k, []);
-      m.get(k).push(e);
-    }
-    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [events, mode]);
+  const sorted = useMemo(() => (sort.key ? sortEvents(events, sort.key, sort.dir) : events), [events, sort]);
+  // A sorted board is one list: re-grouping it by day would put the days back in date order and
+  // undo the sort the reader just asked for.
+  const groups = useMemo(() => (sort.key ? null : groupByDate(events, mode)), [events, mode, sort.key]);
+
+  const toggleSort = (key) => setSort((s) => (s.key === key
+    ? (s.dir === 'asc' ? { key, dir: 'desc' } : { key: null, dir: 'asc' })
+    : { key, dir: 'asc' }));
 
   const Tab = ({ id, label }) => (
     <button onClick={() => { setView(id); setAnchor(iso(new Date())); }}
@@ -126,12 +108,71 @@ export default function DividendsClient({ enabled, initial }) {
 
   const field = { fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.ink, background: C.white,
     border: `1px solid ${C.border}`, borderRadius: 6, padding: '5px 8px' };
+  const btn = { ...field, cursor: 'pointer' };
+
+  const TH = ({ children, align = 'left', width, sortKey }) => (
+    <th onClick={sortKey ? () => toggleSort(sortKey) : undefined}
+      title={sortKey ? 'Sort' : undefined}
+      style={{ textAlign: align, width, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+        color: sort.key === sortKey ? C.ink : C.dim, textTransform: 'uppercase',
+        padding: '0 10px 7px', whiteSpace: 'nowrap', cursor: sortKey ? 'pointer' : 'default',
+        userSelect: 'none' }}>
+      {children}{sortKey && sort.key === sortKey ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+    </th>
+  );
+
+  const Row = ({ e }) => (
+    <tr>
+      <TD>
+        <a href={`/ticker/${encodeURIComponent(e.ticker)}`}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
+          <TickerLogo symbol={e.ticker} size={22} />
+          <span className="cp-tkr" style={{ fontWeight: 700, color: C.ink }}>{e.ticker}</span>
+        </a>
+      </TD>
+      <TD style={{ color: C.muted, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.company || '—'}</TD>
+      <TD align="right" style={{ fontWeight: 600 }}>{money(e.cashAmount, e.currency)}</TD>
+      <TD align="right" style={{ color: e.yieldPct == null ? C.dim : C.ink }}>
+        {e.yieldPct == null ? '—' : `${e.yieldPct.toFixed(2)}%`}
+      </TD>
+      {/* All four dates. A date the provider has not published shows "—" and is NEVER inferred. */}
+      <TD align="right" style={{ color: C.muted }}>{fmtDay(e.exDividendDate)}</TD>
+      <TD align="right" style={{ color: C.muted }}>{fmtDay(e.paymentDate)}</TD>
+      <TD align="right" style={{ color: C.muted }}>{fmtDay(e.recordDate)}</TD>
+      <TD align="right" style={{ color: C.muted }}>{fmtDay(e.declarationDate)}</TD>
+      <TD align="right" style={{ color: C.muted }}>{frequencyLabel(e.frequency)}</TD>
+      <TD align="right" style={{ color: C.muted }}>{bigCap(e.marketCap)}</TD>
+      <TD align="right">
+        {e.dividendType === 'special' ? <Tag tone="special">Special</Tag>
+          : e.dividendType === 'capital_gain' ? <Tag>Cap gain</Tag>
+            : <span style={{ fontSize: 11, color: C.dim }}>Regular</span>}
+      </TD>
+    </tr>
+  );
+
+  const Head = () => (
+    <thead><tr>
+      <TH width={140} sortKey="ticker">Symbol</TH>
+      <TH sortKey="company">Company</TH>
+      <TH align="right" width={88} sortKey="cashAmount">Amount</TH>
+      <TH align="right" width={68} sortKey="yieldPct">Yield</TH>
+      <TH align="right" width={82} sortKey="exDividendDate">Ex-Div</TH>
+      <TH align="right" width={82} sortKey="paymentDate">Payment</TH>
+      <TH align="right" width={82} sortKey="recordDate">Record</TH>
+      <TH align="right" width={82} sortKey="declarationDate">Declared</TH>
+      <TH align="right" width={92} sortKey="frequency">Frequency</TH>
+      <TH align="right" width={84} sortKey="marketCap">Mkt cap</TH>
+      <TH align="right" width={70}>Type</TH>
+    </tr></thead>
+  );
+
+  const total = data?.total ?? events.length;
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
       <BrandStyles />
       <TopNav active="Dividends" />
-      <div style={{ maxWidth: 1080, margin: '22px auto', padding: '0 20px 48px' }}>
+      <div style={{ maxWidth: 1180, margin: '22px auto', padding: '0 20px 48px' }}>
         <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 600, color: C.ink, margin: '0 0 2px' }}>
           Dividend Calendar
         </h1>
@@ -144,8 +185,7 @@ export default function DividendsClient({ enabled, initial }) {
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center' }}>
             <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Coming soon</div>
             <div style={{ fontSize: 13, color: C.muted, maxWidth: 460, margin: '0 auto', lineHeight: 1.6 }}>
-              The dividend calendar is built and loading data. It opens once its market-data source is
-              finalised.
+              The dividend calendar is built and loading data. It opens once its market-data source is finalised.
             </div>
           </div>
         ) : (
@@ -156,97 +196,105 @@ export default function DividendsClient({ enabled, initial }) {
               <Tab id="next" label="Next Week" />
               <Tab id="month" label="This Month" />
               <div style={{ flex: 1 }} />
-              {/* Ex-dividend is the default axis; payment date is the same query on another index. */}
-              <div style={{ display: 'flex', gap: 0, marginBottom: 6, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', marginBottom: 6, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden' }}>
                 {[['ex', 'Ex-Dividend'], ['payment', 'Payment']].map(([id, label]) => (
                   <button key={id} onClick={() => setMode(id)}
                     style={{ border: 'none', cursor: 'pointer', fontSize: 11, padding: '5px 10px',
                       fontFamily: "'DM Sans',sans-serif", fontWeight: mode === id ? 600 : 400,
-                      background: mode === id ? C.surface : C.white, color: mode === id ? C.ink : C.muted }}>
-                    {label}
-                  </button>
+                      background: mode === id ? C.surface : C.white, color: mode === id ? C.ink : C.muted }}>{label}</button>
                 ))}
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-              <button onClick={() => setAnchor(shift(anchor, view === 'month' ? -30 : -7))}
-                style={{ ...field, cursor: 'pointer' }} aria-label="Earlier">←</button>
+            {/* Date navigation */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              <button onClick={() => setAnchor(shiftDays(anchor, -stepFor(view)))} style={btn} aria-label="Previous">← Prev</button>
+              <button onClick={() => setAnchor(iso(new Date()))} style={btn}>Today</button>
+              <button onClick={() => setAnchor(shiftDays(anchor, stepFor(view)))} style={btn} aria-label="Next">Next →</button>
               <input type="date" value={anchor} onChange={(e) => e.target.value && setAnchor(e.target.value)} style={field} />
-              <button onClick={() => setAnchor(shift(anchor, view === 'month' ? 30 : 7))}
-                style={{ ...field, cursor: 'pointer' }} aria-label="Later">→</button>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ticker or company"
-                style={{ ...field, minWidth: 170 }} />
-              <select value={type} onChange={(e) => setType(e.target.value)} style={field}>
+              <span style={{ fontSize: 11, color: C.dim }}>{range.from} → {range.to}</span>
+              <span style={{ fontSize: 11, color: C.dim, marginLeft: 'auto' }}>
+                {status === 'loading' ? 'Loading…' : `${total} event${total === 1 ? '' : 's'}`}
+              </span>
+            </div>
+
+            {/* Filters — every one of these is applied in SQL against stored data, never a provider call. */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+              <input value={filters.q} onChange={(e) => setFilter('q', e.target.value)}
+                placeholder="Ticker or company" style={{ ...field, minWidth: 170 }} />
+              <select value={filters.sector} onChange={(e) => setFilter('sector', e.target.value)} style={field}>
+                <option value="">All sectors</option>
+                {SECTORS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <select value={filters.type} onChange={(e) => setFilter('type', e.target.value)} style={field}>
                 <option value="">All types</option>
                 <option value="regular">Regular</option>
                 <option value="special">Special</option>
+                <option value="capital_gain">Capital gain</option>
               </select>
-              <select value={minYield} onChange={(e) => setMinYield(e.target.value)} style={field}>
+              <select value={filters.frequency} onChange={(e) => setFilter('frequency', e.target.value)} style={field}>
+                <option value="">Any frequency</option>
+                <option value="12">Monthly</option>
+                <option value="4">Quarterly</option>
+                <option value="2">Semi-annual</option>
+                <option value="1">Annual</option>
+                <option value="0">One-time</option>
+              </select>
+              <select value={filters.minYield} onChange={(e) => setFilter('minYield', e.target.value)} style={field}>
                 <option value="">Any yield</option>
                 <option value="2">Yield 2%+</option>
                 <option value="4">Yield 4%+</option>
                 <option value="6">Yield 6%+</option>
+                <option value="8">Yield 8%+</option>
               </select>
-              <span style={{ fontSize: 11, color: C.dim, marginLeft: 'auto' }}>
-                {loading ? 'Loading…' : `${data?.total ?? events.length} event${(data?.total ?? events.length) === 1 ? '' : 's'} · ${range.from} → ${range.to}`}
-              </span>
+              <select value={filters.minAmount} onChange={(e) => setFilter('minAmount', e.target.value)} style={field}>
+                <option value="">Any amount</option>
+                <option value="0.1">$0.10+</option>
+                <option value="0.5">$0.50+</option>
+                <option value="1">$1.00+</option>
+              </select>
+              <select value={filters.minMarketCap} onChange={(e) => setFilter('minMarketCap', e.target.value)} style={field}>
+                <option value="">Any size</option>
+                <option value="300000000">Small cap+</option>
+                <option value="2000000000">Mid cap+</option>
+                <option value="10000000000">Large cap+</option>
+              </select>
+              {Object.values(filters).some(Boolean) && (
+                <button onClick={() => setFilters(EMPTY_FILTERS)} style={{ ...btn, color: C.muted }}>Clear</button>
+              )}
             </div>
 
-            {events.length === 0 ? (
+            {status === 'error' ? (
+              <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '32px 20px', textAlign: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.ink, marginBottom: 4 }}>Couldn&apos;t load the calendar</div>
+                <div style={{ fontSize: 13, color: C.muted, marginBottom: 12 }}>
+                  This is a loading problem, not an empty calendar.
+                </div>
+                <button onClick={load} style={btn}>Try again</button>
+              </div>
+            ) : events.length === 0 ? (
               <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
-                {loading ? 'Loading…' : 'No announced dividends in this range.'}
+                {status === 'loading' ? 'Loading…'
+                  : `No announced dividends ${Object.values(filters).some(Boolean) ? 'match these filters' : 'in this range'}.`}
+              </div>
+            ) : sort.key ? (
+              // Sorted: one flat board, because grouping by day would undo the sort.
+              <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 940 }}>
+                  <Head />
+                  <tbody>{sorted.map((e, i) => <Row key={`${e.ticker}-${e.exDividendDate}-${i}`} e={e} />)}</tbody>
+                </table>
               </div>
             ) : groups.map(([date, rows]) => (
               <div key={date} style={{ marginBottom: 18 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: C.ink, margin: '0 0 6px 2px' }}>
-                  {date === 'unknown' ? 'Date not published' : fmtDow(date)}
+                  {date === 'unknown' ? 'Date not published' : fmtLong(date)}
                   <span style={{ color: C.dim, fontWeight: 400 }}> · {rows.length}</span>
                 </div>
                 <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
-                    <thead><tr>
-                      <TH width={150}>Symbol</TH>
-                      <TH>Company</TH>
-                      <TH align="right" width={92}>Amount</TH>
-                      <TH align="right" width={70}>Yield</TH>
-                      <TH align="right" width={88}>{mode === 'payment' ? 'Ex-Div' : 'Payment'}</TH>
-                      <TH align="right" width={96}>Frequency</TH>
-                      <TH align="right" width={90}>Mkt cap</TH>
-                      <TH align="right" width={72}>Type</TH>
-                    </tr></thead>
-                    <tbody>
-                      {rows.map((e, i) => (
-                        <tr key={`${e.ticker}-${e.exDividendDate}-${i}`}>
-                          <TD>
-                            <a href={`/ticker/${encodeURIComponent(e.ticker)}`}
-                              style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
-                              <TickerLogo symbol={e.ticker} size={22} />
-                              <span className="cp-tkr" style={{ fontWeight: 700, color: C.ink }}>{e.ticker}</span>
-                            </a>
-                          </TD>
-                          <TD style={{ color: C.muted, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {e.company || '—'}
-                          </TD>
-                          <TD align="right" style={{ fontWeight: 600 }}>{money(e.cashAmount, e.currency)}</TD>
-                          {/* Omitted, not zeroed, when the stored price cannot support it. */}
-                          <TD align="right" style={{ color: e.yieldPct == null ? C.dim : C.ink }}>
-                            {e.yieldPct == null ? '—' : `${e.yieldPct.toFixed(2)}%`}
-                          </TD>
-                          {/* The other date. NEVER inferred — "—" when the provider has not published one. */}
-                          <TD align="right" style={{ color: C.muted }}>
-                            {fmtDay(mode === 'payment' ? e.exDividendDate : e.paymentDate)}
-                          </TD>
-                          <TD align="right" style={{ color: C.muted }}>{frequencyLabel(e.frequency)}</TD>
-                          <TD align="right" style={{ color: C.muted }}>{bigCap(e.marketCap)}</TD>
-                          <TD align="right">
-                            {e.dividendType === 'special' ? <Tag tone="special">Special</Tag>
-                              : e.dividendType === 'capital_gain' ? <Tag>Cap gain</Tag>
-                                : <span style={{ fontSize: 11, color: C.dim }}>Regular</span>}
-                          </TD>
-                        </tr>
-                      ))}
-                    </tbody>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 940 }}>
+                    <Head />
+                    <tbody>{rows.map((e, i) => <Row key={`${e.ticker}-${e.exDividendDate}-${i}`} e={e} />)}</tbody>
                   </table>
                 </div>
               </div>
@@ -254,7 +302,7 @@ export default function DividendsClient({ enabled, initial }) {
 
             {data?.asOf && (
               <div style={{ fontSize: 11, color: C.dim, marginTop: 10 }}>
-                Announced events only. Last synced {new Date(data.asOf).toLocaleString()}.
+                Announced events only · yield from the last stored close · last synced {new Date(data.asOf).toLocaleString()}.
               </div>
             )}
           </>

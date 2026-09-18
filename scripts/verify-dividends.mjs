@@ -20,6 +20,7 @@ import {
 } from '../src/lib/dividends/dividend-event.mjs';
 import { toCanonical, fetchWindow, SOURCE_ID } from '../src/lib/dividends/providers/polygon-dividends.mjs';
 import { activeDividendProvider, dividendsPublicEnabled, PROVIDERS } from '../src/lib/dividends/providers/index.mjs';
+import { rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS } from '../src/lib/dividends/dividend-view.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -218,6 +219,84 @@ console.log('\n=== the provider registry is the swap point ===');
   ok('the public calendar is OFF unless explicitly enabled', dividendsPublicEnabled({}) === false);
   ok('"TRUE" does not enable it', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: 'TRUE' }) === false);
   ok('the literal string enables it', dividendsPublicEnabled({ DIVIDENDS_PUBLIC_ENABLED: 'true' }) === true);
+}
+
+console.log('\n=== the calendar\'s date windows ===');
+{
+  // 2026-09-18 is a Friday; its week runs Mon 14th → Sun 20th.
+  ok('today is one day', JSON.stringify(rangeFor('today', TODAY)) === '{"from":"2026-09-18","to":"2026-09-18"}');
+  ok('this week runs Monday to Sunday, inclusive',
+    JSON.stringify(rangeFor('week', TODAY)) === '{"from":"2026-09-14","to":"2026-09-20"}', JSON.stringify(rangeFor('week', TODAY)));
+  ok('next week is the following Monday to Sunday',
+    JSON.stringify(rangeFor('next', TODAY)) === '{"from":"2026-09-21","to":"2026-09-27"}', JSON.stringify(rangeFor('next', TODAY)));
+  ok('this month is the whole calendar month',
+    JSON.stringify(rangeFor('month', TODAY)) === '{"from":"2026-09-01","to":"2026-09-30"}', JSON.stringify(rangeFor('month', TODAY)));
+  // Boundaries: a month end, a year end and a leap February.
+  ok('a 31-day month ends on the 31st', rangeFor('month', '2026-12-05').to === '2026-12-31');
+  ok('February 2028 ends on the 29th', rangeFor('month', '2028-02-10').to === '2028-02-29');
+  ok('February 2027 ends on the 28th', rangeFor('month', '2027-02-10').to === '2027-02-28');
+  ok('a week spanning a year end stays one week',
+    rangeFor('week', '2026-12-31').from === '2026-12-28' && rangeFor('week', '2026-12-31').to === '2027-01-03');
+  ok('Monday anchors its own week', rangeFor('week', '2026-09-14').from === '2026-09-14');
+  ok('Sunday still belongs to the week that opened it', rangeFor('week', '2026-09-20').from === '2026-09-14');
+  // Previous/Next move by what is on screen.
+  ok('stepping matches the view', stepFor('today') === 1 && stepFor('week') === 7 && stepFor('next') === 7 && stepFor('month') === 30);
+}
+
+console.log('\n=== sorting ===');
+{
+  const rows = [
+    { ticker: 'BBB', company: 'Beta', cashAmount: 0.5, yieldPct: 4.0, paymentDate: '2026-10-02', marketCap: 2e9, frequency: 4 },
+    { ticker: 'AAA', company: 'Alpha', cashAmount: 2.0, yieldPct: null, paymentDate: null, marketCap: 9e9, frequency: 12 },
+    { ticker: 'CCC', company: 'Gamma', cashAmount: 0.1, yieldPct: 9.5, paymentDate: '2026-09-30', marketCap: null, frequency: 1 },
+  ];
+  ok('ascending by amount', sortEvents(rows, 'cashAmount', 'asc').map((r) => r.ticker).join() === 'CCC,BBB,AAA');
+  ok('descending by amount', sortEvents(rows, 'cashAmount', 'desc').map((r) => r.ticker).join() === 'AAA,BBB,CCC');
+  ok('by ticker', sortEvents(rows, 'ticker', 'asc').map((r) => r.ticker).join() === 'AAA,BBB,CCC');
+  ok('by company name', sortEvents(rows, 'company', 'asc').map((r) => r.company).join() === 'Alpha,Beta,Gamma');
+  // MISSING VALUES SINK, both directions — a blank yield is not the highest yield on the board.
+  ok('a missing yield sorts last ascending', sortEvents(rows, 'yieldPct', 'asc').at(-1).ticker === 'AAA');
+  ok('…and last descending too', sortEvents(rows, 'yieldPct', 'desc').at(-1).ticker === 'AAA');
+  ok('a missing payment date sinks as well', sortEvents(rows, 'paymentDate', 'asc').at(-1).ticker === 'AAA');
+  ok('a missing market cap sinks', sortEvents(rows, 'marketCap', 'desc').at(-1).ticker === 'CCC');
+  ok('an unknown column leaves the order alone', sortEvents(rows, 'nope').map((r) => r.ticker).join() === 'BBB,AAA,CCC');
+  ok('sorting does not mutate the caller\'s array', rows[0].ticker === 'BBB');
+  // Ties break on ticker, so the same board renders the same way twice.
+  const tied = [{ ticker: 'ZZZ', cashAmount: 1 }, { ticker: 'AAA', cashAmount: 1 }];
+  ok('ties break on ticker', sortEvents(tied, 'cashAmount', 'asc').map((r) => r.ticker).join() === 'AAA,ZZZ');
+}
+
+console.log('\n=== grouping, and a day with nothing on it ===');
+{
+  const many = [
+    { ticker: 'A', exDividendDate: '2026-09-18', paymentDate: '2026-10-01' },
+    { ticker: 'B', exDividendDate: '2026-09-18', paymentDate: '2026-10-15' },
+    { ticker: 'C', exDividendDate: '2026-09-21', paymentDate: '2026-10-01' },
+    { ticker: 'D', exDividendDate: '2026-09-19', paymentDate: null },
+  ];
+  const byEx = groupByDate(many, 'ex');
+  ok('the ex-dividend axis groups by ex-date', byEx.map(([d]) => d).join() === '2026-09-18,2026-09-19,2026-09-21');
+  ok('many companies can share one ex-date', byEx[0][1].length === 2, JSON.stringify(byEx[0][1].map((e) => e.ticker)));
+  const byPay = groupByDate(many, 'payment');
+  ok('the payment axis groups by payment date', byPay[0][0] === '2026-10-01' && byPay[0][1].length === 2);
+  // A row whose organising date was never published still belongs on the board — but last.
+  ok('an unpublished date sorts last, it is not dropped',
+    byPay.at(-1)[0] === 'unknown' && byPay.at(-1)[1][0].ticker === 'D', JSON.stringify(byPay.map(([d]) => d)));
+  ok('an empty day is an empty board, not an error', groupByDate([], 'ex').length === 0);
+  ok('missing input is handled', groupByDate(null, 'ex').length === 0);
+}
+
+console.log('\n=== the query the UI sends ===');
+{
+  const q = calendarQuery({ from: '2026-09-14', to: '2026-09-20', mode: 'payment',
+    filters: { ...EMPTY_FILTERS, q: 'AAPL', sector: 'Technology', minYield: '4' } });
+  const p = new URLSearchParams(q);
+  ok('the window and mode travel', p.get('from') === '2026-09-14' && p.get('to') === '2026-09-20' && p.get('mode') === 'payment');
+  ok('set filters travel', p.get('q') === 'AAPL' && p.get('sector') === 'Technology' && p.get('minYield') === '4');
+  // Empty controls must not become blank filters the API then tries to honour.
+  ok('empty filters are omitted entirely', !p.has('type') && !p.has('frequency') && !p.has('minAmount'));
+  ok('no filters means no filter params',
+    [...new URLSearchParams(calendarQuery({ from: 'a', to: 'b' })).keys()].sort().join() === 'from,limit,mode,to');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
