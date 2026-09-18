@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `49f5457a` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `cad81765` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -226,14 +226,26 @@ looking" is the question, not on-versus-off:
 `true`. A test caught an early version lowercasing it, which would have let `TRUE` open it.
 **Before public launch this must be set explicitly to `true` or `false`, never left unset.**
 
-⚠️ **OPEN DISCREPANCY — production sees a smaller table than this machine does.** Over
-2026-09-01→12-29 production reports **1,513** events while the DB reached from `.env.local` holds
-**9,275** (3,766 covered). Production also returns the *same* count for `covered=all` as for covered
-only, which should be impossible if the coverage filter were running. Ruled out: CDN caching
-(`x-vercel-cache: MISS`, cache-buster, `age: 0`) and the SQL itself (the store returns 253 covered
-events for today directly against the DB, including SPY). **Most likely either Vercel is serving an
-older deployment, or production's `DATABASE_URL` points at a different Neon branch than
-`.env.local`.** Both need the Vercel dashboard — check before trusting per-day counts on the page.
+### RESOLVED: the production/local count mismatch was a query bug, not infrastructure (`cad81765`)
+Production showed 21 events for a day the table held 372. **Neither the database nor the deployment
+was at fault** — fingerprints matched exactly (`dividend_events` max `updated_at` to the microsecond,
+`primary_events` max `seq` = 7710885), so both read the same Neon `neondb` on the same commit.
+
+`Number(null)` and `Number('')` are both **0**, and 0 is finite — so
+`Number.isFinite(Number(v)) ? Number(v) : null` turned every **absent** filter into a real one. Each
+request silently carried `minYield: 0`, `minAmount: 0`, `minMarketCap: 0`; a yield floor of zero
+still demands `annualized_amount is not null and s.price > 0`, and a market-cap floor of zero still
+demands a market cap — excluding every ETF, foreign line and any security without a stored price. It
+also explained why `covered=all` seemed inert: the yield clause already required a screener row.
+
+`numParam()` in `dividend-view.mjs` now checks absence BEFORE conversion — the only order that tells
+0 from nothing — and is tested (absent → null, empty → null, real zero → 0, nonsense → null).
+**Verified: production and the database agree on all five windows** (today 253, this week 1,167, next
+week 173, this month 3,438, Sep 1–Dec 29 3,766).
+
+**Useful technique for next time:** to tell "different database" from "different code", compare a
+value both sides can report without credentials — `max(updated_at)` via the API's `asOf`, and
+`max(seq)` of `primary_events` via `/api/wire`.
 
 **Data layer** (`112b76ce`): `dividend_events` + indexes on `ex_dividend_date`, `payment_date`,
 `(ticker, ex_dividend_date)`, `unique (source, source_event_id)`, plus partial indexes on the
