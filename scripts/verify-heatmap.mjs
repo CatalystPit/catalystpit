@@ -25,7 +25,7 @@ import {
 } from '../src/lib/heatmap/heatmap-window.mjs';
 import {
   heatColor, heatBucket, scaleFor, SCALE_BY_TIMEFRAME, groupBySector, layoutTiles, tileCoverage,
-  MIN_TILE_AREA, showsTicker, showsPct, SECTOR_OTHER,
+  fitBoardHeight, MIN_TILE_AREA, SECTOR_HEADER_PX, MIN_SECTOR_HEIGHT, showsTicker, showsPct, SECTOR_OTHER,
 } from '../src/lib/heatmap/heatmap-layout.mjs';
 import {
   UNIVERSES, DEFAULT_UNIVERSE, universeById, universeLimit, availableUniverses,
@@ -36,6 +36,10 @@ import {
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
 const near = (a, b, eps = 1e-9) => a != null && Math.abs(a - b) < eps;
+// The thinnest sector band a given canvas produces — the quantity fitBoardHeight walks upward until
+// it clears MIN_SECTOR_HEIGHT.
+const treemapMinHeight = (rows, w, h) =>
+  Math.min(...layoutTiles(rows, w, h).filter((t) => t.kind === 'sector').map((t) => t.h));
 
 // A REAL TRADING CALENDAR FRAGMENT, taken from the live candle table. Sep 2026: the 5th/6th are a
 // weekend, the 7th is Labor Day, the 12th/13th and 19th/20th are weekends. Using real gaps rather
@@ -301,6 +305,123 @@ console.log('\n=== a legible board: what does not fit is disclosed, not dropped 
     tileCoverage(rows.slice(0, 2), layoutTiles(rows.slice(0, 2), 900, 500)).hidden === 0);
   ok('coverage of an empty board is zero, not NaN',
     tileCoverage([], []).total === 0 && tileCoverage(null, null).hidden === 0);
+}
+
+console.log('\n=== geometry: nothing escapes the canvas ===');
+{
+  // THE PRODUCTION DEFECT, REPRODUCED. At Top 500 on a 1400×700 board the squarified layout gave
+  // "Real Estate" — a single security — a band 7.7px tall at y=692.3, flush with the bottom. The
+  // header was painted at a FIXED 13px from the top of that band, so it ran to 705.3: 5.3px past the
+  // canvas, clipped by the container. The same band left innerH negative, so the sector's security
+  // was never drawn at all.
+  const lopsided = [
+    { ticker: 'MEGA', sector: 'Technology', marketCap: 5e12, pct: 1 },
+    { ticker: 'BIG', sector: 'Financial Services', marketCap: 9e11, pct: 1 },
+    { ticker: 'MID', sector: 'Healthcare', marketCap: 3e11, pct: -1 },
+    { ticker: 'SMALL', sector: 'Energy', marketCap: 2e10, pct: 1 },
+    // THE SLIVER, sized to reproduce production exactly: alone in its sector, it is allocated an
+    // 8.76px band at y=691.2 on a 1400×700 canvas. A fixed 13px header would run to 704.2 — 4.2px
+    // past the bottom edge, which is the defect. (Production's Real Estate was 7.7px at y=692.3.)
+    { ticker: 'TINY', sector: 'Real Estate', marketCap: 1e9, pct: 2 },
+  ];
+
+  const inBounds = (tiles, w, h, eps = 0.01) => tiles.every((t) => {
+    const bottom = t.kind === 'sector' ? t.y + t.headerH : t.y + t.h;
+    return t.x >= -eps && t.y >= -eps && t.x + t.w <= w + eps && bottom <= h + eps;
+  });
+
+  // A DELIBERATELY SHORT canvas: even when the board cannot grow, nothing may paint outside it.
+  const squashed = layoutTiles(lopsided, 1400, 700);
+  ok('no sector header paints past the canvas, even on a short board', inBounds(squashed, 1400, 700));
+  ok('...because a header is clamped to its own sector',
+    squashed.filter((t) => t.kind === 'sector').every((t) => t.headerH <= t.h + 0.01));
+  ok('...and never taller than the design size', squashed.filter((t) => t.kind === 'sector').every((t) => t.headerH <= SECTOR_HEADER_PX));
+
+  // Every tile inside the sector it belongs to — the other half of "no clipping".
+  const secOf = (t, secs) => secs.find((s) => t.x >= s.x - 0.01 && t.x + t.w <= s.x + s.w + 0.01
+    && t.y >= s.y - 0.01 && t.y + t.h <= s.y + s.h + 0.01);
+  const secs = squashed.filter((t) => t.kind === 'sector');
+  ok('every tile sits wholly inside a sector', squashed.filter((t) => t.kind === 'tile').every((t) => secOf(t, secs)));
+  ok('no tile overlaps its sector header',
+    squashed.filter((t) => t.kind === 'tile').every((t) => { const s = secOf(t, secs); return !s || t.y >= s.y + s.headerH - 0.01; }));
+
+  // THE FIX: the board is sized so the sliver is never squeezed in the first place.
+  const fitted = fitBoardHeight(lopsided, 1400);
+  ok('the fitted height satisfies the minimum-sector rule',
+    treemapMinHeight(lopsided, 1400, fitted) >= MIN_SECTOR_HEIGHT, String(fitted));
+  // ...and it GROWS when the floor is not enough. Production's Top 500 needed ~900px against the
+  // 700px the page used to force, which is exactly how the bottom row came to be clipped.
+  const forced = fitBoardHeight(lopsided, 1400, { minHeight: 300 });
+  ok('the board grows past a height that would squeeze a sector',
+    treemapMinHeight(lopsided, 1400, 300) < MIN_SECTOR_HEIGHT && forced > 300, `${forced}`);
+  const good = layoutTiles(lopsided, 1400, fitted);
+  ok('at the fitted height nothing escapes', inBounds(good, 1400, fitted));
+  ok('...every sector clears a header plus a tile row',
+    good.filter((t) => t.kind === 'sector').every((t) => t.h >= MIN_SECTOR_HEIGHT - 0.01));
+  ok('...every sector shows its FULL header', good.filter((t) => t.kind === 'sector').every((t) => t.headerH === SECTOR_HEADER_PX));
+  // The whole point: the sliver's security is on the board rather than silently dropped.
+  ok('the smallest sector\'s security is actually drawn',
+    good.some((t) => t.kind === 'tile' && t.ticker === 'TINY'));
+  ok('every sector is represented', new Set(good.filter((t) => t.kind === 'sector').map((t) => t.name)).size === 5);
+
+  // A DENSE FILTERED SECTOR — Top 500 → Technology — uses the space it gains rather than keeping the
+  // geometry it had inside the full board.
+  const dense = Array.from({ length: 180 }, (_, i) => ({
+    ticker: `T${i}`, sector: 'Technology', marketCap: 5e12 / (i + 1), pct: (i % 7) - 3,
+  }));
+  const denseH = fitBoardHeight(dense, 1400);
+  const denseTiles = layoutTiles(dense, 1400, denseH);
+  ok('a dense single sector lays out without escaping', inBounds(denseTiles, 1400, denseH));
+  ok('...and its header is intact', denseTiles.filter((t) => t.kind === 'sector').every((t) => t.headerH === SECTOR_HEADER_PX));
+
+  // NARROWER SCREENS need MORE height, not less: the same sectors have less width to spread across.
+  const wide = fitBoardHeight(lopsided, 1600);
+  const narrow = fitBoardHeight(lopsided, 700);
+  ok('a narrower board is at least as tall', narrow >= wide, `${narrow} vs ${wide}`);
+  for (const w of [1920, 1440, 1100, 820, 600, 390]) {
+    const h = fitBoardHeight(lopsided, w);
+    ok(`nothing escapes at ${w}px wide`, inBounds(layoutTiles(lopsided, w, h), w, h), `h=${h}`);
+  }
+
+  // DENSITY: the board gets taller as the universe does, because the page scrolls and a wall of
+  // slivers is not a map. Measured on the real board, Top 2000 at 1400 wide goes from a cramped
+  // 460px drawing 1,841 tiles to 1,300px drawing all 2,000.
+  const many = (n) => Array.from({ length: n }, (_, i) => ({
+    ticker: `N${i}`, sector: ['Technology', 'Financial Services', 'Healthcare', 'Energy'][i % 4],
+    marketCap: 1e12 / (i + 1), pct: 0,
+  }));
+  const h200 = fitBoardHeight(many(200), 1400);
+  const h2000 = fitBoardHeight(many(2000), 1400);
+  ok('a denser universe asks for a taller board', h2000 > h200, `${h2000} vs ${h200}`);
+  ok('...and the growth is bounded', fitBoardHeight(many(20000), 1400) <= 2200);
+  ok('...while a small universe is not stretched', h200 <= 700, String(h200));
+
+  ok('the fit is deterministic', fitBoardHeight(lopsided, 1400) === fitted);
+  ok('an empty board needs no height', fitBoardHeight([], 1400) === 480 || fitBoardHeight([], 1400) === 460);
+  // A sanity ceiling, so a pathological universe cannot produce an endless page.
+  ok('the height is capped', fitBoardHeight(lopsided, 1400, { maxHeight: 900 }) <= 900);
+}
+
+console.log('\n=== small tiles suppress their labels rather than overflowing ===');
+{
+  // A tile too small for text draws no text — but it is still a TILE, still hoverable, still
+  // clickable. "Too small to label" and "not there" are different things.
+  ok('a tile with room shows its ticker', showsTicker({ w: 40, h: 20 }));
+  ok('a narrow tile suppresses it', !showsTicker({ w: 20, h: 40 }));
+  ok('a short tile suppresses it', !showsTicker({ w: 40, h: 10 }));
+  ok('the percentage needs more room than the ticker',
+    showsPct({ w: 50, h: 40 }) && !showsPct({ w: 40, h: 20 }) && showsTicker({ w: 40, h: 20 }));
+  // Deterministic thresholds on BOTH axes — a label is suppressed by geometry, never by guesswork.
+  ok('the thresholds are two-dimensional',
+    !showsTicker({ w: 31, h: 17 }) && showsTicker({ w: 31, h: 19 }));
+  // The legibility floor still leaves a real, interactive rectangle.
+  const tiny = layoutTiles([
+    { ticker: 'A', sector: 'X', marketCap: 1e12, pct: 1 },
+    { ticker: 'B', sector: 'X', marketCap: 2e9, pct: 1 },
+  ], 900, 500);
+  const b = tiny.find((t) => t.kind === 'tile' && t.ticker === 'B');
+  ok('a small security is still drawn as a real rectangle', b && b.w > 0 && b.h > 0);
+  ok('...and carries the data a hover needs', b && b.ticker === 'B' && b.pct === 1);
 }
 
 console.log('\n=== universes: we do not claim membership we do not know ===');

@@ -77,6 +77,79 @@ export function groupBySector(rows) {
 export const SECTOR_HEADER_PX = 13;
 
 /**
+ * THE SECTOR HEADER IS PART OF THE GEOMETRY, NOT PAINT ON TOP OF IT.
+ *
+ * The defect this fixes, measured on the live Top 500 board at 1400×700: the squarified layout gave
+ * "Real Estate" — a single security — a band 7.7px tall at y=692.3, flush with the bottom of the
+ * canvas. The header was rendered at a FIXED 13px from the top of that band, so it painted from
+ * 692.3 to 705.3: 5.3px PAST the canvas, clipped by the container's overflow. The same band left
+ * `innerH = 7.7 − 13 = −5.3`, which the old `innerH < 8` guard turned into "draw no tiles at all", so
+ * the sector's security disappeared from a board that claimed to show 500.
+ *
+ * Two rules now hold, and both are asserted:
+ *   1. a header is CLAMPED to its sector's rect and can never paint outside it, and
+ *   2. the board is sized so no sector is thinner than a header plus one tile row in the first place.
+ *
+ * MIN_SECTOR_HEIGHT is that second rule; fitBoardHeight below is what enforces it.
+ */
+
+/**
+ * The area a security wants before its tile stops being a sliver — about 30x30.
+ *
+ * Not a hard guarantee: a treemap gives the biggest names most of the canvas by design, so this is
+ * the AVERAGE the board aims for when choosing its height. It is what turns "Top 2000" from a wall
+ * of specks into a map worth scrolling.
+ */
+export const COMFORTABLE_TILE_AREA = 900;
+
+export const MIN_TILE_ROW_PX = 10;
+export const MIN_SECTOR_HEIGHT = SECTOR_HEADER_PX + MIN_TILE_ROW_PX;
+
+/**
+ * The height this board actually needs, given the width it actually has.
+ *
+ * TWO FLOORS, both measured against the real universe at 1400 wide:
+ *
+ *   density      — roughly COMFORTABLE_TILE_AREA per security, so Top 2000 gets 1300px and draws all
+ *                  2,000 tiles instead of 1,841 on a cramped board.
+ *   sector fit   — the thinnest sector band must clear MIN_SECTOR_HEIGHT. Top 500 settles at 720px;
+ *                  at the 700px the page previously forced, "Real Estate" got 7.7px and its header
+ *                  painted past the bottom edge. That is the clipping this function exists to stop.
+ *
+ * The page SCROLLS. A taller map that shows every security beats a short one that hides a sector,
+ * and the only ceiling is a sanity cap so a pathological universe cannot produce an endless page —
+ * past it the legibility floor takes over and the page states how many it left out.
+ *
+ * Deterministic: same rows and width in, same height out. Nothing measures the DOM.
+ */
+export function fitBoardHeight(rows, width, { minHeight = 460, maxHeight = 2200, step = 20 } = {}) {
+  const w = Number(width);
+  if (!Array.isArray(rows) || !rows.length || !(w >= 40)) return minHeight;
+  const groups = groupBySector(rows);
+  if (!groups.length) return minHeight;
+
+  // FLOOR 1 — DENSITY. Five hundred securities on a 460px board is not clipped, but it is a wall of
+  // slivers, and the page scrolls: height is cheap and legibility is not. The board therefore asks
+  // for roughly COMFORTABLE_TILE_AREA per security before anything else is considered. Capped, so a
+  // 5,553-security universe does not demand a five-thousand-pixel page — beyond the cap the
+  // legibility floor takes over and says how many it left out.
+  const dense = Math.ceil((rows.length * COMFORTABLE_TILE_AREA) / w / step) * step;
+  const floor = Math.min(maxHeight, Math.max(minHeight, dense));
+
+  // FLOOR 2 — NO SQUEEZED SECTOR. Walk up until the thinnest sector band can hold its header and a
+  // row of tiles. This is the one that fixes the clipped bottom row; the treemap's orientation flips
+  // with aspect ratio, so it is searched rather than solved.
+  for (let h = floor; h <= maxHeight; h += step) {
+    const rects = treemap(groups, 0, 0, w, h);
+    if (!rects.length) continue;
+    let thinnest = Infinity;
+    for (const r of rects) if (r.h < thinnest) thinnest = r.h;
+    if (thinnest >= MIN_SECTOR_HEIGHT) return h;
+  }
+  return maxHeight;
+}
+
+/**
  * THE SMALLEST TILE WORTH DRAWING, in square pixels.
  *
  * Measured on the real universe against a 1400×760 board: 500 securities gives a smallest tile of
@@ -107,12 +180,18 @@ export function layoutTiles(rows, width, height, { minArea = MIN_TILE_AREA } = {
 
   const out = [];
   for (const sr of treemap(groupBySector(rows), 0, 0, w, h)) {
-    out.push({ kind: 'sector', name: sr.name, x: sr.x, y: sr.y, w: sr.w, h: sr.h });
-    const innerY = sr.y + SECTOR_HEADER_PX;
-    const innerH = sr.h - SECTOR_HEADER_PX;
-    // A sector band too short to hold a tile gets its header and nothing else, rather than tiles of
-    // negative height.
-    if (innerH < 8 || sr.w < 8) continue;
+    // THE HEADER CANNOT EXCEED ITS SECTOR. Clamped rather than fixed, so a thin band paints a short
+    // header inside its own rect instead of spilling past it — and past the canvas when that band is
+    // at the bottom, which is exactly the clipping this replaced.
+    const headerH = Math.min(SECTOR_HEADER_PX, sr.h);
+    out.push({ kind: 'sector', name: sr.name, x: sr.x, y: sr.y, w: sr.w, h: sr.h, headerH });
+
+    const innerY = sr.y + headerH;
+    const innerH = sr.h - headerH;
+    // Nothing left to draw into. With a fitted board height this does not arise; the guard stays so
+    // a forced-short canvas degrades to "header only" rather than to tiles of negative height.
+    if (innerH < 1 || sr.w < 1) continue;
+
     const items = sr.items.map((it) => ({ ...it, value: Number(it.marketCap) || 0 }));
     for (const tr of treemap(items, sr.x, innerY, sr.w, innerH)) {
       // Below the legibility floor the tile is omitted rather than painted invisibly. See

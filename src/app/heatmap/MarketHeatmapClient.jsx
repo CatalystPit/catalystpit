@@ -232,7 +232,11 @@ export default function MarketHeatmapClient({ initial }) {
                landscape treemap without the page becoming a single tall screen of colour. ── */}
         <div className="cp-hm-board" style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
           <HeatmapCanvas rows={data ? rows : null} onPick={go} scale={scale} renderTooltip={renderTooltip}
-            onCoverage={setCoverage} emptyLabel="No securities match this filter." />
+            onCoverage={setCoverage} emptyLabel="No securities match this filter."
+            // THE MAP SIZES ITSELF. A fixed clamp knew nothing about how many sectors were on the
+            // board, so Top 500 crushed its thinnest sector into 7.7px and clipped the header off the
+            // bottom. It now takes the height its own geometry needs and the page scrolls.
+            autoHeight minHeight={480} maxHeight={2200} />
         </div>
 
         {/* What did not fit. A board that quietly drops the bottom of its universe is lying by
@@ -279,20 +283,19 @@ export default function MarketHeatmapClient({ initial }) {
       <TickerHoverPreview hover={hover} />
       <Footer />
       <style>{`
-        /* THE BOARD'S ASPECT RATIO. Tied to the viewport rather than to the page width, so a wider
-           screen buys more tiles rather than a taller page: 62vh keeps the leadership cards reachable
-           with one ordinary scroll, the 460px floor keeps a laptop usable, and the 760px ceiling stops
-           a tall monitor turning the treemap into a wall. */
-        .cp-hm-board { height: clamp(460px, 62vh, 760px); min-height: 0; }
+        /* THE BOARD HAS NO FIXED HEIGHT. It was clamp(460px, 62vh, 760px), which is a number that
+           knows nothing about how many sectors are on the board — so at Top 500 the thinnest sector
+           got 7.7px, its 13px header painted 5.3px past the bottom edge, and the container's
+           overflow:hidden cut it off. The canvas now measures its width, derives the height its own
+           treemap needs, and sets it; the page scrolls, which is far better than crushing a sector. */
+        .cp-hm-board { min-height: 0; }
         /* Three equal leadership cards across the full width. */
         .cp-hm-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
         /* Medium widths: two across, the third wraps beneath. */
         @media (max-width: 1100px) { .cp-hm-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-        /* Phones: stacked, and a shorter board so the cards are not a scroll away. */
-        @media (max-width: 720px) {
-          .cp-hm-cards { grid-template-columns: 1fr; }
-          .cp-hm-board { height: clamp(360px, 52vh, 520px); }
-        }
+        /* Phones: stacked cards. The board still sizes itself — a narrow screen needs MORE height,
+           not less, because the same sectors have less width to spread across. */
+        @media (max-width: 720px) { .cp-hm-cards { grid-template-columns: 1fr; } }
       `}</style>
     </div>
   );
