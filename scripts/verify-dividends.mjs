@@ -20,7 +20,7 @@ import {
 } from '../src/lib/dividends/dividend-event.mjs';
 import { toCanonical, fetchWindow, SOURCE_ID } from '../src/lib/dividends/providers/polygon-dividends.mjs';
 import { activeDividendProvider, dividendsPublicEnabled, dividendsVisible, dividendsDisplayMode, PROVIDERS } from '../src/lib/dividends/providers/index.mjs';
-import { rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, numParam, EMPTY_FILTERS } from '../src/lib/dividends/dividend-view.mjs';
+import { rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, numParam, EMPTY_FILTERS, SORTS, COLUMN_HELP } from '../src/lib/dividends/dividend-view.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -330,6 +330,41 @@ console.log('\n=== the query the UI sends ===');
   ok('empty filters are omitted entirely', !p.has('type') && !p.has('frequency') && !p.has('minAmount'));
   ok('no filters means no filter params',
     [...new URLSearchParams(calendarQuery({ from: 'a', to: 'b' })).keys()].sort().join() === 'from,limit,mode,to');
+}
+
+console.log('\n=== what the columns mean, for a reader who does not already know ===');
+{
+  const HELPED = ['cashAmount', 'yieldPct', 'exDividendDate', 'paymentDate', 'recordDate',
+    'declarationDate', 'frequency', 'marketCap'];
+  ok('exactly the eight data columns are explained',
+    Object.keys(COLUMN_HELP).sort().join() === [...HELPED].sort().join());
+  // Symbol and Company explain themselves; an icon on them is clutter, which is why their absence
+  // is asserted rather than merely unimplemented.
+  ok('Symbol and Company carry no explanation', !COLUMN_HELP.ticker && !COLUMN_HELP.company);
+  // A column cannot acquire help text without being a real column — the header looks help up by the
+  // sort key it already has, so a typo here would silently render nothing.
+  ok('every explained key is a real sortable column', Object.keys(COLUMN_HELP).every((k) => SORTS[k]));
+  ok('every entry has a title and a body',
+    Object.values(COLUMN_HELP).every((h) => h.title && h.body && h.title.length < 40 && h.body.length > 40));
+
+  // THE DISTINCTION THE PAGE EXISTS TO PROTECT. Three dates that sound interchangeable and are not;
+  // if the copy ever blurs them, a beginner buys the day after entitlement ended.
+  ok('ex-dividend explains that entitlement ENDS',
+    /begins trading without the right/i.test(COLUMN_HELP.exDividendDate.body)
+    && /before the ex-dividend date/i.test(COLUMN_HELP.exDividendDate.body));
+  ok('record is about eligibility, not cash', /shareholder records/i.test(COLUMN_HELP.recordDate.body));
+  ok('payment is about cash, not eligibility', /scheduled to pay/i.test(COLUMN_HELP.paymentDate.body));
+  ok('declaration is about the announcement', /officially announced/i.test(COLUMN_HELP.declarationDate.body));
+  ok('the three dates do not describe each other',
+    new Set([COLUMN_HELP.exDividendDate.body, COLUMN_HELP.recordDate.body, COLUMN_HELP.paymentDate.body]).size === 3);
+
+  // HONEST ABOUT OUR OWN LIMITS. A dash is our data limit, not a fact about the security, and both
+  // columns that can show one say so.
+  ok('yield says what a dash means', /a dash means/i.test(COLUMN_HELP.yieldPct.body));
+  ok('market cap says what a dash means', /a dash means/i.test(COLUMN_HELP.marketCap.body));
+  // And nothing in the copy promises a figure we do not hold, or predicts one.
+  ok('no explanation promises an estimate or a prediction',
+    !Object.values(COLUMN_HELP).some((h) => /estimat|predict|forecast|expected to pay|projected/i.test(h.body)));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

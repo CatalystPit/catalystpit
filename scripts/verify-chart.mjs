@@ -958,6 +958,7 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
     { placement: 'bottom-end', width: 186 },     // chart settings
     { placement: 'right-start', width: 182 },    // rail flyouts
     { placement: 'right-start', width: 186 },    // drawing style
+    { placement: 'bottom-center', width: 270 },  // the InfoTip column-help tooltip
   ];
 
   let cases = 0, escaped = 0, degenerate = 0, worst = null;
@@ -1012,6 +1013,28 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
     placeFor(far, 'bottom-start', { width: 180, viewport: big }).left === big.width - 180 - EDGE);
   ok('...and bottom-end hangs from the control right edge',
     placeFor(mid, 'bottom-end', { width: 180, viewport: big }).left === mid.right - 180);
+
+  // `bottom-center` is what a 13px info icon wants: a 270px panel left-aligned to a trigger that
+  // narrow reads as belonging to the column beside it. Used by components/InfoTip.jsx.
+  ok('bottom-center centres the panel on its trigger',
+    placeFor(mid, 'bottom-center', { width: 180, viewport: big }).left === (mid.left + mid.right) / 2 - 90);
+  // The clamp still governs: the rightmost column's icon must pull its tooltip inward, not off-screen.
+  ok('...but the window edge still wins',
+    placeFor(far, 'bottom-center', { width: 270, viewport: big }).left === big.width - 270 - EDGE);
+  ok('...at the left edge too',
+    placeFor({ left: 4, top: 40, right: 17, bottom: 53 }, 'bottom-center', { width: 270, viewport: big }).left === EDGE);
+  // A PHONE. The dividend table scrolls horizontally at 390px, so the rightmost column's icon can sit
+  // near the screen edge with a 270px panel to place — the case that would clip if anything here
+  // stopped clamping.
+  {
+    const phone = { width: 390, height: 844 };
+    const icon = { left: 366, top: 300, right: 379, bottom: 313 };
+    const tip = placeFor(icon, 'bottom-center', { width: 270, gap: 6, viewport: phone });
+    const box = boxOf(tip, phone);
+    ok('a tooltip at a phone\'s right edge stays fully on screen',
+      box.left >= EDGE && box.right <= phone.width - EDGE, JSON.stringify(box));
+    ok('...and is still wide enough to read', tip.width >= 250);
+  }
 
   const rail = { left: 30, top: 300, right: 56, bottom: 326 };
   const fly = placeFor(rail, 'right-start', { width: 182, gap: 6, viewport: big });

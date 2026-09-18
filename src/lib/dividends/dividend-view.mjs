@@ -124,6 +124,56 @@ export const EMPTY_FILTERS = Object.freeze({
 });
 
 /**
+ * WHAT EACH COLUMN MEANS, for the reader who does not already know.
+ *
+ * A dividend calendar is dense with dates that sound interchangeable and are not — ex-dividend,
+ * record and payment decide entitlement, eligibility and cash respectively, and a beginner acting on
+ * the wrong one buys a stock the day after it stopped carrying the dividend. The explanations sit
+ * behind a small icon rather than in the header, so the table stays a professional instrument and
+ * the help is there when it is wanted.
+ *
+ * Keyed by the sort key the column already uses, so a column cannot acquire help text without the
+ * column existing. Symbol and Company are deliberately absent — they explain themselves.
+ *
+ * WHERE THE COPY IS HONEST ABOUT US: yield and market cap both say what a dash means, because a dash
+ * is our data limit, not a fact about the security. Nothing here implies a value we do not hold.
+ */
+export const COLUMN_HELP = Object.freeze({
+  cashAmount: {
+    title: 'Dividend Amount',
+    body: 'The cash dividend or distribution paid per share for this event.',
+  },
+  yieldPct: {
+    title: 'Dividend Yield',
+    body: "The annualized dividend amount as a percentage of the security's price. A dash means Catalyst Pit does not have enough current data to calculate it reliably.",
+  },
+  exDividendDate: {
+    title: 'Ex-Dividend Date',
+    body: 'The date the security begins trading without the right to receive this dividend. Generally, an investor must own the security before the ex-dividend date to receive the payment.',
+  },
+  paymentDate: {
+    title: 'Payment Date',
+    body: 'The date the company or fund is scheduled to pay the dividend to eligible shareholders.',
+  },
+  recordDate: {
+    title: 'Record Date',
+    body: 'The date the company checks its shareholder records to determine who is eligible for the dividend.',
+  },
+  declarationDate: {
+    title: 'Declaration Date',
+    body: 'The date the company or fund officially announced the dividend.',
+  },
+  frequency: {
+    title: 'Dividend Frequency',
+    body: 'How often the security typically pays or distributes dividends, such as monthly, quarterly, semi-annual or annual.',
+  },
+  marketCap: {
+    title: 'Market Capitalization',
+    body: "The total market value of a company's outstanding shares. A dash means market-cap data is unavailable or not applicable for that security.",
+  },
+});
+
+/**
  * A numeric query parameter, or null when it was not supplied.
  *
  * `Number(null)` and `Number('')` are both 0, and 0 is finite — so the obvious

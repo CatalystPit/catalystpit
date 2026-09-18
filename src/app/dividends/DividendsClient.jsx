@@ -5,8 +5,9 @@ import { C, BrandStyles, TopNav, Footer, TickerLogo } from '../../lib/cp-shared'
 import { frequencyLabel } from '../../lib/dividends/dividend-event.mjs';
 import { SECTORS } from '../../lib/screener-filters';
 import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
+import InfoTip from '../../components/InfoTip';
 import {
-  iso, shiftDays, rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS,
+  iso, shiftDays, rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS, COLUMN_HELP,
 } from '../../lib/dividends/dividend-view.mjs';
 
 // THE DIVIDEND CALENDAR.
@@ -113,16 +114,27 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
     border: `1px solid ${C.border}`, borderRadius: 6, padding: '5px 8px' };
   const btn = { ...field, cursor: 'pointer' };
 
-  const TH = ({ children, align = 'left', width, sortKey }) => (
-    <th onClick={sortKey ? () => toggleSort(sortKey) : undefined}
-      title={sortKey ? 'Sort' : undefined}
-      style={{ textAlign: align, width, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
-        color: sort.key === sortKey ? C.ink : C.dim, textTransform: 'uppercase',
-        padding: '0 10px 7px', whiteSpace: 'nowrap', cursor: sortKey ? 'pointer' : 'default',
-        userSelect: 'none' }}>
-      {children}{sortKey && sort.key === sortKey ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
-    </th>
-  );
+  // The help text is looked up by the column's OWN sort key, so a column cannot acquire an
+  // explanation it does not have a definition for, and Symbol/Company/Type simply have none.
+  const TH = ({ children, align = 'left', width, sortKey }) => {
+    const help = sortKey ? COLUMN_HELP[sortKey] : null;
+    return (
+      <th onClick={sortKey ? () => toggleSort(sortKey) : undefined}
+        title={sortKey ? 'Sort' : undefined}
+        style={{ textAlign: align, width, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+          color: sort.key === sortKey ? C.ink : C.dim, textTransform: 'uppercase',
+          padding: '0 10px 7px', whiteSpace: 'nowrap', cursor: sortKey ? 'pointer' : 'default',
+          userSelect: 'none' }}>
+        {/* Inline-flex rather than trailing text, so the icon sits on the label's baseline and a
+            right-aligned numeric header keeps its alignment with the column beneath it. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center',
+          justifyContent: align === 'right' ? 'flex-end' : 'flex-start' }}>
+          {children}{sortKey && sort.key === sortKey ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+          {help && <InfoTip title={help.title} body={help.body} label={help.title} />}
+        </span>
+      </th>
+    );
+  };
 
   const Row = ({ e }) => (
     <tr>

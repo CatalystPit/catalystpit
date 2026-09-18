@@ -5,6 +5,7 @@ import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch
 import { meaningFor } from '../../lib/insider-meaning';
 import { ownershipChangePct, fmtOwnershipPct } from '../../lib/insider-format';
 import { treemap } from '../../lib/treemap';
+import SharedInfoTip from '../../components/InfoTip';
 import { INSIDER_TX_COLUMNS, INSIDER_TX_MIN_WIDTH } from '../../lib/insider-columns.mjs';
 import { useRouter } from 'next/navigation';
 
@@ -119,20 +120,13 @@ const VIEW_LABEL = Object.fromEntries(CATEGORIES.map(c => [c.key, c.label]));
 const SEL_STYLE = { background: C.white, border: `1px solid ${C.border}`, color: C.text, padding: '7px 10px', borderRadius: 5, fontSize: 12, fontFamily: "'DM Sans',sans-serif", cursor: 'pointer' };
 const LBL_STYLE = { fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, letterSpacing: '0.5px', marginLeft: 6 };
 const bandBtn = (active) => ({ background: active ? C.green : C.white, color: active ? '#fff' : C.muted, border: `1px solid ${active ? C.green : C.border}`, borderRadius: 5, padding: '5px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" });
-// Clean hover/click tooltip (themed, works light + dark). Not the browser default.
-function InfoTip({ text, below = false, width = 270 }) {
-  const [show, setShow] = useState(false);
-  return (
-    <span style={{ position: 'relative', display: 'inline-flex' }}
-      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}
-      onClick={(e) => { e.stopPropagation(); setShow((s) => !s); }}>
-      <span style={{ fontSize: 9, color: C.dim, cursor: 'help', fontWeight: 700, border: `1px solid ${C.border}`, borderRadius: '50%', width: 14, height: 14, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>i</span>
-      {show && (
-        <span onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', ...(below ? { top: 'calc(100% + 6px)' } : { bottom: 'calc(100% + 6px)' }), left: '50%', transform: 'translateX(-50%)', zIndex: 100, width, maxWidth: '86vw', background: C.white, border: `1px solid ${C.border}`, color: C.text, fontSize: 11, lineHeight: 1.5, padding: '9px 11px', borderRadius: 7, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', fontWeight: 400, whiteSpace: 'normal', textAlign: 'left' }}>{text}</span>
-      )}
-    </span>
-  );
-}
+// The hover/click tooltip this page used to define privately now lives in components/InfoTip.jsx,
+// shared with the Dividend Calendar's column headers. Same look; it gained viewport-aware placement
+// (it was clipped at a table's right edge), touch support and keyboard/ARIA behaviour on the way.
+//
+// `below` is no longer a prop: the shared component flips above or below on its own, based on where
+// the trigger actually sits in the window, which is what `below` was being set by hand to approximate.
+const InfoTip = ({ text, width = 270 }) => <SharedInfoTip body={text} width={width} />;
 
 // Contextual intelligence badges — only shown when the data supports them. Honest wording:
 // we don't claim a multi-year "first buy" until the historical backfill; only "first buy in N months".
@@ -417,7 +411,7 @@ function HeatmapLegend() {
         <span style={legSq(C.dim, 11)} />
         <span style={LEG_TXT}>$ value</span>
       </span>
-      <InfoTip below width={320} text={LEGEND_HELP} />
+      <InfoTip width={320} text={LEGEND_HELP} />
     </div>
   );
 }

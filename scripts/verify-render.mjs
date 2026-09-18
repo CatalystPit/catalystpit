@@ -52,12 +52,81 @@ export const RedirectType = { push: 'push', replace: 'replace' };
 export default {};
 `);
 
+// Clerk ships CommonJS, which esbuild cannot turn into an ESM bundle without a dynamic require of
+// React at runtime. Auth is not what is under test — every page-level component reaches it only
+// through cp-shared's nav — so it is stubbed for the same reason Next's router is.
+const CLERK_STUB = path.join(TMP, 'clerk-stub.mjs');
+fs.writeFileSync(CLERK_STUB, `
+export const SignedIn = () => null;
+export const SignedOut = ({ children }) => children ?? null;
+export const UserButton = () => null;
+export const useAuth = () => ({ isLoaded: true, isSignedIn: false, userId: null });
+export const useUser = () => ({ isLoaded: true, isSignedIn: false, user: null });
+export const ClerkProvider = ({ children }) => children ?? null;
+export default {};
+`);
+
 /** The client components a broken render would take a whole page down with. */
 const TARGETS = [
   { file: 'src/components/chart/CPChart.jsx', props: { symbol: 'SPY', initialTimeframe: '1D', transparent: true } },
   { file: 'src/components/chart/TickerPriceChart.jsx', props: { symbol: 'SPY' } },
   { file: 'src/components/scan/PitScanPanel.jsx', props: { onPick: () => {} } },
   { file: 'src/components/scan/CustomScannerPanel.jsx', props: { onPick: () => {} } },
+  // The column-help tooltip, and the two pages that mount it. The Dividend Calendar renders eight of
+  // them inside sortable headers; the Insiders page had its own copy until they were merged, and a
+  // shared component that throws would now take BOTH pages down rather than one.
+  { file: 'src/components/InfoTip.jsx', props: { title: 'Dividend Yield', body: 'An explanation.', label: 'Dividend Yield' } },
+  // The hover preview reads window.innerWidth to flip itself on-screen, so its SSR contract is that
+  // it renders NOTHING until something has been hovered. That is asserted, not assumed: a version
+  // that touched the window during render would throw here rather than on a reader's first paint.
+  { file: 'src/components/TickerHoverChart.jsx', export: 'TickerHoverPreview', props: { hover: null }, expectEmpty: true },
+  {
+    file: 'src/app/dividends/DividendsClient.jsx',
+    props: {
+      enabled: true,
+      display: 'prelaunch',
+      initial: {
+        enabled: true, mode: 'ex', from: '2026-09-14', to: '2026-09-20', total: 1,
+        events: [{
+          ticker: 'UTF', company: 'COHEN & STEERS INFRASTRUCTURE FUND INC', sector: null,
+          marketCap: 2.4e9, exDividendDate: '2026-09-18', paymentDate: '2026-09-30',
+          recordDate: '2026-09-18', declarationDate: '2026-09-01', cashAmount: 0.155,
+          currency: 'USD', dividendType: 'regular', frequency: 12, annualizedAmount: 1.86,
+          yieldPct: 7.42,
+        }],
+        asOf: '2026-09-18T16:19:12.258Z', source: 'scheduled-ingest',
+      },
+    },
+    // THE EIGHT COLUMN TOOLTIPS, asserted against the real markup rather than the source.
+    assert: (html, check) => {
+      const triggers = [...html.matchAll(/aria-label="What does ([^"]+) mean\?"/g)].map((m) => m[1]);
+      check('every data column header carries an info trigger', triggers.length === 8, `got ${triggers.length}`);
+      check('and they are the eight documented ones',
+        [...triggers].sort().join('|') === [
+          'Declaration Date', 'Dividend Amount', 'Dividend Frequency', 'Dividend Yield',
+          'Ex-Dividend Date', 'Market Capitalization', 'Payment Date', 'Record Date',
+        ].join('|'), triggers.join(', '));
+      // Symbol and Company must NOT have one — the clutter this design deliberately avoids.
+      check('Symbol and Company have no info trigger',
+        !/What does Symbol mean/.test(html) && !/What does Company mean/.test(html));
+      // Closed by default: a tooltip that renders its panel on the server would flash eight boxes
+      // over the table on first paint.
+      check('no tooltip panel is open on first paint', !/role="tooltip"/.test(html));
+      // Real <button>s in the tab order, reporting their state — not spans with a hover handler,
+      // which is what made the original version unreachable by keyboard.
+      check('the triggers are real buttons, closed, in the tab order',
+        (html.match(/<button type="button" aria-label="What does [^"]+ mean\?" aria-expanded="false"/g) || []).length === 8);
+      // Themed from design tokens, so dark mode needs no second stylesheet and cannot drift.
+      check('the trigger is themed from design tokens, not hard-coded colours',
+        /aria-label="What does Dividend Yield mean\?"[^>]*var\(--cp-border/.test(html));
+      // The trigger sits INSIDE the sortable header, so the header still sorts and the icon does not
+      // replace it.
+      check('the headers are still sortable', (html.match(/title="Sort"/g) || []).length >= 8);
+    },
+  },
+  // The other page that mounts the shared tooltip. It was not covered before, which is precisely why
+  // merging its private copy into a shared component needed it to be.
+  { file: 'src/app/insiders/InsidersClient.jsx', props: {} },
 ];
 
 console.log('rendering the components a failure would take a page down with\n');
@@ -76,7 +145,7 @@ for (const target of TARGETS) {
       loader: { '.js': 'jsx' },
       // React stays external so hooks share one instance with the renderer below.
       external: ['react', 'react-dom', 'react/jsx-runtime', 'server-only'],
-      alias: { 'next/navigation': STUB, 'next/link': STUB, 'next/image': STUB },
+      alias: { 'next/navigation': STUB, 'next/link': STUB, 'next/image': STUB, '@clerk/nextjs': CLERK_STUB },
       logLevel: 'silent',
       absWorkingDir: ROOT,
     });
@@ -95,14 +164,20 @@ for (const target of TARGETS) {
     continue;
   }
   ok(`${target.file} evaluates`, true);
-  ok(`${target.file} exports a component`, typeof mod.default === 'function');
-  if (typeof mod.default !== 'function') continue;
+  // Most targets are a default export; a named one (the hover preview) says which.
+  const Component = target.export ? mod[target.export] : mod.default;
+  ok(`${target.file} exports a component`, typeof Component === 'function');
+  if (typeof Component !== 'function') continue;
 
   // THE ASSERTION THAT MATTERS. A temporal-dead-zone reference, a missing import, a null deref on
   // first render — all of them surface here and nowhere else in this repo's tests.
   try {
-    const html = renderToString(React.createElement(mod.default, target.props));
-    ok(`${target.file} renders`, typeof html === 'string' && html.length > 0);
+    const html = renderToString(React.createElement(Component, target.props));
+    ok(`${target.file} renders`,
+      typeof html === 'string' && (target.expectEmpty ? html.length === 0 : html.length > 0));
+    // A target may also assert things about the markup it produced — which is the only way to check
+    // what a component actually rendered rather than what its source appears to say.
+    if (target.assert) target.assert(html, ok);
   } catch (e) {
     ok(`${target.file} renders`, false, `${e.name}: ${e.message}`);
   }

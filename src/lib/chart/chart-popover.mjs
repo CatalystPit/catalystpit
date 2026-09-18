@@ -61,8 +61,13 @@ export function placeFor(rect, placement = 'bottom-start', opts = {}) {
       out.bottom = Math.max(EDGE, Math.min(vh - rect.top + gap, vh - EDGE - 1));
       out.maxHeight = vh - out.bottom - EDGE;
     }
-    // `bottom-end` hangs from the control's right edge, so a control near the window edge opens inward.
-    const wanted = placement === 'bottom-end' ? rect.right - w : rect.left;
+    // `bottom-end` hangs from the control's right edge, so a control near the window edge opens
+    // inward. `bottom-center` centres on the control — what a small icon wants, since a 14px trigger
+    // with a 270px panel left-aligned to it reads as unattached. The clamp below still applies, so
+    // the rightmost column's icon pulls its tooltip inward rather than off the screen.
+    const wanted = placement === 'bottom-end' ? rect.right - w
+      : placement === 'bottom-center' ? (rect.left + rect.right) / 2 - w / 2
+        : rect.left;
     out.left = Math.max(EDGE, Math.min(wanted, vw - w - EDGE));
   }
 
