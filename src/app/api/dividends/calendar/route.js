@@ -17,9 +17,13 @@ import { dividendYieldPct } from '../../../../lib/dividends/dividend-event.mjs';
 export const runtime = 'nodejs';
 export const maxDuration = 15;
 
-// Five minutes at the edge, a day of stale-while-revalidate: the underlying table changes once a
-// day, so this trades nothing for a page that is served from cache almost always.
-const CACHE = { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=86400' };
+// Five minutes at the edge, fifteen of stale-while-revalidate.
+//
+// A DAY of stale-while-revalidate was wrong, and QA caught it: after an ingest the edge went on
+// serving the pre-ingest board — 21 events where the table held 253 — because a stale response
+// stays servable for the whole window. The cache still absorbs almost every request; it just cannot
+// show yesterday's calendar to somebody checking today's ex-dividends.
+const CACHE = { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' };
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
