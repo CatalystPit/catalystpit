@@ -5,7 +5,7 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 import { FEEDS, PENDING, activeFeeds, fetchFeed, normalize, TICKERABLE, categoryOf, importanceOf, contentHash, companyPhrases, isTickerableSource } from './primary-sources.mjs';
 import { resolveIssuerItems } from './name-resolver';
-import { buildIndex, resolveCompanies } from './company-symbols.mjs';
+import { buildIndex, resolveCompanies, tickersSupportedBy } from './company-symbols.mjs';
 import { canonicalUrl, eventKey, factKey, findCluster, normHash, PROXIMITY_MS } from './event-cluster.mjs';
 import { canonicalHeadline, factSignature, entityToken, scoreImportance, isDisplayable } from './news-normalize.mjs';
 import { isNonEnglish } from './language.mjs';
@@ -703,6 +703,33 @@ export async function runEnrichment({ limit = BATCH_SIZE * 2, generate = generat
         stats.tickers++;
         if (headlineStatus === 'normalized') headline = canonicalHeadline(r.source_headline, r.tickers);
       }
+      // THE PUBLISHED SENTENCE HAS TO SUPPORT THE SYMBOL.
+      //
+      // Tickers are resolved from the SOURCE headline, because that is the fullest wording we have.
+      // But Catalyst Pit publishes its own sentence, and when the rewrite drops the words that
+      // produced the symbol the symbol is left pointing at a company our wording never names. That
+      // is how "Giant Wendy's franchisee Meritage Hospitality Group files for bankruptcy" was posted
+      // as "$WEN Meritage Hospitality Group files for bankruptcy" — a headline that reads as Wendy's
+      // going bankrupt.
+      //
+      // So once our wording exists, every ticker is re-checked against it and an unsupported one is
+      // dropped rather than guessed at. Only for wording we wrote: a row still carrying the source's
+      // own line has nothing new to check against.
+      if ((r.tickers || []).length && (headlineStatus === 'original' || headlineStatus === 'composed')) {
+        try {
+          const idx = await symbolIndex();
+          if (idx) {
+            const kept = tickersSupportedBy(headline, r.tickers, idx);
+            if (kept.length !== r.tickers.length) {
+              const dropped = r.tickers.filter((t) => !kept.includes(t));
+              console.log(`[tickers] seq=${r.seq} dropped ${dropped.join(',')} — unsupported by published wording`);
+              stats.tickersDropped = (stats.tickersDropped || 0) + dropped.length;
+              r.tickers = kept;
+            }
+          }
+        } catch { /* best effort: a guard that cannot run must not lose the rewrite */ }
+      }
+
       // Recomputed because a ticker resolved just now can make an item identifiable that was not
       // identifiable at ingest — which lets later reports of the same event still fold into it.
       const key = eventKey({

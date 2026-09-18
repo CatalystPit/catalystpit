@@ -335,6 +335,144 @@ const VENUE_EVENT = /\b(?:conference|summit|forum|symposium|expo|event|day)\b/i;
 const UNIT_AFTER_NUMBER = /(\d(?:[\d,.]*\d)?%?\s*-?\s*)(BPS?)\b/gi;
 export const maskUnitsAfterNumbers = (s) => String(s || '').replace(UNIT_AFTER_NUMBER, (_, n, unit) => n + unit.toLowerCase());
 
+// A COMPANY NAMED AS SOMEONE ELSE'S RELATION IS CONTEXT, NOT THE SUBJECT.
+//
+// "Giant Wendy's franchisee Meritage Hospitality Group files for bankruptcy" went out on the live
+// account as $WEN — a headline that reads as Wendy's filing for bankruptcy. Wendy's did not file;
+// its largest franchisee did, and the correct symbol was on the same story from another wire. The
+// resolver saw a capitalised token it recognised and had no notion of who the sentence is ABOUT.
+//
+// The pattern is a company sitting immediately in front of a relationship noun, where it modifies
+// that noun rather than acting: "Wendy's franchisee", "Costco partner", "Apple supplier",
+// "Palantir partnership", "Alphabet unit". The mirror form is "franchisee of Wendy's".
+//
+// TWO GUARDS KEEP THIS FROM BECOMING A PHRASE BLACKLIST:
+//
+//   A JOINT SUBJECT IS NOT A RELATION. "Nvidia partnership with Intel" and "Apple partners with
+//   Google" both put a company in front of one of these words while genuinely being about it, and
+//   the giveaway is what follows: `with` or `and`. Those keep their ticker.
+//
+//   THE WORD MAY BE PART OF THE NAME. "Alaris Equity Partners announces a bought deal" is about
+//   Alaris Equity Partners. So the candidate plus the relationship word is checked against the
+//   reference index first, and a real company name is never masked.
+const RELATIONAL_NOUN = /^(?:franchisees?|partners?|partnerships?|suppliers?|vendors?|distributors?|licensees?|licensors?|subsidiar(?:y|ies)|units?|affiliates?|rivals?|competitors?|backers?|clients?|customers?|contractors?)\b/i;
+/** What follows the relationship word when the company is acting rather than modifying. */
+const JOINT_SUBJECT = /^\s*(?:with|and)\b/i;
+/** The mirror form: "franchisee of Wendy's", "supplier to Apple". */
+const RELATION_BEFORE = /\b(?:franchisee|partner|partnership|supplier|vendor|distributor|licensee|licensor|subsidiary|unit|affiliate|rival|competitor|backer|client|customer|contractor)s?\s+(?:of|to|for)\s+$/i;
+
+/** Does this phrase exist in the reference index as a name (whole-token prefix)? No recursion. */
+function nameExists(phrase, index) {
+  const toks = tokens(phrase);
+  if (!toks.length || !index) return false;
+  const entries = index.get(toks[0]);
+  if (!entries) return false;
+  return entries.some((e) => toks.length <= e.toks.length && toks.every((t, i) => t === e.toks[i]));
+}
+
+/**
+ * Is this span naming a company as another company's relation?
+ *
+ * Exported so the behaviour is testable on its own rather than only through a resolved ticker.
+ */
+export function isRelationalContext(text, span, index) {
+  const s = String(text || '');
+  let at = s.indexOf(span);
+  let matched = span;
+
+  // A SPAN IS NOT ALWAYS A PHRASE. candidateSpans combines words by position, not adjacency, so
+  // "Meritage Hospitality Group, a franchisee of Wendy's" yields the span "Group Wendy's" — which
+  // appears nowhere in the sentence. Those phantom spans still resolve, because tokenisation drops
+  // descriptors like GROUP and the curated alias WENDY is what actually matches. Locating them by
+  // their last real word is what lets the check see the "franchisee of" sitting in front of it;
+  // without this the guard passes silently on exactly the headline it exists to catch.
+  if (at < 0) {
+    const words = span.split(/\s+/).filter(Boolean);
+    for (let i = words.length - 1; i >= 0 && at < 0; i--) {
+      const p = s.indexOf(words[i]);
+      if (p >= 0) { at = p; matched = words[i]; }
+    }
+    if (at < 0) return false;
+  }
+
+  const before = s.slice(0, at);
+  // "franchisee of Wendy's" — the relationship word comes first.
+  if (RELATION_BEFORE.test(before)) return true;
+  // "Microsoft and Palantir partner on defense cloud" — a compound subject, where the relationship
+  // word is the VERB both companies are doing. Neither is context, so neither loses its symbol.
+  if (/(?:\band|&)\s+$/i.test(before)) return false;
+
+  // "Wendy's franchisee", "Costco partner". The possessive is part of the token, but a headline may
+  // also write it detached, so both shapes are handled.
+  const after = s.slice(at + matched.length).replace(/^(?:'s|’s)/i, '').replace(/^\s+/, '');
+  const m = RELATIONAL_NOUN.exec(after);
+  if (!m) return false;
+  // "partnership with Intel" / "partners with Google" — a joint subject, not a relation.
+  if (JOINT_SUBJECT.test(after.slice(m[0].length))) return false;
+  // "Alaris Equity Partners" — the word belongs to the company's own name.
+  if (nameExists(`${matched} ${m[0]}`, index) || nameExists(`${span} ${m[0]}`, index)) return false;
+  return true;
+}
+
+/**
+ * Keep only the tickers the GIVEN TEXT actually supports.
+ *
+ * The resolver reads a source headline; Catalyst Pit publishes its own sentence. When the rewrite
+ * drops the words that produced a symbol — "Wendy's franchisee" became "Meritage Hospitality Group
+ * files for bankruptcy" — the symbol is left pointing at a company our own wording never mentions.
+ * This is the structural backstop for that: a ticker survives only if the published text names its
+ * company, or prints the symbol itself.
+ *
+ * Provider-independent: it compares our text against the same reference index everything else uses.
+ */
+const _headCache = new WeakMap();
+/** Every leading name token that belongs to a ticker, e.g. RTX -> {RTX}, AAPL -> {APPLE, IPHONE…}. */
+function headsByTicker(index) {
+  let m = _headCache.get(index);
+  if (m) return m;
+  m = new Map();
+  for (const entries of index.values()) {
+    for (const e of entries) {
+      if (!m.has(e.ticker)) m.set(e.ticker, new Set());
+      m.get(e.ticker).add(e.toks[0]);
+    }
+  }
+  _headCache.set(index, m);
+  return m;
+}
+
+export function tickersSupportedBy(text, tickers, index) {
+  const list = [...new Set((tickers || []).filter(Boolean))];
+  if (!list.length || !index) return list;
+  const t = String(text || '');
+  const named = new Set(resolveCompanies(t, index, 10));
+  const heads = headsByTicker(index);
+
+  return list.filter((tk) => {
+    // The resolver confirms it outright.
+    if (named.has(tk)) return true;
+    const sym = String(tk).replace(/[.\-]/g, '\\$&');
+    // The symbol is printed: "$NVT", or the canonical "NVT: …" prefix this product writes itself.
+    if (new RegExp(`\\$${sym}\\b`, 'i').test(t)) return true;
+    if (new RegExp(`(^|[\\s(])${sym}:`).test(t)) return true;
+    // THE COMPANY IS NAMED, even where the resolver will not re-confirm it. A single word that is
+    // merely the PREFIX of a longer registered name is refused by resolveCompanies on purpose, so
+    // "Ascendis authorizes a buyback" does not re-resolve ASND — and dropping it would be the
+    // overbroad rule this guard must not become. The company's own leading name token appearing as
+    // a CAPITALISED word is enough: capitalisation is what separates Root Inc from "root for".
+    const hs = heads.get(tk);
+    if (hs) {
+      for (const h of hs) {
+        if (h.length < 3) continue;                      // two-letter heads collide with everything
+        const esc = h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`\\b${esc[0]}${esc.slice(1).toLowerCase()}\\b`).test(t)) return true;
+        if (new RegExp(`\\b${esc}\\b`).test(t)) return true;   // ALL-CAPS wording
+      }
+    }
+    return false;
+  });
+}
+
 export function resolveCompanies(headline, index, max = 3) {
   if (!index || !index.size) return [];
   headline = maskUnitsAfterNumbers(headline);
@@ -352,6 +490,13 @@ export function resolveCompanies(headline, index, max = 3) {
     if (spanToks.length === 1 && AMBIGUOUS_WORD.has(c)) continue;
     // Introduced by "at" in a headline that names a conference: a venue, not the subject.
     if (venueContext && VENUE.test(text.slice(0, text.indexOf(span)))) { claimed.add(c); continue; }
+    // Named as another company's franchisee, partner, supplier or unit: context, not the subject.
+    //
+    // NOT claimed, deliberately. A span may be a phantom — candidateSpans combines words by
+    // position, so "Group Wendy's" exists as a span but not as a phrase — and claiming one would
+    // block its own words from resolving on their own: "Microsoft Palantir" would take Microsoft
+    // down with it.
+    if (isRelationalContext(text, span, index)) continue;
     // Do not re-match inside a span already attributed, so "NextEra Energy" does not also yield
     // whatever "Energy" alone would.
     if ([...claimed].some((k) => k.includes(c) || c.includes(k))) continue;

@@ -6,7 +6,7 @@
 //
 // Run: node scripts/verify-company-symbols.mjs
 
-import { buildIndex, resolveCompanies, tokens, pickOne, looksLikeIndustry, maskUnitsAfterNumbers } from '../src/lib/company-symbols.mjs';
+import { buildIndex, resolveCompanies, tokens, pickOne, looksLikeIndustry, maskUnitsAfterNumbers, isRelationalContext, tickersSupportedBy } from '../src/lib/company-symbols.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -185,6 +185,109 @@ for (const [h, want] of [
 }
 ok('the mask only touches a unit that directly follows a figure',
   maskUnitsAfterNumbers('BP up 25 BP; BPS 3 bps') === 'BP up 25 bp; BPS 3 bps', maskUnitsAfterNumbers('BP up 25 BP; BPS 3 bps'));
+
+// ── SUBJECT vs CONTEXT ────────────────────────────────────────────────────────
+// A company named as somebody else's franchisee, partner or supplier is context. The live account
+// posted "BREAKING: $WEN Meritage Hospitality Group files for bankruptcy" — which reads as Wendy's
+// filing for bankruptcy — because the source said "Giant Wendy's franchisee Meritage Hospitality
+// Group files for bankruptcy" and the resolver had no idea who the sentence was about.
+console.log('\n=== a company named as another company\'s relation is not the subject ===');
+const rel = buildIndex([
+  { ticker: 'WEN', company: "WENDY'S CO" },
+  { ticker: 'MHGU', company: 'MERITAGE HOSPITALITY GROUP INC' },
+  { ticker: 'COST', company: 'COSTCO WHOLESALE CORP /NEW' },
+  { ticker: 'PLTR', company: 'PALANTIR TECHNOLOGIES INC' },
+  { ticker: 'AAPL', company: 'Apple Inc.' },
+  { ticker: 'NVDA', company: 'NVIDIA CORP' },
+  { ticker: 'INTC', company: 'INTEL CORP' },
+  { ticker: 'MSFT', company: 'MICROSOFT CORP' },
+  { ticker: 'GOOGL', company: 'Alphabet Inc.' },
+  // A company whose own registered name ENDS in a relationship word. Masking this would be the
+  // overbroad rule the fix must not become.
+  { ticker: 'AD', company: 'ALARIS EQUITY PARTNERS INCOME TRUST' },
+  { ticker: 'EPD', company: 'ENTERPRISE PRODUCTS PARTNERS L P' },
+]);
+
+// THE THREE REAL FAILURES, as they were actually published.
+for (const [h, banned, note] of [
+  ["Giant Wendy's franchisee Meritage Hospitality Group files for bankruptcy", 'WEN', 'the franchisor is not bankrupt'],
+  ["How a Costco partner's bankruptcy could benefit its biggest rival", 'COST', 'the partner went bankrupt, not Costco'],
+  ['Nebius: Why The Palantir Partnership Is A Game Changer (Rating Upgrade)', 'PLTR', 'the story is about Nebius'],
+]) {
+  const got = resolveCompanies(h, rel);
+  ok(`no $${banned} — ${note}`, !got.includes(banned), JSON.stringify(got));
+}
+// The franchisee IS the subject, and keeps its symbol.
+ok('the actual subject still resolves',
+  resolveCompanies("Giant Wendy's franchisee Meritage Hospitality Group files for bankruptcy", rel).includes('MHGU'));
+
+// The mirror form.
+for (const h of ['Meritage Hospitality Group, a franchisee of Wendy\'s, files for bankruptcy',
+  'Foxconn, a supplier to Apple, raises guidance']) {
+  const got = resolveCompanies(h, rel);
+  ok(`the relation reversed is still context: "${h.slice(0, 44)}…"`, !got.includes('WEN') && !got.includes('AAPL'), JSON.stringify(got));
+}
+
+// ── and now everything the rule must NOT break ──
+console.log('\n=== legitimate subjects keep their ticker ===');
+for (const [h, want] of [
+  ['Apple beats Q3 estimates on iPhone strength', 'AAPL'],
+  ["Wendy's closes 140 underperforming restaurants", 'WEN'],
+  ["Wendy's names new chief executive", 'WEN'],
+  ['Costco raises membership fees', 'COST'],
+  ['Palantir wins $480 million Army contract', 'PLTR'],
+  // The company IS acting — the giveaway is `with`/`and`, not the noun.
+  ['Apple partners with Google on search deal', 'AAPL'],
+  ['Nvidia partnership with Intel boosts AI roadmap', 'NVDA'],
+  ['Microsoft and Palantir partner on defense cloud', 'MSFT'],
+  // A relationship word that belongs to the company's own registered name.
+  ['Alaris Equity Partners announces $100 million bought deal', 'AD'],
+  ['Enterprise Products Partners raises quarterly distribution', 'EPD'],
+]) {
+  const got = resolveCompanies(h, rel);
+  ok(`"${h.slice(0, 48)}…" still resolves $${want}`, got.includes(want), JSON.stringify(got));
+}
+// A genuine two-company partnership loses NEITHER ticker, in both word orders.
+{
+  const a = resolveCompanies('Nvidia partnership with Intel boosts AI roadmap', rel);
+  ok('a joint partnership keeps both subjects', a.includes('NVDA') && a.includes('INTC'), JSON.stringify(a));
+  // The compound subject: "and X partner" is X doing the partnering, not X being somebody's partner.
+  const b = resolveCompanies('Microsoft and Palantir partner on defense cloud', rel);
+  ok('a compound subject keeps both too', b.includes('MSFT') && b.includes('PLTR'), JSON.stringify(b));
+}
+ok('the predicate is directly testable',
+  isRelationalContext("Wendy's franchisee Meritage files", "Wendy's", rel) === true
+  && isRelationalContext('Apple partners with Google', 'Apple', rel) === false);
+// A relationship word that is part of the company's OWN name must never make it context. Asserted on
+// the predicate, because the span that would be harmed is normally shadowed by the longer one.
+ok('a name ending in a relationship word is not context',
+  isRelationalContext('Alaris Equity Partners announces $100 million bought deal', 'Alaris Equity', rel) === false);
+// SMART QUOTES. Wires publish "Wendy’s" far more often than "Wendy's", and the tokenizer stops at
+// the curly apostrophe — so the possessive arrives detached and the check has to survive it.
+{
+  const curly = 'Giant Wendy’s franchisee Meritage Hospitality Group files for bankruptcy';
+  ok('a curly apostrophe is still a possessive', !resolveCompanies(curly, rel).includes('WEN'),
+    JSON.stringify(resolveCompanies(curly, rel)));
+  ok('…and the subject still resolves', resolveCompanies(curly, rel).includes('MHGU'));
+}
+
+// ── THE STRUCTURAL GUARD ──────────────────────────────────────────────────────
+// Resolution reads the source headline; Catalyst Pit publishes its own sentence. A symbol whose
+// company our wording never names does not survive onto the published event.
+console.log('\n=== a ticker must be supported by the wording we publish ===');
+ok('the exact failure: our sentence never says Wendy\'s, so $WEN is dropped',
+  tickersSupportedBy('Meritage Hospitality Group files for bankruptcy', ['WEN'], rel).length === 0);
+ok('…while the company we DID name survives',
+  tickersSupportedBy('Meritage Hospitality Group files for bankruptcy', ['MHGU', 'WEN'], rel).join() === 'MHGU');
+ok('a named company is supported', tickersSupportedBy('Apple beats Q3 estimates', ['AAPL'], rel).includes('AAPL'));
+ok('a printed symbol is supported even without the name',
+  tickersSupportedBy('$AAPL: iPhone sales rise 12%', ['AAPL'], rel).includes('AAPL'));
+ok('two named companies both survive',
+  tickersSupportedBy('Microsoft and Palantir sign defense deal', ['MSFT', 'PLTR'], rel).length === 2);
+ok('nothing to check is nothing to drop', tickersSupportedBy('anything', [], rel).length === 0);
+ok('no index means no dropping — the guard fails open, never silently empty',
+  tickersSupportedBy('Meritage files', ['WEN'], null).join() === 'WEN');
+ok('duplicates collapse', tickersSupportedBy('Apple rises', ['AAPL', 'AAPL'], rel).length === 1);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
