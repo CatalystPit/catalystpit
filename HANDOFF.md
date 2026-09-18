@@ -1,6 +1,6 @@
 # Catalyst Pit — session handoff
 
-**Last updated:** 2026-09-18 · **Deployed HEAD:** `d0a3618d` on `main` (this file is committed on
+**Last updated:** 2026-09-18 · **Deployed HEAD:** `49f5457a` on `main` (this file is committed on
 top of it). Point a new session here (`read HANDOFF.md`), then check `git status` and
 `git log --oneline -15`: a commit made after this file was written will not be listed here.
 
@@ -213,10 +213,27 @@ X credentials are Vercel-only.
 
 ## Dividend Calendar (deployed `112b76ce` + `d0a3618d` — PUBLIC PAGE GATED OFF)
 
-**THE FEATURE IS FINISHED AND GATED OFF** (`d0a3618d`). Everything provider-independent is built,
-deployed and tested. `DIVIDENDS_PUBLIC_ENABLED` is unset → `/dividends` renders its gated state and
-the API returns `enabled: false`. **Do not flip it until the final source and its rights are
-approved.**
+**LIVE PRE-LAUNCH at `/dividends`** (`49f5457a`). The gate now has THREE states, because "who is
+looking" is the question, not on-versus-off:
+
+| `DIVIDENDS_PUBLIC_ENABLED` | mode | behaviour |
+|---|---|---|
+| unset (today) | `prelaunch` | the real calendar on real data + a visible "temporary source" notice |
+| `true` (exact literal) | `public` | cleared for commercial display |
+| `false` (any casing) | `off` | kill switch — nothing renders |
+
+**The commercial gate is unchanged and still fails closed**: public display needs the exact literal
+`true`. A test caught an early version lowercasing it, which would have let `TRUE` open it.
+**Before public launch this must be set explicitly to `true` or `false`, never left unset.**
+
+⚠️ **OPEN DISCREPANCY — production sees a smaller table than this machine does.** Over
+2026-09-01→12-29 production reports **1,513** events while the DB reached from `.env.local` holds
+**9,275** (3,766 covered). Production also returns the *same* count for `covered=all` as for covered
+only, which should be impossible if the coverage filter were running. Ruled out: CDN caching
+(`x-vercel-cache: MISS`, cache-buster, `age: 0`) and the SQL itself (the store returns 253 covered
+events for today directly against the DB, including SPY). **Most likely either Vercel is serving an
+older deployment, or production's `DATABASE_URL` points at a different Neon branch than
+`.env.local`.** Both need the Vercel dashboard — check before trusting per-day counts on the page.
 
 **Data layer** (`112b76ce`): `dividend_events` + indexes on `ex_dividend_date`, `payment_date`,
 `(ticker, ex_dividend_date)`, `unique (source, source_event_id)`, plus partial indexes on the
