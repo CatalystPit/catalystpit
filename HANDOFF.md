@@ -1006,3 +1006,115 @@ patch. Most of the affected names are typed `ADRC` in `screener_meta`, so the se
 without guessing at classifications.
 
 ⚠️ **Never invent a sector.** "Other" is honest; a wrong sector is a false fact on a trading surface.
+
+---
+
+## Market Heatmap page (deployed `6ef0b766`) — `/heatmap`
+
+Tiles sized by market capitalisation, coloured by return over a selected window, grouped by sector,
+with Top Gainers / Top Losers / Most Active alongside. Nav gained "Heatmap". **The Terminal panel is
+unchanged and verified still working** — it now renders through the same `HeatmapCanvas`, so there is
+one heatmap implementation rather than two that drift.
+
+### Timeframes are PERFORMANCE WINDOWS, not candle intervals
+
+Elsewhere in Catalyst Pit `1W` means a weekly bar. Here it means how much a security moved over a
+week. Rules live in `src/lib/heatmap/heatmap-window.mjs`:
+
+| window | baseline |
+|---|---|
+| **1D** | the session immediately before the latest — whatever it was |
+| **1W** | nearest session ≤ (asOf − 7 calendar days) |
+| **1M** | nearest session ≤ (asOf − 1 calendar month, day clamped) |
+| **1Y** | nearest session ≤ (asOf − 1 calendar year, day clamped) |
+
+**Calendar-anchored, not a trading-day count.** The screener's `perf1m`/`perf1y` count 21 and 252
+closes back; that drifts against the calendar and measures two securities over different spans,
+which is exactly what a reader comparing tiles must not get. 31 Mar − 1 month = 28 Feb (29 in a leap
+year); 29 Feb − 1 year = 28 Feb.
+
+Weekends and holidays need no special-casing — the candle data carries the trading calendar, so
+"nearest session at or before" resolves a Saturday to Friday and Labor Day Monday back to the prior
+Friday by the same rule that handles a gap in one security's own history.
+
+### Nothing is manufactured
+
+- A company listed after the window opened has **no** 1Y return, never a 0%.
+- A security whose entire history predates the anchor would resolve its baseline to its **own latest
+  close** and report a confident flat year — the baseline must be strictly earlier or there is no
+  return.
+- No sector is ever guessed; unclassified securities sit in "Other".
+- `pctReturn` checks absence BEFORE conversion. `Number(null)` is 0 and 0 is finite, so the obvious
+  `isFinite(Number(v))` turns a missing latest close into **−100% printed on a tile**. Same coercion
+  that shipped once on the dividend calendar's filters.
+
+### ⚠️ The series-break gate caught real fabrications
+
+Running the existing `scripts/scan-price-breaks.mjs` over the heatmap universe flagged **3 of 300**:
+
+- **BNY** — 13.6× jump across a three-month gap in bars. The symbol was reassigned between two
+  different companies; it was showing **+1401% on the year**, spanning both.
+- **SPCX** — 8.7× level shift, same class.
+- **B** — 2.61× listing gap.
+
+The existing `returnBlocked()` guard now withholds their 1Y while still measuring 1D/1W/1M, which sit
+on the near side of the break. **`ticker_price_quality` previously covered only ~1,100 congress
+tickers; the top 300 by market cap are now scanned.** Re-run the scanner when the universe grows:
+
+```
+node --env-file=.env.local scripts/scan-price-breaks.mjs <tickers…>
+```
+
+### Data architecture — four bounded queries, whatever the board size
+
+1. the universe (reference: market cap, sector, name — via `security_identity`)
+2. latest session close + volume per ticker
+3. baseline session close per ticker
+4. continuity verdicts
+
+Both session reads are `distinct on (ticker) … order by ticker, date desc`, which walks the
+`(ticker, date)` primary key backwards and stops at the first row per ticker rather than scanning the
+2.8M-row candle table. **Measured in production: 1D 68ms (edge-cached), 1W/1M/1Y ~800ms cold.**
+
+**Reference data stays separate from price**, so tile sizing does not recompute when a price moves —
+which is what makes the live migration a change to query 2 alone.
+
+### HANDOFF activation requirements — honoured, not deferred
+
+- ✅ **`asOf` / freshness**: every response carries `asOf`, `baselineDate`, `anchorDate`, `freshness`
+  and measurable counts; the UI prints the two sessions the percentages run between.
+- ✅ **Provider-neutral**: no vendor call anywhere in this path.
+- ✅ **Cache correctness**: the edge header is chosen FROM the computed freshness, not hard-coded, so
+  the moment a board becomes entitlement-dependent it stops being publicly cacheable. **This is the
+  line that prevents serving a Pro real-time board to a free viewer from the CDN.**
+- ✅ **Entitlement hooks, not gates**: `access: { realtime, applied: false }` is resolved and reported.
+  **No feature is locked** — the Free/Pro matrix is undecided and no gate ships before it is.
+- ✅ **No fake streaming, no polling workaround.** The page fetches on control change only.
+
+### Still outstanding for the final provider
+
+`freshness` is `'eod'` in exactly two places (`api/heatmap/performance/route.js` and `heatmap/page.jsx`)
+— those are the expressions to change. Live precedence, the EOD one-day floor and the stale
+`change_pct` carry-forward remain as recorded above; **this page does not depend on any of them**,
+because it reads candles directly rather than `screener_stocks.change_pct`.
+
+### Universes — we do not claim membership we do not hold
+
+Top 100 / 150 / 300 by market cap are offered. **S&P 500 and Nasdaq 100 are declared unavailable with
+the reason**, because the largest 500 by market cap is not the S&P 500 — the index is a committee's
+selection — and labelling it so would be a fabrication a reader could act on. A licensed constituent
+source flips one flag.
+
+### Tests
+
+`scripts/verify-heatmap.mjs` — **102 assertions, 12/12 mutations caught**. Covers all four windows,
+weekend and Labor Day boundaries, a gap in one security's own history, a new listing, a stale series,
+a broken series, positive/negative/zero returns, tile area following market cap rather than return,
+sector filtering, "Other", gainers/losers ranking, null prices and the universe gate.
+
+`verify-render.mjs` (82) now renders the page, the canvas and the Terminal panel, and asserts the
+freshness strip, the four windows, the disabled index universes and that an unmeasurable security is
+never drawn as 0%.
+
+⚠️ **Needs a human with a browser**: tile legibility at small sizes, hover-card feel, and the
+board/leaders layout at phone width.
