@@ -139,21 +139,24 @@ export async function GET(request) {
 
     const cachedCount = Math.max(0, finalRows.length - fetched);
 
-    // WE ASKED FOR MORE THAN WE ARE SERVING — say so.
+    // REPORT WHAT IS KNOWABLE, AND NOTHING ELSE.
     //
-    // A long interval (1W/1M/3M/1Y) asks for `all` and shows one candle per week, month, quarter or
-    // year. When the head backfill cannot run — a provider error, an expired key, a rate limit — the
-    // route quietly serves whatever the cache already held, and a forty-year monthly chart renders
-    // three years without a word. Measured in production: 13,360 of 13,368 cached tickers hold under
-    // five years, so this is the normal case, not the rare one.
+    // A long interval (1W/1M/3M/1Y) asks for `all`. When the head backfill cannot run — an expired
+    // key, a rate limit, an outage — the route serves whatever the cache already held, and a
+    // forty-year monthly chart can render three years without a word. Measured in production:
+    // 13,360 of 13,368 cached tickers hold under five years.
     //
-    // The series is still honest data; what was missing is that it is SHORTER THAN REQUESTED. The
-    // chart says so rather than implying this is the company's whole history.
+    // WHAT WE CANNOT KNOW is whether that shorter series is short. `all` is requested from an
+    // artificial 1960 floor, so comparing what we served against it marks EVERY security as
+    // truncated — Apple's history starts at its 1980 IPO and is complete. An earlier version of this
+    // did exactly that and would have printed "provider limit" on a correct forty-six-year chart.
+    //
+    // WHAT WE DO KNOW is that the refresh failed. That is a fact about the provider, it is true
+    // whenever it happens, and it is the thing worth telling a reader looking at a long interval:
+    // this series was not refreshed, so treat its start date as a floor rather than an inception.
     const servedStart = finalRows.length ? String(finalRows[0].date).slice(0, 10) : null;
-    const shortfallDays = servedStart ? daysBetween(startDate, servedStart) : 0;
-    const historyTruncated = !!servedStart && shortfallDays > 30;
 
-    console.log(`[chart_daily] ${ticker} range=${range} candles=${finalRows.length} cached=${cachedCount} fetched=${fetched}${tiingoFailed ? ' (tiingo failed; served cache)' : ''}${historyTruncated ? ` (history truncated: asked ${startDate}, served ${servedStart})` : ''}`);
+    console.log(`[chart_daily] ${ticker} range=${range} candles=${finalRows.length} cached=${cachedCount} fetched=${fetched}${tiingoFailed ? ` (provider refresh failed; served cache from ${servedStart})` : ''}`);
     return Response.json({
       ticker, range, count: finalRows.length, candles: finalRows,
       meta: {
@@ -161,9 +164,9 @@ export async function GET(request) {
         fetched,
         earliest: servedStart,
         requestedFrom: startDate,
-        historyTruncated,
-        // Distinguishes "the provider just failed" from "we never held more than this".
-        providerError: tiingoFailed || undefined,
+        // The provider could not be reached or refused us, so this series is whatever was already
+        // stored. Never a claim about how much history the security actually has.
+        providerStale: tiingoFailed === true,
       },
     });
   } catch (e) {

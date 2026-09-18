@@ -326,26 +326,30 @@ console.log('\n=== normalizeBars folds at the provider boundary ===');
   ok('a duplicated day is counted once', fixed.bars[0].volume === 1500, String(fixed.bars[0].volume));
 }
 
-console.log('\n=== a shorter history than we asked for is stated, not implied ===');
+console.log('\n=== a stale provider is stated; the length of a record is not guessed at ===');
 {
-  // A long interval requests the whole history. When the provider cannot supply it — an expired key,
-  // a rate limit, a cache that was never deepened — the series is still honest data, but it is
-  // SHORTER THAN REQUESTED, and a 40-year monthly chart rendering three years must say so.
-  const short = normalizeBars({
+  // When the refresh fails the series is whatever was already stored, and its start date is a floor
+  // rather than an inception. That is what gets reported.
+  const stale = normalizeBars({
     candles: [{ date: '2023-09-13', open: 1, high: 2, low: 1, close: 2, volume: 10 }],
-    meta: { historyTruncated: true, earliest: '2023-09-13', requestedFrom: '1960-01-01' },
+    meta: { providerStale: true, earliest: '2023-09-13', requestedFrom: '1960-01-01' },
   }, '1M');
-  ok('the truncation is carried to the chart', short.meta.historyTruncated === true);
-  ok('…with the date the series actually starts', short.meta.earliest === '2023-09-13');
+  ok('a failed refresh is carried to the chart', stale.meta.providerStale === true);
+  ok('…with the date the series actually starts', stale.meta.earliest === '2023-09-13');
 
-  const full = normalizeBars({
+  const fresh = normalizeBars({
     candles: [{ date: '1980-12-12', open: 1, high: 2, low: 1, close: 2, volume: 10 }],
-    meta: { historyTruncated: false, earliest: '1980-12-12' },
+    meta: { providerStale: false, earliest: '1980-12-12' },
   }, '1M');
-  ok('a complete history is not flagged', full.meta.historyTruncated === false);
-  // Absent metadata must not read as truncated — that would put a provider warning on every chart.
-  ok('missing metadata is not a truncation claim',
-    normalizeBars({ candles: [{ date: '2024-01-02', open: 1, high: 1, low: 1, close: 1 }] }, '1M').meta.historyTruncated === false);
+  ok('a successful refresh says nothing', fresh.meta.providerStale === false);
+  // Absent metadata must never read as a warning — that would mark every chart.
+  ok('missing metadata is not a staleness claim',
+    normalizeBars({ candles: [{ date: '2024-01-02', open: 1, high: 1, low: 1, close: 1 }] }, '1M').meta.providerStale === false);
+  // THE FALSE POSITIVE THIS REPLACED. `all` is requested from an artificial 1960 floor, so a series
+  // that legitimately starts at a 1980 IPO is NOT short — and must not be labelled as though it were.
+  ok('a complete 1980-IPO history carries no warning of its own accord',
+    normalizeBars({ candles: [{ date: '1980-12-12', open: 1, high: 1, low: 1, close: 1 }],
+      meta: { earliest: '1980-12-12', requestedFrom: '1960-01-01' } }, '1M').meta.providerStale === false);
 }
 
 console.log('\n=== indicators read the aggregated candles ===');
