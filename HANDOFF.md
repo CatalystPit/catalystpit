@@ -1397,3 +1397,119 @@ scan **287** · scan-provider **89** · scan-e2e **77** · **11/11 mutations cau
 
 **Do not implement 2–6 before the provider is chosen** — the normalization layer is shaped by the
 feed's message contract.
+
+---
+
+# Pit Consensus research phase (2026-09-18/19)
+
+Four things landed. **No production formula, weight, threshold or UI changed.**
+
+## 1. Congress point-in-time bug — FIXED (`3f7477a0`)
+
+`computeConfluence()` windowed congressional activity on `transaction_date`. Under the STOCK Act a
+member may report up to 45 days later; measured on our data the median lag is **28 days**, p90 **116**,
+max **1,932**, and **17.6%** of trades are disclosed more than 90 days after the fact.
+
+A 90-day window on the transaction date therefore **structurally excluded** every trade whose lag
+exceeded it — those became public and the score never saw them.
+
+| BUY disclosures | rows | tickers |
+|---|---|---|
+| visible under the old transaction window | 315 | 196 |
+| visible under the disclosure window | 911 | 496 |
+| **previously invisible** | **597 (65.5%)** | **401** ($12.4M) |
+| gained / lost | +300 tickers | **0 lost** |
+
+Strictly additive, provably: `disclosure_date >= transaction_date` always. `disclosure_date` is NOT
+NULL with no nulls in the data, so there is **no fallback path** and deliberately none written.
+Insider and 13F windows untouched. `src/lib/congress-window.mjs` + 36 assertions.
+
+## 2. Point-in-time fundamental snapshots — COLLECTING (`e2281975`)
+
+`screener_stocks` is DELETEd and rewritten nightly with one `updated_at` for every row: valuation,
+margins, growth and market cap had **exactly one historical observation — today**. No provider sells
+us ours back.
+
+**Today is day one of the series.** First capture 2026-09-18: 6,439 tickers, 388ms.
+
+Captured: identity/classification, size, the **price-independent raw fundamentals** (eps_ttm,
+revenue_ttm, equity, total_debt, cash, ebitda — every ratio is recomputable from these plus a price,
+so they outlast any formula change), valuation, margins, balance sheet, growth, ownership.
+
+NOT captured, on purpose: price/technicals (recomputable from `ticker_daily_candles` back to 1962),
+proprietary signals (recomputable from source tables *with their own information dates* — capturing
+them would freeze today's definitions, bugs included), presentation artefacts, and 0%-populated
+columns.
+
+**Change-only writes.** A dense daily copy measured 2.2MB/day ≈ 550MB/yr of byte-identical rows;
+fundamentals update quarterly. A row is written only when the payload differs — verified: an
+unchanged day writes **0 rows**. Expected ~20MB/yr. Market cap is excluded from the change test (it
+moves daily with price and is recoverable as `shares_out × close`); `shares_out` is in it.
+`security_snapshot_run` logs every capture so "nothing changed" and "the job did not run" stay
+distinguishable. Runs at the end of the nightly screener rebuild, **wrapped** — never able to fail it.
+
+## 3. ⚠️ Experiment 001 — NULL RESULT on the premise Pit Consensus is built on
+
+Spec frozen and committed **before** running (`0ee86b4c`). Full numbers in
+`research/experiment-001-results.md`.
+
+63-day sector-relative, 4,073 point-in-time observations:
+
+- **Insider buying alone: median −1.26%, hit rate 47%.** The positive mean (+2.79%) is a right-tail
+  artefact — p10 −33%, p90 +37%.
+- **Bigger is not better**: ≥$1M buys median −2.64%. **Clusters are not better**: 3+ buyers −2.87%.
+  Officer buying underperforms non-officer buying.
+- **13F accumulation adds nothing**: accumulating −1.13% vs distributing −0.79%. Agreement does not
+  beat contradiction.
+- **Both out-of-sample walk-forward folds are negative** (−0.41%, −1.47%).
+- Every |t| < 1.1 against a Bonferroni threshold of |t| ≈ 3.1 over 30 hypotheses.
+- **The strongest structure in the data is market cap**, not either signal: <$300M −8.75% (37% hit),
+  $300M–10B +2.8 to +3.2% (56%), ≥$10B −3.00%.
+
+**What it does not establish**: effective N ≈ 65 after a 63× overlap deflation, one horizon, 18
+months of insider history. Underpowered to *rule out* a modest edge. The premise is **unsupported,
+not disproven** — and that is the distinction to keep.
+
+A defect was found on the first run and is recorded rather than hidden: `fund_qoq` is a single-quarter
+production cache, so the first pass matched 0 of 4,073 observations. QoQ is now computed from
+`fund_holdings` (9 quarters) keyed by `filed_date`.
+
+## 4. Provider evaluation — analyst/estimate/earnings data is now a criterion
+
+We hold **no** analyst, estimate, earnings or options tables at all. That is the single largest gap
+between Pit Consensus and genuine differentiation, and it cannot be closed with our own data.
+
+Existing market-data requirements are unchanged and remain primary: commercial display rights,
+realtime/delayed tiering, premarket, after-hours, streaming, OHLCV, **volume methodology** (see the
+Pit Scan RVOL rule — a single-venue realtime feed with consolidated history yields no RVOL at all),
+historical depth, storage/derived-analytics rights, economics.
+
+**Added as evaluation criteria** — and for all three, **historical point-in-time availability matters
+far more than a current snapshot**, because a current snapshot can never be researched:
+
+- **Analysts**: ratings, upgrades/downgrades, initiations, historical rating changes, price targets,
+  historical target revisions, analyst identity where licensed, **publication timestamps**.
+- **Estimates**: EPS and revenue estimates and revisions, historical point-in-time estimates,
+  **publication/revision timestamps**.
+- **Earnings**: dates, EPS/revenue estimate and actual, surprises, announcement timestamp, historical
+  depth.
+
+A provider that supplies only *current* consensus is worth materially less to us than one supplying
+the revision history with timestamps — the audit found `state` and `change` are different evidence,
+and only the second can be tested.
+
+## What must NOT be built on this evidence
+
+- Do **not** raise the weight of insider buying or 13F accumulation in any future model on the
+  strength of the current formula's premise. The data does not support it.
+- Do **not** add a cluster-buying or large-purchase bonus. Both point the wrong way here.
+- Do **not** treat agreement between families as inherently stronger than contradiction.
+- Any future model must control for **market cap and sector first** — they dominate both signals.
+
+## Recommended next experiment
+
+**Is the market-cap/sector effect the whole story?** Re-run the same observations with size- and
+sector-neutral buckets (compare each name against its own size×sector cohort rather than the sector
+ETF alone). If the insider signal is still flat inside cohorts, the premise is dead for this horizon
+and the next question is a different horizon (5/20 days) or a different family. Cheap — same
+dataset, no new data.
