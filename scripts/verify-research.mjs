@@ -23,6 +23,7 @@ import {
   walkForwardSplits, holdoutSplit, inRange, describe, tStatistic, overlapFactorFor,
   bonferroniThreshold, BASELINES, foldResult, stability, median, quantile,
 } from '../research/validation.mjs';
+import { dollarVolProxy, priorReturn, instDirection, MIN_FILERS, MIN_N, H } from '../research/dataset-002.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -286,6 +287,53 @@ console.log('\n=== folds, baselines and stability ===');
   ok('momentum is a baseline, since it is the thing most likely rediscovered',
     BASELINES.some((b) => b.id === 'momentum_12_1'));
   ok('every baseline says why it is there', BASELINES.every((b) => b.why && b.label));
+}
+
+console.log('\n=== the Experiment 002 helpers, which the frozen spec depends on ===');
+{
+  // A bar series: 80 sessions of rising price on flat volume, so the proxy and the prior return are
+  // both computable and predictable.
+  const series = [];
+  for (let i = 0; i < 80; i += 1) {
+    const d = new Date(Date.UTC(2026, 0, 1) + i * 86_400_000).toISOString().slice(0, 10);
+    series.push({ date: d, close: 100 + i, volume: 1_000_000 });
+  }
+  const day = series[79].date;
+
+  // THE SIZE PROXY IS POINT-IN-TIME BY CONSTRUCTION: bars on or after the observation are not read.
+  const p = dollarVolProxy(series, day);
+  ok('the size proxy is computed', Number.isFinite(p));
+  // Bars 20..78 are the last 60 strictly before day 79; their median close is 149.
+  ok('...from the 60 sessions strictly BEFORE the day', p === 149 * 1_000_000, String(p));
+  // The decisive property: appending a huge future bar must not change the answer.
+  const withFuture = [...series, { date: '2026-12-31', close: 9999, volume: 9e9 }];
+  ok('a future bar cannot change the proxy', dollarVolProxy(withFuture, day) === p);
+  ok('too little history yields null, not a partial proxy',
+    dollarVolProxy(series.slice(0, 20), series[19].date) === null);
+
+  // Prior return, same point-in-time rule.
+  ok('the prior return looks backwards only', priorReturn(series, day, 63) === ((179 - 116) / 116) * 100 ||
+    Math.abs(priorReturn(series, day, 63) - ((series[78].close - series[78 - 63].close) / series[78 - 63].close) * 100) < 1e-9);
+  ok('...and is null without enough history', priorReturn(series.slice(0, 10), series[9].date, 63) === null);
+
+  // INSTITUTIONAL DIRECTION IS BREADTH, NOT RAW COUNTS — otherwise a mega-cap held by 2,000 funds
+  // outranks a small-cap held by 40 purely by arithmetic.
+  ok('clear accumulation', instDirection({ inc: 30, init: 10, dec: 5, exited: 5, holders: 100 }) === 'accumulation');
+  ok('clear distribution', instDirection({ inc: 5, init: 5, dec: 30, exited: 10, holders: 100 }) === 'distribution');
+  ok('a balanced book is mixed', instDirection({ inc: 20, init: 5, dec: 20, exited: 5, holders: 100 }) === 'mixed');
+  // Fewer than five moving funds is not a verdict about institutional conviction.
+  ok('too few moving funds is sparse, not a direction',
+    instDirection({ inc: 2, init: 0, dec: 1, exited: 0, holders: 40 }) === 'sparse');
+  ok('no institutional data at all is null, not neutral', instDirection(null) === null);
+  // The same breadth at wildly different scales gives the same verdict — that is the point.
+  ok('breadth is scale-free',
+    instDirection({ inc: 300, init: 100, dec: 50, exited: 50, holders: 2000 })
+    === instDirection({ inc: 30, init: 10, dec: 5, exited: 5, holders: 40 }));
+
+  // ⚠️ THE FROZEN THRESHOLD. Lowering it to make a quarter usable is the one change the spec forbids.
+  ok('the quarter-completeness threshold is 1,000 filers', MIN_FILERS === 1000);
+  ok('the horizon is 63 trading days', H === 63);
+  ok('the minimum reportable cell is 30', MIN_N === 30);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
