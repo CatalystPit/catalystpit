@@ -5,16 +5,46 @@
 //
 // Provider precedence: MARKET_DATA_PROVIDER env, else Twelve Data if keyed, else Polygon.
 
+import { getQuotes as tiingoQuotes, tiingoConfigured, tiingoRealtimeEnabled } from './market/tiingo.mjs';
+
 const POLYGON_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
 const TWELVE_KEY = process.env.TWELVE_DATA_API_KEY || process.env.TWELVEDATA_API_KEY;
-const PROVIDER = process.env.MARKET_DATA_PROVIDER || (TWELVE_KEY ? 'twelvedata' : 'polygon');
+// Tiingo first when it is configured: it is the chosen V1 provider, and it is the one currently
+// answering. Polygon and Twelve Data stay as explicit fallbacks rather than being deleted — Tiingo
+// cannot serve realtime on this account, and removing a working path before its replacement is
+// entitled is how a feature goes dark.
+const PROVIDER = process.env.MARKET_DATA_PROVIDER
+  || (tiingoConfigured() ? 'tiingo' : TWELVE_KEY ? 'twelvedata' : 'polygon');
 
 export function marketDataProvider() { return PROVIDER; }
 
-// symbols: string[]. Returns { TICKER: { price, changePct, volume } } (missing tickers omitted).
+/**
+ * symbols: string[]. Returns { TICKER: { price, changePct, volume, ... } }, missing tickers omitted.
+ *
+ * ── THE ENTITLEMENT BOUNDARY IS HERE, SERVER-SIDE ───────────────────────────
+ *
+ * `realtime` is the caller's ENTITLEMENT (Pro = true), not a request for a specific feed. A provider
+ * returns realtime only when its plan actually supports it, so a caller cannot obtain live data by
+ * passing a flag — which is what keeps the boundary from depending on the frontend remembering to
+ * hide something.
+ *
+ * On the current Tiingo account realtime is not entitled: every quote comes back EOD and says so in
+ * its own `freshness` field. Each quote therefore carries its own provenance rather than the caller
+ * inferring it from which function was called.
+ */
 export async function getQuotes(symbols, { realtime = false } = {}) {
   const syms = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))].slice(0, 100);
   if (!syms.length) return {};
+
+  if (PROVIDER === 'tiingo' && tiingoConfigured()) {
+    try {
+      // The entitlement narrows what may be served; it can never widen it. Asking for realtime when
+      // the plan is EOD yields EOD, labelled EOD.
+      const wantLive = realtime && tiingoRealtimeEnabled();
+      const res = await tiingoQuotes(syms, { realtime: wantLive });
+      if (res.ok && Object.keys(res.quotes).length) return res.quotes;
+    } catch { /* fall through to a provider that may still answer */ }
+  }
   if (PROVIDER === 'twelvedata' && TWELVE_KEY) {
     try { return await twelveQuotes(syms, realtime); } catch { return POLYGON_KEY ? polygonQuotes(syms) : {}; }
   }
