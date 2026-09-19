@@ -49,22 +49,81 @@ const SEC_COOLDOWN_MS = 15 * 60 * 1000;
 // 403 keeps its own meaning and its own path: SEC enforces fair access by blocking the IP, so one
 // 403 still stops everything for the cooldown. These retries are for the load-shedding case only,
 // they are few, and they back off.
-const SEC_RETRY_STATUS = new Set([429, 502, 503, 504]);
+// ⚠️ 429 IS NOT IN THIS SET, AND PUTTING IT THERE MADE THINGS WORSE.
+//
+// 503 means "this object is unavailable right now" — a fast retry is the correct response and it
+// works. 429 means "you are sending too many requests", and retrying three more times inside seven
+// seconds is the opposite of what was asked. Worse, it compounds: the three-route fallback tries
+// each filing by three different URLs, so under a 429 every filing cost up to twelve requests
+// instead of four, at the exact moment SEC was asking for fewer. Measured live — the crawler reached
+// 26.6 filers/min and then www.sec.gov/Archives began returning 429 on every request while
+// data.sec.gov still answered 200; quarters and holdings stopped advancing entirely while the
+// unreadable count climbed 10 to 27 in under three minutes.
+//
+// A 429 now stops the whole pool exactly as a 403 does, because both mean "stop asking".
+const SEC_RETRY_STATUS = new Set([502, 503, 504]);
+const SEC_THROTTLE_STATUS = new Set([403, 429]);
 const SEC_MAX_ATTEMPTS = 4;
+
+// The classification itself, separated so it can be asserted without making a request. The set
+// membership is the whole policy, and it is exactly what regressed: 429 sitting in the retry set
+// looked harmless and caused the incident. A test that can only reach this through fetch() cannot
+// catch that, so the decision is a pure function.
+//   'throttle' — stop the entire pool for a while (403, 429)
+//   'retry'    — this object is flaky, try it again shortly (502, 503, 504)
+//   'final'    — take the response as the answer, success or not
+export function secStatusAction(status) {
+  if (SEC_THROTTLE_STATUS.has(status)) return 'throttle';
+  if (SEC_RETRY_STATUS.has(status)) return 'retry';
+  return 'final';
+}
+const SEC_THROTTLE_DEFAULT_MS = 5 * 60 * 1000;
 export const secRetryDelayMs = (attempt) => 1000 * 2 ** (Math.max(1, attempt) - 1);   // 1s, 2s, 4s
+
+// SEC sends Retry-After on some 429s. Honouring it is both more polite and more accurate than a
+// guess, but it is attacker-free input from a server we already trust, so it is clamped: a missing,
+// malformed or absurd value falls back to the default rather than parking the run for a day.
+export function secThrottleWaitMs(retryAfter, status) {
+  const base = status === 403 ? SEC_COOLDOWN_MS : SEC_THROTTLE_DEFAULT_MS;
+  const secs = Number(String(retryAfter ?? '').trim());
+  if (!Number.isFinite(secs) || secs <= 0) return base;
+  return Math.min(Math.max(secs * 1000, 1000), 60 * 60 * 1000);
+}
+
+// ── ONE GLOBAL PACER, BECAUSE PER-WORKER SLEEPS DO NOT BOUND A RATE ──────────
+//
+// The per-quarter and per-document sleeps are per worker, so the actual request rate was whatever
+// the pool size happened to make it — and the three-route fallback multiplied it again on exactly
+// the filings that were already failing. That is how a run at 26.6 filers/min walked into a 429.
+//
+// This is the one place every SEC request passes through, so it is the only place a rate can
+// actually be bounded. 200ms between requests is a ceiling of 5/s against SEC's published guidance
+// of 10/s, and it holds no matter how many workers there are or how many routes a filing needs.
+let _secNextSlot = 0;
+const SEC_MIN_GAP_MS = 200;
+async function secPace() {
+  const now = Date.now();
+  const slot = Math.max(now, _secNextSlot);
+  _secNextSlot = slot + SEC_MIN_GAP_MS;
+  if (slot > now) await sleep(slot - now);
+}
 
 async function secFetch(url) {
   if (secBlocked()) return null;
   for (let attempt = 1; attempt <= SEC_MAX_ATTEMPTS; attempt++) {
+    await secPace();
     try {
       const r = await fetch(url, { headers: SEC_HEADERS, cache: 'no-store' });
-      if (r.status === 403) {
+      const action = secStatusAction(r.status);
+      if (action === 'throttle') {
         try { await r.body?.cancel?.(); } catch { /* nothing to release */ }
-        _secBlockedUntil = Date.now() + SEC_COOLDOWN_MS;
-        console.log('[institutions-universe] SEC returned 403 Access Denied: backing off for 15 minutes');
+        const wait = secThrottleWaitMs(r.headers.get('retry-after'), r.status);
+        _secBlockedUntil = Date.now() + wait;
+        console.log(`[institutions-universe] SEC returned ${r.status}: pausing every worker for ` +
+          `${(wait / 60000).toFixed(1)} min`);
         return null;
       }
-      if (SEC_RETRY_STATUS.has(r.status) && attempt < SEC_MAX_ATTEMPTS) {
+      if (action === 'retry' && attempt < SEC_MAX_ATTEMPTS) {
         try { await r.body?.cancel?.(); } catch { /* nothing to release */ }
         await sleep(secRetryDelayMs(attempt));
         continue;
