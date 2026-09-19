@@ -73,10 +73,18 @@ export async function GET() {
     probe('completeness.13f_aggregation', async () => {
       // Filings whose declared count disagrees with stored rows were written by the pre-aggregation
       // path and carry one sub-account line instead of the security's total.
+      //
+      // ⚠️ BOUNDED TO RECENT QUARTERS ON PURPOSE. Unbounded, this correlated subquery scans all
+      // 67k filings against 18M holdings and measured 6.3 SECONDS — a health check that expensive
+      // becomes its own load problem the moment anything polls it, which is a self-inflicted
+      // outage. New writes land in recent quarters, so a regression appears there first; the full
+      // history is checked by scripts/audit-13f-history.mjs, which is where an exhaustive sweep
+      // belongs. This trades completeness for a probe that is safe to call often, and says so.
       const r = await one(sql`
         select count(*)::int n from fund_filings f
-         where f.holdings_count is distinct from (select count(*) from fund_holdings h where h.cik = f.cik and h.quarter = f.quarter)`);
-      return { ok: r.n === 0, underAggregated: r.n };
+         where f.quarter >= (select max(quarter) from fund_filings) - interval '6 months'
+           and f.holdings_count is distinct from (select count(*) from fund_holdings h where h.cik = f.cik and h.quarter = f.quarter)`);
+      return { ok: r.n === 0, underAggregatedRecent: r.n, scope: 'last 2 quarters' };
     }),
     probe('completeness.13f_empty_filings', async () => {
       const r = await one(sql`
