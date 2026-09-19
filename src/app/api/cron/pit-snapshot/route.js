@@ -1,4 +1,5 @@
 import { db } from '../../../../lib/db';
+import { isRenderableTicker, firstRenderable } from '../../../../lib/security-identity.mjs';
 import { insiderTrades, congressTrades } from '../../../../lib/schema';
 import { and, eq, inArray, desc, sql } from 'drizzle-orm';
 
@@ -75,20 +76,39 @@ async function buildCongress() {
 }
 
 // NEVER WHITE: if there's no enriched news, synthesize headlines from real filings.
+// Same gate as the cards: every headline here is titled with a ticker and links to /ticker/<sym>,
+// so an unlisted issuer would render "NONE: …" and link to a page that cannot exist.
 function storyFallback(insiders) {
-  return insiders.filter(i => i.action === 'BUY' || i.action === 'SELL').slice(0, 5).map(i => ({
+  return insiders.filter(i => (i.action === 'BUY' || i.action === 'SELL') && isRenderableTicker(i.ticker)).slice(0, 5).map(i => ({
     title: `${i.ticker}: ${i.executive || 'Insider'} ${i.action === 'BUY' ? 'bought' : 'sold'} ${fmtVal(i.totalValue)}`,
     source: 'SEC Form 4', published: null, category: 'SEC', ticker: i.ticker, summary: '', image_url: null,
     url: `/ticker/${i.ticker}`,
   }));
 }
 
+// ⚠️ EVERY CARD HERE IS BUILT AROUND A LISTED SECURITY, SO EVERY CARD MUST NAME ONE.
+//
+// This selector used to take topBuys[0] and topBuys[1] unconditionally. It put
+// "NONE · $9.8M · LIBERTY MUTUAL HOLDING CO INC." on the homepage: Form 4 carries an
+// issuerTradingSymbol field, an unlisted issuer's filer types "NONE" into it, we stored the filing
+// verbatim, and nothing between that row and the card ever asked whether the symbol was a symbol.
+// The security was 5C Lending Partners Corp, a non-traded fund; Liberty Mutual was the 10% owner
+// doing the buying, which is why the card was showing a buyer's name beside a non-ticker.
+//
+// firstRenderable keeps the existing ranking exactly — value for buys, recency for Congress — and
+// walks DOWN it until it finds a candidate that can actually be identified. An ineligible candidate
+// is skipped, never blanked: a card that hides the symbol while still featuring the event makes the
+// same false claim more quietly. If nothing qualifies the card is omitted, and the UI's designed
+// empty state is what a genuinely empty day looks like.
 function buildCatalysts(insiders, clusters, congress) {
-  const topBuys = insiders.filter(i => i.action === 'BUY').sort((a, b) => Number(b.totalValue) - Number(a.totalValue));
+  const topBuys = insiders.filter(i => i.action === 'BUY').sort((a, b) => Number(b.totalValue) - Number(a.totalValue))
+    .filter((i) => isRenderableTicker(i.ticker));
   const out = [];
   if (topBuys[0]) out.push({ kind: 'BUY', label: 'LARGEST OPEN-MARKET BUY', sym: topBuys[0].ticker, line: `${topBuys[0].executive || 'Insider'} bought`, value: fmtVal(topBuys[0].totalValue), date: topBuys[0].filingDate });
-  if (clusters[0]) out.push({ kind: 'BUY', label: 'CLUSTER BUY · 30D', sym: clusters[0].ticker, line: `${clusters[0].buyers} insiders bought`, value: fmtVal(clusters[0].totalValue), date: clusters[0].lastBuy });
-  if (congress[0]) out.push({ kind: congress[0].action === 'BUY' ? 'BUY' : congress[0].action === 'SELL' ? 'SELL' : 'OTHER', label: 'LATEST CONGRESS TRADE', sym: congress[0].ticker, line: `${congress[0].representative} ${congress[0].action === 'BUY' ? 'bought' : congress[0].action === 'SELL' ? 'sold' : 'traded'}`, value: congress[0].amountRange || '—', date: congress[0].transactionDate });
+  const cluster = firstRenderable(clusters);
+  if (cluster) out.push({ kind: 'BUY', label: 'CLUSTER BUY · 30D', sym: cluster.ticker, line: `${cluster.buyers} insiders bought`, value: fmtVal(cluster.totalValue), date: cluster.lastBuy });
+  const cong = firstRenderable(congress);
+  if (cong) out.push({ kind: cong.action === 'BUY' ? 'BUY' : cong.action === 'SELL' ? 'SELL' : 'OTHER', label: 'LATEST CONGRESS TRADE', sym: cong.ticker, line: `${cong.representative} ${cong.action === 'BUY' ? 'bought' : cong.action === 'SELL' ? 'sold' : 'traded'}`, value: cong.amountRange || '—', date: cong.transactionDate });
   if (topBuys[1]) out.push({ kind: 'BUY', label: 'OPEN-MARKET BUY', sym: topBuys[1].ticker, line: `${topBuys[1].executive || 'Insider'} bought`, value: fmtVal(topBuys[1].totalValue), date: topBuys[1].filingDate });
   return out;
 }

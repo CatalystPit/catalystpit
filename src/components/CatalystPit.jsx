@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import ConsensusTeaser from "./ConsensusTeaser";
+import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mjs";
 import HeatMap from "./HeatMap";
 import MiniCandles from "./MiniCandles";
 import {
@@ -163,21 +164,27 @@ const fetchAll = async () => {
       }));
 
     // TODAY IN THE PIT — pre-built in the snapshot; otherwise build locally from fetched data.
+    // Same eligibility rule as the snapshot builder, applied to the local fallback path so the two
+    // cannot disagree about what counts as a ticker. A snapshot built before this shipped may still
+    // carry an ineligible card, so the cached array is filtered too — the fix must not wait for the
+    // next cron run to take effect.
     let catalysts;
     if (usingSnapshot) {
-      catalysts = Array.isArray(snap.catalysts) ? snap.catalysts : [];
+      catalysts = (Array.isArray(snap.catalysts) ? snap.catalysts : []).filter((c) => isRenderableTicker(c?.sym));
     } else {
-      const topBuys = insiders.filter(i => i.type === 'BUY').sort((a, b) => b.valueNum - a.valueNum);
+      const topBuys = insiders.filter(i => i.type === 'BUY' && isRenderableTicker(i.sym)).sort((a, b) => b.valueNum - a.valueNum);
       const clusters = toArr(clusterData);
       catalysts = [];
       if (topBuys[0]) catalysts.push({ kind:'BUY', label:'LARGEST OPEN-MARKET BUY',
         sym: topBuys[0].sym, line: `${topBuys[0].name || 'Insider'} bought`, value: topBuys[0].value, date: topBuys[0].filed });
-      if (clusters[0]) catalysts.push({ kind:'BUY', label:'CLUSTER BUY · 30D',
-        sym: clusters[0].ticker, line: `${clusters[0].buyers} insiders bought`,
-        value: fmtInsiderValue(clusters[0].totalValue), date: clusters[0].lastBuy });
-      if (politicians[0]) catalysts.push({ kind: politicians[0].type, label:'LATEST CONGRESS TRADE',
-        sym: politicians[0].sym, line: `${politicians[0].name} ${politicians[0].type === 'BUY' ? 'bought' : 'sold'}`,
-        value: politicians[0].amount, date: politicians[0].traded });
+      const cluster = firstRenderable(clusters);
+      if (cluster) catalysts.push({ kind:'BUY', label:'CLUSTER BUY · 30D',
+        sym: cluster.ticker, line: `${cluster.buyers} insiders bought`,
+        value: fmtInsiderValue(cluster.totalValue), date: cluster.lastBuy });
+      const pol = firstRenderable(politicians, (p) => p?.sym);
+      if (pol) catalysts.push({ kind: pol.type, label:'LATEST CONGRESS TRADE',
+        sym: pol.sym, line: `${pol.name} ${pol.type === 'BUY' ? 'bought' : 'sold'}`,
+        value: pol.amount, date: pol.traded });
       if (topBuys[1]) catalysts.push({ kind:'BUY', label:'OPEN-MARKET BUY',
         sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
     }
@@ -310,7 +317,10 @@ export default function CatalystPit() {
                 </div>
               ) : (
                 <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))", gap:12}}>
-                  {catalysts.map((c, i) => (
+                  {/* Last line of defence. Selection already rejects an unrenderable symbol, but a
+                      card here is a claim that a listed security did something, and the cost of that
+                      claim being false is a homepage reading "NONE". */}
+                  {catalysts.filter((c) => isRenderableTicker(c?.sym)).map((c, i) => (
                     <div key={i} className="hov" onClick={() => goTicker(c.sym)}
                       style={{background:C.surface, borderRadius:7, padding:14, border:`1px solid ${C.border}`,
                         borderLeft:`3px solid ${insStyle(c.kind).fg}`, cursor:"pointer", transition:"background 0.15s"}}>

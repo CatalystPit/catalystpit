@@ -44,6 +44,66 @@ import { isSicDescription } from './sic-descriptions.mjs';
 export const IDENTITY_SOURCES = Object.freeze(['form4', 'registrant', 'sec_ticker', 'provider']);
 const RANK = new Map(IDENTITY_SOURCES.map((s, i) => [s, i]));
 
+// ── IS THIS STRING A TRADEABLE TICKER WE CAN PUT ON A CARD? ──────────────────
+//
+// The homepage showed "NONE · $9.8M · LIBERTY MUTUAL HOLDING CO INC." on its largest-buy card. The
+// ticker was not a rendering bug and not a resolution failure: Form 4 has an issuerTradingSymbol
+// field, an unlisted issuer's filer types "NONE" into it, and we stored the filing verbatim. The
+// security was 5C Lending Partners Corp, a non-traded fund with no public ticker; Liberty Mutual was
+// the BUYER, a 10% owner. Nothing downstream ever asked whether the symbol was a symbol.
+//
+// TWO RULES, AND BOTH ARE NECESSARY:
+//
+//   SHAPE. Measured across all 17,880 tickers in the screener universe, every one is 1-5 letters,
+//   optionally followed by a dot and a 1-2 letter class suffix — BRK.B, BF.A, MKC.V, NWAX.U. A
+//   rule any tighter than that would drop real share classes; any looser admits raw CUSIPs
+//   (9 alphanumerics) and free text.
+//
+//   PLACEHOLDERS. A handful of strings pass the shape test but are filing-form filler, not symbols.
+//   This list is deliberately SHORT, because the obvious longer version is wrong: ALL, GO, IT, NA,
+//   ON and SO all look like filler and are all real securities in our own universe — Allstate,
+//   Grocery Outlet, Gartner, Nano Labs, ON Semiconductor and Southern Company. Rejecting them to be
+//   safe would silently delete six listed companies from every card and every board. Only strings
+//   with no listed issuer anywhere are named here.
+const TICKER_SHAPE = /^[A-Z]{1,5}(\.[A-Z]{1,2})?$/;
+// ⚠️ EVERY ADDITION HERE MUST BE CHECKED AGAINST THE LIVE UNIVERSE FIRST.
+// 'NAN' was in this list for one draft. It is Nuveen New York Quality Municipal Income Fund, a real
+// $357M closed-end fund, and blocking it would have removed a listed security from every card and
+// board to guard against a string no source actually emits. The check is one query; the failure is
+// silent and indistinguishable from the fund simply not trading.
+const TICKER_PLACEHOLDERS = new Set([
+  'NONE', 'NULL', 'N/A', 'UNKNOWN', 'UNDEFINED', 'NIL', 'TBD', 'ERROR', 'MISSING', 'PLACEHOLDER',
+]);
+
+/**
+ * True when `t` can be shown to a user AS a ticker and linked to a security page.
+ *
+ * This is the single eligibility gate for every ticker-facing surface. It answers "may this be
+ * rendered", never "what should this be" — it resolves nothing, guesses nothing and derives nothing
+ * from a company name.
+ */
+export function isRenderableTicker(t) {
+  if (typeof t !== 'string') return false;
+  const s = t.trim().toUpperCase();
+  if (!s) return false;
+  if (TICKER_PLACEHOLDERS.has(s)) return false;
+  return TICKER_SHAPE.test(s);
+}
+
+/**
+ * The first candidate whose ticker can actually be rendered, or null when none can.
+ *
+ * Candidates arrive already ranked by whatever the card cares about — value, recency, breadth — and
+ * that order is preserved exactly. Ineligible entries are SKIPPED rather than blanked, because a
+ * card built around a listed security must either name one or stand down; showing the strongest
+ * event with its symbol hidden is the same false claim in quieter clothing.
+ */
+export function firstRenderable(candidates, getTicker = (c) => c?.ticker) {
+  if (!Array.isArray(candidates)) return null;
+  for (const c of candidates) if (isRenderableTicker(getTicker(c))) return c;
+  return null;
+}
+
 /** Where a source sits in the precedence, or Infinity if it is not one we recognise. */
 export const sourceRank = (s) => (RANK.has(s) ? RANK.get(s) : Number.POSITIVE_INFINITY);
 
