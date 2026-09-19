@@ -463,6 +463,9 @@ export const screenerStocks = pgTable('screener_stocks', {
   exchange:      text('exchange'),
   sector:        text('sector'),
   industry:      text('industry'),
+  // The SIC code the sector is DERIVED from. Retained so classification can be replayed when the
+  // taxonomy improves, instead of requiring a full vendor re-fetch. See market-taxonomy.mjs.
+  sicCode:   integer('sic_code'),
   country:       text('country'),
   assetType:     text('asset_type'),          // 'stock' | 'etf'
   marketCap:     doublePrecision('market_cap'),
@@ -566,6 +569,7 @@ export const screenerMeta = pgTable('screener_meta', {
   marketCap: doublePrecision('market_cap'),
   sector:    text('sector'),
   industry:  text('industry'),
+  sicCode:   integer('sic_code'),
   exchange:  text('exchange'),
   assetType: text('asset_type'),
   country:   text('country'),

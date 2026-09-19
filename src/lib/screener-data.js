@@ -3,6 +3,7 @@ import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
+import { sicToMarketSector } from './market-taxonomy.mjs';
 import { readSecurityIdentity, refreshSecurityIdentity, filerNameMap } from './security-identity';
 import { captureFundamentalSnapshot } from './fundamental-snapshot';
 
@@ -33,6 +34,9 @@ export async function ensureScreenerTables() {
     fund_net_qoq INTEGER, consensus_score INTEGER, has_material_8k BOOLEAN DEFAULT FALSE, news_recent BOOLEAN DEFAULT FALSE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
+  await db.execute(sql`ALTER TABLE screener_stocks ADD COLUMN IF NOT EXISTS sic_code INTEGER`);
+  await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS sic_code INTEGER`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_screener_sic ON screener_stocks (sic_code)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_screener_sector ON screener_stocks (sector)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_screener_mcap ON screener_stocks (market_cap)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_screener_consensus ON screener_stocks (consensus_score)`);
@@ -238,32 +242,12 @@ export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleD
 
 // Polygon primary_exchange (MIC) → our exchange label.
 const EXCH_MAP = { XNAS: 'NASDAQ', XNGS: 'NASDAQ', XNCM: 'NASDAQ', XNMS: 'NASDAQ', ARCX: 'NYSE', XNYS: 'NYSE', XASE: 'AMEX', BATS: 'AMEX', XCBO: 'AMEX' };
-// Coarse SIC-code → GICS-ish sector (approximate; good enough for screening buckets).
-function sicToSector(code) {
-  const n = parseInt(code, 10); if (!Number.isFinite(n)) return null;
-  if (n >= 2833 && n <= 2836) return 'Healthcare';         // biologics/pharma
-  if (n >= 3570 && n <= 3579) return 'Technology';
-  if (n >= 3670 && n <= 3679) return 'Technology';
-  if (n >= 7370 && n <= 7379) return 'Technology';         // software/data
-  if (n >= 100 && n <= 999) return 'Basic Materials';
-  if (n >= 1000 && n <= 1499) return 'Basic Materials';
-  if (n >= 1500 && n <= 1799) return 'Industrials';
-  if (n >= 2000 && n <= 2199) return 'Consumer Defensive';
-  if (n >= 2200 && n <= 2399) return 'Consumer Cyclical';
-  if (n >= 2800 && n <= 2899) return 'Basic Materials';
-  if (n >= 2900 && n <= 2999) return 'Energy';
-  if (n >= 1300 && n <= 1399) return 'Energy';
-  if (n >= 3000 && n <= 3999) return 'Industrials';
-  if (n >= 4000 && n <= 4799) return 'Industrials';
-  if (n >= 4800 && n <= 4899) return 'Communication Services';
-  if (n >= 4900 && n <= 4999) return 'Utilities';
-  if (n >= 5000 && n <= 5999) return 'Consumer Cyclical';
-  if (n >= 6500 && n <= 6599) return 'Real Estate';
-  if (n >= 6000 && n <= 6799) return 'Financial Services';
-  if (n >= 8000 && n <= 8099) return 'Healthcare';
-  if (n >= 7000 && n <= 8999) return 'Consumer Cyclical';
-  return null;
-}
+// The coarse SIC→sector mapper that used to live here has been replaced by the canonical taxonomy
+// in market-taxonomy.mjs. It described itself as "approximate; good enough for screening buckets"
+// and was accurate about that — but it became what colours the market heatmap, where it put TSLA in
+// Industrials, PG in Basic Materials and PLD in Financial Services. Sector derivation now has ONE
+// definition, shared by the screener, the heatmap, ticker pages and research.
+
 async function fetchDetail(t) {
   try {
     const [dR, divR] = await Promise.all([
@@ -279,7 +263,18 @@ async function fetchDetail(t) {
     return {
       ticker: t,
       marketCap: d.market_cap ?? null,
-      sector: sicToSector(d.sic_code),
+      // ⚠️ THE CODE IS RETAINED, NOT JUST THE DERIVED SECTOR.
+      //
+      // This used to store `sicToSector(d.sic_code)` and `d.sic_description` and throw the CODE
+      // away. The classification was decided once at ingest and its source discarded, so when the
+      // mapping turned out to be wrong — TSLA in Industrials, PG in Basic Materials, PLD in
+      // Financial Services — there was nothing left to reclassify FROM, and correcting it would have
+      // meant re-fetching the whole universe from the vendor.
+      //
+      // Keeping sic_code makes the sector a DERIVATION rather than a decision: the taxonomy can be
+      // improved and replayed over existing rows in seconds.
+      sicCode: Number.isFinite(parseInt(d.sic_code, 10)) ? parseInt(d.sic_code, 10) : null,
+      sector: sicToMarketSector(d.sic_code),
       industry: d.sic_description || null,
       exchange: EXCH_MAP[d.primary_exchange] || null,
       assetType: d.type === 'ETF' ? 'ETF' : d.type === 'CS' ? 'Stock' : (d.type || null),
@@ -328,7 +323,7 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
     const batch = rows.slice(i, i + 300);
     await db.insert(screenerMeta).values(batch).onConflictDoUpdate({
       target: screenerMeta.ticker,
-      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, ipoDate: sql`excluded.ipo_date`, name: sql`coalesce(excluded.name, screener_meta.name)`, updatedAt: sql`now()` },
+      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, sicCode: sql`excluded.sic_code`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, ipoDate: sql`excluded.ipo_date`, name: sql`coalesce(excluded.name, screener_meta.name)`, updatedAt: sql`now()` },
     });
     saved += batch.length;
   }
@@ -986,7 +981,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       // NEVER m?.industry. An industry description is not a company name, and null is the honest
       // answer when no SEC filing has told us who this issuer is.
       ticker: t, company: nameByT.get(t) ?? null,
-      exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: mcap, ipoDate: m?.ipoDate ?? null,
+      exchange: m?.exchange ?? null, sector: m?.sector ?? null, industry: m?.industry ?? null, sicCode: m?.sicCode ?? null, country: m?.country ?? null, assetType: m?.assetType ?? null, marketCap: mcap, ipoDate: m?.ipoDate ?? null,
       price: px, changePct: tk?.changePct ?? pg?.changePct ?? priceMap.get(t)?.changePct ?? null,
       changeFromOpen: pg?.changeFromOpen ?? null, gap: pg?.gap ?? null,
       dividendYield: (m?.annualDividend && px > 0) ? (m.annualDividend / px) * 100 : null,
@@ -1043,7 +1038,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
         // retired or contaminated name survive a correction forever. The rebuild deletes the table
         // first, so this path is not normally taken; it must still be correct when it is.
         company: sql`excluded.company`,
-        exchange: sql`excluded.exchange`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, country: sql`excluded.country`, assetType: sql`excluded.asset_type`, marketCap: sql`excluded.market_cap`, ipoDate: sql`excluded.ipo_date`,
+        exchange: sql`excluded.exchange`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, sicCode: sql`excluded.sic_code`, country: sql`excluded.country`, assetType: sql`excluded.asset_type`, marketCap: sql`excluded.market_cap`, ipoDate: sql`excluded.ipo_date`,
         pe: sql`excluded.pe`, ps: sql`excluded.ps`, pb: sql`excluded.pb`, pCash: sql`excluded.p_cash`, evSales: sql`excluded.ev_sales`, evEbitda: sql`excluded.ev_ebitda`,
         grossMargin: sql`excluded.gross_margin`, operMargin: sql`excluded.oper_margin`, netMargin: sql`excluded.net_margin`, roe: sql`excluded.roe`, roa: sql`excluded.roa`,
         currentRatio: sql`excluded.current_ratio`, quickRatio: sql`excluded.quick_ratio`, debtEquity: sql`excluded.debt_equity`, ltDebtEquity: sql`excluded.lt_debt_equity`,
