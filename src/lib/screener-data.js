@@ -4,6 +4,7 @@ import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
 import { sicToMarketSector } from './market-taxonomy.mjs';
+import { isRenderableTicker } from './security-identity.mjs';
 import { readSecurityIdentity, refreshSecurityIdentity, filerNameMap } from './security-identity';
 import { captureFundamentalSnapshot } from './fundamental-snapshot';
 
@@ -877,24 +878,38 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   const fundByT = new Map((await db.select().from(screenerFundamentals)).map((r) => [r.ticker, r]));
 
   // 2) Universe = union of all tickers we have any signal/candle for.
+  //
+  // ⚠️ GATED, because this is where "NONE" entered the product.
+  //
+  // The universe is built from signal tables, and insider_trades carries a filing's
+  // issuerTradingSymbol verbatim — which for an unlisted issuer is the literal string "NONE" (26
+  // rows today, plus 6 "N/A"). That created a screener_stocks row for a security that does not
+  // exist, named after a non-traded fund, with no price, no market cap and no exchange, and it
+  // reached the homepage as a ticker card.
+  //
+  // Deleting that row without this gate would be theatre: the next rebuild reads the same insider
+  // rows and recreates it. The raw filings are correct and stay as they are — this is the boundary
+  // where a filing's text becomes a claim that a security exists, and it is the right place to
+  // refuse. `add` is the single entry point, so nothing can join the universe around it.
   const universe = new Set();
-  insRows.forEach((r) => r.ticker && universe.add(r.ticker));
-  conRows.forEach((r) => r.ticker && universe.add(r.ticker));
-  fundNet.forEach((_, t) => universe.add(t));
-  consensus.forEach((_, t) => universe.add(t));
-  has8k.forEach((t) => universe.add(t));
-  newsCat.forEach((_, t) => universe.add(t));
+  const addTicker = (t) => { if (isRenderableTicker(t)) universe.add(t); };
+  insRows.forEach((r) => addTicker(r.ticker));
+  conRows.forEach((r) => addTicker(r.ticker));
+  fundNet.forEach((_, t) => addTicker(t));
+  consensus.forEach((_, t) => addTicker(t));
+  has8k.forEach((t) => addTicker(t));
+  newsCat.forEach((_, t) => addTicker(t));
   // FINRA breadth, filtered to clean, liquid common-stock symbols (signal tickers are already in).
-  si.forEach((r) => { if (r.ticker && CLEAN_SYM.test(r.ticker) && (r.avg || 0) >= MIN_LIQUID_VOL) universe.add(r.ticker); });
+  si.forEach((r) => { if (r.ticker && CLEAN_SYM.test(r.ticker) && (r.avg || 0) >= MIN_LIQUID_VOL) addTicker(r.ticker); });
 
   // Polygon grouped-daily → market-wide EOD price/volume/change (the real universe + prices).
   const poly = await polygonEod();
-  if (poly) poly.map.forEach((_, t) => { if (CLEAN_SYM.test(t)) universe.add(t); });
+  if (poly) poly.map.forEach((_, t) => { if (CLEAN_SYM.test(t)) addTicker(t); });
   const insByT = new Map(insRows.map((r) => [r.ticker, r]));
   const conByT = new Map(conRows.map((r) => [r.ticker, r]));
 
   const candleTickers = (await db.selectDistinct({ ticker: tickerDailyCandles.ticker }).from(tickerDailyCandles)).map((r) => r.ticker);
-  candleTickers.forEach((t) => universe.add(t));
+  candleTickers.forEach((t) => addTicker(t));
 
   // 3) Technicals from candles (chunked). Only for tickers we have candles for.
   const tech = new Map();
