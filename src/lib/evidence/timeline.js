@@ -27,6 +27,7 @@ import { db } from '../db';
 import { FAMILY, DIRECTION, collectEvidence } from './model.mjs';
 import { firstInContext, burstContext, implausibleBreadth, breadthChangeContext } from './history.mjs';
 import { rankEvidence } from './rank.mjs';
+import { attachReactions } from './reaction-data';
 import {
   coverageBoundaries, quarterDisclosureDates, BREADTH_QUARTERS, BREADTH_LOOKBACK_DAYS,
   HISTORY_WINDOW_DAYS, ITEM_TO_TYPE, OPEN_MARKET_BUY,
@@ -376,9 +377,12 @@ export async function tickerEvidenceRange(ticker, { from, to, now = Date.now() }
   });
 
   const { evidence, quarantined } = collectEvidence(raw, { now });
+  // Reaction is attached AFTER integrity and dedupe, so nothing quarantined can carry a price
+  // history, and a deduped pair cannot produce two reaction paths for one filing.
+  const ranked = await attachReactions(symbol, rankEvidence(evidence, { now }), { now });
   return {
     ticker: symbol,
-    evidence: rankEvidence(evidence, { now }),
+    evidence: ranked,
     failedFamilies: failed,
     quarantined: quarantined.map((q) => ({ reason: q.reason, detail: q.detail })),
     range: { from: new Date(lo).toISOString(), to: new Date(toMs).toISOString() },

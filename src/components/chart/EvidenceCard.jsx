@@ -11,6 +11,7 @@
 // public date, and the card is where the underlying economic date is disclosed rather than hidden —
 // showing only one of them is how a reader concludes the market knew something months early.
 
+import { Fragment } from 'react';
 import { C } from '../../lib/cp-shared';
 import { markerPalette } from '../../lib/chart/evidence-markers.mjs';
 
@@ -87,10 +88,72 @@ function Row({ ev, pal }) {
   );
 }
 
+// ── market reaction ──────────────────────────────────────────────────────────
+//
+// WORDING IS PART OF THE CORRECTNESS. "After public disclosure" is a statement about time; "impact",
+// "result" or "signal performance" would be claims about cause, which this data cannot support and
+// which nothing in the product is allowed to imply. The heading and the sub-label are deliberate.
+//
+// Only completed horizons appear. A blank row would read as "no movement"; an omitted one reads as
+// what it is — not enough sessions have passed yet.
+const HORIZON_LABEL = { 1: '1D', 5: '5D', 20: '20D', 63: '63D' };
+
+function pctText(n) {
+  if (n == null) return null;
+  return `${n > 0 ? '+' : ''}${n.toFixed(1)}%`;
+}
+
+function MarketReaction({ reaction }) {
+  if (!reaction?.hasAny) return null;
+  const done = Object.entries(reaction.horizons)
+    .filter(([, v]) => v && v.return != null)
+    .sort((a, b) => Number(a[0]) - Number(b[0]));
+  if (!done.length) return null;
+
+  return (
+    <div style={{ marginTop: 8, paddingTop: 7, borderTop: `1px solid ${C.border}` }}>
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 8, letterSpacing: '0.7px', color: C.dim }}>
+        MARKET REACTION
+      </div>
+      <div style={{ fontSize: 9, color: C.muted, marginTop: 1, marginBottom: 4 }}>
+        After public disclosure · from {reaction.anchorDate} close
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '2px 8px', alignItems: 'baseline' }}>
+        {done.map(([h, v]) => (
+          <Fragment key={h}>
+            <span style={{ fontSize: 9, color: C.dim, fontFamily: "'DM Sans',sans-serif" }}>
+              {HORIZON_LABEL[h] || `${h}D`}
+            </span>
+            <span className="cp-num" style={{
+              fontSize: 11, fontWeight: 600,
+              color: v.return > 0 ? C.green : v.return < 0 ? C.red : C.muted,
+            }}>{pctText(v.return)}</span>
+            {/* Relative to SPY over the same two dates. Absent when a benchmark close is missing —
+                a relative number against a guessed benchmark is worse than none. */}
+            <span className="cp-num" style={{ fontSize: 10, color: C.muted, textAlign: 'right' }}>
+              {v.relative == null ? '' : `${pctText(v.relative)} vs ${reaction.benchmark}`}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function EvidenceCard({ detail, theme, onClose, hostWidth = 0, hostHeight = 0 }) {
   if (!detail?.items?.length) return null;
   const pal = markerPalette(theme);
   const W = 268;
+
+  // ONE REACTION PATH PER ANCHOR. Grouped markers share a bar, so their items share a public
+  // trading anchor and their reactions are the same path — printing it once per item would repeat
+  // the same three numbers and, where two items resolved to different anchors, would show two
+  // contradictory paths for one marker. Rendered once, from the earliest anchor present.
+  const reactions = detail.items.map((e) => e.reaction).filter((r) => r?.hasAny);
+  const anchors = new Set(reactions.map((r) => r.anchorDate));
+  const groupReaction = reactions.length
+    ? reactions.reduce((a, b) => (a.anchorDate <= b.anchorDate ? a : b))
+    : null;
 
   // Flip toward whichever side has room, so a marker near the right edge does not open a card that
   // is half off the canvas.
@@ -128,6 +191,14 @@ export default function EvidenceCard({ detail, theme, onClose, hostWidth = 0, ho
         >×</button>
       </div>
       {detail.items.map((ev) => <Row key={ev.evidenceId} ev={ev} pal={pal} />)}
+      <MarketReaction reaction={groupReaction} />
+      {anchors.size > 1 && (
+        // Two items on one bar resolved to different anchors — an 8-K filed after the close beside
+        // a Form 4 dated that day, say. One path is shown and it is said which.
+        <div style={{ fontSize: 9, color: C.muted, marginTop: 3 }}>
+          Shown from the earliest disclosure on this bar.
+        </div>
+      )}
     </div>
   );
 }
