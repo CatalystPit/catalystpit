@@ -10,7 +10,22 @@ export const metadata = pageMeta({
   path: '/heatmap',
 });
 
-export const dynamic = 'force-dynamic';
+// ── CACHING MATCHED TO HOW OFTEN THE DATA ACTUALLY CHANGES ───────────────────
+//
+// This was `dynamic = 'force-dynamic'`, so every request re-ran the whole board query against
+// Postgres. Measured in production: 2,431ms cold, 336ms warm, a cache MISS every time — the slowest
+// route on the site by a factor of three, while every cached page answered in 70-90ms.
+//
+// Nothing here varies per request. No cookies, no headers, no auth, no searchParams, and `access` is
+// the hardcoded pre-launch literal — every viewer gets the same end-of-day board. Re-deriving it per
+// request bought nothing. 300s matches the s-maxage the API route already uses, so the page and its
+// first refresh cannot disagree about how fresh the data is.
+//
+// ⚠️ REVISIT WHEN REALTIME ENTITLEMENTS SHIP. The moment the board differs by subscription tier this
+// must go back to per-request rendering, or a cached EOD page will be served to a realtime viewer —
+// and the reverse, which is the licensing-sensitive direction. The `access` object below is the
+// signal: while `realtime` is a constant false, this cache is safe.
+export const revalidate = 300;
 
 /**
  * SERVER-RENDERED FIRST PAINT.
