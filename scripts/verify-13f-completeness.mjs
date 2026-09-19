@@ -16,7 +16,7 @@
 //
 // Run: node --import ./scripts/real-db-register.mjs scripts/verify-13f-completeness.mjs
 
-import { infoTableDetector, infoTableBlocks, fieldMatcher } from '../src/lib/institutions-quarter.mjs';
+import { infoTableDetector, infoTableBlocks, fieldMatcher, splitSubmissionDocuments } from '../src/lib/institutions-quarter.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c) => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}`); } };
@@ -101,6 +101,55 @@ console.log('\n=== a reason survives, so a gap can be explained and resumed ==='
   ok('every entry names its quarter', unresolved.every((u) => !!u.quarter));
   ok('every entry names why', unresolved.every((u) => u.reason === 'unreadable' || u.reason === 'no-positions-parsed'));
   ok('the two causes stay distinguishable', new Set(unresolved.map((u) => u.reason)).size === 2);
+}
+
+console.log('\n=== 4. THE COMPLETE-SUBMISSION FALLBACK PARSES PER DOCUMENT ===');
+{
+  // Routes 1 and 2 fetch ONE document and stop at the first holding an info table. Route 3 reads the
+  // whole concatenated submission, so without splitting it first, a filing carrying TWO info-table
+  // documents would have both read as one table and their positions merged — a security in each
+  // would be summed across documents never meant to be combined. Silent, and arithmetically
+  // plausible, which is the worst combination.
+  const doc = (type, body) => `<DOCUMENT>\n<TYPE>${type}\n${body}\n</DOCUMENT>\n`;
+  const table = (cusip) => `<informationTable><infoTable><cusip>${cusip}</cusip><value>10</value>` +
+    `<shrsOrPrnAmt><sshPrnamt>5</sshPrnamt></shrsOrPrnAmt></infoTable></informationTable>`;
+
+  const twoTables = doc('13F-HR', '<primaryDoc/>') + doc('INFORMATION TABLE', table('111111111')) +
+    doc('INFORMATION TABLE', table('222222222'));
+  const docs = splitSubmissionDocuments(twoTables);
+  ok('three documents are separated', docs.length === 3);
+  ok('the cover page holds no table', !infoTableDetector().test(docs[0]));
+  const withTable = docs.filter((d) => infoTableDetector().test(d));
+  // Null-safe: a broken splitter must FAIL these, not throw. A crash reads as an error in the test
+  // rather than as the defect being caught, and the distinction matters when reading a mutation run.
+  const blocks = (d) => (typeof d === 'string' ? (d.match(infoTableBlocks()) || []).length : -1);
+  ok('both info-table documents are found', withTable.length === 2);
+  ok('each yields ONE position, not two merged', blocks(withTable[0]) === 1 && blocks(withTable[1]) === 1);
+  // The regression itself: parsing the raw submission would see both.
+  ok('parsing the UNSPLIT submission would have merged them — the bug this prevents',
+    (twoTables.match(infoTableBlocks()) || []).length === 2);
+  ok('the first table document is the one taken, matching routes 1 and 2',
+    String(withTable[0] ?? '').includes('111111111'));
+
+  const normal = doc('13F-HR', '<primaryDoc/>') + doc('INFORMATION TABLE', table('037833100'));
+  const one = splitSubmissionDocuments(normal).filter((d) => infoTableDetector().test(d));
+  ok('the ordinary two-document filing still yields exactly one table', one.length === 1);
+  ok('...and one position', blocks(one[0]) === 1);
+}
+
+console.log('\n=== the splitter never turns a readable filing into an unreadable one ===');
+{
+  // A submission with no SGML markers is one document. Returning nothing here would convert a
+  // filing we CAN read into a fetch failure — trading one silent loss for another.
+  const bare = '<informationTable><infoTable><cusip>037833100</cusip></infoTable></informationTable>';
+  ok('a submission with no <DOCUMENT> markers is returned whole', splitSubmissionDocuments(bare).length === 1);
+  ok('...and still parses', infoTableDetector().test(String(splitSubmissionDocuments(bare)[0] ?? '')));
+  ok('empty string yields nothing', splitSubmissionDocuments('').length === 0);
+  ok('a non-string yields nothing, not a crash',
+    splitSubmissionDocuments(null).length === 0 && splitSubmissionDocuments(undefined).length === 0);
+  ok('an unterminated <DOCUMENT> still yields its content',
+    splitSubmissionDocuments('<DOCUMENT>\n<TYPE>X\nbody-without-close').length === 1);
+  ok('lowercase markers are handled', splitSubmissionDocuments('<document>a</document>').length === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

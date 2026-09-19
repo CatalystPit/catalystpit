@@ -108,6 +108,39 @@ export function firstRenderable(candidates, getTicker = (c) => c?.ticker) {
 export const sourceRank = (s) => (RANK.has(s) ? RANK.get(s) : Number.POSITIVE_INFINITY);
 
 /**
+ * May an incoming identity replace the one already stored?
+ *
+ * ── WHY THIS IS NOT UNCONDITIONAL ───────────────────────────────────────────
+ *
+ * The nightly rebuild upserted `name = excluded.name` with no comparison at all, and the fetch it
+ * depends on fails SOFT by design: an SEC outage returns an empty map rather than aborting the
+ * rebuild. Those two decisions are individually reasonable and together they lose data. When
+ * sec_ticker (rank 3) is missing for a night, any ticker named by BOTH SEC and the vendor falls
+ * through to `provider` (rank 4), and the vendor's name is written over the SEC name that was
+ * already there. The run then reports ok:true, because from its point of view nothing failed.
+ *
+ * The damage is quiet and it is durable: the next night SEC returns, the SEC name wins again, and
+ * nothing records that the product displayed a vendor's name in between. A company name is the kind
+ * of fact users notice and we do not.
+ *
+ * ── THE RULE ────────────────────────────────────────────────────────────────
+ *
+ * An identity may be replaced by one of EQUAL OR HIGHER authority, never lower.
+ *
+ *   equal   — a corrected form4 name replaces an older form4 name. Refreshes must still work, or
+ *             the table freezes at whatever it first learned.
+ *   higher  — provider → sec_ticker is a genuine promotion and must not be blocked.
+ *   lower   — sec_ticker → provider is the outage case, and is refused.
+ *
+ * An unknown or absent stored source ranks lowest, so a row written before this existed can still be
+ * corrected by anything; an unknown INCOMING source also ranks lowest and therefore cannot displace
+ * a known one.
+ */
+export function shouldReplaceIdentity(storedSource, incomingSource) {
+  return sourceRank(incomingSource) <= sourceRank(storedSource);
+}
+
+/**
  * A name we are willing to print, or null.
  *
  * Whitespace is collapsed because filings pad and wrap. An SIC description is refused whatever

@@ -9,7 +9,7 @@
 
 import { sql } from 'drizzle-orm';
 import { db } from './db';
-import { buildIdentities, resolveFilerName, parseSecTickerFile } from './security-identity.mjs';
+import { buildIdentities, resolveFilerName, parseSecTickerFile, IDENTITY_SOURCES } from './security-identity.mjs';
 
 const SEC_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
 const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com', 'Accept-Encoding': 'gzip, deflate' };
@@ -91,11 +91,28 @@ export async function refreshSecurityIdentity({ fetchImpl = fetch } = {}) {
   for (let i = 0; i < rows.length; i += 500) {
     const batch = rows.slice(i, i + 500);
     const values = batch.map((r) => sql`(${r.ticker}, ${r.name}, ${r.source}, now())`);
+    // ⚠️ RANK GUARD — a lower-authority source may not overwrite a higher-authority name.
+    //
+    // This upsert used to be unconditional, and the fetch above fails SOFT by design: an SEC outage
+    // yields an empty map rather than aborting the rebuild. Together those lose data. With
+    // sec_ticker (rank 3) missing for one night, any ticker named by BOTH SEC and the vendor falls
+    // through to `provider` (rank 4) and the vendor's name is written over the SEC name already
+    // stored — while the run returns ok:true, because from its point of view nothing failed.
+    //
+    // The SQL mirrors shouldReplaceIdentity() exactly: replace on EQUAL or HIGHER authority, refuse
+    // LOWER. Equal still replaces, so a corrected name of the same source is not frozen out, and
+    // provider → sec_ticker remains a legitimate promotion. The rank list is derived from
+    // IDENTITY_SOURCES rather than retyped here, so precedence has one definition.
+    // array_position is 1-based and returns NULL for an unknown source; coalescing to 99 ranks both
+    // an unknown stored source and an unknown incoming source as lowest authority.
+    const rankArr = sql`ARRAY[${sql.join(IDENTITY_SOURCES.map((s) => sql`${s}`), sql`, `)}]::text[]`;
     await db.execute(sql`
       insert into security_identity (ticker, name, source, updated_at)
       values ${sql.join(values, sql`, `)}
       on conflict (ticker) do update set
-        name = excluded.name, source = excluded.source, updated_at = excluded.updated_at`);
+        name = excluded.name, source = excluded.source, updated_at = excluded.updated_at
+      where coalesce(array_position(${rankArr}, excluded.source), 99)
+         <= coalesce(array_position(${rankArr}, security_identity.source), 99)`);
   }
 
   const bySource = {};

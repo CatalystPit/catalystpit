@@ -2,7 +2,7 @@ import { and, eq, gte, sql, desc, isNull, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { fundHoldings, fundFilings, institutions } from './schema';
 import { INSTITUTIONS } from './institutions.mjs';
-import { quarterUnchanged, infoTableDetector, infoTableBlocks, fieldMatcher } from './institutions-quarter.mjs';
+import { quarterUnchanged, infoTableDetector, infoTableBlocks, fieldMatcher, splitSubmissionDocuments } from './institutions-quarter.mjs';
 import { resolveCusips, reresolveCusips } from './security-resolver';
 import { resolveIssuerItems } from './name-resolver';
 
@@ -422,13 +422,22 @@ async function fetchHoldings(cik, accession, filedDate) {
     if (got) return got;
   }
 
-  // ROUTE 3 — the complete submission, every document of the filing concatenated in one object. The
-  // info table is embedded verbatim, so the same parser reads it; documents without an <infoTable>
-  // contribute no rows.
+  // ROUTE 3 — the complete submission: every document of the filing concatenated into one object,
+  // each wrapped in SGML <DOCUMENT> markers.
+  //
+  // ⚠️ PARSED PER DOCUMENT, NOT WHOLE. Routes 1 and 2 fetch ONE document and stop at the first that
+  // holds an info table. Handing the entire concatenated submission to the parser looks equivalent
+  // and is not: a filing carrying two info-table documents would have both read as one table and
+  // their positions merged, so a security appearing in each would be summed across documents that
+  // were never meant to be combined. Sampled filings all hold exactly one (cover page + info table),
+  // so this never fired — but "we have not seen it" is not a guarantee, and the failure would be
+  // silent and arithmetically plausible.
   const txt = await secText(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accession}.txt`);
   if (txt != null) {
     readSomething = true;
-    if (hasTable(txt)) return parseInfoTable(txt, wholeDollars);
+    for (const doc of splitSubmissionDocuments(txt)) {
+      if (hasTable(doc)) return parseInfoTable(doc, wholeDollars);
+    }
   }
 
   // Null means "we never got to see this filing", and the caller must not store the quarter. An empty

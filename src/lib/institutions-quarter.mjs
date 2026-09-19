@@ -42,6 +42,25 @@ export const infoTableBlocks = () => new RegExp(`${INFO_TABLE_OPEN}[\\s\\S]*?<\\
 export const fieldMatcher = (name) =>
   new RegExp(`<(?:\\w+:)?${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:\\w+:)?${name}>`, 'i');
 
+// A complete SEC submission, split into its individual documents.
+//
+// The `.txt` object concatenates every document of a filing, each wrapped in SGML <DOCUMENT> …
+// </DOCUMENT> markers. Splitting first is what keeps the fallback route equivalent to fetching a
+// single document: without it, a filing with two info-table documents would have both parsed as one
+// table and positions merged across documents that were never meant to be combined.
+//
+// A submission with no markers at all is returned whole — one document is the honest reading of it,
+// and returning nothing would turn a readable filing into an unreadable one.
+export function splitSubmissionDocuments(text) {
+  if (typeof text !== 'string' || !text) return [];
+  const parts = text.split(/<DOCUMENT>/i).slice(1);
+  if (!parts.length) return [text];
+  return parts.map((p) => {
+    const end = p.search(/<\/DOCUMENT>/i);
+    return end >= 0 ? p.slice(0, end) : p;
+  });
+}
+
 export function quarterUnchanged(list, storedAccession) {
   if (!storedAccession || !Array.isArray(list) || list.length !== 1) return false;
   const only = list[0];
