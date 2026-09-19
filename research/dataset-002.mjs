@@ -23,7 +23,20 @@ export const MIN_N = 30;
 export const MIN_FILERS = 1000;      // ⚠️ FROZEN. Not to be lowered to make a quarter usable.
 export const HOLDOUT_DAYS = 120;
 
-const sql = neon(process.env.DATABASE_URL);
+// LAZY, so importing the pure helpers does not require a database URL.
+//
+// The research suite tests dollarVolProxy, priorReturn and instDirection — all pure — and must stay
+// runnable with no credentials. Building the client at module scope made `node
+// scripts/verify-research.mjs` fail outright unless DATABASE_URL happened to be set, which turns a
+// pure suite into a credentialed one for no reason.
+let _sql = null;
+const sql = (...args) => {
+  if (!_sql) {
+    if (!process.env.DATABASE_URL) throw new Error('dataset-002: DATABASE_URL required to build the dataset');
+    _sql = neon(process.env.DATABASE_URL);
+  }
+  return _sql(...args);
+};
 
 /** Quarters, their filer counts, and which consecutive pairs can support a QoQ comparison. */
 export async function quarterState() {
