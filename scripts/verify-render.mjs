@@ -70,6 +70,10 @@ export default {};
 const TARGETS = [
   { file: 'src/components/chart/CPChart.jsx', props: { symbol: 'SPY', initialTimeframe: '1D', transparent: true } },
   { file: 'src/components/chart/TickerPriceChart.jsx', props: { symbol: 'SPY' } },
+  // The ticker page's analysis cards. Each fetches on mount, so SSR renders the loading state —
+  // what is asserted is that they evaluate and render at all.
+  { file: 'src/components/MarketStructure.jsx', props: { symbol: 'MSFT' } },
+  { file: 'src/components/WhatChanged.jsx', props: { symbol: 'MSFT' } },
   { file: 'src/components/scan/PitScanPanel.jsx', props: { onPick: () => {} } },
   { file: 'src/components/scan/CustomScannerPanel.jsx', props: { onPick: () => {} } },
   // The column-help tooltip, and the two pages that mount it. The Dividend Calendar renders eight of
@@ -228,6 +232,54 @@ for (const target of TARGETS) {
 // A hook's dependency array is evaluated EAGERLY during render, so it may not name a `const`
 // declared later in the same function. The callback body may — it runs afterwards — which is what
 // makes this easy to write and hard to spot.
+// ── IMPORTED BUT NEVER RENDERED ──────────────────────────────────────────────
+//
+// THE BUG THIS EXISTS FOR. Market Structure shipped with its import added to TickerPage and the
+// `<MarketStructure />` tag missing: an automated edit matched the single-line import but not the
+// multi-line JSX, because this repo's files are CRLF and the pattern used \n. The build compiled
+// (an unused import is legal), every unit suite passed, the API served correctly and the component
+// was in the bundle — and the card was absent from the page for every user.
+//
+// A component imported into a page and never used is almost always that mistake rather than an
+// intention, so it is an error here. `rendersAll` lists the page files this applies to.
+console.log('\nchecking that imported components are actually rendered');
+{
+  const PAGES = [
+    'src/app/ticker/[symbol]/TickerPage.jsx',
+    'src/components/CatalystPit.jsx',
+  ];
+  for (const rel of PAGES) {
+    const abs = path.join(process.cwd(), rel);
+    if (!fs.existsSync(abs)) { ok(`${rel} exists`, false); continue; }
+    // Normalise line endings before any matching — the very hazard that caused the bug.
+    const src = fs.readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
+    // Default imports of local components: `import Foo from './components/Foo'`.
+    const imported = [...src.matchAll(/^import\s+([A-Z]\w*)\s+from\s+['"][^'"]*['"];?$/gm)]
+      .map((m) => m[1]);
+    const unused = imported.filter((name) => {
+      // Used as a JSX element, or referenced anywhere outside its own import line.
+      const asJsx = new RegExp(`<${name}[\\s/>]`).test(src);
+      const otherRef = new RegExp(`(?<!import\\s)\\b${name}\\b`).test(
+        src.split('\n').filter((l) => !l.startsWith(`import ${name} `)).join('\n'),
+      );
+      return !asJsx && !otherRef;
+    });
+    ok(`${rel}: every imported component is rendered`, unused.length === 0,
+      unused.length ? `imported but never used: ${unused.join(', ')}` : '');
+  }
+  // And the specific ordering this page is supposed to have, asserted by name so a future edit
+  // that drops the card is caught by more than a general rule.
+  const tp = fs.readFileSync(path.join(process.cwd(), 'src/app/ticker/[symbol]/TickerPage.jsx'), 'utf8')
+    .replace(/\r\n/g, '\n');
+  const iWhat = tp.indexOf('<WhatChanged');
+  const iStruct = tp.indexOf('<MarketStructure');
+  const iBulls = tp.indexOf('<BullsBears');
+  ok('TickerPage renders <MarketStructure>', iStruct > -1);
+  ok('Market Structure sits between What Changed and Bull & Bear',
+    iWhat > -1 && iStruct > iWhat && iBulls > iStruct,
+    `WhatChanged@${iWhat} MarketStructure@${iStruct} BullsBears@${iBulls}`);
+}
+
 console.log('\nchecking hook dependency arrays for forward references');
 {
   const files = [

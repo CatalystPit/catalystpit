@@ -921,6 +921,13 @@ function OverviewTab({ data, insider, gov, onTab }) {
           Bulls/Bears below it is the standing argument; this is the change. */}
       <WhatChanged symbol={data.symbol} />
 
+      {/* Market structure. Sits between what CHANGED and the standing bull/bear argument: it
+          answers "where is price relative to structure", which is the question a reader has right
+          after the chart above and before anyone else's opinion.
+          Free users see the daily card; weekly, monthly and the major/confluence levels are gated
+          server-side — but the CARD ITSELF always renders for every tier. */}
+      <MarketStructure symbol={data.symbol} />
+
       {/* Bull & Bear synthesis. */}
       <BullsBears ticker={data.symbol} />
 
