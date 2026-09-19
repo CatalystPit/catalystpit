@@ -9,7 +9,7 @@ import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
-import ConsensusBadge from '../../../components/ConsensusBadge';
+import ConsensusPanel from '../../../components/ConsensusPanel';
 import CompanyDescription from '../../../components/CompanyDescription';
 import { normalizeDescription } from '../../../lib/company-description.mjs';
 
@@ -197,7 +197,7 @@ function Hero({ data, earnings }) {
             <span style={{ color: C.dim }}> · estimated from filing history</span>
           </div>
         )}
-        <div><ConsensusBadge symbol={data.symbol} /></div>
+        <div><ConsensusPanel symbol={data.symbol} /></div>
       </div>
 
       {/* key statistics — NO last-sale price (production = EDGAR + widget); live price is in
