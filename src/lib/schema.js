@@ -745,3 +745,78 @@ export const securityReviewQueue = pgTable('security_review_queue', {
   uqReview:   uniqueIndex('uq_review_kind_key').on(t.kind, t.key),
   idxRvStatus: index('idx_review_status').on(t.status),
 }));
+
+// ── POINT-IN-TIME FUNDAMENTALS ───────────────────────────────────────────────
+//
+// screener_stocks is a clean-rebuild snapshot: DELETEd and rewritten nightly, one `updated_at` for
+// every row, so it holds exactly one historical observation — the present. Valuation, margins,
+// growth and market cap therefore have no past to research and no provider sells us ours back.
+//
+// This table is the history, accumulating from the day it was created. Written by the nightly
+// rebuild, read by nothing in production — the research harness under research/ is its only
+// eventual consumer. Rows are written only when a ticker's payload CHANGES, because fundamentals
+// update quarterly and a dense daily copy would be ~550MB a year of identical rows; see
+// fundamental-snapshot.js for why market cap is excluded from that test.
+export const securityFundamentalSnapshot = pgTable('security_fundamental_snapshot', {
+  ticker:     text('ticker').notNull(),
+  asOf:       date('as_of', { mode: 'string' }).notNull(),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+  company:    text('company'),
+  sector:     text('sector'),
+  industry:   text('industry'),
+  exchange:   text('exchange'),
+  country:    text('country'),
+  assetType:  text('asset_type'),
+  ipoDate:    date('ipo_date', { mode: 'string' }),
+  marketCap:  doublePrecision('market_cap'),
+  sharesOut:  doublePrecision('shares_out'),
+  floatShares: doublePrecision('float_shares'),
+  epsTtm:     doublePrecision('eps_ttm'),
+  revenueTtm: doublePrecision('revenue_ttm'),
+  equity:     doublePrecision('equity'),
+  totalDebt:  doublePrecision('total_debt'),
+  cash:       doublePrecision('cash'),
+  ebitda:     doublePrecision('ebitda'),
+  pe:         doublePrecision('pe'),
+  ps:         doublePrecision('ps'),
+  pb:         doublePrecision('pb'),
+  evSales:    doublePrecision('ev_sales'),
+  evEbitda:   doublePrecision('ev_ebitda'),
+  dividendYield: doublePrecision('dividend_yield'),
+  payoutRatio: doublePrecision('payout_ratio'),
+  roe:        doublePrecision('roe'),
+  roa:        doublePrecision('roa'),
+  roic:       doublePrecision('roic'),
+  grossMargin: doublePrecision('gross_margin'),
+  operMargin: doublePrecision('oper_margin'),
+  netMargin:  doublePrecision('net_margin'),
+  debtEquity: doublePrecision('debt_equity'),
+  ltDebtEquity: doublePrecision('lt_debt_equity'),
+  currentRatio: doublePrecision('current_ratio'),
+  quickRatio: doublePrecision('quick_ratio'),
+  epsGrowthTtm: doublePrecision('eps_growth_ttm'),
+  revGrowthTtm: doublePrecision('rev_growth_ttm'),
+  epsGrowthQoq: doublePrecision('eps_growth_qoq'),
+  salesGrowthQoq: doublePrecision('sales_growth_qoq'),
+  epsGrowth3y: doublePrecision('eps_growth_3y'),
+  salesGrowth3y: doublePrecision('sales_growth_3y'),
+  epsGrowth5y: doublePrecision('eps_growth_5y'),
+  salesGrowth5y: doublePrecision('sales_growth_5y'),
+  epsGrowthThisYr: doublePrecision('eps_growth_this_yr'),
+  instOwnPct: doublePrecision('inst_own_pct'),
+  shortFloat: doublePrecision('short_float'),
+  source:     text('source').notNull().default('screener_rebuild'),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.ticker, t.asOf] }),
+  idxAsOf: index('idx_fund_snapshot_asof').on(t.asOf),
+}));
+
+// One row per capture. With change-only writes, "nothing changed today" and "the job did not run"
+// would otherwise be the same absence of rows — this is how coverage is audited rather than inferred.
+export const securitySnapshotRun = pgTable('security_snapshot_run', {
+  asOf:       date('as_of', { mode: 'string' }).primaryKey(),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().defaultNow(),
+  considered: integer('considered').notNull().default(0),
+  written:    integer('written').notNull().default(0),
+  source:     text('source').notNull().default('screener_rebuild'),
+});

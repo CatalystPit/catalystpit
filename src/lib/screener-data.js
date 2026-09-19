@@ -4,6 +4,7 @@ import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
 import { readSecurityIdentity, refreshSecurityIdentity, filerNameMap } from './security-identity';
+import { captureFundamentalSnapshot } from './fundamental-snapshot';
 
 // Populates the screener_stocks universe from data we ALREADY own (no external provider):
 //  proprietary signals (insider/congress/13F/consensus/8-K) + price/volume/technicals computed
@@ -1108,5 +1109,23 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   }
 
   const [{ n }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
-  return { universe: tickers.length, technicals: tech.size, polygon: poly ? poly.map.size : 0, polygonDate: poly?.date || null, quoted, tableCount: n };
+  // POINT-IN-TIME CAPTURE, last and wrapped.
+  //
+  // screener_stocks is DELETEd and rewritten by this function, so today's fundamentals exist only
+  // until tomorrow's run overwrites them — there is no way to reconstruct them afterwards and no
+  // provider sells us ours back. The capture therefore runs here, immediately after the rebuild that
+  // produced the values, reading the table it just wrote.
+  //
+  // WRAPPED, because this is data collection for future research and must never be able to fail the
+  // nightly rebuild that the whole product depends on. A missed day is a missed day; a broken
+  // screener is an outage.
+  let snapshot = null;
+  try {
+    snapshot = await captureFundamentalSnapshot();
+    console.log(`[screener] fundamental snapshot: ${JSON.stringify(snapshot)}`);
+  } catch (e) {
+    console.log(`[screener] fundamental snapshot failed (non-fatal): ${e.message}`);
+  }
+
+  return { universe: tickers.length, technicals: tech.size, polygon: poly ? poly.map.size : 0, polygonDate: poly?.date || null, quoted, tableCount: n, snapshot };
 }
