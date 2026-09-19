@@ -17,9 +17,14 @@
 // ── SEC SAFETY IS UNCHANGED ──────────────────────────────────────────────────
 //
 // Request pacing, the identified User-Agent, the per-quarter sleeps and the 403 cooldown all belong
-// to institutions-universe.js and are NOT touched. Nothing here runs filers concurrently: one
-// process, one request at a time, ~0.6 req/s against SEC's 10/s ceiling. Finishing correctly matters
-// more than finishing sooner, and a block would cost far more time than parallelism would save.
+// to institutions-universe.js and are NOT touched.
+//
+// ONE process, and a pool of WORKERS=3 filers in flight. That is ~1.8 requests/second against SEC's
+// published 10/s guidance — under a fifth of it. Concurrency 1 measured 0.6 req/s and a 35-hour ETA
+// while spending almost all of its time waiting on a socket, which is idle time rather than
+// politeness. The pool is deliberately small and capped at 4: finishing correctly matters more than
+// finishing sooner, and a 403 would cost far more than the time saved. If one ever occurs, the right
+// response is `--workers 1`, not a bigger pool.
 //
 // ── FAILURES ARE RECORDED, NOT SWALLOWED ─────────────────────────────────────
 //
@@ -39,6 +44,7 @@ const HOURS = parseFloat(argOf('hours', '20'));
 const CHUNK = parseInt(argOf('chunk', '150'), 10);       // filers re-queried per checkpoint
 const SEC_WAIT_MS = 16 * 60 * 1000;                       // the 403 cooldown, plus a minute
 const MAX_CONSECUTIVE_EMPTY = 3;
+const WORKERS = Math.max(1, Math.min(4, parseInt(argOf('workers', '3'), 10) || 3));
 
 const t0 = Date.now();
 const deadline = t0 + HOURS * 3_600_000;
@@ -87,45 +93,58 @@ while (Date.now() < deadline) {
   consecutiveEmpty = 0;
   stats.chunks += 1;
 
-  for (const f of todo) {
-    if (Date.now() >= deadline) break;
-
-    // A 403 is a COOLDOWN, not an ending. Wait it out and carry on — abandoning the job here is how
-    // a 20-hour run silently becomes a 20-minute one.
-    while (secBlocked()) {
-      stats.secBlocks += 1;
-      console.log(`[${mins()}m] SEC cooldown active — waiting ${(SEC_WAIT_MS / 60000).toFixed(0)} min (block #${stats.secBlocks})`);
-      await sleep(SEC_WAIT_MS);
-      if (Date.now() >= deadline) break;
-    }
-    if (Date.now() >= deadline) break;
-
-    try {
-      const r = await ingestFiler(f.cik, CUTOFF);
-      stats.quarters += r.quarters || 0;
-      stats.holdings += r.stored || 0;
-      stats.filers += 1;
-      // A filer that simply has no submissions payload is not an error worth retrying forever.
-      if (r.error) {
-        await recordError(f.cik, r.error);
-        stats.permanent += 1;
+  // ── A SMALL WORKER POOL ──────────────────────────────────────────────────
+  //
+  // Measured at concurrency 1: ~5-9 filers/min, which is roughly 0.6 requests/second and an ETA of
+  // 35 hours. The bottleneck is SEC round-trip LATENCY, not our pacing — the database answers a
+  // per-filer lookup in 142ms and its statistics are fresh, so the process spends almost all of its
+  // time waiting on a socket.
+  //
+  // WORKERS is deliberately small. At 3 the request rate is about 1.8/s against SEC's published
+  // 10/s guidance — under a fifth of it — and every existing protection is untouched: the same
+  // per-accession sleeps, the same identified User-Agent, the same 403 cooldown, and still ONE
+  // process. This is not aggressive crawling; it is not leaving the connection idle between
+  // round trips. A block would cost far more than the time saved, so if one ever occurs the right
+  // response is to drop back to 1, not to push higher.
+  const queue = [...todo];
+  const worker = async () => {
+    for (;;) {
+      if (Date.now() >= deadline) return;
+      // The shared cooldown is checked by every worker, so a 403 pauses the whole pool rather than
+      // letting two of them keep hammering a blocked endpoint.
+      while (secBlocked()) {
+        if (Date.now() >= deadline) return;
+        stats.secBlocks += 1;
+        console.log(`[${mins()}m] SEC cooldown — waiting ${(SEC_WAIT_MS / 60000).toFixed(0)} min (block #${stats.secBlocks})`);
+        await sleep(SEC_WAIT_MS);
       }
-    } catch (e) {
-      stats.retryable += 1;
-      await recordError(f.cik, e.message);
-      if (stats.retryable <= 5) console.log(`  [${mins()}m] ${f.cik}: ${String(e.message).slice(0, 100)}`);
-      // A database hiccup deserves a breath before the next filer; an SEC problem is handled above.
-      await sleep(2000);
-    }
+      const f = queue.shift();
+      if (!f) return;
 
-    if (stats.filers % 50 === 0 && stats.filers > 0) {
-      const rate = stats.filers / ((Date.now() - t0) / 60000);
-      const left = await remaining();
-      const eta = rate > 0 ? (left / rate / 60).toFixed(1) : '?';
-      console.log(`[${mins()}m] ${stats.filers} filers · ${stats.quarters} quarters · ` +
-        `${stats.holdings.toLocaleString()} holdings · ${rate.toFixed(1)}/min · ${left} left · ETA ${eta}h`);
+      try {
+        const r = await ingestFiler(f.cik, CUTOFF);
+        stats.quarters += r.quarters || 0;
+        stats.holdings += r.stored || 0;
+        stats.filers += 1;
+        // A filer with no submissions payload is not an error worth retrying forever.
+        if (r.error) { await recordError(f.cik, r.error); stats.permanent += 1; }
+      } catch (e) {
+        stats.retryable += 1;
+        await recordError(f.cik, e.message);
+        if (stats.retryable <= 5) console.log(`  [${mins()}m] ${f.cik}: ${String(e.message).slice(0, 100)}`);
+        await sleep(2000);
+      }
+
+      if (stats.filers % 50 === 0 && stats.filers > 0) {
+        const rate = stats.filers / ((Date.now() - t0) / 60000);
+        const left = await remaining();
+        const eta = rate > 0 ? (left / rate / 60).toFixed(1) : '?';
+        console.log(`[${mins()}m] ${stats.filers} filers · ${stats.quarters} quarters · ` +
+          `${stats.holdings.toLocaleString()} holdings · ${rate.toFixed(1)}/min · ${left} left · ETA ${eta}h`);
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: WORKERS }, () => worker()));
 }
 
 async function recordError(cik, message) {
