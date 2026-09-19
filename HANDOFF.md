@@ -510,6 +510,12 @@ count in a `Promise.all`), `/api/ticker` (one MGET, six independently-cached fet
 
 ## Pit Scan provider readiness (investigated; no provider selected)
 
+> ⚠️ **SUPERSEDED IN PART — see "Pit Scan: the wiring, closed" at the foot of this file (`badc8a96`).**
+> The gaps this section records as open have since been closed: the undefined columns and filter
+> fields, the dead `sectorEtf` path, the stale-reads-as-flat velocity defect, the dropped
+> volume-quality tag, and the volume-methodology question. What remains accurate here is the
+> provider-dependent work: ingestion, baselines, credentials and `activeCapabilities()`.
+
 **Pit Scan runs on nothing today, by design.** `scanState()` returns `rows: []` as a literal
 (`runtime.js:107-109`) and never calls `runCycle`. Fixtures are never served. The interim descriptor
 is Polygon Starter: delayed, no stream, single-venue volume, no intraday volume history — so
@@ -1284,3 +1290,110 @@ checks at seven widths, a dense filtered sector, and label suppression on two-di
 **25 of 26 mutations caught** across all rounds. The survivor is an **equivalent mutant**: restoring
 the old `innerH < 8` guard changes nothing, because at a fitted height no sector is ever that thin and
 on a forced-short board both values drop the tile identically.
+
+---
+
+# Pit Scan: the wiring, closed (deployed `badc8a96` + `0bd94cdf`)
+
+**Provider-independent. No vendor chosen, nothing connected, no credentials, no ingestion.**
+`scanState()` still returns `rows: []`; Pit Scan is dormant and verified so in production after the
+push (`/api/pitscan`: `rows: []`, `events: []`, `readiness.live: false`, the same four named needs).
+
+Supersedes the open gaps recorded in "Pit Scan provider readiness" above.
+
+## What was wrong, and is not any more
+
+| gap from the audit | now |
+|---|---|
+| 10 of 23 offered columns read `undefined` | **0** |
+| 11 filter fields read `undefined` | **0** |
+| `velocityProfile()` / `relativeStrengthProfile()` called only by tests | wired into every row |
+| `state.sectorEtf` never set → sector RS dead for every symbol | falls back to the existing `SECTOR_ETF` map |
+| volume-quality tag dropped between state and row | travels with the row |
+| **stale feed reported a confident `0.00%`** | returns unknown |
+| three drifting field vocabularies | one registry |
+| one `consolidatedVolume` flag could not express realtime≠historical | methodology is a string per number |
+
+**Two were real defects, not just missing wiring:**
+
+- **Stale read as flat.** `priceAt()` answers "the last price at or before X", so when a feed stops
+  both ends of a window resolve to the same final bar and velocity came out as exactly `0.00%` — the
+  most dangerous wrong answer available, because it reads as a calm market rather than a broken feed.
+  Measured on a replayed disconnect: a feed frozen fifteen minutes reported 0% on every window
+  shorter than the gap. A window containing no observation is now unknown.
+- **The dead sector path.** `benchmarksFor()` read `state.sectorEtf`, which `buildSymbolState` never
+  set, so sector relative strength could not fire for any symbol on any provider.
+
+Also: a stale **benchmark** is now dropped rather than compared against — if SPY freezes and the
+symbol does not, every symbol on the board looks strong, a market-wide false positive made entirely
+of a data gap.
+
+## New modules
+
+- **`derived.mjs`** — assembles what the engine already computed into the row: velocity per window,
+  acceleration phase, RVOL + interval RVOL, volume acceleration, VWAP state and distance, prior-day /
+  session / opening-range / premarket levels, ATR%, range expansion, per-benchmark RS. **It invents
+  nothing.** Missing inputs stay null.
+- **`field-map.mjs`** — one registry. The dropdowns said `vel5m`, the evaluator and columns said
+  `vel_5m`, nothing reconciled them, and that mismatch does not fail loudly — it fails as a saved scan
+  that quietly stops matching anything. Every field resolves to `derived | state | signal |
+  unsupported`.
+- **`provider-contract.mjs`** — the boundary, with no vendor in it: 9 normalized inputs (3 required:
+  quotes, bars, timestamps), the baseline and benchmark interfaces, and the methodology rule.
+
+## Decisions taken (2026-09-18)
+
+**RVOL methodology — STRICT, and it stays.** Methodology is a string that travels with each number
+(`consolidated` / `single-venue` / `delayed`). RVOL is computed **only on an exact match**. A
+single-venue numerator over a consolidated baseline is **refused, never scaled** — "IEX is ~2.3% of
+the tape" is a per-symbol, per-day, per-session estimate and applying one is inventing volume. Two
+matching but **unrecognised** strings are also refused: a methodology we cannot name is one whose
+semantics we cannot vouch for.
+
+⚠️ **This is a provider-selection criterion.** A feed with single-venue realtime prints and
+consolidated history yields **no RVOL at all**. That is the correct answer and it should weigh in the
+evaluation.
+
+**Compression/squeeze — deliberately NOT implemented.** Declared `unsupported` with a reason, so the
+dropdown is not offered. Better to say a feature is unavailable than to ship an arbitrary definition
+to make a control active. A test asserts it is the **only** unsupported field, so a regression that
+invents a squeeze calculation is caught. To be designed and validated separately.
+
+**Volume spike — 3× RVOL, as the initial DEFAULT.** Centralized: `VOLUME_SPIKE_RATIO` in the tuning
+block at the foot of `signals.mjs`, beside `RVOL_THRESHOLD` and `RANGE_EXPANSION_RATIO`. `derived.mjs`
+imports it, so the `volSpike` field and the `volume_spike` signal cannot drift into two products.
+Retuning is one edit in one place. **No backtesting yet** — measure once there is real data.
+
+## Completeness under FULL_PROVIDER
+
+Columns **23/23** offered, zero undefined (6 on `NO_PROVIDER`, so the gate still holds).
+Filter fields **24**, zero undefined. Dropdowns **34**, **33 offerable** — 27 derived, 6 state, 1
+unsupported. Signals **31**.
+
+`undefined` vs `null` is load-bearing: **null** = the market input is unknown right now; **undefined**
+= nobody wired the field, which is a bug. Never zero for either.
+
+## Tests
+
+`scripts/verify-scan-e2e.mjs` — **77 assertions**, replays a trading day through the real pipeline
+rather than calling formulas: premarket isolation, the open, velocity building, RVOL crossing against
+a time-of-day baseline, VWAP, the prior-day break, RS vs SPY/QQQ/sector, a pause, staleness, a
+reconnect with a gap, a duplicate bar, a corrected bar, and a temporary unknown that must not end a
+live signal. **A formula-level suite could not have caught the wiring gap** — that is why this one
+feeds bars in and reads rows out.
+
+scan **287** · scan-provider **89** · scan-e2e **77** · **11/11 mutations caught**.
+
+## Still open, and provider-dependent
+
+1. `activeCapabilities()` (`runtime.js`) still equates "a Polygon key exists" with Polygon Starter's
+   capability set — **the only vendor conditional left anywhere in `src/lib/scan/`**. It should become
+   a descriptor registry keyed by `MARKET_DATA_PROVIDER`.
+2. The ingestion worker (transport depends on the vendor).
+3. The baseline job feeding `baselineEntry()` — must tag methodology honestly.
+4. Subscribing SPY/QQQ + the 11 sector ETFs.
+5. Client delivery (SSE/WS fan-out) and alerts.
+6. Flipping `scanState()` to call `runCycle`.
+
+**Do not implement 2–6 before the provider is chosen** — the normalization layer is shaped by the
+feed's message contract.
