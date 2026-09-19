@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import ConsensusTeaser from "./ConsensusTeaser";
 import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mjs";
 import HeatMap from "./HeatMap";
-import MiniCandles from "./MiniCandles";
+import CompactChart from "./chart/CompactChart";
 import {
   C, CARD_COLORS,
   chgC, chgBg, fmt2, safeN, minsSince,
@@ -150,7 +150,9 @@ const fetchAll = async () => {
     }));
 
     const spy_chg = safeN(marketSnap?.SPY?.changePct ?? marketSnap?.SPY?.chg ?? marketSnap?.SPY?.change_pct ?? 1.2);
-    const vix     = safeN(marketSnap?.VIX?.price ?? marketSnap?.VIX?.last ?? 18.3);
+    // The VIX value that used to be derived here is gone with the VIX card. It was computed, carried
+    // through the return object, and consumed by nothing — and its fallback was the literal 18.3, a
+    // fabricated index level that would have been displayed as real had anything ever rendered it.
 
     // NEVER WHITE (Rule 0): if the news feed is empty, synthesize up to 5 headlines
     // from the real insider filings we already fetched — no invented content.
@@ -189,7 +191,7 @@ const fetchAll = async () => {
         sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
     }
 
-    return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg, vix };
+    return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg };
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -218,7 +220,7 @@ export default function CatalystPit() {
   const [idxQuotes, setIdxQuotes] = useState({});
   useEffect(() => {
     let alive = true;
-    const load = () => fetch('/api/quotes?symbols=SPY,QQQ,DIA,VIX', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setIdxQuotes(j); }).catch(() => {});
+    const load = () => fetch('/api/quotes?symbols=SPY,QQQ,DIA,UVXY', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setIdxQuotes(j); }).catch(() => {});
     load(); const id = setInterval(load, 60000);
     return () => { alive = false; clearInterval(id); };
   }, []);
@@ -284,14 +286,20 @@ export default function CatalystPit() {
                 cell rendered EMPTY at 320. `.cp-mkt-grid` collapses to one column ≤430px, where a
                 full-width chart has room. Unchanged above that. */}
             <div className="cp-mkt-grid" style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:1, background:C.border}}>
-              {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["VIX","VIX"]].map(([sym,label]) => { const q = idxQ(sym); return (
+              {/* UVXY REPLACES VIX DELIBERATELY. VIX is an index, not a security, and a future
+                  market-data provider may not carry index data at all — the card would go blank
+                  with nothing to fall back to. UVXY is a listed ETF that arrives through the same
+                  equity pipeline as the other three, so this tile has no special case anywhere:
+                  same quote source, same bars endpoint, same chart. No VIX value is sourced,
+                  synthesised, proxied or retained for it. */}
+              {[["SPY","S&P 500"],["QQQ","Nasdaq"],["DIA","Dow"],["UVXY","UVXY"]].map(([sym,label]) => { const q = idxQ(sym); return (
                 <div key={sym} style={{background:C.white, padding:"8px 10px"}}>
                   <div style={{display:"flex", alignItems:"baseline", gap:6, marginBottom:4, flexWrap:"wrap"}}>
                     <span style={{fontSize:10.5, fontWeight:700, color:C.muted, letterSpacing:"0.3px"}}>{label}</span>
                     {q?.price != null && <span className="cp-num" style={{fontSize:11, fontWeight:600, color:C.ink}}>{q.price >= 1000 ? (+q.price).toLocaleString(undefined,{maximumFractionDigits:2}) : (+q.price).toFixed(2)}</span>}
                     {q?.changePct != null && <span className="cp-num" style={{fontSize:10.5, fontWeight:600, color:q.changePct >= 0 ? C.green : C.red}}>{q.changePct > 0 ? "+" : ""}{q.changePct.toFixed(2)}%</span>}
                   </div>
-                  <MiniCandles symbol={sym} height={150}/>
+                  <CompactChart symbol={sym} height={150}/>
                 </div>
               ); })}
             </div>
