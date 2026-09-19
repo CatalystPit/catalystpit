@@ -298,23 +298,84 @@ function parseInfoTable(xml, wholeDollars) {
 // directory listing was unavailable after retries, or none of its documents could be fetched. Those
 // two were the same value before, so an unreachable filing was indistinguishable from an empty one
 // and the caller skipped it without a word.
+// The XML documents named by a filing's index PAGE, as bare filenames.
+//
+// EDGAR lists each document twice: once as the raw file and once under an `xslForm13F_X02/` prefix,
+// which is the same document rendered as HTML for a browser and useless to the parser. Taking only
+// the basename collapses the pair, so the raw file is fetched once rather than the rendering being
+// fetched as well and discarded. A regex that silently matches nothing here would not raise anything
+// — the route would just quietly contribute no candidates — which is why it is separated and tested.
+export function documentNamesFromIndexHtml(html) {
+  if (typeof html !== 'string') return [];
+  return [...new Set([...html.matchAll(/href="[^"]*?\/([^"/]+\.xml)"/gi)].map((m) => m[1]))];
+}
+
+// ── THREE ROUTES TO THE SAME FILING, BECAUSE EDGAR 503s PER OBJECT ───────────
+//
+// The 503s are not global throttling and not a block: probed while the crawler was stopped and SEC
+// was answering 200 everywhere else, individual URLs still returned "File Unavailable" persistently,
+// and WHICH url fails varies within a single accession. Measured on live failures:
+//
+//   CIK 2039437  index.json 503 …but -index.htm and the .txt submission both 200
+//   CIK 902367   index.json 200 …but the infotable.xml it names 503
+//   CIK 2006218  index.json 503 …but the .txt submission 200, info table intact
+//
+// One route is therefore not enough, and retrying it harder does not help — the object itself is
+// what is unavailable. These are three independent EDGAR objects for the same filing, so trying the
+// next one costs a request only on a path that has already failed, and turns what would be a
+// permanent hole in the dataset into a stored quarter. Nothing about the parse changes: whichever
+// route supplies the XML, the same parseInfoTable reads it.
 async function fetchHoldings(cik, accession, filedDate) {
   const accNoDash = accession.replace(/-/g, '');
-  const idx = await secJson(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}/index.json`);
-  if (!idx) return null;                        // listing unreadable — NOT an empty filing
-  const items = idx?.directory?.item || [];
-  const xmls = items.filter((it) => /\.xml$/i.test(it.name) && !/primary_doc\.xml$/i.test(it.name));
+  const dir = `https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}`;
   const wholeDollars = String(filedDate) >= '2023-01-01';
-  let anyRead = false;
-  for (const it of xmls) {
-    await sleep(100);
-    const xml = await secText(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}/${it.name}`);
-    if (xml != null) anyRead = true;
-    if (xml && /<(?:\w+:)?infoTable>/i.test(xml)) return parseInfoTable(xml, wholeDollars);
+  const hasTable = (s) => !!s && /<(?:\w+:)?infoTable>/i.test(s);
+  let readSomething = false;         // did ANY route let us see inside the filing?
+  let missedDocument = false;        // did a document we were told about fail to load?
+
+  // Fetch each named document, newest-style names first, and stop at the one holding the table.
+  const tryDocuments = async (names) => {
+    for (const name of [...new Set(names)].filter((n) => !/^primary_doc\.xml$/i.test(n))) {
+      await sleep(100);
+      const xml = await secText(`${dir}/${name}`);
+      if (xml == null) { missedDocument = true; continue; }
+      readSomething = true;
+      if (hasTable(xml)) return parseInfoTable(xml, wholeDollars);
+    }
+    return null;
+  };
+
+  // ROUTE 1 — the directory listing. The cheapest and the one that works most of the time.
+  const idx = await secJson(`${dir}/index.json`);
+  if (idx) {
+    readSomething = true;
+    const names = (idx.directory?.item || []).map((it) => it.name).filter((n) => /\.xml$/i.test(n));
+    const got = await tryDocuments(names);
+    if (got) return got;
   }
-  // Candidate documents existed but not one of them could be read: that is a fetch failure, not a
-  // filing without positions. Only a listing we truly read through yields an honest empty result.
-  if (xmls.length && !anyRead) return null;
+
+  // ROUTE 2 — the filing index page, which names the same documents in HTML. Only the basename is
+  // taken, so the xsl-rendered copy collapses onto the raw file rather than being fetched twice.
+  const htm = await secText(`${dir}/${accession}-index.htm`);
+  if (htm) {
+    readSomething = true;
+    const got = await tryDocuments(documentNamesFromIndexHtml(htm));
+    if (got) return got;
+  }
+
+  // ROUTE 3 — the complete submission, every document of the filing concatenated in one object. The
+  // info table is embedded verbatim, so the same parser reads it; documents without an <infoTable>
+  // contribute no rows.
+  const txt = await secText(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accession}.txt`);
+  if (txt != null) {
+    readSomething = true;
+    if (hasTable(txt)) return parseInfoTable(txt, wholeDollars);
+  }
+
+  // Null means "we never got to see this filing", and the caller must not store the quarter. An empty
+  // array is only honest when a route actually opened the filing AND every document it named loaded —
+  // otherwise a 503 on one document would masquerade as a 13F reporting no positions.
+  if (!readSomething || missedDocument) return null;
   return [];
 }
 
