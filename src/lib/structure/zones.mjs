@@ -141,7 +141,12 @@ export function describeZone(cluster, { unit, price, side }) {
     major: met.length >= MAJOR_MIN_CRITERIA,
     majorCriteria: met,
     // The component levels, preserved in full. This is what makes a zone arguable rather than
-    // asserted, and what a chart overlay will later draw as individual lines inside the band.
+    // asserted: the Market Structure section can name the four prices that produced the range.
+    //
+    // ⚠️ NOT A CHART OVERLAY, now or later. Market Structure is Catalyst Pit's ANALYSIS of the
+    // chart, not another thing drawn on it — the chart stays price, user-selected indicators and
+    // Evidence event markers. A zone is a RANGE because support is an area rather than false
+    // penny-level precision, which is a statement about the number, not a request for a band.
     components: comps.map((c) => ({
       timeframe: c.timeframe, kind: c.kind, price: c.price,
       date: c.date, confirmedAt: c.confirmedAt,

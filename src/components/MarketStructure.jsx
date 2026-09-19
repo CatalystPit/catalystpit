@@ -7,6 +7,21 @@
 // changes its meaning, or relabels a timeframe: the component renders canonical engine output and
 // the server decided which parts of it this user receives.
 //
+// ── MARKET STRUCTURE IS NOT A CHART INDICATOR ───────────────────────────────
+//
+// The product line is deliberate and worth stating where someone will read it:
+//
+//   CHART              price and candles, the user's own indicators, and Evidence event markers —
+//                      things that happened at a point in time (Form 4, 13F, Congress, 8-K, and
+//                      later earnings), controlled by the Evidence menu.
+//   MARKET STRUCTURE   Catalyst Pit's ANALYSIS of that chart: trend, structure, support,
+//                      resistance, multi-timeframe confluence. It lives HERE.
+//
+// So these zones are never drawn across the chart, and there is no Levels toolbar control, no
+// Market Structure indicator and no entry in the Indicators or Evidence menus. A zone is quoted as
+// a RANGE ($481–$485) because support is an area rather than false penny-level precision — that is
+// a statement about the number's honesty, not a request for a visual band. The chart stays clean.
+//
 // ── THE STRICT LABEL STANDS ─────────────────────────────────────────────────
 //
 // The rejected "bullish transition / current condition" state is deliberately absent. Where the
