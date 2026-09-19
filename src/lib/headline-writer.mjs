@@ -14,6 +14,7 @@
 
 import { valuesIn, validateBullet } from './grounding.mjs';
 import { validatePredicate } from './predicate-grounding.mjs';
+import { validateModality } from './modality.mjs';
 import { classifyAnthropicFailure, describeFailure, usageOf } from './anthropic-errors.mjs';
 
 export const MODEL = 'claude-haiku-4-5-20251001';   // same model the rest of the app uses
@@ -112,6 +113,13 @@ export function validateHeadline(candidate, sourceText, allowedTickers = []) {
   // reason the source never gave all invent a fact while using only real names and real figures.
   const p = validatePredicate(h, src);
   if (!p.ok) return p;
+
+  // Last, and the only gate that reads the source's FRAME rather than its content: a hypothetical,
+  // a forecast, a price target or one analyst's argument must not come out the far side as a market
+  // event. Runs after validatePredicate so its narrower, longer-proven reasons still name the
+  // failure where both apply — both reject, only the label differs.
+  const m = validateModality(h, src);
+  if (!m.ok) return m;
   return { ok: true };
 }
 

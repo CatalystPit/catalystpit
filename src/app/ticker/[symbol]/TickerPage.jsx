@@ -10,6 +10,7 @@ import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
 import ConsensusPanel from '../../../components/ConsensusPanel';
+import WhatChanged from '../../../components/WhatChanged';
 import CompanyDescription from '../../../components/CompanyDescription';
 import { normalizeDescription } from '../../../lib/company-description.mjs';
 
@@ -914,7 +915,12 @@ function OverviewTab({ data, insider, gov, onTab }) {
 
   return (
     <>
-      {/* Bull & Bear synthesis — first Overview section (hero + chart sit above the tab bar). */}
+      {/* What Changed — the Market Evidence Engine. FIRST on purpose: it answers "what is new and
+          how unusual is it for this company", which is the question a trader opens the page with.
+          Bulls/Bears below it is the standing argument; this is the change. */}
+      <WhatChanged symbol={data.symbol} />
+
+      {/* Bull & Bear synthesis. */}
       <BullsBears ticker={data.symbol} />
 
       <Section title="About">

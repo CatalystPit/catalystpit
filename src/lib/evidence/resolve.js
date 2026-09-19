@@ -1,0 +1,521 @@
+// EVIDENCE RESOLUTION — turning our own filing tables into canonical evidence objects.
+//
+// The only part of the Market Evidence Engine that touches the database. model.mjs, history.mjs and
+// rank.mjs stay pure so the rules can be tested without fixtures; everything schema- and PIT-specific
+// lives here.
+//
+// ── THIS LAYER JOINS AND INTERPRETS. IT DOES NOT STORE. ─────────────────────
+//
+// No new table holds a copy of a Form 4 or an 8-K. Those records are already correct where they
+// live, and a second copy is a second thing to keep in sync and a second thing to be wrong. What
+// this file adds is the JOIN and the INTERPRETATION — which of those records is a CHANGE worth a
+// trader's attention, and how unusual it is for this company.
+//
+// ── POINT-IN-TIME, AS EVERYWHERE ELSE ───────────────────────────────────────
+//
+//   Form 4    filing_date      the SEC publication, never transaction_date
+//   Congress  disclosure_date  never the trade date; the STOCK Act allows a 45-day lag
+//   13F       filed_date       quarter end carried separately as the reference period
+//   8-K       filed_at
+//
+// ── QUERY SHAPE ─────────────────────────────────────────────────────────────
+//
+// One bounded query per family, all families in parallel, no per-row follow-up. Each family needs
+// two horizons — the DISPLAY window (what changed lately) and the HISTORY window (what makes it
+// unusual) — and both come back in the same round trip, because "first CEO purchase in 842 days"
+// cannot be answered from a 30-day window and must not cost 842 queries.
+
+import { sql } from 'drizzle-orm';
+import { db } from '../db';
+import { FAMILY, DIRECTION, collectEvidence } from './model.mjs';
+import { firstInContext, burstContext, extremeContext, breadthChangeContext, streakContext, implausibleBreadth } from './history.mjs';
+import { rankEvidence } from './rank.mjs';
+
+const DAY = 86_400_000;
+const rows = (res) => res?.rows ?? res ?? [];
+const num = (v) => (v == null ? null : Number(v));
+const ms = (d) => (d == null ? null : new Date(d).getTime());
+
+/** How far back the display window looks. Anything older is context, not a change. */
+export const DISPLAY_WINDOW_DAYS = 45;
+/** How far back the unusualness comparison looks. Bounded so the query stays indexed and cheap. */
+export const HISTORY_WINDOW_DAYS = 1460;   // four years
+
+const usd = (n) => {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `$${Math.round(v / 1e3)}K`;
+  return `$${Math.round(v)}`;
+};
+
+// ── coverage boundaries ──────────────────────────────────────────────────────
+// A rarity claim is only honest against a KNOWN boundary — see history.mjs. The boundary is the
+// earliest date our ingestion could have seen such a record AT ALL, which is a property of the
+// dataset rather than of the ticker: a company that first filed last year has thin ticker history
+// but our coverage is still three years, and conflating the two produces "first in our 1-month
+// history" on a company whose Form 4s we simply do not have.
+//
+// Table-wide, so it is computed once per process rather than per request.
+let _coverage = null;
+let _coverageAt = 0;
+const COVERAGE_TTL_MS = 6 * 3600e3;
+
+export async function coverageBoundaries({ now = Date.now() } = {}) {
+  if (_coverage && now - _coverageAt < COVERAGE_TTL_MS) return _coverage;
+  try {
+    const res = await db.execute(sql`
+      select
+        -- insider_history_meta is the existing singleton recording how far back the Form 4 backfill
+        -- actually reached. It is the honest boundary and outranks min(filing_date), which only says
+        -- where the rows happen to start and would silently drift as backfill progresses.
+        (select covered_from from insider_history_meta where id = 1) as insider_declared,
+        (select min(filing_date)     from insider_trades)  as insider_observed,
+        (select min(disclosure_date) from congress_trades) as congress,
+        (select min(filed_at)        from eightk_filings)  as catalyst`);
+    const r = rows(res)[0] || {};
+    _coverage = {
+      [FAMILY.INSIDER]: ms(r.insider_declared) ?? ms(r.insider_observed),
+      [FAMILY.CONGRESS]: ms(r.congress),
+      [FAMILY.CATALYST]: ms(r.catalyst),
+    };
+    _coverageAt = now;
+  } catch {
+    // Unknown boundary → history.mjs makes NO rarity claim. Degrading to "no context" is correct;
+    // guessing a boundary would manufacture rarity, which is the one thing that file forbids.
+    _coverage = {};
+  }
+  return _coverage;
+}
+
+/** Test seam: lets a suite inject boundaries without a database. */
+export function __setCoverage(c) { _coverage = c; _coverageAt = Date.now(); }
+
+// ── 1. INSIDERS (Form 4) ─────────────────────────────────────────────────────
+//
+// THE DISCRIMINATION THAT MATTERS: an open-market purchase (transaction code P) is a decision; a
+// grant (A), an option exercise (M) and a tax withholding (F) are administrative, and a 10b5-1 sale
+// was decided months ago. Section 5 of the brief is explicit that routine activity must not
+// dominate, so only discretionary transactions become evidence and the rest never qualify a row.
+
+const OPEN_MARKET_BUY = 'P';
+
+export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
+  const res = await db.execute(sql`
+    select action, transaction_code, total_value, shares, executive, title, filing_date, accession,
+           filing_url,
+           coalesce(rule_10b5_1, false) as planned,
+           coalesce(is_derivative, false) as derivative,
+           coalesce(superseded_by, '') as superseded,
+           coalesce(is_officer, false) as officer, coalesce(is_director, false) as director
+      from insider_trades
+     where ticker = ${ticker}
+       and filing_date >= (current_date - make_interval(days => ${HISTORY_WINDOW_DAYS}))
+       and total_value > 0
+     order by filing_date desc
+     limit 2000`);
+  const r = rows(res).filter((x) => !x.superseded);   // a 4/A replaced this row; it is not evidence
+  if (!r.length) return [];
+
+  const cutoff = now - DISPLAY_WINDOW_DAYS * DAY;
+  // THE CANONICAL OPEN-MARKET PURCHASE, matching form4.mjs's isOpenMarketBuy and the OM_BUY
+  // predicate the context builder uses: transaction code P, non-derivative.
+  //
+  // ⚠️ `action` is NOT sufficient and a missing code is NOT a purchase. classifyAction() collapses
+  // A (grant), M (option exercise) and F (tax withholding) into 'OTHER', but an earlier draft of
+  // this file admitted rows with a null transaction_code — which would have let administrative
+  // grants be reported as conviction buys. That is precisely the noise section 5 forbids.
+  const isOpenMarketBuy = (x) => x.transaction_code === OPEN_MARKET_BUY && !x.derivative;
+  const recent = r.filter((x) => (ms(x.filing_date) ?? 0) >= cutoff);
+
+  const out = [];
+
+  // ── open-market purchases, the highest-information insider event ──
+  const recentBuys = recent.filter(isOpenMarketBuy);
+  if (recentBuys.length) {
+    const buyers = [...new Set(recentBuys.map((x) => x.executive).filter(Boolean))];
+    const officerBuy = recentBuys.find((x) => x.officer);
+    const newest = recentBuys[0];
+    const totalValue = recentBuys.reduce((s, x) => s + Number(x.total_value || 0), 0);
+
+    // Historical comparison uses ONLY comparable prior events, and excludes the ones we are
+    // reporting — otherwise every purchase is "the first in 0 days".
+    const priorBuys = r.filter((x) => isOpenMarketBuy(x) && (ms(x.filing_date) ?? 0) < cutoff);
+    const cov = coverage[FAMILY.INSIDER] ?? null;
+
+    let context = null;
+    if (officerBuy) {
+      const priorOfficer = priorBuys.filter((x) => x.officer);
+      context = firstInContext({
+        priorTimes: priorOfficer.map((x) => ms(x.filing_date)),
+        coverageStart: cov, now, noun: 'officer open-market purchase',
+      });
+    }
+    if (!context) {
+      context = firstInContext({
+        priorTimes: priorBuys.map((x) => ms(x.filing_date)),
+        coverageStart: cov, now, noun: 'insider open-market purchase',
+      });
+    }
+    // A burst outranks a gap claim: three purchases in two weeks is the more striking fact.
+    const burst = burstContext({
+      times: recentBuys.map((x) => ms(x.filing_date)), windowDays: 30, now, noun: 'open-market purchases',
+    });
+    if (burst && recentBuys.length >= 3) context = burst;
+    if (!context) {
+      context = extremeContext({
+        value: Number(newest.total_value || 0),
+        priorValues: priorBuys.map((x) => Number(x.total_value || 0)),
+        coverageStart: cov, now, noun: 'insider purchase',
+      });
+    }
+
+    const cluster = buyers.length >= 3;
+    out.push({
+      ticker, family: FAMILY.INSIDER,
+      type: cluster ? 'insider_cluster_buy' : officerBuy ? 'insider_officer_buy' : 'insider_buy',
+      subtype: officerBuy?.title || newest.title || null,
+      direction: DIRECTION.POSITIVE,
+      materiality: cluster ? 0.85 : officerBuy ? 0.80 : 0.65,
+      quality: (officerBuy || newest.director) ? 0.95 : 0.85,
+      eventTime: null,                       // transaction_date is not carried on this row set
+      publicTime: newest.filing_date,
+      source: 'sec_form4', sourceId: newest.accession,
+      url: newest.filing_url || null,
+      summary: buildInsiderSummary({ recentBuys, buyers, officerBuy, totalValue, cluster }),
+      facts: {
+        buyers: buyers.length, transactions: recentBuys.length,
+        totalValue: totalValue || null, totalValueLabel: usd(totalValue),
+        officer: !!officerBuy, executive: officerBuy?.executive || newest.executive || null,
+        title: officerBuy?.title || newest.title || null,
+      },
+      context,
+    });
+  }
+
+  // ── discretionary selling. Reported, never as the mirror of buying. ──
+  const discSells = recent.filter((x) => x.action === 'SELL' && !x.planned);
+  if (discSells.length >= 2) {
+    const sellers = [...new Set(discSells.map((x) => x.executive).filter(Boolean))];
+    const newest = discSells[0];
+    const totalValue = discSells.reduce((s, x) => s + Number(x.total_value || 0), 0);
+    out.push({
+      ticker, family: FAMILY.INSIDER, type: 'insider_discretionary_sell',
+      direction: DIRECTION.NEGATIVE, materiality: 0.55, quality: 0.90,
+      publicTime: newest.filing_date,
+      source: 'sec_form4', sourceId: newest.accession,
+      url: newest.filing_url || null,
+      summary: `${sellers.length} insider${sellers.length > 1 ? 's' : ''} sold ${usd(totalValue) || 'shares'} outside a 10b5-1 plan`,
+      facts: { sellers: sellers.length, transactions: discSells.length, totalValue: totalValue || null },
+      context: null,
+    });
+  }
+
+  // 10b5-1 sales and administrative codes are deliberately NOT emitted. They are the noise the
+  // section exists to filter out, and a routine plan sale on every mega-cap every month would
+  // train a reader to stop reading.
+  return out;
+}
+
+function buildInsiderSummary({ recentBuys, buyers, officerBuy, totalValue, cluster }) {
+  const amount = usd(totalValue);
+  if (cluster) return `${buyers.length} insiders bought${amount ? ` ${amount}` : ''} on the open market`;
+  if (officerBuy) {
+    const who = officerBuy.title || 'Officer';
+    return `${who} open-market purchase${amount ? ` of ${amount}` : ''}`;
+  }
+  if (recentBuys.length === 1) return `Insider open-market purchase${amount ? ` of ${amount}` : ''}`;
+  return `${recentBuys.length} insider open-market purchases${amount ? ` totalling ${amount}` : ''}`;
+}
+
+// Provenance is always the URL the ingester already stored (`filing_url` / `primary_doc_url`).
+// An earlier draft of this file SYNTHESISED an EDGAR full-text-search link from the accession. That
+// link is not the document, and for many accessions it resolves to nothing — a "View Filing" button
+// that does not open the filing is worse than no button, because it looks like verification.
+
+// ── 2. CATALYSTS (8-K) ───────────────────────────────────────────────────────
+//
+// The SEC's own item taxonomy, not a publisher's opinion about importance. Unmapped item codes
+// deliberately produce nothing rather than a vague "corporate event".
+
+export const ITEM_TO_TYPE = Object.freeze({
+  '4.02': { type: 'sec_8k_non_reliance', label: 'Non-reliance on prior financials', materiality: 1.00, direction: DIRECTION.NEGATIVE },
+  '3.01': { type: 'sec_8k_delisting', label: 'Delisting / listing-standard notice', materiality: 0.95, direction: DIRECTION.NEGATIVE },
+  '4.01': { type: 'sec_8k_auditor_change', label: 'Auditor change', materiality: 0.85, direction: DIRECTION.NEGATIVE },
+  '2.04': { type: 'sec_8k_obligation', label: 'Financial obligation triggered', materiality: 0.80, direction: DIRECTION.NEGATIVE },
+  '1.01': { type: 'sec_8k_material_agreement', label: 'Material agreement', materiality: 0.75, direction: DIRECTION.POSITIVE },
+  '1.02': { type: 'sec_8k_agreement_ended', label: 'Material agreement terminated', materiality: 0.75, direction: DIRECTION.NEGATIVE },
+  '2.02': { type: 'sec_8k_results', label: 'Results of operations', materiality: 0.70, direction: DIRECTION.UNKNOWN },
+  '5.02': { type: 'sec_8k_officer_change', label: 'Officer / director change', materiality: 0.60, direction: DIRECTION.UNKNOWN },
+  '8.01': { type: 'sec_8k_other', label: 'Other material event', materiality: 0.45, direction: DIRECTION.UNKNOWN },
+});
+
+export async function catalystEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
+  const res = await db.execute(sql`
+    select items, coalesce(material, false) as material, filed_at, accession, report_date,
+           filing_url, primary_doc_url
+      from eightk_filings
+     where ticker = ${ticker}
+       and filed_at >= (now() - make_interval(days => ${HISTORY_WINDOW_DAYS}))
+     order by filed_at desc
+     limit 1000`);
+  const r = rows(res);
+  if (!r.length) return [];
+
+  const cutoff = now - DISPLAY_WINDOW_DAYS * DAY;
+  const out = [];
+  const recent = r.filter((x) => (ms(x.filed_at) ?? 0) >= cutoff);
+
+  for (const f of recent) {
+    const items = Array.isArray(f.items) ? f.items : String(f.items || '').split(/[,\s]+/).filter(Boolean);
+    // The most material mapped item decides the row. An 8-K carrying both 2.02 and 8.01 is a
+    // results filing, not an "other event".
+    const mapped = items.map((i) => ITEM_TO_TYPE[String(i).trim()]).filter(Boolean)
+      .sort((a, b) => b.materiality - a.materiality);
+    const spec = mapped[0];
+    if (!spec) continue;                       // unmapped → nothing, by design
+
+    const priorSame = r.filter((x) => {
+      const t = ms(x.filed_at) ?? 0;
+      if (t >= cutoff) return false;
+      const its = Array.isArray(x.items) ? x.items : String(x.items || '').split(/[,\s]+/);
+      return its.some((i) => ITEM_TO_TYPE[String(i).trim()]?.type === spec.type);
+    });
+
+    out.push({
+      ticker, family: FAMILY.CATALYST, type: spec.type, subtype: items.join(','),
+      direction: spec.direction, materiality: spec.materiality, quality: 0.95,
+      eventTime: f.report_date || null,
+      publicTime: f.filed_at,
+      source: 'sec_8k', sourceId: f.accession,
+      // The document itself where we have it, the EDGAR index page otherwise.
+      url: f.primary_doc_url || f.filing_url || null,
+      summary: spec.label,
+      facts: { items, material: f.material },
+      context: firstInContext({
+        priorTimes: priorSame.map((x) => ms(x.filed_at)),
+        coverageStart: coverage[FAMILY.CATALYST] ?? null, now,
+        noun: spec.label.toLowerCase() + ' filing',
+      }),
+    });
+  }
+
+  // "Third material 8-K in 5 trading days" — a burst of material filings is itself a signal, and
+  // is attached to the freshest one rather than emitted as a separate phantom row.
+  const materialRecent = recent.filter((x) => x.material);
+  if (out.length && materialRecent.length >= 3) {
+    const burst = burstContext({
+      times: materialRecent.map((x) => ms(x.filed_at)), windowDays: 14, now, noun: 'material 8-K filings',
+    });
+    if (burst && !out[0].context) out[0].context = burst;
+  }
+  return out;
+}
+
+// ── 3. CONGRESS ──────────────────────────────────────────────────────────────
+//
+// Freshness is the DISCLOSURE. The transaction date is retained as eventTime so the UI can show
+// both, but nothing is ever measured from it — a purchase made in June and disclosed in September
+// became knowable in September.
+
+export async function congressEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
+  const res = await db.execute(sql`
+    select action, amount_mid, amount_range, member_slug, representative, party, chamber, state,
+           disclosure_date, transaction_date, link
+      from congress_trades
+     where ticker = ${ticker}
+       and disclosure_date >= (current_date - make_interval(days => ${HISTORY_WINDOW_DAYS}))
+     order by disclosure_date desc
+     limit 1000`);
+  const r = rows(res);
+  if (!r.length) return [];
+
+  const cutoff = now - DISPLAY_WINDOW_DAYS * DAY;
+  const recent = r.filter((x) => (ms(x.disclosure_date) ?? 0) >= cutoff);
+  if (!recent.length) return [];
+
+  const buys = recent.filter((x) => String(x.action || '').toUpperCase().startsWith('BUY'));
+  const members = [...new Set(recent.map((x) => x.member_slug || x.representative).filter(Boolean))];
+  const newest = recent[0];
+  const prior = r.filter((x) => (ms(x.disclosure_date) ?? 0) < cutoff);
+
+  let context = firstInContext({
+    priorTimes: prior.map((x) => ms(x.disclosure_date)),
+    coverageStart: coverage[FAMILY.CONGRESS] ?? null, now,
+    noun: 'congressional disclosure for this ticker',
+  });
+  if (members.length >= 2) {
+    const span = Math.max(1, Math.ceil((now - Math.min(...recent.map((x) => ms(x.disclosure_date) ?? now))) / DAY));
+    context = { text: `${members.length} members disclosed in the last ${span} days`, unusual: members.length >= 3 };
+  }
+
+  const direction = buys.length && buys.length === recent.length ? DIRECTION.POSITIVE
+    : buys.length === 0 ? DIRECTION.NEGATIVE : DIRECTION.MIXED;
+
+  return [{
+    ticker, family: FAMILY.CONGRESS,
+    type: members.length > 1 ? 'congress_multi' : 'congress_disclosure',
+    subtype: newest.chamber || null,
+    direction,
+    materiality: members.length > 1 ? 0.65 : 0.55,
+    quality: 0.60,                              // self-reported, banded amounts, long lag
+    eventTime: newest.transaction_date || null, // retained, never measured from
+    publicTime: newest.disclosure_date,
+    source: 'congress', sourceId: `${newest.member_slug || newest.representative}|${newest.disclosure_date}|${ticker}`,
+    url: newest.link || null,          // the PTR document itself
+    summary: members.length > 1
+      ? `${members.length} members of Congress disclosed ${buys.length === recent.length ? 'purchases' : 'trades'}`
+      : `${newest.representative || 'A member of Congress'} disclosed a ${String(newest.action || 'trade').toLowerCase()}`,
+    facts: {
+      members: members.length, transactions: recent.length,
+      representative: newest.representative || null, chamber: newest.chamber || null,
+      party: newest.party || null, state: newest.state || null,
+      amountRange: newest.amount_range || null,
+      transactionDate: newest.transaction_date || null,
+      disclosureDate: newest.disclosure_date || null,
+      // The lag is a fact worth showing: it is the difference between when it happened and when
+      // anyone could know.
+      disclosureLagDays: newest.transaction_date && newest.disclosure_date
+        ? Math.max(0, Math.round((ms(newest.disclosure_date) - ms(newest.transaction_date)) / DAY)) : null,
+    },
+    context,
+  }];
+}
+
+// ── 4. INSTITUTIONS (13F) ────────────────────────────────────────────────────
+//
+// SLOW EVIDENCE, AND NEVER CURRENT POSITIONING. Both clocks are mandatory: the quarter the position
+// describes, and the day the filing made it knowable. A 13F published yesterday describes holdings
+// up to ~135 days old, and a surface that shows only one of those dates is lying by omission.
+//
+// Breadth is compared against THIS TICKER'S OWN history — "116 funds added" is meaningless until you
+// know this ticker's quarters normally move by eight.
+
+export async function institutionEvidence(ticker, { now = Date.now() } = {}) {
+  // fund_holdings is ~3M rows, so the shape of this query matters. It rides the existing partial
+  // covering index idx_fund_holdings_qoq (quarter, ticker) INCLUDE (cik, shares)
+  // WHERE put_call = '' AND ticker IS NOT NULL — hence the literal `put_call = ''` rather than a
+  // coalesce, which would not match the index predicate. No join to fund_filings: filed_date is
+  // carried on the holdings row itself, and joining 3M rows to get it would undo the index.
+  const res = await db.execute(sql`
+    select quarter,
+           count(distinct cik)  as breadth,
+           max(filed_date)      as latest_filed
+      from fund_holdings
+     where ticker = ${ticker}
+       and put_call = ''
+     group by quarter
+     order by quarter desc
+     limit 12`);
+  const r = rows(res);
+  if (r.length < 2) return [];                 // nothing to compare is nothing to report
+
+  // Oldest-first for the streak and change series.
+  const series = [...r].reverse().map((x) => ({
+    quarter: x.quarter, breadth: Number(x.breadth || 0), filed: x.latest_filed,
+  }));
+  const latest = series[series.length - 1];
+  const prev = series[series.length - 2];
+  if (!latest?.filed) return [];
+
+  // A change too extreme to be real is a ticker-resolution artifact, not an event. The rule lives
+  // in history.mjs with the other methodology, so it is unit-testable without a database — and it
+  // is load-bearing: CTRA and HON are both live examples in our current data.
+  if (implausibleBreadth(prev.breadth, latest.breadth)) return [];
+
+  const priorChanges = [];
+  for (let i = 1; i < series.length - 1; i++) priorChanges.push(series[i].breadth - series[i - 1].breadth);
+
+  const change = breadthChangeContext({ from: prev.breadth, to: latest.breadth, priorChanges });
+  if (!change) return [];
+  const streak = streakContext({ series: series.map((s) => s.breadth) });
+
+  return [{
+    ticker, family: FAMILY.INSTITUTION, type: 'institution_breadth_change',
+    subtype: latest.quarter,
+    direction: change.delta > 0 ? DIRECTION.POSITIVE : DIRECTION.NEGATIVE,
+    // Deliberately below a fresh 8-K: this is background positioning, months old by construction.
+    materiality: change.unusual ? 0.60 : 0.45,
+    quality: 0.80,
+    // BOTH CLOCKS, and they are months apart. `quarter` is already the quarter-END DATE as stored
+    // (a `date` column, not a '2026Q2' string), so it IS the event time; `filed_date` is the day
+    // the market could know it.
+    eventTime: latest.quarter,
+    publicTime: latest.filed,
+    referencePeriod: quarterLabel(latest.quarter),
+    source: 'sec_13f', sourceId: `13f|${ticker}|${isoDay(latest.quarter)}`,
+    url: null,
+    summary: change.text,
+    facts: {
+      quarter: quarterLabel(latest.quarter), quarterEnd: isoDay(latest.quarter),
+      breadthFrom: prev.breadth, breadthTo: latest.breadth, delta: change.delta,
+      unusual: change.unusual, basis: change.reason,
+      disclosedAt: latest.filed,
+    },
+    // A streak is the more striking observation where one exists; otherwise the unusualness note,
+    // which is deliberately NOT the summary repeated back.
+    context: streak || (change.note ? { text: change.note, unusual: true } : null),
+  }];
+}
+
+/** A quarter-end DATE → 'Q2 2026'. The stored column is the date; the label is for display only. */
+export function quarterLabel(qDate) {
+  const t = ms(qDate);
+  if (t == null) return null;
+  const d = new Date(t);
+  return `Q${Math.floor(d.getUTCMonth() / 3) + 1} ${d.getUTCFullYear()}`;
+}
+
+/** A date value → 'YYYY-MM-DD', or null. */
+export function isoDay(v) {
+  const t = ms(v);
+  return t == null ? null : new Date(t).toISOString().slice(0, 10);
+}
+
+// ── the public interface ─────────────────────────────────────────────────────
+
+/**
+ * Everything the engine knows about one ticker, ranked for display.
+ *
+ * A failing family degrades to nothing rather than failing the request: one broken feed must not
+ * blank a ticker page. Which families failed is REPORTED, because a silently shorter list is how a
+ * regression hides — the same reason collectEvidence returns its quarantine.
+ */
+export async function tickerEvidence(ticker, { now = Date.now(), since = null } = {}) {
+  const symbol = String(ticker || '').toUpperCase();
+  const coverage = await coverageBoundaries({ now });
+
+  const families = [
+    ['insider', insiderEvidence],
+    ['catalyst', catalystEvidence],
+    ['congress', congressEvidence],
+    ['institution', institutionEvidence],
+  ];
+  const settled = await Promise.allSettled(
+    families.map(([, fn]) => fn(symbol, { now, coverage })),
+  );
+
+  const raw = [];
+  const failed = [];
+  settled.forEach((s, i) => {
+    if (s.status === 'fulfilled') raw.push(...(s.value || []));
+    else failed.push({ family: families[i][0], error: String(s.reason?.message || s.reason) });
+  });
+
+  const { evidence, quarantined } = collectEvidence(raw, { now });
+  const ranked = rankEvidence(evidence, { now });
+  const visible = since
+    ? ranked.filter((e) => new Date(e.publicTime).getTime() > new Date(since).getTime())
+    : ranked;
+
+  return {
+    ticker: symbol,
+    evidence: visible,
+    counts: { total: ranked.length, returned: visible.length },
+    failedFamilies: failed,
+    quarantined: quarantined.map((q) => ({ reason: q.reason, detail: q.detail })),
+    coverage,
+    calculatedAt: new Date(now).toISOString(),
+  };
+}
