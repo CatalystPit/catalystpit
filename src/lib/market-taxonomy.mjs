@@ -81,6 +81,17 @@ const EXACT = new Map(Object.entries({
 
   // Tobacco is a staple, not agriculture.
   2100: S['Consumer Defensive'], 2111: S['Consumer Defensive'],
+
+  // SEC files semiconductor equipment under "Special Industry Machinery, NEC", which lands in the
+  // machinery block and therefore in Industrials. Measured on our own universe: of the $1.07T
+  // carried by SIC 3559, $1.06T is semiconductor equipment — ASML $664B, Lam Research $395B, then
+  // ACM Research, Axcelis, Veeco, Azenta, Amtech. Professional taxonomies put semiconductor
+  // equipment with technology, and these names trade with semis rather than with machinery.
+  //
+  // The remainder is genuinely industrial — Cricut, Energy Recovery, Velo3D — about $2B between
+  // them. Classifying 3559 as Technology is right for 99.8% of the weight and wrong for a rounding
+  // error; leaving it as Industrials was wrong for ASML and Lam Research, which is not one.
+  3559: S.Technology,
 }));
 
 // ── 2. RANGES, FIRST MATCH WINS ──────────────────────────────────────────────
@@ -135,12 +146,20 @@ const RANGES = [
   [5400, 5499, S['Consumer Defensive']],       // food stores
   [5912, 5912, S['Consumer Defensive']],       // drug stores
   [5331, 5331, S['Consumer Defensive']],       // variety stores (mass merchants)
+  [5140, 5149, S['Consumer Defensive']],       // groceries wholesale
 
   // Consumer Cyclical — apparel, retail, restaurants, leisure, autos already handled above.
   [2200, 2399, S['Consumer Cyclical']],        // textiles & apparel
   [2510, 2599, S['Consumer Cyclical']],        // furniture
   [3020, 3021, S['Consumer Cyclical']],        // rubber & plastics footwear
-  [3140, 3199, S['Consumer Cyclical']],        // footwear & leather
+  [3100, 3199, S['Consumer Cyclical']],        // leather & footwear — Tapestry and peers
+  // Retail was covered from 5331 upward, leaving 5200-5330 with no rule at all. That gap held Home
+  // Depot and Lowe's ($421B between them), Sherwin-Williams, Fastenal, Tractor Supply, Burlington
+  // and Dillard's — all plainly consumer cyclicals, all unclassified. Found by listing the largest
+  // securities the taxonomy could not map rather than by reasoning about which codes might exist.
+  [5200, 5271, S['Consumer Cyclical']],        // building materials & hardware retail
+  [5300, 5330, S['Consumer Cyclical']],        // general merchandise & department stores
+  [5332, 5399, S['Consumer Cyclical']],
   [3630, 3639, S['Consumer Cyclical']],        // household appliances
   [3650, 3652, S['Consumer Cyclical']],        // household audio & video
   [3940, 3949, S['Consumer Cyclical']],        // toys & sporting goods
@@ -160,6 +179,8 @@ const RANGES = [
   [2600, 2699, S['Basic Materials']],          // paper
   [2800, 2829, S['Basic Materials']],          // industrial chemicals
   [2850, 2899, S['Basic Materials']],          // paints, agricultural & misc chemicals
+  [3000, 3019, S['Basic Materials']],          // rubber products
+  [3050, 3099, S['Basic Materials']],          // plastics & rubber products — Entegris, AptarGroup
   [3200, 3299, S['Basic Materials']],          // stone, clay, glass, concrete
   [3300, 3399, S['Basic Materials']],          // primary metal industries
 
@@ -170,6 +191,7 @@ const RANGES = [
   [3500, 3569, S.Industrials],                 // industrial machinery
   [3580, 3599, S.Industrials],
   [3600, 3629, S.Industrials],                 // electrical equipment
+  [3640, 3649, S.Industrials],                 // electric lighting & wiring — Acuity
   [3690, 3699, S.Industrials],
   [3700, 3710, S.Industrials],                 // transportation equipment (autos excluded above)
   [3720, 3729, S.Industrials],                 // aircraft & aerospace

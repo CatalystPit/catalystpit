@@ -59,6 +59,10 @@ console.log('\n=== the boundaries the old coarse ranges got wrong ===');
   is('medical devices are Healthcare, not Industrials', 3841, 'Healthcare');
   is('surgical instruments are Healthcare', 3845, 'Healthcare');
   is('aircraft remain Industrials', 3724, 'Industrials');
+  // SEC files semiconductor equipment under "Special Industry Machinery, NEC". $1.06T of the $1.07T
+  // in that code is ASML, Lam Research and peers, which trade with semis rather than machinery.
+  is('semiconductor equipment is Technology, not Industrials', 3559, 'Technology');
+  is('general industrial machinery is still Industrials', 3550, 'Industrials');
   is('railroad equipment remains Industrials', 3743, 'Industrials');
   // Chemicals split between staples and materials.
   is('cosmetics are Consumer Defensive', 2844, 'Consumer Defensive');
