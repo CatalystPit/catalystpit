@@ -24,22 +24,32 @@
 // Pure and synchronous, like the rest of the engine.
 
 import { velocityProfile, momentumPhase, VELOCITY_WINDOWS } from './velocity.mjs';
-import { relativeStrength, relativeStrengthProfile } from './relative-strength.mjs';
+import { relativeStrength, relativeStrengthProfile, SECTOR_ETF } from './relative-strength.mjs';
 import { cumulativeRvol, intervalRvol, BUCKET_MINUTES } from './volume-baseline.mjs';
 import {
   sessionVwap, openingRange, OPENING_RANGE_MINUTES, premarketProfile, dayLocation,
   etMinutesOf, pctChange,
 } from './market-state.mjs';
 import { signalAvailability } from './market-capabilities.mjs';
-import { SECTOR_ETF } from './relative-strength.mjs';
+import { VOLUME_SPIKE_RATIO } from './signals.mjs';
 
 /** The symbol's sector proxy, from the classification screener_stocks already stores. */
 const sectorBenchmark = (s) => s?.sectorEtf || (s?.sector ? SECTOR_ETF[s.sector] : null) || null;
 
 const num = (v) => (Number.isFinite(v) ? v : null);
 
-/** What counts as a volume spike, in RVOL terms. One number, stated once, used by field and signal. */
-export const VOLUME_SPIKE_RVOL = 3;
+/**
+ * What counts as a volume spike, in RVOL terms.
+ *
+ * IMPORTED, NOT REDECLARED. `VOLUME_SPIKE_RATIO` already lives in the tuning block at the foot of
+ * signals.mjs alongside RVOL_THRESHOLD, RANGE_EXPANSION_RATIO and the rest — so the `volSpike`
+ * dropdown field and the `volume_spike` SIGNAL read the same number and cannot drift apart. A second
+ * `= 3` here would be the kind of duplicate that silently becomes two different products.
+ *
+ * 3× is the current DEFAULT, not a settled product rule. It is one edit, in one place, once Pit Scan
+ * has real data to measure outcomes against.
+ */
+export { VOLUME_SPIKE_RATIO };
 
 /** Percentage distance from a level, unsigned — "how far away", which is what the filters ask. */
 export function distancePct(price, level) {
@@ -235,7 +245,7 @@ export function deriveRow(state, { capabilities, benchmarks = {}, baseline = nul
     rvolIncompatible: rvol.incompatible === true,
     // A spike is a THRESHOLD ON RVOL, not a separate measurement — derived from the same number so
     // the two can never disagree, and null (not false) when RVOL itself is unknown.
-    volSpike: rvol.cumulative == null ? null : rvol.cumulative >= VOLUME_SPIKE_RVOL,
+    volSpike: rvol.cumulative == null ? null : rvol.cumulative >= VOLUME_SPIKE_RATIO,
     volAccel: volumeAcceleration(state),
     rangeExpansion: rangeExpansion(state),
     atrPct: atrPct(state),
