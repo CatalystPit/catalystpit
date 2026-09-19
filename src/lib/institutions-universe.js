@@ -33,17 +33,49 @@ const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 let _secBlockedUntil = 0;
 export const secBlocked = () => Date.now() < _secBlockedUntil;
 const SEC_COOLDOWN_MS = 15 * 60 * 1000;
+
+// ── 503 IS "TRY AGAIN", NOT "THIS FILING HAS NO HOLDINGS" ────────────────────
+//
+// EDGAR's Archives host sheds load with 503 and an HTML page titled "File Unavailable". It is
+// transient and it is per-request: measured on live accessions, index.json returned 503, 503, then
+// 200 on the third attempt for two different filers, while other documents inside the SAME accession
+// answered 200 throughout. It is not a rate-limit signal, not a block, and not a missing file.
+//
+// Treating it as failure was quietly destroying the backfill. secFetch returned null, secJson turned
+// that into null, fetchHoldings turned that into [], and ingestFiler read [] as "this quarter has
+// nothing to store" and moved on — no error, no retry, filer counted as done. A run processing 38
+// filers stored 1 quarter and looked healthy the whole way.
+//
+// 403 keeps its own meaning and its own path: SEC enforces fair access by blocking the IP, so one
+// 403 still stops everything for the cooldown. These retries are for the load-shedding case only,
+// they are few, and they back off.
+const SEC_RETRY_STATUS = new Set([429, 502, 503, 504]);
+const SEC_MAX_ATTEMPTS = 4;
+export const secRetryDelayMs = (attempt) => 1000 * 2 ** (Math.max(1, attempt) - 1);   // 1s, 2s, 4s
+
 async function secFetch(url) {
   if (secBlocked()) return null;
-  try {
-    const r = await fetch(url, { headers: SEC_HEADERS, cache: 'no-store' });
-    if (r.status === 403) {
-      _secBlockedUntil = Date.now() + SEC_COOLDOWN_MS;
-      console.log('[institutions-universe] SEC returned 403 Access Denied: backing off for 15 minutes');
-      return null;
+  for (let attempt = 1; attempt <= SEC_MAX_ATTEMPTS; attempt++) {
+    try {
+      const r = await fetch(url, { headers: SEC_HEADERS, cache: 'no-store' });
+      if (r.status === 403) {
+        try { await r.body?.cancel?.(); } catch { /* nothing to release */ }
+        _secBlockedUntil = Date.now() + SEC_COOLDOWN_MS;
+        console.log('[institutions-universe] SEC returned 403 Access Denied: backing off for 15 minutes');
+        return null;
+      }
+      if (SEC_RETRY_STATUS.has(r.status) && attempt < SEC_MAX_ATTEMPTS) {
+        try { await r.body?.cancel?.(); } catch { /* nothing to release */ }
+        await sleep(secRetryDelayMs(attempt));
+        continue;
+      }
+      return r.ok ? r : null;
+    } catch {
+      if (attempt >= SEC_MAX_ATTEMPTS) return null;
+      await sleep(secRetryDelayMs(attempt));
     }
-    return r.ok ? r : null;
-  } catch { return null; }
+  }
+  return null;
 }
 async function secJson(url) { const r = await secFetch(url); if (!r) return null; try { return await r.json(); } catch { return null; } }
 async function secText(url) { const r = await secFetch(url); if (!r) return null; try { return await r.text(); } catch { return null; } }
@@ -259,17 +291,30 @@ function parseInfoTable(xml, wholeDollars) {
   }
   return rows;
 }
+// Returns the parsed positions, or NULL when the filing could not be read at all.
+//
+// The distinction is the whole point. An empty array means "we read this filing and it reports no
+// positions", which is a real thing a 13F can say. Null means "we could not see the filing" — the
+// directory listing was unavailable after retries, or none of its documents could be fetched. Those
+// two were the same value before, so an unreachable filing was indistinguishable from an empty one
+// and the caller skipped it without a word.
 async function fetchHoldings(cik, accession, filedDate) {
   const accNoDash = accession.replace(/-/g, '');
   const idx = await secJson(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}/index.json`);
+  if (!idx) return null;                        // listing unreadable — NOT an empty filing
   const items = idx?.directory?.item || [];
   const xmls = items.filter((it) => /\.xml$/i.test(it.name) && !/primary_doc\.xml$/i.test(it.name));
   const wholeDollars = String(filedDate) >= '2023-01-01';
+  let anyRead = false;
   for (const it of xmls) {
     await sleep(100);
     const xml = await secText(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}/${it.name}`);
+    if (xml != null) anyRead = true;
     if (xml && /<(?:\w+:)?infoTable>/i.test(xml)) return parseInfoTable(xml, wholeDollars);
   }
+  // Candidate documents existed but not one of them could be read: that is a fetch failure, not a
+  // filing without positions. Only a listing we truly read through yields an honest empty result.
+  if (xmls.length && !anyRead) return null;
   return [];
 }
 
@@ -402,6 +447,7 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
     for (const h of have) if (h.accession) known.set(String(h.quarter), h.accession);
   }
   let stored = 0, quarters = 0, skipped = 0;
+  const unreadable = [];
   for (const { quarter, list } of filings) {
     if (quarterUnchanged(list, known.get(String(quarter)))) { skipped++; continue; }
     const { base, additive } = await resolveQuarter(cik, list);
@@ -409,11 +455,19 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
     // order they were filed. Every row carries its own accession.
     const parts = [base, ...additive];
     let rows = [];
+    let failed = false;
     for (const p of parts) {
       const got = await fetchHoldings(cik, p.accession, p.filedDate);
+      // A part we could not read makes the WHOLE quarter untrustworthy, not merely smaller. Storing
+      // the parts that did load would silently publish an incomplete quarter — the same shape of
+      // error as treating an additive amendment as a restatement.
+      if (got === null) { failed = true; break; }
       for (const r of got) rows.push({ ...r, accession: p.accession, filedDate: p.filedDate });
       await sleep(80);
     }
+    // Reported so the caller can retry the filer later. Left uncounted, this is the hole the run
+    // cannot see: the quarter is absent and everything says the filer was processed successfully.
+    if (failed) { unreadable.push(quarter); continue; }
     if (!rows.length) continue;
     const head = parts[parts.length - 1];   // newest accession represents the quarter in fund_filings
     const res = await storeFilingSuperseded(cik, quarter, head.filedDate, head.accession, rows);
@@ -424,7 +478,7 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
     const [agg] = await db.select({ n: sql`count(*)`.mapWith(Number), last: sql`max(${fundFilings.quarter})`, first: sql`min(${fundFilings.quarter})` }).from(fundFilings).where(eq(fundFilings.cik, cik));
     await db.update(institutions).set({ name: sub.name || undefined, filingCount: agg?.n || 0, lastQuarter: agg?.last || null, firstSeenQuarter: agg?.first || null, updatedAt: new Date() }).where(eq(institutions.cik, cik));
   } catch { /* non-fatal */ }
-  return { cik, quarters, stored, skipped };
+  return { cik, quarters, stored, skipped, unreadable };
 }
 
 // Resolve tickers for holdings, draining the backlog of NEVER-ATTEMPTED CUSIPs (not yet in

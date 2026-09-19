@@ -57,9 +57,27 @@ await sql`
     first_at timestamptz not null default now(), last_at timestamptz not null default now(),
     primary key (cik, cutoff))`;
 
+// ── "ASKED SEC, THERE IS NOTHING THERE" IS A RESULT, AND IT HAS TO BE RECORDED ──
+//
+// Without this table the run cannot terminate. The queue is "filers with no filing at or before the
+// cutoff", and a filer that never filed a 13F-HR before the cutoff can never leave it: the query
+// returns the same 300 every chunk, forever, and the remaining 9,000 are never reached. Measured on
+// a 20-filer sample of the queue, 8 had no 2024-09-30 filing at SEC at all — not an edge case, 40%
+// of the work.
+//
+// A row here means the filer's own submissions index was read and it genuinely has nothing at or
+// before the cutoff. That is a FACT ABOUT SEC'S DATA, not a failure and not a skip, and it is why it
+// lives apart from institution_backfill_error. It is only ever written after a clean pass: any
+// unreadable quarter sends the filer to the error table to be retried instead.
+await sql`
+  create table if not exists institution_backfill_done (
+    cik text not null, cutoff date not null, quarters integer not null default 0,
+    checked_at timestamptz not null default now(),
+    primary key (cik, cutoff))`;
+
 const REPORT_EVERY_MS = 120_000;
 let lastReport = Date.now();
-const stats = { filers: 0, quarters: 0, skipped: 0, holdings: 0, retryable: 0, permanent: 0, secBlocks: 0, chunks: 0 };
+const stats = { filers: 0, quarters: 0, skipped: 0, unreadable: 0, emptyAtSec: 0, holdings: 0, retryable: 0, permanent: 0, secBlocks: 0, chunks: 0 };
 
 console.log(`13F overnight backfill — cutoff ${CUTOFF}, up to ${HOURS}h, chunks of ${CHUNK}`);
 console.log(`started ${new Date().toISOString()}\n`);
@@ -95,6 +113,11 @@ while (Date.now() < deadline) {
            exists (select 1 from institution_index_hint h where h.cik = i.cik) hinted
       from institutions i
      where not exists (select 1 from fund_filings f where f.cik = i.cik and f.quarter <= ${CUTOFF}::date)
+       and not exists (
+         -- Already asked SEC and it has nothing at or before the cutoff. Without this the queue
+         -- never drains: such a filer can never satisfy the condition above.
+         select 1 from institution_backfill_done d
+          where d.cik = i.cik and d.cutoff = ${CUTOFF}::date)
        and not exists (
          -- Skip filers that have failed repeatedly: three attempts is enough to distinguish a
          -- transient blip from a filer whose filings we cannot parse.
@@ -149,8 +172,21 @@ while (Date.now() < deadline) {
         stats.quarters += r.quarters || 0;
         stats.holdings += r.stored || 0;
         stats.filers += 1;
+        const unreadable = r.unreadable || [];
         // A filer with no submissions payload is not an error worth retrying forever.
         if (r.error) { await recordError(f.cik, r.error); stats.permanent += 1; }
+        else if (unreadable.length) {
+          // EDGAR could not serve these quarters this time. Recorded, not swallowed, and left OUT of
+          // the done table so the next chunk tries again — three attempts before it is given up on.
+          stats.unreadable += unreadable.length;
+          await recordError(f.cik, `unreadable quarters: ${unreadable.join(',')}`);
+        } else {
+          // Clean pass. Mark it done whether or not it yielded anything: "SEC has nothing for this
+          // filer at or before the cutoff" is the answer, and it must be recorded or the queue
+          // hands the same filer back every chunk.
+          await markDone(f.cik, r.quarters || 0);
+          if (!r.quarters) stats.emptyAtSec += 1;
+        }
       } catch (e) {
         stats.retryable += 1;
         await recordError(f.cik, e.message);
@@ -168,11 +204,23 @@ while (Date.now() < deadline) {
         const eta = rate > 0 ? (left / rate / 60).toFixed(1) : '?';
         console.log(`[${mins()}m] ${stats.filers} filers · ${stats.quarters} quarters · ` +
           `${stats.holdings.toLocaleString()} holdings · ${stats.skipped} unchanged · ` +
+          `${stats.emptyAtSec} empty-at-SEC · ${stats.unreadable} unreadable · ` +
           `${rate.toFixed(1)}/min · ${left} left · ETA ${eta}h`);
       }
     }
   };
   await Promise.all(Array.from({ length: WORKERS }, () => worker()));
+}
+
+// Written ONLY after a pass with nothing unreadable, so "done" always means the filer's submissions
+// index was actually read end to end — never that a fetch failed quietly.
+async function markDone(cik, quarters) {
+  try {
+    await sql`
+      insert into institution_backfill_done (cik, cutoff, quarters)
+      values (${String(cik)}, ${CUTOFF}::date, ${Number(quarters) || 0})
+      on conflict (cik, cutoff) do update set quarters = excluded.quarters, checked_at = now()`;
+  } catch { /* never let bookkeeping end the run */ }
 }
 
 async function recordError(cik, message) {
@@ -190,6 +238,8 @@ async function remaining() {
     const r = await sql`
       select count(*)::int n from institutions i
        where not exists (select 1 from fund_filings f where f.cik = i.cik and f.quarter <= ${CUTOFF}::date)
+         and not exists (select 1 from institution_backfill_done d
+                          where d.cik = i.cik and d.cutoff = ${CUTOFF}::date)
          and not exists (select 1 from institution_backfill_error e
                           where e.cik = i.cik and e.cutoff = ${CUTOFF}::date and e.attempts >= 3)`;
     return r[0].n;
@@ -209,3 +259,13 @@ for (const r of await sql`
 const errs = await sql`
   select attempts, count(*)::int n from institution_backfill_error where cutoff = ${CUTOFF}::date group by 1 order by 1`;
 console.log('\nrecorded failures by attempt count:', errs.length ? JSON.stringify(errs) : 'none');
+
+// The three outcomes have to be separable in the log, because they mean completely different things:
+// a filer that supplied quarters, a filer SEC genuinely has nothing for, and a filer we failed to
+// read. Only the last is a hole in the dataset.
+const [d] = await sql`
+  select count(*)::int checked, count(*) filter (where quarters > 0)::int with_data,
+         count(*) filter (where quarters = 0)::int empty_at_sec
+    from institution_backfill_done where cutoff = ${CUTOFF}::date`;
+console.log(`filers verified against SEC: ${d.checked} (${d.with_data} supplied quarters, ` +
+  `${d.empty_at_sec} genuinely have nothing at or before ${CUTOFF})`);
