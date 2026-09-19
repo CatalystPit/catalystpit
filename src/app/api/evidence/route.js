@@ -15,6 +15,7 @@
 
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { tickerEvidence } from '../../../lib/evidence/resolve';
+import { tickerEvidenceRange } from '../../../lib/evidence/timeline';
 import { isRenderableTicker } from '../../../lib/security-identity.mjs';
 
 export const runtime = 'nodejs';
@@ -41,7 +42,25 @@ export async function GET(request) {
     return Response.json({ error: 'invalid_since' }, { status: 400 });
   }
 
+  // RANGE MODE powers the chart's Evidence Timeline: the same engine, emitting evidence at each
+  // distinct public moment rather than as a digest. Both modes share every classification rule —
+  // see src/lib/evidence/timeline.js.
+  const from = searchParams.get('from');
+  const to = searchParams.get('to');
+  const wantsRange = Boolean(from || to);
+  for (const [k, v] of [['from', from], ['to', to]]) {
+    if (v && !Number.isFinite(new Date(v).getTime())) {
+      return Response.json({ error: `invalid_${k}` }, { status: 400 });
+    }
+  }
+
   try {
+    if (wantsRange) {
+      // The server bounds the span regardless of what the client asks for — an unbounded range is
+      // an unbounded query, and the chart can legitimately request five years.
+      const result = await tickerEvidenceRange(ticker, { from, to });
+      return Response.json(result, { headers: CACHE });
+    }
     const result = await tickerEvidence(ticker, { since: since || null });
     return Response.json(result, { headers: since ? { 'Cache-Control': 'no-store' } : CACHE });
   } catch (e) {

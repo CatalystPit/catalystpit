@@ -41,7 +41,7 @@ export const DISPLAY_WINDOW_DAYS = 45;
 /** How far back the unusualness comparison looks. Bounded so the query stays indexed and cheap. */
 export const HISTORY_WINDOW_DAYS = 1460;   // four years
 
-const usd = (n) => {
+export const usdLabel = (n) => {
   const v = Number(n);
   if (!Number.isFinite(v) || v <= 0) return null;
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
@@ -92,6 +92,57 @@ export async function coverageBoundaries({ now = Date.now() } = {}) {
 /** Test seam: lets a suite inject boundaries without a database. */
 export function __setCoverage(c) { _coverage = c; _coverageAt = Date.now(); }
 
+// ── when a 13F quarter became public ─────────────────────────────────────────
+//
+// ⚠️ THIS IS A PROPERTY OF THE QUARTER, NOT OF THE TICKER, and treating it as per-ticker was both
+// slower and less correct.
+//
+// Thousands of funds file across a ~45-day window, so no single filing is "the" disclosure. The
+// honest marker is the day half the quarter's filers were in — and that day is the same for every
+// security in those filings, because they all became public together. Two tickers' Q2 markers
+// landing on different days would be an artifact of which funds happen to hold them.
+//
+// It is also ~7x faster. Deriving it per ticker needs filed_date from fund_holdings, which is NOT
+// in the covering index idx_fund_holdings_qoq — so every row of a mega-cap's 120k holdings takes a
+// heap lookup, measured at 3,459ms cold for GOOGL. fund_filings has one row per (cik, quarter),
+// ~8,900 per quarter, and answers for ALL quarters at once in ~230ms.
+let _quarterDisclosure = null;
+let _quarterDisclosureAt = 0;
+
+export async function quarterDisclosureDates({ now = Date.now() } = {}) {
+  if (_quarterDisclosure && now - _quarterDisclosureAt < COVERAGE_TTL_MS) return _quarterDisclosure;
+  const map = new Map();
+  try {
+    const res = await db.execute(sql`
+      select quarter,
+             percentile_disc(0.5) within group (order by filed_date) as median_filed,
+             count(*) as filers
+        from fund_filings
+       where filed_date is not null
+       group by quarter
+       order by quarter desc
+       limit 24`);
+    for (const r of rows(res)) {
+      const q = isoDay(r.quarter);
+      if (q && r.median_filed) map.set(q, { disclosedAt: r.median_filed, filers: Number(r.filers || 0) });
+    }
+    _quarterDisclosure = map;
+    _quarterDisclosureAt = now;
+  } catch {
+    // No disclosure date means no honest marker placement, so the family simply produces nothing
+    // rather than falling back to the quarter end — which would date it months early.
+    _quarterDisclosure = map;
+  }
+  return _quarterDisclosure;
+}
+
+/** Test seam. */
+export function __setQuarterDisclosure(m) { _quarterDisclosure = m; _quarterDisclosureAt = Date.now(); }
+
+/** How many quarters back the breadth series reaches. Bounds the scan; see the note above. */
+export const BREADTH_QUARTERS = 9;
+export const BREADTH_LOOKBACK_DAYS = 900;
+
 // ── 1. INSIDERS (Form 4) ─────────────────────────────────────────────────────
 //
 // THE DISCRIMINATION THAT MATTERS: an open-market purchase (transaction code P) is a decision; a
@@ -99,7 +150,7 @@ export function __setCoverage(c) { _coverage = c; _coverageAt = Date.now(); }
 // was decided months ago. Section 5 of the brief is explicit that routine activity must not
 // dominate, so only discretionary transactions become evidence and the rest never qualify a row.
 
-const OPEN_MARKET_BUY = 'P';
+export const OPEN_MARKET_BUY = 'P';
 
 export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
   const res = await db.execute(sql`
@@ -186,7 +237,7 @@ export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} 
       summary: buildInsiderSummary({ recentBuys, buyers, officerBuy, totalValue, cluster }),
       facts: {
         buyers: buyers.length, transactions: recentBuys.length,
-        totalValue: totalValue || null, totalValueLabel: usd(totalValue),
+        totalValue: totalValue || null, totalValueLabel: usdLabel(totalValue),
         officer: !!officerBuy, executive: officerBuy?.executive || newest.executive || null,
         title: officerBuy?.title || newest.title || null,
       },
@@ -206,7 +257,7 @@ export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} 
       publicTime: newest.filing_date,
       source: 'sec_form4', sourceId: newest.accession,
       url: newest.filing_url || null,
-      summary: `${sellers.length} insider${sellers.length > 1 ? 's' : ''} sold ${usd(totalValue) || 'shares'} outside a 10b5-1 plan`,
+      summary: `${sellers.length} insider${sellers.length > 1 ? 's' : ''} sold ${usdLabel(totalValue) || 'shares'} outside a 10b5-1 plan`,
       facts: { sellers: sellers.length, transactions: discSells.length, totalValue: totalValue || null },
       context: null,
     });
@@ -219,7 +270,7 @@ export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} 
 }
 
 function buildInsiderSummary({ recentBuys, buyers, officerBuy, totalValue, cluster }) {
-  const amount = usd(totalValue);
+  const amount = usdLabel(totalValue);
   if (cluster) return `${buyers.length} insiders bought${amount ? ` ${amount}` : ''} on the open market`;
   if (officerBuy) {
     const who = officerBuy.title || 'Officer';
@@ -398,22 +449,32 @@ export async function institutionEvidence(ticker, { now = Date.now() } = {}) {
   // WHERE put_call = '' AND ticker IS NOT NULL — hence the literal `put_call = ''` rather than a
   // coalesce, which would not match the index predicate. No join to fund_filings: filed_date is
   // carried on the holdings row itself, and joining 3M rows to get it would undo the index.
-  const res = await db.execute(sql`
-    select quarter,
-           count(distinct cik)  as breadth,
-           max(filed_date)      as latest_filed
-      from fund_holdings
-     where ticker = ${ticker}
-       and put_call = ''
-     group by quarter
-     order by quarter desc
-     limit 12`);
+  // BREADTH ONLY — no filed_date. That column is not in the covering index
+  // idx_fund_holdings_qoq (quarter, ticker) INCLUDE (cik, shares) WHERE put_call = '', so selecting
+  // it forces a heap lookup per row and cost 3,459ms cold on a mega-cap. The disclosure date comes
+  // from quarterDisclosureDates() instead, which is a property of the quarter anyway.
+  //
+  // The quarter bound is what lets the index skip: unbounded, MSFT measured 1,981ms; bounded, 491ms.
+  const [res, disclosure] = await Promise.all([
+    db.execute(sql`
+      select quarter, count(distinct cik) as breadth
+        from fund_holdings
+       where ticker = ${ticker}
+         and put_call = ''
+         and quarter >= (current_date - make_interval(days => ${BREADTH_LOOKBACK_DAYS}))
+       group by quarter
+       order by quarter desc
+       limit ${BREADTH_QUARTERS}`),
+    quarterDisclosureDates({ now }),
+  ]);
   const r = rows(res);
   if (r.length < 2) return [];                 // nothing to compare is nothing to report
 
   // Oldest-first for the streak and change series.
   const series = [...r].reverse().map((x) => ({
-    quarter: x.quarter, breadth: Number(x.breadth || 0), filed: x.latest_filed,
+    quarter: x.quarter,
+    breadth: Number(x.breadth || 0),
+    filed: disclosure.get(isoDay(x.quarter))?.disclosedAt ?? null,
   }));
   const latest = series[series.length - 1];
   const prev = series[series.length - 2];

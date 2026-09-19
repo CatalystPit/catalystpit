@@ -60,6 +60,8 @@ import DrawingManager from './DrawingManager';
 import DrawingSettings from './DrawingSettings';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
+import EvidenceCard from './EvidenceCard';
+import { buildEvidenceMarkers, evidenceAtBar } from '../../lib/chart/evidence-markers.mjs';
 import DrawingRail from './DrawingRail';
 import ChartMenu, { viewMenuItems } from './ChartMenu';
 
@@ -98,6 +100,11 @@ export default function CPChart({
   // symbol is the whole page — a chart quietly showing a different ticker from the headlines and
   // financials around it would be worse than no search at all.
   onSymbolPick = null,
+  // EVIDENCE TIMELINE. Canonical objects from the Market Evidence Engine, already classified,
+  // deduped and integrity-checked. The chart does NOT fetch them and does NOT interpret them — the
+  // host owns the query so the chart stays a renderer, and so the timeline and What Changed can
+  // never disagree about what a filing means.
+  evidence = null,
 }) {
   const theme = useTheme();
   const [tf, setTf] = useState(initialTimeframe);
@@ -181,6 +188,8 @@ export default function CPChart({
   const [drawStyle, setDrawStyle] = useState(DEFAULT_STYLE);
   const [fullscreen, setFullscreen] = useState(false);
   const [chartReady, setChartReady] = useState(0);   // bumps when the chart instance exists
+  // The evidence card: { items, x, y } for the marker the user clicked, or null.
+  const [markerDetail, setMarkerDetail] = useState(null);
   /**
    * RESPONSIVE ON THE CHART'S OWN WIDTH, not the viewport.
    *
@@ -207,6 +216,22 @@ export default function CPChart({
   const priceRef = useRef(null);
   const volumeRef = useRef(null);
   const overlaysRef = useRef([]);            // every indicator series currently on the chart
+
+  // ── evidence markers ───────────────────────────────────────────────────────
+  // THE LIFECYCLE PROBLEM, STATED: draw() removes the price series and builds a new one on every
+  // redraw. In Lightweight Charts v5 a SeriesMarkers plugin is OWNED BY ITS SERIES and dies with
+  // it, so a plugin handle captured before a redraw is a handle to a destroyed object. Calling
+  // setMarkers() on it is at best a no-op and at worst throws.
+  //
+  // The fix is to make the plugin's validity a question we can always answer: remember WHICH SERIES
+  // the plugin was attached to. If that is not the series currently on the chart, the plugin is
+  // gone and we build a new one. That single identity check covers every case the brief lists —
+  // redraw, ticker switch, timeframe switch, chart-type change — without any of them being
+  // special-cased, and makes attaching to a destroyed series structurally impossible.
+  const markersApiRef = useRef(null);        // the SeriesMarkers plugin handle
+  const markersSeriesRef = useRef(null);     // the series that handle belongs to
+  const evidenceRef = useRef([]);            // current canonical evidence
+  const markerMapRef = useRef(new Map());    // groupKey -> evidence[], for the detail card
   // key -> the indicator's FIRST plot, so the legend can read its value under the cursor. Kept in a
   // ref and not in state: it holds live series objects, which are not React data.
   const legendSeriesRef = useRef(new Map());
@@ -568,7 +593,14 @@ export default function CPChart({
     const bars = barsRef.current;
     const p = palette(themeRef.current);
 
-    if (priceRef.current) { chart.removeSeries(priceRef.current); priceRef.current = null; }
+    if (priceRef.current) {
+      chart.removeSeries(priceRef.current);
+      priceRef.current = null;
+      // The markers plugin belonged to that series and has just died with it. Forgetting the handle
+      // here is what stops a later setMarkers() from touching a destroyed object.
+      markersApiRef.current = null;
+      markersSeriesRef.current = null;
+    }
     // FROM THE REGISTRY. Adding Heikin Ashi or Bars later is an entry in chart-types.mjs; this stays.
     const ct = chartTypeOf(typeRef.current);
     priceRef.current = chart.addSeries(lwc[ct.series], {
@@ -593,6 +625,10 @@ export default function CPChart({
       })));
     }
     drawIndicators();
+    // AFTER the series exists, because the plugin attaches to it. Placed here rather than in an
+    // effect so that markers and bars are always painted in the same frame — an effect would show
+    // one redraw's worth of bars with the previous redraw's markers.
+    applyEvidenceMarkers();
 
     // THE DATASET IS NOT THE VIEWPORT. A weekly or monthly series carries the security's whole
     // history — two and a half thousand weekly candles for a 1980 issuer — and fitting all of it
@@ -606,6 +642,43 @@ export default function CPChart({
       chart.timeScale().fitContent();
     }
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Put the current evidence on the current series.
+   *
+   * IDEMPOTENT AND SAFE TO CALL AT ANY TIME. It reattaches when the series has been replaced,
+   * updates in place when it has not, and does nothing at all when there is no series yet — so a
+   * redraw, an evidence refetch and a race between the two all converge on the same state instead
+   * of stacking duplicate plugins.
+   */
+  function applyEvidenceMarkers() {
+    const lwc = lwcRef.current, series = priceRef.current;
+    if (!lwc || !series) return;
+    // createSeriesMarkers arrived in v5. Degrade silently rather than break the chart for everyone
+    // if the dependency is ever rolled back.
+    if (typeof lwc.createSeriesMarkers !== 'function') return;
+
+    const built = buildEvidenceMarkers(evidenceRef.current, barsRef.current, {
+      theme: themeRef.current,
+    });
+    markerMapRef.current = built.byKey;
+
+    try {
+      if (markersApiRef.current && markersSeriesRef.current === series) {
+        // Same series as last time: the plugin is still alive, so update it in place. This is the
+        // path that guarantees a resize or a prop change cannot create a second set of markers.
+        markersApiRef.current.setMarkers(built.markers);
+        return;
+      }
+      markersApiRef.current = lwc.createSeriesMarkers(series, built.markers);
+      markersSeriesRef.current = series;
+    } catch {
+      // A marker whose time is not a real data point is the usual cause. Losing the timeline is
+      // acceptable; taking the price chart down with it is not.
+      markersApiRef.current = null;
+      markersSeriesRef.current = null;
+    }
+  }
 
   /**
    * Draw every active indicator.
@@ -766,6 +839,16 @@ export default function CPChart({
       // It is gone: the time and price are already on the crosshair's own axis labels, and every
       // other number is in the top-left legend, so the box was a third copy that covered candles and
       // sat where no charting platform puts one.
+      // EVIDENCE DETAIL. Click rather than hover: the crosshair already owns hover for the legend,
+      // and a card that appears on every mouse move over a dense chart is unusable. Clicking a bar
+      // that carries evidence opens it; clicking anywhere else closes it.
+      chart.subscribeClick((param) => {
+        if (!param?.time || !param.point) { setMarkerDetail(null); return; }
+        const items = evidenceAtBar(markerMapRef.current, param.time);
+        if (!items.length) { setMarkerDetail(null); return; }
+        setMarkerDetail({ items, x: param.point.x, y: param.point.y });
+      });
+
       chart.subscribeCrosshairMove((param) => {
         const off = !param.point || param.point.x < 0 || param.point.y < 0 || !param.time;
         // OFF THE CHART IS NOT "NO DATA". The legend falls back to the last bar, so the chart always
@@ -836,11 +919,30 @@ export default function CPChart({
       if (chart) chart.remove();
       chartRef.current = null; priceRef.current = null; volumeRef.current = null;
       overlaysRef.current = []; lwcRef.current = null;
+      // The plugin died with the chart. Dropping the handles keeps a late callback from resurrecting
+      // a reference to a removed series, which is the shape most "chart works until you navigate"
+      // leaks take.
+      markersApiRef.current = null; markersSeriesRef.current = null;
+      markerMapRef.current = new Map();
     };
     // Created once for the life of the component. Symbol, timeframe and theme are applied to the
     // live instance below rather than by recreating it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── evidence: applied to the live series, never by rebuilding the chart ──
+  //
+  // Evidence and bars arrive independently — the host refetches evidence when the symbol or range
+  // changes, while bars load on their own schedule. Whichever lands second calls the same
+  // idempotent apply, so there is no ordering requirement between them and no race to lose.
+  useEffect(() => {
+    evidenceRef.current = Array.isArray(evidence) ? evidence : [];
+    // Stale evidence from the previous ticker must never sit on the new one's candles. The host
+    // clears `evidence` on a symbol change, and this runs on that clear as well as on arrival.
+    setMarkerDetail(null);
+    if (chartRef.current && priceRef.current) applyEvidenceMarkers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evidence, chartReady]);
 
   // ── price-scale mode: applied to the live chart, never by rebuilding it ──
   useEffect(() => {
@@ -1211,6 +1313,15 @@ export default function CPChart({
             onRequestText={requestNote}
           />
         )}
+
+        {/* The evidence detail, anchored to the marker that was clicked. */}
+        <EvidenceCard
+          detail={markerDetail}
+          theme={theme}
+          onClose={() => setMarkerDetail(null)}
+          hostWidth={hostRef.current?.clientWidth || 0}
+          hostHeight={hostRef.current?.clientHeight || 0}
+        />
 
         {/* THE LEGEND. Symbol, interval, O/H/L/C, change and every indicator's value, always
             populated — from the crosshair when the pointer is on the chart, from the last bar when
