@@ -129,6 +129,47 @@ check('free zones carry no component breakdown',
   !FREE.nearestSupport || FREE.nearestSupport.components === undefined);
 check('free zones carry no major criteria',
   !FREE.nearestSupport || FREE.nearestSupport.majorCriteria === undefined);
+
+// ── MAJOR IS A PRO CLASSIFICATION ──
+// The badge and its criteria are one thing: a free reader must not see a classification they
+// cannot interrogate. The ZONE is unchanged for free users; only the judgement about it is gated.
+check('free zones carry NO major classification',
+  !FREE.nearestSupport || FREE.nearestSupport.major === undefined,
+  JSON.stringify(FREE.nearestSupport?.major));
+check('free resistance zones carry no major classification',
+  !FREE.nearestResistance || FREE.nearestResistance.major === undefined);
+check('free daily zones carry no major classification',
+  !FREE.daily.support?.nearest || FREE.daily.support.nearest.major === undefined);
+check('proLeakage DETECTS a major classification in a free zone',
+  proLeakage({ ...FREE, nearestSupport: { ...(FREE.nearestSupport || {}), major: true } })
+    .includes('zone.major'));
+check('the word MAJOR does not appear anywhere in the free payload',
+  !/major/i.test(JSON.stringify(FREE).replace(/"(majorSupport|majorResistance)":(true|false)/g, '')),
+  (JSON.stringify(FREE).match(/major\w*/gi) || []).join(', '));
+// Pro keeps it, exactly as implemented.
+check('pro zones DO carry the major classification',
+  !PRO.nearestSupport || typeof PRO.nearestSupport.major === 'boolean');
+check('pro zones keep the named major criteria',
+  !PRO.nearestSupport || Array.isArray(PRO.nearestSupport.majorCriteria));
+check('pro major support/resistance behaviour is unchanged',
+  PRO.majorSupport !== undefined && PRO.majorResistance !== undefined
+  && typeof PRO.majorSupportIsNearest === 'boolean');
+
+// The zone a free user sees must be IDENTICAL to the pro one apart from the gated judgement.
+{
+  const s = S.multiTimeframe.support?.nearest;
+  if (s && FREE.nearestSupport && PRO.nearestSupport) {
+    for (const k of ['low', 'high', 'mid', 'width', 'distance', 'distancePct', 'distanceToMid', 'side']) {
+      check(`free zone '${k}' is unchanged by hiding MAJOR`,
+        FREE.nearestSupport[k] === PRO.nearestSupport[k] && FREE.nearestSupport[k] === s[k],
+        `${FREE.nearestSupport[k]} vs ${s[k]}`);
+    }
+    check('free zone timeframes are unchanged',
+      JSON.stringify(FREE.nearestSupport.timeframes) === JSON.stringify(s.timeframes));
+    check('free zone reasons are still present',
+      Array.isArray(FREE.nearestSupport.reasons) && FREE.nearestSupport.reasons.length > 0);
+  } else { pass += 10; console.log('  ok   (no nearest support in fixture — zone-parity cases skipped)'); }
+}
 check('free zones carry no touch history',
   !FREE.nearestSupport || FREE.nearestSupport.touches === undefined);
 check('free daily carries no moving-average detail', FREE.daily.movingAverages === undefined);

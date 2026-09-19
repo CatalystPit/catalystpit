@@ -46,15 +46,20 @@ function shapeZone(zone, { deep }) {
     // not being shown the weekly trend, its swings or its own zones.
     timeframes: zone.timeframes,
     multiTimeframe: zone.multiTimeframe,
-    major: zone.major,
     reasons: deep ? zone.reasons : (zone.reasons || []).slice(0, FREE_REASON_CAP),
     reasonsTruncated: deep ? false : (zone.reasons || []).length > FREE_REASON_CAP,
   };
   if (!deep) return base;
   return {
     ...base,
-    components: zone.components,
+    // MAJOR IS A PRO CLASSIFICATION, so it is absent from a free zone entirely — not the badge
+    // without its reasons. Showing the label while gating the named criteria behind it would be
+    // half-explaining a Pro concept, which is worse than not showing it: a free reader would see a
+    // classification they cannot interrogate. The ZONE itself is unchanged for free users; only the
+    // judgement about it is Pro.
+    major: zone.major,
     majorCriteria: zone.majorCriteria,
+    components: zone.components,
     touches: zone.touches,
     prominence: zone.prominence,
     firstSeen: zone.firstSeen,
@@ -201,7 +206,7 @@ export function proLeakage(payload) {
   // The deep half of a zone must not ride along inside a free zone either.
   for (const z of [payload.nearestSupport, payload.nearestResistance]) {
     if (!z) continue;
-    for (const k of ['components', 'majorCriteria', 'touches', 'persistenceDays', 'prominence']) {
+    for (const k of ['major', 'majorCriteria', 'components', 'touches', 'persistenceDays', 'prominence']) {
       if (k in z) found.push(`zone.${k}`);
     }
   }
