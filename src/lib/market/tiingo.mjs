@@ -84,7 +84,8 @@ export const volumeLabel = (methodology) =>
  * RVOL against the tape, which is exactly the fabrication the contract exists to prevent.
  */
 export const TIINGO_EOD_CAPABILITIES = describeProvider({
-  name: 'tiingo-eod',
+  id: 'tiingo-eod',
+  label: 'Tiingo (end-of-day)',
   streaming: false,                       // WebSocket rejects every thresholdLevel on this tier
   quoteFreshness: FRESHNESS.EOD,          // measured: live fields null during market hours
   observationsPerMinute: 0,

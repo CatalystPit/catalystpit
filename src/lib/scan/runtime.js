@@ -14,6 +14,7 @@ import 'server-only';
 // reason. Pit Scan renders that honestly rather than replaying fixtures — a scanner showing invented
 // movement is the most damaging thing this product could ship.
 
+import { TIINGO_EOD_CAPABILITIES } from '../market/tiingo.mjs';
 import { INTERIM_PROVIDER, NO_PROVIDER, partitionSignals, signalAvailability } from './market-capabilities.mjs';
 import { SIGNALS } from './signals.mjs';
 import { createLifecycleStore } from './lifecycle.mjs';
@@ -28,6 +29,15 @@ import { availableColumns, DEFAULT_COLUMNS } from './columns.mjs';
  * descriptor — not a change to any signal, filter, column or preset.
  */
 export function activeCapabilities() {
+  // Tiingo is the chosen V1 provider. Its descriptor is measured rather than assumed — see
+  // market/tiingo.mjs — and on the current account it reports EOD quotes, no streaming and no
+  // intraday volume, which is exactly why Pit Scan stays gated below.
+  //
+  // Activating the paid entitlement is an environment change plus that one descriptor. No signal,
+  // filter, column, preset or board changes.
+  if (process.env.TIINGO_API_KEY && String(process.env.TIINGO_ENABLED ?? 'true').toLowerCase() !== 'false') {
+    return TIINGO_EOD_CAPABILITIES;
+  }
   const hasPolygon = !!(process.env.POLYGON_KEY || process.env.POLYGON_API_KEY);
   if (!hasPolygon) return NO_PROVIDER;
   return INTERIM_PROVIDER;
@@ -42,16 +52,30 @@ export function activeCapabilities() {
  * as a live scanner would teach traders to trust something they should not.
  */
 export function scanReadiness(caps = activeCapabilities()) {
+  // ⚠️ VOLUME IS NOT A V1 REQUIREMENT, and this gate used to say it was.
+  //
+  // Pit Scan V1 is price structure plus public evidence. Volume was previously required here because
+  // an earlier design put RVOL near the centre of the product; it no longer is, and keeping the gate
+  // would hold the whole board hostage to a feed capability the product does not need. The
+  // volume-dependent SIGNALS remain individually capability-gated and simply do not run — which is
+  // the correct behaviour and already tested.
+  //
+  // What V1 genuinely needs is a current price: "what is moving right now" cannot be answered by
+  // end-of-day data, and answering it with EOD would not be a worse answer but a misleading one.
   const needs = [];
-  if (!caps.streaming) needs.push('a streaming feed');
   if (caps.quoteFreshness !== 'realtime' && caps.quoteFreshness !== 'near') needs.push('real-time prices');
-  if (!caps.consolidatedVolume) needs.push('consolidated volume');
-  if (!caps.intradayVolumeHistory) needs.push('time-of-day volume baselines');
   return {
     live: needs.length === 0,
     provider: caps.id,
     providerLabel: caps.label,
     needs,
+    // Reported separately so the panel can say what is merely ABSENT rather than blocking: these
+    // turn signals off, they do not stop the product.
+    degraded: [
+      ...(caps.consolidatedVolume ? [] : ['consolidated volume — relative-volume signals are off']),
+      ...(caps.intradayVolumeHistory ? [] : ['time-of-day volume baselines — RVOL is unavailable']),
+      ...(caps.streaming ? [] : ['a streaming feed — prices update by polling']),
+    ],
     reason: needs.length ? `Pit Scan goes live when the market-data provider supplies ${joinList(needs)}.` : null,
   };
 }
