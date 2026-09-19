@@ -225,7 +225,11 @@ export default function CatalystPit() {
 
   const news = data?.news || [];
   const insiders = data?.insiders || [];
-  const insidersShown = insiders.slice(0, 10);
+  // The feed is ticker-facing too: each row renders its symbol and links to /ticker/<sym>. The same
+  // Liberty Mutual filing that reached the card sits in this list, so without the gate the feed would
+  // print "NONE" and link to a page that cannot exist. Filtered BEFORE the slice, so excluding a row
+  // promotes the next real filing rather than leaving a short list.
+  const insidersShown = insiders.filter((i) => isRenderableTicker(i?.sym)).slice(0, 10);
   const politicians = data?.politicians || [];
   const catalysts = data?.catalysts || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"}) : "--:--";
@@ -530,7 +534,7 @@ export default function CatalystPit() {
               <tbody>
                 {loading ? Array(3).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
-                )) : politicians.slice(0, 3).map((p, i, arr) => (
+                )) : politicians.filter((p) => isRenderableTicker(p?.sym)).slice(0, 3).map((p, i, arr) => (
                   <tr key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
                     style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
