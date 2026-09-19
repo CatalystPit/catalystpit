@@ -2,6 +2,7 @@ import { and, eq, gte, sql, desc, isNull, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { fundHoldings, fundFilings, institutions } from './schema';
 import { INSTITUTIONS } from './institutions.mjs';
+import { quarterUnchanged } from './institutions-quarter.mjs';
 import { resolveCusips, reresolveCusips } from './security-resolver';
 import { resolveIssuerItems } from './name-resolver';
 
@@ -372,12 +373,37 @@ async function storeFilingSuperseded(cik, quarter, filedDate, accession, rows) {
 }
 
 // Ingest one filer's 13F holdings for the backfill window.
-export async function ingestFiler(cik, cutoff) {
+//
+// `skipUnchanged` is OFF by default, so the production cron path is byte-for-byte what it was.
+// The historical backfill turns it on, and it matters a great deal there: the runner walks filers
+// that are missing OLD quarters, but ingestFiler re-walks every quarter at or after the cutoff —
+// including the recent ones the filer already has. Measured on the live registry: 33,163 of those
+// quarters are already stored across the remaining filers, ~3.4 per filer out of ~8. Each one was
+// being downloaded and parsed in full before storeFilingSuperseded looked at it and returned
+// `{ skipped: true }`. The download is the expensive part; the skip came too late to save it.
+//
+// ⚠️ THE SKIP RULE IS DELIBERATELY NARROWER THAN THE STORE-TIME ONE, and the difference is the point.
+// storeFilingSuperseded also rewrites when `existing.holdingsCount !== agg.length`, which is how a
+// quarter written by the old restatement-only logic heals itself — it has the same head accession but
+// far fewer positions. That check needs the fetched holdings, so it cannot be made in advance.
+// Instead we skip ONLY a quarter with exactly one filing whose accession is the stored one. With a
+// single filing there are no amendments to layer, so the old logic and the current logic produce
+// identical rows and there is nothing for the count check to heal. Every multi-filing quarter — 81 of
+// 33,163 here — still takes the full path.
+export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
   const sub = await secJson(`https://data.sec.gov/submissions/CIK${pad10(cik)}.json`);
   if (!sub) return { cik, error: 'no-submissions' };
   const filings = filings13F(sub, cutoff);
-  let stored = 0, quarters = 0;
+  // ONE indexed read replaces those ~3.4 SEC round trips per filer.
+  const known = new Map();
+  if (skipUnchanged) {
+    const have = await db.select({ quarter: fundFilings.quarter, accession: fundFilings.accession })
+      .from(fundFilings).where(eq(fundFilings.cik, cik));
+    for (const h of have) if (h.accession) known.set(String(h.quarter), h.accession);
+  }
+  let stored = 0, quarters = 0, skipped = 0;
   for (const { quarter, list } of filings) {
+    if (quarterUnchanged(list, known.get(String(quarter)))) { skipped++; continue; }
     const { base, additive } = await resolveQuarter(cik, list);
     // Compose the quarter: the restating filing, then any additive amendments layered on top in the
     // order they were filed. Every row carries its own accession.
@@ -398,7 +424,7 @@ export async function ingestFiler(cik, cutoff) {
     const [agg] = await db.select({ n: sql`count(*)`.mapWith(Number), last: sql`max(${fundFilings.quarter})`, first: sql`min(${fundFilings.quarter})` }).from(fundFilings).where(eq(fundFilings.cik, cik));
     await db.update(institutions).set({ name: sub.name || undefined, filingCount: agg?.n || 0, lastQuarter: agg?.last || null, firstSeenQuarter: agg?.first || null, updatedAt: new Date() }).where(eq(institutions.cik, cik));
   } catch { /* non-fatal */ }
-  return { cik, quarters, stored };
+  return { cik, quarters, stored, skipped };
 }
 
 // Resolve tickers for holdings, draining the backlog of NEVER-ATTEMPTED CUSIPs (not yet in

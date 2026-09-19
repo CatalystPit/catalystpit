@@ -1,0 +1,27 @@
+// WHEN A 13F QUARTER WE ALREADY HAVE CAN BE LEFT ALONE.
+//
+// storeFilingSuperseded already refuses to rewrite an unchanged quarter, but it decides that AFTER
+// the holdings have been downloaded and parsed — by then the only cost worth avoiding has been paid.
+// The historical backfill is where that bites: it walks filers missing OLD quarters, while
+// ingestFiler re-walks every quarter at or after the cutoff, recent ones included. Measured on the
+// live registry mid-run: 33,163 already-stored quarters across the 9,729 remaining filers, ~3.4 per
+// filer out of ~8, every one of them fetched and thrown away.
+//
+// This is the same decision made BEFORE the fetch, and it is deliberately narrower than the
+// store-time one. storeFilingSuperseded also rewrites when the stored `holdings_count` disagrees with
+// what was parsed, which is how a quarter written by the old restatement-only logic heals itself:
+// same head accession, far fewer positions, because an additive amendment had been treated as a
+// restatement. That comparison needs the fetched rows, so it cannot be made in advance — and so the
+// pre-fetch rule may only skip a quarter where there is provably nothing to heal.
+//
+// That is exactly one shape: a single filing, not an amendment, carrying the accession already
+// stored. One filing means no amendment was layered, so the old logic and the current logic produce
+// identical rows. On the live registry 33,082 of the 33,163 fit it; the other 81 take the full path.
+export function quarterUnchanged(list, storedAccession) {
+  if (!storedAccession || !Array.isArray(list) || list.length !== 1) return false;
+  const only = list[0];
+  // A lone amendment is never a complete quarter: the base it amends was filed before the cutoff and
+  // is not in this list, so storing it alone is the ExodusPoint failure — 1,454 positions down to 41.
+  if (!only?.accession || !only?.form || String(only.form).endsWith('/A')) return false;
+  return only.accession === storedAccession;
+}

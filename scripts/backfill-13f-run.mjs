@@ -57,7 +57,9 @@ await sql`
     first_at timestamptz not null default now(), last_at timestamptz not null default now(),
     primary key (cik, cutoff))`;
 
-const stats = { filers: 0, quarters: 0, holdings: 0, retryable: 0, permanent: 0, secBlocks: 0, chunks: 0 };
+const REPORT_EVERY_MS = 120_000;
+let lastReport = Date.now();
+const stats = { filers: 0, quarters: 0, skipped: 0, holdings: 0, retryable: 0, permanent: 0, secBlocks: 0, chunks: 0 };
 
 console.log(`13F overnight backfill — cutoff ${CUTOFF}, up to ${HOURS}h, chunks of ${CHUNK}`);
 console.log(`started ${new Date().toISOString()}\n`);
@@ -68,17 +70,37 @@ while (Date.now() < deadline) {
   // THE CHECKPOINT IS THE DATABASE. Each chunk re-asks which filers still lack anything at or before
   // the cutoff, so an interrupted run loses at most the filer in flight and never repeats a quarter
   // it already stored.
+  // ⚠️ ORDERED BY `institutions.filing_count`, NOT by aggregating fund_holdings.
+  //
+  // The first version ranked filers with `(select cik, count(*) from fund_holdings group by cik)`.
+  // That aggregates the WHOLE holdings table — 11.3M rows and growing with every chunk this job
+  // writes — and it ran once per chunk. It was the real cause of the throughput decay from 9 to 4.6
+  // filers/min, and once the table passed ~11M rows it stopped returning at all: the run sat for five
+  // minutes without a single write. `filing_count` is maintained on the registry by ingestFiler
+  // itself and is one indexed read.
+  // ⚠️ THE INDEX HINT ORDERS THE QUEUE, AND ONLY THAT. See build-13f-index-hint.mjs.
+  //
+  // `filing_count` alone sorted this queue exactly backwards. It scores a filer by how many quarters
+  // we ALREADY have, so the top entry was a fund with seven stored quarters running 2024-12-31 →
+  // 2026-06-30 and no 2024-09-30 at all — a perfect score for being the least able to supply the
+  // quarter this run exists to fetch. Meanwhile 1,616 of the 9,725 todo filers never filed a 13F-HR
+  // in 2024Q4 or 2025Q1 and cannot produce it at any position in the queue.
+  //
+  // `hinted` says the filer appears in SEC's full-index for one of those quarters, so it was active
+  // when the missing data was filed. It decides ORDER only: every filer is still crawled, and the
+  // period of report still comes from the filer's own submissions JSON inside ingestFiler. No
+  // quarter is ever inferred from the index.
   const todo = await sql`
-    select i.cik, coalesce(h.n, 0)::int weight
+    select i.cik, coalesce(i.filing_count, 0)::int weight,
+           exists (select 1 from institution_index_hint h where h.cik = i.cik) hinted
       from institutions i
-      left join (select cik, count(*)::int n from fund_holdings group by cik) h on h.cik = i.cik
      where not exists (select 1 from fund_filings f where f.cik = i.cik and f.quarter <= ${CUTOFF}::date)
        and not exists (
          -- Skip filers that have failed repeatedly: three attempts is enough to distinguish a
          -- transient blip from a filer whose filings we cannot parse.
          select 1 from institution_backfill_error e
           where e.cik = i.cik and e.cutoff = ${CUTOFF}::date and e.attempts >= 3)
-     order by coalesce(h.n, 0) desc
+     order by hinted desc, coalesce(i.filing_count, 0) desc
      limit ${CHUNK}`;
 
   if (!todo.length) {
@@ -122,7 +144,8 @@ while (Date.now() < deadline) {
       if (!f) return;
 
       try {
-        const r = await ingestFiler(f.cik, CUTOFF);
+        const r = await ingestFiler(f.cik, CUTOFF, { skipUnchanged: true });
+        stats.skipped += r.skipped || 0;
         stats.quarters += r.quarters || 0;
         stats.holdings += r.stored || 0;
         stats.filers += 1;
@@ -135,12 +158,17 @@ while (Date.now() < deadline) {
         await sleep(2000);
       }
 
-      if (stats.filers % 50 === 0 && stats.filers > 0) {
+      // TIME-BASED, NOT COUNT-BASED. `stats.filers % 50 === 0` races across workers — three of them
+      // incrementing can step straight over the boundary, and an 18-hour unattended run then prints
+      // nothing at all and looks stalled when it is working fine.
+      if (Date.now() - lastReport > REPORT_EVERY_MS) {
+        lastReport = Date.now();
         const rate = stats.filers / ((Date.now() - t0) / 60000);
         const left = await remaining();
         const eta = rate > 0 ? (left / rate / 60).toFixed(1) : '?';
         console.log(`[${mins()}m] ${stats.filers} filers · ${stats.quarters} quarters · ` +
-          `${stats.holdings.toLocaleString()} holdings · ${rate.toFixed(1)}/min · ${left} left · ETA ${eta}h`);
+          `${stats.holdings.toLocaleString()} holdings · ${stats.skipped} unchanged · ` +
+          `${rate.toFixed(1)}/min · ${left} left · ETA ${eta}h`);
       }
     }
   };
