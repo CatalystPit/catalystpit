@@ -4,6 +4,10 @@
 // cusip_map. Prioritizes corporate filers + largest managers + biggest by value.
 // Run: node --env-file=.env.local scripts/reingest-13f-aggregate.mjs [filerLimit] [quartersPerFiler]
 import { neon } from '@neondatabase/serverless';
+// Shared with the ingest library so the attribute-tolerant patterns cannot drift apart again.
+// This script exists to FIX under-aggregation, so a filing it silently failed to parse would leave
+// the wrong value in place while reporting the filer done — the defect it was written to repair.
+import { infoTableDetector, infoTableBlocks } from '../src/lib/institutions-quarter.mjs';
 const sql = neon(process.env.DATABASE_URL);
 const UA = { 'User-Agent': 'CatalystPit contact@catalystpit.com' };
 const unpad = (c) => String(Number(c));
@@ -16,7 +20,7 @@ async function secJson(url) { try { const r = await fetch(url, { headers: UA });
 
 const tag = (b, n) => { const m = b.match(new RegExp(`<(?:\\w+:)?${n}>([\\s\\S]*?)</(?:\\w+:)?${n}>`, 'i')); return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/\s+/g, ' ').trim() : ''; };
 function parseAndAggregate(xml, wholeDollars) {
-  const blocks = xml.match(/<(?:\w+:)?infoTable>[\s\S]*?<\/(?:\w+:)?infoTable>/gi) || [];
+  const blocks = xml.match(infoTableBlocks()) || [];
   const by = new Map();
   for (const b of blocks) {
     const cusip = tag(b, 'cusip').toUpperCase(); if (!cusip) continue;
@@ -40,7 +44,7 @@ async function fetchHoldings(cik, accession, filedDate) {
   for (const it of xmls) {
     await sleep(120);
     const xml = await secText(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accND}/${it.name}`);
-    if (xml && /<(?:\w+:)?infoTable>/i.test(xml)) return parseAndAggregate(xml, wholeDollars);
+    if (xml && infoTableDetector().test(xml)) return parseAndAggregate(xml, wholeDollars);
   }
   return [];
 }

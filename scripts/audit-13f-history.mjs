@@ -109,3 +109,37 @@ for (const cutoff of ['2024-09-30', '2025-06-30']) {
 }
 const errs = await sql`select count(*)::int n, sum(case when attempts >= 3 then 1 else 0 end)::int abandoned from institution_backfill_error`;
 console.log(`  recorded per-filer failures: ${errs[0].n} (abandoned after 3 attempts: ${errs[0].abandoned ?? 0})`);
+
+// ── COMPLETENESS INVARIANTS ──────────────────────────────────────────────────
+//
+// Coverage answers "is the quarter there". These answer "is what is there whole", which is the
+// question the silent-success defects made unaskable. Each one is self-contained: it needs no SEC
+// call and no external list, so it can run any time as a standing check.
+console.log('\n=== COMPLETENESS INVARIANTS ===\n');
+
+// 1. UNDER-AGGREGATION. `holdings_count` is what the writer believed it stored. The current path
+//    sets it to the aggregated count, which equals the rows actually stored. The pre-7c72dc39 path
+//    set it to the RAW sub-account line count while storing only the deduped subset — so a filing
+//    where the two disagree was written by the old path, and its positions carry one sub-account's
+//    value instead of the security's total. Measured at discovery: 1,276 filings, 477 filers, 1.90%.
+//    Repair: scripts/repair-13f-aggregation.mjs.
+const [agg] = await sql`
+  select count(*)::int n, count(distinct cik)::int filers from fund_filings f
+   where f.holdings_count is distinct from (select count(*) from fund_holdings h where h.cik = f.cik and h.quarter = f.quarter)`;
+console.log(`  under-aggregated filings (declared count != stored rows): ${agg.n}` +
+  `${agg.n ? ` across ${agg.filers} filers  ⚠️ run repair-13f-aggregation.mjs` : '  ok'}`);
+
+// 2. A FILING THAT STORED NOTHING. A manager files a 13F because it holds $100M+ in reportable
+//    securities, so a summary row with no holdings behind it is very nearly a contradiction — and it
+//    is exactly the shape a silently-skipped filing leaves.
+const [empty] = await sql`
+  select count(*)::int n from fund_filings f
+   where not exists (select 1 from fund_holdings h where h.cik = f.cik and h.quarter = f.quarter)`;
+console.log(`  filings with a summary row but zero holdings: ${empty.n}${empty.n ? '  ⚠️ REVIEW' : '  ok'}`);
+
+// 3. HOLDINGS WITH NO SUMMARY. The mirror case: rows whose (cik, quarter) has no fund_filings row,
+//    which would make the quarter invisible to every coverage count that joins through it.
+const [orphan] = await sql`
+  select count(distinct (h.cik, h.quarter))::int n from fund_holdings h
+   where not exists (select 1 from fund_filings f where f.cik = h.cik and f.quarter = h.quarter)`;
+console.log(`  (cik, quarter) with holdings but no filing summary: ${orphan.n}${orphan.n ? '  ⚠️ REVIEW' : '  ok'}`);

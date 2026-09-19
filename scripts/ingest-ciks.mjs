@@ -1,6 +1,9 @@
 // One-off: ingest specific 13F-HR filers directly (BlackRock's current CIK + Vanguard's sub-entities
 // that OpenFIGI/discovery hadn't ingested yet). Run: node --env-file=.env.local scripts/ingest-ciks.mjs
 import { neon } from '@neondatabase/serverless';
+// Shared with the ingest library so the attribute-tolerant patterns cannot drift apart again —
+// <infoTable xmlns:ns1="..."> parsed to zero rows here exactly as it did there.
+import { infoTableDetector, infoTableBlocks } from '../src/lib/institutions-quarter.mjs';
 const sql = neon(process.env.DATABASE_URL);
 const H = { 'User-Agent': 'CatalystPit contact@catalystpit.com' };
 const pad10 = (c) => String(c).replace(/\D/g, '').padStart(10, '0');
@@ -13,7 +16,7 @@ const tget = async (u) => { const r = await fetch(u, { headers: H }); return r.o
 function parseInfoTable(xml, wholeDollars) {
   const tag = (b, n) => { const m = b.match(new RegExp(`<(?:\\w+:)?${n}>([\\s\\S]*?)</(?:\\w+:)?${n}>`, 'i')); return m ? clean(m[1]) : ''; };
   const rows = [];
-  for (const b of (xml.match(/<(?:\w+:)?infoTable>[\s\S]*?<\/(?:\w+:)?infoTable>/gi) || [])) {
+  for (const b of (xml.match(infoTableBlocks()) || [])) {
     const cusip = tag(b, 'cusip').toUpperCase(); if (!cusip) continue;
     const rawV = parseFloat(tag(b, 'value').replace(/,/g, '')) || 0;
     const sh = parseFloat(tag(b, 'sshPrnamt').replace(/,/g, '')) || 0;
@@ -27,7 +30,7 @@ async function storeQuarter(cik, name, f) {
   const idx = await jget(`https://www.sec.gov/Archives/edgar/data/${cik}/${accND}/index.json`);
   const xmls = (idx?.directory?.item || []).filter((it) => /\.xml$/i.test(it.name) && !/primary_doc/i.test(it.name));
   let rows = [];
-  for (const it of xmls) { const xml = await tget(`https://www.sec.gov/Archives/edgar/data/${cik}/${accND}/${it.name}`); if (xml && /<(?:\w+:)?infoTable>/i.test(xml)) { rows = parseInfoTable(xml, String(f.filed) >= '2023-01-01'); break; } }
+  for (const it of xmls) { const xml = await tget(`https://www.sec.gov/Archives/edgar/data/${cik}/${accND}/${it.name}`); if (xml && infoTableDetector().test(xml)) { rows = parseInfoTable(xml, String(f.filed) >= '2023-01-01'); break; } }
   if (!rows.length) return 0;
   await sql`DELETE FROM fund_holdings WHERE cik=${cik} AND quarter=${f.q}`;
   for (let i = 0; i < rows.length; i += 1000) {
