@@ -1,0 +1,42 @@
+[
+ {
+  "ticker": "AAGPX",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AAETX",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AACTF",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AACIU",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AADI",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AAGRW",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AACOU",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AACPU",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AAL",
+  "reason": "retries exhausted"
+ },
+ {
+  "ticker": "AALTX",
+  "reason": "retries exhausted"
+ }
+]

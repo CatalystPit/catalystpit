@@ -185,28 +185,46 @@ export function splitAdjustSeries(bars) {
 }
 
 /**
- * Detect an ADJUSTMENT SEAM: a one-bar move that the security did not make.
+ * Detect an ADJUSTMENT SEAM: a step in the series that the security did not make.
  *
  * ⚠️ DELIBERATELY NOT the existing break detector. price-continuity.mjs looks for a SUSTAINED LEVEL
  * SHIFT of 4x — a reused symbol, an unapplied reverse split. An adjustment seam is one to ten
  * percent and leaves the level otherwise intact, so it passes that test untouched: 0 of the 18 real
  * seams were flagged by it.
  *
- * The signal here is different. A convention change is a SINGLE-BAR step with no follow-through:
- * the gap appears, and the bars after it behave exactly as the bars before did. A genuine gap —
- * earnings, a guidance cut, an ex-dividend date — is accompanied by a change in behaviour, or is
- * explained by a known corporate action.
+ * ── PROVENANCE IS REQUIRED, AND THAT IS THE WHOLE POINT ─────────────────────
  *
- * Returns candidates, never a verdict. An ex-dividend drop looks identical to a small seam by
- * construction, so `knownExDates` is how a caller excludes them; without it the honest output is a
- * candidate list for a human or a vendor cross-check, which is what the audit script does.
+ * An earlier version of this function tried to identify seams statistically, from the shape of the
+ * price alone: a one-bar step with no follow-through. It passed every synthetic fixture and then
+ * failed catastrophically on real data — 26 of 28 tickers flagged, AAPL with 37 "seams", ABBV with
+ * 39. The reason is not a bad threshold, it is a bad premise. A gap that settles back to normal
+ * trading the next day is what an ordinary earnings reaction looks like; markets produce that shape
+ * constantly. There is no purely statistical signature that separates it from a re-basing.
+ *
+ * So the detector now requires EVIDENCE OF A PROVENANCE CHANGE — a bar whose `source` differs from
+ * the bar before it. That is the only place a convention can change, which makes it the only place
+ * worth testing, and it collapses the false-positive rate to zero by construction: 569 boundaries
+ * in our data rather than every large daily move in history.
+ *
+ * Where no bar carries a `source`, the honest answer is NOT a guess. `requireSourceChange: false`
+ * exists for a caller that has some other reason to suspect a boundary (a vendor cross-check, an
+ * ingest log), and it is documented as candidate generation, not detection.
+ *
+ * Returns candidates, never a verdict. An ex-dividend drop at a source boundary is indistinguishable
+ * from a small seam by price alone, so `knownExDates` excludes them; the definitive test remains
+ * asking the vendor, which is what research/price-seam-definitive.mjs does.
  */
 export const SEAM_MIN_PCT = 0.8;
 export const SEAM_SIGMA = 4;
 /** How many bars after the step are inspected for follow-through. */
 export const SEAM_FOLLOW_BARS = 5;
 
-export function findAdjustmentSeams(bars, { knownExDates = null, minPct = SEAM_MIN_PCT, sigma = SEAM_SIGMA } = {}) {
+export function findSeamCandidates(bars, {
+  knownExDates = null, minPct = SEAM_MIN_PCT, sigma = SEAM_SIGMA,
+  // Default TRUE: only boundaries where provenance actually changes are examined. See the note
+  // above for why the statistical-only mode is candidate generation rather than detection.
+  requireSourceChange = true,
+} = {}) {
   const b = Array.isArray(bars) ? bars.filter((x) => Number.isFinite(x.close)) : [];
   if (b.length < 30) return [];
   const moves = [];
@@ -219,9 +237,18 @@ export function findAdjustmentSeams(bars, { knownExDates = null, minPct = SEAM_M
 
   const out = [];
   for (let i = 1; i < b.length; i++) {
+    const srcChange = !!(b[i].source && b[i - 1].source && b[i].source !== b[i - 1].source);
+    // THE GATE. Without a provenance change there is nothing here that distinguishes a re-basing
+    // from an ordinary gap, and pretending otherwise produced 37 false seams on AAPL alone.
+    if (requireSourceChange && !srcChange) continue;
     const gapPct = ((b[i].close - b[i - 1].close) / b[i - 1].close) * 100;
     const mag = Math.abs(gapPct);
-    if (mag < minPct || mag < sigma * median) continue;
+    if (mag < minPct) continue;
+    // THE SIGMA TEST APPLIES ONLY WITHOUT PROVENANCE. Its job is to suppress false positives across
+    // every bar in a series; at a source boundary that work is already done by the gate, and
+    // applying it there suppresses REAL seams: MSFT's confirmed 3.66% step is under 4x its median
+    // day, so the sigma test hid the very defect this file was written for.
+    if (!srcChange && mag < sigma * median) continue;
     // An ex-dividend drop is a real price move, not corruption.
     if (knownExDates && knownExDates.has(String(b[i].date).slice(0, 10))) continue;
     // NO FOLLOW-THROUGH is what separates a convention change from news. A real move continues,
@@ -250,7 +277,7 @@ export function findAdjustmentSeams(bars, { knownExDates = null, minPct = SEAM_M
       sigma: Math.round((mag / median) * 10) / 10,
       // Higher when the step had no follow-through, which is the seam signature.
       seamLike: quietAfter,
-      sourceChange: b[i].source && b[i - 1].source && b[i].source !== b[i - 1].source,
+      sourceChange: srcChange,
     });
   }
   return out;

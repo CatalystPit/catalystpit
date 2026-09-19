@@ -14,7 +14,7 @@
 import {
   CONVENTION, CONVENTION_LABEL, REQUIRED_CONVENTION, VENDOR_FIELDS,
   assertSameConvention, ConventionMismatch, conventionFitness,
-  splitAdjustSeries, findAdjustmentSeams, SEAM_MIN_PCT, SEAM_SIGMA,
+  splitAdjustSeries, findSeamCandidates, SEAM_MIN_PCT, SEAM_SIGMA,
 } from '../src/lib/price-semantics.mjs';
 
 let pass = 0, fail = 0;
@@ -141,6 +141,10 @@ check('a series with no splits is unchanged', (() => {
 // ── 4. THE SEAM DETECTOR ─────────────────────────────────────────────────────
 sec('SEAM DETECTION — WHAT IT MUST CATCH');
 
+// Detection is SOURCE-ANCHORED, so a fixture must carry provenance. The split is placed at bar 30,
+// where every fixture puts its step.
+const withSrc = (bars, at = 30) => bars.map((b, i) => ({ ...b, source: i < at ? 'tiingo' : 'polygon' }));
+
 const quiet = (n, level = 100, from = '2024-01-01') => days(n, from).map((date, i) => {
   const c = level * (1 + Math.sin(i / 3) * 0.004);   // ~0.4% daily noise
   return { date, open: c, high: c * 1.004, low: c * 0.996, close: c, volume: 1000 };
@@ -152,7 +156,7 @@ const quiet = (n, level = 100, from = '2024-01-01') => days(n, from).map((date, 
   for (let i = 30; i < b.length; i++) {
     b[i].close *= 1.10; b[i].open *= 1.10; b[i].high *= 1.10; b[i].low *= 1.10;
   }
-  const seams = findAdjustmentSeams(b);
+  const seams = findSeamCandidates(withSrc(b));
   check('a 10% re-basing is detected', seams.length >= 1, JSON.stringify(seams.map((s) => s.gapPct)));
   check('it is flagged as seam-like (no follow-through)', seams.some((s) => s.seamLike));
   check('it reports the boundary dates', seams[0]?.date === b[30].date && seams[0]?.prevDate === b[29].date);
@@ -164,7 +168,7 @@ const quiet = (n, level = 100, from = '2024-01-01') => days(n, from).map((date, 
   for (let i = 30; i < b.length; i++) {
     b[i].close *= 1.0234; b[i].open *= 1.0234; b[i].high *= 1.0234; b[i].low *= 1.0234;
   }
-  const seams = findAdjustmentSeams(b);
+  const seams = findSeamCandidates(withSrc(b));
   check('a 2.34% seam (the MSFT case) is detected', seams.length >= 1,
     `found ${seams.length}`);
 }
@@ -172,13 +176,13 @@ const quiet = (n, level = 100, from = '2024-01-01') => days(n, from).map((date, 
   // A source change is reported when the bars carry one.
   const b = quiet(60).map((x, i) => ({ ...x, source: i < 30 ? 'tiingo' : 'polygon' }));
   for (let i = 30; i < b.length; i++) b[i].close *= 1.05;
-  const seams = findAdjustmentSeams(b);
+  const seams = findSeamCandidates(withSrc(b));
   check('a coincident source change is reported', seams.some((s) => s.sourceChange === true));
 }
 
 sec('SEAM DETECTION — WHAT IT MUST NOT CATCH');
 
-check('a quiet series produces no candidates', findAdjustmentSeams(quiet(60)).length === 0);
+check('a quiet series produces no candidates', findSeamCandidates(withSrc(quiet(60))).length === 0);
 {
   // AN EX-DIVIDEND DROP IS A REAL PRICE MOVE. Excluded by known ex-dates, not by pretending it is
   // small — on a high yielder a quarterly drop is comparable to the seams we are hunting.
@@ -186,9 +190,9 @@ check('a quiet series produces no candidates', findAdjustmentSeams(quiet(60)).le
   for (let i = 30; i < b.length; i++) b[i].close *= 0.985;   // 1.5% ex-div
   const exDate = b[30].date;
   check('an ex-dividend drop IS a candidate without the calendar',
-    findAdjustmentSeams(b).length >= 1);
+    findSeamCandidates(withSrc(b)).length >= 1);
   check('an ex-dividend drop is excluded when the ex-date is known',
-    findAdjustmentSeams(b, { knownExDates: new Set([exDate]) }).length === 0);
+    findSeamCandidates(withSrc(b), { knownExDates: new Set([exDate]) }).length === 0);
 }
 {
   // An earnings gap: a big move WITH follow-through. Volatility rises after it, which is what
@@ -198,18 +202,71 @@ check('a quiet series produces no candidates', findAdjustmentSeams(quiet(60)).le
     const shock = 1.12 * (1 + Math.sin(i) * 0.03);           // elevated volatility after the gap
     b[i].close = b[i].close * shock;
   }
-  const seams = findAdjustmentSeams(b);
+  const seams = findSeamCandidates(withSrc(b));
   check('an earnings gap with follow-through is NOT flagged seam-like',
     seams.every((s) => s.seamLike === false), JSON.stringify(seams.map((s) => [s.gapPct, s.seamLike])));
 }
 {
-  // A genuinely volatile security: big daily moves are NORMAL, so nothing is anomalous.
+  // A genuinely volatile security with NO provenance change anywhere: nothing to examine, so
+  // nothing is reported however large its daily moves are.
   const b = days(60).map((date, i) => {
     const c = 10 * (1 + Math.sin(i / 2) * 0.09);             // ~9% daily swings
-    return { date, open: c, high: c * 1.05, low: c * 0.95, close: c, volume: 1000 };
+    return { date, open: c, high: c * 1.05, low: c * 0.95, close: c, volume: 1000, source: 'polygon' };
   });
-  check('a high-volatility series does not trip the detector',
-    findAdjustmentSeams(b).length === 0, `${findAdjustmentSeams(b).length} candidates`);
+  check('a volatile series with one consistent source yields nothing',
+    findSeamCandidates(b).length === 0, `${findSeamCandidates(b).length} candidates`);
+}
+{
+  // ── THE REAL-DATA LESSON, encoded ──
+  //
+  // The statistical-only mode was the original design and it failed on production data: 26 of 28
+  // tickers flagged, AAPL with 37 candidates, ABBV with 39. The premise was wrong, not the
+  // threshold — a gap that settles back to normal trading is what an ordinary earnings reaction
+  // looks like, and markets make that shape constantly. This asserts the weakness rather than
+  // hiding it, so nobody re-enables it as a detector.
+  // FAT TAILS ARE THE POINT. A smooth sinusoid has every move near its own median, so nothing can
+  // exceed 4x it and the statistical mode looks fine — which is exactly how the original fixtures
+  // misled me. Real series are mostly quiet with occasional large days, and it is those days the
+  // statistical test cannot tell from a re-basing. Deterministic, so the suite is reproducible.
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  let px = 50;
+  const vol = days(200).map((date, i) => {
+    const r = rnd();
+    // ~6% of days are 4-9% moves; the rest are well under 1%.
+    const move = r > 0.94 ? (rnd() > 0.5 ? 1 : -1) * (0.04 + rnd() * 0.05) : (rnd() - 0.5) * 0.012;
+    px *= (1 + move);
+    return { date, open: px, high: px * 1.01, low: px * 0.99, close: px, volume: 1000, source: 'polygon' };
+  });
+  const statistical = findSeamCandidates(vol, { requireSourceChange: false });
+  check('statistical-only mode over-fires on ordinary volatility (documented, not detection)',
+    statistical.length > 0, `${statistical.length} candidates`);
+  check('source-anchored mode reports nothing on the same series',
+    findSeamCandidates(vol).length === 0);
+  check('anchoring is what removes the false positives',
+    findSeamCandidates(vol).length < statistical.length);
+}
+{
+  // A real seam is still caught at a boundary even when it is SMALL relative to the ticker's own
+  // volatility — the MSFT case, where 3.66% is under 4x its median day and the sigma test hid it.
+  // The median daily move is pinned to 1.2% by alternating the sign, so the arithmetic of the
+  // sigma test is exact: 3.66 / 1.2 = 3.05x, comfortably UNDER the 4x it demands. A boundary seam
+  // of this size is therefore only findable because sigma does not apply at a source change.
+  const b = days(120).map((date, i) => {
+    const c = 300 * (i % 2 === 0 ? 1 : 1.012);
+    return { date, open: c, high: c * 1.001, low: c * 0.999, close: c, volume: 1000, source: i < 60 ? 'tiingo' : 'polygon' };
+  });
+  for (let i = 60; i < b.length; i++) { b[i].close *= 1.0366; b[i].open *= 1.0366; b[i].high *= 1.0366; b[i].low *= 1.0366; }
+  const found = findSeamCandidates(b);
+  // The property, not a magic number: it is found, AND its size is under the sigma multiple — so
+  // the only reason it is visible is that sigma does not apply at a provenance boundary.
+  check('a boundary seam is caught at all', found.length >= 1, JSON.stringify(found.map((x) => x.gapPct)));
+  check('and it is UNDER the sigma multiple that would have hidden it',
+    found.length >= 1 && found[0].sigma < SEAM_SIGMA,
+    `sigma ${found[0]?.sigma} vs threshold ${SEAM_SIGMA}`);
+  check('the statistical mode would indeed have missed it',
+    !findSeamCandidates(b.map((x) => ({ ...x, source: 'polygon' })), { requireSourceChange: false })
+      .some((c) => c.date === found[0].date));
 }
 {
   // THE ABSOLUTE FLOOR, exercised. On a very quiet security the sigma test alone would fire on
@@ -221,17 +278,17 @@ check('a quiet series produces no candidates', findAdjustmentSeams(quiet(60)).le
     return { date, open: c, high: c * 1.0005, low: c * 0.9995, close: c, volume: 1000 };
   });
   for (let i = 30; i < b.length; i++) b[i].close *= 1.005;   // 0.5%: over sigma, under the floor
-  const seams = findAdjustmentSeams(b);
+  const seams = findSeamCandidates(withSrc(b));
   check('a sub-floor step is NOT flagged even though it clears sigma',
     seams.length === 0, JSON.stringify(seams.map((s) => [s.gapPct, s.sigma])));
   // And the same series with a step ABOVE the floor is still caught, so the floor has not simply
   // disabled the detector on quiet names.
   const c2 = b.map((x) => ({ ...x }));
   for (let i = 30; i < c2.length; i++) c2[i].close = (c2[i].close / 1.005) * 1.03;
-  check('the same quiet series still catches a 3% step', findAdjustmentSeams(c2).length >= 1);
+  check('the same quiet series still catches a 3% step', findSeamCandidates(withSrc(c2)).length >= 1);
 }
-check('too short a series yields nothing rather than noise', findAdjustmentSeams(quiet(10)).length === 0);
-check('null bars do not throw', findAdjustmentSeams(null).length === 0);
+check('too short a series yields nothing rather than noise', findSeamCandidates(withSrc(quiet(10))).length === 0);
+check('null bars do not throw', findSeamCandidates(null).length === 0);
 check('the thresholds are exported for auditing',
   Number.isFinite(SEAM_MIN_PCT) && Number.isFinite(SEAM_SIGMA));
 
@@ -246,7 +303,7 @@ sec('COMPLEMENTS THE EXISTING BREAK SCAN');
   const ratio = b[35].close / b[25].close;
   check('a 10% seam is nowhere near the 4x break threshold', ratio < 4 && ratio > 1,
     String(Math.round(ratio * 100) / 100));
-  check('but the seam detector still finds it', findAdjustmentSeams(b).length >= 1);
+  check('but the seam detector still finds it', findSeamCandidates(withSrc(b)).length >= 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
