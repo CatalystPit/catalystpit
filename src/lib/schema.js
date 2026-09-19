@@ -175,18 +175,41 @@ export const congressFilings = pgTable('congress_filings', {
 }));
 
 // Permanent cache of daily EOD candles for the ticker price chart (1M+ timeframes).
-// Stores SPLIT/DIVIDEND-ADJUSTED OHLCV (mapped from Tiingo adj* fields on insert) so
-// historical charts have no split-induced discontinuities. Past dates are immutable —
-// once stored, never re-fetched; only today's row is refreshed post-close. The composite
-// PK (ticker, date) btree serves the sole query: range scan per ticker ordered by date.
+// Daily OHLCV. Past dates are immutable — once stored, never re-fetched; only today's row is
+// refreshed post-close. The composite PK (ticker, date) btree serves the sole query: range scan per
+// ticker ordered by date.
+//
+// ⚠️ THIS TABLE HOLDS TWO ADJUSTMENT CONVENTIONS, and `source` is the only thing that says which.
+//
+// The comment here previously read "SPLIT/DIVIDEND-ADJUSTED ... mapped from Tiingo adj* fields",
+// which was true of 4% of the rows:
+//
+//   source='polygon'  95.7% of rows, 13,383 tickers, 2023-09-13 onward
+//                     SPLIT-ADJUSTED ONLY (Polygon `adjusted=true`). Distributions are NOT removed,
+//                     so an ex-dividend date shows its real drop.
+//   source='tiingo'    4.3% of rows, 142 tickers, deep history
+//                     TOTAL RETURN (Tiingo adjClose). Splits AND distributions removed.
+//
+// Where a ticker holds both, the series CHANGES MEANING mid-stream and inserts a move that never
+// happened — measured at 9.88% on KO, 8.89% on JNJ, 8.19% on PG, 2.34% on MSFT, across 18
+// boundaries on 16 tickers. ticker_price_breaks does not catch these: it looks for sustained 4x
+// level shifts and an adjustment seam is one to ten percent. See research/price-seam-audit.mjs and
+// research/price-seam-definitive.mjs for the audit, and src/lib/price-semantics.mjs for which
+// convention each use case requires and why.
+//
+// Until the two are reconciled, anything COMPARING two prices across a source change on those 16
+// tickers is reading a vendor artifact. Reading a single price, or a window on one side, is safe.
 export const tickerDailyCandles = pgTable('ticker_daily_candles', {
   ticker:  text('ticker').notNull(),
   date:    date('date', { mode: 'string' }).notNull(),
-  open:    doublePrecision('open').notNull(),               // = Tiingo adjOpen
-  high:    doublePrecision('high').notNull(),               // = Tiingo adjHigh
-  low:     doublePrecision('low').notNull(),                // = Tiingo adjLow
-  close:   doublePrecision('close').notNull(),              // = Tiingo adjClose
-  volume:  doublePrecision('volume').notNull().default(0),  // = Tiingo adjVolume (fractional after splits)
+  // Convention depends on `source` — see the note above. NOT universally Tiingo adj*.
+  open:    doublePrecision('open').notNull(),
+  high:    doublePrecision('high').notNull(),
+  low:     doublePrecision('low').notNull(),
+  close:   doublePrecision('close').notNull(),
+  volume:  doublePrecision('volume').notNull().default(0),
+  // The convention discriminator, not merely provenance: 'polygon' = split-adjusted,
+  // 'tiingo' = total-return.
   source:  text('source').notNull().default('tiingo'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.ticker, t.date] }),
