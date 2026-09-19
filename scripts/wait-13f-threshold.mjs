@@ -23,8 +23,20 @@ if (!want.length) want.push('2024-09-30', '2024-12-31', '2025-03-31', '2025-06-3
 
 console.error(`waiting for ${want.join(', ')} to reach ${MIN_FILERS} filers each`);
 
+// ⚠️ POLLS fund_filings, WHICH IS A TRIGGER — THE AUDIT REMAINS THE AUTHORITY.
+//
+// The obvious query, `count(distinct cik) from fund_holdings group by quarter`, aggregates the whole
+// holdings table: 11M+ rows, and it was measured at 3.3s even when narrowed to the four quarters of
+// interest, against 173ms here. Unbounded and repeated every ten minutes, it competes with the very
+// crawler it is waiting on — the same full-table-aggregate mistake that once stalled the backfill's
+// own queue query.
+//
+// fund_filings carries one row per (cik, quarter), so the count is the same number by construction.
+// Verified equal on live data at the moment of the change: 202/203/244/247 across the four target
+// quarters from both queries. This decides only WHEN to stop waiting; audit-13f-history.mjs still
+// counts distinct filers from fund_holdings itself, and that is what the threshold is judged on.
 for (;;) {
-  const rs = await sql`select quarter::text q, count(distinct cik)::int n from fund_holdings group by 1`;
+  const rs = await sql`select quarter::text q, count(*)::int n from fund_filings group by 1`;
   const have = new Map(rs.map((r) => [r.q, r.n]));
   const short = want.filter((q) => (have.get(q) ?? 0) < MIN_FILERS);
   console.error(`${new Date().toISOString()}  ${want.map((q) => `${q}:${have.get(q) ?? 0}`).join('  ')}`);
