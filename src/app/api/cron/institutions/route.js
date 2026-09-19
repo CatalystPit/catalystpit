@@ -1,6 +1,7 @@
 import { db } from '../../../../lib/db';
 import { fundHoldings, fundFilings } from '../../../../lib/schema';
 import { INSTITUTIONS } from '../../../../lib/institutions.mjs';
+import { infoTableDetector, infoTableBlocks, fieldMatcher } from '../../../../lib/institutions-quarter.mjs';
 import { refreshFundQoq } from '../../../../lib/fund-qoq';
 import { refreshTickerIssuer } from '../../../../lib/ticker-issuer';
 import { and, eq, sql, inArray } from 'drizzle-orm';
@@ -112,11 +113,11 @@ function latest13F(sub, n = 2) {
 // Parse a 13F info table into positions. Namespace-tolerant regex (tags may be prefixed).
 function parseInfoTable(xml, wholeDollars) {
   const tag = (block, name) => {
-    const m = block.match(new RegExp(`<(?:\\w+:)?${name}>([\\s\\S]*?)</(?:\\w+:)?${name}>`, 'i'));
+    const m = block.match(fieldMatcher(name));
     return m ? m[1].trim() : '';
   };
   const rows = [];
-  const blocks = xml.match(/<(?:\w+:)?infoTable>[\s\S]*?<\/(?:\w+:)?infoTable>/gi) || [];
+  const blocks = xml.match(infoTableBlocks()) || [];
   for (const b of blocks) {
     const cusip = tag(b, 'cusip').toUpperCase();
     if (!cusip) continue;
@@ -135,17 +136,26 @@ function parseInfoTable(xml, wholeDollars) {
 }
 
 // Fetch + parse one 13F filing's info table.
+//
+// Returns NULL when the filing could not be read, and [] only when it was read and genuinely holds
+// no positions. They were the same value here, exactly as in institutions-universe.js, and the
+// caller's `if (rows.length)` then read an unreachable filing as an empty one and moved on without
+// recording anything. This route is the curated-fund twin of that path and carried the same defect.
 async function fetchHoldings(cik, accession, filedDate) {
   const accNoDash = accession.replace(/-/g, '');
   const idx = await secJson(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}/index.json`);
+  if (!idx) return null;                       // listing unreadable — NOT an empty filing
   const items = idx?.directory?.item || [];
   const xmls = items.filter((it) => /\.xml$/i.test(it.name) && !/primary_doc\.xml$/i.test(it.name));
   const wholeDollars = String(filedDate) >= '2023-01-01';
+  let anyRead = false;
   for (const it of xmls) {
     await sleep(120);
     const xml = await secText(`https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}/${it.name}`);
-    if (xml && /<(?:\w+:)?infoTable>/i.test(xml)) return parseInfoTable(xml, wholeDollars);
+    if (xml != null) anyRead = true;
+    if (xml && infoTableDetector().test(xml)) return parseInfoTable(xml, wholeDollars);
   }
+  if (xmls.length && !anyRead) return null;    // documents existed; not one of them loaded
   return [];
 }
 
@@ -231,7 +241,7 @@ export async function GET(request) {
   const tickerBudget = onlySlug ? 150 : TICKER_BUDGET;   // resolve tickers on manual runs too (single funds are small)
   const funds = onlySlug ? INSTITUTIONS.filter((f) => f.slug === onlySlug) : INSTITUTIONS;
 
-  const done = [], skipped = [];
+  const done = [], skipped = [], unresolved = [];
   for (const fund of funds) {
     if (Date.now() - startedAt > TIME_BUDGET_MS) { skipped.push(`${fund.slug}(time)`); continue; }
     try {
@@ -245,7 +255,12 @@ export async function GET(request) {
           .where(and(eq(fundFilings.cik, cik), eq(fundFilings.quarter, f.quarter))).limit(1);
         if (existing.length) continue;   // idempotent
         const rows = await fetchHoldings(cik, f.accession, f.filedDate);
-        if (rows.length) { await storeFiling(cik, f.quarter, f.filedDate, f.accession, rows); ingested += rows.length; }
+        // Unresolved is reported, never silently skipped. A 13F-HR that parses to zero positions is
+        // very nearly a contradiction — a manager files one because it holds $100M+ in reportable
+        // securities — so both "could not read" and "read but nothing parsed" are surfaced.
+        if (rows === null) { unresolved.push(`${fund.slug}:${f.quarter}:unreadable`); }
+        else if (!rows.length) { unresolved.push(`${fund.slug}:${f.quarter}:no-positions-parsed`); }
+        else { await storeFiling(cik, f.quarter, f.filedDate, f.accession, rows); ingested += rows.length; }
         await sleep(150);
       }
       done.push(`${fund.slug}:${resolved.entityName}(${ingested})`);
@@ -284,7 +299,7 @@ export async function GET(request) {
     console.log(`[institutions] fund_qoq refresh error: ${e.message}`);
   }
 
-  const summary = { ok: true, funds: funds.length, done: done.length, skipped, tickersResolved, fundQoq, tickerNames, ms: Date.now() - startedAt };
+  const summary = { ok: unresolved.length === 0, status: unresolved.length ? 'partial' : 'complete', funds: funds.length, done: done.length, skipped, unresolved, tickersResolved, fundQoq, tickerNames, ms: Date.now() - startedAt };
   console.log(`[institutions] ${JSON.stringify(summary)}`);
   return Response.json(summary);
 }

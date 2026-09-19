@@ -172,18 +172,23 @@ while (Date.now() < deadline) {
         stats.quarters += r.quarters || 0;
         stats.holdings += r.stored || 0;
         stats.filers += 1;
-        const unreadable = r.unreadable || [];
-        // A filer with no submissions payload is not an error worth retrying forever.
-        if (r.error) { await recordError(f.cik, r.error); stats.permanent += 1; }
-        else if (unreadable.length) {
-          // EDGAR could not serve these quarters this time. Recorded, not swallowed, and left OUT of
-          // the done table so the next chunk tries again — three attempts before it is given up on.
-          stats.unreadable += unreadable.length;
-          await recordError(f.cik, `unreadable quarters: ${unreadable.join(',')}`);
+        const unresolved = r.unresolved || [];
+        // ⚠️ THE COMPLETION MARKER FOLLOWS `status`, NEVER A COUNT.
+        //
+        // The bug this guards against is a run reporting success while having skipped real filings,
+        // so the decision to write "done" must key off the ingest's own verdict about whether the
+        // work happened — not off "did anything go wrong that we happened to count".
+        if (r.status === 'failed' || r.error) { await recordError(f.cik, r.error || 'failed'); stats.permanent += 1; }
+        else if (r.status === 'partial') {
+          // Named quarters could not be resolved, with a reason each. Recorded, NOT marked done, so
+          // the next chunk retries — three attempts before the filer is given up on.
+          stats.unreadable += unresolved.length;
+          await recordError(f.cik, `partial — ${unresolved.map((u) => `${u.quarter}:${u.reason}`).join(' ')}`);
         } else {
-          // Clean pass. Mark it done whether or not it yielded anything: "SEC has nothing for this
-          // filer at or before the cutoff" is the answer, and it must be recorded or the queue
-          // hands the same filer back every chunk.
+          // status === 'complete'. Mark it done whether or not it yielded anything: "SEC has nothing
+          // for this filer at or before the cutoff" is a real answer, and it must be recorded or the
+          // queue hands the same filer back every chunk. It is only reachable when every quarter was
+          // stored or was already stored unchanged.
           await markDone(f.cik, r.quarters || 0);
           if (!r.quarters) stats.emptyAtSec += 1;
         }

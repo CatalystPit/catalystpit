@@ -17,6 +17,31 @@
 // That is exactly one shape: a single filing, not an amendment, carrying the accession already
 // stored. One filing means no amendment was layered, so the old logic and the current logic produce
 // identical rows. On the live registry 33,082 of the 33,163 fit it; the other 81 take the full path.
+// ── THE <infoTable> ELEMENT, WITH OR WITHOUT ATTRIBUTES ──────────────────────
+//
+// The original patterns were `<(?:\w+:)?infoTable>` — the `>` immediately after the name means the
+// element must carry NO attributes. Most filing agents emit it that way, so this looked correct for
+// months. Others do not:
+//
+//   <infoTable xmlns:ns1="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+//
+// BNP Paribas Asset Management files exactly that, and every one of its quarters from 2025-03-31 to
+// 2026-06-30 was read successfully, matched nothing, parsed to zero rows, and was skipped in silence
+// by `if (!rows.length) continue`. Nothing was 503ing and nothing was broken upstream — the document
+// was in our hands and the regex refused it.
+//
+// `(?:\s[^>]*)?` accepts an attribute list and still requires a tag boundary, so `<infoTableFoo>`
+// cannot match. Both the DETECTOR (does this document hold a table?) and the BLOCK MATCHER (pull
+// each position out) must use it — fixing only one turns a silent skip into an empty parse.
+export const INFO_TABLE_OPEN = '<(?:\\w+:)?infoTable(?:\\s[^>]*)?>';
+export const infoTableDetector = () => new RegExp(INFO_TABLE_OPEN, 'i');
+export const infoTableBlocks = () => new RegExp(`${INFO_TABLE_OPEN}[\\s\\S]*?<\\/(?:\\w+:)?infoTable>`, 'gi');
+
+// A field inside one position block. Same attribute tolerance, same boundary requirement — without
+// the boundary, `value` would match `valueTotal` and read the wrong number.
+export const fieldMatcher = (name) =>
+  new RegExp(`<(?:\\w+:)?${name}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:\\w+:)?${name}>`, 'i');
+
 export function quarterUnchanged(list, storedAccession) {
   if (!storedAccession || !Array.isArray(list) || list.length !== 1) return false;
   const only = list[0];

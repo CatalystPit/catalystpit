@@ -2,7 +2,7 @@ import { and, eq, gte, sql, desc, isNull, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { fundHoldings, fundFilings, institutions } from './schema';
 import { INSTITUTIONS } from './institutions.mjs';
-import { quarterUnchanged } from './institutions-quarter.mjs';
+import { quarterUnchanged, infoTableDetector, infoTableBlocks, fieldMatcher } from './institutions-quarter.mjs';
 import { resolveCusips, reresolveCusips } from './security-resolver';
 import { resolveIssuerItems } from './name-resolver';
 
@@ -338,9 +338,9 @@ export async function discoverFilers({ indexes = 2, featured } = {}) {
 // ── holdings parsing (ported from the curated cron) ──
 function parseInfoTable(xml, wholeDollars) {
   // Strip CDATA wrappers + collapse whitespace so issuer names are clean (drives logo/name resolution).
-  const tag = (block, name) => { const m = block.match(new RegExp(`<(?:\\w+:)?${name}>([\\s\\S]*?)</(?:\\w+:)?${name}>`, 'i')); return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/\s+/g, ' ').trim() : ''; };
+  const tag = (block, name) => { const m = block.match(fieldMatcher(name)); return m ? m[1].replace(/<!\[CDATA\[|\]\]>/g, '').replace(/\s+/g, ' ').trim() : ''; };
   const rows = [];
-  const blocks = xml.match(/<(?:\w+:)?infoTable>[\s\S]*?<\/(?:\w+:)?infoTable>/gi) || [];
+  const blocks = xml.match(infoTableBlocks()) || [];
   for (const b of blocks) {
     const cusip = tag(b, 'cusip').toUpperCase();
     if (!cusip) continue;
@@ -388,7 +388,7 @@ async function fetchHoldings(cik, accession, filedDate) {
   const accNoDash = accession.replace(/-/g, '');
   const dir = `https://www.sec.gov/Archives/edgar/data/${unpad(cik)}/${accNoDash}`;
   const wholeDollars = String(filedDate) >= '2023-01-01';
-  const hasTable = (s) => !!s && /<(?:\w+:)?infoTable>/i.test(s);
+  const hasTable = (s) => !!s && infoTableDetector().test(s);
   let readSomething = false;         // did ANY route let us see inside the filing?
   let missedDocument = false;        // did a document we were told about fail to load?
 
@@ -557,7 +557,8 @@ async function storeFilingSuperseded(cik, quarter, filedDate, accession, rows) {
 // 33,163 here — still takes the full path.
 export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
   const sub = await secJson(`https://data.sec.gov/submissions/CIK${pad10(cik)}.json`);
-  if (!sub) return { cik, error: 'no-submissions' };
+  // Could not read the index at all — we never got to look. NOT evidence the filer has nothing.
+  if (!sub) return { cik, status: 'failed', error: 'no-submissions', quarters: 0, stored: 0, skipped: 0, unresolved: [], unreadable: [] };
   const filings = filings13F(sub, cutoff);
   // ONE indexed read replaces those ~3.4 SEC round trips per filer.
   const known = new Map();
@@ -567,7 +568,7 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
     for (const h of have) if (h.accession) known.set(String(h.quarter), h.accession);
   }
   let stored = 0, quarters = 0, skipped = 0;
-  const unreadable = [];
+  const unresolved = [];
   for (const { quarter, list } of filings) {
     if (quarterUnchanged(list, known.get(String(quarter)))) { skipped++; continue; }
     const { base, additive } = await resolveQuarter(cik, list);
@@ -587,8 +588,15 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
     }
     // Reported so the caller can retry the filer later. Left uncounted, this is the hole the run
     // cannot see: the quarter is absent and everything says the filer was processed successfully.
-    if (failed) { unreadable.push(quarter); continue; }
-    if (!rows.length) continue;
+    if (failed) { unresolved.push({ quarter, reason: 'unreadable' }); continue; }
+    // A 13F-HR THAT PARSES TO NOTHING IS NOT AN EMPTY QUARTER.
+    //
+    // A manager files a 13F because it holds at least $100M in reportable securities, so "we read
+    // the filing and it reports no positions" is very nearly a contradiction. Treating it as one
+    // more empty result is how BNP Paribas lost six consecutive quarters: the documents downloaded
+    // perfectly, an attribute on <infoTable> defeated the match, zero rows came back, and
+    // `if (!rows.length) continue` moved on without a trace. Recorded, not skipped.
+    if (!rows.length) { unresolved.push({ quarter, reason: 'no-positions-parsed' }); continue; }
     const head = parts[parts.length - 1];   // newest accession represents the quarter in fund_filings
     const res = await storeFilingSuperseded(cik, quarter, head.filedDate, head.accession, rows);
     if (res.stored) { stored += res.stored; quarters++; }
@@ -598,7 +606,18 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
     const [agg] = await db.select({ n: sql`count(*)`.mapWith(Number), last: sql`max(${fundFilings.quarter})`, first: sql`min(${fundFilings.quarter})` }).from(fundFilings).where(eq(fundFilings.cik, cik));
     await db.update(institutions).set({ name: sub.name || undefined, filingCount: agg?.n || 0, lastQuarter: agg?.last || null, firstSeenQuarter: agg?.first || null, updatedAt: new Date() }).where(eq(institutions.cik, cik));
   } catch { /* non-fatal */ }
-  return { cik, quarters, stored, skipped, unreadable };
+  // ── SUCCESS HAS TO MEAN THE WORK ACTUALLY HAPPENED ─────────────────────────
+  //
+  // Three outcomes, never conflated, because the whole class of bug being fixed here is one of them
+  // wearing another's clothes:
+  //   complete — every quarter at or after the cutoff was stored, or was already stored unchanged
+  //   partial  — some quarters could not be resolved; they are named, with why, and can be retried
+  //   failed   — the filer's submissions index was unreadable, so NOTHING could even be attempted
+  //
+  // `failed` is emphatically not the same as "this filer has no filings". It means we never got to
+  // look, which is the exact confusion that let a run report success while skipping real filings.
+  const status = unresolved.length ? 'partial' : 'complete';
+  return { cik, status, quarters, stored, skipped, unresolved, unreadable: unresolved.map((u) => u.quarter) };
 }
 
 // Resolve tickers for holdings, draining the backlog of NEVER-ATTEMPTED CUSIPs (not yet in
