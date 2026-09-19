@@ -11,6 +11,7 @@ import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
 import ConsensusPanel from '../../../components/ConsensusPanel';
 import WhatChanged from '../../../components/WhatChanged';
+import MarketStructure from '../../../components/MarketStructure';
 import CompanyDescription from '../../../components/CompanyDescription';
 import { normalizeDescription } from '../../../lib/company-description.mjs';
 

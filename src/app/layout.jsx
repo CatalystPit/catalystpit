@@ -164,6 +164,12 @@ export default function RootLayout({ children }) {
             .tk-hero-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
             @media (max-width: 899px) { .tk-hero-grid { grid-template-columns: repeat(3, 1fr); } }
             @media (max-width: 599px) { .tk-hero-grid { grid-template-columns: repeat(2, 1fr); } }
+            /* MARKET STRUCTURE timeframes. Three across on desktop, ONE on a phone — the price
+               zones inside must never be squeezed into a column narrow enough to truncate them,
+               which is the failure the Consensus panel shows at the same widths. */
+            .ms-tf-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+            @media (max-width: 1099px) { .ms-tf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+            @media (max-width: 719px)  { .ms-tf-grid { grid-template-columns: minmax(0, 1fr); } }
             .tk-chart { height: 400px; }
             @media (max-width: 599px) { .tk-chart { height: 280px; } }
             .bb-cols { display: flex; gap: 28px; }
