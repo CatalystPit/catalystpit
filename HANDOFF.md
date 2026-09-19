@@ -1513,3 +1513,102 @@ sector-neutral buckets (compare each name against its own size×sector cohort ra
 ETF alone). If the insider signal is still flat inside cohorts, the premise is dead for this horizon
 and the next question is a different horizon (5/20 days) or a different family. Cheap — same
 dataset, no new data.
+
+---
+
+# Pit Consensus research phase 2 (2026-09-19)
+
+**No production formula, weight, threshold or UI changed.** `git diff -- src/` is empty for the
+research portion; the only `src/` change in this phase is nothing at all.
+
+## 13F history — audited, and worse than assumed
+
+The "gap around 2024-06-30 → 2025-06-30" was not a gap in otherwise-good history. **Five of the nine
+stored quarters hold ONE fund each** — they are seed rows, not quarters:
+
+| quarter | funds | holdings |
+|---|---|---|
+| 2023-09-30 … 2024-06-30 | **1 each** | 39 – 5,283 |
+| 2025-06-30 | 1 → **146** (backfilling) | 516,586 |
+| 2025-09-30 | 7,600 | 2.13M |
+| 2025-12-31 | 8,514 | 2.28M |
+| 2026-03-31 | 8,749 | 2.38M |
+| 2026-06-30 | 8,837 | 2.52M |
+
+Fully absent: **2024-09-30, 2024-12-31, 2025-03-31**.
+
+⚠️ **This invalidated Experiment 001's institutional arm.** It compared quarters holding one fund
+against quarters holding thousands, so every holding looked like a new initiation and the acc/red
+counts were fiction. Its insider-only conclusions are unaffected. Experiment 002 requires **both**
+quarters of a pair to have ≥1,000 filers and marks anything else *unavailable* rather than neutral —
+leaving **3 valid QoQ pairs**.
+
+**Backfill is running and resumable.** `scripts/backfill-13f-quarters.mjs` uses the existing
+`ingestFiler(cik, cutoff)` — idempotent, amendment-aware, SEC-rate-limited, provenance-preserving —
+not a parallel system. Progress is the database, not a cursor: re-running resumes. Largest filers
+first, so a partial run is still useful. **~5 filers/min; 8,874 remain ≈ 30 hours.** Note the new
+holdings need the existing CUSIP→ticker resolver to drain before they are researchable.
+
+## Experiment 002 — branch **B**, with an **E** caveat
+
+Spec frozen and committed before running. Full numbers in `research/experiment-002-results.md`.
+
+**The size control is what revealed the signal.** Sector-relative, insider buy-only is −0.10% —
+nothing. Against a **size-tercile × sector peer cohort** it is **+2.35%, 55% hit, n=2,392**. Insider
+buying concentrates in smaller names that underperformed; the sector ETF hid the signal inside that
+size effect, which is exactly why Experiment 001 missed it.
+
+| | n | cohort-rel | hit |
+|---|---|---|---|
+| buy_only | 2,392 | **+2.35%** | 55% |
+| sell_only | 12,708 | **−1.51%** | 47% |
+| **holdout** buy_only | 2,382 | **+3.01%** | 56% |
+| **holdout** sell_only | 8,886 | +0.45% | 51% |
+
+The buy/sell spread holds in both windows (3.9pp exploratory, 2.6pp holdout).
+
+**The effect is ANTI-momentum** — the most useful finding here. buy_only decays monotonically as
+prior 63-session momentum rises: **+1.82% low / +0.59% mid / −0.27% high**. It is not momentum in
+disguise; it is closer to reversal in beaten-down names. And sell_only in high-momentum names is
+**+0.23%** — selling into strength was not bearish, so a sale is not a negative buy.
+
+**Confluence still adds nothing.** buy_only +2.35% → +3.53% with institutional accumulation, on
+**n=137**. Contradiction (+1.65%) is not meaningfully worse than agreement, and `sell_only +
+accumulation` is **+1.38%**, which no agreement/contradiction story predicts.
+
+**Folklore that did not survive:** cluster buying (3+ buyers **+1.33%**, *below* one buyer's +2.16%),
+large purchases (≥$1M **+1.02%** vs <$50k **+3.12%**), and CEO primacy — the CEO is the **weakest**
+buyer (+0.89%) behind directors (+2.24%), CFOs (+3.62%) and **10% owners (+6.66%, 63% hit, n=328)**.
+
+**Point-in-time size proxy**: median 60-session dollar volume from bars strictly before the
+observation. **Spearman 0.941** against current market cap over 26,628 pairs — tracks size closely
+while never reading a snapshot. It conflates size with turnover; stated, not hidden.
+
+⚠️ **Nothing is statistically significant.** 47 hypotheses → Bonferroni |t| ≈ 3.5; max observed
+**1.84**, with a 63× overlap deflation already applied. Only one walk-forward fold fits this history.
+**Consistent, not proven.**
+
+## Internal status: Pit Consensus is UNVALIDATED
+
+`research/validation-status.mjs` records it — research metadata only, `userFacing: false`, imported
+by nothing in `src/`. Purpose: stop future development treating a shipped formula as empirically
+established because it has been shipped a long time. The vocabulary is explicit — **UNVALIDATED**
+(never tested) is not **UNSUPPORTED** (tested, premise not supported) and neither is **REFUTED**.
+
+## What must NOT be built on this evidence
+
+- No cluster-buying bonus. No large-purchase bonus. No CEO-weighting bonus. All three point the wrong
+  way across two experiments.
+- No agreement bonus / contradiction penalty — the matrix does not support either.
+- **Any future model must control for size first.** Sector alone is not enough, and using current
+  market cap historically is leakage.
+- Do not treat a sale as a negative buy.
+
+## Recommended next step
+
+Extend the insider buy/sell study to **5- and 20-day horizons on the same cohort framework** — the
+anti-momentum shape suggests a shorter-horizon reversal, and shorter labels overlap far less, which
+is the cheapest available route to real statistical power. No new data required.
+
+Second priority: finish the 13F backfill (~30h) so institutional questions can be asked with more
+than 3 valid quarter-transitions.
