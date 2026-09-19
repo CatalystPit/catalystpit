@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '../../lib/cp-shared';
 import { barsUrl, normalizeBars, isValidSymbol } from '../../lib/chart/chart-source.mjs';
 import { palette } from '../../lib/chart/chart-theme.mjs';
+import { chartTypeOf } from '../../lib/chart/chart-types.mjs';
 
 // THE SMALL CHART FOR THE HOMEPAGE MARKET TILES.
 //
@@ -11,8 +12,8 @@ import { palette } from '../../lib/chart/chart-theme.mjs';
 // CPChart is 1,510 lines and pulls in drawings, indicators, panes, undo history, export and the
 // drawing store. Hiding its toolbar hides the controls; it does not stop any of that mounting. Four
 // of them on the homepage would be four crosshair subscriptions, four pane managers and four
-// drawing layers to serve four tiles that show one line each — the "unnecessary rendering work" the
-// brief rules out, on the most performance-sensitive page we have.
+// drawing layers to serve four tiles that show one candle series each — the "unnecessary rendering
+// work" the brief rules out, on the most performance-sensitive page we have.
 //
 // So this reuses the INFRASTRUCTURE and not the UI, which is what the brief asks for:
 //
@@ -34,7 +35,14 @@ import { palette } from '../../lib/chart/chart-theme.mjs';
 // No toolbar, drawings, indicators, chart types, timeframe row, fullscreen, crosshair subscription,
 // legend or refresh timer. One fetch per symbol on mount. A tile is a glance, not an instrument.
 
-const RANGE = '3M';   // matches what the tiles showed before, so the visual change is the renderer
+// Candle width in pixels, including the gap. Six is the point where a body is a body and a wick is
+// still visible at tile scale — below about four they read as a bar code, above about ten a desktop
+// card shows too little history to be worth a chart.
+const BAR_SPACING = 6;
+// The widest a tile gets is roughly half the MARKETS card, so ~120 candles is more than any card can
+// display at BAR_SPACING. Loading more would be history nobody can scroll to — these tiles do not
+// pan.
+const MAX_BARS = 120;
 
 export default function CompactChart({ symbol, height = 150 }) {
   const hostRef = useRef(null);
@@ -60,47 +68,54 @@ export default function CompactChart({ symbol, height = 150 }) {
       if (disposed) return;
       if (!bars.length) { setState('empty'); return; }
 
-      // The tile shows a recent window, not the full history the payload carries.
-      const slice = bars.slice(-90);
+      // Enough history to fill the widest tile at BAR_SPACING, and no more. The chart shows the
+      // right-hand end of this, so anything further back is only there to fill a wide card.
+      const slice = bars.slice(-MAX_BARS);
 
       const lwc = await import('lightweight-charts');
       if (disposed || !hostRef.current) return;
 
       const p = palette(theme);
-      // Built from the shared palette, then stripped to what a 150px tile can actually show. Axes,
-      // grid and crosshair are removed because at this size they are noise that hides the line.
+      // Built from the shared palette, then stripped to what a 150px tile can show. Axes, grid and
+      // crosshair are removed because at this size they are noise that hides the candles.
       chart = lwc.createChart(hostRef.current, {
         autoSize: true,
         layout: { background: { color: 'transparent' }, textColor: p.text, attributionLogo: false },
         grid: { vertLines: { visible: false }, horzLines: { visible: false } },
-        rightPriceScale: { visible: false },
+        // Hidden, not absent. The series still autoscales to the VISIBLE candles, which is what
+        // keeps the bodies filling the tile instead of collapsing toward a flat line; the margins
+        // stop the extremes touching the edges.
+        rightPriceScale: { visible: false, autoScale: true, scaleMargins: { top: 0.12, bottom: 0.08 } },
         leftPriceScale: { visible: false },
-        timeScale: { visible: false, fixLeftEdge: true, fixRightEdge: true },
+        // ⚠️ barSpacing, NOT fitContent(). fitContent squeezes every loaded bar into the tile, and at
+        // this width that renders candles about a pixel wide — the "unreadable hairlines" a compact
+        // chart is most likely to become. Fixing the spacing instead makes the WIDTH decide how many
+        // candles are shown: a wide card shows more, a narrow one fewer, each of them legible, and
+        // the count re-adapts on resize with no refetch.
+        timeScale: { visible: false, rightOffset: 1, barSpacing: BAR_SPACING, minBarSpacing: 2, fixRightEdge: true },
         crosshair: { mode: 0, vertLine: { visible: false, labelVisible: false }, horzLine: { visible: false, labelVisible: false } },
         handleScroll: false,
         handleScale: false,
       });
 
-      // Colour follows the window's own direction, so the tile reads before any number does.
-      const first = slice[0]?.close, last = slice[slice.length - 1]?.close;
-      const up = !(Number.isFinite(first) && Number.isFinite(last)) || last >= first;
-      const line = up ? p.up : p.down;
-
-      const series = chart.addSeries(lwc.AreaSeries, {
-        lineColor: line,
-        topColor: `${line}33`,
-        bottomColor: `${line}00`,
-        lineWidth: 1.5,
+      // THE CANONICAL CANDLE DEFINITION, taken from the chart-type registry rather than retyped.
+      // Same series, same OHLC mapping and same palette colours CPChart draws with, so the tiles and
+      // the full chart cannot drift apart — and if the registry gains Heikin Ashi or Bars, this
+      // follows without being edited.
+      const ct = chartTypeOf('Candles');
+      const series = chart.addSeries(lwc[ct.series], {
+        ...ct.options(p),
+        // The only departures, and both are because a 150px tile has no room for them.
         priceLineVisible: false,
         lastValueVisible: false,
-        crosshairMarkerVisible: false,
       });
-      series.setData(slice.map((b) => ({ time: b.time, value: b.close })));
-      chart.timeScale().fitContent();
+      series.setData(slice.map(ct.map));           // full OHLC — never reduced to close
+      chart.timeScale().scrollToRealTime();
 
-      // The tiles reflow at every homepage breakpoint, and a chart sized once renders at the wrong
-      // width after the grid collapses to a single column.
-      ro = new ResizeObserver(() => { try { chart.timeScale().fitContent(); } catch { /* disposed */ } });
+      // The tiles reflow at every homepage breakpoint. Re-anchoring to the right keeps the most
+      // recent candles in view after the grid collapses to a single column; barSpacing handles how
+      // many of them fit, so nothing needs re-slicing.
+      ro = new ResizeObserver(() => { try { chart.timeScale().scrollToRealTime(); } catch { /* disposed */ } });
       if (hostRef.current) ro.observe(hostRef.current);
 
       setState('ready');
