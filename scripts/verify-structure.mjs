@@ -512,5 +512,56 @@ sec('GUARD DETAIL');
     t.trend === TREND.UNKNOWN, `${t.trend} / swings=${t.swings.count}`);
 }
 
+// ── 14. structural disruption is a FACT, not a state ─────────────────────────
+sec('STRUCTURAL DISRUPTION');
+
+{
+  // A downtrend whose last confirmed high price has since exceeded — the "looks like a recovery"
+  // shape. Both facts are true at once and both are reported.
+  const dates = weekdays(400, '2022-01-03');
+  const bars = dates.map((d, i) => {
+    // Descending zig-zag for 200 bars, then a strong recovery above the last high.
+    const c = i < 200 ? 200 - i * 0.4 + 8 * Math.sin(i / 5) : 120 + (i - 200) * 0.45;
+    return bar(d, c, c + 1, c - 1, c);
+  });
+  const t = timeframeStructure(aggregateBars(bars, 'daily', { asOf: dates[dates.length - 1] }),
+    'daily', { asOf: dates[dates.length - 1] });
+  check('structural disruption is reported', t.structuralDisruption != null);
+  check('it names the last confirmed high as a price',
+    Number.isFinite(t.structuralDisruption.lastConfirmedHigh));
+  check('it answers whether that high was reclaimed',
+    typeof t.structuralDisruption.reclaimedLastHigh === 'boolean');
+  check('it carries a plain-language note', typeof t.structuralDisruption.note === 'string');
+  // The fact must not be a verdict: no trend label may be derived from it.
+  check('disruption does not carry a trend or state', !('trend' in t.structuralDisruption)
+    && !('state' in t.structuralDisruption) && !('condition' in t.structuralDisruption));
+  check('the strict trend label is unchanged by the disruption fact',
+    [TREND.UP, TREND.DOWN, TREND.RANGE, TREND.UNKNOWN].includes(t.trend));
+}
+{
+  // Nothing to reclaim -> null, not false. "Not reclaimed" and "no such level" are different.
+  const flat = weekdays(200, '2022-01-03').map((d) => bar(d, 100, 100.1, 99.9, 100));
+  const t = timeframeStructure(aggregateBars(flat, 'daily', { asOf: '2023-01-01' }), 'daily', { asOf: '2023-01-01' });
+  // "There is no such level" and "the level was not reclaimed" are different answers, and false
+  // would assert the second. With no pivot, BOTH fields must be null.
+  check('with no pivot, the level is null', t.structuralDisruption.lastConfirmedHigh === null,
+    String(t.structuralDisruption.lastConfirmedHigh));
+  check('with no pivot, reclaimed is null and NOT false',
+    t.structuralDisruption.reclaimedLastHigh === null,
+    JSON.stringify(t.structuralDisruption.reclaimedLastHigh));
+  check('with no pivot there is no note to make', t.structuralDisruption.note === null);
+}
+// The rejected proposal must not have leaked into the shipped engine.
+{
+  const dates = weekdays(900, '2021-01-01');
+  const bars = dates.map((d, i) => { const c = 100 + 40 * Math.sin(i / 60) + i * 0.05; return bar(d, c, c + 2, c - 2, c); });
+  const s = marketStructure(bars, { asOf: dates[dates.length - 1] });
+  const json = JSON.stringify(s);
+  check('no transition state is emitted', !/transition/i.test(json));
+  check('no condition state is emitted', !/"condition"/.test(json));
+  check('trend remains one of the four strict labels',
+    [TREND.UP, TREND.DOWN, TREND.RANGE, TREND.UNKNOWN].includes(s.daily.trend));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

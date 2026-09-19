@@ -72,6 +72,19 @@ export function timeframeStructure(bars, timeframe, { asOf = null, price = null,
     currentBar: current ? { date: current.date, close: round(current.close), complete: false, sessions: current.sessions } : null,
     trend: trend.trend,
     trendReasons: trend.reasons,
+    // ── HAS THE CONFIRMED STRUCTURE BEEN DISRUPTED? ──
+    //
+    // A FACT, DELIBERATELY NOT A STATE. The swing SEQUENCE says "the last two highs were lower";
+    // this says "price is now above the most recent high". Both can be true at once, and that pair
+    // is exactly the situation a chart reader calls a recovery while the strict label still says
+    // downtrend. Naming the level makes the disagreement checkable against the chart.
+    //
+    // A separate "bullish transition" STATE was designed, built and measured against 72 tickers and
+    // 74,791 bar-level evaluations, and REJECTED: its runs lasted a median of 2-3 bars with 50-70%
+    // lasting three or fewer, and it preceded the structural relabel by only 2-4 bars — which was
+    // always to RANGE, never straight to uptrend. See research/trend-condition-*.mjs. This fact is
+    // what survived that work.
+    structuralDisruption: disruption(trend, px),
     // The confirmation lag, disclosed. A swing needs pivotWidth bars to its right to exist, so the
     // newest structure is never in the verdict; the reader is told how far back it is anchored and
     // how much price has moved since.
@@ -96,6 +109,27 @@ export function timeframeStructure(bars, timeframe, { asOf = null, price = null,
 }
 
 const pick = (s) => (s ? { price: round(s.price), date: s.date, confirmedAt: s.confirmedAt } : null);
+
+/**
+ * Price against the most recent confirmed pivot LEVELS.
+ *
+ * Null where the pivot does not exist, so a caller can distinguish "not reclaimed" from "there is
+ * nothing to reclaim". No verdict is attached — the two booleans and the two prices are the output.
+ */
+function disruption(trend, price) {
+  const hi = trend.lastHigh, lo = trend.lastLow;
+  return {
+    lastConfirmedHigh: hi ? round(hi.price) : null,
+    lastConfirmedLow: lo ? round(lo.price) : null,
+    reclaimedLastHigh: hi ? price > hi.price : null,
+    lostLastLow: lo ? price < lo.price : null,
+    // The plain-language version, for a surface that wants one line rather than four fields.
+    note: !hi && !lo ? null
+      : hi && price > hi.price ? `price is above the last confirmed swing high ${hi.price.toFixed(2)}`
+        : lo && price < lo.price ? `price is below the last confirmed swing low ${lo.price.toFixed(2)}`
+          : hi ? `price is below the last confirmed swing high ${hi.price.toFixed(2)}` : null,
+  };
+}
 
 // ── cross-timeframe ──────────────────────────────────────────────────────────
 
