@@ -62,8 +62,12 @@ import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import EvidenceCard from './EvidenceCard';
 import { buildEvidenceMarkers, evidenceAtBar } from '../../lib/chart/evidence-markers.mjs';
+import {
+  defaultVisibility, loadVisibility, saveVisibility, filterEvidence,
+  allFamiliesOn, visibleFamilyCount,
+} from '../../lib/chart/evidence-visibility.mjs';
 import DrawingRail from './DrawingRail';
-import ChartMenu, { viewMenuItems } from './ChartMenu';
+import ChartMenu, { viewMenuItems, evidenceMenuItems } from './ChartMenu';
 
 // CATALYST PIT PRICE CHART — TradingView Lightweight Charts v5, on our own licensed data.
 //
@@ -232,6 +236,12 @@ export default function CPChart({
   const markersSeriesRef = useRef(null);     // the series that handle belongs to
   const evidenceRef = useRef([]);            // current canonical evidence
   const markerMapRef = useRef(new Map());    // groupKey -> evidence[], for the detail card
+
+  // Which evidence families are drawn. DISPLAY STATE ONLY — it filters the evidence already in
+  // memory and never causes a fetch. Held in a ref as well as state because applyEvidenceMarkers
+  // runs from draw(), outside the render that owns the state.
+  const [evidenceVis, setEvidenceVis] = useState(defaultVisibility);
+  const evidenceVisRef = useRef(evidenceVis);
   // key -> the indicator's FIRST plot, so the legend can read its value under the cursor. Kept in a
   // ref and not in state: it holds live series objects, which are not React data.
   const legendSeriesRef = useRef(new Map());
@@ -658,9 +668,14 @@ export default function CPChart({
     // if the dependency is ever rolled back.
     if (typeof lwc.createSeriesMarkers !== 'function') return;
 
-    const built = buildEvidenceMarkers(evidenceRef.current, barsRef.current, {
-      theme: themeRef.current,
-    });
+    // The visibility filter sits HERE, between the loaded evidence and the marker builder. Grouping,
+    // the density cap, public-time placement and the reaction all continue to operate on whatever
+    // survives it, so a hidden family changes what is drawn and nothing else.
+    const built = buildEvidenceMarkers(
+      filterEvidence(evidenceRef.current, evidenceVisRef.current),
+      barsRef.current,
+      { theme: themeRef.current },
+    );
     markerMapRef.current = built.byKey;
 
     try {
@@ -930,6 +945,27 @@ export default function CPChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restore the saved family preferences once, on mount, the same way indicators and view are.
+  // Changing symbol or timeframe must not reset the user's choices, which is why this is keyed on
+  // mount rather than on either of those.
+  useEffect(() => { setEvidenceVis(loadVisibility()); }, []);
+
+  // A visibility change re-filters and re-applies IN PLACE. The series is untouched, so
+  // applyEvidenceMarkers takes its setMarkers path: one live plugin, no recreation, no refetch —
+  // `evidence` is not a dependency here and nothing in this effect can trigger a request.
+  const visReady = useRef(false);
+  useEffect(() => {
+    evidenceVisRef.current = evidenceVis;
+    if (chartRef.current && priceRef.current) applyEvidenceMarkers();
+    // The card may be showing an item whose family has just been hidden.
+    setMarkerDetail(null);
+    // Skips the first run so the mount-time restore cannot overwrite a stored preference with the
+    // default before it has been read.
+    if (!visReady.current) { visReady.current = true; return; }
+    saveVisibility(evidenceVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evidenceVis]);
+
   // ── evidence: applied to the live series, never by rebuilding the chart ──
   //
   // Evidence and bars arrive independently — the host refetches evidence when the symbol or range
@@ -1118,6 +1154,9 @@ export default function CPChart({
 
   const p = palette(theme);
   const canExtend = supportsExtendedHours(tf);
+  // The control appears only where evidence is actually supplied — a Terminal chart with no host
+  // query must not grow a menu that governs nothing.
+  const hasEvidence = Array.isArray(evidence) && evidence.length > 0;
   const btn = (label, active, onClick, key) => (
     <button key={key ?? label} onClick={onClick} type="button"
       style={{
@@ -1230,6 +1269,26 @@ export default function CPChart({
             </ToolButton>
           )}
 
+          {/* EVIDENCE VISIBILITY. One control, in the spirit of Indicators — four permanent
+              switches across the toolbar would crowd out everything else. Rendered only when the
+              host actually supplies evidence, so the Terminal's charts do not grow a menu that
+              controls nothing. */}
+          {!overflowed && hasEvidence && (
+            <Dropdown theme={theme} title="Evidence" menuLabel="Evidence markers"
+              width={236} buttonWidth={narrow ? 30 : 86}
+              active={!allFamiliesOn(evidenceVis)}
+              label={narrow ? '◆' : (
+                <>
+                  <span>◆</span><span>Evidence</span>
+                  <span style={{ width: 10, textAlign: 'right', opacity: allFamiliesOn(evidenceVis) ? 0 : 1 }}>
+                    {allFamiliesOn(evidenceVis) ? '' : visibleFamilyCount(evidenceVis)}
+                  </span>
+                </>
+              )}>
+              {evidenceMenuItems({ theme, vis: evidenceVis, onChange: setEvidenceVis })}
+            </Dropdown>
+          )}
+
           {/* Everything from here is pushed to the right-hand end of the same toolbar. */}
           <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
             {overflowed
@@ -1242,6 +1301,9 @@ export default function CPChart({
                   <MenuItem theme={theme} role="menuitem" left="ƒ"
                     active={active.length > 0} onClick={() => setBrowserOpen(true)}
                     right={active.length ? String(active.length) : undefined}>Indicators</MenuItem>
+                  {/* The SAME rows the wide toolbar renders, so the two cannot drift apart — the
+                      established pattern here for the view rows below. */}
+                  {hasEvidence && evidenceMenuItems({ theme, vis: evidenceVis, onChange: setEvidenceVis })}
                   <MenuItem theme={theme} role="menuitemcheckbox" active={fullscreen}
                     closeOnPick={false} onClick={() => setFullscreen((v) => !v)}
                     right={fullscreen ? 'On' : 'Off'}>Fullscreen</MenuItem>

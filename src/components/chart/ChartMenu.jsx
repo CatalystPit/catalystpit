@@ -1,5 +1,8 @@
 'use client';
-import { Dropdown, MenuItem } from './ChartUI';
+import { Dropdown, MenuItem, MenuLabel } from './ChartUI';
+import {
+  EVIDENCE_FAMILIES, allFamiliesOn, toggleAll, toggleFamily, visibleFamilyCount,
+} from '../../lib/chart/evidence-visibility.mjs';
 
 // The chart-level view controls.
 //
@@ -18,6 +21,37 @@ import { Dropdown, MenuItem } from './ChartUI';
  * Toggles keep the menu open: changing the price scale and then the auto-scale is one visit, not
  * two. Reset is a command, so it closes.
  */
+/**
+ * The evidence-visibility rows.
+ *
+ * Returned as an array from ONE function so the wide toolbar's dropdown and the narrow overflow menu
+ * render identical rows — the same arrangement viewMenuItems uses, and for the same reason: two
+ * copies of a menu drift the first time either is edited.
+ *
+ * Every row is `menuitemcheckbox` with `closeOnPick={false}`: these are toggles a user flips two or
+ * three of in a row, and a menu that shut after each one would make that four trips.
+ */
+export function evidenceMenuItems({ theme, vis, onChange }) {
+  const all = allFamiliesOn(vis);
+  return [
+    <MenuLabel key="__lbl" theme={theme}>Evidence markers</MenuLabel>,
+    <MenuItem key="__all" theme={theme} role="menuitemcheckbox" active={all} closeOnPick={false}
+      onClick={() => onChange(toggleAll(vis))}
+      right={all ? 'All' : `${visibleFamilyCount(vis)}/${EVIDENCE_FAMILIES.length}`}>
+      All evidence
+    </MenuItem>,
+    ...EVIDENCE_FAMILIES.map((f) => {
+      const on = !!vis?.enabled && vis?.families?.[f.id] !== false;
+      return (
+        <MenuItem key={f.id} theme={theme} role="menuitemcheckbox" active={on} closeOnPick={false}
+          onClick={() => onChange(toggleFamily(vis, f.id))} right={on ? 'On' : 'Off'}>
+          {f.label}
+        </MenuItem>
+      );
+    }),
+  ];
+}
+
 export function viewMenuItems({ theme, view, canExtend, onPatch, onReset }) {
   const toggle = (label, on, onClick, onText = 'On', offText = 'Off') => (
     <MenuItem key={label} theme={theme} role="menuitemcheckbox" active={on} onClick={onClick}
