@@ -236,6 +236,24 @@ L('\n=== A PLACEHOLDER TICKER CANNOT REACH insider_trades ===');
   ]) {
     ok(`${surface} still gates on render too`, /isRenderableTicker/.test(read(file)));
   }
+
+  // ⚠️ /api/insiders WAS THE HOLE. Every other ticker-facing surface gated; the one list whose
+  // whole subject is insider filings did not, and was serving the original defect by accession:
+  // "NONE · $9.8M · 5C Lending Partners Corp · LIBERTY MUTUAL HOLDING Co INC.". Rows already in
+  // the table outlive an ingest gate, so the READ needs its own guard.
+  const ins = read('src/app/api/insiders/route.js');
+  ok('the insiders route defines a symbol guard',
+    mut('ungatedinsiders') ? false : /const TICKER_IS_A_SYMBOL = sql`/.test(ins));
+  ok('…it rejects the placeholder strings in SQL',
+    /not in\s*\n?\s*\('NONE','NULL','N\/A'/.test(ins));
+  ok('…and requires the symbol shape', /\^\[A-Z\]\[A-Z0-9\]\*\(\[\.-\]\[A-Z0-9\]\+\)\*\$/.test(ins));
+  // Applied to every view that returns rows, not just the main one.
+  const guards = (ins.match(/TICKER_IS_A_SYMBOL/g) || []).length;
+  ok('…and is applied to every insider query, not only the list',
+    mut('onequery') ? false : guards >= 5, `${guards} references`);
+  // It must be a base condition: a filter a query string can switch off is not a guard.
+  ok('…as a base condition no query string can disable',
+    mut('optionalguard') ? false : /conds\.push\(TICKER_IS_A_SYMBOL\);/.test(ins));
 }
 
 L('\n=== THE WEEKEND NEWS GAP IS CLOSED ===');

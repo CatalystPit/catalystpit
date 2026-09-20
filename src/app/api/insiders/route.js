@@ -7,6 +7,29 @@ import { ownershipChangePct as ownPctShared } from '../../../lib/insider-format'
 
 export const runtime = 'nodejs';
 
+// ⚠️ A ROW WHOSE TICKER IS NOT A SYMBOL MUST NOT LEAVE THIS ROUTE.
+//
+// /api/insiders was serving "NONE · $9.8M · 5C Lending Partners Corp · LIBERTY MUTUAL HOLDING Co
+// INC." — the exact row, by accession, that the security master was written about after it reached
+// the homepage. Every other ticker-facing surface gates on isRenderableTicker; this one never did,
+// so the one list whose entire subject is insider filings was also the one still showing the
+// unusable ones.
+//
+// The ingest gate added to /api/refresh stops new rows arriving, but rows already in the table
+// outlive it, so the read needs its own guard. This is the SQL twin of isIngestableTicker in
+// lib/security-identity.mjs, deliberately matching the standard the table now admits rather than
+// the stricter card rule: the card rule would additionally hide AXIA3 (391 rows), BRK.A and NYT.A
+// from the list, which is a product decision, not a dirt fix.
+//
+// It filters the READ. Nothing is deleted here, and a row hidden by this predicate is still in the
+// table with its accession and CIK intact.
+const TICKER_IS_A_SYMBOL = sql`${insiderTrades.ticker} is not null
+  and trim(${insiderTrades.ticker}) <> ''
+  and length(trim(${insiderTrades.ticker})) <= 10
+  and upper(trim(${insiderTrades.ticker})) not in
+    ('NONE','NULL','N/A','UNKNOWN','UNDEFINED','NIL','TBD','ERROR','MISSING','PLACEHOLDER')
+  and upper(trim(${insiderTrades.ticker})) ~ '^[A-Z][A-Z0-9]*([.-][A-Z0-9]+)*$'`;
+
 // AUTH gate (sign-in, NOT tier — mirrors /api/news): signed-in users of ANY tier
 // get the full set; signed-out get a FREE_PREVIEW_ROWS preview + lockedCount, with
 // the locked rows never leaving the server. Response varies by auth → never CDN-cached.
@@ -87,6 +110,7 @@ async function clusterBuys() {
     .where(and(
       eq(insiderTrades.action, 'BUY'),
       sql`${insiderTrades.transactionDate} >= current_date - interval '30 days'`,
+      TICKER_IS_A_SYMBOL,
     ))
     .groupBy(insiderTrades.ticker)
     .having(sql`count(distinct ${insiderTrades.executive}) >= 3`)
@@ -103,7 +127,7 @@ async function trends() {
       sells: sql`count(*) filter (where ${insiderTrades.action} = 'SELL')`.mapWith(Number),
     })
     .from(insiderTrades)
-    .where(sql`${insiderTrades.filingDate} >= current_date - interval '90 days'`)
+    .where(and(sql`${insiderTrades.filingDate} >= current_date - interval '90 days'`, TICKER_IS_A_SYMBOL))
     .groupBy(insiderTrades.filingDate)
     .orderBy(insiderTrades.filingDate);
 
@@ -116,7 +140,7 @@ async function trends() {
       sells:   sql`count(*) filter (where ${insiderTrades.action} = 'SELL')`.mapWith(Number),
     })
     .from(insiderTrades)
-    .where(sql`${insiderTrades.filingDate} >= current_date - interval '7 days'`)
+    .where(and(sql`${insiderTrades.filingDate} >= current_date - interval '7 days'`, TICKER_IS_A_SYMBOL))
     .groupBy(insiderTrades.ticker)
     .orderBy(sql`count(*) desc`)
     .limit(20);
@@ -153,7 +177,7 @@ async function searchView(q) {
     company: sql`max(${insiderTrades.company})`,
     trades: sql`count(*)`.mapWith(Number),
   }).from(insiderTrades)
-    .where(where)
+    .where(where ? and(where, TICKER_IS_A_SYMBOL) : TICKER_IS_A_SYMBOL)
     .groupBy(insiderTrades.executive, insiderTrades.ticker)
     .orderBy(sql`count(*) desc`)
     .limit(12);
@@ -400,7 +424,10 @@ export async function GET(request) {
     if (bandF && CONVICTION_BANDS.includes(bandF)) conds.push(eq(insiderTrades.convictionBand, bandF));
     if (firstBuyF) conds.push(sql`${insiderTrades.transactionCode} = 'P' AND NOT EXISTS (SELECT 1 FROM insider_trades e WHERE e.executive = ${insiderTrades.executive} AND e.ticker = ${insiderTrades.ticker} AND e.transaction_code = 'P' AND e.transaction_date < ${insiderTrades.transactionDate})`);
 
-    const whereClause = conds.length ? (conds.length === 1 ? conds[0] : and(...conds)) : undefined;
+    // A BASE condition, not one more optional filter: no query string can turn it off, and any
+    // filter added below inherits it for free.
+    conds.push(TICKER_IS_A_SYMBOL);
+    const whereClause = conds.length === 1 ? conds[0] : and(...conds);
     const tier = await resolveUserTier();
     const isPro = tier === 'pro' || tier === 'elite';
 
