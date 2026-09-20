@@ -44,7 +44,11 @@ import { FAMILY, freshness } from '../evidence/model.mjs';
 import { CONSENSUS_STATE, MARKET } from './synthesis.mjs';
 import { JOIN, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE } from './evidence-model.mjs';
 
-export const SETUP_VERSION = 'consensus_v3_setup';
+// ⚠️ BUMPED FOR V3.5. The materialization key is built from this, so leaving it unchanged would
+// have let boards classified by the V3 archetype cascade keep serving as current after a
+// methodology change that altered qualification, direction, the dead zone and ranking — the exact
+// failure the versioned-key design exists to prevent.
+export const SETUP_VERSION = 'consensus_v35_setup';
 
 // ── THE ARCHETYPES ──────────────────────────────────────────────────────────
 export const SETUP = Object.freeze({
