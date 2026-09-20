@@ -159,8 +159,16 @@ export function whyThisIsHere({ setup, synthesis, significantFamilies = [], cons
     // ⚠️ DISCLOSURE FAMILIES ONLY. row.families carries all five board families, so without this
     // filter the sentence read "Insiders and structure point negative" — price narrating itself as
     // public evidence, which is the contamination the whole two-layer split exists to prevent.
+    // ⚠️ ONLY NAME FAMILIES THE CARD ACTUALLY SHOWS. GMRS shipped reading "Institutions and
+    // Catalysts point positive" with no Institutions block anywhere on the card, because the
+    // sentence is built from the consensus family VALUES while the card renders the evidence_v1
+    // FACT SHEET, and a family can carry a signed value without having a displayable record. A
+    // sentence that cites evidence the reader cannot see is unverifiable by construction.
+    const shown = new Set(Object.keys(sheet || {}));
+    const sheetKey = (fam) => String(fam).replace(/s$/, '');
     const signed = (consensusFamilies || []).filter((f) => DISCLOSURE_ONLY.includes(f?.family)
-      && f?.active && Number.isFinite(f.E) && f.E !== 0);
+      && f?.active && Number.isFinite(f.E) && f.E !== 0
+      && shown.has(sheetKey(f.family)));
     const label = (f) => NAME[String(f.family).replace(/s$/, '')] || NAME[f.family] || f.family;
     const p2 = signed.filter((f) => f.E > 0).map(label);
     const n2 = signed.filter((f) => f.E < 0).map(label);
