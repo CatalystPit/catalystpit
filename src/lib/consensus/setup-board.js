@@ -177,7 +177,20 @@ export function whyThisIsHere({ setup, synthesis, significantFamilies = [], cons
   }
 
   // 2. WHAT THE EVIDENCE SAYS.
-  if (pos.length && neg.length) parts.push(`${join2(pos)} point positive, while ${join2(neg)} point negative`);
+  if (pos.length && neg.length) {
+    // ⚠️ ALIGNMENT AND CONFLICT ARE DIFFERENT SENTENCES. INM shipped headlined "Cross-source
+    // alignment" above a line reading "Institutions point positive, while Catalysts point
+    // negative" — a card arguing with itself. Alignment means one side clearly dominates (A >= 0.6,
+    // at least a 4:1 split), so the minority is minor contrary evidence, not an equal opposing
+    // claim. Only a genuine standoff gets the two-sided phrasing.
+    const aligned = setup?.setup === SETUP.CROSS_SOURCE_ALIGNMENT;
+    const lean = synthesis?.L ?? 0;
+    const major = aligned ? (lean >= 0 ? pos : neg) : null;
+    const minor = aligned ? (lean >= 0 ? neg : pos) : null;
+    parts.push(aligned
+      ? `${join2(major)} point ${lean >= 0 ? 'positive' : 'negative'}, with minor contrary evidence from ${join2(minor)}`
+      : `${join2(pos)} point positive, while ${join2(neg)} point negative`);
+  }
   else if (pos.length) parts.push(`${join2(pos)} point positive`);
   else if (neg.length) parts.push(`${join2(neg)} point negative`);
 
