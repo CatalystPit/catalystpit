@@ -20,7 +20,8 @@ export default function ConsensusBadge({ symbol }) {
         const cands = [];
         if (j.bull) cands.push({ dir: 'bull', ...j.bull });
         if (j.bear) cands.push({ dir: 'bear', ...j.bear });
-        cands.sort((a, b) => (b.score || 0) - (a.score || 0));
+        // Ranked by how many families align, then by insider dollars — facts, not the deprecated blend.
+        cands.sort((a, b) => (b.signals - a.signals) || ((b.insider?.val || 0) - (a.insider?.val || 0)));
         setHit(cands[0] || null);
       } catch { /* silent — badge is optional chrome */ }
     })();
@@ -41,7 +42,7 @@ export default function ConsensusBadge({ symbol }) {
         Pit Consensus · {bull ? 'Accumulation' : 'Distribution'}
       </span>
       <span style={{ fontSize: 11, fontWeight: 600, color: fg, opacity: 0.85 }}>
-        #{hit.rank} · {hit.signals}/3 signals · score {hit.score}
+        #{hit.rank} · {hit.signals}/3 evidence families aligned
       </span>
       <span style={{ fontSize: 12, color: fg, fontWeight: 600 }}>→</span>
     </a>

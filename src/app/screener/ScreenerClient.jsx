@@ -45,7 +45,6 @@ const COL = {
   perf3m:   { label: '3M', fmt: pct, sort: 'perf3m', align: 'right', color: true },
   perf6m:   { label: '6M', fmt: pct, align: 'right', color: true },
   perf1y:   { label: '1Y', fmt: pct, align: 'right', color: true },
-  consensusScore:  { label: 'Convergence', fmt: num0, sort: 'consensusScore', align: 'right', pit: true },
   insiderBuy90d:   { label: 'Insider Buy', fmt: yesNo, align: 'center', pit: true },
   insiderBuyers90d:{ label: 'Buyers', fmt: (v) => v || '—', align: 'right' },
   insiderNet90d:   { label: 'Insider $', fmt: money, sort: 'insiderNet90d', align: 'right', pit: true },
@@ -63,18 +62,17 @@ const COL = {
 
 const VIEWS = {
   Overview:    ['company', 'sector', 'industry', 'country', 'marketCap', 'pe', 'price', 'changePct', 'volume'],
-  Ownership:   ['insiderBuy90d', 'insiderBuyers90d', 'insiderNet90d', 'congressBuy90d', 'fundNetQoq', 'consensusScore'],
+  Ownership:   ['insiderBuy90d', 'insiderBuyers90d', 'insiderNet90d', 'congressBuy90d', 'fundNetQoq'],
   Technical:   ['price', 'rsi14', 'sma20', 'sma50', 'sma200', 'hi52', 'lo52', 'relVol'],
   Performance: ['price', 'changePct', 'perf1w', 'perf1m', 'perf3m', 'perf6m', 'perf1y'],
   Valuation:   ['price', 'marketCap', 'pe', 'ps', 'pb'],
   Financial:   ['roe', 'grossMargin', 'netMargin', 'sector'],
-  News:        ['hasMaterial8k', 'consensusScore', 'insiderBuy90d', 'changePct'],
+  News:        ['hasMaterial8k', 'insiderBuy90d', 'changePct'],
 };
 
 // Preset filter combos (all use available-now columns).
 const PRESETS = {
   'Insider Buying':            { insiderBuy90d: { eq: true } },
-  'Catalyst Convergence 70+':  { consensusScore: { min: 70 } },
   'Congress Buying':           { congressBuy90d: { eq: true } },
   'Institutional Accumulation':{ fundNetQoq: { min: 2 } },
   'Oversold (RSI < 30)':       { rsi14: { max: 30 } },
@@ -134,7 +132,10 @@ export default function ScreenerClient() {
   const search = useSearchParams();
   const [meta, setMeta] = useState(null);
   const [filters, setFilters] = useState({});
-  const [sort, setSort] = useState('consensusScore');
+  // Default sort is a MEASURED QUANTITY, not a composite. The old default ranked the whole screener
+  // by a 0-100 blend (execs*20 + value/250k*20 + members*25 + netFunds*18, times 1.6 or 2.4), so the
+  // first thing every user saw was ordered by a number nobody could explain.
+  const [sort, setSort] = useState('insiderNet90d');
   const [dir, setDir] = useState('desc');
   const [ticker, setTicker] = useState('');
   const [page, setPage] = useState(0);
@@ -351,8 +352,8 @@ export default function ScreenerClient() {
                         <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><TickerLogo symbol={r.ticker} size={18} />{r.ticker}</span>
                       </td>
                       {cols.map((ck) => { const c = COL[ck]; const v = r[ck];
-                        const color = c.color && typeof v === 'number' ? (v > 0 ? C.green : v < 0 ? C.red : C.text) : (ck === 'consensusScore' ? C.green : C.text);
-                        return <td key={ck} className={typeof v === 'number' ? 'cp-num' : undefined} style={{ padding: '10px 14px', textAlign: c.align || 'left', fontSize: 12.5, color, fontWeight: ck === 'consensusScore' ? 700 : 400, maxWidth: ck === 'company' ? 220 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.fmt(v)}</td>;
+                        const color = c.color && typeof v === 'number' ? (v > 0 ? C.green : v < 0 ? C.red : C.text) : C.text;
+                        return <td key={ck} className={typeof v === 'number' ? 'cp-num' : undefined} style={{ padding: '10px 14px', textAlign: c.align || 'left', fontSize: 12.5, color, maxWidth: ck === 'company' ? 220 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.fmt(v)}</td>;
                       })}
                     </tr>
                     );

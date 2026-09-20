@@ -8,17 +8,27 @@ import { C } from '../lib/cp-shared';
 // averaged three sub-scores and multiplied by 1.6 or 2.4, and no part of it could be explained to
 // the person reading it.
 //
-// THE THREE OUTPUTS STAY SEPARATE HERE TOO. Direction, alignment and confidence answer different
-// questions and collapsing them into one figure is what made the old presentation unreadable. The
-// evidence table underneath is not decoration: a reading nobody can audit is indistinguishable from
-// a guess, so every family shows its own state and the reasons list quotes only what the records
-// actually say.
+// THE FAMILY ROWS ARE THE PRODUCT. Each family is read from its own records, keeps its own state
+// vocabulary, and is never combined with the others into a figure.
 //
-// ⚠️ NOT A RATING. No buy/sell, no target, no expected return, no probability. The wording is
-// deliberately "lean" and the disclaimer is part of the component rather than something a page is
-// trusted to add.
+// The aggregate outputs this panel used to lead with — "Bullish Lean", "Alignment 73%",
+// "Confidence High" — are gone. They were computed by summing E_f = D·S·F·Q across families, which
+// is a weighting claim: that a $2M insider purchase and a quarterly 13F shift sit on one axis, in
+// one unit, and cancel. Experiment 002 tested that premise and measured institutional evidence
+// adding +0.43% over insider-alone at t=0.82. A percentage and a confidence word on top of that
+// read as validated precision nobody had established, and they invited the reader to trust the
+// headline instead of the evidence.
+//
+// What replaces them is a state a reader can verify against the rows immediately below it, and —
+// when families disagree — the disagreement named outright. Averaging destroyed exactly the
+// information a reader most needed.
+//
+// ⚠️ NOT A RATING. No buy/sell, no target, no expected return, no probability, no score.
 
+// Presentation order: slowest-moving structural evidence first, fastest-moving last. NOT precedence.
+const FAMILY_ORDER = ['structure', 'institutions', 'insiders', 'congress', 'catalysts'];
 const FAMILY_LABEL = {
+  structure: 'Market structure',
   insiders: 'Insiders', institutions: 'Institutions', congress: 'Congress', catalysts: 'Catalysts',
 };
 const STATE_LABEL = {
@@ -26,6 +36,10 @@ const STATE_LABEL = {
   accumulating: 'Accumulating', distributing: 'Distributing',
   positive: 'Positive', negative: 'Negative',
   'routine-sale': 'Routine sales', 'cluster-sale': 'Cluster selling', 'cluster-buy': 'Cluster buying',
+  // The structure engine's own words. A confirmed sequence, not a claim a trend is still running.
+  'higher-highs-and-lows': 'Higher highs & lows',
+  'lower-highs-and-lows': 'Lower highs & lows',
+  'no-clear-sequence': 'No clear sequence',
 };
 const TREND_LABEL = {
   strengthening: 'Strengthening', weakening: 'Weakening', stable: 'Stable',
@@ -39,9 +53,17 @@ const INACTIVE_LABEL = {
   'resolution-error': 'Unavailable', 'incomplete-inputs': 'Unavailable',
 };
 
-const dirColor = (d) => (d === 'bullish-lean' ? C.green : d === 'bearish-lean' ? C.red : C.muted);
-const stateColor = (s) => (['bullish', 'accumulating', 'positive', 'cluster-buy'].includes(s) ? C.green
-  : ['bearish', 'distributing', 'negative', 'cluster-sale'].includes(s) ? C.red : C.muted);
+const stateColor = (s) => (['bullish', 'accumulating', 'positive', 'cluster-buy', 'higher-highs-and-lows'].includes(s) ? C.green
+  : ['bearish', 'distributing', 'negative', 'cluster-sale', 'lower-highs-and-lows'].includes(s) ? C.red : C.muted);
+
+const AGREEMENT_LABEL = {
+  aligned: 'Evidence families agree',
+  conflicting: 'Evidence families disagree',
+  'no-clear-agreement': 'No clear agreement',
+  'single-family': 'Only one family has current evidence',
+  'no-evidence': 'No current evidence',
+};
+const agreementColor = (a) => (a === 'conflicting' ? C.red : a === 'aligned' ? C.ink : C.muted);
 
 export default function ConsensusPanel({ symbol }) {
   const [data, setData] = useState(null);
@@ -65,9 +87,12 @@ export default function ConsensusPanel({ symbol }) {
   // about us. The panel simply does not render.
   if (failed || !data || data.error) return null;
 
-  const families = data.families || [];
+  const families = [...(data.families || [])]
+    .sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family));
   const active = families.filter((f) => f.active);
-  const reasons = active.flatMap((f) => (f.reasons || []).map((t) => ({ family: f.family, text: t }))).slice(0, 5);
+  // One line per family where possible, so a single talkative family cannot crowd the others out of
+  // the WHY list.
+  const reasons = active.flatMap((f) => (f.reasons || []).slice(0, 2).map((t) => ({ family: f.family, text: t }))).slice(0, 7);
 
   return (
     <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
@@ -80,44 +105,51 @@ export default function ConsensusPanel({ symbol }) {
       </div>
 
       <div style={{ padding: '14px 16px' }}>
-        {/* DIRECTION */}
-        <div style={{ fontSize: 20, fontWeight: 700, color: dirColor(data.direction), letterSpacing: '-0.2px' }}>
-          {data.directionLabel}
+        {/* WHAT THE EVIDENCE COLLECTIVELY SAYS — a state a reader can check against the rows below,
+            not a verdict. There is deliberately no "Bullish Lean", no alignment percentage and no
+            confidence word: each implied a validated scale that does not exist, and each invited the
+            reader to skip the evidence and trust the headline. */}
+        <div style={{ fontSize: 16, fontWeight: 700, color: agreementColor(data.agreement), letterSpacing: '-0.2px' }}>
+          {AGREEMENT_LABEL[data.agreement] || 'No clear agreement'}
+        </div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
+          {data.activeCount === 0
+            ? 'Nothing currently reportable across the evidence families'
+            : `${data.activeCount} of ${data.evaluatedCount} families have current evidence`}
         </div>
 
-        {/* ALIGNMENT + CONFIDENCE — alignment is a state, not always a percentage. With one active
-            family it says Single-source rather than the 100% that would otherwise be the most
-            misleading number on the page. */}
-        <div style={{ display: 'flex', gap: 18, marginTop: 6, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12.5, color: C.muted }}>
-            {data.alignmentState === 'computed' ? (
-              <>Alignment <b style={{ color: C.ink }}>{Math.round(data.alignment * 100)}%</b></>
-            ) : data.alignmentState === 'single-source' ? (
-              <b style={{ color: C.ink }}>Single-source</b>
-            ) : (
-              <b style={{ color: C.ink }}>No current evidence</b>
-            )}
-          </span>
-          <span style={{ fontSize: 12.5, color: C.muted }}>
-            Confidence <b style={{ color: C.ink }}>{data.confidence}</b>
-          </span>
-          {data.conflict?.conflict && (
-            <span style={{ fontSize: 11.5, color: C.red, fontWeight: 600 }}>Families disagree</span>
-          )}
-        </div>
+        {/* KEY CONFLICT — named, not averaged away. This is the single most useful thing the panel
+            can say, and the old aggregate destroyed it by construction. */}
+        {data.conflicts?.length > 0 && (
+          <div style={{ marginTop: 10, padding: '9px 11px', background: '#FFF4F4',
+            border: `1px solid ${C.red}33`, borderRadius: 7 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.red, letterSpacing: '0.6px' }}>KEY CONFLICT</div>
+            <div style={{ fontSize: 12.5, color: C.text, marginTop: 3, lineHeight: 1.45 }}>
+              {data.conflicts[0].text}
+            </div>
+          </div>
+        )}
 
         {/* EVIDENCE — inactive families are listed too. Omitting them would hide that three of the
             four had nothing to say, which is exactly what the reader needs to judge the reading. */}
         <div style={{ marginTop: 14, display: 'grid', gap: 6 }}>
           {families.map((f) => (
-            <div key={f.family} style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 12.5 }}>
-              <span style={{ width: 92, color: C.muted, flexShrink: 0 }}>{FAMILY_LABEL[f.family] || f.family}</span>
+            // MOBILE: the family name sits on its own line and the state below it, rather than two
+            // fixed-width columns that force the state to truncate on a narrow screen. "Higher
+            // highs & lows" is the longest state and is exactly the one a phone reader must not
+            // lose. minWidth:0 lets the flex child actually shrink instead of overflowing.
+            <div key={f.family} style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 12.5, flexWrap: 'wrap' }}>
+              <span style={{ minWidth: 92, color: C.muted, flexShrink: 0 }}>{FAMILY_LABEL[f.family] || f.family}</span>
               {f.active ? (
                 <>
-                  <span style={{ width: 96, fontWeight: 600, color: stateColor(f.state), flexShrink: 0 }}>
+                  <span style={{ fontWeight: 600, color: stateColor(f.state), minWidth: 0, overflowWrap: 'anywhere' }}>
                     {STATE_LABEL[f.state] || f.state}
                   </span>
-                  <span style={{ color: C.dim }}>{TREND_LABEL[f.trend] || f.trend || ''}</span>
+                  {(TREND_LABEL[f.trend] || f.trend) && (
+                    <span style={{ color: C.dim, minWidth: 0, overflowWrap: 'anywhere' }}>
+                      {TREND_LABEL[f.trend] || String(f.trend).replace(/-/g, ' ')}
+                    </span>
+                  )}
                 </>
               ) : (
                 <span style={{ color: C.dim, fontStyle: 'italic' }}>{INACTIVE_LABEL[f.inactiveReason] || 'No evidence'}</span>
@@ -150,7 +182,10 @@ export default function ConsensusPanel({ symbol }) {
         )}
 
         <div style={{ marginTop: 12, fontSize: 10.5, color: C.dim, lineHeight: 1.5 }}>
-          A structured reading of public filings and disclosures. Not a rating, price target or forecast.
+          Each family is read independently from its own records and keeps its own state. Nothing here is
+          combined into a score, a percentage or a confidence level, because no validated basis exists for
+          weighting one family against another. A structured reading of public evidence — not a rating,
+          price target or forecast.
         </div>
       </div>
     </div>

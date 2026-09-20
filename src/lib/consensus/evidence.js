@@ -185,15 +185,26 @@ export async function institutionEvidence(ticker, now) {
   // The staleness is disclosed through the dates rather than discounted through Q.
   const Q = 0.85;
 
+  // ── THE REASON MUST EXPLAIN THE STATE IT SITS BESIDE ──
+  //
+  // This reported only the winning side whenever bull > bear, including when the net was well inside
+  // the mixed band. So a near-balanced quarter printed "Institutions: Mixed" above "3,324 managers
+  // increased and 269 initiated positions" — a one-sided fact that reads bullish, directly under a
+  // label saying it was not. When the state is mixed, BOTH sides are stated, because that is what
+  // made it mixed.
+  const state = D > 0.2 ? 'accumulating' : D < -0.2 ? 'distributing' : 'mixed';
+  const upSide = `${increased} manager${increased === 1 ? '' : 's'} increased and ${initiated} initiated`;
+  const downSide = `${reduced} reduced and ${exited} exited`;
+  const asOf = 'in the latest reported quarter';
   const reasons = [];
-  if (bull > bear) reasons.push(`${increased} manager${increased === 1 ? '' : 's'} increased and ${initiated} initiated positions in the latest reported quarter`);
-  if (bear > bull) reasons.push(`${reduced} manager${reduced === 1 ? '' : 's'} reduced and ${exited} exited positions in the latest reported quarter`);
-  if (bull === bear) reasons.push('Institutional accumulation and reduction were balanced in the latest reported quarter');
+  if (state === 'accumulating') reasons.push(`${upSide} positions ${asOf}`);
+  else if (state === 'distributing') reasons.push(`${reduced} manager${reduced === 1 ? '' : 's'} reduced and ${exited} exited positions ${asOf}`);
+  else reasons.push(`${upSide} positions, against ${downSide}, ${asOf}`);
 
   return familyValue({
     family: 'institutions', direction: D, strength: S, freshness: F, quality: Q,
     evidenceCount: movers,
-    state: D > 0.2 ? 'accumulating' : D < -0.2 ? 'distributing' : 'mixed',
+    state,
     trend: initiated > exited ? 'accumulating' : exited > initiated ? 'distributing' : 'stable',
     reasons,
     refs: [],
@@ -238,15 +249,30 @@ export async function congressEvidence(ticker, now) {
   // the least precise of the four.
   const Q = 0.6;
 
+  // ── THE REASON MUST EXPLAIN THE STATE IT SITS BESIDE ──
+  //
+  // This previously said "Congressional activity is mixed" whenever both purchases and sales
+  // existed, while the STATE came from the dollar-weighted net. So KO read "Congress: Bullish" with
+  // "activity is mixed" printed directly underneath it — the explanation contradicting the label it
+  // was meant to justify. In a product whose entire claim is explainability, that is the worst
+  // possible defect: a reader who checks the reasoning is punished for doing so.
+  //
+  // The counts and the direction are now stated together, so a net-bullish reading with sales in it
+  // says exactly that, and the reader can see both facts that produced the state.
+  const state = D > 0.2 ? 'bullish' : D < -0.2 ? 'bearish' : 'mixed';
+  const counts = `${buys.length} purchase${buys.length === 1 ? '' : 's'} and ${sells.length} sale${sells.length === 1 ? '' : 's'} disclosed`;
   const reasons = [];
-  if (buys.length && sells.length) reasons.push(`Congressional activity is mixed — ${buys.length} purchase${buys.length === 1 ? '' : 's'} and ${sells.length} sale${sells.length === 1 ? '' : 's'} disclosed`);
-  else if (buys.length) reasons.push(`${actors} member${actors === 1 ? '' : 's'} of Congress disclosed purchases`);
+  if (buys.length && sells.length) {
+    reasons.push(state === 'mixed'
+      ? `Congressional activity is mixed — ${counts}`
+      : `${counts}; the larger dollar value was on the ${state === 'bullish' ? 'buy' : 'sell'} side`);
+  } else if (buys.length) reasons.push(`${actors} member${actors === 1 ? '' : 's'} of Congress disclosed purchases`);
   else if (sells.length) reasons.push(`${actors} member${actors === 1 ? '' : 's'} of Congress disclosed sales`);
 
   return familyValue({
     family: 'congress', direction: D, strength: S, freshness: F, quality: Q,
     evidenceCount: r.length,
-    state: D > 0.2 ? 'bullish' : D < -0.2 ? 'bearish' : 'mixed',
+    state,
     trend: actors > 1 ? 'multiple-actors' : 'single-actor',
     reasons,
     refs: [],
@@ -322,14 +348,76 @@ export async function catalystEvidence(ticker, now) {
   });
 }
 
-/** All four families for one ticker, resolved independently and in parallel. */
+/**
+ * MARKET STRUCTURE — the price evidence, carried as its own family.
+ *
+ * ⚠️ IT IS NOT A WEIGHTED INPUT. It contributes a STATE and the facts behind it, exactly like every
+ * other family, and the synthesis never multiplies or sums it against them. The direction/strength
+ * fields exist only so this family has the same shape as the others; nothing downstream aggregates
+ * them any more.
+ *
+ * The state words are the engine's own, post-correction: a confirmed higher-high/higher-low
+ * SEQUENCE, not a claim that a trend is currently running. Measured over 112,620 point-in-time
+ * samples, that reading is accurate about the window it is derived from and a coin flip about the
+ * window it is displayed over — so it is reported as confirmed structure and nothing more.
+ *
+ * DAILY is used. Weekly is carried as a supporting fact rather than a second vote, because two
+ * timeframes of the same price series are not two independent families and counting them twice
+ * would be the weighting error this redesign exists to remove.
+ */
+export async function structureEvidence(ticker, now) {
+  const { tickerStructure } = await import('../structure/structure-data.js');
+  const s = await tickerStructure(ticker).catch(() => null);
+  if (!s || !s.available || !s.daily?.available) {
+    return familyValue({ family: 'structure', evidenceCount: 0 });
+  }
+
+  const STATE = { uptrend: 'higher-highs-and-lows', downtrend: 'lower-highs-and-lows', range: 'no-clear-sequence' };
+  const state = STATE[s.daily.trend] || 'no-clear-sequence';
+  if (!STATE[s.daily.trend]) {
+    // insufficient-history and anything unrecognised are INACTIVE, never silently "no clear
+    // sequence" — an engine that could not read the series has not said the series is neutral.
+    if (s.daily.trend !== 'range') return familyValue({ family: 'structure', evidenceCount: 0 });
+  }
+
+  const reasons = [];
+  for (const r of (s.daily.trendReasons || []).slice(0, 2)) reasons.push(`Daily: ${r}`);
+  if (s.weekly?.available && s.weekly.trend) {
+    reasons.push(`Weekly structure reads ${String(s.weekly.trend).replace(/-/g, ' ')}`);
+  }
+  if (s.daily.structuralDisruption?.note) reasons.push(s.daily.structuralDisruption.note);
+  if (Number.isFinite(s.daily.priceSincePivotPct) && s.daily.trendAsOfPivot) {
+    reasons.push(`${s.daily.priceSincePivotPct >= 0 ? '+' : ''}${s.daily.priceSincePivotPct}% since the `
+      + `${s.daily.trendAsOfPivot} pivot this structure was confirmed on`);
+  }
+
+  return familyValue({
+    family: 'structure',
+    direction: state === 'higher-highs-and-lows' ? 1 : state === 'lower-highs-and-lows' ? -1 : 0,
+    strength: 1, freshness: 1,
+    // Quality is high because this is computed from our own point-in-time engine over price data we
+    // hold, not inferred from a third party.
+    quality: 0.95,
+    evidenceCount: Number(s.daily.swings?.count) || 0,
+    state,
+    trend: s.weekly?.available ? `weekly-${s.weekly.trend}` : null,
+    reasons,
+    refs: [],
+    dates: { confirmedOn: s.daily.trendAsOfPivot ?? null, priceDate: s.priceDate ?? null },
+  });
+}
+
+/** All families for one ticker, resolved independently and in parallel. */
 export async function resolveEvidence(ticker, { now = Date.now() } = {}) {
   const t = String(ticker || '').toUpperCase().trim();
   if (!t) return [];
   const settled = await Promise.allSettled([
     insiderEvidence(t, now), institutionEvidence(t, now), congressEvidence(t, now), catalystEvidence(t, now),
+    structureEvidence(t, now),
   ]);
-  const names = ['insiders', 'institutions', 'congress', 'catalysts'];
+  // Must stay aligned with the Promise.allSettled order above — a mismatch would label a failed
+  // family as the wrong one, which is worse than reporting nothing.
+  const names = ['insiders', 'institutions', 'congress', 'catalysts', 'structure'];
   // A family whose query fails is INACTIVE with a recorded reason — never silently absent, and never
   // defaulted to neutral. One broken query must not quietly change the reading.
   return settled.map((s, i) => (s.status === 'fulfilled'

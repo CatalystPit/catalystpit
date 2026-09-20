@@ -51,7 +51,10 @@ export async function GET(request) {
     if (ticker) conds.push(ilike(screenerStocks.ticker, `${ticker}%`));
 
     const where = conds.length ? and(...conds) : null;
-    const sortCol = SORT_MAP[sp.get('sort')] || screenerStocks.consensusScore;
+    // Default ordering is a measured quantity. It used to fall back to consensus_score, a 0-100
+    // blend of weighted sub-scores that nothing validated, so every unsorted screener view was
+    // ranked by it. The column still exists for compatibility; it is no longer what users are shown.
+    const sortCol = SORT_MAP[sp.get('sort')] || screenerStocks.insiderNet90d || screenerStocks.ticker;
     const dirFn = sp.get('dir') === 'asc' ? asc : desc;
     const pageSize = Math.min(100, Math.max(10, parseInt(sp.get('pageSize') || '50', 10) || 50));
     const page = Math.max(0, parseInt(sp.get('page') || '0', 10) || 0);

@@ -511,7 +511,6 @@ function WhyMovingBody({ symbol }) {
           {ctx.relVol != null && chip(`RVOL ${fmt2(ctx.relVol)}×`, ctx.relVol >= 2 ? { fg: '#C2410C', bg: '#FFEDD5' } : null)}
           {ctx.nearHigh && chip('Near 20D high', { fg: '#1E5C38', bg: '#E8F5EE' })}
           {ctx.volume != null && chip(`Vol ${fmtVol(ctx.volume)}`)}
-          {ctx.consensusScore != null && chip(`◆ Convergence ${ctx.consensusScore}`, { fg: '#1E5C38', bg: '#E8F5EE' })}
           {ctx.company && <div style={{ width: '100%', fontSize: 10.5, color: C.dim, marginTop: 4 }}>{ctx.company}</div>}
         </div>
       ) : <div style={{ fontSize: 11.5, color: C.dim }}>Not in our covered universe yet, so there is no reaction context.</div>}
@@ -563,7 +562,7 @@ function ConvergenceBody({ onPick }) {
                           ))}
                         </span>
                       </td>}
-                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', fontWeight: 800, color: dir === 'bull' ? C.green : C.red }}>{r.score}</td>
+                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', fontWeight: 800, color: dir === 'bull' ? C.green : C.red }}>{r.signals}</td>
                     </tr>
                   ))}
                 </tbody>

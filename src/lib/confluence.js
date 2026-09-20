@@ -159,6 +159,15 @@ async function computeConfluenceUncached(dir = 'bull', { forceLiveRollup = false
     const signals = (insActive ? 1 : 0) + (conActive ? 1 : 0) + (fundActive ? 1 : 0);
     if (signals < 2) continue;   // confluence = at least two aligned signals
 
+    // ⚠️ DEPRECATED SCORE, RETAINED FOR COMPATIBILITY ONLY.
+    //
+    // screener_stocks.consensus_score is written from this and is still indexed, so removing the
+    // field outright would break that write path and any stored history. It is no longer displayed
+    // anywhere: not on the board, not in the screener, not on the ticker page.
+    //
+    // It should not be trusted. execs*20, value/250k*20, members*25, netFunds*18 and a 1.6/2.4
+    // multiplier are arbitrary constants that were never validated, and averaging three of them
+    // produces a number whose units are meaningless. Delete it once nothing reads the column.
     const insScore = clamp(execs * 20 + Math.min(60, (insVal / 250000) * 20));
     const conScore = clamp(members * 25 + Math.min(50, (conVal / 100000) * 20));
     const fundScore = clamp(netFunds * 18);
@@ -172,7 +181,16 @@ async function computeConfluenceUncached(dir = 'bull', { forceLiveRollup = false
       fund: fundActive ? { net: netFunds, acc: f?.acc || 0, red: f?.red || 0 } : null,
     });
   }
-  list.sort((a, b) => b.score - a.score);
+  // ORDERED BY FACTS, NOT BY THE DEPRECATED SCORE.
+  //
+  // How many independent families align is the thing the board is actually about, so it leads. Ties
+  // break on insider dollars then congressional dollars — measured quantities in known units, so a
+  // reader can see why one row sits above another. Ranking by the blended score meant the ordering
+  // inherited every arbitrary constant in it.
+  list.sort((a, b) => (b.signals - a.signals)
+    || ((b.insider?.val || 0) - (a.insider?.val || 0))
+    || ((b.congress?.val || 0) - (a.congress?.val || 0))
+    || ((b.fund?.net || 0) - (a.fund?.net || 0)));
   return list.slice(0, 60);
 }
 

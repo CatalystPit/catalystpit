@@ -68,9 +68,19 @@ function Row({ r, dir, rank }) {
           {r.fund && <Badge tone={tone}>🏢 {r.fund.net} fund{r.fund.net > 1 ? 's' : ''} {dir === 'bear' ? 'reducing' : 'adding'}</Badge>}
         </div>
       </div>
-      <div style={{ textAlign: 'right' }}>
-        <div className="cp-num" style={{ fontSize: 20, fontWeight: 800, color: tone === 'bull' ? C.green : C.red }}>{r.score}</div>
-        <div style={{ fontSize: 8, color: C.dim, letterSpacing: '0.5px' }}>CONFLUENCE</div>
+      {/* THE COUNT OF ALIGNED FAMILIES, NOT A SCORE.
+          This slot used to show a 0-100 "CONFLUENCE" figure built as
+          (execs*20 + value/250k*20 + members*25 + netFunds*18) / 3, multiplied by 1.6 or 2.4.
+          None of those constants was validated and no part of the result could be explained to the
+          person reading it — while the badges to the left already state the actual facts.
+          How many independent families line up is a fact; 73 was not. */}
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <div className="cp-num" style={{ fontSize: 20, fontWeight: 800, color: tone === 'bull' ? C.green : C.red }}>
+          {r.signals}
+        </div>
+        <div style={{ fontSize: 8, color: C.dim, letterSpacing: '0.5px' }}>
+          {r.signals === 1 ? 'FAMILY' : 'FAMILIES'}
+        </div>
       </div>
     </a>
   );

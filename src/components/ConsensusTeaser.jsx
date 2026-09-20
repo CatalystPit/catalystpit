@@ -75,7 +75,8 @@ export default function ConsensusTeaser() {
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div className="cp-num" style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{r.score}</div>
+                {/* Aligned families, not the deprecated 0-100 blend. */}
+                <div className="cp-num" style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{r.signals}</div>
                 <div style={{ fontSize: 7, color: C.dim, letterSpacing: '0.5px' }}>SCORE</div>
               </div>
             </a>

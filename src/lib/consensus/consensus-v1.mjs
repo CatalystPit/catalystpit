@@ -35,8 +35,20 @@
 
 export const METHODOLOGY_VERSION = 'consensus_v1';
 
-/** The four independent evidence families. Order is presentation order, not precedence. */
+/**
+ * The four families the LEGACY aggregate was computed over. Deliberately unchanged.
+ *
+ * This list is also the coverage denominator in computeConfidence(), so adding a family to it would
+ * silently alter every legacy confidence value. Market structure is therefore a valid family for
+ * construction (see VALID_FAMILIES) but is not a member of the deprecated aggregate.
+ */
 export const FAMILIES = Object.freeze(['insiders', 'institutions', 'congress', 'catalysts']);
+
+/**
+ * Families that may be CONSTRUCTED. Superset of FAMILIES: market structure is a first-class evidence
+ * family in the synthesis, it simply never enters the deprecated arithmetic.
+ */
+export const VALID_FAMILIES = Object.freeze([...FAMILIES, 'structure']);
 
 // ── VERSIONED CONSTANTS ──────────────────────────────────────────────────────
 //
@@ -164,7 +176,7 @@ export function familyValue({ family, direction, strength, freshness, quality, e
     state: state ?? 'no-evidence', trend: null, evidenceCount: 0, reasons: [], refs: [], dates,
   });
 
-  if (!FAMILIES.includes(family)) return inactive('unknown-family');
+  if (!VALID_FAMILIES.includes(family)) return inactive('unknown-family');
   if (!finite(evidenceCount) || evidenceCount <= 0) return inactive('no-evidence');
   if (!finite(direction) || !finite(strength) || !finite(freshness) || !finite(quality)) return inactive('incomplete-inputs');
 

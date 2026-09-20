@@ -1,5 +1,6 @@
 import { resolveEvidence } from '../../../lib/consensus/evidence';
 import { computeConsensus, METHODOLOGY_VERSION } from '../../../lib/consensus/consensus-v1.mjs';
+import { synthesise } from '../../../lib/consensus/synthesis.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -12,9 +13,17 @@ export const maxDuration = 20;
 //
 // ── SHAPE IS THE CONTRACT ───────────────────────────────────────────────────
 //
-// Three separate outputs — direction, alignment, confidence — plus the per-family evidence that
-// produced them. Consumers read the object rather than a number, which is what stops the old
-// "consensus_score: 73" from reappearing somewhere downstream in a different costume.
+// The per-family evidence IS the product: each family's own state, its own supporting facts, and a
+// plain statement of where families agree and where they disagree.
+//
+// ⚠️ THE AGGREGATE OUTPUTS ARE DEPRECATED. `direction`, `directionLabel`, `alignment` and
+// `confidence` are still computed and still returned so existing consumers do not break, but they
+// are marked deprecated and NOTHING USER-FACING READS THEM ANY MORE. Summing four families into one
+// signed number is a weighting claim the evidence does not support — Experiment 002 measured
+// institutional evidence adding +0.43% over insider-alone at t=0.82 — and a percentage or a
+// confidence word reads as validated precision that was never established.
+//
+// Remove the deprecated block once no consumer references it.
 //
 // ── MARKET-PRICE INDEPENDENT, ON PURPOSE ────────────────────────────────────
 //
@@ -36,8 +45,28 @@ export async function GET(request) {
   try {
     const now = Date.now();
     const families = await resolveEvidence(ticker, { now });
-    const result = computeConsensus(families, { now });
-    return Response.json({ ticker, ...result }, { headers: CACHE });
+    const synthesis = synthesise(families, { now });
+
+    // Legacy aggregate, computed over the four ORIGINAL families only. Market structure is
+    // deliberately excluded from it: adding a fifth family to a sum we no longer believe in would
+    // silently change every stored legacy value for no benefit.
+    const legacy = computeConsensus(families.filter((f) => f.family !== 'structure'), { now });
+
+    return Response.json({
+      ticker,
+      ...synthesis,
+      deprecated: {
+        note: 'Aggregate direction/alignment/confidence are unvalidated and are no longer shown to '
+          + 'users. Retained only for consumer compatibility; do not build on these.',
+        version: METHODOLOGY_VERSION,
+        direction: legacy.direction,
+        directionLabel: legacy.directionLabel,
+        alignment: legacy.alignment,
+        alignmentState: legacy.alignmentState,
+        confidence: legacy.confidence,
+        confidenceRaw: legacy.confidenceRaw,
+      },
+    }, { headers: CACHE });
   } catch (e) {
     // A failure is a failure, not an empty reading. Returning 200 with "insufficient evidence"
     // would be indistinguishable from a ticker nobody has filed anything about.
