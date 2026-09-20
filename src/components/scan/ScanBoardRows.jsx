@@ -30,10 +30,48 @@ import { useEffect, useState } from 'react';
 import { C, TickerLogo } from '../../lib/cp-shared';
 
 const BOARD_TABS = [
-  { key: 'catalysts-now', label: 'Evidence Now' },
-  { key: 'moving-now', label: 'Moving Now' },
-  { key: 'divergence', label: 'Divergence' },
+  // ⚠️ "MOVING NOW" MUST NOT IMPLY 9:31. Realtime is not entitled, so the move shown is the last
+  // completed session's. The board keeps its name; the subtitle does the honest work, because a
+  // trader reading "moving now" at 09:31 and getting yesterday's close is the precise failure this
+  // scanner exists to refuse.
+  { key: 'moving-now', label: 'Moving Now',
+    blurb: 'A meaningful move on the last completed session, with the evidence that explains it.' },
+  { key: 'catalysts-now', label: 'Evidence Now',
+    blurb: 'Fresh material filings and unusual activity. Price may be flat — timing comes from the filing.' },
+  { key: 'divergence', label: 'Divergence',
+    blurb: 'Meaningful evidence and a meaningful move pointing opposite ways. The gate is deliberately tight.' },
 ];
+
+/**
+ * THE FEED BANNER — one component, used by the Terminal panel and any page wrapper.
+ *
+ * ⚠️ THERE IS NO "LIVE" BRANCH, DELIBERATELY. Tiingo commercial realtime is not entitled in
+ * production, so a LIVE state here could only ever be wrong — and a dead branch that renders
+ * "LIVE" is one refactor away from rendering it for real. When live is genuinely proven, this is
+ * the single place that changes.
+ */
+export function FeedBanner({ freshness, compact = false }) {
+  const delayed = freshness === 'delayed' || freshness === 'near';
+  const label = delayed ? 'DELAYED' : 'LAST CLOSE';
+  const text = delayed ? 'Delayed quotes — not live.' : 'Last completed session — not live quotes.';
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+      padding: compact ? '5px 8px' : '8px 12px', borderRadius: 6,
+      background: C.surface, border: `1px solid ${C.border2}`,
+      fontSize: compact ? 10.5 : 11.5, color: C.muted, marginBottom: compact ? 9 : 16,
+    }}>
+      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.7px', color: C.dim,
+        border: `1px solid ${C.border2}`, borderRadius: 3, padding: '1px 6px' }}>{label}</span>
+      <span>{text}</span>
+      {!compact && (
+        <span style={{ color: C.dim }}>
+          Evidence timing is unaffected — filings are timestamped from public availability.
+        </span>
+      )}
+    </div>
+  );
+}
 
 const JOIN_TONE = {
   'PRICE CONFIRMING': C.green,
@@ -113,8 +151,11 @@ function Row({ r, onWatch, onAlert, busy }) {
   );
 }
 
-export default function ScanBoardRows() {
-  const [board, setBoard] = useState('catalysts-now');
+/**
+ * ONE BOARD. Used on its own by /scan (three stacked) and behind tabs in the Terminal panel.
+ * There is exactly one Row design and one fetch path; the two surfaces differ only in arrangement.
+ */
+export function ScanBoard({ board, title, onState }) {
   const [state, setState] = useState(null);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(null);
@@ -129,6 +170,9 @@ export default function ScanBoardRows() {
         if (!alive) return;
         setError(!r.ok || j.degraded === true);
         setState(j);
+        // The page-level banner needs the feed state, and it must come from the response rather
+        // than from an assumption made in the page.
+        if (onState) onState(j);
       } catch { if (alive) setError(true); }
     };
     load();
@@ -164,24 +208,18 @@ export default function ScanBoardRows() {
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif" }}>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-        {BOARD_TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => setBoard(t.key)}
-            style={{ fontSize: 11, fontWeight: board === t.key ? 700 : 500, cursor: 'pointer',
-              padding: '4px 10px', borderRadius: 999, fontFamily: 'inherit',
-              border: `1px solid ${board === t.key ? C.green : C.border}`,
-              background: board === t.key ? C.greenLight : C.white,
-              color: board === t.key ? C.green : C.muted }}>
-            {t.label}
-          </button>
-        ))}
-        {/* The provider's actual freshness, stated once at the top as well as on every row. */}
-        {state?.freshness && state.freshness !== 'realtime' && (
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: C.dim }}>
-            Prices are {state.freshness === 'eod' ? 'last-close' : 'delayed'} — realtime is not enabled
+      {title && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.6px', color: C.ink }}>
+            {title.toUpperCase()}
           </span>
-        )}
-      </div>
+          {state && (
+            <span style={{ fontSize: 10.5, color: C.dim }}>
+              {rows.length} {rows.length === 1 ? 'name' : 'names'}
+            </span>
+          )}
+        </div>
+      )}
 
       {error ? (
         // An unavailable board is not a quiet market and must never render as one.
@@ -215,3 +253,39 @@ export default function ScanBoardRows() {
     </div>
   );
 }
+
+/**
+ * THE TERMINAL ARRANGEMENT — the same boards behind tabs, because a panel has one board's worth of
+ * height. /scan stacks all three instead. Same component, same API, same row.
+ */
+export default function ScanBoardRows() {
+  const [board, setBoard] = useState('catalysts-now');
+  const [feed, setFeed] = useState(null);
+
+  return (
+    <div style={{ fontFamily: "'DM Sans',sans-serif" }}>
+      {/* Stated at the top of the panel, and again on every row. */}
+      <FeedBanner freshness={feed} compact />
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+        {BOARD_TABS.map((t) => (
+          <button key={t.key} type="button" onClick={() => setBoard(t.key)}
+            style={{ fontSize: 11, fontWeight: board === t.key ? 700 : 500, cursor: 'pointer',
+              padding: '4px 10px', borderRadius: 999, fontFamily: 'inherit',
+              border: `1px solid ${board === t.key ? C.green : C.border}`,
+              background: board === t.key ? C.greenLight : C.white,
+              color: board === t.key ? C.green : C.muted }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 10, lineHeight: 1.45 }}>
+        {BOARD_TABS.find((t) => t.key === board)?.blurb}
+      </div>
+
+      <ScanBoard board={board} onState={(j) => setFeed(j?.freshness || null)} />
+    </div>
+  );
+}
+
+export { BOARD_TABS };

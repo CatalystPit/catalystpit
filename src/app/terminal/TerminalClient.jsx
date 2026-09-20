@@ -39,7 +39,11 @@ const PANELS = [
   { id: 'earnings',  title: 'Earnings',     tag: 'CALENDAR' },
 ];
 const PANEL_BY_ID = Object.fromEntries(PANELS.map((p) => [p.id, p]));
-const DEFAULT_VISIBLE = ['pitwire', 'tape', 'halts', 'chart', 'newswire', 'watchlist', 'chat'];
+// Pit Scan joins the default layout. It already had a position reserved below the chart and
+// appeared in two station presets, but not in the default — so the boards shipped reachable only by
+// adding the panel by hand, which is the same as not shipping them. Existing users keep their saved
+// layout; this changes what a new or reset terminal opens with.
+const DEFAULT_VISIBLE = ['pitwire', 'tape', 'halts', 'chart', 'pitscan', 'newswire', 'watchlist', 'chat'];
 const MIN_W = 240, MIN_H = 220;
 const PANEL_MIN = { minW: MIN_W, minH: MIN_H };
 

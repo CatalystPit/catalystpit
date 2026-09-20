@@ -238,5 +238,101 @@ L('\n=== MAPPING A WHOLE BOARD ===');
   ok('…and a ticker with no quote still renders from stored levels', rows[1].last === 1.25);
 }
 
+L('\n=== THE TERMINAL SCAN PANEL ===');
+{
+  const fs = await import('node:fs');
+  const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
+  const page = read('../src/app/scan/ScanClient.jsx');
+  const rows = read('../src/components/scan/ScanBoardRows.jsx');
+  const route = read('../src/app/api/scan-board/route.js');
+  const shared = read('../src/lib/cp-shared.jsx');
+  const panel = read('../src/components/scan/PitScanPanel.jsx');
+  const terminal = read('../src/app/terminal/TerminalClient.jsx');
+
+  // ⚠️ THE PANEL IS THE PRODUCT SURFACE, so it has to be in the DEFAULT layout. The boards had a
+  // reserved position and two station presets but were absent from DEFAULT_VISIBLE — reachable only
+  // by adding the panel by hand, which is the same as not shipping them.
+  const defVisible = terminal.split('\n').find((l) => l.startsWith('const DEFAULT_VISIBLE'));
+  ok('the Scan panel is in the Terminal default layout',
+    mut('panelhidden') ? false : /'pitscan'/.test(defVisible), String(defVisible).slice(0, 100));
+  ok('…and the panel renders the boards', /ScanBoardRows/.test(panel));
+  ok('…with a reserved layout position', /pitscan:\s*\{\s*x:/.test(terminal));
+
+  // ⚠️ ONE ROW DESIGN. Two surfaces rendering the same boards must not drift into two answers.
+  ok('the page wrapper reuses the shared components, it does not fork them',
+    mut('forkedrow') ? false
+      : /import \{ ScanBoard, FeedBanner, BOARD_TABS \}/.test(page));
+  ok('…and the Terminal panel uses the same module', /ScanBoardRows/.test(panel));
+  ok('the page defines no Row of its own', !/function Row\s*\(/.test(page));
+  ok('…and no second board list', !/const BOARDS = \[/.test(page));
+
+  // All three boards, from the live API.
+  for (const b of ['moving-now', 'catalysts-now', 'divergence']) {
+    ok(`the panel offers the ${b} board`, new RegExp(`'${b}'`).test(rows));
+  }
+  ok('boards are fetched, never hard-coded', /\/api\/scan-board\?board=/.test(rows));
+  ok('the panel ships no literal row data', !/ticker:\s*'[A-Z]{1,5}'/.test(panel));
+
+  // ⚠️ NEVER "LIVE". Realtime is not entitled, so a LIVE branch could only ever be wrong — and a
+  // dead branch that renders "LIVE" is one refactor away from rendering it for real.
+  ok('the banner has no LIVE state at all',
+    mut('livebadge') ? false : !/'LIVE'|>LIVE</.test(rows));
+  ok('…nor does the page wrapper', !/'LIVE'|>LIVE</.test(page));
+  ok('the banner says exactly what the ticket requires',
+    /Last completed session — not live quotes\./.test(rows));
+  ok('…and has a delayed variant', /Delayed quotes — not live\./.test(rows));
+  ok('there is ONE banner implementation, shared',
+    /export function FeedBanner/.test(rows) && !/function FeedBanner/.test(page));
+
+  // ⚠️ "MOVING NOW" MUST NOT IMPLY 9:31.
+  const movingBlurb = (rows.match(/label: 'Moving Now',[\s\S]{0,160}/) || [''])[0];
+  ok('the Moving Now subtitle does not overpromise a live tape',
+    mut('overpromise') ? false : /last completed session/i.test(movingBlurb), movingBlurb.slice(0, 110));
+  ok('…while the board keeps its name', /label: 'Moving Now'/.test(rows));
+
+  ok('the banner reads freshness from the API response',
+    mut('hardcodedbanner') ? false : /onState=\{\(j\) => \{ if \(j\?\.freshness\)/.test(page));
+  ok('…and the page asserts no freshness of its own',
+    !/freshness\s*=\s*['"]realtime['"]/.test(page));
+
+  // ⚠️ ENTITLEMENT. `realtime` may only ever narrow what is served.
+  ok('the route resolves entitlement server-side',
+    /resolveUserAccess\(\)/.test(route) && /isRealtime\(tier\) && !beta/.test(route));
+  ok('…defaulting to delayed when it cannot be resolved',
+    /let realtime = false;/.test(route));
+  ok('…and passes it to getQuotes rather than assuming',
+    /getQuotes\(symbols, \{ realtime \}\)/.test(route));
+  ok('the response is never shared-cacheable',
+    mut('sharedcache') ? false : /private, no-store/.test(route) && !/s-maxage/.test(route));
+  ok('the page is a client component, so no live value is baked into SSR',
+    /^'use client'/.test(page));
+
+  // No fabricated anything.
+  ok('the page adds no RVOL column', !/rvol/i.test(page));
+  ok('…no fabricated structure tag', !/vwap|opening range|premarket/i.test(page));
+  ok('…and no fabricated rows when the API is empty',
+    /Nothing currently qualifies/.test(rows) && !/placeholder|sample|demo/i.test(page));
+
+  // An empty Divergence renders as an empty board, with the gate left alone.
+  ok('an empty board explains itself instead of disappearing',
+    /candidates were considered and did not meet the threshold/.test(rows));
+  ok('the page does not loosen any threshold', !/THRESHOLDS|minAbsChangePct|deadZone/i.test(page));
+
+  // ⚠️ EVERY EXISTING TAB SURVIVES. Adding Scan must not quietly drop a room.
+  const navLine = shared.split('\n').find((l) => l.includes('const links = [') && l.includes('Terminal'));
+  for (const tab of ['Terminal', 'Pit Consensus', 'Feed', 'News', 'Screener', 'Heatmap',
+    'Dividends', 'Insiders', 'Politicians', 'Institutions']) {
+    ok(`nav still contains ${tab}`, mut('droptab') ? false : navLine.includes(`"${tab}"`));
+  }
+  ok('…and Scan was added', navLine.includes('"Scan"'));
+  ok('the nav route resolves to /scan', /\/\$\{l\.toLowerCase\(\)\}/.test(shared));
+
+  // The row's actions point at surfaces that already exist.
+  ok('Evidence links into the existing ticker experience', /\/ticker\/\$\{encodeURIComponent/.test(rows));
+  ok('Watch uses the existing watchlist API', /'\/api\/watchlist'/.test(rows));
+  ok('Alert uses the existing alerts API and fires no synthetic tick',
+    /'\/api\/alerts'/.test(rows) && /type: 'news'/.test(rows) && !/setInterval\([^)]*tick/i.test(rows));
+}
+
 L(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
