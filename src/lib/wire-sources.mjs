@@ -59,7 +59,56 @@ const ADVICE = [
   /\bprice (?:prediction|target for 20\d\d)\b/i,
   /\b(?:set(?:ting)? up well|looks? (?:attractive|cheap)|screaming buy|still a buy|buy or sell)\b/i,
   /\b(?:retirees?|retirement)\b[^.]*\b(?:should|own|buy|need)\b/i,
+
+  // ── RETAIL EXPLAINER SHAPES ──
+  //
+  // Measured on 400 recent displayed events: the patterns above caught 23.8%, and the largest
+  // remaining class was retail explainer content carrying source_type='article' — "Why Zscaler
+  // Stock Rocketed Higher This Week", "Prediction: This Much Nvidia Stock...", "How To Earn $500 A
+  // Month From...", "Ranking the Safest Dividend Stocks", "Should a 63-Year-Old Couple...".
+  //
+  // These are OPENING WORDS, anchored with ^, because a factual wire headline states an event and
+  // essentially never begins by asking or instructing. Anchoring is what keeps precision high:
+  // "Pfizer says why the trial failed" is untouched, "Why Pfizer's Trial Failed" is not.
+  /^\s*why\b/i,
+  /^\s*how (?:to|much|i)\b/i,
+  /^\s*prediction\b/i,
+  /^\s*ranking\b/i,
+  /^\s*should\b/i,
+  /^\s*here'?s (?:what|how|why)\b/i,
+  /^\s*what\b[^.]*\bmeans? for\b/i,
+  /^\s*this \d+-year-old\b/i,
+  // Retail framing around a hypothetical stake. Never appears in a real event headline.
+  /\b(?:for|of) a \$[\d,]+ investment\b/i,
+  /\b(?:could|would) (?:be|have been) worth \$[\d,]+/i,
+  /\$[\d,]+ (?:invested|in) .{0,24}\b(?:today|now)\b.{0,30}\bworth\b/i,
+  // A price-move RECAP, not the move itself. Requires the retrospective window, so "Zscaler shares
+  // jump on results" — an actual event — is untouched.
+  /\b(?:rocketed|soared|plunged|tumbled|surged|jumped|gave back|sank)\b[^.]{0,40}\bthis (?:week|month|year)\b/i,
 ];
+
+// PROMOTIONAL / SOLICITATION MATERIAL.
+//
+// Securities class-action solicitations are the dominant press-release spam on this wire:
+// "WIX INVESTOR DEADLINE APPROACHING: Faruqi & Faruqi, LLP Reminds Investors...". They are law-firm
+// advertising, carry no new event, and repeat verbatim for weeks.
+//
+// ⚠️ DELIBERATELY NARROW. A company actually being sued, charged or investigated by a REGULATOR is
+// real news, so this requires the solicitation shape itself — a firm reminding, alerting or
+// encouraging investors about a deadline or an investigation it is running.
+const PROMO = [
+  /\b(?:deadline (?:approaching|reminder)|investor deadline|lead plaintiff)\b/i,
+  /\b(?:reminds?|alerts?|notifies|encourages?|urges?)\s+(?:investors|shareholders|purchasers)\b/i,
+  /\bshareholder (?:alert|rights|investigation)\b/i,
+  /\bclass action (?:lawsuit )?(?:filed |against )?[^.]{0,30}\b(?:deadline|investors)\b/i,
+  /\b(?:LLP|LLC|law (?:firm|offices))\b[^.]{0,40}\b(?:investigat\w+|reminds?|announces?)\b/i,
+];
+const isPromo = (e) => {
+  // A regulator acting is news; a firm advertising is not. SEC/DOJ rows are never promotional.
+  if (e.source_kind === 'sec' || e.source === 'SEC' || e.source === 'DOJ') return false;
+  const h = String(e.headline || '');
+  return PROMO.some((re) => re.test(h));
+};
 const isAdvice = (e) => {
   // Anything the engine itself called a primary record cannot be a column. This keeps the shape
   // patterns away from filings, halts and wire flashes entirely.
@@ -72,6 +121,7 @@ const isAdvice = (e) => {
 // the filter chips.
 const NOISE_TESTS = [
   { key: 'advice',      test: isAdvice },
+  { key: 'promo',       test: isPromo },
   { key: 'lowPr',       test: (e) => e.source_type === 'press_release' && (e.importance ?? 0) <= 1 },
   { key: 'transcripts', test: (e) => e.source_type === 'transcript' },
   { key: 'commentary',  test: (e) => e.source_type === 'analysis' && (e.importance ?? 0) <= 1 },

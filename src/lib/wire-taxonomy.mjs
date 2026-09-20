@@ -185,6 +185,7 @@ const isAdvice = (e) => {
 // `wireNoise` array and uses these entries purely to render the filter chips.
 export const NOISE_FILTERS = [
   { key: 'advice',      label: 'Opinion & advice' },
+  { key: 'promo',       label: 'Promotional / legal notices' },
   { key: 'lowPr',       label: 'Low-impact PR' },
   { key: 'transcripts', label: 'Transcripts' },
   { key: 'commentary',  label: 'General commentary' },

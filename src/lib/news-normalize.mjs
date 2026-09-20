@@ -369,9 +369,29 @@ const ENTITY_STOP = new Set(['the', 'a', 'an', 'us', 'u.s.', 'new', 'breaking', 
   'more', 'danger', 'alert', 'warning', 'statement', 'remarks', 'speech', 'minutes', 'summary',
   'agencies', 'federal', 'government', 'president', 'chairman', 'governor', 'secretary']);
 
+// A LEADING DESCRIPTOR IS NOT THE SUBJECT.
+//
+// The first capitalised run is very often a qualifier rather than the company being reported on,
+// and taking it produced entity tokens that named the wrong party entirely. Measured on one real
+// event — Nscale's IPO filing, reported by seven outlets — the tokens were:
+//
+//   "Nvidia-backed Nscale files for IPO"              → nvidia-backed
+//   "British data centre group Nscale files…"         → british
+//   "AI firm Nscale reveals revenue surge…"           → ai
+//
+// Three different subjects for one event, none of them Nscale. That breaks factKey, which is
+// entity|class|factSig, and it silently associates an event with a company that merely appears in
+// the sentence — "nvidia-backed" is the worst case, since NVDA is itself a heavily covered ticker.
+//
+// So a leading X-backed/-owned/-led/-based compound is skipped, as is a bare nationality adjective,
+// and the scan continues to the next capitalised word.
+const LEAD_QUALIFIER = /^(?:[A-Z][A-Za-z0-9&.']*-(?:backed|owned|led|based|focused|controlled|run)|British|Chinese|Japanese|German|French|Indian|Korean|Canadian|Australian|Swiss|Dutch|Israeli|Saudi|Russian|Brazilian|Mexican|Italian|Spanish|Swedish|Norwegian|Danish|Irish|Singaporean|Taiwanese)\s+/;
+
 export function entityToken(headline, tickers = []) {
   if ((tickers || []).length) return String(tickers[0]).toUpperCase();
-  const s = cleanHeadline(headline);
+  let s = cleanHeadline(headline);
+  // Bounded: strip at most a couple of stacked qualifiers ("Nvidia-backed British …").
+  for (let i = 0; i < 2 && LEAD_QUALIFIER.test(s); i++) s = s.replace(LEAD_QUALIFIER, '');
   const m = s.match(/^((?:[A-Z][A-Za-z0-9&.'\-]*)(?:\s+[A-Z][A-Za-z0-9&.'\-]*){0,3})/);
   if (!m) return '';
   const tok = m[1].replace(CORP_TAIL, ' ').replace(/[^A-Za-z0-9 ]/g, ' ')
