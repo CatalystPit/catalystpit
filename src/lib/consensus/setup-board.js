@@ -128,7 +128,7 @@ export function whyThisIsHere({ setup, canonical, sheet, market }) {
   const opposition = names(canonical?.opposition);
   const dir = DIR_WORD[setupDirection(canonical)];
   if (drivers.length && opposition.length) {
-    parts.push(`${join(drivers)} point ${dir === 'mixed' ? 'one way' : dir}, while ${join(opposition)} point the other`);
+    parts.push(`${join(drivers)} point ${dir === 'mixed' ? 'one way' : dir}, while ${join(opposition)} point the other way`);
   } else if (drivers.length && dir !== 'mixed') {
     parts.push(`${join(drivers)} point ${dir}`);
   } else if (drivers.length) {
