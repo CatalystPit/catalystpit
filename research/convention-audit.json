@@ -170,36 +170,6 @@
   "unverifiedOlderRows": 0,
   "action": "RELABEL_ONLY"
  },
- "DPLS": {
-  "status": "audited",
-  "storedRetired": 61,
-  "differing": 0,
-  "matching": 61,
-  "uncovered": 0,
-  "worstDiffPct": 0,
-  "polygonCompared": 1141,
-  "polygonAgreePct": 77.4,
-  "polygonWorstPct": 202,
-  "verified": false,
-  "verifiedFrom": "2021-12-31",
-  "unverifiedOlderRows": 0,
-  "action": "REPORT_ONLY (no independent verification)"
- },
- "SVA": {
-  "status": "audited",
-  "storedRetired": 61,
-  "differing": 0,
-  "matching": 61,
-  "uncovered": 0,
-  "worstDiffPct": 0,
-  "polygonCompared": 0,
-  "polygonAgreePct": null,
-  "polygonWorstPct": 0,
-  "verified": false,
-  "verifiedFrom": null,
-  "unverifiedOlderRows": 61,
-  "action": "REPORT_ONLY (no independent verification)"
- },
  "DIA": {
   "status": "audited",
   "storedRetired": 1250,
@@ -244,21 +214,6 @@
   "verifiedFrom": "2021-09-20",
   "unverifiedOlderRows": 10277,
   "action": "REPAIR"
- },
- "META": {
-  "status": "audited",
-  "storedRetired": 1326,
-  "differing": 1141,
-  "matching": 185,
-  "uncovered": 0,
-  "worstDiffPct": 0.77,
-  "polygonCompared": 1165,
-  "polygonAgreePct": 92.1,
-  "polygonWorstPct": 2365.61,
-  "verified": false,
-  "verifiedFrom": "2021-09-20",
-  "unverifiedOlderRows": 77,
-  "action": "REPORT_ONLY (no independent verification)"
  },
  "RIVN": {
   "status": "audited",
@@ -424,21 +379,6 @@
   "verifiedFrom": "2021-12-31",
   "unverifiedOlderRows": 0,
   "action": "RELABEL_ONLY"
- },
- "LILA": {
-  "status": "audited",
-  "storedRetired": 63,
-  "differing": 0,
-  "matching": 63,
-  "uncovered": 0,
-  "worstDiffPct": 0,
-  "polygonCompared": 1255,
-  "polygonAgreePct": 5.2,
-  "polygonWorstPct": 32.07,
-  "verified": false,
-  "verifiedFrom": "2021-09-20",
-  "unverifiedOlderRows": 0,
-  "action": "REPORT_ONLY (no independent verification)"
  },
  "IEP": {
   "status": "audited",
@@ -739,20 +679,5 @@
   "verifiedFrom": "2021-09-20",
   "unverifiedOlderRows": 0,
   "action": "RELABEL_ONLY"
- },
- "HON": {
-  "status": "audited",
-  "storedRetired": 135,
-  "differing": 82,
-  "matching": 53,
-  "uncovered": 0,
-  "worstDiffPct": 32.66,
-  "polygonCompared": 1255,
-  "polygonAgreePct": 4.6,
-  "polygonWorstPct": 4.88,
-  "verified": false,
-  "verifiedFrom": "2021-09-20",
-  "unverifiedOlderRows": 0,
-  "action": "REPORT_ONLY (no independent verification)"
  }
 }

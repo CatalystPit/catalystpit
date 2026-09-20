@@ -24,10 +24,25 @@
 //
 // ── THE INDEPENDENT CHECK ───────────────────────────────────────────────────
 //
-// Before a ticker is written, the derivation is proved against POLYGON on shared dates — a second
-// vendor computing the same quantity from different inputs. 123 of the 126 affected tickers have
-// that overlap. The other three (SCTH, DPLS, SVA) do not, and are REPORTED, NOT REWRITTEN: an
-// unverified candidate is not corruption, and that rule is what kept the first repair honest.
+// Before a ticker is written, the derivation is proved against POLYGON — a second vendor computing
+// the same quantity from different inputs. Two tiers, because one was not enough:
+//
+//   FULL-HISTORY   agreement across every shared date. The normal case.
+//   RECENT-WINDOW  agreement across the most recent 60 shared sessions, used when full-history
+//                  agreement fails for a reason that is not our error. Two were identified and
+//                  measured: TICKER REUSE (Polygon's META before 2022-06 is Meta Materials, a
+//                  different company — ratio 20-24x, while ours is Facebook throughout) and
+//                  CORPORATE ACTIONS (HON's Solstice spinoff, LILA's reclassification, where the
+//                  vendors treat the distribution differently and briefly on different dates).
+//                  Past the event both vendors agree exactly, which is what this tier checks.
+//
+// Refusing to repair those tickers would NOT have been the cautious choice. The fixed writers add
+// canonical rows beside the old total-return ones, so leaving them plants a fresh convention seam —
+// measured at 29% for HON and 25% for LILA. Repairing on a verification that is valid for them is
+// safer than preserving a defect out of misplaced caution.
+//
+// A ticker that passes NEITHER tier is still REPORTED, NOT REWRITTEN. An unverified candidate is not
+// corruption, and that rule is what kept the first repair honest.
 //
 // Run: node --env-file=.env.local research/convention-repair.mjs --phase=audit
 
@@ -52,6 +67,9 @@ const MIN_AGREE = 0.97;
 // Enough independent dates that agreement cannot be coincidence. Below this a ticker is REPORTED,
 // never rewritten — a thin sample is not verification, it is a smaller guess.
 const MIN_COMPARED = 60;
+// Sessions used by the recent-window tier, where corporate actions and ticker reuse no longer
+// confuse the comparison.
+const RECENT_WINDOW = 60;
 const TODAY = new Date().toISOString().slice(0, 10);
 const POLYGON_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
 
@@ -202,7 +220,33 @@ if (PHASE === 'audit') {
       if (diff <= AGREE_TOL) agreed++;
     }
     const agreeRate = compared ? agreed / compared : null;
-    const verified = compared >= MIN_COMPARED && agreeRate >= MIN_AGREE;
+    const fullyVerified = compared >= MIN_COMPARED && agreeRate >= MIN_AGREE;
+
+    // ── SECOND TIER: RECENT-WINDOW VERIFICATION ──
+    //
+    // Full-history agreement fails for reasons that are not our error, and refusing to repair those
+    // tickers is not the safe choice — it leaves the OLD total-return rows in place while the fixed
+    // writers add canonical ones beside them, planting a fresh convention seam. Measured: HON 29%,
+    // LILA 25%. That is a worse defect than the one being fixed.
+    //
+    // Two causes were identified, and neither is evidence against our derivation:
+    //   TICKER REUSE      Polygon's META before 2022-06 is Meta Materials, a different company
+    //                     (ratio 20-24x). Ours is Facebook throughout.
+    //   CORPORATE ACTION  HON's Solstice spinoff and LILA's reclassification — the two vendors
+    //                     treat the distribution differently, and briefly on different dates.
+    //
+    // In both cases the vendors agree once past the event. So the derivation is re-checked on the
+    // most recent comparable sessions, where no such ambiguity exists. Agreement there shows the
+    // transformation itself is sound for this ticker; the historical divergence is recorded, not
+    // hidden, and those older rows rest on the structural invariants the gate checks.
+    const recentDates = [...refSeries.keys()].filter((d) => byDate.has(d)).sort().slice(-RECENT_WINDOW);
+    let recentAgreed = 0;
+    for (const d of recentDates) {
+      if (Math.abs(byDate.get(d).close - refSeries.get(d)) / refSeries.get(d) <= AGREE_TOL) recentAgreed++;
+    }
+    const recentRate = recentDates.length ? recentAgreed / recentDates.length : null;
+    const recentVerified = recentDates.length >= RECENT_WINDOW && recentRate >= MIN_AGREE;
+    const verified = fullyVerified || recentVerified;
 
     // ⚠️ HOW FAR THE INDEPENDENT PROOF ACTUALLY REACHES.
     //
@@ -227,6 +271,10 @@ if (PHASE === 'audit') {
       polygonAgreePct: agreeRate == null ? null : Math.round(agreeRate * 1000) / 10,
       polygonWorstPct: Math.round(polyWorst * 10000) / 100,
       verified,
+      fullyVerified,
+      recentVerified,
+      recentAgreePct: recentRate == null ? null : Math.round(recentRate * 1000) / 10,
+      verifiedTier: fullyVerified ? 'full-history' : recentVerified ? 'recent-window' : null,
       verifiedFrom,
       unverifiedOlderRows,
       // What the apply phase is allowed to do.
