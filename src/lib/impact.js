@@ -201,6 +201,15 @@ export function impactOf(item = {}) {
   const isIssuerEvent = !!resolvedTicker(item) && (eventWords || issuerFiling);
   if (isIssuerEvent && !adviceVoice && !neverHigh) return 'high';
 
+  // ⚠️ ADVICE AND THE NEVER LIST DO NOT RANK AT ALL — SUPPRESSING ONLY `high` IS NOT ENOUGH.
+  //
+  // That was the first attempt, and it put the credit-card column straight back at the top. Both
+  // it and the Lakers story fell to NOTABLE together, and among equals the pool's own order wins,
+  // so the feed simply swapped one piece of junk for another. A column carrying the word
+  // "bankruptcy" is not second-most-important news; it is not news. These land at routine and
+  // stay visible under All, which is exactly where the rule says they may live.
+  if (adviceVoice || neverHigh) return 'routine';
+
   // Everything else can still be NOTABLE — this is a demotion, not a deletion. A well-reported
   // feature with no ticker keeps its place in the river; it just cannot lead it.
   const routine = ROUTINE_KW.some((k) => matchesKeyword(t, k));

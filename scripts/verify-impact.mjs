@@ -104,9 +104,19 @@ L('\n=== NO TICKER AND NOT A MACRO PRINT IS NOT HIGH IMPACT ===');
     ok(`NOT HIGH (${why})`, mut('tickerless') ? false : got !== 'high', `${got} — ${h.slice(0, 44)}`);
   }
 
-  // ⚠️ A DEMOTION, NOT A DELETION. These stay in the river; they just cannot lead it.
-  ok('a demoted feature is still visible as NOTABLE or routine',
-    ['notable', 'routine'].includes(impactOf(lakers)));
+  // ⚠️ SUPPRESSING ONLY `high` IS NOT ENOUGH, AND THIS IS THE ASSERTION THAT PROVES IT.
+  //
+  // The first attempt left advice and the never-list at NOTABLE. Both the Lakers story and the
+  // credit-card column fell to NOTABLE together, and among equals the pool's own order wins — so
+  // the live feed simply swapped one piece of junk for another and the column led the page again.
+  // They have to land at routine, where they stay visible under All but cannot rank.
+  ok('the Lakers story does not merely drop a tier — it drops out of ranking',
+    mut('demoteonly') ? false : impactOf(lakers) === 'routine', impactOf(lakers));
+  ok('…and neither does the advice column rank',
+    mut('demoteonly') ? false
+      : tier('I have $125,000 in credit-card debt. Will $17,000 affect my bankruptcy?') === 'routine');
+  ok('…while ordinary news with no ticker is still NOTABLE, not suppressed',
+    impactOf({ title: 'Nvidia-Backed Cloud Startup Nscale Files for IPO', category: 'IPO' }) === 'notable');
 
   // The same words WITH a resolved issuer are a real event again.
   ok('…while a real issuer deal with a ticker is HIGH',
