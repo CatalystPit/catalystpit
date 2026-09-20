@@ -31,17 +31,18 @@
 
 import { SYNTHESIS_VERSION } from './synthesis.mjs';
 import { METHODOLOGY_VERSION } from './consensus-v1.mjs';
+import { SETUP_VERSION } from './setup.mjs';
 
 // ── VERSION ─────────────────────────────────────────────────────────────────
 //
 // Bump this when the SHAPE of a materialized row changes without the methodology changing — a new
 // field the UI depends on, a renamed property. Methodology changes are picked up automatically
 // from the two engine versions, which is the case that actually bit us.
-export const BOARD_SHAPE_VERSION = 'b1';
+export const BOARD_SHAPE_VERSION = 'b2';
 
 /** The fingerprint of the deployed methodology. Any change to it retires every existing key. */
 export const MATERIALIZATION_VERSION =
-  `${SYNTHESIS_VERSION}.${METHODOLOGY_VERSION}.${BOARD_SHAPE_VERSION}`;
+  `${SETUP_VERSION}.${SYNTHESIS_VERSION}.${METHODOLOGY_VERSION}.${BOARD_SHAPE_VERSION}`;
 
 // ── KEYS ────────────────────────────────────────────────────────────────────
 export const boardKey = (v = MATERIALIZATION_VERSION) => `consensus:board:${v}`;
@@ -203,6 +204,10 @@ export function validateBoardPayload(payload, {
 
   const wrong = payload.rows.filter((r) => r?.canonical?.version !== synthesisVersion);
   if (wrong.length) return reject(`mixed-methodology:${wrong.length}`);
+  // V3: the setup layer is versioned too, so a board half-classified by an older archetype set is
+  // refused for exactly the same reason a half-V2.1 board was.
+  const wrongSetup = payload.rows.filter((r) => r?.setup && r?.version !== SETUP_VERSION);
+  if (wrongSetup.length) return reject(`mixed-setup-methodology:${wrongSetup.length}`);
   if (payload.rows.some((r) => !r?.ticker || !r?.canonical?.state)) return reject('malformed-row');
 
   // More than half the candidates failing is a systemic fault, not a few bad tickers.

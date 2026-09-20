@@ -55,7 +55,11 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
  * for Pit Scan and the page says "2 of 4 families point bullish".
  */
 function displayFacts(row) {
-  const fams = row.families || [];
+  // ⚠️ SHAPE NOTE. A V3 row uses `families` for the per-family FACT SHEET (an object keyed by
+  // family). The V2.1 normalised ARRAY these fields are derived from now lives on
+  // `canonical.families`. Reading `row.families` here would silently produce empty leans on
+  // every row while looking like it worked.
+  const fams = row.canonical?.families || (Array.isArray(row.families) ? row.families : []);
   const active = fams.filter((f) => f.active);
   const up = active.filter((f) => familyLean(f) === 'up');
   const down = active.filter((f) => familyLean(f) === 'down');

@@ -73,6 +73,7 @@ const resetKv = () => { KV.clear(); SETS.clear(); commands = []; kvFailing = fal
 const M = await import('../src/lib/consensus/materialization.mjs');
 const R = await import('../src/lib/consensus/refresh.js');
 const { familyValue } = await import('../src/lib/consensus/consensus-v1.mjs');
+const { SETUP_VERSION } = await import('../src/lib/consensus/setup.mjs');
 const { SYNTHESIS_VERSION } = await import('../src/lib/consensus/synthesis.mjs');
 
 // ── FIXTURES ────────────────────────────────────────────────────────────────
@@ -82,13 +83,34 @@ const fam = (family, direction, extra = {}) => familyValue({
   state: direction > 0.2 ? 'bullish' : direction < -0.2 ? 'bearish' : 'mixed', ...extra,
 });
 
-// Per-ticker evidence the fake resolver serves. Mutating this simulates evidence landing.
+// Per-ticker CONSENSUS families the fake resolver serves. Mutating this simulates evidence landing.
 let EVIDENCE = {};
 let resolveCalls = [];
 const resolve = async (ticker) => {
   resolveCalls.push(ticker);
   return EVIDENCE[ticker] || [fam('insiders', 0.9), fam('congress', 0.8)];
 };
+
+// V3 builds ALSO resolve evidence_v1 records. One fresh material catalyst plus a congressional
+// disclosure is enough to produce an active setup for every fixture ticker.
+const evAgo = (d) => new Date(NOW - d * 86_400_000).toISOString();
+const evidenceV1 = async (ticker) => ({
+  ticker,
+  evidence: [
+    { evidenceId: `${ticker}-c`, family: 'catalyst', type: 'sec_8k_material_agreement',
+      direction: 'unknown', materiality: 0.75, quality: 0.95, publicTime: evAgo(1),
+      summary: 'Material agreement', source: 'sec_8k', url: 'https://sec.gov/x',
+      facts: { items: ['1.01'], material: true }, methodology: 'evidence_v1' },
+    { evidenceId: `${ticker}-g`, family: 'congress', type: 'congress_disclosure',
+      direction: 'positive', materiality: 0.55, quality: 0.6, publicTime: evAgo(2),
+      summary: 'A member disclosed a buy', source: 'congress', url: 'https://house.gov/x',
+      facts: { members: 1, transactionDate: '2026-08-07', disclosureLagDays: 31 },
+      methodology: 'evidence_v1' },
+  ],
+  failedFamilies: [], quarantined: [], coverage: {},
+});
+// Every rebuild in this suite drives the V3 path, so both seams are always supplied.
+const BUILD = { resolve: evidenceV1, resolveConsensus: resolve };
 
 let CANDIDATES = ['AAA', 'BBB', 'CCC'];
 const db = { execute: async () => CANDIDATES.map((t) => ({ ticker: t, n: 5 })) };
@@ -256,7 +278,7 @@ L('\n=== EVIDENCE INGESTION IS NEVER BROKEN BY DERIVED CONSENSUS ===');
 L('\n=== A SUCCESSFUL REBUILD PUBLISHES ATOMICALLY ===');
 {
   reset();
-  const r = await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'test' });
+  const r = await R.rebuildBoard(db, sql, { now: NOW, reason: 'test', ...BUILD });
   ok('the rebuild publishes', r.published, r.reason);
   ok('it wrote the version-scoped key', KV.has(M.boardKey()));
   ok('…and the last-known-good key', KV.has(M.LAST_GOOD_KEY));
@@ -283,7 +305,7 @@ L('\n=== A FAILED REBUILD PRESERVES THE LAST KNOWN GOOD ===');
   // Every candidate throws — the board comes back empty WITH candidates waiting, which validation
   // refuses precisely so a broken build is not published as "no evidence exists".
   const brokenResolve = async () => { throw new Error('evidence engine down'); };
-  const r = await R.rebuildBoard(db, sql, { now: NOW + 1000, resolve: brokenResolve, reason: 'broken' });
+  const r = await R.rebuildBoard(db, sql, { now: NOW + 1000, reason: 'broken', resolve: brokenResolve, resolveConsensus: resolve });
 
   ok('the broken build does NOT publish',
     mut('publishbroken') ? false : !r.published, r.reason);
@@ -315,7 +337,7 @@ L('\n=== A METHODOLOGY CHANGE CANNOT SERVE OLD ROWS AS CURRENT ===');
     mut('servestale') ? false : read.status === 'stale-methodology', read.status);
 
   // And the rebuild resolves it.
-  const r = await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'version-rebuild' });
+  const r = await R.rebuildBoard(db, sql, { now: NOW, reason: 'version-rebuild', ...BUILD });
   const after = await R.readPublishedBoard();
   ok('rebuilding under the new methodology republishes', r.published);
   ok('…and the read is now ok', after.status === 'ok');
@@ -328,22 +350,26 @@ L('\n=== A METHODOLOGY CHANGE CANNOT SERVE OLD ROWS AS CURRENT ===');
 L('\n=== TARGETED RECOMPUTATION: ONLY WHAT CHANGED ===');
 {
   reset();
-  await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'seed' });
+  await R.rebuildBoard(db, sql, { now: NOW, reason: 'seed', ...BUILD });
 
   // Evidence lands for BBB only.
   setEvidence('BBB', [fam('insiders', -0.9), fam('congress', -0.85)]);
   await M.markConsensusDirty(['BBB']);
 
   resolveCalls = [];
-  const d = await R.drainDirty(db, sql, { now: NOW + 60_000, resolve });
+  const d = await R.drainDirty(db, sql, { now: NOW + 60_000, ...BUILD });
 
   ok('the drain runs a targeted pass', d.strategy === 'targeted', d.strategy);
   ok('…and publishes', d.published, d.reason);
-  ok('ONLY the dirty ticker was recomputed',
-    mut('recomputeall') ? false
-      : resolveCalls.length === 1 && resolveCalls[0] === 'BBB', resolveCalls.join(','));
-  ok('the unrelated tickers were reused from materialization',
-    d.payload.reused === 2, String(d.payload.reused));
+  // ⚠️ THE CONTRACT CHANGED AT V3, DELIBERATELY. The consensus board reused recently materialized
+  // rows to make a 90-second rebuild cheap. A V3 build resolves its whole candidate set in ~20s,
+  // and reusing a cached row would risk publishing a SETUP classified against stale evidence —
+  // exactly what a freshness-driven board must never do. Targeted invalidation still decides WHEN
+  // to rebuild; it no longer decides which rows get recomputed.
+  ok('the dirty ticker is recomputed rather than served from cache',
+    mut('recomputeall') ? false : resolveCalls.includes('BBB'), resolveCalls.join(','));
+  ok('…and the rebuild stays bounded to the candidate set, not the universe',
+    resolveCalls.length <= CANDIDATES.length * 3, String(resolveCalls.length));
 
   // NO CROSS-TICKER CONTAMINATION.
   const rows = Object.fromEntries(d.payload.rows.map((x) => [x.ticker, x.canonical.state]));
@@ -360,7 +386,7 @@ L('\n=== TARGETED RECOMPUTATION: ONLY WHAT CHANGED ===');
 L('\n=== BOARD MEMBERSHIP AND ORDERING FOLLOW A TICKER CHANGE ===');
 {
   reset();
-  await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'seed' });
+  await R.rebuildBoard(db, sql, { now: NOW, reason: 'seed', ...BUILD });
   const before = (await R.readPublishedBoard()).payload.rows.map((r) => r.ticker);
   ok('all three tickers start on the board', before.length === 3, before.join(','));
 
@@ -368,7 +394,7 @@ L('\n=== BOARD MEMBERSHIP AND ORDERING FOLLOW A TICKER CHANGE ===');
   setEvidence('AAA', [familyValue({ family: 'insiders', evidenceCount: 0 }),
     familyValue({ family: 'congress', evidenceCount: 0 })]);
   await M.markConsensusDirty(['AAA']);
-  await R.drainDirty(db, sql, { now: NOW + 60_000, resolve });
+  await R.drainDirty(db, sql, { now: NOW + 60_000, ...BUILD });
 
   const after = (await R.readPublishedBoard()).payload.rows.map((r) => r.ticker);
   // THE INDEX, NOT JUST THE TICKER. Updating a hidden per-ticker object while leaving the board
@@ -380,38 +406,42 @@ L('\n=== BOARD MEMBERSHIP AND ORDERING FOLLOW A TICKER CHANGE ===');
   // Ordering follows too: a ticker whose state strengthens moves up the board.
   reset();
   setEvidence('CCC', [fam('insiders', 0.2, { state: 'mixed' })]);
-  await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'seed' });
+  await R.rebuildBoard(db, sql, { now: NOW, reason: 'seed', ...BUILD });
   const order1 = (await R.readPublishedBoard()).payload.rows.map((r) => r.ticker);
-  ok('the ambiguous ticker sorts below the aligned ones',
-    order1[order1.length - 1] === 'CCC', order1.join(','));
+  // V3 orders by SETUP archetype, not by consensus state, so this only asserts determinism —
+  // the archetype ordering itself is covered by verify-consensus-setup.mjs.
+  ok('ordering is deterministic across reads',
+    (await R.readPublishedBoard()).payload.rows.map((r) => r.ticker).join(',') === order1.join(','),
+    order1.join(','));
 
   setEvidence('CCC', [fam('insiders', 0.95, { strength: 0.95, quality: 0.95 }),
     fam('institutions', 0.9, { strength: 0.9, quality: 0.95, state: 'accumulating' }),
     fam('congress', 0.9, { strength: 0.9, quality: 0.95 })]);
   await M.markConsensusDirty(['CCC']);
-  await R.drainDirty(db, sql, { now: NOW + 60_000, resolve });
+  await R.drainDirty(db, sql, { now: NOW + 60_000, ...BUILD });
   const order2 = (await R.readPublishedBoard()).payload.rows.map((r) => r.ticker);
-  ok('…and rises once its evidence aligns across three families',
-    order2[0] === 'CCC', order2.join(','));
+  ok('a republish after new evidence still yields a valid, complete board',
+    order2.length > 0 && M.validateBoardPayload((await R.readPublishedBoard()).payload).ok,
+    order2.join(','));
 }
 
 L('\n=== A BURST IS ONE UNIT OF WORK ===');
 {
   reset();
-  await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'seed' });
+  await R.rebuildBoard(db, sql, { now: NOW, reason: 'seed', ...BUILD });
 
   // Three Form 4s and two wire events land for BBB in the same minute.
   for (const _ of [1, 2, 3, 4, 5]) await M.markConsensusDirty(['BBB']);
   ok('five marks produce one dirty entry', (await M.readDirty()).length === 1);
 
   resolveCalls = [];
-  await R.drainDirty(db, sql, { now: NOW + 60_000, resolve });
+  await R.drainDirty(db, sql, { now: NOW + 60_000, ...BUILD });
   ok('…and one recomputation, not five',
     resolveCalls.filter((t) => t === 'BBB').length === 1, String(resolveCalls.length));
 
   // A drain is idempotent: running it again with nothing dirty does no work at all.
   resolveCalls = [];
-  const again = await R.drainDirty(db, sql, { now: NOW + 120_000, resolve });
+  const again = await R.drainDirty(db, sql, { now: NOW + 120_000, ...BUILD });
   ok('a drain with nothing dirty does nothing', again.strategy === 'none' && !resolveCalls.length);
   ok('…and says so rather than failing', again.reason === 'nothing-dirty');
 }
@@ -431,13 +461,13 @@ L('\n=== A LARGE BURST REBUILDS INSTEAD OF CRAWLING ===');
 L('\n=== CONCURRENT REFRESH CANNOT CORRUPT THE BOARD ===');
 {
   reset();
-  await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'seed' });
+  await R.rebuildBoard(db, sql, { now: NOW, reason: 'seed', ...BUILD });
   await M.markConsensusDirty(['BBB']);
 
   // Two drains start at once. One must decline rather than both writing the same keys.
   const [a, b] = await Promise.all([
-    R.drainDirty(db, sql, { now: NOW + 60_000, resolve }),
-    R.drainDirty(db, sql, { now: NOW + 60_000, resolve }),
+    R.drainDirty(db, sql, { now: NOW + 60_000, ...BUILD }),
+    R.drainDirty(db, sql, { now: NOW + 60_000, ...BUILD }),
   ]);
   const locked = [a, b].filter((r) => r.reason === 'locked');
   ok('exactly one of two concurrent drains proceeds',
@@ -449,7 +479,7 @@ L('\n=== CONCURRENT REFRESH CANNOT CORRUPT THE BOARD ===');
 
   // And the exclusive rebuild declines the same way.
   await M.claimLock('consensus:board', 60);
-  const r = await R.rebuildBoardExclusive(db, sql, { resolve });
+  const r = await R.rebuildBoardExclusive(db, sql, { ...BUILD });
   ok('a rebuild declines while another holds the lock', r.reason === 'locked');
 }
 
@@ -460,7 +490,7 @@ L('\n=== THE TICKER AND THE BOARD CANNOT INTERPRET DIFFERENTLY ===');
   setEvidence('AAA', [fam('insiders', 0.9, { strength: 0.9 }), fam('institutions', 0.8),
     fam('congress', -0.6, { strength: 0.55 })]);
 
-  await R.rebuildBoard(db, sql, { now: NOW, resolve, reason: 'seed' });
+  await R.rebuildBoard(db, sql, { now: NOW, reason: 'seed', ...BUILD });
   const boardRow = (await R.readPublishedBoard()).payload.rows.find((r) => r.ticker === 'AAA');
   const direct = await consensusRow('AAA', { now: NOW, resolve });
 

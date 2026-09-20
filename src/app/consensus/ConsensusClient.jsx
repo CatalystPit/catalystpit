@@ -24,12 +24,15 @@
 import { useEffect, useState } from 'react';
 import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
+import SetupCard from './SetupCard';
 import ConsensusRow, { STATE_UI } from './ConsensusRow';
 import { BOARD_FILTERS } from '../../lib/consensus/synthesis.mjs';
+import { SETUP_FILTERS, filterSetups } from '../../lib/consensus/setup.mjs';
 
 // Discovery filters over the CANONICAL states, imported from the engine so a filter cannot
 // disagree with the label on the row it shows — or quietly leave a state unreachable.
-const FILTERS = BOARD_FILTERS;
+const FILTERS = SETUP_FILTERS;
+void BOARD_FILTERS;
 
 // Non-predictive ordering only. None of these claims a security will perform better than another.
 const SORTS = [
@@ -87,24 +90,17 @@ export default function ConsensusClient() {
 
   // Filtering and ordering are both over the canonical object. The server already ordered by
   // research priority; these only re-cut that, never re-interpret it.
-  const f = FILTERS.find((x) => x.key === filter) || FILTERS[0];
-  let list = all.filter((r) => {
-    const k = r.canonical; if (!k) return false;
-    if (f.market) return k.market?.confirmation === f.market;
-    return !f.states || f.states.includes(k.state);
-  });
+  // Filtering is over the canonical SETUP object. The server already ordered by research
+  // relevance; these controls only re-cut that ordering, never re-interpret the evidence.
+  let list = filterSetups(all, filter);
   if (sort === 'coverage') {
-    list = [...list].sort((a, b) => (b.canonical.coverage.active - a.canonical.coverage.active)
-      || a.ticker.localeCompare(b.ticker));
+    list = [...list].sort((x, y) => ((y.canonical?.coverage?.active || 0) - (x.canonical?.coverage?.active || 0))
+      || x.ticker.localeCompare(y.ticker));
   } else if (sort === 'confidence') {
-    list = [...list].sort((a, b) => ((CONF_RANK[b.canonical.confidence] || 0) - (CONF_RANK[a.canonical.confidence] || 0))
-      || a.ticker.localeCompare(b.ticker));
+    list = [...list].sort((x, y) => ((CONF_RANK[y.canonical?.confidence] || 0) - (CONF_RANK[x.canonical?.confidence] || 0))
+      || x.ticker.localeCompare(y.ticker));
   }
-  const counts = Object.fromEntries(FILTERS.map((x) => [x.key, all.filter((r) => {
-    const k = r.canonical; if (!k) return false;
-    if (x.market) return k.market?.confirmation === x.market;
-    return !x.states || x.states.includes(k.state);
-  }).length]));
+  const counts = Object.fromEntries(FILTERS.map((x) => [x.key, filterSetups(all, x.key).length]));
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -113,8 +109,9 @@ export default function ConsensusClient() {
       <div style={{ maxWidth: 860, margin: '22px auto', padding: '0 20px 48px' }}>
         <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 30, fontWeight: 600, color: C.ink, margin: '0 0 2px' }}>Pit Consensus</h1>
         <p style={{ fontSize: 13, color: C.muted, margin: '0 0 16px', fontWeight: 300, maxWidth: 640 }}>
-          What the independent public evidence says right now — insiders, institutions, Congress and
-          catalysts — and whether those families agree. Evidence accounting, not a prediction.
+          Companies where the public evidence currently forms a question worth investigating — a
+          fresh filing, historically unusual insider activity, or price moving against the
+          disclosures. Evidence accounting, not a prediction.
         </p>
 
         {/* DISCOVERY CONTROLS. Every filter maps to canonical states, so a filter can never show a
@@ -166,12 +163,12 @@ export default function ConsensusClient() {
         ) : list.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
             {all.length === 0
-              ? 'No ticker currently has qualifying evidence in two or more independent families.'
-              : 'No ticker is currently in that state.'}
+              ? 'No company currently has an active evidence setup. Evidence exists for many tickers — none of it is currently a reason to investigate.'
+              : 'No company currently has that setup.'}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {list.map((r) => <ConsensusRow key={r.ticker} r={r} />)}
+            {list.map((r) => <SetupCard key={r.ticker} row={r} />)}
 
             {locked > 0 && (
               <div style={{ position: 'relative', marginTop: 2 }}>

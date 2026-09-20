@@ -88,21 +88,21 @@ export async function rebuildBoard(db, sql, {
   limit = BOARD_LIMIT, now = Date.now(), reuseTickers = false, force = [], reason = 'manual',
   // Test seam. Production leaves this undefined and the real evidence engine is imported lazily,
   // which keeps this module loadable without a database.
-  resolve,
+  resolve, resolveConsensus,
 } = {}) {
-  const { buildConsensusBoard } = await import('./board.mjs');
-  const forced = new Set(force.map((t) => String(t).toUpperCase()));
-
+  // V3: the board is a SETUP board. Rows carry the V3 setup object AND the full V2.1 canonical
+  // object, so Pit Scan's contract and every V2.1 consumer keep working unchanged.
+  //
+  // Per-ticker reuse is deliberately not applied here. It existed to make a 90-second consensus
+  // rebuild cheap; a V3 build resolves ~150 tickers in ~20s because the evidence engine is fast
+  // warm, and reusing a cached row would risk publishing a setup classified against stale evidence
+  // — the one thing a freshness-driven board must not do. Targeted invalidation still decides WHEN
+  // to rebuild; it no longer decides which rows are recomputed.
+  void reuseTickers; void force; void readTicker;
+  const { buildSetupBoard } = await import('./setup-board.js');
   let reused = 0;
-  const rowFor = async (ticker) => {
-    if (reuseTickers && !forced.has(ticker)) {
-      const hit = await readTicker(ticker, { now });
-      if (hit) { reused++; return hit.row; }
-    }
-    return refreshTicker(ticker, { now, resolve });
-  };
 
-  const board = await buildConsensusBoard(db, sql, { limit, now, rowFor });
+  const board = await buildSetupBoard(db, sql, { limit, now, resolve, resolveConsensus });
   const payload = {
     ...board,
     materializationVersion: MATERIALIZATION_VERSION,
@@ -149,7 +149,7 @@ export async function rebuildBoardExclusive(db, sql, opts = {}) {
  * The republish is cheap because every ticker that did NOT change is reused from its
  * materialization; only the dirty ones are recomputed.
  */
-export async function drainDirty(db, sql, { now = Date.now(), limit = BOARD_LIMIT, resolve } = {}) {
+export async function drainDirty(db, sql, { now = Date.now(), limit = BOARD_LIMIT, resolve, resolveConsensus } = {}) {
   const dirty = await readDirty();
   const strategy = drainStrategy(dirty.length);
 
@@ -163,7 +163,7 @@ export async function drainDirty(db, sql, { now = Date.now(), limit = BOARD_LIMI
     // A full-strategy drain recomputes everything anyway, so nothing needs forcing.
     const result = await rebuildBoard(db, sql, {
       limit, now, reuseTickers: strategy === 'targeted', force: dirty,
-      reason: `drain:${strategy}`, resolve,
+      reason: `drain:${strategy}`, resolve, resolveConsensus,
     });
     // Clear ONLY on a successful publish, and clear only the members we actually drained —
     // anything marked while this was running survives to the next pass.
