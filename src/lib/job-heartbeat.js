@@ -87,12 +87,19 @@ export const TRACKED_JOBS = Object.freeze([
   { name: 'refresh-content', label: 'News enrichment',       maxAgeHours: 24, weekdaysOnly: true },
 ]);
 
-/** Read every tracked job's heartbeat in one query. Returns a Map keyed by job NAME. */
+/**
+ * Read every job heartbeat in one query. Returns a Map keyed by job NAME.
+ *
+ * ⚠️ A PREFIX MATCH, NOT `= any($1)`. Drizzle's sql template does not bind a JS array to a
+ * Postgres text[], so the any() form threw instantly in production (14ms) and /api/health
+ * reported `probe_failed` for liveness — the one check whose whole job is noticing silence was
+ * itself silently broken. `like 'job:%'` needs no array binding, and it has the better property
+ * of returning heartbeats written under a name nobody tracks any more, instead of hiding them.
+ */
 export async function readJobHeartbeats() {
-  const keys = TRACKED_JOBS.map((j) => jobKey(j.name));
   const res = await db.execute(sql`
     select feed_key, last_polled_at, last_success_at, last_status, consecutive_failures, events_seen, note
-      from feed_state where feed_key = any(${keys})`);
+      from feed_state where feed_key like 'job:%'`);
   const out = new Map();
   for (const r of (res.rows ?? res)) out.set(String(r.feed_key).replace(/^job:/, ''), r);
   return out;

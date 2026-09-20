@@ -141,6 +141,14 @@ L('\n=== A HEARTBEAT CAN NEVER BREAK THE JOB IT DESCRIBES ===');
   ok('…namespaced so they cannot collide with a feed key',
     /export const jobKey = \(name\) => `job:/.test(heartbeatLib));
 
+  // ⚠️ THE READ MUST NOT BIND A JS ARRAY. Drizzle's sql template does not map a JS array onto a
+  // Postgres text[], so `feed_key = any(${keys})` threw instantly in production and /api/health
+  // reported `probe_failed` for liveness — the check whose entire purpose is noticing silence
+  // was itself silently broken, and it looked like a missing feature rather than a bug.
+  ok('the heartbeat read does not bind a JS array into any()',
+    mut('anybinding') ? false : !/any\(\$\{/.test(heartbeatLib));
+  ok('…it selects the job namespace directly', /like 'job:%'/.test(heartbeatLib));
+
   // ⚠️ THE FORM 4 CRON RETURNS 200 ON FAILURE BY DESIGN. The heartbeat is the ONLY record of that
   // failure, so it must not be skipped in the catch.
   const refresh = read('src/app/api/refresh/route.js');
