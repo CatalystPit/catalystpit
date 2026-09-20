@@ -21,7 +21,9 @@ const L = (s = '') => console.log(s);
 const one = process.argv[2];
 if (one && /^[A-Z.]{1,6}$/.test(one)) {
   const s = await buildSetup(one, {});
-  s.why = whyThisIsHere({ setup: s.setup, canonical: s.canonical, sheet: s.families, market: s.market });
+  s.why = whyThisIsHere({ setup: s.setup, synthesis: s.evidence_layer, significantFamilies: s._significant,
+    consensusFamilies: s._consensusFamilies, sheet: s.families, market: s.market,
+    reaction: s.reaction_layer, join: s.join_layer });
   L(JSON.stringify(s, null, 2));
   process.exit(0);
 }

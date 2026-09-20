@@ -14,7 +14,7 @@ import { consensusRow, BOARD_FAMILIES, CONCURRENCY } from './board.mjs';
 import { qualifies, labelFor, setupDirection, leanDirection, isActive, orderSetups, SETUP, SETUP_LABEL, SETUP_VERSION, freshCatalysts } from './setup.mjs';
 import {
   significantByFamily, evidenceSynthesis, normalizeReaction, joinEvidenceMarket,
-  researchPriority, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, JOIN,
+  researchPriority, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, JOIN, DISCLOSURE_ONLY,
 } from './evidence-model.mjs';
 import { familyFactSheet, evidenceFacts, publicAgo } from './facts.mjs';
 import { marketFactsFor } from './market-facts.js';
@@ -121,7 +121,7 @@ export async function selectSetupCandidates(db, sql, { limit = EVALUATE_LIMIT } 
 
 const DIR_WORD = { POSITIVE: 'positive', NEGATIVE: 'negative', MIXED: 'mixed' };
 
-export function whyThisIsHere({ setup, synthesis, significantFamilies = [], sheet, market, reaction, join }) {
+export function whyThisIsHere({ setup, synthesis, significantFamilies = [], consensusFamilies = [], sheet, market, reaction, join }) {
   const parts = [];
   const NAME = { insider: 'Insiders', institution: 'Institutions', congress: 'Congress', catalyst: 'Catalysts' };
   const join2 = (n) => (n.length <= 1 ? (n[0] || '') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
@@ -129,10 +129,33 @@ export function whyThisIsHere({ setup, synthesis, significantFamilies = [], shee
   // ⚠️ ONE FAMILY UNIVERSE. Earlier this sentence was assembled from V2.1's drivers and opposition
   // while the rest of the card used the V3.5 significance layer, so cards named families that did
   // not appear in their own evidence list. Both sides now come from the same place.
-  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
   const dirOf = (f) => f.evidence?.direction;
-  const pos = meaningful.filter((f) => dirOf(f) === 'positive').map((f) => NAME[f.family] || f.family);
-  const neg = meaningful.filter((f) => dirOf(f) === 'negative').map((f) => NAME[f.family] || f.family);
+  const sides = (list) => ({
+    pos: list.filter((f) => dirOf(f) === 'positive').map((f) => NAME[f.family] || f.family),
+    neg: list.filter((f) => dirOf(f) === 'negative').map((f) => NAME[f.family] || f.family),
+  });
+
+  // Normally only MEANINGFUL families are named, which keeps the sentence short.
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
+  let { pos, neg } = sides(meaningful);
+
+  // ⚠️ A DECLARED CONFLICT MUST NAME BOTH SIDES, AND FROM THE SAME PLACE THE CONFLICT CAME FROM.
+  // AAOI shipped reading "Institutions and Catalysts point positive. Independent sources disagree"
+  // — asserting a disagreement while naming one side of it. The cause is that chi is computed from
+  // the CONSENSUS family values (signed E), while the sentence was built from evidence_v1 record
+  // directions: two different universes. For a conflict the sides are taken from the signed values
+  // that actually produced chi, so the sentence cannot contradict the verdict above it.
+  if (join?.state === 'SOURCES_CONFLICT') {
+    // ⚠️ DISCLOSURE FAMILIES ONLY. row.families carries all five board families, so without this
+    // filter the sentence read "Insiders and structure point negative" — price narrating itself as
+    // public evidence, which is the contamination the whole two-layer split exists to prevent.
+    const signed = (consensusFamilies || []).filter((f) => DISCLOSURE_ONLY.includes(f?.family)
+      && f?.active && Number.isFinite(f.E) && f.E !== 0);
+    const label = (f) => NAME[String(f.family).replace(/s$/, '')] || NAME[f.family] || f.family;
+    const p2 = signed.filter((f) => f.E > 0).map(label);
+    const n2 = signed.filter((f) => f.E < 0).map(label);
+    if (p2.length && n2.length) { pos = p2; neg = n2; }
+  }
 
   // 1. THE TRIGGER.
   const cat = sheet?.[FAMILY.CATALYST]?.[0];
@@ -260,6 +283,7 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
       })),
     },
     _significant: significantFamilies,
+    _consensusFamilies: row?.families || [],
     reaction_layer: reaction,
     join_layer: join,
     // INTERNAL SORT KEY ONLY — never rendered. See evidence-model.mjs.
@@ -302,7 +326,8 @@ export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALU
         const s = await buildSetup(t, { now, resolve, resolveConsensus });
         s.why = whyThisIsHere({
           setup: s.setup, synthesis: s.evidence_layer,
-          significantFamilies: s._significant, sheet: s.families,
+          significantFamilies: s._significant, consensusFamilies: s._consensusFamilies,
+          sheet: s.families,
           market: s.market, reaction: s.reaction_layer, join: s.join_layer,
         });
         built.push(s);
