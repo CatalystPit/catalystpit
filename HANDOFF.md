@@ -218,13 +218,18 @@ looking" is the question, not on-versus-off:
 
 | `DIVIDENDS_PUBLIC_ENABLED` | mode | behaviour |
 |---|---|---|
-| unset (today) | `prelaunch` | the real calendar on real data + a visible "temporary source" notice |
+| unset | `off` | **FAILS CLOSED (V1 decision, 2026-09-20)** — nothing renders, nothing served |
+| `prelaunch` | `prelaunch` | real calendar + "temporary source" notice — now an explicit opt-in |
 | `true` (exact literal) | `public` | cleared for commercial display |
 | `false` (any casing) | `off` | kill switch — nothing renders |
 
 **The commercial gate is unchanged and still fails closed**: public display needs the exact literal
 `true`. A test caught an early version lowercasing it, which would have let `TRUE` open it.
-**Before public launch this must be set explicitly to `true` or `false`, never left unset.**
+**V1 LAUNCH DECISION (2026-09-20): NOT publicly exposed.** Polygon is a temporary development
+source and redistribution rights are unconfirmed, so the calendar ships built and gated. The default
+now FAILS CLOSED: an unset variable resolves to `off`, not `prelaunch`, because a rights question
+must not resolve to "publish" merely because a deployment step was forgotten. Revisit when the
+commercial provider is integrated.
 
 ### RESOLVED: the production/local count mismatch was a query bug, not infrastructure (`cad81765`)
 Production showed 21 events for a day the table held 372. **Neither the database nor the deployment

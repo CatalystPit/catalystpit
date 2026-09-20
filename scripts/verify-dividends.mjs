@@ -216,7 +216,14 @@ console.log('\n=== the provider registry is the swap point ===');
     Object.values(PROVIDERS).every((p) => typeof p.fetchWindow === 'function' && typeof p.id === 'string'));
 
   // THE GATE HAS THREE STATES, because "who is looking" is the question, not on-versus-off.
-  ok('unset is pre-launch — the real calendar on real data', dividendsDisplayMode({}) === 'prelaunch');
+  // THE DEFAULT FAILS CLOSED. The V1 decision is that Polygon dividend data is not publicly
+  // exposed, and that must not depend on remembering to set a variable at deploy time.
+  ok('UNSET is off — an unconfigured rights question resolves to do-not-publish',
+    dividendsDisplayMode({}) === 'off');
+  ok('pre-launch viewing is now an explicit opt-in',
+    dividendsDisplayMode({ DIVIDENDS_PUBLIC_ENABLED: 'prelaunch' }) === 'prelaunch');
+  ok('an unrecognised value is off, never published',
+    dividendsDisplayMode({ DIVIDENDS_PUBLIC_ENABLED: 'maybe' }) === 'off');
   ok('true is cleared for public commercial display', dividendsDisplayMode({ DIVIDENDS_PUBLIC_ENABLED: 'true' }) === 'public');
   ok('false is the kill switch', dividendsDisplayMode({ DIVIDENDS_PUBLIC_ENABLED: 'false' }) === 'off');
 
@@ -230,7 +237,8 @@ console.log('\n=== the provider registry is the swap point ===');
 
   // Visibility renders pre-launch and public, never when killed — and the kill switch must not be
   // defeated by a capital letter or a stray space.
-  ok('the calendar renders pre-launch', dividendsVisible({}) === true);
+  ok('the calendar does NOT render when unconfigured', dividendsVisible({}) === false);
+  ok('…but does render on explicit pre-launch', dividendsVisible({ DIVIDENDS_PUBLIC_ENABLED: 'prelaunch' }) === true);
   ok('…and when public', dividendsVisible({ DIVIDENDS_PUBLIC_ENABLED: 'true' }) === true);
   ok('…and NOT when killed', dividendsVisible({ DIVIDENDS_PUBLIC_ENABLED: 'false' }) === false);
   ok('the kill switch survives casing and whitespace',

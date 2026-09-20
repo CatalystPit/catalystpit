@@ -32,15 +32,22 @@ export function activeDividendProvider(env = process.env) {
  *
  *   'public'    DIVIDENDS_PUBLIC_ENABLED=true  — rights confirmed, cleared for commercial display.
  *   'off'       DIVIDENDS_PUBLIC_ENABLED=false — the kill switch. Nothing renders, nothing is served.
- *   'prelaunch' unset (today)                  — the real calendar, on real data, carrying a visible
- *                                                notice that its source is temporary and uncleared.
+ *   'prelaunch' DIVIDENDS_PUBLIC_ENABLED=prelaunch — the real calendar on real data, carrying a
+ *                                                visible notice that its source is temporary. Now an
+ *                                                EXPLICIT opt-in, never the default.
  *
- * THE COMMERCIAL GATE IS UNCHANGED: public display still requires an explicit, deliberate `true`,
- * and it is still the thing to check before launch. What the default no longer does is pretend the
- * feature is unfinished to the people building it.
+ * ── V1 LAUNCH DECISION (2026-09-20): THE DEFAULT FAILS CLOSED ───────────────
  *
- * BEFORE PUBLIC LAUNCH this must be set to `true` (rights confirmed) or `false` (kill), never left
- * unset — see HANDOFF.
+ * Dividend data comes from Polygon, a TEMPORARY development source whose redistribution rights are
+ * not confirmed. The owner's decision for V1 is that the calendar ships built but NOT publicly
+ * exposed, and is revisited when the commercial provider is integrated.
+ *
+ * So an unset variable now resolves to 'off', not 'prelaunch'. Previously, forgetting to set it
+ * published real uncleared data to anyone who found the URL — the one outcome that must not depend
+ * on remembering a deployment step. A missing configuration value is exactly the condition under
+ * which a rights question should resolve to "do not publish".
+ *
+ * Opening the gate is unchanged and still requires the exact literal `true`.
  */
 export function dividendsDisplayMode(env = process.env) {
   const raw = String(env.DIVIDENDS_PUBLIC_ENABLED ?? '').trim();
@@ -48,8 +55,9 @@ export function dividendsDisplayMode(env = process.env) {
   // that happens to look affirmative. KILLING it accepts any casing, because a switch meant to stop
   // publication must not be defeated by a capital letter.
   if (raw === 'true') return 'public';
-  if (raw.toLowerCase() === 'false') return 'off';
-  return 'prelaunch';
+  if (raw.toLowerCase() === 'prelaunch') return 'prelaunch';
+  // 'false', anything unrecognised, and — deliberately — UNSET.
+  return 'off';
 }
 
 /** Is the calendar cleared for PUBLIC COMMERCIAL display? Still fails closed, still explicit. */
