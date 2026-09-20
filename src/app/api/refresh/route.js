@@ -2,6 +2,11 @@ import { db } from '../../../lib/db';
 import { insiderTrades as insiderTradesTable } from '../../../lib/schema';
 import { inArray } from 'drizzle-orm';
 import { recordJobRun } from '../../../lib/job-heartbeat';
+import { isIngestableTicker } from '../../../lib/security-identity.mjs';
+
+// How many rows the last insert refused for an unusable ticker, surfaced in the form4 heartbeat
+// so a parser regression is visible in /api/health rather than only in the logs.
+let lastInsiderReject = 0;
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -104,7 +109,20 @@ function parseForm4(xml, filing) {
 
   const ticker  = extractFormText(xml, 'issuerTradingSymbol')?.toUpperCase();
   const company = decodeEntities(extractFormText(xml, 'issuerName'));
-  if (!ticker) return [];
+  // ⚠️ THE SYMBOL MUST BE A SYMBOL, AND THIS IS THE PARSER THAT ACTUALLY RUNS.
+  //
+  // There are two Form 4 parsers. lib/form4.mjs validates its ticker against a placeholder list
+  // and quarantines what fails — but only the backfill scripts use it. THIS one, local to the
+  // per-minute cron, is the live path, and its only test was `if (!ticker)`. So every string a
+  // filer typed into issuerTradingSymbol was stored verbatim: NONE, N/A, "Z AND ZG",
+  // "NYSE: VTEX", "(CALX)". 1,220 such rows accumulated, 51 of them in the last seven days.
+  // Public surfaces gate them at render, which is why this stayed invisible — the dirt was real,
+  // it was just downstream of the last place anyone looked.
+  //
+  // isIngestableTicker is the shared gate, so the two parsers cannot drift apart again. It is
+  // looser than the card rule on purpose (see its comment): rejecting on the card rule would have
+  // thrown away 391 legitimate AXIA3 rows along with BRK.A and NYT.A.
+  if (!isIngestableTicker(ticker)) return [];
 
   const executive = decodeEntities(extractFormText(xml, 'rptOwnerName') || '');
   const isDirector   = ['true','1'].includes(extractFormText(xml, 'isDirector'));
@@ -558,9 +576,20 @@ function mergeNews(...sources) {
 // Insert parsed Form 4 trades (dedup on the natural key). Shared by the full refresh + the fast path.
 async function insertInsiderTrades(insiderTrades) {
   if (!insiderTrades?.length) return 0;
-  const rows = insiderTrades
+  const mapped = insiderTrades
     .map(r => ({ ...r, transactionCode: r.transactionCode || null, transactionDate: normalizeDate(r.transactionDate), filingDate: normalizeDate(r.filingDate) }))
     .filter(r => r.filingDate);
+
+  // ⚠️ THE SAME GATE AGAIN, AT THE WRITE. parseForm4 above already refuses an unusable symbol, so
+  // in normal operation this rejects nothing. It is here because this function is the ONLY door
+  // into insider_trades from the live path, and a table is protected by its last gate, not its
+  // first — the original defect was precisely that every gate sat downstream of the write, at
+  // render time. Counted rather than silent, so a parser regression shows up as a number instead
+  // of as a slow drift in how many rows nobody can click.
+  const rows = mapped.filter(r => isIngestableTicker(r.ticker));
+  const rejected = mapped.length - rows.length;
+  if (rejected) console.log(`[form4] rejected ${rejected} row(s) with an unusable ticker`);
+  lastInsiderReject = rejected;
   if (!rows.length) return 0;
   const inserted = await db.insert(insiderTradesTable).values(rows)
     .onConflictDoNothing({ target: [insiderTradesTable.accession, insiderTradesTable.transactionDate, insiderTradesTable.transactionCode, insiderTradesTable.securityTitle, insiderTradesTable.shares, insiderTradesTable.pricePerShare, insiderTradesTable.sharesOwnedAfter] })
@@ -597,7 +626,8 @@ export async function GET(request) {
       // `inserted: 0` is the normal answer overnight and at weekends — EDGAR publishes nothing,
       // so the heartbeat records that we ASKED. That is the fact no amount of inspecting
       // insider_trades afterwards can recover.
-      await recordJobRun('form4', { ok: true, seen: inserted, note: `parsed ${insider.length}` });
+      await recordJobRun('form4', { ok: true, seen: inserted,
+        note: `parsed ${insider.length}` + (lastInsiderReject ? `, rejected ${lastInsiderReject}` : '') });
       return Response.json({ form4: true, parsed: insider.length, inserted, ts: new Date().toISOString() });
     } catch (e) {
       // ⚠️ THIS PATH RETURNS 200 ON PURPOSE — a per-minute cron must not page on a single bad SEC

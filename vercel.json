@@ -13,6 +13,10 @@
       "schedule": "0 13-21 * * 1-5"
     },
     {
+      "path": "/api/refresh-content",
+      "schedule": "0 */3 * * 6,0"
+    },
+    {
       "path": "/api/refresh-congress",
       "schedule": "0 */3 * * *"
     },

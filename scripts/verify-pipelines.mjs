@@ -18,6 +18,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { isIngestableTicker, isRenderableTicker } from '../src/lib/security-identity.mjs';
 
 const L = (s = '') => console.log(s);
 const MUT = (process.argv.find((a) => a.startsWith('--mutate')) || '').split('=')[1]
@@ -193,6 +194,88 @@ L('\n=== THE NEWS FEED RANKS BEFORE IT SLICES ===');
     mut('drops') ? false : !/\.filter\(\s*\(?a\)?\s*=>\s*impactOf/.test(news));
   ok('the payload says how the feed was composed',
     /curatedCount:/.test(news) && /wireCount:/.test(news));
+}
+
+L('\n=== A PLACEHOLDER TICKER CANNOT REACH insider_trades ===');
+{
+  // Form 4 has an issuerTradingSymbol field and an unlisted issuer's filer types NONE into it.
+  // The live parser's only test was `if (!ticker)`, so 1,220 unusable rows accumulated — public
+  // surfaces gated them at RENDER, which is downstream of the write and therefore invisible.
+  const placeholders = ['NONE', 'N/A', 'NULL', 'UNKNOWN', 'UNDEFINED', 'NIL', 'TBD', '', '   '];
+  for (const p of placeholders) {
+    ok(`"${p}" is refused at ingest`, mut('acceptsplaceholder') ? false : !isIngestableTicker(p));
+  }
+  // Not one symbol at all — a filer typing two symbols, an exchange prefix or a parenthetical.
+  for (const m of ['Z AND ZG', 'NYSE: VTEX', 'GEF, GEF-B', 'ASX:LNW', '(CALX)', 'MOGA/MOGB', '$FEED', 'ASTS?', '1314152']) {
+    ok(`"${m}" is refused at ingest`, mut('acceptsmalformed') ? false : !isIngestableTicker(m));
+  }
+  ok('a non-string is refused', !isIngestableTicker(null) && !isIngestableTicker(undefined) && !isIngestableTicker(42));
+
+  // ⚠️ AND THE GATE MUST NOT EAT REAL FILINGS. Gating on the CARD rule instead would have deleted
+  // 391 rows of AXIA3 plus BRK.A, NYT.A, SBSP3 — measured against the live table before choosing.
+  for (const good of ['AAPL', 'A', 'BRK.A', 'BRK-B', 'NYT.A', 'AXIA3', 'SBSP3', 'PHXE.P', 'CFTR-PRA', 'ALLKGUSD']) {
+    ok(`"${good}" is still accepted`, mut('toostrict') ? false : isIngestableTicker(good));
+  }
+  ok('the ingest gate is looser than the card gate',
+    isIngestableTicker('AXIA3') && !isRenderableTicker('AXIA3'));
+
+  // Both gates, at both ends of the pipe.
+  const refresh = read('src/app/api/refresh/route.js');
+  ok('the LIVE Form 4 parser applies the gate',
+    mut('ungatedparser') ? false : /if \(!isIngestableTicker\(ticker\)\) return \[\];/.test(refresh));
+  ok('…and the insert applies it again, as the last door in',
+    mut('ungatedinsert') ? false : /\.filter\(r => isIngestableTicker\(r\.ticker\)\)/.test(refresh));
+  ok('…and counts what it refused rather than dropping silently',
+    /rejected \$\{lastInsiderReject\}|lastInsiderReject = rejected/.test(refresh));
+
+  // The render-time gates that were the ONLY defence stay exactly where they are.
+  for (const [surface, file] of [
+    ['homepage', 'src/components/CatalystPit.jsx'],
+    ['pit snapshot', 'src/app/api/cron/pit-snapshot/route.js'],
+    ['evidence', 'src/app/api/evidence/route.js'],
+  ]) {
+    ok(`${surface} still gates on render too`, /isRenderableTicker/.test(read(file)));
+  }
+}
+
+L('\n=== THE WEEKEND NEWS GAP IS CLOSED ===');
+{
+  const paths = (vercel.crons || []).filter((c) => c.path === '/api/refresh-content').map((c) => c.schedule);
+  ok('the weekday enrichment cron is unchanged', paths.includes('0 13-21 * * 1-5'));
+  // top_stories carries a 4h TTL; a 4-hourly cron would re-write it exactly as it expires, so any
+  // late run leaves the feed with no curated stories — the failure the schedule exists to remove.
+  ok('…and a weekend cron exists', mut('noweekend') ? false : paths.some((p) => /\* \* 6,0$/.test(p)));
+  const weekend = paths.find((p) => /\* \* 6,0$/.test(p)) || '';
+  const everyN = Number((weekend.match(/^0 \*\/(\d+) /) || [])[1] || 99);
+  ok('…running more often than the 4-hour TTL expires',
+    mut('ttlrace') ? false : everyN > 0 && everyN < 4, `every ${everyN}h`);
+
+  const rc = read('src/app/api/refresh-content/route.js');
+  ok('the run budget is written down where vercel.json cannot carry it',
+    mut('nobudget') ? false : /runs\/week/.test(rc) && /Haiku calls/.test(rc));
+  // A kill switch for the only job here that spends money — unset means ON, so it changes nothing.
+  ok('an enrichment kill switch exists', /NEWS_ENRICH_ENABLED/.test(rc));
+  ok('…and defaults to ON when unset',
+    mut('defaultoff') ? false : /process\.env\.NEWS_ENRICH_ENABLED !== 'false'/.test(rc));
+  ok('…and a skipped run is never recorded as a healthy tick',
+    mut('skipisok') ? false : /recordJobRun\('refresh-content', \{ ok: false, note: 'disabled/.test(rc));
+}
+
+L('\n=== THE CLASSIFICATION ALARM MEASURES WHAT IT CLAIMS ===');
+{
+  const health = read('src/app/api/health/route.js');
+  // ⚠️ THE THRESHOLD MUST NOT MOVE. Making a red light green by lowering the bar is the failure
+  // this assertion exists to prevent; the fix was the denominator, not the standard.
+  ok('the 8% threshold is unchanged',
+    mut('raisedbar') ? false : /ok: pctWeight < 8,/.test(health));
+  ok('ADRs and funds are excluded from the denominator, by asset class',
+    mut('nodenominator') ? false : /'ADRC','FUND','ETF','ETV','WARRANT'/.test(health));
+  ok('…and the excluded population is still reported',
+    mut('hidesadrs') ? false : /excludedNoSic/.test(health));
+  ok('…and the scope is stated in the response', /scope: 'operating companies/.test(health));
+  // No SIC code may be invented for a security that structurally lacks one.
+  ok('no SIC code is fabricated',
+    !/sector\s*=\s*'|coalesce\(sector,\s*'[A-Za-z]/.test(health));
 }
 
 // ── LIVE HEARTBEAT AGES (only with DATABASE_URL) ────────────────────────────

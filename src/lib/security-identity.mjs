@@ -14,6 +14,7 @@
 // PURE. No database, no network, no clock. The store module supplies the rows; this decides.
 
 import { isSicDescription } from './sic-descriptions.mjs';
+import { isValidSymbol } from './ticker-symbol.mjs';
 
 /**
  * PRECEDENCE, HIGHEST FIRST. The order is the whole design, so it is stated once, here.
@@ -88,6 +89,36 @@ export function isRenderableTicker(t) {
   if (!s) return false;
   if (TICKER_PLACEHOLDERS.has(s)) return false;
   return TICKER_SHAPE.test(s);
+}
+
+// ── MAY THIS STRING BE STORED AS A TICKER AT ALL? ────────────────────────────
+//
+// ⚠️ A DIFFERENT, DELIBERATELY LOOSER QUESTION THAN isRenderableTicker. That one decides what may
+// go on a CARD and answers it with the 1-5-letter shape the screener universe actually uses. This
+// one guards the INGEST boundary, and it has to admit every symbol the product legitimately
+// stores — including the ones the card rule excludes.
+//
+// Measured before choosing: gating inserts on isRenderableTicker would have rejected 391 rows of
+// AXIA3, plus BRK.A, NYT.A, SBSP3, PHXE.P and PRTFTM. Deleting real filings to keep a table tidy
+// is a worse outcome than the dirt, so the ingest gate uses the SECURITY grammar from
+// ticker-symbol.mjs — the same one /ticker/[symbol] accepts, verified against all 19,199 symbols
+// we hold — and adds only the placeholder rejection on top.
+//
+// What it therefore rejects is exactly what no security can be: the filler strings above, and
+// strings that are not one symbol at all. Those are real and still arriving — "Z AND ZG" (230
+// rows), "NYSE: VTEX" (88), "GEF, GEF-B" (85), "ASX:LNW" (71), "(CALX)" (44), "MOGA/MOGB" (41).
+// A filer typed two symbols, an exchange prefix or a parenthetical into a one-symbol field.
+//
+// ⚠️ IT REJECTS, IT DOES NOT REPAIR. "(CALX)" is obviously Calix and "NYSE: VTEX" is obviously
+// VTEX, and unwrapping them would be a guess dressed as a parse — the same class of move as
+// inventing a SIC code. A filing we cannot read the symbol of is quarantined with its accession
+// and CIK intact, which is recoverable; a filing silently reassigned to the wrong issuer is not.
+export function isIngestableTicker(t) {
+  if (typeof t !== 'string') return false;
+  const s = t.trim().toUpperCase();
+  if (!s) return false;
+  if (TICKER_PLACEHOLDERS.has(s)) return false;
+  return isValidSymbol(s);
 }
 
 /**

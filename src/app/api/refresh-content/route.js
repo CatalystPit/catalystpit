@@ -97,10 +97,42 @@ Return ONLY a JSON array of all ${batch.length} enriched articles. No markdown, 
   return [...enriched1, ...enriched2];
 }
 
+// ── SCHEDULE, AND WHAT IT COSTS ─────────────────────────────────────────────
+//
+// vercel.json cannot carry comments, so the run budget lives here.
+//
+//   0 13-21 * * 1-5   weekdays, hourly 13:00-21:00 UTC   9/day × 5 = 45 runs/week  (existing)
+//   0 */3  * * 6,0    weekends, every 3 hours            8/day × 2 = 16 runs/week  (added)
+//                                                        ------------------------
+//                                                        61 runs/week, +16 (+36%)
+//
+// Each run makes at most 2 Claude Haiku calls (the article list is split into two batches), so
+// the weekend adds AT MOST 32 Haiku calls a week. That is the entire spend delta.
+//
+// ⚠️ WHY 3 HOURS AND NOT 4. kvSet writes top_stories with `?ex=14400` — a 4-hour TTL exactly. A
+// 4-hourly cron would re-write the key at the same moment it expires, so any late run leaves the
+// News feed with no curated stories at all, which is the failure this schedule exists to remove.
+// Three hours buys a full hour of margin for the price of two extra runs a day.
+//
+// The alternative — simply lengthening the TTL so Friday's write survives to Monday — was
+// rejected: it would keep the page full by showing Friday's stories as if they were current,
+// which is a worse lie than showing raw wire.
+const ENRICH_ENABLED = process.env.NEWS_ENRICH_ENABLED !== 'false';
+
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron')==='1';
   if (!isVercelCron && request.headers.get('authorization')!==`Bearer ${CRON_SECRET}`)
     return Response.json({ error:'Unauthorized' }, { status:401 });
+
+  // A kill switch for the only job here that spends money. Unset means ON, so adding this changes
+  // nothing by itself; `NEWS_ENRICH_ENABLED=false` stops the Claude calls without touching the
+  // cron or the deployment. Skipping is reported as a SKIP, never as a success — the heartbeat
+  // must not claim a clock is ticking while enrichment is switched off.
+  if (!ENRICH_ENABLED) {
+    console.log('[refresh-content] skipped: NEWS_ENRICH_ENABLED=false');
+    await recordJobRun('refresh-content', { ok: false, note: 'disabled by NEWS_ENRICH_ENABLED' });
+    return Response.json({ skipped: true, reason: 'enrichment disabled' }, { status: 200 });
+  }
 
   const results = { refreshed:[], failed:[], timestamp:new Date().toISOString() };
 

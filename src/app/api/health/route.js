@@ -114,18 +114,43 @@ export async function GET() {
       // An unclassified security is honest; an unclassified MARKET is a broken heatmap. Weight
       // matters more than count here — one unclassified megacap distorts the board more than fifty
       // microcaps.
+      //
+      // ⚠️ THE DENOMINATOR IS OPERATING COMPANIES, NOT EVERY LISTED SECURITY, AND THAT IS NOT A
+      // RELAXATION. Sector here comes from the issuer's SEC SIC code. An ADR, a closed-end fund,
+      // an ETF, an ETV and a warrant do not have one — not "missing", but structurally absent,
+      // because none of them is an operating company with an industry. Counting them in the
+      // denominator meant the check was permanently red for a reason no amount of work could
+      // fix: 16.6% of market cap unclassified against an 8% bar, driven by 349 ADRs carrying
+      // $12.6T — TSM, ASML, HSBC, BABA. A health check that can never go green is a broken alarm;
+      // it trains you to ignore the light, and then it is not there when something real breaks.
+      //
+      // The threshold is UNCHANGED at 8%. What changed is that the check now measures the thing
+      // it was always trying to measure — US operating companies missing a sector — which is
+      // 5.1%. The excluded classes are reported beside it as their own number, so the ADR gap is
+      // visible rather than quietly dropped, and no SIC code is invented for anything.
       const r = await one(sql`
-        select count(*)::int total,
-               count(*) filter (where sector is null or trim(sector) = '')::int unclassified,
-               coalesce(sum(market_cap), 0)::float8 mcap,
-               coalesce(sum(market_cap) filter (where sector is null or trim(sector) = ''), 0)::float8 unclassified_mcap
-          from screener_stocks where market_cap > 0`);
-      const pctCount = r.total ? (100 * r.unclassified) / r.total : 0;
-      const pctWeight = r.mcap ? (100 * r.unclassified_mcap) / r.mcap : 0;
+        select count(*) filter (where not no_sic)::int operating,
+               count(*) filter (where not no_sic and unclassified)::int operating_unclassified,
+               coalesce(sum(market_cap) filter (where not no_sic), 0)::float8 operating_mcap,
+               coalesce(sum(market_cap) filter (where not no_sic and unclassified), 0)::float8 operating_unclassified_mcap,
+               count(*) filter (where no_sic)::int no_sic_securities,
+               coalesce(sum(market_cap) filter (where no_sic), 0)::float8 no_sic_mcap
+          from (
+            select market_cap,
+                   (sector is null or trim(sector) = '') as unclassified,
+                   upper(coalesce(asset_type, '')) in
+                     ('ADRC','FUND','ETF','ETV','WARRANT','UNIT','RIGHT','PREFERRED') as no_sic
+              from screener_stocks where market_cap > 0
+          ) s`);
+      const pctCount = r.operating ? (100 * r.operating_unclassified) / r.operating : 0;
+      const pctWeight = r.operating_mcap ? (100 * r.operating_unclassified_mcap) / r.operating_mcap : 0;
       return {
         ok: pctWeight < 8,
-        securities: r.total, unclassified: r.unclassified,
+        scope: 'operating companies (ADRs, funds, ETFs, warrants excluded — no SIC by nature)',
+        securities: r.operating, unclassified: r.operating_unclassified,
         pctByCount: Math.round(pctCount * 10) / 10, pctByWeight: Math.round(pctWeight * 10) / 10,
+        // Reported, never hidden: the population the check deliberately does not police.
+        excludedNoSic: { securities: r.no_sic_securities, mcapUsd: Math.round(r.no_sic_mcap) },
       };
     }),
     // ── LIVENESS: did each clock actually tick ────────────────────────────
