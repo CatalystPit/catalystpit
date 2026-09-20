@@ -48,33 +48,51 @@ import { JOIN, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE } from './evide
 // have let boards classified by the V3 archetype cascade keep serving as current after a
 // methodology change that altered qualification, direction, the dead zone and ranking — the exact
 // failure the versioned-key design exists to prevent.
-export const SETUP_VERSION = 'consensus_v35_setup';
+export const SETUP_VERSION = 'consensus_v36_setup';
 
 // ── THE ARCHETYPES ──────────────────────────────────────────────────────────
+// ⚠️ THE HEADLINE DESCRIBES EVIDENCE, NOT PRICE.
+//
+// V3.5 made PRICE_DIVERGENCE and PRICE_CONFIRMATION primary identities, which quietly turned
+// Consensus into an intraday product: the headline answered "what is price doing?" — Pit Scan's
+// question — instead of "what public evidence is worth investigating?". The price concepts are
+// still computed and still shown, as a SECONDARY market line. They are no longer what the card is.
 export const SETUP = Object.freeze({
+  UNUSUAL_INSIDER_ACTIVITY: 'UNUSUAL_INSIDER_ACTIVITY',
+  CROSS_SOURCE_CONFLICT: 'CROSS_SOURCE_CONFLICT',
+  CROSS_SOURCE_ALIGNMENT: 'CROSS_SOURCE_ALIGNMENT',
+  FRESH_MATERIAL_CATALYST: 'FRESH_MATERIAL_CATALYST',
+  INSTITUTIONAL_CHANGE: 'INSTITUTIONAL_CHANGE',
+  CONGRESS_ACTIVITY: 'CONGRESS_ACTIVITY',
+  EVIDENCE_BUILDING: 'EVIDENCE_BUILDING',
+  SINGLE_SOURCE_SIGNIFICANCE: 'SINGLE_SOURCE_SIGNIFICANCE',
+  NO_ACTIVE_SETUP: 'NO_ACTIVE_SETUP',
+  // Retained so existing consumers and stored rows do not break on an unknown key. No longer
+  // produced as a PRIMARY identity — see marketState() for where price now lives.
   FRESH_CATALYST_SUPPORTED: 'FRESH_CATALYST_SUPPORTED',
   FRESH_CATALYST_CONTESTED: 'FRESH_CATALYST_CONTESTED',
   FRESH_CATALYST: 'FRESH_CATALYST',
   PRICE_DIVERGENCE: 'PRICE_DIVERGENCE',
   PRICE_CONFIRMATION: 'PRICE_CONFIRMATION',
-  UNUSUAL_INSIDER_ACTIVITY: 'UNUSUAL_INSIDER_ACTIVITY',
-  CROSS_SOURCE_CONFLICT: 'CROSS_SOURCE_CONFLICT',
-  EVIDENCE_BUILDING: 'EVIDENCE_BUILDING',
   SINGLE_SOURCE: 'SINGLE_SOURCE',
-  NO_ACTIVE_SETUP: 'NO_ACTIVE_SETUP',
 });
 
 export const SETUP_LABEL = Object.freeze({
-  FRESH_CATALYST_SUPPORTED: 'Fresh catalyst, evidence supports',
-  FRESH_CATALYST_CONTESTED: 'Fresh catalyst, evidence contests',
+  UNUSUAL_INSIDER_ACTIVITY: 'Unusual insider activity',
+  CROSS_SOURCE_CONFLICT: 'Cross-source conflict',
+  CROSS_SOURCE_ALIGNMENT: 'Cross-source alignment',
+  FRESH_MATERIAL_CATALYST: 'Fresh material catalyst',
+  INSTITUTIONAL_CHANGE: 'Institutional change',
+  CONGRESS_ACTIVITY: 'Congress activity',
+  EVIDENCE_BUILDING: 'Evidence building',
+  SINGLE_SOURCE_SIGNIFICANCE: 'Single-source significance',
+  NO_ACTIVE_SETUP: 'No active setup',
+  FRESH_CATALYST_SUPPORTED: 'Fresh material catalyst',
+  FRESH_CATALYST_CONTESTED: 'Fresh material catalyst',
   FRESH_CATALYST: 'Fresh catalyst',
   PRICE_DIVERGENCE: 'Price diverging from evidence',
   PRICE_CONFIRMATION: 'Price confirming evidence',
-  UNUSUAL_INSIDER_ACTIVITY: 'Unusual insider activity',
-  CROSS_SOURCE_CONFLICT: 'Cross-source conflict',
-  EVIDENCE_BUILDING: 'Evidence building',
   SINGLE_SOURCE: 'Single-source evidence',
-  NO_ACTIVE_SETUP: 'No active setup',
 });
 
 // ── WHAT MAKES A CATALYST "FRESH" ───────────────────────────────────────────
@@ -179,15 +197,30 @@ export function qualifies({ significantFamilies = [], freshCatalyst = false, rea
     && f.family !== FAMILY.CATALYST);
 
   if (exceptionalQualifying.length) return { ok: true, why: 'exceptional-single-family' };
+
+  // ⚠️ HISTORICAL RARITY QUALIFIES ON ITS OWN. ALK carries "First officer open-market purchase in
+  // our 1-year history" at significance 0.584 — meaningful, but just under the exceptional bar —
+  // and with no second family it had no way onto the board at all. Company-specific rarity is the
+  // most valuable thing the evidence engine produces; a claim history.mjs was willing to make is a
+  // reason to look even when only one family is speaking.
+  const unusualQualifying = qualifying.filter((f) => f.evidence?.context?.unusual === true
+    || f.evidence?.context?.boundedByCoverage === true
+    || typeof f.evidence?.context?.gapDays === 'number');
+  if (unusualQualifying.length) return { ok: true, why: 'historically-unusual-evidence' };
   // Two meaningful families where at least one is a disclosure other than 13F.
   if (qualifying.length >= 1 && meaningful.length >= 2) return { ok: true, why: 'multiple-meaningful-families' };
   // ⚠️ A CATALYST CANNOT CORROBORATE ITSELF. The supporting family must be something other than the
   // filing that triggered the question, or "fresh 8-K + that same 8-K" would qualify everything.
   const corroborating = qualifying.filter((f) => f.family !== FAMILY.CATALYST);
   if (freshCatalyst && corroborating.length >= 1) return { ok: true, why: 'fresh-catalyst-with-evidence' };
-  // A meaningful price response to evidence that is itself meaningful is a research question even
-  // when only one family is speaking.
-  if (reaction?.meaningful && corroborating.length >= 1) return { ok: true, why: 'meaningful-reaction' };
+  // ⚠️ THERE IS DELIBERATELY NO PRICE PATH HERE.
+  //
+  // V3.5 qualified a ticker when a meaningful price move accompanied one meaningful family. That
+  // made price a route INTO Consensus, which is Pit Scan's job, and it meant a company with
+  // extraordinary public evidence and a flat tape could be admitted only if something else fired.
+  // Price is context on the card; it can never be the reason a company is on the board, and its
+  // absence can never remove one.
+  void reaction;
   return { ok: false, why: 'no-material-evidence' };
 }
 
@@ -199,59 +232,99 @@ export function qualifies({ significantFamilies = [], freshCatalyst = false, rea
  */
 export function labelFor({ join, significantFamilies = [], freshCatalyst = false, freshCatalystEvidence = null, synthesis = null } = {}) {
   const secondary = [];
-  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
-  const topInsider = significantFamilies.find((f) => f.family === FAMILY.INSIDER);
-  const insiderExceptional = topInsider && topInsider.significance >= EXCEPTIONAL_SIGNIFICANCE;
   const reasons = [];
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
+  const top = (fam) => significantFamilies.find((f) => f.family === fam);
+  const exceptional = (fam) => {
+    const f = top(fam);
+    return f && f.significance >= EXCEPTIONAL_SIGNIFICANCE ? f : null;
+  };
+  const insiderExceptional = exceptional(FAMILY.INSIDER);
+  const unusual = (f) => Boolean(f?.evidence?.context?.unusual || f?.evidence?.context?.boundedByCoverage
+    || typeof f?.evidence?.context?.gapDays === 'number');
 
-  if (insiderExceptional) secondary.push(SETUP.UNUSUAL_INSIDER_ACTIVITY);
-  if (freshCatalyst) secondary.push(SETUP.FRESH_CATALYST);
+  // Price findings are recorded as SECONDARY characteristics, never as the identity.
+  if (join?.state === JOIN.PRICE_DIVERGING) secondary.push('MARKET_DIVERGING');
+  if (join?.state === JOIN.PRICE_CONFIRMING) secondary.push('MARKET_CONFIRMING');
 
-  // 1. A GENUINE STANDOFF is the reading, whatever price is doing.
+  // ── 1. HISTORICALLY UNUSUAL INSIDER ACTIVITY ─────────────────────────────
+  // The rarest and most specific thing we can say about a company, and the reason INTC must be
+  // able to rank prominently on a completely flat tape.
+  if (insiderExceptional) {
+    reasons.push(insiderExceptional.evidence?.context?.text
+      || insiderExceptional.evidence?.summary || 'Exceptional insider activity');
+    return { setup: SETUP.UNUSUAL_INSIDER_ACTIVITY, reasons, secondary };
+  }
+
+  // ── 2. INDEPENDENT SOURCES GENUINELY DISAGREE ────────────────────────────
   if (join?.state === JOIN.SOURCES_CONFLICT) {
     reasons.push('Independent sources disagree with comparable weight');
     return { setup: SETUP.CROSS_SOURCE_CONFLICT, reasons, secondary };
   }
 
-  // 2. PRICE MOVING AGAINST MEANINGFUL EVIDENCE.
-  if (join?.state === JOIN.PRICE_DIVERGING) {
-    reasons.push('A meaningful price move opposes the disclosure evidence');
-    return { setup: SETUP.PRICE_DIVERGENCE, reasons, secondary };
-  }
-
-  // 3. AN EXCEPTIONAL INSIDER ACT outranks confirmation: "the CEO did something he has not done in
-  //    our whole history" is a better reason to look than "price agrees".
-  if (insiderExceptional) {
-    reasons.push(topInsider.evidence?.context?.text || 'Exceptional insider activity');
-    return { setup: SETUP.UNUSUAL_INSIDER_ACTIVITY, reasons, secondary: secondary.filter((x) => x !== SETUP.UNUSUAL_INSIDER_ACTIVITY) };
-  }
-
-  // 4. A FRESH CLASSIFIED CATALYST with supporting evidence.
-  if (freshCatalyst && meaningful.length >= 1) {
+  // ── 3. A FRESH MATERIAL CATALYST ─────────────────────────────────────────
+  const corroborating = meaningful.filter((f) => f.family !== FAMILY.CATALYST
+    && f.family !== FAMILY.INSTITUTION);
+  if (freshCatalyst && corroborating.length >= 1) {
     reasons.push(`${freshCatalystEvidence?.summary || 'A material filing'} became public recently`);
-    return {
-      setup: join?.state === JOIN.PRICE_CONFIRMING ? SETUP.FRESH_CATALYST_SUPPORTED : SETUP.FRESH_CATALYST_SUPPORTED,
-      reasons, secondary: secondary.filter((x) => x !== SETUP.FRESH_CATALYST),
-    };
+    return { setup: SETUP.FRESH_MATERIAL_CATALYST, reasons, secondary };
   }
 
-  // 5. PRICE AGREEING.
-  if (join?.state === JOIN.PRICE_CONFIRMING) {
-    reasons.push('A meaningful price move agrees with the disclosure evidence');
-    return { setup: SETUP.PRICE_CONFIRMATION, reasons, secondary };
+  // ── 4. INDEPENDENT SOURCES AGREE ─────────────────────────────────────────
+  // Two or more meaningful families pointing the same way, with alignment to show for it.
+  if (meaningful.length >= 2 && Number.isFinite(synthesis?.A) && synthesis.A >= 0.6) {
+    reasons.push('Multiple independent sources point the same way');
+    return { setup: SETUP.CROSS_SOURCE_ALIGNMENT, reasons, secondary };
   }
 
-  // 6. EVIDENCE WITHOUT A PRICE RESPONSE — a real state, not a failure to classify.
+  // ── 5. A SINGLE FAMILY THAT IS UNUSUAL ON ITS OWN ────────────────────────
+  const instTop = top(FAMILY.INSTITUTION);
+  if (instTop && instTop.significance >= MEANINGFUL_SIGNIFICANCE && unusual(instTop)
+    && corroborating.length === 0) {
+    reasons.push(instTop.evidence?.context?.text || 'Meaningful institutional change');
+    return { setup: SETUP.INSTITUTIONAL_CHANGE, reasons, secondary };
+  }
+  const conTop = top(FAMILY.CONGRESS);
+  if (conTop && conTop.significance >= MEANINGFUL_SIGNIFICANCE && meaningful.length === 1) {
+    reasons.push(conTop.evidence?.context?.text || conTop.evidence?.summary || 'Congressional disclosure activity');
+    return { setup: SETUP.CONGRESS_ACTIVITY, reasons, secondary };
+  }
+
+  // ── 6. EVIDENCE ACCUMULATING ─────────────────────────────────────────────
   if (meaningful.length >= 2) {
-    reasons.push('Multiple independent families carry meaningful evidence; price has not responded');
+    reasons.push('Multiple independent families carry meaningful evidence');
     return { setup: SETUP.EVIDENCE_BUILDING, reasons, secondary };
   }
   if (meaningful.length === 1) {
-    reasons.push(`${meaningful[0].family} evidence is meaningful on its own`);
-    return { setup: SETUP.SINGLE_SOURCE, reasons, secondary };
+    reasons.push(meaningful[0].evidence?.context?.text
+      || `${meaningful[0].family} evidence is meaningful on its own`);
+    return { setup: SETUP.SINGLE_SOURCE_SIGNIFICANCE, reasons, secondary };
   }
 
   return { setup: SETUP.NO_ACTIVE_SETUP, reasons: ['No material evidence currently'], secondary: [] };
+}
+
+/**
+ * THE SECONDARY MARKET LINE.
+ *
+ * Price is context. It is never forced into "confirming" or "diverging": inside the dead zone, or
+ * with no recent public event to measure from, the honest answer is that there is no meaningful
+ * reaction — which is a real state, not a missing one.
+ */
+export const MARKET_STATE = Object.freeze({
+  CONFIRMING: 'CONFIRMING', DIVERGING: 'DIVERGING',
+  NO_REACTION: 'NO_REACTION', NOT_MEASURED: 'NOT_MEASURED', MIXED: 'MIXED',
+});
+export const MARKET_STATE_LABEL = Object.freeze({
+  CONFIRMING: 'Confirming', DIVERGING: 'Diverging',
+  NO_REACTION: 'No meaningful reaction', NOT_MEASURED: 'Not measured', MIXED: 'Mixed',
+});
+export function marketState({ join, reaction } = {}) {
+  if (!reaction || reaction.reason === 'not-measured') return MARKET_STATE.NOT_MEASURED;
+  if (!reaction.meaningful) return MARKET_STATE.NO_REACTION;
+  if (join?.state === JOIN.PRICE_CONFIRMING) return MARKET_STATE.CONFIRMING;
+  if (join?.state === JOIN.PRICE_DIVERGING) return MARKET_STATE.DIVERGING;
+  return MARKET_STATE.MIXED;
 }
 
 /** Does this ticker belong on the active board? */
@@ -300,15 +373,17 @@ export function setupDirection(canonical) {
 // "Most relevant to investigate now", NOT "best stock". Every term is an observable property of
 // evidence. There is no visible number and nothing here is derived from returns.
 const SETUP_RANK = Object.freeze({
-  FRESH_CATALYST_CONTESTED: 0,
-  FRESH_CATALYST_SUPPORTED: 1,
-  FRESH_CATALYST: 2,
-  PRICE_DIVERGENCE: 3,
-  UNUSUAL_INSIDER_ACTIVITY: 4,
-  CROSS_SOURCE_CONFLICT: 5,
-  PRICE_CONFIRMATION: 6,
-  EVIDENCE_BUILDING: 7,
-  SINGLE_SOURCE: 8,
+  UNUSUAL_INSIDER_ACTIVITY: 0,
+  CROSS_SOURCE_ALIGNMENT: 1,
+  CROSS_SOURCE_CONFLICT: 2,
+  FRESH_MATERIAL_CATALYST: 3,
+  INSTITUTIONAL_CHANGE: 4,
+  CONGRESS_ACTIVITY: 5,
+  EVIDENCE_BUILDING: 6,
+  SINGLE_SOURCE_SIGNIFICANCE: 7,
+  // Legacy keys, ranked where their evidence meaning falls rather than by their price name.
+  FRESH_CATALYST_SUPPORTED: 3, FRESH_CATALYST_CONTESTED: 2, FRESH_CATALYST: 8,
+  PRICE_DIVERGENCE: 6, PRICE_CONFIRMATION: 7, SINGLE_SOURCE: 7,
   NO_ACTIVE_SETUP: 99,
 });
 const CONF_RANK = { High: 0, Medium: 1, Low: 2 };
@@ -344,15 +419,17 @@ export function orderSetups(rows) {
 // Every filter maps to an archetype that genuinely occurs in production. An archetype with no
 // current examples does not get a decorative filter.
 export const SETUP_FILTERS = Object.freeze([
-  { key: 'all', label: 'All setups' },
-  { key: 'catalyst', label: 'Fresh catalysts', setups: [SETUP.FRESH_CATALYST_SUPPORTED, SETUP.FRESH_CATALYST_CONTESTED] },
-  { key: 'divergence', label: 'Price divergence', setups: [SETUP.PRICE_DIVERGENCE] },
-  { key: 'confirmation', label: 'Price confirmation', setups: [SETUP.PRICE_CONFIRMATION] },
-  { key: 'insider', label: 'Unusual insider', setups: [SETUP.UNUSUAL_INSIDER_ACTIVITY] },
-  { key: 'conflict', label: 'Cross-source conflict', setups: [SETUP.CROSS_SOURCE_CONFLICT, SETUP.FRESH_CATALYST_CONTESTED] },
-  { key: 'building', label: 'Evidence building', setups: [SETUP.EVIDENCE_BUILDING, SETUP.SINGLE_SOURCE] },
-  { key: 'positive', label: 'Positive', direction: 'POSITIVE' },
-  { key: 'negative', label: 'Negative', direction: 'NEGATIVE' },
+  { key: 'all', label: 'All' },
+  { key: 'insider', label: 'Unusual insiders', setups: [SETUP.UNUSUAL_INSIDER_ACTIVITY] },
+  { key: 'catalyst', label: 'Fresh catalyst', setups: [SETUP.FRESH_MATERIAL_CATALYST, SETUP.FRESH_CATALYST_SUPPORTED, SETUP.FRESH_CATALYST_CONTESTED] },
+  { key: 'alignment', label: 'Cross-source alignment', setups: [SETUP.CROSS_SOURCE_ALIGNMENT] },
+  { key: 'conflict', label: 'Cross-source conflict', setups: [SETUP.CROSS_SOURCE_CONFLICT] },
+  { key: 'institutions', label: 'Institutional change', setups: [SETUP.INSTITUTIONAL_CHANGE] },
+  { key: 'congress', label: 'Congress activity', setups: [SETUP.CONGRESS_ACTIVITY] },
+  { key: 'building', label: 'Evidence building', setups: [SETUP.EVIDENCE_BUILDING, SETUP.SINGLE_SOURCE_SIGNIFICANCE, SETUP.SINGLE_SOURCE] },
+  // SECONDARY. Market reaction remains discoverable, but it is not how the board is organised.
+  { key: 'confirming', label: 'Market confirming', market: 'CONFIRMING' },
+  { key: 'diverging', label: 'Market diverging', market: 'DIVERGING' },
 ]);
 
 export function filterSetups(rows, key = 'all') {
@@ -361,5 +438,6 @@ export function filterSetups(rows, key = 'all') {
   const f = SETUP_FILTERS.find((x) => x.key === key);
   if (!f) return list;
   if (f.direction) return list.filter((r) => r.setup?.direction === f.direction);
+  if (f.market) return list.filter((r) => r.setup?.marketState === f.market);
   return list.filter((r) => f.setups.includes(r.setup?.setup));
 }

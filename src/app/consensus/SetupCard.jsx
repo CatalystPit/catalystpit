@@ -33,9 +33,14 @@ const DIR = {
   MIXED: { fg: C.muted, bg: C.surface, label: 'Mixed' },
 };
 
+// MARKET IS SECONDARY. No ticker is forced into confirming or diverging: inside the dead zone, or
+// with no recent public event to measure from, the honest answer is that there was no meaningful
+// reaction — a real state, not a missing one.
 const MARKET_UI = {
   CONFIRMING: { label: 'Confirming', fg: C.green },
   DIVERGING: { label: 'Diverging', fg: C.conflictAccent },
+  NO_REACTION: { label: 'No meaningful reaction', fg: C.muted },
+  NOT_MEASURED: { label: 'Not measured', fg: C.dim },
   MIXED: { label: 'Mixed', fg: C.muted },
   UNAVAILABLE: { label: 'Unavailable', fg: C.dim },
 };
@@ -103,7 +108,8 @@ export default function SetupCard({ row }) {
   if (!s) return null;
 
   const dir = DIR[s.direction] || DIR.MIXED;
-  const market = MARKET_UI[row.market?.verdict] || MARKET_UI.UNAVAILABLE;
+  // The SECONDARY market state, not V2.1's structure verdict.
+  const market = MARKET_UI[s.marketState] || MARKET_UI[row.market?.verdict] || MARKET_UI.UNAVAILABLE;
   const fams = FAM_ORDER.filter((f) => row.families?.[f]?.length);
 
   // The two strongest families by default. The engine already ranked them; this only truncates.

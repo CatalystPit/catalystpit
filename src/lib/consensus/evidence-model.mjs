@@ -394,11 +394,16 @@ export function joinEvidenceMarket({ synthesis, reaction, significantFamilies = 
 // Divergence leads because price disagreeing with meaningful evidence is the least widely available
 // observation; a fresh classified catalyst is the strongest "why now"; exceptional single-family
 // significance is what rescues the INTC case.
+// ⚠️ REWEIGHTED SO EVIDENCE LEADS. Under the previous weights, divergence and confirmation carried
+// 55% of the ranking, so a company was promoted mainly for how its price behaved — which is Pit
+// Scan's question, and it meant extraordinary evidence on a flat tape ranked near the bottom.
+// Price is now a small tiebreak between comparable evidence cases; it can never carry a weak one.
 export const WEIGHTS = Object.freeze({
-  divergence: 0.35,
-  confirmation: 0.20,
-  freshCatalyst: 0.30,
-  significance: 0.15,
+  significance: 0.35,      // historically unusual, high-quality evidence
+  breadth: 0.25,           // multiple independent meaningful families
+  freshCatalyst: 0.20,     // a classified material filing
+  conflict: 0.12,          // a genuine standoff worth investigating
+  reaction: 0.08,          // secondary: price agreeing or disagreeing
 });
 
 // ── DECAY ───────────────────────────────────────────────────────────────────
@@ -432,27 +437,39 @@ const CONF_H = { High: 1, Medium: 0.75, Low: 0.5 };
 export function researchPriority({ join, synthesis, significantFamilies = [], confidence = 'Low',
   freshCatalyst = false, youngestEvidenceAgeMs = null, stillDeveloping = false } = {}) {
   const H = CONF_H[confidence] ?? 0.5;
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
   const top = significantFamilies[0]?.significance ?? 0;
   const exceptional = top >= EXCEPTIONAL_SIGNIFICANCE ? top : 0;
 
-  const base = WEIGHTS.divergence * (join?.T || 0)
-    + WEIGHTS.confirmation * (join?.K_conf || 0)
-    + WEIGHTS.freshCatalyst * (freshCatalyst ? 1 : 0)
-    + WEIGHTS.significance * (exceptional || top);
-
-  // A genuine standoff is research-worthy even though it produces neither T nor K_conf.
-  const conflictTerm = join?.state === JOIN.SOURCES_CONFLICT ? 0.25 * (synthesis?.chi ?? 0) : 0;
-
-  // Something still arriving keeps its priority; a lone old event decays.
+  // A. Historically unusual, high-quality evidence LEADS — §7A.
   //
-  // ⚠️ THE EXCEPTIONAL CARVE-OUT. Decay exists so a company does not sit near the top for a week
-  // because something happened once — but a genuinely rare act stays research-worthy longer than
-  // an ordinary one. INTC is the live case: a CEO buying $10.0M, the first officer open-market
-  // purchase in 236 days, was 37 days old and decayed to a floor of 0.25, which would have buried
-  // the strongest insider signal on the board all over again. Exceptional significance raises the
-  // floor; it never removes decay.
+  // Measured: with significance scaled linearly, INTC ranked 27th of 48 despite carrying the single
+  // most unusual insider record on the board (a CEO buying $10.0M, the first officer open-market
+  // purchase in 236 days). Multi-family conflicts out-ranked it by stacking breadth and conflict
+  // terms. An observation the engine has certified as EXCEPTIONAL gets the full weight of this
+  // term, so genuine rarity competes with breadth instead of losing to it.
+  const significance = exceptional ? 1 : top;
+  // B. Independent corroboration, excluding the near-universal institutional record.
+  const independent = meaningful.filter((f) => f.family !== FAMILY.INSTITUTION).length;
+  const breadth = Math.min(1, independent / 2);
+  // C. A fresh classified catalyst.
+  const cat = freshCatalyst ? 1 : 0;
+  // D. A genuine standoff.
+  const conflict = join?.state === JOIN.SOURCES_CONFLICT ? (synthesis?.chi ?? 0) : 0;
+  // E. Price, secondary only.
+  const reaction = Math.min(1, (join?.T || 0) + (join?.K_conf || 0));
+
+  const base = WEIGHTS.significance * significance
+    + WEIGHTS.breadth * breadth
+    + WEIGHTS.freshCatalyst * cat
+    + WEIGHTS.conflict * conflict
+    + WEIGHTS.reaction * reaction;
+
+  // Something still arriving keeps its priority; a lone old event decays. Exceptional significance
+  // raises the floor, because a genuinely rare act stays research-worthy longer than an ordinary
+  // one — without it INTC's $10.0M CEO purchase decayed out of sight at 37 days old.
   const raw = stillDeveloping ? 1 : freshnessDecay(youngestEvidenceAgeMs);
   const decay = exceptional ? Math.max(raw, EXCEPTIONAL_DECAY_FLOOR) : raw;
 
-  return Math.round(H * (base + conflictTerm) * decay * 10000) / 10000;
+  return Math.round(H * base * decay * 10000) / 10000;
 }

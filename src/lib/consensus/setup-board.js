@@ -11,7 +11,7 @@
 // board, ticker page, and later Watchlist and Alerts — renders from.
 
 import { consensusRow, BOARD_FAMILIES, CONCURRENCY } from './board.mjs';
-import { qualifies, labelFor, setupDirection, leanDirection, isActive, orderSetups, SETUP, SETUP_LABEL, SETUP_VERSION, freshCatalysts } from './setup.mjs';
+import { qualifies, labelFor, marketState, MARKET_STATE_LABEL, setupDirection, leanDirection, isActive, orderSetups, SETUP, SETUP_LABEL, SETUP_VERSION, freshCatalysts } from './setup.mjs';
 import {
   significantByFamily, evidenceSynthesis, normalizeReaction, joinEvidenceMarket,
   researchPriority, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, JOIN, DISCLOSURE_ONLY,
@@ -23,7 +23,10 @@ import { FAMILY } from '../evidence/model.mjs';
 export const SETUP_BOARD_VERSION = SETUP_VERSION;
 
 /** How many tickers are EVALUATED. How many are SHOWN is decided by qualification, not by a quota. */
-export const EVALUATE_LIMIT = 150;
+// Raised from 150: BE sat just outside the budget while qualifying on evaluation, and a board that
+// asks "what deserves investigation" should not miss a company for want of ~7 seconds of database
+// time. Still bounded, still ~25s inside a 300s cron.
+export const EVALUATE_LIMIT = 200;
 
 /**
  * Candidate selection, widened.
@@ -55,8 +58,13 @@ export async function selectSetupCandidates(db, sql, { limit = EVALUATE_LIMIT } 
        where filing_date >= current_date - 45
          and total_value > 0 and coalesce(superseded_by,'') = ''
        group by ticker`),
+    // Amount matters here for the same reason dollars matter for insiders: a $500,001-$1,000,000
+    // disclosure and a $1,001-$15,000 one are not the same signal, and counting rows treated them
+    // identically — which is why BE, carrying a large disclosed purchase and the first
+    // congressional disclosure for that ticker in 403 days, never reached evaluation.
     db.execute(sql`
-      select ticker, count(*)::int n, count(distinct representative)::int members
+      select ticker, count(*)::int n, count(distinct representative)::int members,
+             coalesce(max(amount_mid), 0)::float8 amt
         from congress_trades
        where disclosure_date >= current_date - 45 and ticker is not null
        group by ticker`),
@@ -95,7 +103,8 @@ export async function selectSetupCandidates(db, sql, { limit = EVALUATE_LIMIT } 
                 + 0.30 * logw(r.any_usd, 25000, 50000000), 'insider');
   }
   for (const r of rows(con)) {
-    add(r.ticker, 0.25 + 0.15 * Math.min(1, (Number(r.members) || 1) / 3), 'congress');
+    add(r.ticker, 0.25 + 0.15 * Math.min(1, (Number(r.members) || 1) / 3)
+                + 0.15 * logw(r.amt, 15_000, 5_000_000), 'congress');
   }
   for (const r of rows(cat)) {
     if (!(Number(r.material_n) || 0)) continue;
@@ -266,6 +275,9 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
       // evidence exists, not because an archetype happened to fire.
       active: q.ok && isActive(label.setup),
       qualifiedBy: q.why,
+      // SECONDARY. Price is context on the card, never the identity.
+      marketState: marketState({ join, reaction }),
+      marketStateLabel: MARKET_STATE_LABEL[marketState({ join, reaction })],
       unusualCount,
       // How old the triggering event is — the ordering term for "why now".
       whyNowAgeMs: driver?.publicTime ? now - Date.parse(driver.publicTime) : null,

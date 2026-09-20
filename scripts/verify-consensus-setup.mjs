@@ -249,7 +249,13 @@ L('\n=== FILTERS MAP TO REAL ARCHETYPES ===');
   ];
   ok('all returns everything', filterSetups(rows, 'all').length === 3);
   ok('a setup filter selects its archetype', filterSetups(rows, 'divergence')[0].ticker === 'A');
-  ok('a direction filter selects direction', filterSetups(rows, 'negative')[0].ticker === 'C');
+  // Direction filters were replaced by EVIDENCE filters: the board is organised by what the public
+  // records say, not by a lean. Market reaction survives as a SECONDARY filter.
+  ok('a secondary market filter selects on the market state',
+    filterSetups([{ ticker: 'M', setup: { setup: SETUP.EVIDENCE_BUILDING, marketState: 'DIVERGING' } }],
+      'diverging').length === 1);
+  ok('no primary filter is named after price',
+    !SETUP_FILTERS.filter((f) => f.setups).some((f) => /price/i.test(f.label)));
   ok('every filter names archetypes that exist',
     SETUP_FILTERS.every((f) => !f.setups || f.setups.every((s) => s in SETUP)));
   // ⚠️ NOT A RECOMMENDATION SURFACE.

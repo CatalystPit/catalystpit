@@ -13,7 +13,10 @@ import {
   MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, REACTION_FLOOR_PCT, JOIN, CONFLICT_CHI,
   WEIGHTS, DECAY_FLOOR, EXCEPTIONAL_DECAY_FLOOR,
 } from '../src/lib/consensus/evidence-model.mjs';
-import { qualifies, labelFor, leanDirection, SETUP, DIRECTION_DEADBAND } from '../src/lib/consensus/setup.mjs';
+import {
+  qualifies, labelFor, marketState, MARKET_STATE, SETUP_LABEL as LABELS,
+  leanDirection, SETUP, DIRECTION_DEADBAND,
+} from '../src/lib/consensus/setup.mjs';
 import { FAMILY } from '../src/lib/evidence/model.mjs';
 
 const L = (s = '') => console.log(s);
@@ -245,24 +248,118 @@ L('\n=== DIRECTION COMES FROM THE EVIDENCE LEAN ===');
   ok('the deadband is non-trivial', DIRECTION_DEADBAND >= 0.1);
 }
 
-L('\n=== LABELS ARE OUTPUTS ===');
+L('\n=== THE HEADLINE IS EVIDENCE, NEVER PRICE ===');
 {
-  const fams = [{ family: FAMILY.INSIDER, significance: 0.75, evidence: ins({ context: { text: 'First in 236 days', gapDays: 236 } }) }];
-  ok('a genuine standoff labels SOURCES CONFLICT',
-    labelFor({ join: { state: JOIN.SOURCES_CONFLICT }, significantFamilies: fams }).setup === SETUP.CROSS_SOURCE_CONFLICT);
-  ok('divergence labels PRICE DIVERGENCE',
-    labelFor({ join: { state: JOIN.PRICE_DIVERGING }, significantFamilies: fams }).setup === SETUP.PRICE_DIVERGENCE);
-  ok('an exceptional insider act outranks confirmation',
-    labelFor({ join: { state: JOIN.PRICE_CONFIRMING }, significantFamilies: fams }).setup === SETUP.UNUSUAL_INSIDER_ACTIVITY);
-  ok('evidence with no price response labels EVIDENCE BUILDING',
+  const exceptionalIns = [{ family: FAMILY.INSIDER, significance: 0.75,
+    evidence: ins({ context: { text: 'First in 236 days', gapDays: 236 } }) }];
+  const ordinary = [{ family: FAMILY.INSIDER, significance: 0.45, evidence: ins({}) },
+    { family: FAMILY.CONGRESS, significance: 0.45, evidence: con({ amount: '$500,001 - $1,000,000' }) }];
+
+  // ⚠️ PRICE IS NEVER A PRIMARY IDENTITY. V3.5 headlined rows "Price diverging from evidence",
+  // which is Pit Scan's question, not Consensus's. The price finding is still computed and still
+  // shown — as a secondary market line — but it can no longer be what the card IS.
+  const diverging = labelFor({ join: { state: JOIN.PRICE_DIVERGING },
+    significantFamilies: ordinary, synthesis: { A: 0.9 } });
+  ok('a diverging price does not become the headline',
+    mut('priceheadline') ? false
+      : diverging.setup !== SETUP.PRICE_DIVERGENCE && diverging.setup !== SETUP.PRICE_CONFIRMATION,
+    diverging.setup);
+  ok('…the headline describes the evidence instead',
+    diverging.setup === SETUP.CROSS_SOURCE_ALIGNMENT, diverging.setup);
+  ok('…and the price finding survives as a SECONDARY characteristic',
+    diverging.secondary.includes('MARKET_DIVERGING'), diverging.secondary.join(','));
+
+  const confirming = labelFor({ join: { state: JOIN.PRICE_CONFIRMING },
+    significantFamilies: ordinary, synthesis: { A: 0.9 } });
+  ok('a confirming price is secondary too',
+    confirming.setup === SETUP.CROSS_SOURCE_ALIGNMENT
+    && confirming.secondary.includes('MARKET_CONFIRMING'), confirming.setup);
+
+  // Evidence-first precedence.
+  ok('historically unusual insider activity leads',
+    labelFor({ join: { state: JOIN.PRICE_CONFIRMING }, significantFamilies: exceptionalIns }).setup
+      === SETUP.UNUSUAL_INSIDER_ACTIVITY);
+  ok('a genuine standoff labels cross-source conflict',
+    labelFor({ join: { state: JOIN.SOURCES_CONFLICT }, significantFamilies: ordinary }).setup
+      === SETUP.CROSS_SOURCE_CONFLICT);
+  ok('a fresh material catalyst with corroboration labels as such',
+    labelFor({ join: { state: JOIN.EVIDENCE_BUILDING }, significantFamilies: ordinary,
+      freshCatalyst: true, freshCatalystEvidence: cat({}) }).setup === SETUP.FRESH_MATERIAL_CATALYST);
+  ok('one meaningful family labels single-source significance',
     labelFor({ join: { state: JOIN.EVIDENCE_BUILDING },
-      significantFamilies: [{ family: FAMILY.INSIDER, significance: 0.45, evidence: ins({}) },
-        { family: FAMILY.CONGRESS, significance: 0.45, evidence: con({}) }] }).setup === SETUP.EVIDENCE_BUILDING);
+      significantFamilies: [{ family: FAMILY.INSIDER, significance: 0.45, evidence: ins({}) }] }).setup
+      === SETUP.SINGLE_SOURCE_SIGNIFICANCE);
   ok('nothing meaningful labels no active setup',
     labelFor({ join: { state: JOIN.INSUFFICIENT }, significantFamilies: [] }).setup === SETUP.NO_ACTIVE_SETUP);
   ok('the label is deterministic',
-    labelFor({ join: { state: JOIN.PRICE_DIVERGING }, significantFamilies: fams }).setup
-      === labelFor({ join: { state: JOIN.PRICE_DIVERGING }, significantFamilies: fams }).setup);
+    labelFor({ join: { state: JOIN.SOURCES_CONFLICT }, significantFamilies: ordinary }).setup
+      === labelFor({ join: { state: JOIN.SOURCES_CONFLICT }, significantFamilies: ordinary }).setup);
+
+  // No reachable headline mentions price at all.
+  const LIVE = ['UNUSUAL_INSIDER_ACTIVITY', 'CROSS_SOURCE_CONFLICT', 'CROSS_SOURCE_ALIGNMENT',
+    'FRESH_MATERIAL_CATALYST', 'INSTITUTIONAL_CHANGE', 'CONGRESS_ACTIVITY', 'EVIDENCE_BUILDING',
+    'SINGLE_SOURCE_SIGNIFICANCE', 'NO_ACTIVE_SETUP'];
+  ok('no producible headline mentions price',
+    !/price/i.test(LIVE.map((k) => LABELS[k]).join(' ')), LIVE.map((k) => LABELS[k]).join(' | '));
+}
+
+L('\n=== MARKET IS A SECONDARY STATE, NEVER FORCED ===');
+{
+  const conf = { state: JOIN.PRICE_CONFIRMING };
+  const meaningfulR = normalizeReaction({ horizons: { 1: { return: 6, relative: 6 } } });
+  const quietR = normalizeReaction({ horizons: { 1: { return: 0.8, relative: 0.9 } } });
+  const absentR = normalizeReaction({ horizons: { 1: null } });
+
+  ok('a meaningful confirming move reads Confirming',
+    marketState({ join: conf, reaction: meaningfulR }) === MARKET_STATE.CONFIRMING);
+  // ⚠️ NO TICKER IS FORCED INTO CONFIRMING OR DIVERGING.
+  ok('a sub-threshold move reads NO MEANINGFUL REACTION',
+    mut('forcemarket') ? false
+      : marketState({ join: conf, reaction: quietR }) === MARKET_STATE.NO_REACTION,
+    marketState({ join: conf, reaction: quietR }));
+  ok('an unmeasurable window reads NOT MEASURED',
+    marketState({ join: conf, reaction: absentR }) === MARKET_STATE.NOT_MEASURED);
+  ok('no reaction object at all reads NOT MEASURED',
+    marketState({ join: conf, reaction: null }) === MARKET_STATE.NOT_MEASURED);
+}
+
+L('\n=== ACCEPTANCE: EVIDENCE OUTRANKS PRICE ===');
+{
+  // THE TEST THE BRIEF ASKS FOR, stated directly:
+  //   extraordinary evidence on a FLAT tape must be able to rank prominently;
+  //   weak evidence must NOT rank prominently merely because the stock moved.
+  const strongFlat = researchPriority({
+    join: { state: JOIN.EVIDENCE_BUILDING, T: 0, K_conf: 0 },
+    synthesis: { chi: 0 }, confidence: 'High',
+    significantFamilies: [{ family: FAMILY.INSIDER, significance: 0.78 },
+      { family: FAMILY.CONGRESS, significance: 0.5 }],
+    youngestEvidenceAgeMs: 3 * DAY,
+  });
+  const weakMoving = researchPriority({
+    join: { state: JOIN.PRICE_DIVERGING, T: 1, K_conf: 0 },
+    synthesis: { chi: 0 }, confidence: 'Low',
+    significantFamilies: [{ family: FAMILY.INSTITUTION, significance: 0.36 }],
+    youngestEvidenceAgeMs: 1 * DAY,
+  });
+  ok('extraordinary evidence on a flat tape outranks weak evidence that moved',
+    mut('pricedominates') ? false : strongFlat > weakMoving, `${strongFlat} vs ${weakMoving}`);
+
+  // Price may break a tie between comparable evidence, but never carry a weak case.
+  const same = { synthesis: { chi: 0 }, confidence: 'Medium',
+    significantFamilies: [{ family: FAMILY.INSIDER, significance: 0.5 },
+      { family: FAMILY.CONGRESS, significance: 0.5 }], youngestEvidenceAgeMs: DAY };
+  const moved = researchPriority({ ...same, join: { state: JOIN.PRICE_DIVERGING, T: 1, K_conf: 0 } });
+  const flatp = researchPriority({ ...same, join: { state: JOIN.EVIDENCE_BUILDING, T: 0, K_conf: 0 } });
+  ok('price breaks a tie between comparable evidence', moved > flatp);
+  ok('…but the tiebreak is small', (moved - flatp) / moved < 0.2, `${flatp} -> ${moved}`);
+
+  // And price can never be a route INTO Consensus.
+  ok('qualification has no price path at all',
+    mut('pricequalifies') ? false
+      : !qualifies({ significantFamilies: [], reaction: { meaningful: true } }).ok);
+  ok('…and a flat tape never removes a qualifying company',
+    qualifies({ significantFamilies: [{ family: FAMILY.INSIDER, significance: 0.75 }],
+      reaction: { meaningful: false } }).ok);
 }
 
 L('\n=== RESEARCH PRIORITY IS INTERNAL AND DECAYS ===');
