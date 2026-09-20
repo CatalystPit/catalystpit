@@ -94,7 +94,13 @@ const resolve = async (ticker) => {
 // V3 builds ALSO resolve evidence_v1 records. One fresh material catalyst plus a congressional
 // disclosure is enough to produce an active setup for every fixture ticker.
 const evAgo = (d) => new Date(NOW - d * 86_400_000).toISOString();
-const evidenceV1 = async (ticker) => ({
+// Per-ticker override, so a test can make a company genuinely stop qualifying. Under V3.5
+// qualification is decided by the evidence_v1 records, not by the consensus family values, so
+// clearing only the latter would leave the ticker on the board — correctly.
+let EV1 = {};
+const evidenceV1 = async (ticker) => (EV1[ticker] !== undefined
+  ? { ticker, evidence: EV1[ticker], failedFamilies: [], quarantined: [], coverage: {} }
+  : {
   ticker,
   evidence: [
     { evidenceId: `${ticker}-c`, family: 'catalyst', type: 'sec_8k_material_agreement',
@@ -104,7 +110,10 @@ const evidenceV1 = async (ticker) => ({
     { evidenceId: `${ticker}-g`, family: 'congress', type: 'congress_disclosure',
       direction: 'positive', materiality: 0.55, quality: 0.6, publicTime: evAgo(2),
       summary: 'A member disclosed a buy', source: 'congress', url: 'https://house.gov/x',
-      facts: { members: 1, transactionDate: '2026-08-07', disclosureLagDays: 31 },
+      // A disclosed range large enough to be MEANINGFUL under V3.5 significance. A
+      // $1,001-$15,000 trade is deliberately not, so the fixture states a real one.
+      facts: { members: 2, transactionDate: '2026-08-07', disclosureLagDays: 31,
+        amountRange: '$500,001 - $1,000,000' },
       methodology: 'evidence_v1' },
   ],
   failedFamilies: [], quarantined: [], coverage: {},
@@ -118,7 +127,7 @@ const sql = (s, ...v) => ({ s, v });
 
 const setEvidence = (t, fams) => { EVIDENCE[t] = fams; };
 const reset = () => {
-  resetKv(); EVIDENCE = {}; resolveCalls = []; CANDIDATES = ['AAA', 'BBB', 'CCC'];
+  resetKv(); EVIDENCE = {}; EV1 = {}; resolveCalls = []; CANDIDATES = ['AAA', 'BBB', 'CCC'];
 };
 
 // selectCandidates takes each of three queries and unions them, so every ticker appears with
@@ -393,6 +402,7 @@ L('\n=== BOARD MEMBERSHIP AND ORDERING FOLLOW A TICKER CHANGE ===');
   // AAA's evidence goes away entirely — it no longer qualifies.
   setEvidence('AAA', [familyValue({ family: 'insiders', evidenceCount: 0 }),
     familyValue({ family: 'congress', evidenceCount: 0 })]);
+  EV1.AAA = [];        // and no canonical evidence either — nothing left to qualify on
   await M.markConsensusDirty(['AAA']);
   await R.drainDirty(db, sql, { now: NOW + 60_000, ...BUILD });
 

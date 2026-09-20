@@ -42,6 +42,7 @@
 
 import { FAMILY, freshness } from '../evidence/model.mjs';
 import { CONSENSUS_STATE, MARKET } from './synthesis.mjs';
+import { JOIN, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE } from './evidence-model.mjs';
 
 export const SETUP_VERSION = 'consensus_v3_setup';
 
@@ -55,6 +56,7 @@ export const SETUP = Object.freeze({
   UNUSUAL_INSIDER_ACTIVITY: 'UNUSUAL_INSIDER_ACTIVITY',
   CROSS_SOURCE_CONFLICT: 'CROSS_SOURCE_CONFLICT',
   EVIDENCE_BUILDING: 'EVIDENCE_BUILDING',
+  SINGLE_SOURCE: 'SINGLE_SOURCE',
   NO_ACTIVE_SETUP: 'NO_ACTIVE_SETUP',
 });
 
@@ -67,6 +69,7 @@ export const SETUP_LABEL = Object.freeze({
   UNUSUAL_INSIDER_ACTIVITY: 'Unusual insider activity',
   CROSS_SOURCE_CONFLICT: 'Cross-source conflict',
   EVIDENCE_BUILDING: 'Evidence building',
+  SINGLE_SOURCE: 'Single-source evidence',
   NO_ACTIVE_SETUP: 'No active setup',
 });
 
@@ -139,146 +142,112 @@ export function corroboratingFamilies(canonical) {
   return dirs.filter((f) => f.family !== 'institutions').map((f) => f.family);
 }
 
-// ── QUALIFICATION ───────────────────────────────────────────────────────────
+// ── QUALIFICATION (V3.5) ────────────────────────────────────────────────────
+//
+// ⚠️ LABELS ARE OUTPUTS, NOT GATES. In V3 the setup archetypes decided which evidence was allowed
+// into the system, and that hid real situations: INTC's CEO bought $10.0M — the first officer
+// open-market purchase in 236 days, at High confidence with price confirming — and the board never
+// showed it. Qualification now asks only whether MATERIAL EVIDENCE exists; the label is chosen
+// afterwards from the join.
 
 /**
- * Does this company have an active setup, and which one is PRIMARY?
+ * Does this company warrant research at all?
  *
- * Precedence is most-specific-first and fully deterministic: a ticker satisfying several patterns
- * always resolves to the same primary, and the others are reported as secondary rather than
- * plastered across the card as five badges.
- *
- * @param {object} input
- * @param {object} input.canonical  the V2.1 canonical consensus (states, drivers, market, coverage)
- * @param {Array}  input.evidence   canonical evidence_v1 records for this ticker
- * @param {object} [input.reaction] market reaction anchored to the driving event's publicTime
+ * Any ONE of these is sufficient. They are deliberately independent so that a single exceptional
+ * family can qualify a ticker with no second family present, and so that missing families never
+ * penalise one.
  */
-export function classifySetup({ canonical, evidence, now = Date.now() } = {}) {
-  const state = canonical?.state;
-  const market = canonical?.market?.confirmation;
-  const fresh = freshCatalysts(evidence, { now });
-  const corroborating = corroboratingFamilies(canonical);
-  const unusualInsider = unusualEvidence(evidence, FAMILY.INSIDER);
-  const unusualAny = unusualEvidence(evidence);
+export function qualifies({ significantFamilies = [], freshCatalyst = false, reaction = null, synthesis = null } = {}) {
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
+  const exceptional = significantFamilies.filter((f) => f.significance >= EXCEPTIONAL_SIGNIFICANCE);
 
-  const reasons = [];
+  // ⚠️ INSTITUTIONS CANNOT QUALIFY A TICKER. 13F breadth is present for 98% of companies and scores
+  // meaningfully often, so counting it as "a meaningful family" let a fresh 8-K plus the standing
+  // institutional record qualify almost everything — 121 of 150 candidates in one measured pass.
+  // Institutions still contribute to synthesis, still appear on the card, and still provide
+  // context; they simply cannot be the reason a company is on the board.
+  const qualifying = meaningful.filter((f) => f.family !== FAMILY.INSTITUTION);
+  // ⚠️ AND A FILING ALONE IS NEVER EXCEPTIONAL. The exceptional path exists for a genuinely rare
+  // act — a CEO buying after 236 quiet days. An 8-K is a scheduled obligation that thousands of
+  // companies meet every week; it qualifies a ticker only alongside other evidence, which is what
+  // the fresh-catalyst-with-evidence branch below is for.
+  const exceptionalQualifying = exceptional.filter((f) => f.family !== FAMILY.INSTITUTION
+    && f.family !== FAMILY.CATALYST);
+
+  if (exceptionalQualifying.length) return { ok: true, why: 'exceptional-single-family' };
+  // Two meaningful families where at least one is a disclosure other than 13F.
+  if (qualifying.length >= 1 && meaningful.length >= 2) return { ok: true, why: 'multiple-meaningful-families' };
+  // ⚠️ A CATALYST CANNOT CORROBORATE ITSELF. The supporting family must be something other than the
+  // filing that triggered the question, or "fresh 8-K + that same 8-K" would qualify everything.
+  const corroborating = qualifying.filter((f) => f.family !== FAMILY.CATALYST);
+  if (freshCatalyst && corroborating.length >= 1) return { ok: true, why: 'fresh-catalyst-with-evidence' };
+  // A meaningful price response to evidence that is itself meaningful is a research question even
+  // when only one family is speaking.
+  if (reaction?.meaningful && corroborating.length >= 1) return { ok: true, why: 'meaningful-reaction' };
+  return { ok: false, why: 'no-material-evidence' };
+}
+
+/**
+ * The human-readable label, derived from the join.
+ *
+ * Precedence is deterministic and most-specific-first. A ticker satisfying several patterns always
+ * resolves to the same primary; the rest become secondary rather than a row of badges.
+ */
+export function labelFor({ join, significantFamilies = [], freshCatalyst = false, freshCatalystEvidence = null, synthesis = null } = {}) {
   const secondary = [];
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
+  const topInsider = significantFamilies.find((f) => f.family === FAMILY.INSIDER);
+  const insiderExceptional = topInsider && topInsider.significance >= EXCEPTIONAL_SIGNIFICANCE;
+  const reasons = [];
 
-  // Nothing to say at all. NO_EVIDENCE is the engine's own verdict, not an absence of data.
-  if (!state || state === CONSENSUS_STATE.NO_EVIDENCE) {
-    return { setup: SETUP.NO_ACTIVE_SETUP, reasons: ['No disclosure family holds qualifying evidence'], secondary: [] };
-  }
+  if (insiderExceptional) secondary.push(SETUP.UNUSUAL_INSIDER_ACTIVITY);
+  if (freshCatalyst) secondary.push(SETUP.FRESH_CATALYST);
 
-  // ── 1. A FRESH MATERIAL CATALYST IS THE STRONGEST "WHY NOW" ───────────────
-  //
-  // Something material became public in the last week. That is a reason to look today regardless of
-  // what the slower families say, so it outranks every other pattern.
-  if (fresh.length) {
-    reasons.push(`Material company filing became public ${fresh.length > 1 ? `(${fresh.length} filings) ` : ''}within the last 7 days`);
-    if (market === MARKET.DIVERGING) secondary.push(SETUP.PRICE_DIVERGENCE);
-    if (market === MARKET.CONFIRMING) secondary.push(SETUP.PRICE_CONFIRMATION);
-    if (unusualInsider.length) secondary.push(SETUP.UNUSUAL_INSIDER_ACTIVITY);
-
-    // Contested beats supported: an unresolved disagreement is the more urgent research question.
-    if (isContested(state) && canonical?.opposition?.length) {
-      reasons.push('Independent disclosure evidence points against the prevailing reading');
-      return { setup: SETUP.FRESH_CATALYST_CONTESTED, reasons, secondary };
-    }
-    if (hasLean(state) && corroborating.length >= 1) {
-      reasons.push('Independent disclosure evidence points the same way');
-      return { setup: SETUP.FRESH_CATALYST_SUPPORTED, reasons, secondary };
-    }
-
-    // ── A DIRECTIONAL FILING WITH CORROBORATION ───────────────────────────
-    //
-    // Found by inspecting GOLD, which the first version of these rules dropped: a negative auditor
-    // change filed one day ago alongside $7.0M of insider selling two days ago. V2.1 reads MIXED
-    // there because the total directional mass falls just under its floor — and that is V2.1
-    // answering its OWN question correctly ("can I name an overall direction?").
-    //
-    // This asks a narrower one: does a filing that itself carries a direction have an independent
-    // family pointing the same way? That is a real research question whether or not the aggregate
-    // crosses a threshold, and it does not override V2.1 — the row still reports MIXED as its
-    // direction, because that remains the honest summary of the whole picture.
-    const directional = fresh.filter((c) => c.direction === 'positive' || c.direction === 'negative');
-    if (directional.length) {
-      const way = directional[0].direction;
-      // Read the agreeing families from the EVIDENCE RECORDS, not from canonical.drivers. For a
-      // MIXED state — which is exactly the case this rule exists to catch — drivers and opposition
-      // are deliberately empty, so matching against them would always find nothing.
-      const agreeing = [...new Set((evidence || [])
-        .filter((e) => e.family !== FAMILY.CATALYST && e.family !== FAMILY.INSTITUTION
-          && e.direction === way)
-        .map((e) => e.family))];
-      if (agreeing.length) {
-        reasons.push(`The filing itself reads ${way}, and ${agreeing.join(' and ')} evidence points the same way`);
-        return { setup: SETUP.FRESH_CATALYST_SUPPORTED, reasons, secondary };
-      }
-    }
-    // ⚠️ A FRESH FILING ALONE IS NOT A SETUP. Measured market-wide, material 8-Ks are filed
-    // constantly — selecting on them put 75 bare catalysts on the board in one pass, which is the
-    // "what our database can calculate" failure in a new costume. A catalyst establishes WHEN;
-    // without a disclosure family resolving a direction there is no question to investigate, and
-    // the filing is still one click away on the ticker page.
-    return { setup: SETUP.FRESH_CATALYST, reasons, secondary };
-  }
-
-  // ── 2. PRICE DISAGREEING WITH MEANINGFUL EVIDENCE ─────────────────────────
-  //
-  // Requires BOTH a real evidence lean and a supported market reading. Divergence against a mixed
-  // or single-source picture is not divergence, it is noise with a label.
-  if (market === MARKET.DIVERGING && hasLean(state) && corroborating.length >= 1) {  // eslint-disable-line
-    reasons.push('Disclosure evidence has a clear direction and price is moving against it');
-    if (unusualInsider.length) secondary.push(SETUP.UNUSUAL_INSIDER_ACTIVITY);
-    return { setup: SETUP.PRICE_DIVERGENCE, reasons, secondary };
-  }
-
-  // ── 3. HISTORICALLY UNUSUAL INSIDER BEHAVIOUR ─────────────────────────────
-  //
-  // Scarce by construction — 13% of the board carries any historical claim at all — which is
-  // exactly what makes it worth a place. Placed above confirmation because "the CEO did something
-  // he has not done in our whole history" is a better reason to look than "price agrees".
-  if (unusualInsider.length) {
-    reasons.push(unusualInsider[0].context?.text || 'Historically unusual insider activity');
-    if (market === MARKET.CONFIRMING) secondary.push(SETUP.PRICE_CONFIRMATION);
-    if (market === MARKET.DIVERGING) secondary.push(SETUP.PRICE_DIVERGENCE);
-    return { setup: SETUP.UNUSUAL_INSIDER_ACTIVITY, reasons, secondary };
-  }
-
-  // ── 4. A GENUINE STANDOFF ─────────────────────────────────────────────────
-  // Both sides must carry non-institutional weight. A "conflict" where one side is only the 13F
-  // breadth record — present on 98% of tickers — is not a cross-source disagreement worth a card.
-  if (state === CONSENSUS_STATE.BALANCED_CONFLICT
-    && nonInstitutional(canonical?.drivers).length >= 1
-    && nonInstitutional(canonical?.opposition).length >= 1) {
-    reasons.push('Independent sources point in opposite directions with comparable weight');
+  // 1. A GENUINE STANDOFF is the reading, whatever price is doing.
+  if (join?.state === JOIN.SOURCES_CONFLICT) {
+    reasons.push('Independent sources disagree with comparable weight');
     return { setup: SETUP.CROSS_SOURCE_CONFLICT, reasons, secondary };
   }
 
-  // ── 5. PRICE AGREEING WITH MEANINGFUL EVIDENCE ────────────────────────────
-  // ⚠️ THE HIGHEST BAR ON THE BOARD. "Price agrees with the evidence" is the least actionable thing
-  // we can say — it is the absence of a question. It earns a card only when two or more independent
-  // non-institutional families agree, which is genuinely uncommon.
-  if (market === MARKET.CONFIRMING && hasLean(state) && corroborating.length >= 2) {
-    reasons.push('Two or more independent disclosure families agree and price is moving with them');
+  // 2. PRICE MOVING AGAINST MEANINGFUL EVIDENCE.
+  if (join?.state === JOIN.PRICE_DIVERGING) {
+    reasons.push('A meaningful price move opposes the disclosure evidence');
+    return { setup: SETUP.PRICE_DIVERGENCE, reasons, secondary };
+  }
+
+  // 3. AN EXCEPTIONAL INSIDER ACT outranks confirmation: "the CEO did something he has not done in
+  //    our whole history" is a better reason to look than "price agrees".
+  if (insiderExceptional) {
+    reasons.push(topInsider.evidence?.context?.text || 'Exceptional insider activity');
+    return { setup: SETUP.UNUSUAL_INSIDER_ACTIVITY, reasons, secondary: secondary.filter((x) => x !== SETUP.UNUSUAL_INSIDER_ACTIVITY) };
+  }
+
+  // 4. A FRESH CLASSIFIED CATALYST with supporting evidence.
+  if (freshCatalyst && meaningful.length >= 1) {
+    reasons.push(`${freshCatalystEvidence?.summary || 'A material filing'} became public recently`);
+    return {
+      setup: join?.state === JOIN.PRICE_CONFIRMING ? SETUP.FRESH_CATALYST_SUPPORTED : SETUP.FRESH_CATALYST_SUPPORTED,
+      reasons, secondary: secondary.filter((x) => x !== SETUP.FRESH_CATALYST),
+    };
+  }
+
+  // 5. PRICE AGREEING.
+  if (join?.state === JOIN.PRICE_CONFIRMING) {
+    reasons.push('A meaningful price move agrees with the disclosure evidence');
     return { setup: SETUP.PRICE_CONFIRMATION, reasons, secondary };
   }
 
-  // ── 6. EVIDENCE ACCUMULATING WITHOUT A TRIGGER ────────────────────────────
-  //
-  // No fresh catalyst and no price story, but two or more independent non-institutional families
-  // point the same way. The reason to look is the accumulation itself.
-  // Accumulation is only a setup if it is still accumulating. Without a fresh catalyst, at least
-  // one disclosure record must itself have become public recently — otherwise this is a description
-  // of a company's standing position, which the ticker page already covers.
-  if (hasLean(state) && corroborating.length >= 2 && recentDisclosure(evidence, now)) {
-    reasons.push('Multiple independent disclosure families point the same way without a fresh trigger');
-    if (unusualAny.length) secondary.push(SETUP.UNUSUAL_INSIDER_ACTIVITY);
+  // 6. EVIDENCE WITHOUT A PRICE RESPONSE — a real state, not a failure to classify.
+  if (meaningful.length >= 2) {
+    reasons.push('Multiple independent families carry meaningful evidence; price has not responded');
     return { setup: SETUP.EVIDENCE_BUILDING, reasons, secondary };
   }
+  if (meaningful.length === 1) {
+    reasons.push(`${meaningful[0].family} evidence is meaningful on its own`);
+    return { setup: SETUP.SINGLE_SOURCE, reasons, secondary };
+  }
 
-  // ── 7. WE HAVE DATA. THAT IS NOT THE SAME AS SOMETHING TO LOOK AT. ────────
-  return { setup: SETUP.NO_ACTIVE_SETUP, reasons: ['No fresh catalyst, unusual evidence or price disagreement'], secondary: [] };
+  return { setup: SETUP.NO_ACTIVE_SETUP, reasons: ['No material evidence currently'], secondary: [] };
 }
 
 /** Does this ticker belong on the active board? */
@@ -289,6 +258,26 @@ export const isActive = (setup) => !INACTIVE.has(setup);
 //
 // Kept as a SECONDARY concept per §15. It summarises where the disclosure evidence leans; it is not
 // the reason the ticker is here, and it never describes price.
+/**
+ * ⚠️ DIRECTION COMES FROM LAYER A, NOT FROM THE V2.1 STATE.
+ *
+ * Measured live: TNON reported POSITIVE while its evidence lean L was -0.455, because direction was
+ * read from V2.1's canonical state while every other number on the card came from the V3.5
+ * synthesis. Those are two different family universes and they can disagree. One lean, one
+ * direction, one sentence — the V2.1 state stays on the row as secondary metadata.
+ *
+ * The deadband exists because a lean of 0.05 is not a direction.
+ */
+export const DIRECTION_DEADBAND = 0.2;
+export function leanDirection(synthesis) {
+  const L = synthesis?.L;
+  if (!Number.isFinite(L) || !synthesis?.n) return 'MIXED';
+  if (L >= DIRECTION_DEADBAND) return 'POSITIVE';
+  if (L <= -DIRECTION_DEADBAND) return 'NEGATIVE';
+  return 'MIXED';
+}
+
+/** Retained for consumers that still read the V2.1 state directly. */
 export function setupDirection(canonical) {
   switch (canonical?.state) {
     case CONSENSUS_STATE.POSITIVE_ALIGNMENT:
@@ -315,13 +304,17 @@ const SETUP_RANK = Object.freeze({
   CROSS_SOURCE_CONFLICT: 5,
   PRICE_CONFIRMATION: 6,
   EVIDENCE_BUILDING: 7,
+  SINGLE_SOURCE: 8,
   NO_ACTIVE_SETUP: 99,
 });
 const CONF_RANK = { High: 0, Medium: 1, Low: 2 };
 
+/** Ordering is by the INTERNAL research priority. It is a sort key and is never displayed. */
 export function setupOrderKey(row) {
   const s = row?.setup;
   return {
+    // Higher priority sorts first, so it is negated.
+    priority: -(row?.priority ?? 0),
     rank: SETUP_RANK[s?.setup] ?? 99,
     // Freshest driving event first within an archetype.
     age: Number.isFinite(s?.whyNowAgeMs) ? s.whyNowAgeMs : Number.MAX_SAFE_INTEGER,
@@ -332,7 +325,7 @@ export function setupOrderKey(row) {
   };
 }
 
-const ORDER_TERMS = ['rank', 'age', 'unusual', 'confidence', 'families'];
+const ORDER_TERMS = ['priority', 'rank', 'age', 'unusual', 'confidence', 'families'];
 
 export function orderSetups(rows) {
   return [...(rows || [])].sort((a, b) => {
@@ -353,7 +346,7 @@ export const SETUP_FILTERS = Object.freeze([
   { key: 'confirmation', label: 'Price confirmation', setups: [SETUP.PRICE_CONFIRMATION] },
   { key: 'insider', label: 'Unusual insider', setups: [SETUP.UNUSUAL_INSIDER_ACTIVITY] },
   { key: 'conflict', label: 'Cross-source conflict', setups: [SETUP.CROSS_SOURCE_CONFLICT, SETUP.FRESH_CATALYST_CONTESTED] },
-  { key: 'building', label: 'Evidence building', setups: [SETUP.EVIDENCE_BUILDING] },
+  { key: 'building', label: 'Evidence building', setups: [SETUP.EVIDENCE_BUILDING, SETUP.SINGLE_SOURCE] },
   { key: 'positive', label: 'Positive', direction: 'POSITIVE' },
   { key: 'negative', label: 'Negative', direction: 'NEGATIVE' },
 ]);

@@ -92,6 +92,9 @@ export function levelFacts(bars) {
     // `bars` is the honest denominator for every claim below.
     sessions: bars.length,
     high20, low20, high52, low52,
+    fiveDayPct: bars.length >= 6 ? Math.round(pct(bars[bars.length - 6].close, last.close) * 100) / 100 : null,
+    pctFrom20dHigh: Number.isFinite(high20) && high20 > 0
+      ? Math.round(((last.close - high20) / high20) * 10000) / 100 : null,
     at20dHigh: Number.isFinite(high20) ? last.close >= high20 : null,
     at20dLow: Number.isFinite(low20) ? last.close <= low20 : null,
     at52wHigh: Number.isFinite(high52) ? last.close >= high52 : null,
@@ -106,47 +109,52 @@ export function levelFacts(bars) {
  * @param {object} levels   levelFacts()
  * @param {string} verdict  V2.1's CONFIRMING | DIVERGING | MIXED | UNAVAILABLE — never recomputed here
  */
-export function marketNarrative({ reaction, levels, verdict, driverLabel = 'the evidence' } = {}) {
+export function marketNarrative({ reaction, levels, verdict, join, driverLabel = 'the evidence' } = {}) {
   const lines = [];
 
-  // 1. WHAT PRICE DID SINCE THE EVIDENCE BECAME PUBLIC. The 1-session horizon is the closest
-  //    honest answer to "since the event"; longer horizons are shown when they have fully elapsed.
-  //    An incomplete window is null in the engine and stays absent here rather than being reported
-  //    under a longer label.
-  const h = reaction?.horizons || {};
-  const first = h['1'] ?? h[1] ?? null;
-  if (first && Number.isFinite(first.return)) {
-    const r = first.return;
-    lines.push(`${r >= 0 ? '+' : ''}${r.toFixed(1)}% in the session after it became public`);
-    if (Number.isFinite(first.relative)) {
-      const rel = first.relative;
-      lines.push(`${rel >= 0 ? '+' : ''}${rel.toFixed(1)}% vs SPY over the same window`);
+  // 1. THE EVENT REACTION — what price did after the evidence became public.
+  //    Measured: the MEDIAN absolute 1-session move across 195 real reactions is 1.60%. So a move
+  //    is REPORTED whatever its size, but it is only called meaningful once it clears the floor on
+  //    both the absolute and the SPY-relative leg. V3 called +0.8% 'diverging'; that was the 25th
+  //    to 50th percentile of ordinary daily noise wearing a market opinion.
+  if (reaction && Number.isFinite(reaction.abs)) {
+    const sign = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+    lines.push(`${sign(reaction.abs)} in the session after it became public`
+      + (Number.isFinite(reaction.rel) ? ` · ${sign(reaction.rel)} vs SPY` : ''));
+    if (Number.isFinite(reaction.five)) lines.push(`${sign(reaction.five)} over 5 sessions since`);
+    if (!reaction.meaningful) {
+      lines.push(`Below the ${reaction.floorPct.toFixed(1)}% threshold for a meaningful response`);
     }
   }
-  const five = h['5'] ?? h[5] ?? null;
-  if (five && Number.isFinite(five.return)) {
-    lines.push(`${five.return >= 0 ? '+' : ''}${five.return.toFixed(1)}% over 5 sessions since`);
-  }
 
-  // 2. WHERE PRICE SITS NOW — end-of-day facts only.
+  // 2. CURRENT STRUCTURE — end-of-day facts, separate from the event reaction.
   if (levels) {
     if (Number.isFinite(levels.changePct)) {
-      lines.push(`${levels.changePct >= 0 ? '+' : ''}${levels.changePct.toFixed(1)}% on the last session`
+      lines.push(`${levels.changePct >= 0 ? '+' : ''}${levels.changePct.toFixed(1)}% last session`
         + ` · ${levels.changePct >= 0 ? 'above' : 'below'} prior close`);
+    }
+    if (Number.isFinite(levels.fiveDayPct)) {
+      lines.push(`5D ${levels.fiveDayPct >= 0 ? '+' : ''}${levels.fiveDayPct.toFixed(1)}%`);
     }
     if (levels.at52wHigh) lines.push('At a 52-week closing high');
     else if (levels.at52wLow) lines.push('At a 52-week closing low');
     else if (levels.at20dHigh) lines.push('At a 20-day closing high');
     else if (levels.at20dLow) lines.push('At a 20-day closing low');
+    else if (Number.isFinite(levels.pctFrom20dHigh)) {
+      lines.push(`${levels.pctFrom20dHigh.toFixed(1)}% below the 20-day high`);
+    }
   }
 
-  // 3. THE VERDICT, EXPLAINED. V2.1 decided confirming/diverging from the structure family; this
-  //    only puts the observed move next to it so the word means something.
+  // 3. THE JOIN, in words. Inside the dead zone this is never confirming and never diverging.
   let explain = null;
-  if (verdict === 'DIVERGING') explain = `Price has not confirmed ${driverLabel}`;
-  else if (verdict === 'CONFIRMING') explain = `Price is moving with ${driverLabel}`;
-  else if (verdict === 'MIXED') explain = 'Price structure does not speak to this evidence';
-  else if (verdict === 'UNAVAILABLE') explain = 'Price structure unavailable';
+  if (join?.state === 'PRICE_DIVERGING') explain = `Price is moving against ${driverLabel}`;
+  else if (join?.state === 'PRICE_CONFIRMING') explain = `Price is moving with ${driverLabel}`;
+  else if (join?.state === 'SOURCES_CONFLICT') explain = 'Independent sources disagree; price is not the tiebreaker';
+  else if (join?.state === 'EVIDENCE_BUILDING' || join?.state === 'NO_REACTION') {
+    explain = reaction?.reason === 'not-measured'
+      ? 'No measurable price response yet'
+      : 'No meaningful price response to the evidence';
+  }
 
   return {
     lines,
@@ -157,13 +165,7 @@ export function marketNarrative({ reaction, levels, verdict, driverLabel = 'the 
   };
 }
 
-/**
- * Everything the market section of a V3 card needs, for one ticker.
- *
- * `evidence` must already carry reactions (attachReactions is called by the caller once per ticker,
- * because it fetches candles and amortises the SPY series across the whole board).
- */
-export async function marketFactsFor(ticker, { driver = null, verdict = 'UNAVAILABLE', driverLabel } = {}) {
+export async function marketFactsFor(ticker, { driver = null, reaction = null, join = null, verdict = 'UNAVAILABLE', driverLabel } = {}) {
   let levels = null;
   try {
     levels = levelFacts(await loadBars(ticker));
@@ -171,12 +173,14 @@ export async function marketFactsFor(ticker, { driver = null, verdict = 'UNAVAIL
     // A candle-query failure is unknown structure, not flat structure.
     levels = null;
   }
-  const narrative = marketNarrative({
-    reaction: driver?.reaction || null, levels, verdict, driverLabel,
-  });
+  const narrative = marketNarrative({ reaction, levels, verdict, join, driverLabel });
   return {
     version: MARKET_FACTS_VERSION,
     verdict,
+    // The JOIN state is the trader-facing verdict now; `verdict` is V2.1's structure reading,
+    // retained for existing consumers.
+    joinState: join?.state || null,
+    meaningfulReaction: Boolean(reaction?.meaningful),
     levels,
     reaction: driver?.reaction
       ? { anchorDate: driver.reaction.anchorDate, anchorBasis: driver.reaction.anchorBasis,

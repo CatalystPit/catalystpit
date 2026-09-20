@@ -11,7 +11,11 @@
 // board, ticker page, and later Watchlist and Alerts — renders from.
 
 import { consensusRow, BOARD_FAMILIES, CONCURRENCY } from './board.mjs';
-import { classifySetup, setupDirection, isActive, orderSetups, SETUP, SETUP_LABEL, SETUP_VERSION } from './setup.mjs';
+import { qualifies, labelFor, setupDirection, leanDirection, isActive, orderSetups, SETUP, SETUP_LABEL, SETUP_VERSION, freshCatalysts } from './setup.mjs';
+import {
+  significantByFamily, evidenceSynthesis, normalizeReaction, joinEvidenceMarket,
+  researchPriority, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, JOIN,
+} from './evidence-model.mjs';
 import { familyFactSheet, evidenceFacts, publicAgo } from './facts.mjs';
 import { marketFactsFor } from './market-facts.js';
 import { FAMILY } from '../evidence/model.mjs';
@@ -36,66 +40,77 @@ export const EVALUATE_LIMIT = 150;
  *   · a congressional disclosure became public in window
  */
 export async function selectSetupCandidates(db, sql, { limit = EVALUATE_LIMIT } = {}) {
-  const [multi, ins, con] = await Promise.all([
+  // ⚠️ WINDOWS MUST MATCH THE EVIDENCE ENGINE. This is the defect that hid INTC: selection counted
+  // insider FILINGS over 30 days while the engine reads and displays 45, so a CEO's $10.0M
+  // open-market purchase 37 days old — the first in 236 days — was invisible to the board while
+  // being fully present in the evidence. Every window below is now the engine's own.
+  const [ins, con, cat] = await Promise.all([
+    // DOLLARS, NOT ROW COUNTS. One $10M officer purchase must outrank twenty small filings.
     db.execute(sql`
-      with f as (
-        select ticker, 'i' k from insider_trades
-          where filing_date >= current_date - 30 and total_value > 0 and coalesce(superseded_by,'') = ''
-        union all
-        select ticker, 'c' k from congress_trades
-          where disclosure_date >= current_date - 45 and ticker is not null
-        union all
-        select ticker, 'e' k from eightk_filings where filed_at >= now() - interval '30 days')
-      select ticker, count(distinct k)::int fams, count(*)::int n from f
-       group by ticker having count(distinct k) >= 2
-       order by count(distinct k) desc, count(*) desc`),
+      select ticker,
+             coalesce(sum(total_value) filter (where transaction_code = 'P'
+               and coalesce(is_derivative,false) = false), 0)::float8 buy_usd,
+             coalesce(sum(total_value), 0)::float8 any_usd
+        from insider_trades
+       where filing_date >= current_date - 45
+         and total_value > 0 and coalesce(superseded_by,'') = ''
+       group by ticker`),
     db.execute(sql`
-      select ticker, sum(total_value)::float8 v from insider_trades
-       where filing_date >= current_date - 30 and transaction_code = 'P'
-         and coalesce(is_derivative,false) = false and total_value > 0
-         and coalesce(superseded_by,'') = ''
-       group by ticker order by sum(total_value) desc`),
-    db.execute(sql`
-      select ticker, count(*)::int n from congress_trades
+      select ticker, count(*)::int n, count(distinct representative)::int members
+        from congress_trades
        where disclosure_date >= current_date - 45 and ticker is not null
-       group by ticker order by count(*) desc`),
+       group by ticker`),
+    db.execute(sql`
+      select ticker, count(*) filter (where material)::int material_n, max(filed_at) last_filed
+        from eightk_filings
+       where filed_at >= now() - interval '30 days'
+       group by ticker`),
   ]);
 
   const rows = (r) => (Array.isArray(r) ? r : (r?.rows || []));
 
-  // ── A QUOTA, NOT A PRIORITY ORDER ─────────────────────────────────────────
-  //
-  // Two failed attempts are encoded here. Ordering by family count hid ALK, whose single insider
-  // record — the first officer open-market purchase in our entire held history — sorted below every
-  // ticker that merely had two families present. Ordering by insider buying instead filled all 150
-  // slots with purchases and produced a board of 42 positive setups and 1 negative: open-market
-  // BUYS are the rare, deliberate act, so selecting on them selects a direction.
-  //
-  // So the multi-family set — which is directionally neutral — is the base, and the high-value
-  // single-family signals get a reserved allowance on top. Insider candidates are ranked by DOLLARS
-  // rather than filing count, because one $1.0M purchase by a CEO is the interesting case and a
-  // dozen small sales are not.
-  const MULTI_QUOTA = Math.round(limit * 0.7);
-  const INSIDER_QUOTA = Math.round(limit * 0.22);
-  const picked = new Map();   // ticker -> selection reason, kept for diagnostics
-  const take = (list, quota, reason, key = 'ticker') => {
-    let n = 0;
-    for (const r of list) {
-      if (n >= quota) break;
-      const t = String(r[key] || '').toUpperCase();
-      if (!t || picked.has(t)) continue;
-      picked.set(t, reason);
-      n++;
-    }
+  // A SELECTION PROXY, NOT A RATING. It never reaches a user and only decides evaluation order.
+  // Every term is bounded so no single family can monopolise the budget — the failure that produced
+  // a board of 42 positive setups and 1 negative when insider buying led selection.
+  const logw = (v, floor, ceil) => {
+    const x = Number(v);
+    if (!Number.isFinite(x) || x <= floor) return 0;
+    return Math.min(1, (Math.log10(Math.min(x, ceil)) - Math.log10(floor))
+      / (Math.log10(ceil) - Math.log10(floor)));
+  };
+  const score = new Map();
+  const add = (t, v, fam) => {
+    const k = String(t || '').toUpperCase();
+    if (!k) return;
+    const e = score.get(k) || { s: 0, fams: new Set() };
+    e.s += v;
+    if (fam) e.fams.add(fam);
+    score.set(k, e);
   };
 
-  take(rows(multi), MULTI_QUOTA, 'multi-family');
-  take(rows(ins), INSIDER_QUOTA, 'insider-buying');
-  take(rows(con), limit - picked.size, 'congress');
-  // Any remaining budget goes back to the neutral base rather than to a directional tier.
-  take(rows(multi), limit - picked.size, 'multi-family');
+  for (const r of rows(ins)) {
+    // Buying and selling both earn evaluation. Buying weighs more because it is the rarer, more
+    // deliberate act, but selling still gets in so the board cannot become structurally one-sided.
+    add(r.ticker, 0.55 * logw(r.buy_usd, 25000, 50000000)
+                + 0.30 * logw(r.any_usd, 25000, 50000000), 'insider');
+  }
+  for (const r of rows(con)) {
+    add(r.ticker, 0.25 + 0.15 * Math.min(1, (Number(r.members) || 1) / 3), 'congress');
+  }
+  for (const r of rows(cat)) {
+    if (!(Number(r.material_n) || 0)) continue;
+    const ageDays = r.last_filed ? (Date.now() - Date.parse(r.last_filed)) / 86400000 : 99;
+    add(r.ticker, ageDays <= 7 ? 0.45 : ageDays <= 14 ? 0.25 : 0.12, 'catalyst');
+  }
 
-  return [...picked.keys()];
+  // Independent families corroborating each other is itself a reason to look. Institutions are
+  // deliberately absent from selection entirely: they exist for 98% of tickers.
+  for (const [, e] of score) if (e.fams.size >= 2) e.s += 0.25 * (e.fams.size - 1);
+
+  return [...score.entries()]
+    .sort((x, y) => (y[1].s - x[1].s) || x[0].localeCompare(y[0]))
+    .slice(0, limit)
+    .map(([t]) => t);
 }
 
 // ── WHY THIS IS HERE ────────────────────────────────────────────────────────
@@ -106,41 +121,35 @@ export async function selectSetupCandidates(db, sql, { limit = EVALUATE_LIMIT } 
 
 const DIR_WORD = { POSITIVE: 'positive', NEGATIVE: 'negative', MIXED: 'mixed' };
 
-export function whyThisIsHere({ setup, canonical, sheet, market }) {
+export function whyThisIsHere({ setup, synthesis, significantFamilies = [], sheet, market, reaction, join }) {
   const parts = [];
-  // Drivers and opposition come from the CANONICAL object, not from which families happen to have a
-  // fact sheet. Deriving the two sides from the sheet listed institutions as both supporting and
-  // opposing on the same card, because the sheet only knows presence, not which way a family points.
-  const names = (list) => (list || []).map((f) => f.label || f.family);
-  const join = (n) => (n.length <= 1 ? (n[0] || '') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
+  const NAME = { insider: 'Insiders', institution: 'Institutions', congress: 'Congress', catalyst: 'Catalysts' };
+  const join2 = (n) => (n.length <= 1 ? (n[0] || '') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
 
-  // 1. THE TRIGGER — what makes this now rather than last month.
+  // ⚠️ ONE FAMILY UNIVERSE. Earlier this sentence was assembled from V2.1's drivers and opposition
+  // while the rest of the card used the V3.5 significance layer, so cards named families that did
+  // not appear in their own evidence list. Both sides now come from the same place.
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
+  const dirOf = (f) => f.evidence?.direction;
+  const pos = meaningful.filter((f) => dirOf(f) === 'positive').map((f) => NAME[f.family] || f.family);
+  const neg = meaningful.filter((f) => dirOf(f) === 'negative').map((f) => NAME[f.family] || f.family);
+
+  // 1. THE TRIGGER.
   const cat = sheet?.[FAMILY.CATALYST]?.[0];
   if (setup?.setup?.startsWith('FRESH_CATALYST') && cat) {
     parts.push(`${cat.headline || 'A material company filing'} became public ${cat.publicAgo || 'recently'}`);
   } else if (setup?.setup === SETUP.UNUSUAL_INSIDER_ACTIVITY) {
-    const ins = sheet?.[FAMILY.INSIDER]?.[0];
-    parts.push(ins?.context || ins?.headline || 'Historically unusual insider activity');
+    const ins = meaningful.find((f) => f.family === FAMILY.INSIDER);
+    parts.push(ins?.evidence?.context?.text || sheet?.[FAMILY.INSIDER]?.[0]?.headline
+      || 'Historically unusual insider activity');
   }
 
-  // 2. WHAT THE DISCLOSURE EVIDENCE SAYS.
-  const drivers = names(canonical?.drivers);
-  const opposition = names(canonical?.opposition);
-  const dir = DIR_WORD[setupDirection(canonical)];
-  if (drivers.length && opposition.length) {
-    parts.push(`${join(drivers)} point ${dir === 'mixed' ? 'one way' : dir}, while ${join(opposition)} point the other way`);
-  } else if (drivers.length && dir !== 'mixed') {
-    parts.push(`${join(drivers)} point ${dir}`);
-  } else if (drivers.length) {
-    parts.push(`${join(drivers)} carry evidence without a clear direction`);
-  } else if (setup?.reasons?.length > 1) {
-    // A MIXED state has no drivers by construction, so the qualification reason is the only place
-    // the corroboration is recorded. Without this the card said why the filing was fresh and never
-    // said what agreed with it.
-    parts.push(setup.reasons[1]);
-  }
+  // 2. WHAT THE EVIDENCE SAYS.
+  if (pos.length && neg.length) parts.push(`${join2(pos)} point positive, while ${join2(neg)} point negative`);
+  else if (pos.length) parts.push(`${join2(pos)} point positive`);
+  else if (neg.length) parts.push(`${join2(neg)} point negative`);
 
-  // 3. WHAT PRICE IS DOING ABOUT IT.
+  // 3. WHAT PRICE IS DOING ABOUT IT — never confirming or diverging inside the dead zone.
   if (market?.explain) parts.push(market.explain);
 
   const sentence = (t) => (t ? `${t.charAt(0).toUpperCase()}${t.slice(1)}` : t);
@@ -179,7 +188,11 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     evidence = await attachReactions(sym, evidence, { now });
   } catch { /* reaction is enrichment; its absence must not remove the evidence */ }
 
-  const setup = classifySetup({ canonical, evidence, now });
+  // ── THE V3.5 PIPELINE, in order ──────────────────────────────────────
+  // significance -> qualification -> synthesis -> reaction -> join -> priority -> label
+  const significantFamilies = significantByFamily(evidence, { now });
+  const synthesis = evidenceSynthesis(row?.families || []);
+  const fresh = freshCatalysts(evidence, { now });
   const sheet = familyFactSheet(evidence, { now });
 
   // THE DRIVING RECORD — what the market reaction is measured from. The freshest material catalyst
@@ -190,15 +203,29 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
   // Only a setup actually triggered by a filing may describe price relative to "the filing".
   // Everything else is confirming or contradicting the DISCLOSURE evidence, whatever the reaction
   // happens to be anchored to.
-  const catalystDriven = setup.setup.startsWith('FRESH_CATALYST');
+  const catalystDriven = fresh.length > 0;
+  // LAYER B: normalise the reaction, with the dead zone applied.
+  const reaction = normalizeReaction(driver?.reaction || null);
+
+  // LAYER C: the join. Never confirming or diverging inside the dead zone.
+  const join = joinEvidenceMarket({ synthesis, reaction, significantFamilies });
+
+  const q = qualifies({ significantFamilies, freshCatalyst: fresh.length > 0, reaction, synthesis });
+  const label = labelFor({
+    join, significantFamilies, freshCatalyst: fresh.length > 0,
+    freshCatalystEvidence: fresh[0] || null, synthesis,
+  });
+
   const market = await marketFactsFor(sym, {
-    driver,
+    driver, reaction, join,
     verdict: canonical?.market?.confirmation || 'UNAVAILABLE',
     driverLabel: catalystDriven && driver?.family === FAMILY.CATALYST
       ? 'the filing' : 'the disclosure evidence',
   });
 
-  const direction = setupDirection(canonical);
+  // When independent sources genuinely disagree, the honest summary direction is MIXED — asserting
+  // a lean alongside "these sources contradict each other" would undercut the card's own reading.
+  const direction = join.state === JOIN.SOURCES_CONFLICT ? 'MIXED' : leanDirection(synthesis);
   const unusualCount = Object.values(sheet).flat().filter((f) => f?.unusual).length;
 
   return {
@@ -207,17 +234,43 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     calculatedAt: new Date(now).toISOString(),
 
     setup: {
-      setup: setup.setup,
-      label: SETUP_LABEL[setup.setup],
-      secondary: setup.secondary,
-      reasons: setup.reasons,
+      setup: label.setup,
+      label: SETUP_LABEL[label.setup],
+      secondary: label.secondary,
+      reasons: label.reasons,
       direction,
-      active: isActive(setup.setup),
+      // ⚠️ QUALIFICATION IS INDEPENDENT OF THE LABEL. A ticker is active because material
+      // evidence exists, not because an archetype happened to fire.
+      active: q.ok && isActive(label.setup),
+      qualifiedBy: q.why,
       unusualCount,
       // How old the triggering event is — the ordering term for "why now".
       whyNowAgeMs: driver?.publicTime ? now - Date.parse(driver.publicTime) : null,
       whyNowAgo: driver?.publicTime ? publicAgo(driver.publicTime, now) : null,
     },
+
+    // LAYER A / B / C kept structurally separate in the payload, so no consumer can conflate
+    // public evidence with what price did about it.
+    evidence_layer: {
+      ...synthesis,
+      significantFamilies: significantFamilies.map((f) => ({
+        family: f.family, significance: Math.round(f.significance * 1000) / 1000, tier: f.tier,
+        meaningful: f.significance >= MEANINGFUL_SIGNIFICANCE,
+        exceptional: f.significance >= EXCEPTIONAL_SIGNIFICANCE,
+      })),
+    },
+    _significant: significantFamilies,
+    reaction_layer: reaction,
+    join_layer: join,
+    // INTERNAL SORT KEY ONLY — never rendered. See evidence-model.mjs.
+    priority: researchPriority({
+      join, synthesis, significantFamilies, confidence: canonical?.confidence,
+      freshCatalyst: fresh.length > 0,
+      youngestEvidenceAgeMs: evidence.length
+        ? Math.min(...evidence.map((e) => now - Date.parse(e.publicTime)).filter(Number.isFinite))
+        : null,
+      stillDeveloping: fresh.length > 0,
+    }),
 
     // V2.1 PRESERVED IN FULL, as secondary metadata. Existing consumers keep working and the two
     // layers cannot disagree, because V3 reads this object rather than recomputing it.
@@ -247,7 +300,11 @@ export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALU
       const t = candidates[i++];
       try {
         const s = await buildSetup(t, { now, resolve, resolveConsensus });
-        s.why = whyThisIsHere({ setup: s.setup, canonical: s.canonical, sheet: s.families, market: s.market });
+        s.why = whyThisIsHere({
+          setup: s.setup, synthesis: s.evidence_layer,
+          significantFamilies: s._significant, sheet: s.families,
+          market: s.market, reaction: s.reaction_layer, join: s.join_layer,
+        });
         built.push(s);
       } catch {
         failed++;
