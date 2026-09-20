@@ -119,6 +119,10 @@
     {
       "schedule": "20 7 * * *",
       "path": "/api/cron/dividends"
+    },
+    {
+      "path": "/api/cron/consensus-board",
+      "schedule": "*/30 * * * *"
     }
   ],
   "headers": [
@@ -235,6 +239,9 @@
     },
     "src/app/api/cron/news-enrich/route.js": {
       "maxDuration": 60
+    },
+    "src/app/api/cron/consensus-board/route.js": {
+      "maxDuration": 300
     }
   }
 }
