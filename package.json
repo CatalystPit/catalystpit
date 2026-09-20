@@ -11,7 +11,8 @@
     "verify:scan": "node scripts/verify-scan.mjs",
     "verify:launch": "node scripts/verify-launch-integrity.mjs",
     "verify:pipelines": "node scripts/verify-pipelines.mjs",
-    "verify:watchlist": "node scripts/verify-watchlist-changes.mjs"
+    "verify:watchlist": "node scripts/verify-watchlist-changes.mjs",
+    "verify:impact": "node scripts/verify-impact.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.3",
