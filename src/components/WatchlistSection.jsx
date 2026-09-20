@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { C, Skel, TickerLogo } from '../lib/cp-shared';
 import { estimateNextEarnings } from '../lib/earnings-estimate';
+import WatchlistChanges from './WatchlistChanges';
 
 const usd = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
 const pct = (n) => (n == null || isNaN(n)) ? null : `${n >= 0 ? '+' : ''}${Number(n).toFixed(2)}%`;
@@ -209,6 +210,10 @@ export default function WatchlistSection() {
           {list.map(item => (
             <Row key={item.ticker} item={item} onRemove={remove} removing={!!removing[item.ticker]} />
           ))}
+          {/* What became public on these names since the user last looked. Appended below the
+              rows rather than woven into them: the list answers "what do I hold", this answers
+              "what happened", and merging the two turns every row into a paragraph. */}
+          <WatchlistChanges enabled={list.length > 0} />
         </div>
       )}
     </div>

@@ -46,3 +46,9 @@ _*.mjs
 
 # Local vendor payload cache — raw provider responses, re-fetchable, not source
 research/.vendor-cache/
+
+# scratch files from production verification runs
+.ins.json
+.tmp*.json
+.hq.json
+placeholder-rows-removed-*.json

@@ -8,6 +8,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
+import WatchlistChanges, { ChangedBadge, useWatchlistChanges } from './WatchlistChanges';
 import { C, TickerLogo, fmt2 } from '../lib/cp-shared';
 
 const PANEL_W = 330;                 // match the Pit chat + Tape dock width
@@ -15,7 +16,11 @@ const MOBILE_Q = '(max-width: 860px)';
 const PREF_KEY = 'cp_watch_open';
 
 function Body({ onClose }) {
-  const [lists, setLists] = useState([]);        // [{id,name,isDefault,count}]
+  const [lists, setLists] = useState([]);   // [{id,name,isDefault,count}]
+  // ONE fetch for the whole dock: the per-row badges and the block underneath read the same
+  // state, so opening the dock costs a single bounded pass over the Evidence Engine.
+  const changesState = useWatchlistChanges({ enabled: true });
+  const changes = changesState.data;
   const [activeId, setActiveId] = useState(null);
   const [rows, setRows] = useState(null);
   const [menu, setMenu] = useState(false);
@@ -216,11 +221,17 @@ function Body({ onClose }) {
                 <span className="cp-num" style={{ fontSize: 12.5, minWidth: 54, textAlign: 'right', whiteSpace: 'nowrap', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
                   {r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}
                 </span>
+                {/* The badge sits on the ROW, so a name with new filings is findable without
+                    reading the list below it. Renders nothing at zero. */}
+                <ChangedBadge count={(changes?.byTicker?.[r.ticker] || []).length} />
                 <button onClick={() => remove(r.ticker)} aria-label={`Remove ${r.ticker}`} title="Remove"
                   style={{ background: 'transparent', border: 'none', color: C.dim, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
                   onMouseEnter={(e) => (e.currentTarget.style.color = C.red)} onMouseLeave={(e) => (e.currentTarget.style.color = C.dim)}>×</button>
               </div>
             ))}
+            {/* Same component as the home card, in its compact form — one "what changed" in the
+                product, not one per surface. */}
+            <WatchlistChanges compact limit={4} state={changesState} />
           </div>
         )}
       </div>
