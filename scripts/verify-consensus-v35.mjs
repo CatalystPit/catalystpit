@@ -8,6 +8,8 @@
 // Run: node scripts/verify-consensus-v35.mjs [--mutate=<mode>]
 
 import {
+  isCurrent, evidenceConfidence, catalystDirectional, CURRENT_BOARD_DAYS, FRESH_CATALYST_HOURS,
+  STALE_CONFIDENCE_DAYS,
   familySignificance, significantByFamily, dollarWeight, congressAmountWeight,
   evidenceSynthesis, normalizeReaction, joinEvidenceMarket, researchPriority, freshnessDecay,
   MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, REACTION_FLOOR_PCT, JOIN, CONFLICT_CHI,
@@ -443,6 +445,112 @@ L('\n=== THE TWO LAYERS NEVER MERGE ===');
 
   ok('the join is the only place they meet',
     /synthesis/.test(joinEvidenceMarket.toString()) && /reaction/.test(joinEvidenceMarket.toString()));
+}
+
+L('\n=== ACCEPTANCE: BOARD QUALITY (A–J) ===');
+{
+  const sig = (family, significance, ev) => ({ family, significance, evidence: ev });
+
+  // A. 45-day-old ORDINARY insider activity must not sit on the current board.
+  const oldOrdinary = isCurrent({
+    significantFamilies: [sig(FAMILY.INSIDER, 0.42, ins({ days: 45 }))], now: NOW });
+  ok('A. 45-day-old ordinary evidence is not a current situation',
+    mut('staleboard') ? false : !oldOrdinary.current, oldOrdinary.why);
+
+  // B. Historically EXCEPTIONAL evidence survives the age gate.
+  const oldExceptional = isCurrent({
+    significantFamilies: [sig(FAMILY.INSIDER, 0.72, ins({ days: 45 }))], now: NOW });
+  ok('B. exceptional evidence survives normal age gating',
+    oldExceptional.current && oldExceptional.why === 'exceptional-evidence', oldExceptional.why);
+  ok('…and recent ordinary evidence is current',
+    isCurrent({ significantFamilies: [sig(FAMILY.INSIDER, 0.42, ins({ days: 3 }))], now: NOW }).current);
+  ok('…the ordinary window is 5 trading days', CURRENT_BOARD_DAYS === 7);
+  ok('…and a fresh catalyst runs on a 72-hour clock', FRESH_CATALYST_HOURS === 72);
+
+  // C. Strong positive insider vs strong negative catalyst = CONFLICT, never alignment.
+  const delisting = cat({ type: 'sec_8k_delisting', direction: 'negative', materiality: 0.95,
+    summary: 'Delisting notice' });
+  const opposed = labelFor({
+    join: { state: JOIN.EVIDENCE_BUILDING },
+    significantFamilies: [sig(FAMILY.INSIDER, 0.55, ins({})), sig(FAMILY.CATALYST, 0.6, delisting)],
+    synthesis: { A: 0.8 },
+  });
+  ok('C. strong opposing meaningful families read CONFLICT, not alignment',
+    mut('falsealignment') ? false : opposed.setup === SETUP.CROSS_SOURCE_CONFLICT, opposed.setup);
+
+  // D. Routine mixed mega-cap Congress activity cannot create strong direction.
+  const routine = familySignificance(con({ members: 1, amount: '$1,001 - $15,000' }));
+  ok('D. a lone routine congressional disclosure is not meaningful',
+    mut('congressnoise') ? false : routine < MEANINGFUL_SIGNIFICANCE, routine.toFixed(3));
+  ok('…while three members moving together is',
+    familySignificance(con({ members: 3, amount: '$15,001 - $50,000' })) >= MEANINGFUL_SIGNIFICANCE);
+
+  // E. A generic catalyst cannot activate direction.
+  ok('E. "other material event" contributes no direction',
+    mut('genericdirection') ? false
+      : !catalystDirectional(cat({ type: 'sec_8k_other', direction: 'positive' })));
+  ok('…nor does a non-material filing', !catalystDirectional(cat({ material: false, direction: 'positive' })));
+  ok('…nor one the engine left directionless', !catalystDirectional(cat({ direction: 'unknown' })));
+  ok('…but a classified delisting does', catalystDirectional(delisting));
+
+  // F. Ordinary noise is not divergence.
+  ok('F. a 2.1% relative move is not a meaningful reaction',
+    mut('noisedivergence') ? false
+      : !normalizeReaction({ horizons: { 1: { return: 2.1, relative: 2.1 } } }).meaningful);
+  ok('…a 4% relative move is', normalizeReaction({ horizons: { 1: { return: 4, relative: 4 } } }).meaningful);
+  ok('…and the floor is at least 3%', REACTION_FLOOR_PCT >= 3);
+
+  // G. High confidence cannot come from family count alone.
+  const manyStale = evidenceConfidence({
+    significantFamilies: [sig(FAMILY.INSIDER, 0.4, ins({ days: 30 })), sig(FAMILY.CONGRESS, 0.4, con({ days: 30 })),
+      sig(FAMILY.INSTITUTION, 0.4, inst({ days: 45 }))],
+    synthesis: { M: 1.2 }, newestAgeMs: 30 * DAY });
+  ok('G. three stale families do not produce High confidence',
+    mut('countconfidence') ? false : manyStale === 'Low', manyStale);
+  const freshStrong = evidenceConfidence({
+    significantFamilies: [sig(FAMILY.INSIDER, 0.7, ins({ days: 2 })), sig(FAMILY.CONGRESS, 0.6, con({ days: 3 }))],
+    synthesis: { M: 1.2 }, newestAgeMs: 2 * DAY });
+  ok('…while fresh, strong, independent evidence can', freshStrong === 'High', freshStrong);
+  ok('…and age caps confidence past ~10 trading days', STALE_CONFIDENCE_DAYS <= 14);
+
+  // H. Single-source must not contradict the family count.
+  const single = labelFor({ join: { state: JOIN.EVIDENCE_BUILDING },
+    significantFamilies: [sig(FAMILY.INSIDER, 0.45, ins({}))] });
+  ok('H. one meaningful family labels single-source significance',
+    single.setup === SETUP.SINGLE_SOURCE_SIGNIFICANCE);
+  ok('…and the directional count agrees with that label',
+    evidenceSynthesis([fv('insiders', 0.8)]).n === 1);
+
+  // I. Price cannot confirm an incoherent thesis.
+  const strongMove = normalizeReaction({ horizons: { 1: { return: 6, relative: 6 } } });
+  ok('I. price cannot confirm a MIXED reading',
+    mut('falseconfirm') ? false
+      : marketState({ join: { state: JOIN.PRICE_CONFIRMING }, reaction: strongMove, direction: 'MIXED' })
+        === MARKET_STATE.MIXED);
+  ok('…nor resolve a cross-source conflict',
+    marketState({ join: { state: JOIN.PRICE_CONFIRMING }, reaction: strongMove,
+      direction: 'POSITIVE', setup: SETUP.CROSS_SOURCE_CONFLICT }) === MARKET_STATE.MIXED);
+  ok('…but it confirms a coherent directional reading',
+    marketState({ join: { state: JOIN.PRICE_CONFIRMING }, reaction: strongMove,
+      direction: 'POSITIVE', setup: SETUP.CROSS_SOURCE_ALIGNMENT }) === MARKET_STATE.CONFIRMING);
+
+  // J. Strong evidence on a flat tape still qualifies and stays current.
+  ok('J. strong evidence with no price move is still current',
+    isCurrent({ significantFamilies: [sig(FAMILY.INSIDER, 0.75, ins({ days: 2 }))], now: NOW }).current);
+  ok('…and still qualifies', qualifies({
+    significantFamilies: [sig(FAMILY.INSIDER, 0.75, ins({ days: 2 }))],
+    reaction: { meaningful: false } }).ok);
+
+  // §8: rarity must amplify substance, never replace it.
+  const tiny = familySignificance(ins({ usd: 50_000, officer: true, buyers: 1,
+    context: { text: 'First in 300 days', gapDays: 300 } }));
+  const huge = familySignificance({ ...ins({ usd: 25_000_000, officer: true, buyers: 6 }),
+    type: 'insider_cluster_buy' });
+  ok('a $25M cluster far outweighs a tiny isolated "first in X days"',
+    mut('rarityflattens') ? false : huge > tiny + 0.3, `${huge.toFixed(3)} vs ${tiny.toFixed(3)}`);
+  ok('…and a trivial non-officer purchase is nothing at all',
+    familySignificance(ins({ usd: 9_000, officer: false, buyers: 1,
+      context: { text: 'First in 300 days', gapDays: 300 } })) < 0.1);
 }
 
 L(`\n${pass} passed, ${fail} failed`);

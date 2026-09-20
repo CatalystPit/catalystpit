@@ -15,6 +15,7 @@ import { qualifies, labelFor, marketState, MARKET_STATE_LABEL, setupDirection, l
 import {
   significantByFamily, evidenceSynthesis, normalizeReaction, joinEvidenceMarket,
   researchPriority, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, JOIN, DISCLOSURE_ONLY,
+  isCurrent, evidenceConfidence, catalystDirectional,
 } from './evidence-model.mjs';
 import { familyFactSheet, evidenceFacts, publicAgo } from './facts.mjs';
 import { marketFactsFor } from './market-facts.js';
@@ -236,7 +237,13 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
   // ── THE V3.5 PIPELINE, in order ──────────────────────────────────────
   // significance -> qualification -> synthesis -> reaction -> join -> priority -> label
   const significantFamilies = significantByFamily(evidence, { now });
-  const synthesis = evidenceSynthesis(row?.families || []);
+  // §7: mask the catalyst family's direction when no canonical catalyst record is classifiable.
+  // Facts and freshness still count; only the DIRECTION is withheld, because guessing it would
+  // be fabrication and it is what made unclassified filings argue with real evidence.
+  const catalystHasDirection = evidence.some((e) => e.family === FAMILY.CATALYST && catalystDirectional(e));
+  const synthFamilies = (row?.families || []).map((f) => (f.family === 'catalysts' && !catalystHasDirection
+    ? { ...f, E: 0 } : f));
+  const synthesis = evidenceSynthesis(synthFamilies);
   const fresh = freshCatalysts(evidence, { now });
   const sheet = familyFactSheet(evidence, { now });
 
@@ -254,6 +261,12 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
 
   // LAYER C: the join. Never confirming or diverging inside the dead zone.
   const join = joinEvidenceMarket({ synthesis, reaction, significantFamilies });
+
+  const freshCatalystAgeMs = fresh.length
+    ? Math.min(...fresh.map((e) => now - Date.parse(e.publicTime)).filter(Number.isFinite))
+    : null;
+  const currency = isCurrent({ significantFamilies, freshCatalystAgeMs, now });
+  const confidence = evidenceConfidence({ significantFamilies, synthesis, newestAgeMs: currency.newestAgeMs });
 
   const q = qualifies({ significantFamilies, freshCatalyst: fresh.length > 0, reaction, synthesis });
   const label = labelFor({
@@ -289,8 +302,14 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
       active: q.ok && isActive(label.setup),
       qualifiedBy: q.why,
       // SECONDARY. Price is context on the card, never the identity.
-      marketState: marketState({ join, reaction }),
-      marketStateLabel: MARKET_STATE_LABEL[marketState({ join, reaction })],
+      marketState: marketState({ join, reaction, direction, setup: label.setup }),
+      marketStateLabel: MARKET_STATE_LABEL[marketState({ join, reaction, direction, setup: label.setup })],
+      // §1: on the DEFAULT board or only in the lookback view, and why.
+      current: currency.current,
+      currentWhy: currency.why,
+      newestEvidenceAgeMs: currency.newestAgeMs,
+      // §6: confidence from significance, quality, independence and FRESHNESS — not family count.
+      confidence,
       unusualCount,
       // How old the triggering event is — the ordering term for "why now".
       whyNowAgeMs: driver?.publicTime ? now - Date.parse(driver.publicTime) : null,
@@ -301,6 +320,13 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     // public evidence with what price did about it.
     evidence_layer: {
       ...synthesis,
+      // §9: how many families are DIRECTIONALLY ACTIVE, which is what 'single-source' means.
+      // The card previously printed 'Single-source' beside '3 of 4 active families' because one
+      // counted direction and the other counted presence. Both numbers are now published so the
+      // UI can state presence and direction separately instead of conflating them.
+      directionalFamilies: synthesis.n,
+      meaningfulFamilies: significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE).length,
+      confidence,
       significantFamilies: significantFamilies.map((f) => ({
         family: f.family, significance: Math.round(f.significance * 1000) / 1000, tier: f.tier,
         meaningful: f.significance >= MEANINGFUL_SIGNIFICANCE,
@@ -313,12 +339,12 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     join_layer: join,
     // INTERNAL SORT KEY ONLY — never rendered. See evidence-model.mjs.
     priority: researchPriority({
-      join, synthesis, significantFamilies, confidence: canonical?.confidence,
+      join, synthesis, significantFamilies, confidence,
       freshCatalyst: fresh.length > 0,
-      youngestEvidenceAgeMs: evidence.length
-        ? Math.min(...evidence.map((e) => now - Date.parse(e.publicTime)).filter(Number.isFinite))
-        : null,
-      stillDeveloping: fresh.length > 0,
+      // Age is measured on the newest MEANINGFUL evidence, not on the newest record of any kind:
+      // a stale case does not become current because an insignificant filing arrived.
+      youngestEvidenceAgeMs: currency.newestAgeMs,
+      stillDeveloping: currency.why === 'fresh-catalyst',
     }),
 
     // V2.1 PRESERVED IN FULL, as secondary metadata. Existing consumers keep working and the two
@@ -364,13 +390,21 @@ export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALU
 
   // ⚠️ QUALIFICATION, NOT A QUOTA. Everything without an active setup is dropped, however much data
   // it has. A board of 9 is a correct answer when only 9 companies have something worth looking at.
-  const active = built.filter((s) => s.setup.active);
+  // ⚠️ THE DEFAULT BOARD IS CURRENT SITUATIONS ONLY. Everything else remains in the evidence
+  // record, on the ticker page and available to a lookback view — it is simply not a reason to
+  // look at a company today, and leaving it here pushed live situations down the page.
+  const qualified = built.filter((s) => s.setup.active);
+  const active = qualified.filter((s) => s.setup.current);
 
   return {
     rows: orderSetups(active),
     candidates: candidates.length,
     evaluated: built.length,
     dropped: built.length - active.length,
+    // Split so the two reasons are distinguishable in operations: nothing material to say, versus
+    // material but no longer current.
+    droppedNoEvidence: built.length - qualified.length,
+    droppedStale: qualified.length - active.length,
     failed,
     builtAt: new Date(now).toISOString(),
   };

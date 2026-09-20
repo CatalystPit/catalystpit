@@ -112,7 +112,9 @@ const evidenceV1 = async (ticker) => (EV1[ticker] !== undefined
       summary: 'A member disclosed a buy', source: 'congress', url: 'https://house.gov/x',
       // A disclosed range large enough to be MEANINGFUL under V3.5 significance. A
       // $1,001-$15,000 trade is deliberately not, so the fixture states a real one.
-      facts: { members: 2, transactionDate: '2026-08-07', disclosureLagDays: 31,
+      // Three members on a large disclosed range — enough to clear the tightened congressional
+      // significance bar, which deliberately rejects lone routine disclosures.
+      facts: { members: 3, transactionDate: '2026-08-07', disclosureLagDays: 31,
         amountRange: '$500,001 - $1,000,000' },
       methodology: 'evidence_v1' },
   ],

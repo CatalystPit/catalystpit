@@ -76,13 +76,21 @@ const clamp01 = (v) => Math.min(1, Math.max(0, v));
 function insiderSignificance(ev) {
   const f = ev.facts || {};
   const value = dollarWeight(f.totalValue);
-  const officer = f.officer === true ? 0.25 : 0;
+  const officer = f.officer === true ? 0.30 : 0;
   // Independent actors are the strongest insider signal: one buyer can be idiosyncratic, six
   // buying separately is a pattern.
   const actors = Number(f.buyers ?? f.sellers ?? 0);
   const cluster = actors >= 5 ? 0.2 : actors >= 3 ? 0.12 : actors >= 2 ? 0.06 : 0;
   const clusterType = ev.type === 'insider_cluster_buy' ? 0.1 : 0;
-  return clamp01(0.30 * value + officer + cluster + clusterType + 0.2 * rarity(ev));
+
+  // ⚠️ RARITY IS A MULTIPLIER, NOT A FREE PASS. "First purchase in 312 days" is true of a $9,000
+  // odd-lot as often as a $25M cluster, and crediting both equally made every tiny isolated
+  // transaction "unusual". Rarity now scales with the substance it is describing, so it amplifies a
+  // real act and adds almost nothing to a trivial one.
+  const substance = clamp01(0.30 * value + officer + cluster + clusterType);
+  const rare = rarity(ev) ? 0.35 * substance : 0;
+
+  return clamp01(substance + rare);
 }
 
 /**
@@ -134,10 +142,22 @@ export function congressAmountWeight(range) {
 function congressSignificance(ev) {
   const f = ev.facts || {};
   const members = Number(f.members) || 1;
-  const multi = members >= 3 ? 0.3 : members === 2 ? 0.18 : 0;
-  const amount = 0.4 * congressAmountWeight(f.amountRange);
-  const txns = Number(f.transactions) >= 4 ? 0.08 : 0;
-  return clamp01(amount + multi + txns + 0.25 * rarity(ev));
+  const amountW = congressAmountWeight(f.amountRange);
+
+  // ⚠️ ROUTINE DISCLOSURE IS NOT A SIGNAL. Mega-cap names attract constant small, mixed
+  // congressional trading; treating each disclosure as meaningful gave those tickers strong
+  // direction and confidence built on nothing. A congressional family earns weight when several
+  // members move together, when the disclosed size is real, or when it is historically unusual for
+  // THIS ticker — not merely because a filing exists.
+  const multi = members >= 3 ? 0.42 : members === 2 ? 0.18 : 0;
+  const amount = 0.30 * amountW;
+  const unusual = 0.30 * rarity(ev);
+
+  // A lone small disclosure with no rarity claim cannot reach meaningful on its own.
+  const lone = members < 2 && amountW < 0.35 && !rarity(ev);
+  if (lone) return clamp01(0.5 * (amount + 0.02));
+
+  return clamp01(amount + multi + unusual);
 }
 
 /**
@@ -170,6 +190,26 @@ function catalystSignificance(ev) {
   // Item 8.01 carries no classification at all and is demoted further — see the header note.
   const generic = ev.type === 'sec_8k_other' ? 0.3 : 1;
   return clamp01(above * generic);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// §7 — A GENERIC CATALYST MUST NOT ACTIVATE DIRECTION
+// ════════════════════════════════════════════════════════════════════════════
+//
+// "Other material event" carries no classification at all, and a filing we cannot classify cannot
+// tell us which way it points. Guessing would be fabrication, so those records contribute facts and
+// freshness but never a direction — which is also what stopped INM reading "alignment" above a
+// sentence describing a conflict.
+const UNCLASSIFIED_CATALYST = new Set(['sec_8k_other']);
+
+/** May this catalyst record contribute a DIRECTION to the evidence lean? */
+export function catalystDirectional(ev) {
+  if (ev?.family !== FAMILY.CATALYST) return true;
+  if (UNCLASSIFIED_CATALYST.has(ev.type)) return false;
+  if (ev.facts?.material !== true) return false;
+  // The engine itself declines to assign a direction to most 8-Ks; respect that rather than
+  // inventing one from materiality.
+  return ev.direction === 'positive' || ev.direction === 'negative';
 }
 
 const SIGNIFICANCE = {
@@ -212,7 +252,11 @@ export function significantByFamily(evidence, { now = Date.now() } = {}) {
 //   EXCEPTIONAL enough on its own to justify researching the company with no second family —
 //               the INTC case: one CEO buying $10.0M after 236 quiet days
 export const MEANINGFUL_SIGNIFICANCE = 0.35;
-export const EXCEPTIONAL_SIGNIFICANCE = 0.60;
+// Raised from 0.60. That bar let 31 of 57 board rows survive the age gate as "exceptional", some
+// 41 days old — an exception carrying more than half the board is not an exception, it is the rule
+// with extra steps. At 0.70 it means what it says: a very large officer open-market purchase, a
+// real multi-buyer cluster, or an equivalently rare act.
+export const EXCEPTIONAL_SIGNIFICANCE = 0.70;
 
 // ════════════════════════════════════════════════════════════════════════════
 // LAYER A — SYNTHESIS
@@ -279,7 +323,11 @@ export function evidenceSynthesis(families) {
 //
 // At 2.0% roughly 40% of observations survive, which is a conservative cut that still leaves a
 // populated board. Below 1.5% more than half survive and the word stops meaning anything.
-export const REACTION_FLOOR_PCT = 2.0;
+// Raised from 2.0. At 2.0 a 2.1% relative move became an "important divergence" on the strength of
+// crossing an arbitrary line, and the board filled with moves nobody would call a reaction. Against
+// the measured distribution (median |1-session| 1.60%, p75 3.10%) a 3.5% relative requirement keeps
+// roughly the top quartile — moves that are actually distinguishable from a normal day.
+export const REACTION_FLOOR_PCT = 3.5;
 export const REACTION_SATURATION_PCT = 8.0;
 
 /**
@@ -406,14 +454,102 @@ export const WEIGHTS = Object.freeze({
   reaction: 0.08,          // secondary: price agreeing or disagreeing
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// §1 — WHAT BELONGS ON THE *DEFAULT* BOARD
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Consensus is a research desk, not a filing archive. A 45-day-old ordinary insider filing is real
+// evidence and stays in the record, on the ticker page and in any lookback view — it simply is not
+// a reason to look at a company TODAY, and letting it sit on the default board pushed genuinely
+// current situations down the page.
+//
+// Two gates, both measured on publicTime:
+//
+//   ordinary evidence   <= 5 trading days (7 calendar)
+//   fresh catalysts     <= 72 hours
+//
+// ⚠️ WITH ONE EXCEPTION, AND ONLY ONE. Evidence the engine has certified as EXCEPTIONAL — a very
+// large officer open-market purchase, a real cluster, a first-in-years act — survives the age gate,
+// because "the CEO did something he has not done in three years" does not stop being worth knowing
+// on day six. It still decays hard in ranking; it just is not silently dropped.
+export const CURRENT_BOARD_DAYS = 7;
+export const FRESH_CATALYST_HOURS = 72;
+
+/**
+ * Is this company a CURRENT research situation?
+ *
+ * @returns {{current: boolean, why: string, newestAgeMs: number|null}}
+ */
+export function isCurrent({ significantFamilies = [], freshCatalystAgeMs = null, now = Date.now() } = {}) {
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
+  if (!meaningful.length) return { current: false, why: 'no-meaningful-evidence', newestAgeMs: null };
+
+  const ageOf = (f) => {
+    const t = Date.parse(f.evidence?.publicTime);
+    return Number.isFinite(t) ? now - t : Infinity;
+  };
+  const newestAgeMs = Math.min(...meaningful.map(ageOf));
+
+  // A genuinely fresh catalyst is its own reason, on a tighter clock.
+  if (Number.isFinite(freshCatalystAgeMs) && freshCatalystAgeMs <= FRESH_CATALYST_HOURS * 3_600_000) {
+    return { current: true, why: 'fresh-catalyst', newestAgeMs };
+  }
+  if (newestAgeMs <= CURRENT_BOARD_DAYS * 86_400_000) {
+    return { current: true, why: 'recent-evidence', newestAgeMs };
+  }
+  // THE EXCEPTION.
+  const exceptional = meaningful.find((f) => f.significance >= EXCEPTIONAL_SIGNIFICANCE);
+  if (exceptional) return { current: true, why: 'exceptional-evidence', newestAgeMs };
+
+  return { current: false, why: 'stale', newestAgeMs };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// §6 — CONFIDENCE REFLECTS QUALITY AND FRESHNESS, NOT FAMILY COUNT
+// ════════════════════════════════════════════════════════════════════════════
+//
+// "3 of 4 families" was producing High confidence on month-old evidence. Coverage is one input and
+// the weakest one: a missing family is missing evidence, never contradicting evidence, and four
+// stale families are not more trustworthy than one fresh strong one.
+export const STALE_CONFIDENCE_DAYS = 14;   // ~10 trading days
+
+export function evidenceConfidence({ significantFamilies = [], synthesis = null, newestAgeMs = null } = {}) {
+  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
+  if (!meaningful.length) return 'Low';
+
+  const top = meaningful[0].significance;
+  const exceptional = top >= EXCEPTIONAL_SIGNIFICANCE;
+  // Independence excludes the near-universal institutional record.
+  const independent = meaningful.filter((f) => f.family !== FAMILY.INSTITUTION).length;
+  // ⚠️ THE QUALITY OF THE STRONGEST EVIDENCE, NOT THE AVERAGE. Congressional records are inherently
+  // 0.6 (self-reported, banded, lagged), so averaging meant ADDING congressional corroboration to a
+  // 0.95-quality Form 4 lowered confidence — punishing a company for having more evidence.
+  const quality = Number.isFinite(meaningful[0].evidence?.quality) ? meaningful[0].evidence.quality : 0.5;
+  const mass = Number.isFinite(synthesis?.M) ? synthesis.M : 0;
+  const ageDays = Number.isFinite(newestAgeMs) ? newestAgeMs / 86_400_000 : Infinity;
+
+  // ⚠️ AGE CAPS CONFIDENCE. Past ~10 trading days the only thing that still justifies confidence is
+  // that the evidence itself was exceptional.
+  if (ageDays > STALE_CONFIDENCE_DAYS && !exceptional) return 'Low';
+
+  const strong = top >= 0.6 && quality >= 0.8 && mass >= 0.6;
+  const moderate = top >= 0.45 && quality >= 0.65 && mass >= 0.3;
+
+  if (strong && independent >= 2 && ageDays <= 7) return 'High';
+  if (strong || (moderate && independent >= 2)) return 'Medium';
+  return 'Low';
+}
+
 // ── DECAY ───────────────────────────────────────────────────────────────────
 //
 // The board surfaces what is worth investigating NOW. Without decay a company stays near the top
 // for a week because something happened once. This controls BOARD PRIORITY ONLY — the evidence
 // record itself is never deleted or hidden, and the ticker page is unchanged.
+// Tightened: full weight for 48h, then falling to a hard floor by day 5 rather than day 7, so an
+// ordinary older case cannot sit near the top of a board meant to show current situations.
 export const DECAY_FULL_HOURS = 48;
-export const DECAY_FLOOR_HOURS = 168;
-export const DECAY_FLOOR = 0.25;
+export const DECAY_FLOOR_HOURS = 120;
+export const DECAY_FLOOR = 0.12;
 /** Historically unusual evidence decays to here rather than to DECAY_FLOOR. */
 export const EXCEPTIONAL_DECAY_FLOOR = 0.65;
 

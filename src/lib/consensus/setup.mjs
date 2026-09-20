@@ -48,7 +48,7 @@ import { JOIN, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE } from './evide
 // have let boards classified by the V3 archetype cascade keep serving as current after a
 // methodology change that altered qualification, direction, the dead zone and ranking — the exact
 // failure the versioned-key design exists to prevent.
-export const SETUP_VERSION = 'consensus_v36_setup';
+export const SETUP_VERSION = 'consensus_v37_setup';
 
 // ── THE ARCHETYPES ──────────────────────────────────────────────────────────
 // ⚠️ THE HEADLINE DESCRIBES EVIDENCE, NOT PRICE.
@@ -256,6 +256,17 @@ export function labelFor({ join, significantFamilies = [], freshCatalyst = false
     return { setup: SETUP.UNUSUAL_INSIDER_ACTIVITY, reasons, secondary };
   }
 
+  // ⚠️ MEANINGFUL OPPOSITION IS A CONFLICT, WHATEVER ELSE IS TRUE. This runs before the catalyst
+  // branch because a fresh filing does not resolve a disagreement — TELA shipped labelled "Fresh
+  // material catalyst" above a sentence describing insider buying against a delisting notice.
+  const dirOfEv = (f) => f.evidence?.direction;
+  const posM = meaningful.filter((f) => dirOfEv(f) === 'positive');
+  const negM = meaningful.filter((f) => dirOfEv(f) === 'negative');
+  if (posM.length && negM.length) {
+    reasons.push('Meaningful evidence points in both directions');
+    return { setup: SETUP.CROSS_SOURCE_CONFLICT, reasons, secondary };
+  }
+
   // ── 2. INDEPENDENT SOURCES GENUINELY DISAGREE ────────────────────────────
   if (join?.state === JOIN.SOURCES_CONFLICT) {
     reasons.push('Independent sources disagree with comparable weight');
@@ -271,7 +282,11 @@ export function labelFor({ join, significantFamilies = [], freshCatalyst = false
   }
 
   // ── 4. INDEPENDENT SOURCES AGREE ─────────────────────────────────────────
-  // Two or more meaningful families pointing the same way, with alignment to show for it.
+  //
+  // ⚠️ ALIGNMENT MEANS THEY ACTUALLY AGREE. A high |L| alone is not enough: INM shipped as
+  // "cross-source alignment" with institutions positive and a delisting catalyst negative, because
+  // one side simply outweighed the other. If a MEANINGFUL family points the other way, that is a
+  // conflict, whatever the arithmetic says.
   if (meaningful.length >= 2 && Number.isFinite(synthesis?.A) && synthesis.A >= 0.6) {
     reasons.push('Multiple independent sources point the same way');
     return { setup: SETUP.CROSS_SOURCE_ALIGNMENT, reasons, secondary };
@@ -319,9 +334,16 @@ export const MARKET_STATE_LABEL = Object.freeze({
   CONFIRMING: 'Confirming', DIVERGING: 'Diverging',
   NO_REACTION: 'No meaningful reaction', NOT_MEASURED: 'Not measured', MIXED: 'Mixed',
 });
-export function marketState({ join, reaction } = {}) {
+export function marketState({ join, reaction, direction = null, setup = null } = {}) {
   if (!reaction || reaction.reason === 'not-measured') return MARKET_STATE.NOT_MEASURED;
   if (!reaction.meaningful) return MARKET_STATE.NO_REACTION;
+
+  // ⚠️ PRICE CANNOT CONFIRM A THESIS THAT DOES NOT EXIST. An officer change plus insider selling
+  // plus a rising tape was reading "confirming" — confirming WHAT? Without a coherent directional
+  // reading there is nothing for price to agree with, and a conflict is not resolved by the tape.
+  const incoherent = direction === 'MIXED' || setup === SETUP.CROSS_SOURCE_CONFLICT;
+  if (incoherent) return MARKET_STATE.MIXED;
+
   if (join?.state === JOIN.PRICE_CONFIRMING) return MARKET_STATE.CONFIRMING;
   if (join?.state === JOIN.PRICE_DIVERGING) return MARKET_STATE.DIVERGING;
   return MARKET_STATE.MIXED;
