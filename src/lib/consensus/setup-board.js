@@ -133,6 +133,11 @@ export function whyThisIsHere({ setup, canonical, sheet, market }) {
     parts.push(`${join(drivers)} point ${dir}`);
   } else if (drivers.length) {
     parts.push(`${join(drivers)} carry evidence without a clear direction`);
+  } else if (setup?.reasons?.length > 1) {
+    // A MIXED state has no drivers by construction, so the qualification reason is the only place
+    // the corroboration is recorded. Without this the card said why the filing was fresh and never
+    // said what agreed with it.
+    parts.push(setup.reasons[1]);
   }
 
   // 3. WHAT PRICE IS DOING ABOUT IT.

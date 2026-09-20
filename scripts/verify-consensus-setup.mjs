@@ -114,6 +114,47 @@ L('\n=== A FRESH FILING ALONE IS NOT A SETUP ===');
     !SETUP_FILTERS.some((f) => f.setups?.includes(SETUP.FRESH_CATALYST)));
 }
 
+L('\n=== A DIRECTIONAL FILING WITH CORROBORATION QUALIFIES ===');
+{
+  // GOLD in production: a negative auditor change filed one day ago alongside $7.0M of insider
+  // selling two days ago. V2.1 reads MIXED there because the total directional mass falls just
+  // under its floor — which is V2.1 answering its OWN question correctly. This rule asks a
+  // narrower one: does a filing that itself carries a direction have an independent family
+  // pointing the same way?
+  const negCat = catalyst(1, true, { direction: 'negative', type: 'sec_8k_auditor_change',
+    summary: 'Auditor change', materiality: 0.85 });
+  const negIns = { ...insiderBuy(2), direction: 'negative', type: 'insider_discretionary_sell',
+    summary: '5 insiders sold $7.0M outside a 10b5-1 plan',
+    facts: { sellers: 5, transactions: 13, totalValue: 6967699 } };
+  const r = classifySetup({
+    // A MIXED state has EMPTY drivers and opposition by construction — which is exactly why this
+    // rule reads the agreeing families from the evidence records instead.
+    canonical: canon(CONSENSUS_STATE.MIXED, { drivers: [], opposition: [] }),
+    evidence: [negCat, negIns, institution(45)], now: NOW,
+  });
+  ok('a directional filing with an agreeing family is an active setup',
+    mut('nodirectional') ? false : r.setup === SETUP.FRESH_CATALYST_SUPPORTED, r.setup);
+  ok('…and the reason names both sides',
+    /reads negative/.test(r.reasons.join(' ')) && /insider/.test(r.reasons.join(' ')),
+    r.reasons.join(' | '));
+  // ⚠️ IT MUST NOT OVERRIDE V2.1. The overall direction stays the honest MIXED summary.
+  ok('…while the reported direction remains the V2.1 answer',
+    setupDirection(canon(CONSENSUS_STATE.MIXED)) === 'MIXED');
+
+  const alone = classifySetup({
+    canonical: canon(CONSENSUS_STATE.MIXED), evidence: [negCat, institution(45)], now: NOW,
+  });
+  ok('a directional filing with nothing agreeing stays inactive',
+    !isActive(alone.setup), alone.setup);
+
+  // Institutions cannot be the agreeing family — they are present on 98% of tickers.
+  const instAgrees = classifySetup({
+    canonical: canon(CONSENSUS_STATE.MIXED),
+    evidence: [catalyst(1, true, { direction: 'positive' }), institution(45)], now: NOW,
+  });
+  ok('institutions alone cannot corroborate a filing', !isActive(instAgrees.setup), instAgrees.setup);
+}
+
 L('\n=== FRESHNESS IS MEASURED ON PUBLIC TIME ===');
 {
   ok('a filing public today is fresh', freshCatalysts([catalyst(0)], { now: NOW }).length === 1);

@@ -188,6 +188,33 @@ export function classifySetup({ canonical, evidence, now = Date.now() } = {}) {
       reasons.push('Independent disclosure evidence points the same way');
       return { setup: SETUP.FRESH_CATALYST_SUPPORTED, reasons, secondary };
     }
+
+    // ── A DIRECTIONAL FILING WITH CORROBORATION ───────────────────────────
+    //
+    // Found by inspecting GOLD, which the first version of these rules dropped: a negative auditor
+    // change filed one day ago alongside $7.0M of insider selling two days ago. V2.1 reads MIXED
+    // there because the total directional mass falls just under its floor — and that is V2.1
+    // answering its OWN question correctly ("can I name an overall direction?").
+    //
+    // This asks a narrower one: does a filing that itself carries a direction have an independent
+    // family pointing the same way? That is a real research question whether or not the aggregate
+    // crosses a threshold, and it does not override V2.1 — the row still reports MIXED as its
+    // direction, because that remains the honest summary of the whole picture.
+    const directional = fresh.filter((c) => c.direction === 'positive' || c.direction === 'negative');
+    if (directional.length) {
+      const way = directional[0].direction;
+      // Read the agreeing families from the EVIDENCE RECORDS, not from canonical.drivers. For a
+      // MIXED state — which is exactly the case this rule exists to catch — drivers and opposition
+      // are deliberately empty, so matching against them would always find nothing.
+      const agreeing = [...new Set((evidence || [])
+        .filter((e) => e.family !== FAMILY.CATALYST && e.family !== FAMILY.INSTITUTION
+          && e.direction === way)
+        .map((e) => e.family))];
+      if (agreeing.length) {
+        reasons.push(`The filing itself reads ${way}, and ${agreeing.join(' and ')} evidence points the same way`);
+        return { setup: SETUP.FRESH_CATALYST_SUPPORTED, reasons, secondary };
+      }
+    }
     // ⚠️ A FRESH FILING ALONE IS NOT A SETUP. Measured market-wide, material 8-Ks are filed
     // constantly — selecting on them put 75 bare catalysts on the board in one pass, which is the
     // "what our database can calculate" failure in a new costume. A catalyst establishes WHEN;
