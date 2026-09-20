@@ -575,6 +575,10 @@ function mergeNews(...sources) {
 
 // Insert parsed Form 4 trades (dedup on the natural key). Shared by the full refresh + the fast path.
 async function insertInsiderTrades(insiderTrades) {
+  // Reset FIRST. This is module state on a warm serverless instance, so leaving it untouched on
+  // the early return would let a previous run's reject count be reported against a later run that
+  // refused nothing — a stale number in a health note is worse than no number.
+  lastInsiderReject = 0;
   if (!insiderTrades?.length) return 0;
   const mapped = insiderTrades
     .map(r => ({ ...r, transactionCode: r.transactionCode || null, transactionDate: normalizeDate(r.transactionDate), filingDate: normalizeDate(r.filingDate) }))
