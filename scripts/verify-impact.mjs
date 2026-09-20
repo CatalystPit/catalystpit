@@ -45,27 +45,104 @@ L('=== THE REPORTED BUG: AN ADVICE COLUMN IS NOT A CATALYST ===');
     mut('noapostrophe') ? false : tier('“You’re not bankrupt”: Dave Ramsey saves woman') !== 'high');
 }
 
-L('\n=== …BUT A CORPORATE BANKRUPTCY STILL IS ===');
+L('\n=== …BUT A BANKRUPTCY AT A LISTED ISSUER STILL IS ===');
 {
-  for (const h of [
-    'XYZ Corp Files for Chapter 11 Bankruptcy Protection',
-    'Management company to acquire bankrupt Neta Auto',
-    'Bankrupt Popeyes franchisee sues firm over failed deal',
-    'Rite Aid files for bankruptcy, will close 150 stores',
+  // ⚠️ THE TICKER IS NOW HALF THE TEST. The keyword says WHAT happened; the ticker says it
+  // happened to a company someone can act on.
+  for (const [h, tk] of [
+    ['XYZ Corp Files for Chapter 11 Bankruptcy Protection', 'XYZ'],
+    ['Management company to acquire bankrupt Neta Auto', 'NETA'],
+    ['Bankrupt Popeyes franchisee sues firm over failed deal', 'QSR'],
+    ['Rite Aid files for bankruptcy, will close 150 stores', 'RAD'],
   ]) {
-    ok(`HIGH: ${h.slice(0, 48)}`, mut('losescorporate') ? false : tier(h) === 'high', tier(h));
+    ok(`HIGH with a ticker: ${h.slice(0, 44)}`,
+      mut('losescorporate') ? false : impactOf({ title: h, ticker: tk }) === 'high',
+      impactOf({ title: h, ticker: tk }));
   }
 
   // ⚠️ AN ISSUER FILING IS NEVER AN ADVICE COLUMN, WHATEVER ITS TITLE LOOKS LIKE. "My Size, Inc."
   // is a real company whose name begins with "My", and its 8-K must stay eligible for HIGH.
   ok('a material 8-K is exempt from the advice damper',
     mut('dampersfilings') ? false
-      : impactOf({ title: 'My Size, Inc. · 8-K — Chapter 11 bankruptcy', material: true }) === 'high');
+      : impactOf({ title: 'My Size, Inc. · 8-K — Chapter 11 bankruptcy', material: true, ticker: 'MYSZ' }) === 'high');
   ok('…and so is anything categorised SEC',
-    impactOf({ title: 'I have filed for bankruptcy protection', category: 'SEC' }) === 'high');
+    impactOf({ title: 'I have filed for bankruptcy protection', category: 'SEC', ticker: 'ABC' }) === 'high');
   ok('…while the same words with no issuer context are not',
     mut('dampersfilings') ? false
       : impactOf({ title: 'I have filed for bankruptcy protection', category: 'Macro' }) !== 'high');
+
+  // 8-K item classes the ticket named, each with a resolved issuer.
+  for (const [label, tk] of [
+    ['Delisting / listing-standard notice', 'ABCD'],
+    ['Material agreement', 'ABCD'],
+    ['Officer / director change', 'ABCD'],
+    ['Results of operations', 'ABCD'],
+    ['Non-reliance on prior financials', 'ABCD'],
+  ]) {
+    ok(`8-K "${label}" is HIGH`,
+      mut('losesfilings') ? false
+        : impactOf({ title: `${tk} · ${label}`, ticker: tk, material: true, category: label }) === 'high');
+  }
+}
+
+L('\n=== NO TICKER AND NOT A MACRO PRINT IS NOT HIGH IMPACT ===');
+{
+  // The headline that led the public feed: an M&A-tagged fundraising pitch for a basketball
+  // franchise. No listed issuer, no filing, nothing anyone can trade.
+  const lakers = { title: 'Lakers Buyers Lay Out Plans to Reach $30 Billion Valuation in Pitch', category: 'M&A', source: 'WSJ' };
+  ok('the Lakers valuation pitch is NOT HIGH',
+    mut('tickerless') ? false : impactOf(lakers) !== 'high', impactOf(lakers));
+
+  for (const [h, cat, why] of [
+    ['Knicks stake sale draws private equity interest', 'M&A', 'franchise stake'],
+    ['Premier League club valuation tops $5 billion', 'M&A', 'football club'],
+    ['Rosen Law Firm Encourages Barclays PLC Investors to Inquire About Securities Class Action', 'SEC', 'law firm solicitation'],
+    ['Le Guide MICHELIN dévoile sa sélection 2026', 'Markets', 'lifestyle'],
+    ['Tourism board named best destination of the year', 'Markets', 'tourism award'],
+  ]) {
+    const got = impactOf({ title: h, category: cat });
+    ok(`NOT HIGH (${why})`, mut('tickerless') ? false : got !== 'high', `${got} — ${h.slice(0, 44)}`);
+  }
+
+  // ⚠️ A DEMOTION, NOT A DELETION. These stay in the river; they just cannot lead it.
+  ok('a demoted feature is still visible as NOTABLE or routine',
+    ['notable', 'routine'].includes(impactOf(lakers)));
+
+  // The same words WITH a resolved issuer are a real event again.
+  ok('…while a real issuer deal with a ticker is HIGH',
+    impactOf({ title: 'Acquirer to acquire TargetCo', category: 'M&A', ticker: 'TGTC' }) === 'high');
+
+  // A placeholder is not a resolved ticker — 'NONE' must not unlock HIGH.
+  for (const bad of ['NONE', 'N/A', '', '(CALX)', 'NYSE: VTEX']) {
+    ok(`ticker "${bad}" does not unlock HIGH`,
+      mut('placeholderticker') ? false
+        : impactOf({ title: 'Company to acquire rival', category: 'M&A', ticker: bad }) !== 'high');
+  }
+}
+
+L('\n=== A SCHEDULED MACRO PRINT IS HIGH WITHOUT A TICKER ===');
+{
+  for (const [h, cat] of [
+    ['FOMC holds rates steady, signals one cut in 2026', 'FED'],
+    ['FOMC minutes show split over timing of cuts', 'FED'],
+    ['CPI rises 0.3% in August, above expectations', 'MACRO'],
+    ['Consumer price index cools to 2.4% year over year', 'MACRO'],
+    ['NFP: economy adds 180,000 jobs in August', 'MACRO'],
+    ['Jobs report shows unemployment rate at 4.1%', 'MACRO'],
+  ]) {
+    ok(`macro print is HIGH: ${h.slice(0, 40)}`,
+      mut('nomacro') ? false : impactOf({ title: h, category: cat }) === 'high',
+      impactOf({ title: h, category: cat }));
+  }
+
+  // ⚠️ IT MUST BE TAGGED MACRO. The word "inflation" in a lifestyle piece is not a print, and a
+  // FED-tagged opinion column is not one either.
+  ok('an untagged mention of CPI is not a print',
+    mut('anymacro') ? false : impactOf({ title: 'CPI rises 0.3% in August', category: 'Markets' }) !== 'high');
+  ok('a FED-tagged feature with no print is not HIGH',
+    impactOf({ title: "Don't Count Out Corporate Bonds Just Because the Fed Is Raising Rates", category: 'FED' }) !== 'high');
+  ok('…and an advice column about rates is not HIGH',
+    impactOf({ title: 'Here\'s how to prepare your portfolio for the Fed\'s next move', category: 'FED' }) !== 'high');
 }
 
 L('\n=== FRAGMENT COLLISIONS: A KEYWORD MUST START A WORD ===');
@@ -90,7 +167,7 @@ L('\n=== FRAGMENT COLLISIONS: A KEYWORD MUST START A WORD ===');
   // Perdoceo contains 'ceo' but the headline is genuinely HIGH via 'to acquire' — the point is
   // that 'ceo' is not what made it so.
   ok('Perdoceo is still HIGH, for the right reason',
-    tier('Perdoceo Education agrees to acquire South University') === 'high');
+    impactOf({ title: 'Perdoceo Education agrees to acquire South University', ticker: 'PRDO' }) === 'high');
   ok('"relocates headquarters" is routine', tier('Biomed X relocates global headquarters') === 'routine');
   ok('"emerges as" is routine', tier('AI search optimisation emerges as businesses adapt') === 'routine');
   ok('"dismisses" is routine', tier('Analyst dismisses robotaxi concerns') === 'routine');
@@ -119,8 +196,10 @@ L('\n=== …AND THE STEMS MUST SURVIVE, WHICH WHOLE-WORD MATCHING WOULD BREAK ==
     ok(`'${kw}' still matches its inflected form`,
       mut('wholeword') ? false : matchesKeyword(h.toLowerCase(), kw), h.slice(0, 44));
   }
-  ok('an FDA approval is still HIGH', tier('FDA approves new therapy for rare disease') === 'high');
-  ok('a delisting is still HIGH', tier('Exchange begins delisting proceedings') === 'high');
+  ok('an FDA approval is still HIGH',
+    impactOf({ title: 'FDA approves new therapy for rare disease', ticker: 'BIIB' }) === 'high');
+  ok('a delisting is still HIGH',
+    impactOf({ title: 'Exchange begins delisting proceedings', ticker: 'ABCD' }) === 'high');
   ok('a dividend is still NOTABLE', tier('Company announces quarterly dividends increase') === 'notable');
 }
 
@@ -173,11 +252,18 @@ L('\n=== THE CONTRACT IS UNCHANGED ===');
   ok('a non-string title does not throw', impactOf({ title: 12345 }) === 'routine');
   ok('the material flag alone still reaches NOTABLE',
     impactOf({ title: 'Some filing', material: true }) === 'notable');
-  ok('category M&A still reaches HIGH', impactOf({ title: 'Deal news', category: 'M&A' }) === 'high');
+  ok('category M&A reaches HIGH only with an issuer',
+    impactOf({ title: 'Deal news', category: 'M&A', ticker: 'ABCD' }) === 'high'
+    && impactOf({ title: 'Deal news', category: 'M&A' }) !== 'high');
   ok('category EARNINGS still reaches NOTABLE',
     impactOf({ title: 'Some update', category: 'EARNINGS' }) === 'notable');
-  ok('headline is accepted as well as title', impactOf({ headline: 'FDA approves drug' }) === 'high');
-  ok('tag is accepted as well as category', impactOf({ title: 'Deal', tag: 'M&A' }) === 'high');
+  ok('headline is accepted as well as title',
+    impactOf({ headline: 'FDA approves drug', ticker: 'BIIB' }) === 'high');
+  ok('tag is accepted as well as category',
+    impactOf({ title: 'Deal', tag: 'M&A', ticker: 'ABCD' }) === 'high');
+  ok('sym and symbol are accepted as the ticker too',
+    impactOf({ title: 'FDA approves drug', sym: 'BIIB' }) === 'high'
+    && impactOf({ title: 'FDA approves drug', symbol: 'BIIB' }) === 'high');
 }
 
 L(`\n${pass} passed, ${fail} failed`);

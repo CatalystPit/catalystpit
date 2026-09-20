@@ -37,6 +37,36 @@ export function isValidSymbol(s) {
   return v.length > 0 && v.length <= MAX_SYMBOL_LEN && SYMBOL_SHAPE.test(v);
 }
 
+// ⚠️ EVERY ADDITION HERE MUST BE CHECKED AGAINST THE LIVE UNIVERSE FIRST.
+// A handful of strings pass the shape test but are filing-form filler, not symbols. This list is
+// deliberately SHORT, because the obvious longer version is wrong: ALL, GO, IT, NA, ON and SO all
+// look like filler and are all real securities in our own universe — Allstate, Grocery Outlet,
+// Gartner, Nano Labs, ON Semiconductor and Southern Company. Rejecting them to be safe would
+// silently delete six listed companies from every card and every board.
+// 'NAN' was in this list for one draft. It is Nuveen New York Quality Municipal Income Fund, a
+// real $357M closed-end fund. The check is one query; the failure is silent and indistinguishable
+// from the fund simply not trading.
+//
+// It lives HERE, in the module with no imports, because three different layers need it — the
+// ingest boundary, the security master, and the client-side impact classifier — and a second copy
+// is how two of them eventually disagree about what a ticker is.
+export const TICKER_PLACEHOLDERS = new Set([
+  'NONE', 'NULL', 'N/A', 'UNKNOWN', 'UNDEFINED', 'NIL', 'TBD', 'ERROR', 'MISSING', 'PLACEHOLDER',
+]);
+
+/**
+ * True when `s` may be STORED or ATTRIBUTED as a ticker: the security grammar above, plus a
+ * rejection of the filler strings. This is the ingest/attribution gate, deliberately looser than
+ * the card-rendering rule in security-identity.mjs — see isIngestableTicker there.
+ */
+export function isIngestableSymbol(s) {
+  if (typeof s !== 'string') return false;
+  const v = s.trim().toUpperCase();
+  if (!v) return false;
+  if (TICKER_PLACEHOLDERS.has(v)) return false;
+  return isValidSymbol(v);
+}
+
 /**
  * The canonical uppercase form of a raw URL segment, or null if no legitimate symbol can be read
  * from it. Case is the ONLY thing normalised: BRK.B and BRK-B stay distinct URLs because they are

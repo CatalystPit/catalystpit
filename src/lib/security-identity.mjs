@@ -14,7 +14,7 @@
 // PURE. No database, no network, no clock. The store module supplies the rows; this decides.
 
 import { isSicDescription } from './sic-descriptions.mjs';
-import { isValidSymbol } from './ticker-symbol.mjs';
+import { isIngestableSymbol, TICKER_PLACEHOLDERS } from './ticker-symbol.mjs';
 
 /**
  * PRECEDENCE, HIGHEST FIRST. The order is the whole design, so it is stated once, here.
@@ -67,14 +67,11 @@ const RANK = new Map(IDENTITY_SOURCES.map((s, i) => [s, i]));
 //   safe would silently delete six listed companies from every card and every board. Only strings
 //   with no listed issuer anywhere are named here.
 const TICKER_SHAPE = /^[A-Z]{1,5}(\.[A-Z]{1,2})?$/;
-// ⚠️ EVERY ADDITION HERE MUST BE CHECKED AGAINST THE LIVE UNIVERSE FIRST.
-// 'NAN' was in this list for one draft. It is Nuveen New York Quality Municipal Income Fund, a real
-// $357M closed-end fund, and blocking it would have removed a listed security from every card and
-// board to guard against a string no source actually emits. The check is one query; the failure is
-// silent and indistinguishable from the fund simply not trading.
-const TICKER_PLACEHOLDERS = new Set([
-  'NONE', 'NULL', 'N/A', 'UNKNOWN', 'UNDEFINED', 'NIL', 'TBD', 'ERROR', 'MISSING', 'PLACEHOLDER',
-]);
+// The placeholder list itself now lives in ticker-symbol.mjs, the module with no imports, because
+// the ingest boundary and the client-side impact classifier need the same answer and a second copy
+// is how two layers eventually disagree about what a ticker is. Re-exported here so the existing
+// readers of this module are unaffected.
+export { TICKER_PLACEHOLDERS };
 
 /**
  * True when `t` can be shown to a user AS a ticker and linked to a security page.
@@ -113,13 +110,7 @@ export function isRenderableTicker(t) {
 // VTEX, and unwrapping them would be a guess dressed as a parse — the same class of move as
 // inventing a SIC code. A filing we cannot read the symbol of is quarantined with its accession
 // and CIK intact, which is recoverable; a filing silently reassigned to the wrong issuer is not.
-export function isIngestableTicker(t) {
-  if (typeof t !== 'string') return false;
-  const s = t.trim().toUpperCase();
-  if (!s) return false;
-  if (TICKER_PLACEHOLDERS.has(s)) return false;
-  return isValidSymbol(s);
-}
+export const isIngestableTicker = isIngestableSymbol;
 
 /**
  * The first candidate whose ticker can actually be rendered, or null when none can.

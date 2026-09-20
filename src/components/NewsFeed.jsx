@@ -74,7 +74,8 @@ function NewsRowCard({n, idx}) {
       </div>
       <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:5}}>
         <div style={{display:"flex", alignItems:"center", gap:7, flexWrap:"wrap"}}>
-          {(() => { const st = IMPACT_STYLE[impactOf({ title: n.headline, category: n.tag, source: n.source })]; return st ? (
+          {(() => { /* ticker included: HIGH IMPACT now requires a resolved issuer, so the badge must see it */
+            const st = IMPACT_STYLE[impactOf({ title: n.headline, category: n.tag, source: n.source, ticker: n.sym })]; return st ? (
             <span style={{fontSize:9, fontWeight:700, color:st.fg, background:st.bg, borderRadius:3, padding:"2px 7px", letterSpacing:"0.3px"}}>{st.label}</span>
           ) : null; })()}
           <TagBadge tag={n.tag}/>
@@ -253,7 +254,7 @@ export default function NewsFeed() {
       if (activeCategory !== 'ALL' && a.tag !== activeCategory) return false;
       if (tickerQuery && (!a.sym || !a.sym.toUpperCase().includes(tickerQuery))) return false;
       if (a.source && hiddenSources.has(a.source)) return false;
-      if (impactOnly && impactOf({ title: a.headline, category: a.tag, source: a.source }) === 'routine') return false;
+      if (impactOnly && impactOf({ title: a.headline, category: a.tag, source: a.source, ticker: a.sym }) === 'routine') return false;
       return true;
     });
   }, [articles, activeCategory, tickerQuery, hiddenSources, impactOnly]);

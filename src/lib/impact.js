@@ -1,3 +1,5 @@
+import { isIngestableSymbol } from './ticker-symbol.mjs';
+
 // Catalyst-importance tiers — editorial flags, NOT a numeric score. Pure heuristic (free, no LLM):
 // event-type keywords + category + 8-K material flag, dampened for routine boilerplate.
 // Used by the news feed flags and the Top Catalysts module. tier ∈ 'high' | 'notable' | 'routine'.
@@ -93,6 +95,60 @@ const ROUTINE_KW = [
 const CAT_HIGH = new Set(['M&A', 'SEC']);
 const CAT_NOTABLE = new Set(['EARNINGS', 'IPO', 'FED']);
 
+// ── WHAT HIGH IMPACT IS ALLOWED TO MEAN ─────────────────────────────────────
+//
+// Keywords alone decided this, and keywords do not know who a story is ABOUT. So the feed led
+// with "Lakers Buyers Lay Out Plans to Reach $30 Billion Valuation" — flagged HIGH because its
+// category was M&A. It is a fundraising pitch for a basketball franchise: no listed issuer, no
+// filing, nothing anyone can trade. Next to it, a personal-finance column about the reader's own
+// bankruptcy.
+//
+// HIGH IMPACT now means one of exactly two things:
+//
+//   A) A MATERIAL EVENT AT A LISTED ISSUER — a resolved U.S. ticker AND evidence that this is a
+//      company event: a material 8-K, an SEC-categorised item, or a material-event keyword.
+//   B) A SCHEDULED MACRO PRINT — FOMC, CPI, NFP, FOMC minutes. These move every equity and belong
+//      to no ticker, so demanding one would be the wrong test.
+//
+// No ticker and not a macro print is not HIGH. That single requirement does most of the work
+// here: the Lakers story, the credit-card column, the Michelin guide, the tourism releases and
+// the law-firm solicitations all fail it without needing a list of things to ban, and the rule
+// stays true for the junk nobody has thought of yet.
+//
+// ⚠️ IT WILL BE SPARSE, AND THAT IS THE POINT. On a weekend, with no filings, HIGH IMPACT should
+// be empty. An empty shelf is honest; a shelf filled with a basketball team is not.
+
+/** The scheduled prints that are market events in their own right, with no issuer attached. */
+// ⚠️ THE PRINT, NOT THE COMMENTARY. Bare 'rate hike' and 'rate cut' were in this list for one
+// draft and pulled in "Warsh says Fed rate hike reflects strengthening economy" and "ECB Rate
+// Hikes Don't Solve Inflation Problem, Giorgetti Says" — officials talking about policy, which is
+// not a scheduled release. What stays is the release itself: the statement, the minutes, the
+// projections, and the named data prints. Commentary keeps its MACRO tag and lands at NOTABLE.
+const MACRO_PRINT_KW = [
+  'fomc', 'federal open market committee', 'fomc minutes', 'fomc statement', 'rate decision',
+  'economic projections', 'dot plot',
+  'cpi', 'consumer price index', 'inflation report', 'ppi', 'producer price index',
+  'nfp', 'nonfarm payroll', 'non-farm payroll', 'jobs report', 'employment report', 'unemployment rate',
+  'pce', 'gdp report', 'beige book',
+];
+const CAT_MACRO = new Set(['FED', 'MACRO', 'ECONOMY']);
+
+// Things that carry a ticker and still are not a market event. Kept SHORT on purpose — the ticker
+// requirement above already removes the tickerless bulk, and every entry here is a category the
+// ticket named that could otherwise arrive attached to a real symbol.
+const NEVER_HIGH = [
+  // Law-firm solicitations quote real issuers and use the language of an SEC investigation.
+  /\b(?:law (?:firm|offices)|rosen law|pomerantz|bronstein|levi & korsinsky|glancy prongay|schall law)\b/,
+  /\b(?:class action|shareholder alert|investor alert|securities fraud (?:investigation|class action))\b/,
+  /\bencourages\b[^.]{0,40}\binvestors\b/,
+  // Franchise and non-listed entertainment fundraising.
+  /\b(?:lakers|knicks|celtics|yankees|dodgers|premier league|nba|nfl|mlb|nhl|fifa)\b/,
+  /\b(?:franchise|team) (?:valuation|stake|sale)\b/,
+  // Lifestyle, awards, tourism.
+  /\b(?:michelin (?:guide|star)|best places|top \d+ (?:places|destinations)|tourism board|travel guide)\b/,
+  /\b(?:wins|named|receives)\b[^.]{0,30}\b(?:award|awards|recognition|accolade)\b/,
+];
+
 // Curly apostrophes are everywhere in real headlines ("you’re", "here’s"), and they are a
 // different code point from the typewriter form the patterns are written with. Normalised once,
 // so every rule below can be written the readable way.
@@ -112,6 +168,12 @@ export function matchesKeyword(text, kw) {
   return re.test(text);
 }
 
+/** Is `t` a symbol we can resolve to a listed U.S. security? */
+function resolvedTicker(item) {
+  const raw = item.ticker ?? item.sym ?? item.symbol ?? null;
+  return isIngestableSymbol(typeof raw === 'string' ? raw : '') ? String(raw).toUpperCase() : null;
+}
+
 export function impactOf(item = {}) {
   const t = normalize(item.title || item.headline || '');
   const cat = `${item.category || item.tag || ''}`.toUpperCase();
@@ -123,14 +185,27 @@ export function impactOf(item = {}) {
   // "My Size, Inc. · 8-K" eligible for HIGH.
   const issuerFiling = material || cat === 'SEC';
   const adviceVoice = !issuerFiling && ADVICE_VOICE.some((re) => re.test(t));
+  const neverHigh = !issuerFiling && NEVER_HIGH.some((re) => re.test(t));
 
-  const hitHigh = HIGH_KW.some((k) => matchesKeyword(t, k)) || CAT_HIGH.has(cat);
-  // Advice suppresses HIGH only. A column about dividends is still perfectly NOTABLE; it just
-  // does not get to lead the page over an actual filing.
-  if (hitHigh && !adviceVoice) return 'high';
+  // ── (B) A SCHEDULED MACRO PRINT ──────────────────────────────────────────
+  // Deliberately first, and deliberately exempt from the ticker test: CPI belongs to no issuer.
+  // It must still be TAGGED macro — the word "inflation" in a lifestyle piece is not a print.
+  const macroPrint = CAT_MACRO.has(cat) && MACRO_PRINT_KW.some((k) => matchesKeyword(t, k));
+  if (macroPrint && !adviceVoice) return 'high';
 
+  // ── (A) A MATERIAL EVENT AT A LISTED ISSUER ──────────────────────────────
+  // Both halves are required. The keyword says WHAT happened; the ticker says it happened to a
+  // company someone can act on. Either alone is how a basketball team reached the top of a
+  // trading feed.
+  const eventWords = HIGH_KW.some((k) => matchesKeyword(t, k)) || CAT_HIGH.has(cat);
+  const isIssuerEvent = !!resolvedTicker(item) && (eventWords || issuerFiling);
+  if (isIssuerEvent && !adviceVoice && !neverHigh) return 'high';
+
+  // Everything else can still be NOTABLE — this is a demotion, not a deletion. A well-reported
+  // feature with no ticker keeps its place in the river; it just cannot lead it.
   const routine = ROUTINE_KW.some((k) => matchesKeyword(t, k));
-  const hitNotable = NOTABLE_KW.some((k) => matchesKeyword(t, k)) || CAT_NOTABLE.has(cat) || material;
+  const hitNotable = eventWords || NOTABLE_KW.some((k) => matchesKeyword(t, k))
+    || CAT_NOTABLE.has(cat) || CAT_MACRO.has(cat) || material;
   if (hitNotable && !routine) return 'notable';
 
   return 'routine';

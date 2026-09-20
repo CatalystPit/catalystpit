@@ -44,20 +44,59 @@ export default function TopCatalysts({ limit = 6 }) {
           });
         }
 
-        // Score, keep only high/notable, dedupe by ticker+title, rank by tier then recency.
-        const seen = new Set();
-        const scored = [];
+        // ── ONE EVENT, ONE CARD — AND THE FILING WINS ─────────────────────
+        //
+        // A results 8-K and the newswire story about it are the same event. Keyed on ticker and
+        // title alone they never collided, so both appeared: the same company twice, once citing
+        // SEC and once citing a wire, which reads as two things happening. They are now keyed on
+        // TICKER + EVENT CLASS, and when they collide the 8-K survives — it is the primary
+        // document, it is timestamped by EDGAR rather than by an editor, and its link goes to the
+        // filing a trader can actually verify.
+        const EVENT_CLASS = [
+          [/delist|listing standard|listing compliance/, 'delist'],
+          [/bankrupt|chapter 11|restructur/, 'bankruptcy'],
+          [/acquir|merger|takeover|buyout|m&a/, 'ma'],
+          [/offering|placement|notes|convertible|prices \$/, 'offering'],
+          [/results|earnings|revenue|eps|guidance/, 'results'],
+          [/ceo|cfo|officer|director|resign|appoint|steps down/, 'officer'],
+          [/fda|clinical|phase \d|topline|endpoint/, 'clinical'],
+          [/material agreement|agreement/, 'agreement'],
+        ];
+        const classOf = (p) => {
+          const hay = `${p.title} ${p.category || ''}`.toLowerCase();
+          for (const [re, name] of EVENT_CLASS) if (re.test(hay)) return name;
+          return null;
+        };
+
+        const byKey = new Map();
         for (const p of pool) {
           if (!p.title) continue;
           const tier = impactOf(p);
           if (tier === 'routine') continue;
-          const key = `${p.ticker || ''}|${p.title.toLowerCase().slice(0, 40)}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          scored.push({ ...p, tier });
+          const cls = classOf(p);
+          // With no ticker or no recognisable class there is nothing to collapse against, so the
+          // title keeps it distinct rather than silently merging two unrelated stories.
+          const key = (p.ticker && cls)
+            ? `${p.ticker}|${cls}`
+            : `${p.ticker || ''}|${p.title.toLowerCase().slice(0, 40)}`;
+          const prev = byKey.get(key);
+          if (!prev) { byKey.set(key, { ...p, tier }); continue; }
+          // SEC link wins. Otherwise keep whichever is higher-tier, then whichever is newer.
+          const better = (prev.kind !== '8-K' && p.kind === '8-K')
+            || (prev.kind === p.kind && IMPACT_RANK[tier] > IMPACT_RANK[prev.tier])
+            || (prev.kind === p.kind && IMPACT_RANK[tier] === IMPACT_RANK[prev.tier]
+                && new Date(p.published || 0) > new Date(prev.published || 0));
+          if (better) byKey.set(key, { ...p, tier });
         }
+
+        // ⚠️ A FILING OUTRANKS A FEATURE AT THE SAME TIER. Both may be HIGH, but one is the
+        // company speaking on the record and the other is a publication writing about it.
+        const scored = [...byKey.values()];
         scored.sort((a, b) => {
           if (IMPACT_RANK[b.tier] !== IMPACT_RANK[a.tier]) return IMPACT_RANK[b.tier] - IMPACT_RANK[a.tier];
+          const aFiling = a.kind === '8-K' ? 1 : 0;
+          const bFiling = b.kind === '8-K' ? 1 : 0;
+          if (aFiling !== bFiling) return bFiling - aFiling;
           return new Date(b.published || 0) - new Date(a.published || 0);
         });
         if (alive) setItems(scored.slice(0, limit));

@@ -907,11 +907,12 @@ function NewsWireBody({ onPick }) {
         if (!headline) continue;
         const sym = (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || null);
         pool.push({ headline, source: s.source || 'News', url: s.url || null, published: s.published || s.date || null, sym,
-          tier: impactOf({ title: headline, category: s.category || s.tag, source: s.source }) });
+          // ticker passed: HIGH now requires a resolved issuer, so the tier must see one.
+          tier: impactOf({ title: headline, category: s.category || s.tag, source: s.source, ticker: sym }) });
       }
       for (const f of (eRes?.list || [])) {
         pool.push({ headline: f.primaryLabel || 'Filing', source: '8-K', url: f.url || null, published: f.filedAt || null, sym: f.ticker,
-          tier: impactOf({ title: f.primaryLabel, material: f.material, category: f.primaryLabel }) });
+          tier: impactOf({ title: f.primaryLabel, material: f.material, category: f.primaryLabel, ticker: f.ticker }) });
       }
       pool.sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0));
       setItems(pool.slice(0, 80));
