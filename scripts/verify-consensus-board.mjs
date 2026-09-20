@@ -254,6 +254,11 @@ L('\n=== THE GOLD REGRESSION ===');
   ok('the conflict names both sides', conflicts.length === 1
     && conflicts[0].positive.includes('institutions')
     && conflicts[0].negative.includes('congress'));
+  // The KEY CONFLICT sentence is held to the same grammar as the WHY: family lists are never the
+  // subject, and a list of three reads as a list.
+  ok('the conflict text does not make a family list its subject',
+    !/^(Insiders|Institutions|Congress|Catalysts)\b/.test(conflicts[0].text), conflicts[0].text);
+  ok('…and chains no ANDs', !/ and .* and /.test(conflicts[0].text), conflicts[0].text);
 
   const k = canonicalConsensus(gold, { now: NOW });
   ok('the dissenting families are carried as OPPOSITION, not as minor contrary evidence',

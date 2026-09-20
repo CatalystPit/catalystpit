@@ -146,12 +146,16 @@ export function describeConflicts(families) {
   const topUp = [...up].sort(byEvidence);
   const topDown = [...down].sort(byEvidence);
 
-  const side = (list) => list.map((f) => familyLabel(f.family)).join(' and ');
+  // Same discipline as explainState: "Evidence from …" is always singular, so the sentence cannot
+  // be wrong about whether Congress is one body or Insiders are many, and a list reads as a list.
+  const side = (list) => {
+    const n = list.map((f) => familyLabel(f.family));
+    return n.length <= 1 ? n[0] || '' : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
+  };
   return [{
     positive: topUp.map((f) => f.family),
     negative: topDown.map((f) => f.family),
-    text: `${side(topUp)} point${topUp.length === 1 ? 's' : ''} one way while `
-      + `${side(topDown)} point${topDown.length === 1 ? 's' : ''} the other`,
+    text: `Evidence from ${side(topUp)} points one way; evidence from ${side(topDown)} points the other`,
   }];
 }
 
