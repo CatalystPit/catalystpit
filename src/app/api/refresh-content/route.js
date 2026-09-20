@@ -1,5 +1,6 @@
 import { recordUsage, recordModelState } from '../../../lib/anthropic-usage';
 import { classifyAnthropicFailure, usageOf } from '../../../lib/anthropic-errors.mjs';
+import { recordJobRun } from '../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -139,5 +140,17 @@ export async function GET(request) {
   }
 
   await kvSet('catalystpit:last_enrich', results.timestamp);
+  // ⚠️ THE JOB THAT KEEPS THE NEWS FEED CURATED, AND THE ONE WHOSE SILENCE IS HARDEST TO SEE.
+  // It writes catalystpit:top_stories with a 4-hour TTL but its cron is `0 13-21 * * 1-5`, so the
+  // key is expired from roughly Friday 21:00 UTC until Monday 13:00 UTC and /api/news falls back
+  // to the raw press-release wire for about 64 hours a week. Nothing errored, nothing alerted,
+  // and the feed quietly became PR. A failed enrichment is therefore recorded as a FAILED run
+  // even though the route still answers 200 with its per-key results.
+  const enrichFailed = results.failed?.some((f) => f.key === 'catalystpit:top_stories');
+  await recordJobRun('refresh-content', {
+    ok: !enrichFailed,
+    seen: results.refreshed?.length ?? 0,
+    note: enrichFailed ? 'top_stories not written' : 'top_stories refreshed',
+  });
   return Response.json(results, { status:200 });
 }

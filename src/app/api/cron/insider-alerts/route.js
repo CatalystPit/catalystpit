@@ -2,6 +2,7 @@ import { db } from '../../../../lib/db';
 import { insiderTrades, watchlist } from '../../../../lib/schema';
 import { and, gt, lte, inArray, asc } from 'drizzle-orm';
 import { clerkClient } from '@clerk/nextjs/server';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -90,6 +91,9 @@ export async function GET(request) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   if (!RESEND_API_KEY || !FROM) {
     console.log('[insider_alerts] RESEND_API_KEY / ALERTS_FROM_EMAIL not set');
+    // Not a tick. The cron fired, but the job cannot do its work, and a heartbeat here would
+    // report a healthy clock for a mailer that is switched off.
+    await recordJobRun('insider-alerts', { ok: false, note: 'email not configured' });
     return Response.json({ ok: false, error: 'not_configured' }, { status: 503 });
   }
 
@@ -98,6 +102,7 @@ export async function GET(request) {
   if (!watermark) {                                        // first run — set watermark, don't blast backlog
     await kvSet(WATERMARK_KEY, runStartIso);
     console.log('[insider_alerts] initialized watermark, no backlog sent');
+    await recordJobRun('insider-alerts', { ok: true, note: 'watermark initialised' });
     return Response.json({ ok: true, initialized: true, watermark: runStartIso });
   }
 
@@ -116,6 +121,8 @@ export async function GET(request) {
 
   if (filings.length === 0) {
     await kvSet(WATERMARK_KEY, runStartIso);
+    // The overwhelmingly common outcome, and a real tick: we asked and there was nothing.
+    await recordJobRun('insider-alerts', { ok: true, seen: 0, note: 'no new filings' });
     return Response.json({ ok: true, newFilings: 0, usersNotified: 0 });
   }
 
@@ -125,6 +132,7 @@ export async function GET(request) {
 
   if (wl.length === 0) {
     await kvSet(WATERMARK_KEY, runStartIso);
+    await recordJobRun('insider-alerts', { ok: true, seen: filings.length, note: 'no watchers matched' });
     return Response.json({ ok: true, newFilings: filings.length, usersNotified: 0 });
   }
 
@@ -162,5 +170,6 @@ export async function GET(request) {
   await kvSet(WATERMARK_KEY, runStartIso);
   const summary = { ok: true, newFilings: filings.length, watchers: userTickers.size, sent, failed, skipped, capped: userTickers.size > MAX_EMAILS };
   console.log(`[insider_alerts] ${JSON.stringify(summary)}`);
+  await recordJobRun('insider-alerts', { ok: true, seen: filings.length, note: `sent ${sent}, failed ${failed}` });
   return Response.json(summary);
 }

@@ -9,7 +9,8 @@
     "verify:render": "node scripts/verify-render.mjs",
     "verify:chart": "node scripts/verify-chart.mjs",
     "verify:scan": "node scripts/verify-scan.mjs",
-    "verify:launch": "node scripts/verify-launch-integrity.mjs"
+    "verify:launch": "node scripts/verify-launch-integrity.mjs",
+    "verify:pipelines": "node scripts/verify-pipelines.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.3",

@@ -1,5 +1,6 @@
 import { db } from '../../../lib/db';
 import { sql } from 'drizzle-orm';
+import { TRACKED_JOBS, readJobHeartbeats } from '../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -129,6 +130,42 @@ export async function GET() {
     }),
   ]);
 
+  // ── LIVENESS: did each clock actually tick ──────────────────────────────
+  //
+  // ⚠️ THIS IS THE QUESTION FRESHNESS CANNOT ANSWER. Every probe above asks how new the DATA is,
+  // and on a Sunday every SEC-derived dataset is correctly three days old — indistinguishable
+  // from an ingest that has been throwing since Friday. Proving the difference used to mean
+  // fetching EDGAR by hand and comparing it to the table. The jobs now record a heartbeat on
+  // every successful run (see lib/job-heartbeat.js), so a stopped clock is visible within its
+  // own silence budget whether or not the source had anything to give.
+  //
+  // Reported as its own block rather than folded into `failing`, because a stale heartbeat and a
+  // stale dataset are different incidents with different responses.
+  const jobs = await probe('jobs.heartbeats', async () => {
+    const beats = await readJobHeartbeats();
+    const now = Date.now();
+    const weekend = [0, 6].includes(new Date().getUTCDay());
+    const out = TRACKED_JOBS.map((j) => {
+      const b = beats.get(j.name) || null;
+      const age = hoursSince(b?.last_success_at);
+      // A weekday-only job is idle by design at the weekend, not late.
+      const idleByDesign = !!j.weekdaysOnly && weekend;
+      return {
+        job: j.name, label: j.label,
+        lastSuccess: b?.last_success_at ?? null,
+        ageHours: age, maxAgeHours: j.maxAgeHours,
+        consecutiveFailures: b?.consecutive_failures ?? null,
+        note: b?.note ?? null,
+        // `never` is not yet a failure: a heartbeat only exists once the job has run since this
+        // shipped, and reporting a brand-new field as an outage would cry wolf on day one.
+        state: b == null ? 'never' : idleByDesign ? 'idle_by_design'
+          : age != null && age <= j.maxAgeHours ? 'ok' : 'late',
+      };
+    });
+    const late = out.filter((j) => j.state === 'late');
+    return { ok: late.length === 0, late: late.map((j) => j.job), jobs: out };
+  });
+
   const failed = checks.filter((c) => !c.ok).map((c) => c.name);
   const slowest = [...checks].sort((a, b) => b.ms - a.ms)[0];
 
@@ -140,5 +177,6 @@ export async function GET() {
     totalMs: Date.now() - startedAt,
     at: new Date().toISOString(),
     checks,
+    jobs,
   }, { status: failed.length === 0 ? 200 : 503, headers: NO_STORE });
 }

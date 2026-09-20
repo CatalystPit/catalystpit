@@ -1,5 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { runCongressSync, dedupeCongressCanonical } from '../../../../lib/congress-sync';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -39,9 +40,12 @@ export async function GET(request) {
   try {
     const res = await runCongressSync({ chambers, ingestCapHouse, ingestCapSenate });
     console.log(`[congress-sync] ${JSON.stringify(res)}`);
+    // Disclosures arrive in bursts on business days; 0 new is the usual answer and still a tick.
+    await recordJobRun('congress-sync', { ok: true, seen: res?.inserted ?? 0, note: `chambers ${chambers}` });
     return Response.json({ ok: true, ...res });
   } catch (e) {
     console.log(`[congress-sync] failed: ${e.message}`);
+    await recordJobRun('congress-sync', { ok: false, note: 'sync threw' });
     return Response.json({ ok: false, error: e.message }, { status: 500 });
   }
 }

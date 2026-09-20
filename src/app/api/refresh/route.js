@@ -1,6 +1,7 @@
 import { db } from '../../../lib/db';
 import { insiderTrades as insiderTradesTable } from '../../../lib/schema';
 import { inArray } from 'drizzle-orm';
+import { recordJobRun } from '../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -593,8 +594,17 @@ export async function GET(request) {
     try {
       const insider = await fetchForm4Trades();
       const inserted = await insertInsiderTrades(insider);
+      // `inserted: 0` is the normal answer overnight and at weekends — EDGAR publishes nothing,
+      // so the heartbeat records that we ASKED. That is the fact no amount of inspecting
+      // insider_trades afterwards can recover.
+      await recordJobRun('form4', { ok: true, seen: inserted, note: `parsed ${insider.length}` });
       return Response.json({ form4: true, parsed: insider.length, inserted, ts: new Date().toISOString() });
     } catch (e) {
+      // ⚠️ THIS PATH RETURNS 200 ON PURPOSE — a per-minute cron must not page on a single bad SEC
+      // response. Which means a permanently broken Form 4 ingest has looked identical, from
+      // outside, to a healthy one. The heartbeat is the only place that difference is now
+      // recorded, so it records the failure even though the HTTP response does not.
+      await recordJobRun('form4', { ok: false, note: 'fetch/insert threw' });
       return Response.json({ form4: true, error: e.message }, { status: 200 });
     }
   }
@@ -715,5 +725,13 @@ export async function GET(request) {
   } catch(e) { fail('wire_news', e); }
 
   await kvSet('catalystpit:last_refresh', results.timestamp);
+  // The 5-minute pass that refreshes quotes, the tape and the raw wire pool. `results.failed`
+  // carries the per-key failures; the run itself is a tick as long as it completed, and the note
+  // names how many keys did not refresh so a partial degradation is visible without log-diving.
+  await recordJobRun('quotes', {
+    ok: true,
+    seen: results.refreshed?.length ?? 0,
+    note: results.failed?.length ? `${results.failed.length} keys failed` : 'all keys refreshed',
+  });
   return Response.json(results, { status:200 });
 }

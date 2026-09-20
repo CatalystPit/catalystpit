@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { EVALUATE_LIMIT } from '../../../../lib/consensus/setup-board.js';
 import { rebuildBoardExclusive } from '../../../../lib/consensus/refresh';
 import { MATERIALIZATION_VERSION } from '../../../../lib/consensus/materialization.mjs';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -67,6 +68,9 @@ export async function GET(request) {
 
     console.log(`[consensus-board] ${rows} rows / ${r.payload.candidates} candidates,`
       + ` ${r.payload.failed} failed, ${ms}ms`);
+    // A 'locked' pass above is deliberately NOT a heartbeat: the drain that holds the lock is the
+    // thing doing the work, and recording a tick here would credit this pass for it.
+    await recordJobRun('consensus-board', { ok: true, seen: rows, note: `${rows} rows / ${r.payload.candidates} candidates` });
     return Response.json({
       ok: true, published: true, rows, candidates: r.payload.candidates,
       failed: r.payload.failed, version: MATERIALIZATION_VERSION, ms,
@@ -75,6 +79,7 @@ export async function GET(request) {
     // A failed build leaves the PREVIOUS board in KV. Overwriting it with an empty one would turn a
     // build failure into "no evidence exists", which is a different and false statement.
     console.error(`[consensus-board] build failed: ${e.message}`);
+    await recordJobRun('consensus-board', { ok: false, note: 'build failed' });
     return Response.json({ ok: false, error: 'build_failed' }, { status: 500 });
   }
 }

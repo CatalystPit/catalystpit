@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
+import { impactOf, IMPACT_RANK } from '../../../lib/impact';
 
 export const runtime = 'nodejs';
 
@@ -49,21 +50,56 @@ export async function GET() {
 
   // Press-release wires (separate un-enriched pool) — appended AFTER the enriched stories so the
   // hero stays a curated story. Each carries its own `source`, filtered client-side in NewsFeed.
+  let wire = [];
   try {
     let w = await kvGet('catalystpit:wire_news');
     if (typeof w === 'string') { try { w = JSON.parse(w); } catch { w = null; } }
     if (typeof w === 'string') { try { w = JSON.parse(w); } catch { w = null; } }
-    if (Array.isArray(w) && w.length) raw = [...raw, ...w];
+    if (Array.isArray(w) && w.length) wire = w;
   } catch { /* wires optional — never break the feed */ }
 
-  // Slice the RAW array (no reorder/normalize — element 0 stays the hero) so
-  // NewsFeed's existing client-side normalization works unchanged. Signed-in users
-  // get the full feed; signed-out get the teaser and the locked rows never ship.
+  // ⚠️ THE HERO MUST EARN ITS PLACE, BECAUSE THE CURATED POOL IS ROUTINELY ABSENT.
+  //
+  // `catalystpit:top_stories` is written with a 4-hour TTL by /api/refresh-content, whose cron is
+  // `0 13-21 * * 1-5` — weekdays only. From Friday ~21:00 UTC until Monday 13:00 UTC the key has
+  // expired and there is nothing enriched to be first, so "append the wires after the curated
+  // stories" silently became "the wires ARE the feed" for roughly 64 hours a week. Measured on a
+  // Sunday: 36 wire items, 1 high-impact, 35 routine, and the hero was a German-language PR
+  // Newswire release about a factory opening, followed by its own French translation.
+  //
+  // So the ordering is stated rather than assumed. Enriched stories still outrank wires — when
+  // curation exists it leads, exactly as before — and WITHIN each tier the material items come
+  // first, using the same impactOf() the feed's own "High impact" filter already uses. Recency
+  // breaks ties, so this is a re-ranking of what we already had, not a new editorial layer and
+  // not a filter: nothing is dropped, and the routine items are all still there, lower down.
+  //
+  // This matters most for signed-out visitors, who only ever receive the first six elements —
+  // client-side sorting could never have reached a material story that sat at index 20.
+  const rankOf = (a) => IMPACT_RANK[impactOf(a)] ?? 1;   // high 3 · notable 2 · routine 1
+  raw = [
+    ...raw.map((a, i) => ({ a, tier: 0, i })),
+    ...wire.map((a, i) => ({ a, tier: 1, i })),
+  ]
+    .sort((x, y) => (x.tier - y.tier)                    // curated before wire
+      || (rankOf(y.a) - rankOf(x.a))                     // material before routine
+      || (x.i - y.i))                                    // else the order the pool arrived in
+    .map((r) => r.a);
+
+  // Slice the ranked array (element 0 is now the most material story available) so NewsFeed's
+  // existing client-side normalization works unchanged. Signed-in users get the full feed;
+  // signed-out get the teaser and the locked rows never ship.
   const data = loggedIn ? raw : raw.slice(0, SIGNED_OUT_VISIBLE);
   const lockedCount = loggedIn ? 0 : Math.max(0, raw.length - SIGNED_OUT_VISIBLE);
 
   return Response.json(
-    { data, lockedCount, loggedIn, source, lastRefresh },
+    {
+      data, lockedCount, loggedIn, source, lastRefresh,
+      // How the feed was actually composed. `curatedCount: 0` is the signature of the expired
+      // top_stories key — the difference between "quiet news day" and "the enrichment job has not
+      // run since Friday", which was previously indistinguishable from outside.
+      curatedCount: raw.length - wire.length,
+      wireCount: wire.length,
+    },
     { headers: { 'Cache-Control': 'private, no-store' } },
   );
 }

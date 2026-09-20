@@ -1,5 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { ingestEightK } from '../../../../lib/eightk';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -28,9 +29,13 @@ export async function GET(request) {
   try {
     const res = await ingestEightK();
     console.log(`[eightk] scanned ${res.scanned} · inserted ${res.inserted}`);
+    // `inserted: 0` is the normal answer outside filing hours — the heartbeat records that we
+    // ASKED, which is the fact that cannot be recovered from the data afterwards.
+    await recordJobRun('eightk', { ok: true, seen: res.inserted ?? 0, note: `scanned ${res.scanned}` });
     return Response.json({ ok: true, ...res });
   } catch (e) {
     console.log(`[eightk] ingest failed: ${e.message}`);
+    await recordJobRun('eightk', { ok: false, note: 'ingest threw' });
     return Response.json({ ok: false, error: e.message }, { status: 500 });
   }
 }

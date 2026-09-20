@@ -1,5 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { runInstitutionsUniverse, ingestFiler } from '../../../../lib/institutions-universe';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -57,9 +58,13 @@ export async function GET(request) {
   try {
     const res = await runInstitutionsUniverse({ indexes, ingestCap, tickerCap, tickerOnly, cleanup, disputed });
     console.log(`[institutions-universe] ${JSON.stringify(res)}`);
+    // 13F is quarterly by nature: outside a filing window this legitimately ingests nothing for
+    // weeks, which is exactly why the tick has to be recorded separately from the data.
+    await recordJobRun('institutions', { ok: true, seen: res?.filings ?? res?.ingested ?? 0, note: `indexes ${indexes}` });
     return Response.json({ ok: true, ...res });
   } catch (e) {
     console.log(`[institutions-universe] failed: ${e.message}`);
+    await recordJobRun('institutions', { ok: false, note: 'universe run threw' });
     return Response.json({ ok: false, error: e.message }, { status: 500 });
   }
 }

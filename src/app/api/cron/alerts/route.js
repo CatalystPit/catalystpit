@@ -1,5 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { evaluateAlerts } from '../../../../lib/alerts';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -29,9 +30,11 @@ export async function GET(request) {
   try {
     const res = await evaluateAlerts();
     console.log(`[alerts] ${JSON.stringify(res)}`);
+    await recordJobRun('alerts', { ok: true, seen: res?.fired ?? 0, note: `checked ${res?.checked ?? 0}` });
     return Response.json({ ok: true, ...res });
   } catch (e) {
     console.log(`[alerts] failed: ${e.message}`);
+    await recordJobRun('alerts', { ok: false, note: 'evaluate threw' });
     return Response.json({ ok: false, error: e.message }, { status: 500 });
   }
 }
