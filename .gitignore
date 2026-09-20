@@ -43,3 +43,6 @@ next-env.d.ts
 /.clerk/
 _*.json
 _*.mjs
+
+# Local vendor payload cache — raw provider responses, re-fetchable, not source
+research/.vendor-cache/

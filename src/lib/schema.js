@@ -197,20 +197,33 @@ export const congressFilings = pgTable('congress_filings', {
 // research/price-seam-definitive.mjs for the audit, and src/lib/price-semantics.mjs for which
 // convention each use case requires and why.
 //
-// Until the two are reconciled, anything COMPARING two prices across a source change on those 16
-// tickers is reading a vendor artifact. Reading a single price, or a window on one side, is safe.
+// ── THE CONTRACT NOW: ONE CONVENTION, SPLIT-ADJUSTED ────────────────────────
+//
+// Both Tiingo writers were fixed at the source: /api/chart-daily and /api/ticker now convert RAW +
+// splitFactor through market/candles.mjs (tiingoDailyToCanonical) and write 'tiingo_split_adj'.
+// assertCanonicalCandles() rejects the retired 'tiingo' value, so a writer cannot reintroduce the
+// total-return basis without deleting the guard.
+//
+//   'polygon'           SPLIT-ADJUSTED (Polygon adjusted=true). Canonical.
+//   'tiingo_split_adj'  SPLIT-ADJUSTED, derived from Tiingo RAW x splitFactor. Canonical.
+//   'tiingo'            RETIRED — total return. Being repaired; no writer emits it.
+//
+// Split-adjusted means distributions are NOT removed, so an ex-dividend date still shows its real
+// drop. That is the correct basis for a trader-facing level: it is the price that actually printed,
+// restated only for share-count changes.
 export const tickerDailyCandles = pgTable('ticker_daily_candles', {
   ticker:  text('ticker').notNull(),
   date:    date('date', { mode: 'string' }).notNull(),
-  // Convention depends on `source` — see the note above. NOT universally Tiingo adj*.
+  // SPLIT-ADJUSTED for every canonical source. Never Tiingo adj* (total return).
   open:    doublePrecision('open').notNull(),
   high:    doublePrecision('high').notNull(),
   low:     doublePrecision('low').notNull(),
   close:   doublePrecision('close').notNull(),
+  // Split-adjusted too: raw volume x the same split factor, so dollar volume stays consistent.
   volume:  doublePrecision('volume').notNull().default(0),
-  // The convention discriminator, not merely provenance: 'polygon' = split-adjusted,
-  // 'tiingo' = total-return.
-  source:  text('source').notNull().default('tiingo'),
+  // Provenance AND convention discriminator. The default is deliberately a canonical value so a
+  // row inserted without an explicit source cannot land on the retired basis.
+  source:  text('source').notNull().default('tiingo_split_adj'),
 }, (t) => ({
   pk: primaryKey({ columns: [t.ticker, t.date] }),
 }));

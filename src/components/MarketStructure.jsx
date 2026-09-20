@@ -14,7 +14,7 @@
 //   CHART              price and candles, the user's own indicators, and Evidence event markers —
 //                      things that happened at a point in time (Form 4, 13F, Congress, 8-K, and
 //                      later earnings), controlled by the Evidence menu.
-//   MARKET STRUCTURE   Catalyst Pit's ANALYSIS of that chart: trend, structure, support,
+//   MARKET STRUCTURE   Catalyst Pit's ANALYSIS of that chart: confirmed swing structure,
 //                      resistance, multi-timeframe confluence. It lives HERE.
 //
 // So these zones are never drawn across the chart, and there is no Levels toolbar control, no
@@ -25,10 +25,11 @@
 // ── THE STRICT LABEL STANDS ─────────────────────────────────────────────────
 //
 // The rejected "bullish transition / current condition" state is deliberately absent. Where the
-// strict swing label may read oddly against the chart — a monthly downtrend after a large advance —
-// the card shows the STRUCTURAL FACTS that explain the gap: how far price has come since the pivot
-// the label is anchored on, and whether the last confirmed swing high has been reclaimed. A reader
-// can then disagree with the label on evidence rather than being quietly told something softer.
+// strict swing label may read oddly against the chart — a monthly lower-highs-and-lows reading after
+// a large advance — the card shows the STRUCTURAL FACTS that explain the gap: how far price has come
+// since the pivot the structure was confirmed on, and whether the last confirmed swing high has been
+// reclaimed. A reader can then disagree with the label on evidence rather than being quietly told
+// something softer.
 //
 // ── MOBILE ──────────────────────────────────────────────────────────────────
 //
@@ -42,8 +43,23 @@ import { C, Dot, Skel, startCheckout } from '../lib/cp-shared';
 const money = (n) => (n == null ? '—' : `$${Number(n).toFixed(2)}`);
 const pctText = (n) => (n == null ? '' : `${Number(n).toFixed(2)}%`);
 
+// ── THE LABEL DESCRIBES CONFIRMED STRUCTURE, NOT A CURRENT TREND ────────────
+//
+// Measured over 762 daily / 726 weekly tickers and 112,620 point-in-time samples
+// (research/trend-methodology-report.md): at label time the TRAILING window is strongly
+// directional — +6.12% median for the up state, 78.6% matching sign — while across the span the
+// label is actually displayed it is a coin flip (46.7%, and the median carries the wrong sign).
+//
+// So the engine truthfully identifies a higher-high/higher-low SEQUENCE that has already formed.
+// The word "Uptrend" asserted something stronger: that it is still happening. These words say what
+// was actually computed. Sweeping pivotWidth 2-6 confirmed this is structural, not a tuning
+// problem — no width made the present-tense reading true, so the wording changed instead.
+//
+// The classifier is untouched: same states, same colours, same underlying field.
 const TREND_LABEL = {
-  uptrend: 'Uptrend', downtrend: 'Downtrend', range: 'Range',
+  uptrend: 'Higher highs & lows',
+  downtrend: 'Lower highs & lows',
+  range: 'No clear sequence',
   'insufficient-history': 'Insufficient history',
 };
 const trendColor = (t) => (t === 'uptrend' ? C.green : t === 'downtrend' ? C.red : C.muted);
@@ -194,7 +210,7 @@ function Timeframe({ tf }) {
               <span className="cp-num" style={{ fontWeight: 600, color: tf.priceSincePivotPct >= 0 ? C.green : C.red }}>
                 {tf.priceSincePivotPct >= 0 ? '+' : ''}{pctText(tf.priceSincePivotPct)}
               </span>
-              {` since the ${tf.trendAsOfPivot} pivot this label is anchored on`}
+              {` since the ${tf.trendAsOfPivot} pivot this structure was confirmed on`}
             </div>
           )}
           {d?.note && (

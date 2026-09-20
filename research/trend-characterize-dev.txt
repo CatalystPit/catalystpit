@@ -1,0 +1,88 @@
+harness self-test: rising staircase -> uptrend, falling staircase -> downtrend  ok
+
+development tickers: 767 (holdout of 448 NOT touched)
+
+  ... 100/767 tickers
+  ... 200/767 tickers
+  ... 300/767 tickers
+  ... 400/767 tickers
+  ... 500/767 tickers
+  ... 600/767 tickers
+  ... 700/767 tickers
+
+================ DAILY — 762 tickers, 112,620 samples ================
+C1 non-triviality — state distribution
+   uptrend                   37423   33.2%
+   downtrend                 31870   28.3%
+   range                     43314   38.5%
+   insufficient-history         13      0%
+C5 coverage — UNKNOWN share: 0%
+
+C2 stability — run length in samples (consecutive same-state samples)
+   uptrend                n= 12701  median    2  mean   2.9  share of runs that are a single sample  34.3%
+   downtrend              n= 11874  median    2  mean   2.7  share of runs that are a single sample  36.3%
+   range                  n= 20719  median    2  mean   2.1  share of runs that are a single sample  45.8%
+   flips per 100 samples: 39.5
+
+C3 staleness — bars between the newest confirmed pivot and the sample
+   uptrend                n=  37423  median    5 bars  p90   10  median run   10 bars  staleness/run 0.50
+   downtrend              n=  31870  median    5 bars  p90   10  median run   10 bars  staleness/run 0.50
+   range                  n=  43314  median    5 bars  p90   11  median run   10 bars  staleness/run 0.50
+
+C4a CONTROL — trailing change at label time (must be strongly directional, or the harness is wrong)
+   uptrend                n=  37423  median 6.12%  matching sign 78.6%
+   downtrend              n=  31870  median -5.14%  matching sign 75.4%
+   range                  n=  43314  median 0.40%
+
+C4 descriptive validity — net price change across the labelled span
+   uptrend                n=  8181  median -0.42%  mean 2.52%  matching sign 46.7%
+   downtrend              n=  7425  median 0.92%  mean 1.38%  matching sign 42.4%
+   range                  n= 11071  median 0.25%  mean 1.19%
+
+C4c persistence — fixed window from label onset (context only, NOT the pre-registered gate)
+   uptrend                n=  36926  median 0.20%  matching sign 51.4%
+   downtrend              n=  31445  median 0.50%  matching sign 46.7%
+   range                  n=  42714  median 0.29%
+
+C6 redundancy — agreement with the trivial 200DMA rule: 65.8%  (n=69,293)
+   NOTE: the MA rule has no RANGE state, so it can only ever agree on UP/DOWN samples. A high
+   number here means the structural label is mostly restating the moving average.
+
+================ WEEKLY — 726 tickers, 74,785 samples ================
+C1 non-triviality — state distribution
+   uptrend                   26277   35.1%
+   downtrend                 20681   27.7%
+   range                     27827   37.2%
+   insufficient-history          0      0%
+C5 coverage — UNKNOWN share: 0%
+
+C2 stability — run length in samples (consecutive same-state samples)
+   uptrend                n=  2860  median    6  mean   9.2  share of runs that are a single sample   5.8%
+   downtrend              n=  2552  median    6  mean   8.1  share of runs that are a single sample   6.8%
+   range                  n=  5139  median    4  mean   5.4  share of runs that are a single sample   9.5%
+   flips per 100 samples: 13.1
+
+C3 staleness — bars between the newest confirmed pivot and the sample
+   uptrend                n=  26277  median    4 bars  p90    7  median run    6 bars  staleness/run 0.67
+   downtrend              n=  20681  median    4 bars  p90    7  median run    6 bars  staleness/run 0.67
+   range                  n=  27827  median    3 bars  p90    7  median run    4 bars  staleness/run 0.75
+
+C4a CONTROL — trailing change at label time (must be strongly directional, or the harness is wrong)
+   uptrend                n=  26277  median 5.58%  matching sign 68.6%
+   downtrend              n=  20681  median -3.66%  matching sign 61.2%
+   range                  n=  27827  median 1.28%
+
+C4 descriptive validity — net price change across the labelled span
+   uptrend                n=  2422  median -1.13%  mean 4.27%  matching sign 44.4%
+   downtrend              n=  2235  median 2.30%  mean 5.53%  matching sign 39.5%
+   range                  n=  4437  median 0.21%  mean 3.01%
+
+C4c persistence — fixed window from label onset (context only, NOT the pre-registered gate)
+   uptrend                n=  25101  median 0.62%  matching sign 52.9%
+   downtrend              n=  20005  median 1.09%  matching sign 45.2%
+   range                  n=  26775  median 0.53%
+
+C6 redundancy — agreement with the trivial 40WMA rule: 76%  (n=46,958)
+   NOTE: the MA rule has no RANGE state, so it can only ever agree on UP/DOWN samples. A high
+   number here means the structural label is mostly restating the moving average.
+

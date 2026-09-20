@@ -18,6 +18,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Warm one ticker's caches by hitting the public routes (reuses all their cache logic).
 // The 4 endpoints hit different upstreams (Finnhub/Polygon, Polygon, Tiingo, SEC) → parallel
 // is a controlled 4-call burst, not a per-ticker bottleneck; the inter-ticker GAP is the throttle.
+//
+// ── WARMING IS NOT REFETCHING ───────────────────────────────────────────────
+//
+// This job used to cost an upstream Tiingo request per ticker per run — 4 runs/hour x 20 tickers =
+// 80/hour, which on its own exceeded the account's hourly allocation before a single visitor
+// arrived. The cause was not this file: /api/chart-daily compared freshness against the calendar
+// date, so "warm the cache" and "refetch from the vendor" were the same operation.
+//
+// With market/refresh-policy.mjs that is fixed at the route. A warm now reaches the provider only
+// when a session has actually published — roughly once per ticker per day — and every other run is
+// served from Postgres. Measured in scripts/verify-refresh-policy.mjs: 80/hour -> 20/hour, and a
+// fully warm hour costs zero.
+//
+// The job is left calling the public routes deliberately: it exercises the same paths visitors do,
+// so a cache that is warm here is warm for them. That property is worth more than shaving the
+// internal hop, now that the hop is cheap.
 async function warmTicker(base, sym) {
   const t0 = Date.now();
   const paths = [

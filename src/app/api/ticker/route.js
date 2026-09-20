@@ -4,6 +4,8 @@ import { eq, desc } from 'drizzle-orm';
 import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
 import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
+import { tiingoDailyToCanonical, assertCanonicalCandles } from '../../../lib/market/candles.mjs';
+import { claimRefreshAttempt, coalesce } from '../../../lib/market/refresh-policy.mjs';
 
 export const runtime = 'nodejs';
 
@@ -119,16 +121,26 @@ async function computeFiftyDayMA(sym) {
     .from(tickerDailyCandles).where(eq(tickerDailyCandles.ticker, sym))
     .orderBy(desc(tickerDailyCandles.date)).limit(50);
   let rows = await last50();
-  if (rows.length < 50 && TIINGO_API_KEY) {
+  // ── WHY THIS IS GUARDED ──
+  //
+  // The trigger is "fewer than 50 stored candles", and for a legitimately thin history — a recent
+  // listing, an illiquid or delisted symbol — the fetch can never make that false. The condition
+  // that causes the request is one the request cannot satisfy, so every visit re-fetched forever.
+  //
+  // A claimed ATTEMPT (not a success) terminates it: one upstream call per cooldown per symbol,
+  // whatever the vendor returns. Concurrent callers share a single flight.
+  const key = `ticker-50dma:${sym}`;
+  if (rows.length < 50 && TIINGO_API_KEY && await claimRefreshAttempt(key)) {
     const to = new Date(), from = new Date(to.getTime() - 90 * 86400000);
     const fmt = (d) => d.toISOString().slice(0, 10);
-    const { ok, data } = await fetchTiingoDaily(sym, fmt(from), fmt(to), TIINGO_API_KEY);
+    const { ok, data } = await coalesce(key, () =>
+      fetchTiingoDaily(sym, fmt(from), fmt(to), TIINGO_API_KEY));
     if (ok && Array.isArray(data) && data.length) {
-      const vals = data
-        .filter(d => d.date && Number.isFinite(d.adjClose))
-        .map(d => ({ ticker: sym, date: d.date.slice(0, 10),
-          open: d.adjOpen, high: d.adjHigh, low: d.adjLow, close: d.adjClose,
-          volume: d.adjVolume ?? 0, source: 'tiingo' }));
+      // Same canonical conversion as /api/chart-daily. This writer previously persisted the adj*
+      // (total-return) fields too, so a 50-day average computed from it was an average of prices
+      // nobody could have traded. One contract, one conversion, enforced by the guard.
+      const vals = assertCanonicalCandles(
+        tiingoDailyToCanonical(data, { ticker: sym, today: fmt(to) }), { ticker: sym });
       if (vals.length) {
         await db.insert(tickerDailyCandles).values(vals)
           .onConflictDoNothing({ target: [tickerDailyCandles.ticker, tickerDailyCandles.date] });
