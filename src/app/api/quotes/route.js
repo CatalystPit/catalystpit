@@ -1,9 +1,41 @@
 import { auth } from '@clerk/nextjs/server';
 import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
 import { getQuotes } from '../../../lib/market-data';
+import { coalesce } from '../../../lib/market/refresh-policy.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
+
+// Seconds a DELAYED quote may be reused. Short enough that the tape still looks live at the
+// product's own 60s poll cadence, long enough that a thousand viewers are one upstream request
+// rather than a thousand. Never applied to entitled realtime.
+const QUOTES_TTL_SEC = Number(process.env.QUOTES_CACHE_TTL_SEC || 45);
+
+const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+
+// A cache miss and a cache outage must both simply mean "ask the provider", never an error page.
+async function quotesCacheGet(key) {
+  if (!KV_URL || !KV_TOKEN) return null;
+  try {
+    const r = await fetch(`${KV_URL}/get/${encodeURIComponent(`quotes:${key}`)}`,
+      { headers: { Authorization: `Bearer ${KV_TOKEN}` } });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.result ? JSON.parse(d.result) : null;
+  } catch { return null; }
+}
+
+async function quotesCacheSet(key, value) {
+  if (!KV_URL || !KV_TOKEN) return;
+  try {
+    await fetch(`${KV_URL}/set/${encodeURIComponent(`quotes:${key}`)}?EX=${QUOTES_TTL_SEC}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'text/plain' },
+      body: JSON.stringify(value),
+    });
+  } catch { /* non-fatal */ }
+}
 
 // Batch quotes for a set of tickers, ENTITLEMENT-AWARE: Pro/Elite get real-time (when the configured
 // provider supports it), Free gets delayed. Provider-agnostic (Polygon now, Twelve Data next) — this
@@ -25,7 +57,37 @@ export async function GET(request) {
   } catch { /* signed-out → delayed */ }
 
   try {
-    const quotes = await getQuotes(syms, { realtime });
+    // ── WHY THERE IS A CACHE HERE AT ALL ──
+    //
+    // Every open tab polled this route on a timer with no server-side cache, so N viewers of the
+    // same four index symbols produced N identical upstream requests per minute. Provider demand
+    // scaled with audience rather than with data — the defect is architectural and survives any
+    // provider or plan.
+    //
+    // ── AND WHY IT IS DELIBERATELY NARROW ──
+    //
+    // ENTITLED REALTIME IS NEVER CACHED. A realtime quote is licensed per entitled user, and
+    // reusing one user's response for another is a redistribution question we have not licensed an
+    // answer to. Only the delayed/EOD tier — which every visitor is already served identically —
+    // is shared, and only for seconds.
+    //
+    // Coalescing applies to both: collapsing requests that are in flight AT THE SAME MOMENT for the
+    // SAME symbols is not redistribution, it is not issuing the same question twice.
+    const key = `${realtime ? 'rt' : 'eod'}:${syms.join(',')}`;
+
+    if (realtime) {
+      const quotes = await coalesce(`quotes:${key}`, () => getQuotes(syms, { realtime }));
+      return Response.json(quotes, { headers: { 'Cache-Control': 'private, no-store' } });
+    }
+
+    const cached = await quotesCacheGet(key);
+    if (cached) return Response.json(cached, { headers: { 'Cache-Control': 'private, no-store' } });
+
+    const quotes = await coalesce(`quotes:${key}`, async () => {
+      const q = await getQuotes(syms, { realtime: false });
+      if (q && Object.keys(q).length) await quotesCacheSet(key, q);
+      return q;
+    });
     return Response.json(quotes, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     return Response.json({}, { status: 200, headers: { 'Cache-Control': 'private, no-store' } });

@@ -3,6 +3,8 @@ import { tickerDailyCandles } from '../../../lib/schema';
 import { and, eq, gte, lte, asc, sql } from 'drizzle-orm';
 import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
+import { tiingoDailyToCanonical, assertCanonicalCandles } from '../../../lib/market/candles.mjs';
+import { isStale, claimRefreshAttempt, coalesce } from '../../../lib/market/refresh-policy.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -77,34 +79,50 @@ export async function GET(request) {
     //  - head missing (range starts well before earliest stored) → whole range (covers head+tail)
     //  - tail missing (newer days)        → just latest_stored+1 … end
     //  - fully covered                    → no fetch
+    // TAIL FRESHNESS IS MEASURED AGAINST THE LAST PUBLISHED SESSION, NOT THE CALENDAR DATE.
+    //
+    // This previously compared against today, so it was true during every session and all weekend:
+    // every visitor triggered an upstream fetch for a window that could not contain a bar yet. The
+    // cache existed and was bypassed. See market/refresh-policy.mjs.
+    const tail = isStale(maxStored, now);
     let fetchFrom = null;
     if (!minStored) {
       fetchFrom = startDate;
     } else {
       const needHead = startDate < minStored && daysBetween(startDate, minStored) > HEAD_TOL;
-      const needTail = !maxStored || maxStored < endDate;
       if (needHead) fetchFrom = startDate;
-      else if (needTail) fetchFrom = nextDay(maxStored);
+      else if (tail.stale) fetchFrom = nextDay(maxStored);
     }
 
     let fetched = 0;
     let tiingoFailed = false;
+    let upstream = false;
     if (fetchFrom && fetchFrom <= endDate) {
-      const { ok, data } = await fetchTiingoDaily(ticker, fetchFrom, endDate, TIINGO_API_KEY);
+      // A gap we cannot close — a holiday, a delisted symbol — would otherwise re-request forever,
+      // so an ATTEMPT is claimed, not just a success. Simultaneous callers share one flight.
+      const key = `chart-daily:${ticker}:${fetchFrom}`;
+      let ok = true;
+      let data = [];                    // within cooldown: serve what we already hold
+      if (await claimRefreshAttempt(key)) {
+        upstream = true;
+        ({ ok, data } = await coalesce(key, () =>
+          fetchTiingoDaily(ticker, fetchFrom, endDate, TIINGO_API_KEY)));
+      }
       if (!ok || !Array.isArray(data)) {
         tiingoFailed = true;
         console.log(`[chart_daily] ${ticker} tiingo fetch failed for ${fetchFrom}..${endDate}`);
       } else {
-        // Store ADJUSTED OHLCV under canonical column names (no split-induced gaps).
-        const rows = data
-          .map((d) => ({
-            ticker,
-            date: String(d.date || '').slice(0, 10),
-            open: d.adjOpen, high: d.adjHigh, low: d.adjLow, close: d.adjClose,
-            volume: Number.isFinite(d.adjVolume) ? d.adjVolume : 0,
-            source: 'tiingo',
-          }))
-          .filter((r) => r.date && [r.open, r.high, r.low, r.close].every(Number.isFinite));
+        // CANONICAL SPLIT-ADJUSTED, derived from RAW + splitFactor.
+        //
+        // This used to store Tiingo's adj* fields, which are TOTAL RETURN — splits and dividends
+        // both removed. That is a different quantity from the one every reader of this table
+        // assumes, and it is what produced the fabricated boundary gaps (KO 10.15%, PG 8.94%) and
+        // put the reaction benchmark on a different basis from the stocks measured against it.
+        //
+        // The conversion and the guard live in market/candles.mjs so there is exactly one semantic
+        // contract for this table and no second copy of the adjustment to drift.
+        const rows = assertCanonicalCandles(
+          tiingoDailyToCanonical(data, { ticker, today: endDate }), { ticker });
         // Chunk inserts: 8 columns/row vs Postgres' 65535 bind-param cap ⇒ ≤8191 rows/statement.
         // 1000 keeps a wide margin and handles full histories (e.g. AAPL 'all' ≈ 11k rows).
         const CHUNK = 1000;
@@ -161,6 +179,8 @@ export async function GET(request) {
       ticker, range, count: finalRows.length, candles: finalRows,
       meta: {
         cached: cachedCount,
+        upstream,
+        tailReason: tail.reason,
         fetched,
         earliest: servedStart,
         requestedFrom: startDate,

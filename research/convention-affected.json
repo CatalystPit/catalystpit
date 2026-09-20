@@ -1,0 +1,632 @@
+[
+ {
+  "ticker": "SCTH",
+  "tiingo": 61,
+  "polygon": 0
+ },
+ {
+  "ticker": "DPLS",
+  "tiingo": 61,
+  "polygon": 0
+ },
+ {
+  "ticker": "SVA",
+  "tiingo": 61,
+  "polygon": 0
+ },
+ {
+  "ticker": "DIA",
+  "tiingo": 1250,
+  "polygon": 5
+ },
+ {
+  "ticker": "LCID",
+  "tiingo": 135,
+  "polygon": 5
+ },
+ {
+  "ticker": "AAPL",
+  "tiingo": 11526,
+  "polygon": 6
+ },
+ {
+  "ticker": "META",
+  "tiingo": 1326,
+  "polygon": 6
+ },
+ {
+  "ticker": "RIVN",
+  "tiingo": 134,
+  "polygon": 6
+ },
+ {
+  "ticker": "NVDA",
+  "tiingo": 1325,
+  "polygon": 7
+ },
+ {
+  "ticker": "VTI",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "GME",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "XLK",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "MARA",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "RIOT",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "XLF",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "VOO",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "NIO",
+  "tiingo": 133,
+  "polygon": 7
+ },
+ {
+  "ticker": "APLD",
+  "tiingo": 61,
+  "polygon": 8
+ },
+ {
+  "ticker": "LILA",
+  "tiingo": 63,
+  "polygon": 9
+ },
+ {
+  "ticker": "IEP",
+  "tiingo": 63,
+  "polygon": 9
+ },
+ {
+  "ticker": "WRAP",
+  "tiingo": 62,
+  "polygon": 9
+ },
+ {
+  "ticker": "CAI",
+  "tiingo": 61,
+  "polygon": 9
+ },
+ {
+  "ticker": "KEEL",
+  "tiingo": 61,
+  "polygon": 9
+ },
+ {
+  "ticker": "ACHC",
+  "tiingo": 59,
+  "polygon": 9
+ },
+ {
+  "ticker": "AAAU",
+  "tiingo": 59,
+  "polygon": 9
+ },
+ {
+  "ticker": "GROV",
+  "tiingo": 58,
+  "polygon": 9
+ },
+ {
+  "ticker": "SBSI",
+  "tiingo": 58,
+  "polygon": 9
+ },
+ {
+  "ticker": "SYM",
+  "tiingo": 58,
+  "polygon": 9
+ },
+ {
+  "ticker": "STT",
+  "tiingo": 10049,
+  "polygon": 78
+ },
+ {
+  "ticker": "RGTI",
+  "tiingo": 991,
+  "polygon": 264
+ },
+ {
+  "ticker": "UVXY",
+  "tiingo": 991,
+  "polygon": 264
+ },
+ {
+  "ticker": "RDDT",
+  "tiingo": 362,
+  "polygon": 264
+ },
+ {
+  "ticker": "CRWV",
+  "tiingo": 58,
+  "polygon": 313
+ },
+ {
+  "ticker": "NBIS",
+  "tiingo": 63,
+  "polygon": 416
+ },
+ {
+  "ticker": "AMZN",
+  "tiingo": 323,
+  "polygon": 434
+ },
+ {
+  "ticker": "DRI",
+  "tiingo": 251,
+  "polygon": 506
+ },
+ {
+  "ticker": "EOG",
+  "tiingo": 136,
+  "polygon": 621
+ },
+ {
+  "ticker": "CVX",
+  "tiingo": 136,
+  "polygon": 621
+ },
+ {
+  "ticker": "COP",
+  "tiingo": 136,
+  "polygon": 621
+ },
+ {
+  "ticker": "SLB",
+  "tiingo": 136,
+  "polygon": 621
+ },
+ {
+  "ticker": "SPY",
+  "tiingo": 7845,
+  "polygon": 622
+ },
+ {
+  "ticker": "PLTR",
+  "tiingo": 877,
+  "polygon": 622
+ },
+ {
+  "ticker": "UPS",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "LMT",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "MS",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "BLK",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "PFE",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "RTX",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "SCHW",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "ABBV",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "HOOD",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "HON",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "BA",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "COIN",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "HD",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "SOFI",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "DE",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "C",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "MRK",
+  "tiingo": 135,
+  "polygon": 622
+ },
+ {
+  "ticker": "UBER",
+  "tiingo": 1227,
+  "polygon": 623
+ },
+ {
+  "ticker": "NOW",
+  "tiingo": 632,
+  "polygon": 623
+ },
+ {
+  "ticker": "CVS",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "SPGI",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "PEP",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "SHOP",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "GILD",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "ICE",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "MU",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "TSLA",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "BAC",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "NKE",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "TGT",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "XOM",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "WMT",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "MSTR",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "NET",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "USB",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "AMGN",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "DHR",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "LOW",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "ABT",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "GS",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "MCD",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "DDOG",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "TMO",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "TXN",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "PANW",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "IBM",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "WFC",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "SNOW",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "BMY",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "AXP",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "QCOM",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "ABNB",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "UNH",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "V",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "SBUX",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "PYPL",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "DIS",
+  "tiingo": 134,
+  "polygon": 623
+ },
+ {
+  "ticker": "CSCO",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "ARKK",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "XLE",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "IWM",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "ADBE",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "GLD",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "TLT",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "JPM",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "NFLX",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "BABA",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "CRM",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "ORCL",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "SLV",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "AMD",
+  "tiingo": 133,
+  "polygon": 624
+ },
+ {
+  "ticker": "GOOG",
+  "tiingo": 63,
+  "polygon": 694
+ },
+ {
+  "ticker": "ILMN",
+  "tiingo": 63,
+  "polygon": 694
+ },
+ {
+  "ticker": "CI",
+  "tiingo": 63,
+  "polygon": 694
+ },
+ {
+  "ticker": "CEG",
+  "tiingo": 61,
+  "polygon": 696
+ },
+ {
+  "ticker": "TSM",
+  "tiingo": 58,
+  "polygon": 699
+ },
+ {
+  "ticker": "RSG",
+  "tiingo": 58,
+  "polygon": 699
+ },
+ {
+  "ticker": "MSI",
+  "tiingo": 58,
+  "polygon": 699
+ },
+ {
+  "ticker": "SE",
+  "tiingo": 58,
+  "polygon": 699
+ },
+ {
+  "ticker": "A",
+  "tiingo": 1,
+  "polygon": 756
+ },
+ {
+  "ticker": "MMM",
+  "tiingo": 13541,
+  "polygon": 757
+ },
+ {
+  "ticker": "UPST",
+  "tiingo": 498,
+  "polygon": 757
+ },
+ {
+  "ticker": "ALK",
+  "tiingo": 498,
+  "polygon": 757
+ },
+ {
+  "ticker": "COO",
+  "tiingo": 498,
+  "polygon": 757
+ }
+]

@@ -31,8 +31,30 @@ import { loadDailyHistory, loadPriceQuality } from '../src/lib/structure/structu
 import { marketStructure } from '../src/lib/structure/engine.mjs';
 import { atr } from '../src/lib/structure/bars.mjs';
 
-const TICKERS = process.argv.slice(2).length ? process.argv.slice(2)
-  : ['MSFT', 'AAPL', 'NVDA', 'AMD', 'ALK', 'KO', 'JPM', 'XOM', 'WMT', 'PFE'];
+const PRE_REPAIR = process.argv.includes('--pre-repair');
+const TICKERS = (process.argv.slice(2).filter((a) => !a.startsWith('--')).length
+  ? process.argv.slice(2).filter((a) => !a.startsWith('--'))
+  : ['MSFT', 'AAPL', 'NVDA', 'AMD', 'ALK', 'KO', 'JPM', 'XOM', 'WMT', 'PFE']);
+
+// Pre-repair reconstruction, from the snapshot of the exact rows the migration changed. A ticker the
+// repair never touched comes back identical, which is what makes an old-vs-new comparison meaningful
+// rather than a comparison of two different vendor pulls.
+async function preRepairBars(ticker, liveBars) {
+  const { neon } = await import('@neondatabase/serverless');
+  const sql = neon(process.env.DATABASE_URL);
+  const run = (await sql.query(
+    'select run_id from ticker_daily_candles_backup order by backed_up_at desc limit 1'))[0]?.run_id;
+  if (!run) return liveBars;
+  const back = await sql.query(
+    `select date::text date, open, high, low, close
+       from ticker_daily_candles_backup where run_id=$1 and ticker=$2`, [run, ticker]);
+  if (!back.length) return liveBars;
+  const bm = new Map(back.map((b) => [String(b.date), b]));
+  return liveBars.map((b) => {
+    const o = bm.get(String(b.date).slice(0, 10));
+    return o ? { ...b, open: Number(o.open), high: Number(o.high), low: Number(o.low), close: Number(o.close) } : b;
+  });
+}
 
 /** Sessions after the sample date over which an outcome is measured. */
 const HORIZON = 40;
@@ -117,7 +139,11 @@ const bump = (key) => {
 let tickersUsed = 0, samples = 0, skipped = 0;
 
 for (const ticker of TICKERS) {
-  const [bars, quality] = await Promise.all([loadDailyHistory(ticker), loadPriceQuality(ticker)]);
+  const [liveBars, quality] = await Promise.all([loadDailyHistory(ticker), loadPriceQuality(ticker)]);
+  // --pre-repair reconstructs the series production served BEFORE the adjustment-seam repair, so the
+  // same harness produces the old and the new answer. Rewriting the harness to compare them would
+  // have compared two harnesses instead of two datasets.
+  const bars = PRE_REPAIR ? await preRepairBars(ticker, liveBars) : liveBars;
   if (bars.length < 600) { skipped++; continue; }
   if (quality?.usable === false) { skipped++; continue; }
   tickersUsed++;

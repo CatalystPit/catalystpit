@@ -12,11 +12,22 @@
 //   0  benchmark candles, amortised — SPY is identical for every viewer and every ticker, so it is
 //      held process-wide behind a TTL rather than refetched per request
 //
-// ── THE PRICES ARE ALREADY ADJUSTED ─────────────────────────────────────────
+// ── WHICH ADJUSTMENT, AND WHY IT IS NOT "BOTH" ──────────────────────────────
 //
-// ticker_daily_candles stores Tiingo's adjusted series (schema.js:185-189 — open/high/low/close are
-// adjOpen/adjHigh/adjLow/adjClose), so splits and dividends are handled at ingest and no return here
-// needs to correct for them.
+// Reaction requires a SPLIT-ADJUSTED series (price-semantics.mjs, REQUIRED_CONVENTION). It must not
+// be total-return. A total-return series back-adjusts historic prices downward by every dividend
+// paid since, so a bar's "return" silently includes distributions the tape never showed on that day
+// — and this module's whole claim is that it reports what the tape did after a disclosure.
+//
+// This comment used to say splits AND dividends were handled at ingest. That described the old
+// convention and was corrected when the adjustment seam was repaired: the repaired tickers now
+// store raw OHLC scaled by split factor only. Dividends are deliberately NOT removed.
+//
+// ⚠️ THE TABLE IS NOT YET UNIFORM. Only the vendor-confirmed seam tickers have been converted; other
+// tickers may still carry total-return rows from the older ingest. The difference is small on recent
+// bars and grows with age, so a reaction far back on an unrepaired dividend payer can still read
+// high. That is a known, bounded data-quality gap, not something this module can correct — it cannot
+// tell the two conventions apart from the numbers alone.
 //
 // What adjustment CANNOT fix is a series that stops describing the same security — a retired symbol
 // reassigned to a new company, or a reverse split the vendor never applied. price-continuity.mjs
