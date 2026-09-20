@@ -27,7 +27,9 @@ const CONFIRMED = Object.entries(audit)
 
 const sql = neon(process.env.DATABASE_URL);
 const L = (s = '') => console.log(s);
-const RUN = (await sql.query(
+// Which snapshot defines 'before'. Defaults to the newest, but the newest is not always the
+// substantive one — a later small fix-up run would otherwise make this comparison vacuous.
+const RUN = process.env.REPAIR_RUN_ID || (await sql.query(
   'select run_id from ticker_daily_candles_backup order by backed_up_at desc limit 1'))[0].run_id;
 
 const n1 = (v) => (Number.isFinite(v) ? Number(v).toFixed(2) : '-');
