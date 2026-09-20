@@ -8,7 +8,7 @@
 
 import {
   toScanRow, toScanRows, evidenceLine, joinLine, structureTags, levelsToStructure,
-  supportingFacts, freshnessLabel, isLiveEnough, JOIN_LINE, EVIDENCE_LINE_MAX,
+  supportingFacts, freshnessLabel, isLiveEnough, servedRow, JOIN_LINE, EVIDENCE_LINE_MAX,
   SCAN_DEAD_ZONE_PCT, SELLOFF_PCT,
 } from '../src/lib/scan/scan-rows.mjs';
 import { buildBoard, THRESHOLDS } from '../src/lib/scan/boards.mjs';
@@ -175,6 +175,85 @@ L('\n=== STRUCTURE IS DAILY-ONLY, AND HONEST ABOUT IT ===');
   ok('no tags means no structure object', levelsToStructure({}) === null);
 }
 
+// ── ONE CLOCK PER ROW ───────────────────────────────────────────────────────
+//
+// The change% a row prints is the quote's when there is one, while the levels come from the
+// Consensus row's daily bars. Those are two different snapshots, and reading the prior-close
+// relationship from the levels while printing the quote's move put "BELOW PRIOR CLOSE" beside a
+// green +4.2% — one row, two contradictory claims about the same session.
+L('\n=== ONE CLOCK: STRUCTURE AND CHANGE% AGREE ===');
+{
+  // Levels say the close was BELOW its prior close; a fresher quote says the stock is up.
+  const staleDown = { abovePrevClose: false, close: 1.25, changePct: -3.1,
+    at20dHigh: false, at20dLow: false, at52wHigh: false, at52wLow: false };
+
+  ok('the displayed move decides the prior-close tag',
+    mut('twoclocks') ? false : structureTags(staleDown, 4.2).includes('ABOVE PRIOR CLOSE'));
+  ok('…and the contradicting stale tag is gone',
+    !structureTags(staleDown, 4.2).includes('BELOW PRIOR CLOSE'));
+  ok('a down move still reads as below',
+    structureTags({ abovePrevClose: true }, -4.2).includes('BELOW PRIOR CLOSE'));
+  ok('with no quote the levels flag still answers',
+    structureTags(staleDown, null).includes('BELOW PRIOR CLOSE'));
+  ok('…and a row with neither claims no direction',
+    !JSON.stringify(structureTags({ at20dHigh: true }, null)).includes('PRIOR CLOSE'));
+
+  // The whole row, end to end: the tag, the printed move and the board's own reason all agree.
+  const row = toScanRow(crow({ levels: staleDown }), { price: 1.4, changePct: 4.2, freshness: 'eod' });
+  ok('the row renders the quote\'s move', row.display.changePct === 4.2);
+  ok('…and its structure tag agrees with it',
+    mut('twoclocks') ? false : row.display.structure.includes('ABOVE PRIOR CLOSE'));
+  ok('…and the structure boards.mjs ranks on is the same label',
+    row.structure.label === row.display.structure[0]);
+
+  // boards.mjs quotes that label back in its reason ("52W HIGH on +4.2%"); same snapshot, so the
+  // sentence cannot contradict itself.
+  const built = buildBoard('moving-now', [row], { now: NOW, limit: 5 });
+  const reason = built.rows[0]?.boardReason || '';
+  const saysAbove = /ABOVE PRIOR CLOSE/.test(reason);
+  ok('the board reason never pairs a stale tag with a fresh move',
+    mut('twoclocks') ? false : !/BELOW PRIOR CLOSE/.test(reason), reason);
+  ok('…and when it names the tag, the move it names is positive',
+    !saysAbove || /on \+?4\.2%/.test(reason), reason);
+}
+
+// ── ONE REASON PER ROW ──────────────────────────────────────────────────────
+//
+// boards.mjs writes a gate trace; the row composes an evidence line. Shipping both unreconciled
+// put two different explanations of the same row on screen.
+L('\n=== ONE REASON: THE EVIDENCE LINE LEADS ===');
+{
+  const row = toScanRow(crow(), null);
+  const built = buildBoard('catalysts-now', [row], { now: NOW, limit: 5 });
+  const served = built.rows.map(servedRow);   // the exact mapping the API serves
+  ok('a row is served with a reason', served[0] && typeof served[0].boardReason === 'string');
+  ok('…and that reason IS the compact evidence line',
+    mut('tworeasons') ? false : served[0].boardReason === served[0].evidence, served[0]?.boardReason);
+  ok('…so the row never shows two different explanations',
+    served[0].boardReason === served[0].evidence);
+  ok('the gate trace is kept, under its own name',
+    typeof served[0].qualifiedBy === 'string' && served[0].qualifiedBy.length > 0);
+  ok('…and is still the board\'s own wording', served[0].qualifiedBy === built.rows[0].boardReason);
+
+  // A row with no composable evidence line must still explain itself.
+  const bare = toScanRow(crow({ families: {} }), { price: 9, changePct: 8.5, freshness: 'eod' });
+  const bareBuilt = buildBoard('moving-now', [bare], { now: NOW, limit: 5 });
+  const bareServed = bareBuilt.rows.map(servedRow);
+  ok('a row with no evidence line falls back to the gate trace',
+    bareServed[0] && typeof bareServed[0].boardReason === 'string' && bareServed[0].boardReason.length > 0,
+    bareServed[0]?.boardReason);
+
+  // ⚠️ THE JOIN BADGE READS THE SAME % THE ROW PRINTS.
+  const moved = toScanRow(crow({ direction: 'POSITIVE', setup: 'FRESH_MATERIAL_CATALYST' }),
+    { price: 9, changePct: 6.4, freshness: 'eod' });
+  ok('the join describes the displayed move, not a second measurement',
+    mut('twoclocks') ? false : moved.display.join === JOIN_LINE.CONFIRMING, moved.display.join);
+  const flat = toScanRow(crow({ direction: 'POSITIVE', setup: 'FRESH_MATERIAL_CATALYST' }),
+    { price: 9, changePct: 1.1, freshness: 'eod' });
+  ok('…and a move inside the dead zone reads as no reaction',
+    flat.display.join === JOIN_LINE.NO_REACTION);
+}
+
 L('\n=== THE ADAPTER FEEDS THE BOARDS CORRECTLY ===');
 {
   const r = toScanRow(crow(), null);
@@ -245,6 +324,11 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   const page = read('../src/app/scan/ScanClient.jsx');
   const rows = read('../src/components/scan/ScanBoardRows.jsx');
   const route = read('../src/app/api/scan-board/route.js');
+  // The board building moved out of the route into a module both Scan endpoints share, so the
+  // entitlement and quote rules are asserted where they now live. `route + payload` keeps the
+  // assertions honest wherever the code sits: if either file drops the rule, the test fails.
+  const payloadMod = read('../src/lib/scan/board-payload.js');
+  const routeSrc = route + payloadMod;
   const shared = read('../src/lib/cp-shared.jsx');
   const panel = read('../src/components/scan/PitScanPanel.jsx');
   const terminal = read('../src/app/terminal/TerminalClient.jsx');
@@ -297,11 +381,11 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
 
   // ⚠️ ENTITLEMENT. `realtime` may only ever narrow what is served.
   ok('the route resolves entitlement server-side',
-    /resolveUserAccess\(\)/.test(route) && /isRealtime\(tier\) && !beta/.test(route));
+    /resolveUserAccess\(\)/.test(routeSrc) && /isRealtime\(tier\) && !beta/.test(routeSrc));
   ok('…defaulting to delayed when it cannot be resolved',
-    /let realtime = false;/.test(route));
+    /let realtime = false;/.test(routeSrc));
   ok('…and passes it to getQuotes rather than assuming',
-    /getQuotes\(symbols, \{ realtime \}\)/.test(route));
+    /getQuotes\(symbols, \{ realtime \}\)/.test(routeSrc));
   ok('the response is never shared-cacheable',
     mut('sharedcache') ? false : /private, no-store/.test(route) && !/s-maxage/.test(route));
   ok('the page is a client component, so no live value is baked into SSR',

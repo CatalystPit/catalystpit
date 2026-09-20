@@ -360,7 +360,7 @@ function LockedRows({ what, remaining }) {
           </div>
           <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap',
             padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-            Unlock Pro · $12/mo
+            Unlock Pro · $20/month
           </button>
         </div>
       </div>

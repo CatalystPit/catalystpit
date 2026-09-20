@@ -66,7 +66,7 @@ export default function AccountBilling() {
         <button onClick={() => startCheckout()}
           style={{ background: C.green, border: 'none', color: '#fff', borderRadius: 6, padding: '9px 16px',
             fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-          Upgrade to Pro · $12/mo
+          Upgrade to Pro · $20/month
         </button>
       ))}
     </div>

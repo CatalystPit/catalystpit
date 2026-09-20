@@ -14,17 +14,34 @@ import { buildConds } from './screener-filters';
 // ─────────────────────────────────────────────────────────────────────────────
 
 // UI metadata (also used to validate types on create). needsThreshold=false → event alert.
+//
+// ⚠️ `creatable: false` MEANS THE FEED CANNOT FIRE IT. Relative volume and absolute volume both
+// need consolidated live volume, which this market-data entitlement does not carry. A rule of
+// either kind could be created and would then sit there forever without triggering — and an alert
+// that silently never fires is worse than one that was never offered, because the trader believes
+// they are covered and stops watching. The keys stay in this table so any rule already stored
+// still resolves its label and can still be listed and deleted; they are simply no longer OFFERED
+// and can no longer be created. Flip `creatable` when a volume-capable feed is licensed. Do not
+// make them "work" by deriving a ratio from EOD bars — that is a fabricated RVOL.
 export const ALERT_TYPES = [
-  { key: 'price_above',  label: 'Price above',     unit: '$', needsThreshold: true },
-  { key: 'price_below',  label: 'Price below',     unit: '$', needsThreshold: true },
-  { key: 'change_above', label: 'Change % above',  unit: '%', needsThreshold: true },
-  { key: 'change_below', label: 'Change % below',  unit: '%', needsThreshold: true },
-  { key: 'rvol_above',   label: 'Rel Vol above',   unit: '×', needsThreshold: true },
-  { key: 'volume_above', label: 'Volume above',    unit: '',  needsThreshold: true },
-  { key: 'news',         label: 'Fresh news (8-K)', unit: '',  needsThreshold: false },
-  { key: 'halt',         label: 'Trading halt',    unit: '',  needsThreshold: false },
+  { key: 'price_above',  label: 'Price above',     unit: '$', needsThreshold: true,  creatable: true },
+  { key: 'price_below',  label: 'Price below',     unit: '$', needsThreshold: true,  creatable: true },
+  { key: 'change_above', label: 'Change % above',  unit: '%', needsThreshold: true,  creatable: true },
+  { key: 'change_below', label: 'Change % below',  unit: '%', needsThreshold: true,  creatable: true },
+  { key: 'rvol_above',   label: 'Rel Vol above',   unit: '×', needsThreshold: true,  creatable: false,
+    unavailable: 'Needs consolidated live volume' },
+  { key: 'volume_above', label: 'Volume above',    unit: '',  needsThreshold: true,  creatable: false,
+    unavailable: 'Needs consolidated live volume' },
+  { key: 'news',         label: 'Fresh news (8-K)', unit: '',  needsThreshold: false, creatable: true },
+  { key: 'halt',         label: 'Trading halt',    unit: '',  needsThreshold: false, creatable: true },
 ];
+
+// What a user may create TODAY. This is what /api/alerts serves as `types`, so the picker cannot
+// offer a rule the engine cannot fire. Existing stored rules of any type still evaluate.
+export const CREATABLE_ALERT_TYPES = ALERT_TYPES.filter((t) => t.creatable !== false);
+
 const TYPE_KEYS = new Set(ALERT_TYPES.map((t) => t.key));
+const CREATABLE_KEYS = new Set(CREATABLE_ALERT_TYPES.map((t) => t.key));
 
 let _ensured = false;
 export async function ensureAlertTables() {
@@ -47,6 +64,12 @@ export async function createAlert(userId, { symbol, type, threshold, note }) {
   const sym = String(symbol || '').toUpperCase().trim();
   if (!TICKER_RE.test(sym)) throw new Error('valid symbol required');
   if (!TYPE_KEYS.has(type)) throw new Error('unknown alert type');
+  // Enforced here, not only in the picker: a stale client or a direct POST must not be able to
+  // store a rule the engine can never fire.
+  if (!CREATABLE_KEYS.has(type)) {
+    const meta = ALERT_TYPES.find((t) => t.key === type);
+    throw new Error(`${meta?.label || type} alerts are unavailable — ${meta?.unavailable || 'not supported by the current data feed'}`);
+  }
   const meta = ALERT_TYPES.find((t) => t.key === type);
   const thr = meta.needsThreshold ? Number(threshold) : null;
   if (meta.needsThreshold && !Number.isFinite(thr)) throw new Error('threshold required');

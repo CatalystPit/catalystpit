@@ -8,7 +8,8 @@
     "start": "next start",
     "verify:render": "node scripts/verify-render.mjs",
     "verify:chart": "node scripts/verify-chart.mjs",
-    "verify:scan": "node scripts/verify-scan.mjs"
+    "verify:scan": "node scripts/verify-scan.mjs",
+    "verify:launch": "node scripts/verify-launch-integrity.mjs"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.3",

@@ -195,7 +195,7 @@ export default function CongressTransactions({ ticker, onSelectTicker }) {
               {locked.toLocaleString('en-US')} more transactions. Sign in to see the full record.
             </div>
             <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '8px 18px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-              Unlock Pro {'·'} $12/mo
+              Unlock Pro {'·'} $20/month
             </button>
           </div>
         )}

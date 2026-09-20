@@ -1,17 +1,21 @@
 import { auth } from '@clerk/nextjs/server';
-import { createAlert, createScanAlert, listAlerts, deleteAlert, setAlertActive, ALERT_TYPES } from '../../../lib/alerts';
+import { createAlert, createScanAlert, listAlerts, deleteAlert, setAlertActive, CREATABLE_ALERT_TYPES } from '../../../lib/alerts';
 
 export const runtime = 'nodejs';
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 // GET → { alerts, types }. POST { symbol, type, threshold, note } → create. PATCH { id, active } →
 // toggle/re-arm. DELETE ?id= → remove. All per authenticated user.
+//
+// `types` is the CREATABLE set only — the picker must never offer a rule the engine cannot fire
+// (see ALERT_TYPES in lib/alerts.js). A rule already stored under a retired type still comes back
+// in `alerts`, so it stays visible and deletable rather than vanishing from the user's list.
 export async function GET() {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ alerts: [], types: ALERT_TYPES }, { headers: NO_STORE });
-    return Response.json({ alerts: await listAlerts(userId), types: ALERT_TYPES }, { headers: NO_STORE });
-  } catch (e) { return Response.json({ alerts: [], types: ALERT_TYPES, error: e.message }, { status: 200, headers: NO_STORE }); }
+    if (!userId) return Response.json({ alerts: [], types: CREATABLE_ALERT_TYPES }, { headers: NO_STORE });
+    return Response.json({ alerts: await listAlerts(userId), types: CREATABLE_ALERT_TYPES }, { headers: NO_STORE });
+  } catch (e) { return Response.json({ alerts: [], types: CREATABLE_ALERT_TYPES, error: e.message }, { status: 200, headers: NO_STORE }); }
 }
 
 export async function POST(request) {

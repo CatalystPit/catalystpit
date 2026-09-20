@@ -64,14 +64,29 @@ async function buildClusters() {
 }
 
 // Congress teaser: 3 newest trades (flat feed, mirrors /api/politicians?view=feed).
+//
+// ⚠️ "NEWEST" MEANS NEWEST DISCLOSED, AND THE CARD MUST SAY SO. This ordered by transactionDate,
+// which is both a point-in-time violation — a member's trade is not news until it is disclosed,
+// often 30-45 days later — and the reason the homepage led with an impossible row: SONY /
+// Hon. Steve Cohen carries a transaction date of 2026-12-26 against a disclosure of 2026-02-09,
+// a trade dated ten months AFTER it was disclosed. Sorting by transaction date floated that
+// future date to the top of the public homepage.
+//
+// So: order and display by disclosure, and refuse rows whose dates cannot both be true. The bad
+// row is left untouched in the table — this filters what we publish, it does not edit the source.
 async function buildCongress() {
   return db.select({
     ticker: congressTrades.ticker, representative: congressTrades.representative, party: congressTrades.party,
     state: congressTrades.state, memberSlug: congressTrades.memberSlug, action: congressTrades.action,
     amountRange: congressTrades.amountRange, transactionDate: congressTrades.transactionDate,
+    disclosureDate: congressTrades.disclosureDate,
   }).from(congressTrades)
-    .where(sql`${congressTrades.ticker} is not null`)   // matched, ticker-linked rows only
-    .orderBy(sql`${congressTrades.transactionDate} desc nulls last`, desc(congressTrades.id))
+    .where(sql`${congressTrades.ticker} is not null      -- matched, ticker-linked rows only
+      and ${congressTrades.disclosureDate} is not null
+      and ${congressTrades.disclosureDate} <= current_date
+      and (${congressTrades.transactionDate} is null
+           or ${congressTrades.transactionDate} <= ${congressTrades.disclosureDate})`)
+    .orderBy(sql`${congressTrades.disclosureDate} desc nulls last`, desc(congressTrades.id))
     .limit(3);
 }
 
@@ -108,7 +123,9 @@ function buildCatalysts(insiders, clusters, congress) {
   const cluster = firstRenderable(clusters);
   if (cluster) out.push({ kind: 'BUY', label: 'CLUSTER BUY · 30D', sym: cluster.ticker, line: `${cluster.buyers} insiders bought`, value: fmtVal(cluster.totalValue), date: cluster.lastBuy });
   const cong = firstRenderable(congress);
-  if (cong) out.push({ kind: cong.action === 'BUY' ? 'BUY' : cong.action === 'SELL' ? 'SELL' : 'OTHER', label: 'LATEST CONGRESS TRADE', sym: cong.ticker, line: `${cong.representative} ${cong.action === 'BUY' ? 'bought' : cong.action === 'SELL' ? 'sold' : 'traded'}`, value: cong.amountRange || '—', date: cong.transactionDate });
+  // The date on this card is the DISCLOSURE date — when the trade became public, which is the only
+  // date a reader can act on. buildCongress already refuses rows where the two dates contradict.
+  if (cong) out.push({ kind: cong.action === 'BUY' ? 'BUY' : cong.action === 'SELL' ? 'SELL' : 'OTHER', label: 'LATEST CONGRESS TRADE', sym: cong.ticker, line: `${cong.representative} ${cong.action === 'BUY' ? 'bought' : cong.action === 'SELL' ? 'sold' : 'traded'}`, value: cong.amountRange || '—', date: cong.disclosureDate });
   if (topBuys[1]) out.push({ kind: 'BUY', label: 'OPEN-MARKET BUY', sym: topBuys[1].ticker, line: `${topBuys[1].executive || 'Insider'} bought`, value: fmtVal(topBuys[1].totalValue), date: topBuys[1].filingDate });
   return out;
 }

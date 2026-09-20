@@ -149,6 +149,13 @@ async function tickerView(ticker) {
 
 // FEED: flat most-recent individual trades (NOT grouped by member). For homepage
 // teasers — no price join, no returnPct (homepage shows who-traded-what only).
+//
+// ⚠️ ORDERED AND DATED BY DISCLOSURE. See buildCongress() in api/cron/pit-snapshot — this is the
+// same teaser down a different path (the homepage falls back to this live query when the snapshot
+// is cold), so it has to answer the same way or the two disagree about which trade is "latest".
+// Ordering by transactionDate put a row dated 2026-12-26 — ten months after its own disclosure —
+// at the top of the public homepage. Rows whose dates contradict each other are refused here
+// rather than rendered; the underlying row is left alone.
 async function feedView(limit) {
   const trades = await db.select({
     id:              congressTrades.id,
@@ -160,9 +167,14 @@ async function feedView(limit) {
     action:          congressTrades.action,
     amountRange:     congressTrades.amountRange,
     transactionDate: congressTrades.transactionDate,
+    disclosureDate:  congressTrades.disclosureDate,
   })
     .from(congressTrades)
-    .orderBy(sql`${congressTrades.transactionDate} desc nulls last`, desc(congressTrades.id))
+    .where(sql`${congressTrades.disclosureDate} is not null
+      and ${congressTrades.disclosureDate} <= current_date
+      and (${congressTrades.transactionDate} is null
+           or ${congressTrades.transactionDate} <= ${congressTrades.disclosureDate})`)
+    .orderBy(sql`${congressTrades.disclosureDate} desc nulls last`, desc(congressTrades.id))
     .limit(limit);
   return { view: 'feed', count: trades.length, trades };
 }

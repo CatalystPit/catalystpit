@@ -48,15 +48,31 @@ export const isLiveEnough = (f) => f === 'realtime' || f === 'near';
 // The only structure we can honestly claim on an end-of-day feed. Premarket highs, opening ranges,
 // VWAP and session extremes all need intraday bars that do not exist in this database, and the
 // signal registry already darkens them. Omitted, never approximated.
-export function structureTags(levels) {
+//
+// ⚠️ ONE CLOCK PER ROW. `changePct` is the move the row DISPLAYS, and it does not always come from
+// the same snapshot as `levels`: the quote is preferred when there is one, while the levels come
+// from the Consensus row's daily bars. Deriving "above/below prior close" from `levels` while
+// printing a change% from the quote produced rows reading "BELOW PRIOR CLOSE" beside a green
+// +4.2% — one row making two contradictory claims about the same session, which destroys trust in
+// both numbers. So the directional tag is derived from the displayed move whenever there is one,
+// and only falls back to the levels flag when the row has no change% at all.
+//
+// The 52W/20D extremes are genuinely daily-bar facts on a slower clock, so they still come from
+// `levels`; they describe where the close sits in a range, not what happened today.
+export function structureTags(levels, changePct = null) {
   if (!levels) return [];
   const tags = [];
   if (levels.at52wHigh) tags.push('52W HIGH');
   else if (levels.at52wLow) tags.push('52W LOW');
   else if (levels.at20dHigh) tags.push('20D HIGH');
   else if (levels.at20dLow) tags.push('20D LOW');
-  if (levels.abovePrevClose === true) tags.push('ABOVE PRIOR CLOSE');
-  else if (levels.abovePrevClose === false) tags.push('BELOW PRIOR CLOSE');
+
+  const above = Number.isFinite(changePct) ? changePct > 0
+    : levels.abovePrevClose === true ? true
+    : levels.abovePrevClose === false ? false
+    : null;
+  if (above === true) tags.push('ABOVE PRIOR CLOSE');
+  else if (above === false) tags.push('BELOW PRIOR CLOSE');
   return tags;
 }
 
@@ -67,9 +83,12 @@ export function structureTags(levels) {
  * `levels.asOf` is a DATE — so a real timestamp here would be hours or days old and every row would
  * silently fail as 'structure-stale'. A daily level is not a 90-minute event; passing null says
  * "this has no intraday clock" rather than asserting a false one.
+ *
+ * `changePct` is threaded through so the label boards.mjs quotes in its reason ("52W HIGH on
+ * +4.2%") is the same label the row renders, from the same snapshot.
  */
-export function levelsToStructure(levels) {
-  const tags = structureTags(levels);
+export function levelsToStructure(levels, changePct = null) {
+  const tags = structureTags(levels, changePct);
   if (!tags.length) return null;
   return { label: tags[0], at: null, weight: levels.at52wHigh || levels.at52wLow ? 5 : 3 };
 }
@@ -229,7 +248,8 @@ export function toScanRow(row, quote = null) {
     symbol: row.ticker,
     last,
     changePct,
-    structure: levelsToStructure(levels),
+    // Same snapshot as the change% above — see structureTags.
+    structure: levelsToStructure(levels, changePct),
     // ⚠️ consensusV1, NOT canonical. `canonical` is the v2 SYNTHESIS object (version
     // 'consensus_v2_synthesis') and the divergence gate refuses it by design — measured, it
     // rejected all 28 rows as 'legacy-consensus-refused'. The v1 object carries the
@@ -252,7 +272,7 @@ export function toScanRow(row, quote = null) {
       freshness,
       freshnessLabel: freshnessLabel(freshness),
       live: isLiveEnough(freshness),
-      structure: structureTags(levels),
+      structure: structureTags(levels, changePct),
       evidence: evidenceLine(row),
       join: joinLine({
         setup: row.setup?.setup, joinState: row.join_layer?.state, reaction: row.reaction_layer,
@@ -262,6 +282,29 @@ export function toScanRow(row, quote = null) {
       setupLabel: row.setup?.label || null,
       evidenceUrl: `/ticker/${encodeURIComponent(row.ticker)}`,
     },
+  };
+}
+
+/**
+ * ⚠️ ONE REASON PER ROW.
+ *
+ * boards.mjs writes its own `why` for the gate it applied ("Q2 8-K · 6h", "52W HIGH on +4.2%"),
+ * and the row separately renders a compact evidence line composed from the fact blocks. Serving
+ * both unreconciled put two different explanations of the same row on screen — the board reason
+ * naming a catalyst while EVIDENCE described an insider cluster — and a reader cannot tell which
+ * one the row is actually about.
+ *
+ * The evidence line wins when there is one: it is the composed, setup-aware sentence, where the
+ * board reason is a gate trace. The trace is kept under `qualifiedBy`, because "why did THIS board
+ * admit this row" stays worth answering — it just is not the row's headline. A row that composes
+ * no evidence line still explains itself, by falling back to the trace.
+ */
+export function servedRow(built) {
+  const display = built?.display || {};
+  return {
+    ...display,
+    boardReason: display.evidence || built?.boardReason || null,
+    qualifiedBy: built?.boardReason || null,
   };
 }
 

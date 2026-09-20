@@ -146,7 +146,13 @@ const fetchAll = async () => {
       slug:   p.memberSlug || '',
       type:   p.action === 'BUY' ? 'BUY' : p.action === 'SELL' ? 'SELL' : 'OTHER',
       amount: p.amountRange || '—',
+      // ⚠️ BOTH DATES, EACH UNDER ITS OWN NAME. `traded` is when the member dealt; `disclosed` is
+      // when the filing made it public, and that is the date the homepage shows and sorts by — the
+      // transaction date is not actionable information until it has been disclosed. Collapsing the
+      // two into one field is what let a transaction date ten months in the future render as though
+      // it were news. /api/politicians?view=feed already refuses rows where the two contradict.
       traded: p.transactionDate || '',
+      disclosed: p.disclosureDate || '',
     }));
 
     const spy_chg = safeN(marketSnap?.SPY?.changePct ?? marketSnap?.SPY?.chg ?? marketSnap?.SPY?.change_pct ?? 1.2);
@@ -183,10 +189,12 @@ const fetchAll = async () => {
       if (cluster) catalysts.push({ kind:'BUY', label:'CLUSTER BUY · 30D',
         sym: cluster.ticker, line: `${cluster.buyers} insiders bought`,
         value: fmtInsiderValue(cluster.totalValue), date: cluster.lastBuy });
-      const pol = firstRenderable(politicians, (p) => p?.sym);
+      // Dated by disclosure, and only if we have one — a hero card with no date beats a hero card
+      // with the wrong date. Matches buildCatalysts() in api/cron/pit-snapshot.
+      const pol = firstRenderable(politicians, (p) => p?.sym && p?.disclosed);
       if (pol) catalysts.push({ kind: pol.type, label:'LATEST CONGRESS TRADE',
         sym: pol.sym, line: `${pol.name} ${pol.type === 'BUY' ? 'bought' : 'sold'}`,
-        value: pol.amount, date: pol.traded });
+        value: pol.amount, date: pol.disclosed });
       if (topBuys[1]) catalysts.push({ kind:'BUY', label:'OPEN-MARKET BUY',
         sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
     }
@@ -421,7 +429,7 @@ export default function CatalystPit() {
                     cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
                     onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Unlock Pro · $12/mo
+                    Unlock Pro · $20/month
                   </button>
                 </div>
               )}
@@ -532,7 +540,9 @@ export default function CatalystPit() {
             <table style={{width:"100%", borderCollapse:"collapse"}}>
               <thead>
                 <tr style={{background:C.surface, borderBottom:`1px solid ${C.border}`}}>
-                  {["Ticker","Politician","Party","Action","Amount","Traded"].map(h => (
+                  {/* "Disclosed", not "Traded": the column carries the disclosure date, which is
+                      when this became public and the only date a reader can have acted on. */}
+                  {["Ticker","Politician","Party","Action","Amount","Disclosed"].map(h => (
                     <th key={h} style={{padding:"8px 16px", textAlign:h === "Amount" ? "right" : "left",
                       fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim,
                       letterSpacing:"0.8px", fontWeight:400}}>{h.toUpperCase()}</th>
@@ -563,7 +573,7 @@ export default function CatalystPit() {
                     </td>
                     <td className="cp-num" style={{padding:"11px 16px", textAlign:"right", fontFamily:"'DM Sans',sans-serif",
                       fontSize:14, fontWeight:700, color:insStyle(p.type).fg, whiteSpace:"nowrap"}}>{p.amount}</td>
-                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim, whiteSpace:"nowrap"}}>{p.traded}</td>
+                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim, whiteSpace:"nowrap"}}>{p.disclosed}</td>
                   </tr>
                 ))}
               </tbody>
@@ -629,7 +639,7 @@ export default function CatalystPit() {
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,
             borderRadius:8, padding:"16px"}}>
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
-              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO · $12/MO</div>
+              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO · $20/MO</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
               {["Full real-time news feed","All insider filings · live",
                 "Full screener · 12 filters","Live charts · all timeframes","Options flow & dark pool",
@@ -645,12 +655,12 @@ export default function CatalystPit() {
               fontFamily:"'DM Sans',sans-serif"}}
               onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
               onMouseLeave={e => e.currentTarget.style.background = C.green}>
-              Start Pro · $12/mo
+              Start Pro · $20/month
             </button>
             <button onClick={() => startCheckout('annual')} style={{width:"100%", background:"transparent",
               border:"none", color:C.green, marginTop:8, cursor:"pointer", fontSize:12, fontWeight:600,
               fontFamily:"'DM Sans',sans-serif"}}>
-              or save with $99/year →
+              or save with $199/year →
             </button>
             <p style={{fontSize:10, color:C.muted, textAlign:"center", marginTop:6, fontWeight:300}}>
               Cancel anytime · No contracts

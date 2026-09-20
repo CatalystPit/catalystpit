@@ -75,10 +75,16 @@ export default function PitScanPanel({ onPick }) {
         {tabBtn('pulse', 'Pit Pulse')}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
           {/* THE FEED STATE IS ALWAYS VISIBLE. A scanner that does not say how fresh it is invites
-              the reader to assume the best. */}
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: live ? C.green : C.dim }} />
+              the reader to assume the best.
+
+              ⚠️ NEVER "LIVE", AND NO LONGER "AWAITING FEED". Realtime is not entitled, so LIVE
+              would be a false claim about every number below it. "AWAITING FEED" was equally
+              wrong in the other direction — it described the unfed SIGNAL engine while the
+              evidence boards were full — and read as a broken product. What is printed is the
+              freshness the rows actually carry. */}
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.dim }} />
           <span style={{ fontSize: 9, color: C.dim, letterSpacing: 0.3 }}>
-            {live ? 'LIVE' : 'AWAITING FEED'}
+            {state?.freshnessLabel || 'LAST CLOSE'}
           </span>
         </span>
       </div>
