@@ -133,74 +133,43 @@ const DIR_WORD = { POSITIVE: 'positive', NEGATIVE: 'negative', MIXED: 'mixed' };
 
 export function whyThisIsHere({ setup, synthesis, significantFamilies = [], consensusFamilies = [], sheet, market, reaction, join }) {
   const parts = [];
-  const NAME = { insider: 'Insiders', institution: 'Institutions', congress: 'Congress', catalyst: 'Catalysts' };
   const join2 = (n) => (n.length <= 1 ? (n[0] || '') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
 
-  // ⚠️ ONE FAMILY UNIVERSE. Earlier this sentence was assembled from V2.1's drivers and opposition
-  // while the rest of the card used the V3.5 significance layer, so cards named families that did
-  // not appear in their own evidence list. Both sides now come from the same place.
-  const dirOf = (f) => f.evidence?.direction;
-  const sides = (list) => ({
-    pos: list.filter((f) => dirOf(f) === 'positive').map((f) => NAME[f.family] || f.family),
-    neg: list.filter((f) => dirOf(f) === 'negative').map((f) => NAME[f.family] || f.family),
-  });
-
-  // Normally only MEANINGFUL families are named, which keeps the sentence short.
-  const meaningful = significantFamilies.filter((f) => f.significance >= MEANINGFUL_SIGNIFICANCE);
-  let { pos, neg } = sides(meaningful);
-
-  // ⚠️ A DECLARED CONFLICT MUST NAME BOTH SIDES, AND FROM THE SAME PLACE THE CONFLICT CAME FROM.
-  // AAOI shipped reading "Institutions and Catalysts point positive. Independent sources disagree"
-  // — asserting a disagreement while naming one side of it. The cause is that chi is computed from
-  // the CONSENSUS family values (signed E), while the sentence was built from evidence_v1 record
-  // directions: two different universes. For a conflict the sides are taken from the signed values
-  // that actually produced chi, so the sentence cannot contradict the verdict above it.
-  if (join?.state === 'SOURCES_CONFLICT') {
-    // ⚠️ DISCLOSURE FAMILIES ONLY. row.families carries all five board families, so without this
-    // filter the sentence read "Insiders and structure point negative" — price narrating itself as
-    // public evidence, which is the contamination the whole two-layer split exists to prevent.
-    // ⚠️ ONLY NAME FAMILIES THE CARD ACTUALLY SHOWS. GMRS shipped reading "Institutions and
-    // Catalysts point positive" with no Institutions block anywhere on the card, because the
-    // sentence is built from the consensus family VALUES while the card renders the evidence_v1
-    // FACT SHEET, and a family can carry a signed value without having a displayable record. A
-    // sentence that cites evidence the reader cannot see is unverifiable by construction.
-    const shown = new Set(Object.keys(sheet || {}));
-    const sheetKey = (fam) => String(fam).replace(/s$/, '');
-    const signed = (consensusFamilies || []).filter((f) => DISCLOSURE_ONLY.includes(f?.family)
-      && f?.active && Number.isFinite(f.E) && f.E !== 0
-      && shown.has(sheetKey(f.family)));
-    const label = (f) => NAME[String(f.family).replace(/s$/, '')] || NAME[f.family] || f.family;
-    const p2 = signed.filter((f) => f.E > 0).map(label);
-    const n2 = signed.filter((f) => f.E < 0).map(label);
-    if (p2.length && n2.length) { pos = p2; neg = n2; }
-  }
+  // ⚠️ THE SENTENCE IS BUILT FROM THE FACT BLOCKS THE CARD ACTUALLY RENDERS, and from their own
+  // directions. Two shipped bugs came from reading anything else:
+  //
+  //   GOLD  said "Insiders point positive" while the Insiders block read "5 insiders sold $7.0M
+  //         outside a 10b5-1 plan" — because the sentence used the consensus signed value
+  //         (insiders = +0.010, a near-zero aggregate) instead of the record on the card.
+  //   GMRS  named Institutions with no Institutions block anywhere, because a family can carry a
+  //         signed value without a displayable record.
+  //
+  // Reading the blocks makes both impossible by construction: a family can only be named if the
+  // reader can see it, and it can only be described the way its own record describes it.
+  // The chip labels are upper-case for the card's family headers; prose needs the sentence form.
+  const PROSE = { catalyst: 'Catalysts', insider: 'Insiders', institution: 'Institutions', congress: 'Congress' };
+  const blocks = Object.entries(sheet || {}).flatMap(([fam, items]) =>
+    (items || []).filter(Boolean).map((f) => ({ ...f, prose: PROSE[fam] || f.familyLabel })));
+  const pos = blocks.filter((f) => f.direction === 'positive').map((f) => f.prose);
+  const neg = blocks.filter((f) => f.direction === 'negative').map((f) => f.prose);
 
   // 1. THE TRIGGER.
   const cat = sheet?.[FAMILY.CATALYST]?.[0];
   if (setup?.setup?.startsWith('FRESH_CATALYST') && cat) {
     parts.push(`${cat.headline || 'A material company filing'} became public ${cat.publicAgo || 'recently'}`);
   } else if (setup?.setup === SETUP.UNUSUAL_INSIDER_ACTIVITY) {
-    const ins = meaningful.find((f) => f.family === FAMILY.INSIDER);
-    parts.push(ins?.evidence?.context?.text || sheet?.[FAMILY.INSIDER]?.[0]?.headline
-      || 'Historically unusual insider activity');
+    const ins = sheet?.[FAMILY.INSIDER]?.[0];
+    parts.push(ins?.context || ins?.headline || 'Historically unusual insider activity');
   }
 
-  // 2. WHAT THE EVIDENCE SAYS.
+  // 2. WHAT THE VISIBLE EVIDENCE SAYS.
   if (pos.length && neg.length) {
-    // ⚠️ ALIGNMENT AND CONFLICT ARE DIFFERENT SENTENCES. INM shipped headlined "Cross-source
-    // alignment" above a line reading "Institutions point positive, while Catalysts point
-    // negative" — a card arguing with itself. Alignment means one side clearly dominates (A >= 0.6,
-    // at least a 4:1 split), so the minority is minor contrary evidence, not an equal opposing
-    // claim. Only a genuine standoff gets the two-sided phrasing.
     const aligned = setup?.setup === SETUP.CROSS_SOURCE_ALIGNMENT;
     const lean = synthesis?.L ?? 0;
-    const major = aligned ? (lean >= 0 ? pos : neg) : null;
-    const minor = aligned ? (lean >= 0 ? neg : pos) : null;
     parts.push(aligned
-      ? `${join2(major)} point ${lean >= 0 ? 'positive' : 'negative'}, with minor contrary evidence from ${join2(minor)}`
+      ? `${join2(lean >= 0 ? pos : neg)} point ${lean >= 0 ? 'positive' : 'negative'}, with minor contrary evidence from ${join2(lean >= 0 ? neg : pos)}`
       : `${join2(pos)} point positive, while ${join2(neg)} point negative`);
-  }
-  else if (pos.length) parts.push(`${join2(pos)} point positive`);
+  } else if (pos.length) parts.push(`${join2(pos)} point positive`);
   else if (neg.length) parts.push(`${join2(neg)} point negative`);
 
   // 3. WHAT PRICE IS DOING ABOUT IT — never confirming or diverging inside the dead zone.
@@ -289,9 +258,13 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
       ? 'the filing' : 'the disclosure evidence',
   });
 
-  // When independent sources genuinely disagree, the honest summary direction is MIXED — asserting
-  // a lean alongside "these sources contradict each other" would undercut the card's own reading.
-  const direction = join.state === JOIN.SOURCES_CONFLICT ? 'MIXED' : leanDirection(synthesis);
+  // ⚠️ GATED ON THE SETUP, NOT THE JOIN. TELA and INM shipped headed "Positive" above
+  // "Cross-source conflict" with a NEGATIVE delisting notice on the card, because the conflict was
+  // established by the meaningful-opposition branch while the join still read EVIDENCE_BUILDING.
+  // Whatever route produced the conflict, a card that says these sources contradict each other
+  // cannot also assert a lean.
+  const conflicted = label.setup === SETUP.CROSS_SOURCE_CONFLICT || join.state === JOIN.SOURCES_CONFLICT;
+  const direction = conflicted ? 'MIXED' : leanDirection(synthesis);
   const unusualCount = Object.values(sheet).flat().filter((f) => f?.unusual).length;
 
   return {

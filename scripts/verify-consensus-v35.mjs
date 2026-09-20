@@ -567,5 +567,66 @@ L('\n=== ACCEPTANCE: BOARD QUALITY (A–J) ===');
       context: { text: 'First in 300 days', gapDays: 300 } })) < 0.1);
 }
 
+L('\n=== DISPLAY CORRECTNESS: THE CARD CANNOT CONTRADICT ITSELF ===');
+{
+  const { whyThisIsHere } = await import('../src/lib/consensus/setup-board.js');
+
+  // A sheet is what the card RENDERS: family key -> fact blocks, each with its own direction.
+  const sheet = {
+    catalyst: [{ familyLabel: 'CATALYST', direction: 'negative', headline: 'Delisting / listing-standard notice', publicAgo: '1 day ago' }],
+    insider: [{ familyLabel: 'INSIDERS', direction: 'negative', headline: '5 insiders sold $7.0M outside a 10b5-1 plan' }],
+    institution: [{ familyLabel: 'INSTITUTIONS', direction: 'positive', headline: 'Manager breadth increased from 217 to 222' }],
+  };
+
+  // ⚠️ C — GOLD CLASS. The sentence must describe each family the way its own visible block does.
+  // It shipped saying "Insiders point positive" above a block reading "5 insiders sold $7.0M",
+  // because the sentence read the consensus signed value (+0.010) instead of the record on the card.
+  const why = whyThisIsHere({
+    setup: { setup: SETUP.CROSS_SOURCE_CONFLICT }, synthesis: { L: 0.49 }, sheet,
+    // A signed value that disagrees with the visible block — the exact shipped condition.
+    consensusFamilies: [{ family: 'insiders', active: true, E: 0.010 },
+      { family: 'institutions', active: true, E: 0.215 }],
+    market: { explain: 'Independent sources disagree; price is not the tiebreaker' },
+  });
+  ok('C. a negative insider block is never described as positive',
+    mut('signedoverblock') ? false : /Insiders point negative|and Insiders point negative/.test(why),
+    why);
+  ok('…and the positive family is still named correctly', /Institutions point positive/.test(why), why);
+
+  // ⚠️ B — GMRS CLASS. A family with a signed value but no visible block cannot be named.
+  const noInstSheet = { catalyst: sheet.catalyst, insider: sheet.insider };
+  const why2 = whyThisIsHere({
+    setup: { setup: SETUP.CROSS_SOURCE_CONFLICT }, synthesis: { L: 0.1 }, sheet: noInstSheet,
+    consensusFamilies: [{ family: 'institutions', active: true, E: 0.845 }],
+    market: null,
+  });
+  ok('B. a family with no visible block is never cited',
+    mut('ghostfamily') ? false : !/Institutions/.test(why2), why2);
+
+  // Prose form, not the card's shouting chip labels.
+  ok('the sentence uses sentence-case family names',
+    !/INSIDERS|CATALYST\b|INSTITUTIONS/.test(why), why);
+
+  // ⚠️ A — TELA CLASS. A conflict header can never assert a lean, whichever branch produced the
+  // conflict. TELA and INM shipped headed "Positive" above "Cross-source conflict" with a negative
+  // delisting notice on the card, because direction was gated on the JOIN state while the conflict
+  // had been established by the meaningful-opposition branch.
+  const conflictDirection = (setup, joinState, syn) =>
+    (setup === SETUP.CROSS_SOURCE_CONFLICT || joinState === JOIN.SOURCES_CONFLICT)
+      ? 'MIXED' : leanDirection(syn);
+  ok('A. a conflict label forces a MIXED header even when the join disagrees',
+    mut('conflictlean') ? false
+      : conflictDirection(SETUP.CROSS_SOURCE_CONFLICT, JOIN.EVIDENCE_BUILDING, { L: 0.79, n: 3 }) === 'MIXED');
+  ok('…and a join-derived conflict does too',
+    conflictDirection(SETUP.EVIDENCE_BUILDING, JOIN.SOURCES_CONFLICT, { L: 0.79, n: 3 }) === 'MIXED');
+  ok('…while a genuine one-sided reading keeps its direction',
+    conflictDirection(SETUP.CROSS_SOURCE_ALIGNMENT, JOIN.EVIDENCE_BUILDING, { L: 0.79, n: 3 }) === 'POSITIVE');
+  // And price can never confirm a conflict.
+  ok('a conflict is never PRICE CONFIRMING',
+    marketState({ join: { state: JOIN.PRICE_CONFIRMING },
+      reaction: normalizeReaction({ horizons: { 1: { return: 8, relative: 8 } } }),
+      direction: 'MIXED', setup: SETUP.CROSS_SOURCE_CONFLICT }) === MARKET_STATE.MIXED);
+}
+
 L(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

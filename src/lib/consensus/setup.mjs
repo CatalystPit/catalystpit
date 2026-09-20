@@ -48,7 +48,7 @@ import { JOIN, MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE } from './evide
 // have let boards classified by the V3 archetype cascade keep serving as current after a
 // methodology change that altered qualification, direction, the dead zone and ranking — the exact
 // failure the versioned-key design exists to prevent.
-export const SETUP_VERSION = 'consensus_v38_setup';
+export const SETUP_VERSION = 'consensus_v38a_setup';
 
 // ── THE ARCHETYPES ──────────────────────────────────────────────────────────
 // ⚠️ THE HEADLINE DESCRIBES EVIDENCE, NOT PRICE.
