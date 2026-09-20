@@ -14,11 +14,15 @@ const money = (v) => {
   return `$${Math.round(v)}`;
 };
 
-// The canonical state words, matching the board and the ticker page exactly.
+// The canonical state words, matching the board and the ticker page exactly — all EIGHT of them.
+// This had been left on the V2 vocabulary, so every lean and every balanced conflict fell through
+// to an unstyled label; and the colours were literal hexes, which do not theme.
 const STATE_UI = {
-  POSITIVE_ALIGNMENT: { label: 'Positive alignment', color: '#1E5C38' },
-  NEGATIVE_ALIGNMENT: { label: 'Negative alignment', color: '#A83030' },
-  CONFLICT: { label: 'Conflict', color: '#A83030' },
+  POSITIVE_ALIGNMENT: { label: 'Positive alignment', color: C.green },
+  NEGATIVE_ALIGNMENT: { label: 'Negative alignment', color: C.red },
+  POSITIVE_LEAN_WITH_CONFLICT: { label: 'Positive lean · conflict', color: C.green },
+  NEGATIVE_LEAN_WITH_CONFLICT: { label: 'Negative lean · conflict', color: C.red },
+  BALANCED_CONFLICT: { label: 'Balanced conflict', color: C.conflictAccent },
   MIXED: { label: 'No clear agreement', color: null },
   SINGLE_SOURCE: { label: 'Single-source', color: null },
   NO_EVIDENCE: { label: 'No current evidence', color: null },

@@ -18,6 +18,25 @@ export const C = {
   red:"var(--cp-red,#A83030)", redLight:"var(--cp-redLight,#FAEAEA)", gold:"var(--cp-gold,#7A5818)",
   blue:"var(--cp-blue,#1A3A78)", blueLight:"var(--cp-blueLight,#E8F0FF)",
   navBg:"#1E5C38",
+
+  // ─── OPPOSING-EVIDENCE TREATMENT ──────────────────────────────────────────
+  //
+  // Two weights, because the product draws a line between them and the visuals have to draw it too.
+  //
+  //   conflict* — KEY CONFLICT. Meaningful opposing evidence: the minority side is at least 15% of
+  //               the directional total. A tinted surface, a visible border and a left accent bar.
+  //   contrary* — MINOR CONTRARY EVIDENCE. Outweighed by more than 5:1. Surfaced, never boxed: a
+  //               thin rule and muted warm text, so it reads as a footnote rather than a contest.
+  //
+  // ⚠️ THESE ARE TOKENS, NOT HEXES. The old KEY CONFLICT box was a literal #FFF4F4, which in dark
+  // mode rendered a near-white panel on a near-black card — unreadable, and it looked like a system
+  // error rather than a reading of the evidence. Anything conflict-coloured belongs here so both
+  // themes stay in step.
+  conflictBg:"var(--cp-conflictBg,#FBF1F0)", conflictBorder:"var(--cp-conflictBorder,#E3C0BC)",
+  conflictAccent:"var(--cp-conflictAccent,#A83030)", conflictText:"var(--cp-conflictText,#3C2523)",
+  contraryRule:"var(--cp-contraryRule,#DCC8C4)", contraryText:"var(--cp-contraryText,#7A6660)",
+  // Chip fills for the family/state pills. Themed for the same reason.
+  negBg:"var(--cp-negBg,#FBEDED)", warnBg:"var(--cp-warnBg,#FFF6E8)", warnFg:"var(--cp-warnFg,#7A5018)",
 };
 
 // ─── CATEGORY TAGS (all 16 from enrichment prompt) ──────────────────────────
@@ -176,6 +195,9 @@ export function BrandStyles() {
         --cp-ink:#0C1410;--cp-text:#1A2018;--cp-muted:#5A6458;--cp-dim:#8A9088;--cp-hint:#C0C4BC;
         --cp-green:#1E5C38;--cp-greenMid:#2A7848;--cp-greenLight:#E8F5EE;--cp-greenBorder:#A8CEB8;
         --cp-red:#A83030;--cp-redLight:#FAEAEA;--cp-gold:#7A5818;--cp-blue:#1A3A78;--cp-blueLight:#E8F0FF;
+        --cp-conflictBg:#FBF1F0;--cp-conflictBorder:#E3C0BC;--cp-conflictAccent:#A83030;--cp-conflictText:#3C2523;
+        --cp-contraryRule:#DCC8C4;--cp-contraryText:#7A6660;
+        --cp-negBg:#FBEDED;--cp-warnBg:#FFF6E8;--cp-warnFg:#7A5018;
       }
       :root[data-theme="dark"]{
         color-scheme:dark;
@@ -184,6 +206,12 @@ export function BrandStyles() {
         --cp-ink:#EEF3EF;--cp-text:#D8DED8;--cp-muted:#98A49B;--cp-dim:#78847B;--cp-hint:#48524C;
         --cp-green:#46A874;--cp-greenMid:#58BE86;--cp-greenLight:#16301F;--cp-greenBorder:#2E5A40;
         --cp-red:#E06B6B;--cp-redLight:#3A1E1E;--cp-gold:#C79A3C;--cp-blue:#6B8FE0;--cp-blueLight:#1A2540;
+        /* Burgundy-tinted surface, not a bright panel. The luminance step from the card is small on
+           purpose — the left accent bar (#F09490, 7.5:1 against the card) is what makes the block
+           read as separate, so the treatment stays restrained instead of alarming. */
+        --cp-conflictBg:#3A2024;--cp-conflictBorder:#6B383C;--cp-conflictAccent:#F09490;--cp-conflictText:#EBD9D6;
+        --cp-contraryRule:#4A3438;--cp-contraryText:#A89490;
+        --cp-negBg:#33201F;--cp-warnBg:#3A2E16;--cp-warnFg:#E8C06A;
       }
       html,body{background:var(--cp-bg);}
       @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}

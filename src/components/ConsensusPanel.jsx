@@ -161,12 +161,29 @@ export default function ConsensusPanel({ symbol }) {
         {/* KEY CONFLICT — named, not averaged away. This is the single most useful thing the panel
             can say, and the old aggregate destroyed it by construction. */}
         {data.conflicts?.length > 0 && (
-          <div style={{ marginTop: 10, padding: '9px 11px', background: '#FFF4F4',
-            border: `1px solid ${C.red}33`, borderRadius: 7 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: C.red, letterSpacing: '0.6px' }}>KEY CONFLICT</div>
-            <div style={{ fontSize: 12.5, color: C.text, marginTop: 3, lineHeight: 1.45 }}>
+          // The accent BAR carries the separation, not the fill. On a dark card a tinted surface
+          // can only be a step or two off the background before it starts shouting, so the block is
+          // held apart by a 3px rule at 7.5:1 against the card and a visible border — restrained
+          // enough to read as "these sources disagree", not as a system failure.
+          <div style={{ marginTop: 10, padding: '9px 11px 9px 12px', background: C.conflictBg,
+            border: `1px solid ${C.conflictBorder}`, borderLeft: `3px solid ${C.conflictAccent}`,
+            borderRadius: 7 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.conflictAccent, letterSpacing: '0.6px' }}>KEY CONFLICT</div>
+            <div style={{ fontSize: 12.5, color: C.conflictText, marginTop: 3, lineHeight: 1.45 }}>
               {data.conflicts[0].text}
             </div>
+          </div>
+        )}
+
+        {/* MINOR CONTRARY EVIDENCE — deliberately NOT a box. This is evidence outweighed by more
+            than 5:1; giving it the conflict treatment would tell the reader there is a contest when
+            the engine has just determined there isn't one. A thin rule and muted warm text. */}
+        {data.canonical?.minorContrary?.length > 0 && (
+          <div style={{ marginTop: 9, paddingLeft: 9, borderLeft: `2px solid ${C.contraryRule}`,
+            fontSize: 11.5, color: C.contraryText, lineHeight: 1.45 }}>
+            <span style={{ fontWeight: 600, letterSpacing: '0.3px' }}>Minor contrary evidence</span>
+            {' · '}
+            {data.canonical.minorContrary.map((f) => f.label).join(', ')}
           </div>
         )}
 

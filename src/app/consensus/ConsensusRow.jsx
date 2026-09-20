@@ -26,30 +26,36 @@ export const STATE_UI = {
   SINGLE_SOURCE: { label: 'Single-source', tone: 'flat' },
   NO_EVIDENCE: { label: 'No current evidence', tone: 'flat' },
 };
+// Every colour is a theme token. These were literal hexes — #A83030 on #FBEDED, #7A5018 on
+// #FFF6E8 — which is a pale pink and a pale cream chip rendered on a near-black card in dark mode.
 const TONE = {
   pos: { fg: C.green, bg: C.greenLight },
-  neg: { fg: '#A83030', bg: '#FBEDED' },
-  warn: { fg: '#7A5018', bg: '#FFF6E8' },
+  neg: { fg: C.red, bg: C.negBg },
+  warn: { fg: C.warnFg, bg: C.warnBg },
   flat: { fg: C.muted, bg: C.surface },
 };
 
 const NSTATE = { POSITIVE: 'Positive', NEGATIVE: 'Negative', MIXED: 'Mixed', INACTIVE: 'Inactive' };
-const NCOLOR = { POSITIVE: C.green, NEGATIVE: '#A83030', MIXED: C.muted, INACTIVE: C.dim };
+const NCOLOR = { POSITIVE: C.green, NEGATIVE: C.red, MIXED: C.muted, INACTIVE: C.dim };
 const TREND = { NEW: 'New', STRENGTHENING: 'Strengthening', WEAKENING: 'Weakening', STABLE: null };
 const MARKET_UI = {
   CONFIRMING: { label: 'Confirming', fg: C.green },
-  DIVERGING: { label: 'Diverging', fg: '#A83030' },
+  DIVERGING: { label: 'Diverging', fg: C.red },
   MIXED: { label: 'Mixed', fg: C.muted },
   UNAVAILABLE: { label: 'Unavailable', fg: C.dim },
 };
 
-/** A family as a single inline chip: state, trend, and its own descriptor. */
-function FamilyChip({ f, dim }) {
+/** A family as a single inline chip: state, trend, and its own descriptor.
+ *  `opposing` tints the chip with the conflict surface so the two sides of a KEY CONFLICT are
+ *  separable at a glance, rather than relying on the reader parsing a "vs" between identical pills. */
+function FamilyChip({ f, dim, opposing }) {
   const trend = TREND[f.trend];
   return (
     <span style={{
-      fontSize: 10.5, padding: '2px 7px', borderRadius: 999, background: C.surface,
-      border: `1px solid ${C.border}`, color: dim ? C.dim : C.text, whiteSpace: 'nowrap',
+      fontSize: 10.5, padding: '2px 7px', borderRadius: 999,
+      background: opposing ? C.conflictBg : C.surface,
+      border: `1px solid ${opposing ? C.conflictBorder : C.border}`,
+      color: dim ? C.dim : (opposing ? C.conflictText : C.text), whiteSpace: 'nowrap',
     }}>
       <b style={{ color: dim ? C.dim : NCOLOR[f.state], fontWeight: 700 }}>{f.label}</b>
       {' '}{NSTATE[f.state]}{trend ? ` · ${trend}` : ''}
@@ -96,8 +102,9 @@ export default function ConsensusRow({ r }) {
                 {k.drivers.map((f) => <FamilyChip key={f.family} f={f} />)}
                 {k.opposition.length > 0 && (
                   <>
-                    <span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>vs</span>
-                    {k.opposition.map((f) => <FamilyChip key={f.family} f={f} />)}
+                    <span style={{ fontSize: 10, color: C.conflictAccent, fontWeight: 700,
+                      letterSpacing: '0.4px' }}>vs</span>
+                    {k.opposition.map((f) => <FamilyChip key={f.family} f={f} opposing />)}
                   </>
                 )}
               </>
@@ -114,8 +121,10 @@ export default function ConsensusRow({ r }) {
               A family outweighed by more than 5:1 is a footnote, and printing it as a contest
               misrepresents the evidence. */}
           {k.minorContrary.length > 0 && (
-            <div style={{ fontSize: 10.5, color: C.dim, marginTop: 5 }}>
-              Minor contrary evidence: {k.minorContrary.map((f) => f.label).join(', ')}
+            <div style={{ fontSize: 10.5, color: C.contraryText, marginTop: 6, paddingLeft: 8,
+              borderLeft: `2px solid ${C.contraryRule}`, lineHeight: 1.4 }}>
+              <span style={{ fontWeight: 600 }}>Minor contrary evidence</span>
+              {' · '}{k.minorContrary.map((f) => f.label).join(', ')}
             </div>
           )}
 
