@@ -51,10 +51,11 @@ const pct = (from, to) => (Number.isFinite(from) && Number.isFinite(to) && from 
 async function loadBars(ticker) {
   const [{ db }, { sql }] = await Promise.all([import('../db'), import('drizzle-orm')]);
   const res = await db.execute(sql`
-    select date::text as date, close::float8 as close, high::float8 as high, low::float8 as low
+    select date::text as date, close::float8 as close, high::float8 as high, low::float8 as low,
+           open::float8 as open
       from ticker_daily_candles
      where ticker = ${String(ticker).toUpperCase()}
-       and date >= current_date - ${BAR_DAYS}
+       and date >= current_date - make_interval(days => ${BAR_DAYS})
      order by date asc`);
   const rows = Array.isArray(res) ? res : (res?.rows || []);
   return rows.filter((r) => Number.isFinite(r.close));
@@ -169,8 +170,10 @@ export async function marketFactsFor(ticker, { driver = null, reaction = null, j
   let levels = null;
   try {
     levels = levelFacts(await loadBars(ticker));
-  } catch {
-    // A candle-query failure is unknown structure, not flat structure.
+  } catch (e) {
+    // A candle-query failure is unknown structure, not flat structure — but it is LOGGED, because a
+    // silent null here is exactly how the level facts went missing from every card unnoticed.
+    console.warn(`[market-facts] ${ticker} levels unavailable: ${e.message}`);
     levels = null;
   }
   const narrative = marketNarrative({ reaction, levels, verdict, join, driverLabel });

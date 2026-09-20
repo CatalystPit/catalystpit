@@ -37,7 +37,7 @@ export const THRESHOLDS = Object.freeze({
   catalystsNow: Object.freeze({
     // Evidence-first: the catalyst must be both material and fresh. Age is measured from PUBLIC
     // AVAILABILITY, never from the underlying transaction.
-    maxAgeHours: 48,
+    maxAgeHours: 72,
     minMateriality: 0.5,
   }),
 

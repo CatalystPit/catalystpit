@@ -331,6 +331,13 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     // V2.1 PRESERVED IN FULL, as secondary metadata. Existing consumers keep working and the two
     // layers cannot disagree, because V3 reads this object rather than recomputing it.
     canonical,
+    // The legacy consensus_v1 object, carried verbatim for Pit Scan's divergence gate — which
+    // requires version/activeCount/confidence/directionValue and correctly REFUSES the v2 synthesis
+    // object. Passthrough only: nothing here recomputes or reshapes it.
+    consensusV1: row ? {
+      version: row.version, activeCount: row.activeCount, confidence: row.confidence,
+      directionValue: row.directionValue, direction: row.direction, alignment: row.alignment,
+    } : null,
 
     families: sheet,
     market,

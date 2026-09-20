@@ -38,7 +38,7 @@ import { SETUP_VERSION } from './setup.mjs';
 // Bump this when the SHAPE of a materialized row changes without the methodology changing — a new
 // field the UI depends on, a renamed property. Methodology changes are picked up automatically
 // from the two engine versions, which is the case that actually bit us.
-export const BOARD_SHAPE_VERSION = 'b2';
+export const BOARD_SHAPE_VERSION = 'b3';
 
 /** The fingerprint of the deployed methodology. Any change to it retires every existing key. */
 export const MATERIALIZATION_VERSION =

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import ScanBoardRows from './ScanBoardRows';
 import { C, TickerLogo } from '../../lib/cp-shared';
 
 // THE PIT SCAN PANEL.
@@ -86,14 +87,27 @@ export default function PitScanPanel({ onPick }) {
         <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading Pit Scan…</div>
       ) : !live ? (
         <div style={{ overflow: 'auto', flex: 1, padding: '16px 14px' }}>
+          {/* ── THE EVIDENCE BOARDS RUN TODAY ───────────────────────────────────────
+              The signal engine still waits for a realtime feed — that part of the panel below is
+              unchanged and still true. But the three boards are driven by the Consensus evidence
+              payload plus whatever quote we are entitled to, and two of them are fully honest on
+              end-of-day data: one is timestamped from public filings, the other only needs the sign
+              of a move. Every row states the freshness of its own price, so nothing here claims to
+              be a live tape. */}
+          <ScanBoardRows />
+
+          <div style={{ height: 1, background: C.border, margin: '18px 0 14px' }} />
+
           <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 5 }}>
-            Pit Scan is built and waiting on market data
+            Intraday signals are still waiting on market data
           </div>
           <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.6, marginBottom: 14 }}>
             {state.readiness?.reason
               || 'Pit Scan goes live when the market-data provider is connected.'}
-            {' '}It will not run on delayed prints: a fifteen-minute-old answer to “what is moving
-            right now” is not a worse answer, it is a misleading one.
+            {' '}The intraday signals below will not run on delayed prints: a fifteen-minute-old
+            answer to “what is moving right now” is not a worse answer, it is a misleading one. The
+            evidence boards above do run, because they are timestamped from public filings and label
+            the freshness of every price they show.
           </div>
 
           {/* The signals that exist, grouped by what each is waiting for. This is the product, and a
