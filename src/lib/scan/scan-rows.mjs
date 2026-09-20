@@ -212,10 +212,14 @@ export function toScanRow(row, quote = null) {
   // Prefer the live quote; fall back to the daily close the Consensus row already carries. Either
   // way the freshness that gets LABELLED is the freshness of the number actually shown.
   const hasQuote = quote && Number.isFinite(quote.price);
-  const last = hasQuote ? quote.price : (Number.isFinite(levels?.close) ? levels.close : null);
-  const changePct = hasQuote && Number.isFinite(quote.changePct)
+  const rawLast = hasQuote ? quote.price : (Number.isFinite(levels?.close) ? levels.close : null);
+  const last = rawLast === null ? null : Math.round(rawLast * 10000) / 10000;
+  const rawChange = hasQuote && Number.isFinite(quote.changePct)
     ? quote.changePct
     : (Number.isFinite(levels?.changePct) ? levels.changePct : null);
+  // Rounded in the PAYLOAD, not only in the component. A raw -3.1007751937984525 in the API is a
+  // precision the feed does not have, and any other consumer would render it verbatim.
+  const changePct = rawChange === null ? null : Math.round(rawChange * 100) / 100;
   const freshness = hasQuote ? (quote.freshness || 'eod') : 'eod';
 
   const catBlock = row.families?.[FAMILY.CATALYST]?.[0] || null;
