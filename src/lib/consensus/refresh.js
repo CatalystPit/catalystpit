@@ -13,6 +13,7 @@
 // to remember to compare.
 
 import { consensusRow, BOARD_LIMIT } from './board.mjs';
+import { EVALUATE_LIMIT } from './setup-board.js';
 import {
   MATERIALIZATION_VERSION, boardKey, tickerKey, LAST_GOOD_KEY,
   BOARD_TTL_SEC, LAST_GOOD_TTL_SEC, TICKER_TTL_SEC, TICKER_REUSE_MAX_AGE_MS,
@@ -85,7 +86,7 @@ export async function readTicker(ticker, { maxAgeMs = TICKER_REUSE_MAX_AGE_MS, n
  * @param {string[]} [opts.force] tickers to recompute even when a fresh materialization exists.
  */
 export async function rebuildBoard(db, sql, {
-  limit = BOARD_LIMIT, now = Date.now(), reuseTickers = false, force = [], reason = 'manual',
+  limit = EVALUATE_LIMIT, now = Date.now(), reuseTickers = false, force = [], reason = 'manual',
   // Test seam. Production leaves this undefined and the real evidence engine is imported lazily,
   // which keeps this module loadable without a database.
   resolve, resolveConsensus,
@@ -149,7 +150,7 @@ export async function rebuildBoardExclusive(db, sql, opts = {}) {
  * The republish is cheap because every ticker that did NOT change is reused from its
  * materialization; only the dirty ones are recomputed.
  */
-export async function drainDirty(db, sql, { now = Date.now(), limit = BOARD_LIMIT, resolve, resolveConsensus } = {}) {
+export async function drainDirty(db, sql, { now = Date.now(), limit = EVALUATE_LIMIT, resolve, resolveConsensus } = {}) {
   const dirty = await readDirty();
   const strategy = drainStrategy(dirty.length);
 

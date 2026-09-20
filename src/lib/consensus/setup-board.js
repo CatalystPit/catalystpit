@@ -182,10 +182,15 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
   const driver = evidence.find((e) => e.family === FAMILY.CATALYST && e.facts?.material === true)
     || evidence[0] || null;
 
+  // Only a setup actually triggered by a filing may describe price relative to "the filing".
+  // Everything else is confirming or contradicting the DISCLOSURE evidence, whatever the reaction
+  // happens to be anchored to.
+  const catalystDriven = setup.setup.startsWith('FRESH_CATALYST');
   const market = await marketFactsFor(sym, {
     driver,
     verdict: canonical?.market?.confirmation || 'UNAVAILABLE',
-    driverLabel: driver?.family === FAMILY.CATALYST ? 'the filing' : 'the disclosure evidence',
+    driverLabel: catalystDriven && driver?.family === FAMILY.CATALYST
+      ? 'the filing' : 'the disclosure evidence',
   });
 
   const direction = setupDirection(canonical);

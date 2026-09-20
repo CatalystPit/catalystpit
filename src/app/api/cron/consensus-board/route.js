@@ -1,6 +1,6 @@
 import { db } from '../../../../lib/db';
 import { sql } from 'drizzle-orm';
-import { BOARD_LIMIT } from '../../../../lib/consensus/board.mjs';
+import { EVALUATE_LIMIT } from '../../../../lib/consensus/setup-board.js';
 import { rebuildBoardExclusive } from '../../../../lib/consensus/refresh';
 import { MATERIALIZATION_VERSION } from '../../../../lib/consensus/materialization.mjs';
 
@@ -51,7 +51,7 @@ export async function GET(request) {
   const t0 = Date.now();
   try {
     // reuseTickers defaults to false — see above. Every candidate is recomputed from the database.
-    const r = await rebuildBoardExclusive(db, sql, { limit: BOARD_LIMIT, reason: 'reconcile' });
+    const r = await rebuildBoardExclusive(db, sql, { limit: EVALUATE_LIMIT, reason: 'reconcile' });
     const rows = r.payload?.rows?.length ?? 0;
     const ms = Date.now() - t0;
 
