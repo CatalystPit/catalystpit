@@ -546,6 +546,61 @@ L('\n=== THE WHY IS DETERMINISTIC AND DERIVED ===');
   }
   ok('the explanation makes no claim about price',
     !/will|expect|should|likely|target|outperform/i.test(a), a);
+
+  // Production read "Insiders and Institutions and Congress align positive" — a template writing a
+  // list, not a sentence somebody is being asked to trust.
+  const three = ['insiders', 'institutions', 'congress'].map((f) => fam(f, 0.9));
+  const t = explainState(three, consensusState(three));
+  ok('a three-family list reads as a list, not a chain of ANDs',
+    !/ and .* and /.test(t), t);
+  ok('…and still names all three', ['Insider', 'Institution', 'Congress'].every((n) => t.includes(n)), t);
+
+  // SUBJECT-VERB AGREEMENT. "Insiders" are many and "Congress" is one, so any sentence that makes
+  // the family list its subject is wrong for one of them whichever verb the template picks. Every
+  // sentence must therefore survive a single-family Congress input.
+  for (const s of Object.keys(CONSENSUS_STATE)) {
+    const cong = [fam('congress', 0.9), fam('insiders', -0.85, { strength: 0.9 }), fam('institutions', 0)];
+    const sentence = explainState(cong, s);
+    ok(`${s} reads correctly with Congress as the named family`,
+      mut('agreement') ? false
+        : !/^(Insiders|Institutions|Congress|Catalysts)\b/.test(sentence),
+      sentence);
+  }
+}
+
+L('\n=== A ROW NEVER CONTRADICTS ITS OWN HEADLINE ===');
+{
+  // GOLD and CLH in production: state MIXED, WHY "too slight to name a direction" — and the row
+  // still printed driver and opposition chips. The canonical object was describing a direction the
+  // state had explicitly declined to name.
+  const thin = [
+    fam('insiders', -0.3, { strength: 0.25, quality: 0.8, state: 'bearish' }),
+    fam('congress', -0.3, { strength: 0.2, quality: 0.8, state: 'bearish' }),
+  ];
+  const k = canonicalConsensus(thin, { now: NOW });
+  ok('the fixture is genuinely below the directional floor', k.state === CONSENSUS_STATE.MIXED, k.state);
+  ok('a MIXED row names no drivers',
+    mut('phantom') ? false : k.drivers.length === 0, JSON.stringify(k.drivers.map((f) => f.family)));
+  ok('…and no opposition', k.opposition.length === 0 && k.minorContrary.length === 0);
+  ok('…but the families are still carried for the detail view',
+    k.families.filter((f) => f.active).length === 2);
+  ok('…and the WHY says exactly that', /too slight/i.test(k.why), k.why);
+
+  const none = canonicalConsensus([missing('insiders'), missing('congress')], { now: NOW });
+  ok('a NO_EVIDENCE row names no drivers either', none.drivers.length === 0);
+
+  // The converse: every state that DOES name a direction must name what drives it, or the reader
+  // is given a conclusion with nothing behind it.
+  for (const fams of [
+    [fam('insiders', 0.9), fam('congress', 0.8)],
+    [fam('insiders', -0.9), fam('congress', -0.8)],
+    [fam('insiders', 0.9, { strength: 0.9 }), fam('institutions', 0.8), fam('congress', -0.6, { strength: 0.55 })],
+    [fam('insiders', 0.8), fam('congress', -0.78, { strength: 0.79 })],
+    [fam('insiders', 0.9), missing('congress')],
+  ]) {
+    const c = canonicalConsensus(fams, { now: NOW });
+    ok(`${c.state} names at least one driving family`, c.drivers.length > 0);
+  }
 }
 
 L(`\n${pass} passed, ${fail} failed`);

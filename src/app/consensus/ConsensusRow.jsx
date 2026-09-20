@@ -86,13 +86,26 @@ export default function ConsensusRow({ r }) {
             </span>
           </div>
 
-          {/* 4-5. DRIVING vs OPPOSING — the synthesis, not five equal rows. */}
+          {/* 4-5. DRIVING vs OPPOSING — the synthesis, not five equal rows.
+              When the state names no direction there is nothing to drive it, so the row shows which
+              families simply HOLD evidence, dimmed and without the "vs". Printing drivers under a
+              "too slight to name a direction" headline would have the row argue with itself. */}
           <div style={{ display: 'flex', gap: 5, marginTop: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-            {k.drivers.map((f) => <FamilyChip key={f.family} f={f} />)}
-            {k.opposition.length > 0 && (
+            {k.drivers.length > 0 ? (
               <>
-                <span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>vs</span>
-                {k.opposition.map((f) => <FamilyChip key={f.family} f={f} />)}
+                {k.drivers.map((f) => <FamilyChip key={f.family} f={f} />)}
+                {k.opposition.length > 0 && (
+                  <>
+                    <span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>vs</span>
+                    {k.opposition.map((f) => <FamilyChip key={f.family} f={f} />)}
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 10, color: C.dim, fontWeight: 700 }}>HOLDING EVIDENCE</span>
+                {k.families.filter((f) => f.active && f.family !== 'structure')
+                  .map((f) => <FamilyChip key={f.family} f={f} dim />)}
               </>
             )}
           </div>

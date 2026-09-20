@@ -184,6 +184,11 @@ export function meaningfulConflict(families) {
  * That tracking is deliberately NOT built here: applying today's model to yesterday's data would
  * fabricate history, and doing it correctly needs point-in-time snapshots.
  */
+/** The states that name a direction, and therefore have a side driving them. Referenced by
+ *  canonicalConsensus; defined here so the list is one thing, not a condition repeated three times. */
+const DIRECTED = new Set(['POSITIVE_ALIGNMENT', 'NEGATIVE_ALIGNMENT', 'POSITIVE_LEAN_WITH_CONFLICT',
+  'NEGATIVE_LEAN_WITH_CONFLICT', 'BALANCED_CONFLICT', 'SINGLE_SOURCE']);
+
 export function canonicalConsensus(families, { now = Date.now() } = {}) {
   const evaluated = Array.isArray(families) ? families : [];
   const c = evidenceContributions(evaluated);
@@ -214,9 +219,17 @@ export function canonicalConsensus(families, { now = Date.now() } = {}) {
     confidence: confidenceOf(evaluated, state),
 
     // WHAT IS DRIVING THE VIEW, and what opposes it.
-    drivers: (c.dominant === 'positive' ? c.positive : c.negative).map(normaliseFamily),
-    opposition: hasOpposition && share >= MINOR_CONTRARY_SHARE ? minorityFamilies.map(normaliseFamily) : [],
-    minorContrary: hasOpposition && share < MINOR_CONTRARY_SHARE ? minorityFamilies.map(normaliseFamily) : [],
+    //
+    // ⚠️ NOTHING DRIVES A READING THAT DOES NOT EXIST. When the state is MIXED or NO_EVIDENCE the
+    // engine has explicitly declined to name a direction, and a row that still printed "Insiders
+    // NEGATIVE vs …" would contradict its own WHY sentence — which is exactly what production did
+    // for GOLD and CLH. The families are still carried in `families` for the detail view.
+    drivers: DIRECTED.has(state)
+      ? (c.dominant === 'positive' ? c.positive : c.negative).map(normaliseFamily) : [],
+    opposition: DIRECTED.has(state) && hasOpposition && share >= MINOR_CONTRARY_SHARE
+      ? minorityFamilies.map(normaliseFamily) : [],
+    minorContrary: DIRECTED.has(state) && hasOpposition && share < MINOR_CONTRARY_SHARE
+      ? minorityFamilies.map(normaliseFamily) : [],
     mixedFamilies: c.mixed.map(normaliseFamily),
 
     // MARKET — a separate layer, never a disclosure vote.
@@ -507,32 +520,43 @@ export function confidenceOf(families, state) {
  */
 export function explainState(families, state) {
   const c = evidenceContributions(families);
-  const names = (list) => list.map((f) => familyLabel(f.family)).join(' and ');
+  // "Institutions and Congress and Catalysts" is how a template writes a list; it is not how the
+  // sentence should read to somebody deciding whether to trust it.
+  const names = (list) => {
+    const n = list.map((f) => familyLabel(f.family));
+    if (n.length <= 1) return n[0] || '';
+    return `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`;
+  };
   const dom = c.dominant === 'positive' ? c.positive : c.negative;
   const opp = c.dominant === 'positive' ? c.negative : c.positive;
   const dir = c.dominant === 'positive' ? 'positive' : 'negative';
 
+  // ⚠️ THE FAMILY LIST IS NEVER THE SUBJECT OF THE SENTENCE. "Insiders align" and "Congress aligns"
+  // need different verbs, and a template cannot know which it has — Congress is one body, Insiders
+  // are many. Writing every sentence around "Evidence from …", which is always singular, removes
+  // the agreement problem instead of guessing at it.
   switch (state) {
     case CONSENSUS_STATE.NO_EVIDENCE:
       return 'No disclosure family currently holds qualifying evidence.';
     case CONSENSUS_STATE.SINGLE_SOURCE:
-      return `Only ${names([...c.positive, ...c.negative])} currently carries directional evidence, `
+      return `Directional evidence comes from ${names([...c.positive, ...c.negative])} alone, `
         + 'so there is no independent corroboration.';
     case CONSENSUS_STATE.MIXED:
       return c.directionalCount
         ? 'The directional evidence available is too slight to name a direction.'
-        : `${names(c.mixed) || 'The active families'} carry evidence, but none of it is directional.`;
+        : `Evidence from ${names(c.mixed) || 'the active families'} is present, `
+          + 'but none of it is directional.';
     case CONSENSUS_STATE.BALANCED_CONFLICT:
-      return `${names(c.positive)} point positive while ${names(c.negative)} point negative, `
-        + 'and neither side clearly outweighs the other.';
+      return `Positive evidence from ${names(c.positive)} is set against negative evidence from `
+        + `${names(c.negative)}, and neither side clearly outweighs the other.`;
     case CONSENSUS_STATE.POSITIVE_LEAN_WITH_CONFLICT:
     case CONSENSUS_STATE.NEGATIVE_LEAN_WITH_CONFLICT:
-      return `${names(dom)} outweigh opposing evidence from ${names(opp)}, `
+      return `Evidence from ${names(dom)} outweighs opposing evidence from ${names(opp)}, `
         + `so the reading leans ${dir} with that conflict unresolved.`;
     default:
       return opp.length
-        ? `${names(dom)} align ${dir}, with only minor contrary evidence from ${names(opp)}.`
-        : `${names(dom)} align ${dir} with no opposing disclosure evidence.`;
+        ? `Evidence from ${names(dom)} aligns ${dir}, with only minor contrary evidence from ${names(opp)}.`
+        : `Evidence from ${names(dom)} aligns ${dir}, with no opposing disclosure evidence.`;
   }
 }
 
