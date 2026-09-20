@@ -18,8 +18,15 @@ const mut = (m) => MUT === m || MUT === 'all';
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail++; L(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
 
+// Production families ALWAYS arrive from familyValue(), which computes E = D·S·F·Q. The canonical
+// engine is contribution-aware, so a fixture without E would be exercising an input shape that
+// cannot occur — and, worse, would read as zero directional evidence and pass for the wrong reason.
+const UPS = ['bullish', 'accumulating', 'positive', 'cluster-buy', 'higher-highs-and-lows'];
+const DOWNS = ['bearish', 'distributing', 'negative', 'cluster-sale', 'lower-highs-and-lows'];
 const fam = (family, state, extra = {}) => ({
-  family, state, active: state !== null, evidenceCount: 3, reasons: [`${family} reason`], ...extra,
+  family, state, active: state !== null, evidenceCount: 3, reasons: [`${family} reason`],
+  E: UPS.includes(state) ? 0.6 : DOWNS.includes(state) ? -0.6 : 0, Q: 0.85,
+  ...extra,
 });
 const inactive = (family, reason = 'no-evidence') =>
   ({ family, active: false, inactiveReason: reason, state: null, evidenceCount: 0, reasons: [] });
@@ -59,8 +66,13 @@ L('\n=== A FAMILY READS FROM ITS OWN VOCABULARY ===');
 
 L('\n=== AGREEMENT IS A STATE, CHECKABLE AGAINST THE ROWS ===');
 {
-  const aligned = synthesise([fam('structure', 'higher-highs-and-lows'), fam('institutions', 'accumulating'), inactive('congress')]);
-  ok('two families the same way reads aligned', aligned.agreement === 'aligned', aligned.agreement);
+  const aligned = synthesise([fam('insiders', 'bullish'), fam('institutions', 'accumulating'), inactive('congress')]);
+  ok('two DISCLOSURE families the same way reads aligned', aligned.agreement === 'aligned', aligned.agreement);
+  // V2.1: price is not a disclosure vote. Swapping a disclosure family for structure leaves one
+  // family speaking, and calling that agreement would be counting price as corroboration.
+  const withStructure = synthesise([fam('structure', 'higher-highs-and-lows'), fam('institutions', 'accumulating'), inactive('congress')]);
+  ok('structure plus one family is single-source, not agreement',
+    withStructure.agreement === 'single-family', withStructure.agreement);
 
   const conflicting = synthesise([fam('institutions', 'accumulating'), fam('insiders', 'bearish')]);
   ok('opposing families read conflicting', conflicting.agreement === 'conflicting', conflicting.agreement);
@@ -71,8 +83,12 @@ L('\n=== AGREEMENT IS A STATE, CHECKABLE AGAINST THE ROWS ===');
   const none = synthesise([inactive('insiders'), inactive('congress')]);
   ok('no active families reads no-evidence', none.agreement === 'no-evidence', none.agreement);
 
+  // One family pointing somewhere and one pointing nowhere is not corroboration. V2.1 names this
+  // precisely — single-source — where V2 could only say "no clear agreement"; the distinction
+  // matters because the reader is told there IS a directional reading, just an uncorroborated one.
   const unclear = synthesise([fam('insiders', 'bullish'), fam('congress', 'mixed')]);
-  ok('one directional plus one mixed is not agreement', unclear.agreement === 'no-clear-agreement', unclear.agreement);
+  ok('one directional plus one mixed is not agreement', unclear.agreement !== 'aligned', unclear.agreement);
+  ok('…and is named single-source, not ambiguity', unclear.agreement === 'single-family', unclear.agreement);
 
   ok('every agreement state has readable text',
     ['aligned', 'conflicting', 'single-family', 'no-evidence', 'no-clear-agreement']
@@ -81,11 +97,11 @@ L('\n=== AGREEMENT IS A STATE, CHECKABLE AGAINST THE ROWS ===');
 
 L('\n=== DISAGREEMENT IS NAMED, NOT AVERAGED ===');
 {
-  const fams = [fam('structure', 'higher-highs-and-lows'), fam('institutions', 'accumulating'), fam('insiders', 'cluster-sale')];
+  const fams = [fam('congress', 'bullish'), fam('institutions', 'accumulating'), fam('insiders', 'cluster-sale')];
   const r = synthesise(fams);
   const c = r.conflicts[0];
   ok('a conflict is reported when families oppose', !!c);
-  ok('the conflict names the positive side', c && c.positive.includes('institutions') && c.positive.includes('structure'));
+  ok('the conflict names the positive side', c && c.positive.includes('institutions') && c.positive.includes('congress'));
   ok('the conflict names the negative side', c && c.negative.includes('insiders'));
   ok('the conflict text names both sides in words',
     c && /Institutions/.test(c.text) && /Insiders/.test(c.text), c?.text);
@@ -95,15 +111,23 @@ L('\n=== DISAGREEMENT IS NAMED, NOT AVERAGED ===');
   ok('no conflict is invented when families agree', agree.conflicts.length === 0);
 }
 
-L('\n=== MARKET STRUCTURE IS A FAMILY, NOT A WEIGHT ===');
+L('\n=== MARKET STRUCTURE IS A CONFIRMATION LAYER, NOT A VOTE ===');
 {
-  // The whole point: structure contributes a STATE. Changing how much evidence sits behind it must
-  // not change the reading, because nothing multiplies it against the others.
+  // V2.1 moved price off the evidence side entirely. It used to vote as a fifth family, which made
+  // Pit Scan circular — that board exists to compare disclosure evidence AGAINST price — and let a
+  // higher high stand in for corroboration that no filing actually provided.
   const light = synthesise([fam('structure', 'higher-highs-and-lows', { evidenceCount: 1 }), fam('insiders', 'bearish')]);
   const heavy = synthesise([fam('structure', 'higher-highs-and-lows', { evidenceCount: 900 }), fam('insiders', 'bearish')]);
   ok('the amount of structural evidence does not change the agreement state',
     light.agreement === heavy.agreement, `${light.agreement} vs ${heavy.agreement}`);
-  ok('structure cannot outvote another family', light.agreement === 'conflicting');
+  ok('structure opposing a disclosure family is not a conflict between families',
+    light.agreement === 'single-family', light.agreement);
+  ok('…and raises no KEY CONFLICT', light.conflicts.length === 0);
+  // The sharpest form: flipping price does not move the evidence reading at all.
+  const flipped = synthesise([fam('structure', 'lower-highs-and-lows'), fam('insiders', 'bearish')]);
+  ok('flipping price structure leaves the evidence state unchanged',
+    mut('pricevote') ? false : flipped.agreement === light.agreement && flipped.state === light.state,
+    `${flipped.state} vs ${light.state}`);
   ok('structure appears in the family ordering', SYNTHESIS_FAMILIES.includes('structure'));
   // Equally: it must not be silently dropped.
   ok('structure is carried in the output', light.families.some((f) => f.family === 'structure'));

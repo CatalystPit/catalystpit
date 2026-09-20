@@ -23,31 +23,21 @@
 
 import { useEffect, useState } from 'react';
 import ErrorState from '../../components/ErrorState';
-import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout } from '../../lib/cp-shared';
+import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
+import ConsensusRow, { STATE_UI } from './ConsensusRow';
+import { BOARD_FILTERS } from '../../lib/consensus/synthesis.mjs';
 
-const FAMILY_LABEL = {
-  insiders: 'Insiders', institutions: 'Institutions', congress: 'Congress', catalysts: 'Catalysts',
-};
-const STATE_LABEL = {
-  bullish: 'Positive', bearish: 'Negative', mixed: 'Mixed',
-  accumulating: 'Accumulating', distributing: 'Distributing',
-  positive: 'Positive', negative: 'Negative',
-  'routine-sale': 'Routine sales', 'cluster-sale': 'Cluster selling', 'cluster-buy': 'Cluster buying',
-};
-const INACTIVE_LABEL = {
-  'no-evidence': 'No evidence in window', stale: 'Evidence too old',
-  'unusable-quality': 'Not classifiable', 'no-strength': 'Not classifiable',
-  'resolution-error': 'Unavailable', 'incomplete-inputs': 'Unavailable',
-};
+// Discovery filters over the CANONICAL states, imported from the engine so a filter cannot
+// disagree with the label on the row it shows — or quietly leave a state unreachable.
+const FILTERS = BOARD_FILTERS;
 
-const UP = new Set(['bullish', 'accumulating', 'positive', 'cluster-buy']);
-const DOWN = new Set(['bearish', 'distributing', 'negative', 'cluster-sale']);
-const stateColor = (s) => (UP.has(s) ? C.green : DOWN.has(s) ? C.red : C.muted);
-
-const dirTone = (d) => (d === 'bullish-lean' ? C.green : d === 'bearish-lean' ? C.red : C.muted);
-const CONF_TITLE = 'Confidence in this reading of the EVIDENCE — how many independent families are '
-  + 'active, how much they carry and how reliable those sources are. It is not a probability that '
-  + 'the stock rises or falls.';
+// Non-predictive ordering only. None of these claims a security will perform better than another.
+const SORTS = [
+  { key: 'default', label: 'Research priority' },
+  { key: 'coverage', label: 'Most evidence' },
+  { key: 'confidence', label: 'Highest confidence' },
+];
+const CONF_RANK = { High: 3, Medium: 2, Low: 1 };
 
 function SkeletonRow() {
   const bar = (w, h = 10) => (
@@ -64,157 +54,6 @@ function SkeletonRow() {
   );
 }
 
-/**
- * One family's line, rendered from the NORMALISED family.
- *
- * State and trend are separate axes and both are shown: "Positive · Strengthening" and "Positive ·
- * Weakening" are different readings and collapsing them would lose the more useful half. The
- * family's own word ("Accumulating", "Single actor") is kept beside the normalised state because it
- * carries detail the four canonical states cannot.
- */
-const NSTATE_COLOR = { POSITIVE: C.green, NEGATIVE: C.red, MIXED: C.muted, INACTIVE: C.dim };
-const NSTATE_LABEL = { POSITIVE: 'Positive', NEGATIVE: 'Negative', MIXED: 'Mixed', INACTIVE: 'Inactive' };
-const TREND_LABEL = { NEW: 'New', STRENGTHENING: 'Strengthening', WEAKENING: 'Weakening', STABLE: null };
-
-function FamilyLine({ f }) {
-  const descriptor = f.descriptor && STATE_LABEL[f.descriptor];
-  const trend = TREND_LABEL[f.trend];
-  return (
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12, flexWrap: 'wrap' }}>
-      <span style={{ minWidth: 92, color: C.muted, flexShrink: 0 }}>{f.label}</span>
-      {f.active ? (
-        <>
-          <span style={{ fontWeight: 600, color: NSTATE_COLOR[f.state], minWidth: 0 }}>
-            {NSTATE_LABEL[f.state]}
-          </span>
-          {trend && <span style={{ color: C.muted }}>· {trend}</span>}
-          {descriptor && descriptor !== NSTATE_LABEL[f.state] && (
-            <span style={{ color: C.dim }}>· {descriptor}</span>
-          )}
-          {f.reasons?.[0] && (
-            <span style={{ color: C.dim, minWidth: 0, overflowWrap: 'anywhere' }}>· {f.reasons[0]}</span>
-          )}
-        </>
-      ) : (
-        <span style={{ color: C.dim, fontStyle: 'italic' }}>
-          {INACTIVE_LABEL[f.inactiveReason] || 'No evidence'}
-        </span>
-      )}
-    </div>
-  );
-}
-
-const STATE_UI = {
-  POSITIVE_ALIGNMENT: { label: 'Positive alignment', color: C.green },
-  NEGATIVE_ALIGNMENT: { label: 'Negative alignment', color: C.red },
-  CONFLICT: { label: 'Conflict', color: C.red },
-  MIXED: { label: 'No clear agreement', color: C.muted },
-  SINGLE_SOURCE: { label: 'Single-source evidence', color: C.muted },
-  NO_EVIDENCE: { label: 'No current evidence', color: C.muted },
-};
-
-function Row({ r }) {
-  const [open, setOpen] = useState(false);
-  // The NORMALISED families — the same five the ticker page renders, from the same function.
-  const fams = r.normalised || [];
-  const active = fams.filter((f) => f.active);
-
-  // THE HEADLINE IS THE STATE COUNT, NOT THE ARITHMETIC LEAN. On GOLD the sum said "Bullish Lean"
-  // because institutional magnitude outweighed two dissenting families; the state count says
-  // Conflict, which is what the ticker page says and what is true.
-  const ui = STATE_UI[r.state] || STATE_UI.MIXED;
-
-  // ALIGNMENT AS A COUNT, NOT A PERCENTAGE. One active family agrees with itself by definition;
-  // printing 100% there would be the most misleading number on the page.
-  const up = active.filter((f) => f.state === 'POSITIVE').length;
-  const down = active.filter((f) => f.state === 'NEGATIVE').length;
-  const alignText = active.length < 2
-    ? 'Single-source'
-    : up && down
-      ? `${up} positive, ${down} negative of ${active.length} active`
-      : `${Math.max(up, down)} of ${active.length} active families aligned`;
-
-  // The 13F date pair, never collapsed: a filing published yesterday describes a position up to
-  // ~135 days old.
-  const inst = active.find((f) => f.family === 'institutions');
-
-  return (
-    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 13, padding: '14px 16px' }}>
-        <TickerLogo symbol={r.ticker} size={30} />
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-            <a href={`/ticker/${encodeURIComponent(r.ticker)}`} className="cp-tkr"
-              style={{ fontSize: 15, fontWeight: 800, color: C.ink, textDecoration: 'none' }}>{r.ticker}</a>
-            <span style={{ fontSize: 14, fontWeight: 700, color: ui.color }}>{ui.label}</span>
-            <span title={CONF_TITLE} style={{ fontSize: 11.5, color: C.muted, cursor: 'help' }}>
-              {r.confidence} confidence
-            </span>
-            <span style={{ fontSize: 11.5, color: C.muted }}>· {alignText}</span>
-          </div>
-
-          <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
-            {fams.map((f) => <FamilyLine key={f.family} f={f} />)}
-          </div>
-
-          {/* CONFLICT IS A FIRST-CLASS OUTPUT, not a failed calculation. */}
-          {r.conflicts?.length > 0 && (
-            <div style={{ marginTop: 8, padding: '7px 10px', background: '#FFF4F4', border: `1px solid ${C.red}33`, borderRadius: 6 }}>
-              <span style={{ fontSize: 9.5, fontWeight: 700, color: C.red, letterSpacing: '0.5px' }}>KEY CONFLICT</span>
-              <div style={{ fontSize: 11.5, color: C.text, marginTop: 2, lineHeight: 1.4 }}>{r.conflicts[0].text}</div>
-            </div>
-          )}
-
-          {inst?.dates?.quarterEnd && (
-            <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim }}>
-              Institutional holdings as of quarter ended {inst.dates.quarterEnd}
-              {inst.dates.disclosedAt && <> · disclosed {inst.dates.disclosedAt}</>}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 14, marginTop: 9, alignItems: 'center', flexWrap: 'wrap' }}>
-            <a href={`/ticker/${encodeURIComponent(r.ticker)}`}
-              style={{ fontSize: 11.5, fontWeight: 700, color: C.green, textDecoration: 'none' }}>
-              Open evidence →
-            </a>
-            {active.some((f) => (f.reasons || []).length > 1 || (f.refs || []).length) && (
-              <button type="button" onClick={() => setOpen((v) => !v)}
-                style={{ fontSize: 11, color: C.muted, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
-                {open ? 'Hide why' : 'Why'} {open ? '▴' : '▾'}
-              </button>
-            )}
-          </div>
-
-          {/* WHY — generated from the records, never written to fit the conclusion. */}
-          {open && (
-            <div style={{ marginTop: 9, paddingTop: 9, borderTop: `1px solid ${C.surface}` }}>
-              {active.map((f) => (
-                <div key={f.family} style={{ marginBottom: 7 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, letterSpacing: '0.5px' }}>
-                    {(FAMILY_LABEL[f.family] || f.family).toUpperCase()}
-                  </div>
-                  <ul style={{ margin: '3px 0 0', paddingLeft: 15 }}>
-                    {(f.reasons || []).slice(0, 3).map((t, i) => (
-                      <li key={i} style={{ fontSize: 11.5, color: C.text, lineHeight: 1.45 }}>{t}</li>
-                    ))}
-                  </ul>
-                  {/* Canonical stored URLs only. A family with none says so rather than linking
-                      somewhere approximate. */}
-                  {(f.refs || []).length > 0 && (
-                    <div style={{ fontSize: 10.5, color: C.dim, marginTop: 2, paddingLeft: 15 }}>
-                      {(f.refs || []).length} source record{(f.refs || []).length === 1 ? '' : 's'} on file
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function ConsensusClient() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -223,6 +62,8 @@ export default function ConsensusClient() {
   const [loadError, setLoadError] = useState(false);
   const [degraded, setDegraded] = useState(false);
   const [reloadAt, setReloadAt] = useState(0);
+  const [filter, setFilter] = useState('all');
+  const [sort, setSort] = useState('default');
 
   useEffect(() => {
     let alive = true;
@@ -241,8 +82,29 @@ export default function ConsensusClient() {
     return () => { alive = false; };
   }, [reloadAt]);
 
-  const list = data?.rows || [];
+  const all = data?.rows || [];
   const locked = data?.lockedCount || 0;
+
+  // Filtering and ordering are both over the canonical object. The server already ordered by
+  // research priority; these only re-cut that, never re-interpret it.
+  const f = FILTERS.find((x) => x.key === filter) || FILTERS[0];
+  let list = all.filter((r) => {
+    const k = r.canonical; if (!k) return false;
+    if (f.market) return k.market?.confirmation === f.market;
+    return !f.states || f.states.includes(k.state);
+  });
+  if (sort === 'coverage') {
+    list = [...list].sort((a, b) => (b.canonical.coverage.active - a.canonical.coverage.active)
+      || a.ticker.localeCompare(b.ticker));
+  } else if (sort === 'confidence') {
+    list = [...list].sort((a, b) => ((CONF_RANK[b.canonical.confidence] || 0) - (CONF_RANK[a.canonical.confidence] || 0))
+      || a.ticker.localeCompare(b.ticker));
+  }
+  const counts = Object.fromEntries(FILTERS.map((x) => [x.key, all.filter((r) => {
+    const k = r.canonical; if (!k) return false;
+    if (x.market) return k.market?.confirmation === x.market;
+    return !x.states || x.states.includes(k.state);
+  }).length]));
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -254,6 +116,32 @@ export default function ConsensusClient() {
           What the independent public evidence says right now — insiders, institutions, Congress and
           catalysts — and whether those families agree. Evidence accounting, not a prediction.
         </p>
+
+        {/* DISCOVERY CONTROLS. Every filter maps to canonical states, so a filter can never show a
+            row whose own label contradicts it. None of these ranks securities by expected return. */}
+        {!loading && !loadError && !degraded && all.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+            {FILTERS.filter((x) => x.key === 'all' || counts[x.key] > 0).map((x) => (
+              <button key={x.key} type="button" onClick={() => setFilter(x.key)}
+                style={{
+                  fontSize: 11, fontWeight: filter === x.key ? 700 : 500, cursor: 'pointer',
+                  padding: '4px 10px', borderRadius: 999, fontFamily: 'inherit',
+                  border: `1px solid ${filter === x.key ? C.green : C.border}`,
+                  background: filter === x.key ? C.greenLight : C.white,
+                  color: filter === x.key ? C.green : C.muted,
+                }}>
+                {x.label}{x.key !== 'all' ? ` ${counts[x.key]}` : ''}
+              </button>
+            ))}
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 10.5, color: C.dim }}>Order</span>
+              <select value={sort} onChange={(e) => setSort(e.target.value)}
+                style={{ fontSize: 11, padding: '3px 6px', borderRadius: 5, border: `1px solid ${C.border}`, background: C.white, color: C.text, fontFamily: 'inherit' }}>
+                {SORTS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+              </select>
+            </span>
+          </div>
+        )}
 
         {loadError && !loading ? (
           <ErrorState
@@ -277,11 +165,13 @@ export default function ConsensusClient() {
           </div>
         ) : list.length === 0 ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
-            No ticker currently has qualifying evidence in two or more independent families.
+            {all.length === 0
+              ? 'No ticker currently has qualifying evidence in two or more independent families.'
+              : 'No ticker is currently in that state.'}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {list.map((r) => <Row key={r.ticker} r={r} />)}
+            {list.map((r) => <ConsensusRow key={r.ticker} r={r} />)}
 
             {locked > 0 && (
               <div style={{ position: 'relative', marginTop: 2 }}>

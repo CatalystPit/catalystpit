@@ -63,6 +63,22 @@ const AGREEMENT_LABEL = {
   'single-family': 'Only one family has current evidence',
   'no-evidence': 'No current evidence',
 };
+const STATE_UI = {
+  POSITIVE_ALIGNMENT: { label: 'Positive alignment', color: C.green },
+  NEGATIVE_ALIGNMENT: { label: 'Negative alignment', color: C.red },
+  POSITIVE_LEAN_WITH_CONFLICT: { label: 'Positive lean, with conflict', color: C.green },
+  NEGATIVE_LEAN_WITH_CONFLICT: { label: 'Negative lean, with conflict', color: C.red },
+  BALANCED_CONFLICT: { label: 'Balanced conflict', color: C.red },
+  MIXED: { label: 'Mixed / ambiguous', color: C.muted },
+  SINGLE_SOURCE: { label: 'Single-source evidence', color: C.muted },
+  NO_EVIDENCE: { label: 'No current evidence', color: C.muted },
+};
+const MARKET_UI = {
+  CONFIRMING: { label: 'Confirming', color: C.green },
+  DIVERGING: { label: 'Diverging', color: C.red },
+  MIXED: { label: 'Mixed', color: C.muted },
+  UNAVAILABLE: { label: 'Unavailable', color: C.dim },
+};
 const agreementColor = (a) => (a === 'conflicting' ? C.red : a === 'aligned' ? C.ink : C.muted);
 
 export default function ConsensusPanel({ symbol }) {
@@ -109,14 +125,38 @@ export default function ConsensusPanel({ symbol }) {
             not a verdict. There is deliberately no "Bullish Lean", no alignment percentage and no
             confidence word: each implied a validated scale that does not exist, and each invited the
             reader to skip the evidence and trust the headline. */}
-        <div style={{ fontSize: 16, fontWeight: 700, color: agreementColor(data.agreement), letterSpacing: '-0.2px' }}>
-          {AGREEMENT_LABEL[data.agreement] || 'No clear agreement'}
+        {/* THE CANONICAL STATE — the same object and the same function the market-wide board
+            headlines with, so the two surfaces cannot describe this company differently. */}
+        <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.2px',
+          color: (STATE_UI[data.canonical?.state] || {}).color || agreementColor(data.agreement) }}>
+          {(STATE_UI[data.canonical?.state] || {}).label
+            || AGREEMENT_LABEL[data.agreement] || 'No clear agreement'}
         </div>
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
-          {data.activeCount === 0
-            ? 'Nothing currently reportable across the evidence families'
-            : `${data.activeCount} of ${data.evaluatedCount} families have current evidence`}
-        </div>
+        {data.canonical && (
+          <>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
+              {data.canonical.confidence} confidence · {data.canonical.coverage.active} of{' '}
+              {data.canonical.coverage.total} disclosure families active
+              {' · '}Market{' '}
+              <b style={{ color: (MARKET_UI[data.canonical.market.confirmation] || {}).color, fontWeight: 700 }}>
+                {(MARKET_UI[data.canonical.market.confirmation] || {}).label}
+              </b>
+            </div>
+            <div style={{ fontSize: 12, color: C.text, marginTop: 6, lineHeight: 1.45 }}>
+              {data.canonical.why}
+            </div>
+          </>
+        )}
+        {/* Fallback only. When the canonical reading is present it already states coverage — over the
+            four DISCLOSURE families — and printing a second count over five would read as a
+            contradiction on the same card. */}
+        {!data.canonical && (
+          <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
+            {data.activeCount === 0
+              ? 'Nothing currently reportable across the evidence families'
+              : `${data.activeCount} of ${data.evaluatedCount} families have current evidence`}
+          </div>
+        )}
 
         {/* KEY CONFLICT — named, not averaged away. This is the single most useful thing the panel
             can say, and the old aggregate destroyed it by construction. */}

@@ -9,7 +9,12 @@
 
 import { orderBoard, BOARD_FAMILIES, AGGREGATE_FAMILIES, BOARD_LIMIT, CONCURRENCY } from '../src/lib/consensus/board.mjs';
 import { computeConsensus, familyValue, FAMILIES, CONSTANTS } from '../src/lib/consensus/consensus-v1.mjs';
-import { familyLean, consensusState, CONSENSUS_STATE, describeConflicts, synthesise, normaliseFamily, familyState, familyTrend } from '../src/lib/consensus/synthesis.mjs';
+import {
+  familyLean, consensusState, CONSENSUS_STATE, describeConflicts, synthesise, normaliseFamily,
+  familyState, familyTrend, canonicalConsensus, meaningfulConflict, marketConfirmation, confidenceOf,
+  evidenceContributions, explainState, MARKET, BOARD_FILTERS, DISCLOSURE_FAMILIES,
+  MINOR_CONTRARY_SHARE, BALANCED_SHARE,
+} from '../src/lib/consensus/synthesis.mjs';
 
 const L = (s = '') => console.log(s);
 const MUT = (process.argv.find((a) => a.startsWith('--mutate')) || '').split('=')[1]
@@ -164,18 +169,23 @@ L('\n=== INVALID EVIDENCE CANNOT REACH THE BOARD ===');
 
 L('\n=== ORDERING IS DETERMINISTIC AND NOT A LEADERBOARD ===');
 {
-  const row = (ticker, activeCount, confidence, alignment, directionValue) =>
-    ({ ticker, activeCount, confidence, alignment, directionValue });
+  // Rows now order off the CANONICAL object, so the fixtures are canonical objects.
+  const row = (ticker, state, confidence, active, mass = 0.5) =>
+    ({ ticker, canonical: { state, confidence, coverage: { active, total: 4 },
+      diagnostics: { positiveMass: mass, negativeMass: 0 } } });
   const list = [
-    row('BBB', 2, 'Low', 0.9, 0.5),
-    row('AAA', 4, 'High', 0.5, 0.4),
-    row('CCC', 4, 'High', 0.5, 0.4),
-    row('DDD', 3, 'Medium', 0.99, 0.9),
+    row('BBB', 'MIXED', 'High', 4),
+    row('AAA', 'POSITIVE_ALIGNMENT', 'High', 3),
+    row('CCC', 'POSITIVE_ALIGNMENT', 'High', 3),
+    row('DDD', 'BALANCED_CONFLICT', 'High', 4),
   ];
   const out = orderBoard(list).map((r) => r.ticker);
-  ok('more active independent families ranks first', out[0] === 'AAA' || out[0] === 'CCC');
+  // A decided state outranks an undecided one however much evidence the undecided row has: the
+  // board's job is to surface readings worth investigating, and MIXED is the absence of a reading.
+  ok('a resolved state ranks above a mixed one with more coverage', out[0] !== 'BBB', out.join(','));
   ok('a perfect tie falls back to the ticker, so the order is stable',
     out.slice(0, 2).join(',') === 'AAA,CCC', out.join(','));
+  ok('mixed rows sink to the bottom', out[out.length - 1] === 'BBB', out.join(','));
   ok('ordering is pure — the same input gives the same output',
     orderBoard(list).map((r) => r.ticker).join(',') === out.join(','));
   // The ordering must be a function of EVIDENCE only. Written as property accesses so the `return`
@@ -183,9 +193,12 @@ L('\n=== ORDERING IS DETERMINISTIC AND NOT A LEADERBOARD ===');
   // its own control flow and failed for the wrong reason.
   ok('ordering reads no price, return or performance field',
     !/\.(changePct|price|close|perf\w*|return\w*|marketCap)\b/.test(orderBoard.toString()));
-  ok('ordering reads only evidence properties',
-    ['activeCount', 'confidence', 'alignment', 'directionValue', 'ticker']
-      .every((k) => orderBoard.toString().includes(k)));
+  ok('ordering reads only canonical evidence properties',
+    ['state', 'confidence', 'coverage', 'ticker'].every((k) => orderBoard.toString().includes(k)));
+  // Market confirmation is a SEPARATE layer. Letting it order the board would make price a
+  // tiebreaker on an evidence ranking, which is the circularity the layer exists to prevent.
+  ok('market confirmation does not enter the ordering',
+    !/confirmation|market/i.test(orderBoard.toString()));
   ok('the board is bounded', BOARD_LIMIT <= 100 && CONCURRENCY <= 8);
 }
 
@@ -217,25 +230,39 @@ L('\n=== THE GOLD REGRESSION ===');
   ];
 
   const state = consensusState(gold);
-  ok('GOLD reads CONFLICT, not positive alignment',
-    mut('gold') ? state === CONSENSUS_STATE.POSITIVE_ALIGNMENT : state === CONSENSUS_STATE.CONFLICT, state);
+  // V2.1 answer: the opposing evidence is 22% of the directional total — material, clearly
+  // outweighed, not a standoff. So the reading leans positive AND names the conflict, instead of
+  // V2's flat CONFLICT (which discarded magnitude) or the arithmetic's clean "Bullish Lean"
+  // (which discarded the dissent).
+  ok('GOLD reads a positive LEAN WITH CONFLICT, not clean alignment',
+    mut('gold') ? state === CONSENSUS_STATE.POSITIVE_ALIGNMENT
+      : state === CONSENSUS_STATE.POSITIVE_LEAN_WITH_CONFLICT, state);
 
-  // The specific failure: one high-magnitude family outvoting two opposing families.
-  ok('one strong family cannot outvote two opposing families',
+  // The specific failure that started this: one high-magnitude family outvoting two opposing
+  // families and the dissent vanishing from the headline entirely.
+  ok('one strong family cannot erase two opposing families',
     state !== CONSENSUS_STATE.POSITIVE_ALIGNMENT);
+  ok('…and the conflict survives into the canonical object', /conflict/i.test(state));
 
   // And the arithmetic still leans positive — proving the headline no longer comes from it.
   const arithmetic = computeConsensus(gold.filter((f) => f.family !== 'structure'), { now: NOW });
   ok('the retired arithmetic still leans positive on this input (so the fix is the source, not the data)',
     arithmetic.directionValue > 0, String(arithmetic.directionValue?.toFixed(3)));
-  ok('…and the canonical headline disagrees with it, deliberately',
-    state === CONSENSUS_STATE.CONFLICT);
 
   // The conflict must be NAMED, not just detected.
-  const conflicts = describeConflicts(gold.filter((f) => f.active));
+  const conflicts = meaningfulConflict(gold);
   ok('the conflict names both sides', conflicts.length === 1
     && conflicts[0].positive.includes('institutions')
     && conflicts[0].negative.includes('congress'));
+
+  const k = canonicalConsensus(gold, { now: NOW });
+  ok('the dissenting families are carried as OPPOSITION, not as minor contrary evidence',
+    k.opposition.map((f) => f.family).sort().join(',') === 'catalysts,congress'
+    && k.minorContrary.length === 0, JSON.stringify(k.opposition.map((f) => f.family)));
+  ok('the WHY names the outweighed side rather than dropping it',
+    /congress/i.test(k.why) && /outweigh/i.test(k.why), k.why);
+  // Structure is mixed here, and the state leans — price must decline to confirm either way.
+  ok('mixed price structure does not confirm the lean', k.market.confirmation === 'MIXED');
 }
 
 L('\n=== BOARD AND TICKER CANNOT DISAGREE ===');
@@ -250,8 +277,10 @@ L('\n=== BOARD AND TICKER CANNOT DISAGREE ===');
     [fam('insiders', 0), fam('congress', 0)],
   ];
   const MAP = {
-    NO_EVIDENCE: 'no-evidence', CONFLICT: 'conflicting', SINGLE_SOURCE: 'single-family',
-    POSITIVE_ALIGNMENT: 'aligned', NEGATIVE_ALIGNMENT: 'aligned', MIXED: 'no-clear-agreement',
+    NO_EVIDENCE: 'no-evidence', SINGLE_SOURCE: 'single-family', MIXED: 'no-clear-agreement',
+    POSITIVE_ALIGNMENT: 'aligned', NEGATIVE_ALIGNMENT: 'aligned',
+    BALANCED_CONFLICT: 'conflicting',
+    POSITIVE_LEAN_WITH_CONFLICT: 'conflicting', NEGATIVE_LEAN_WITH_CONFLICT: 'conflicting',
   };
   let agree = 0;
   for (const c of cases) {
@@ -282,6 +311,241 @@ L('\n=== STATE AND TREND ARE SEPARATE AXES ===');
   ok('"single actor" is not treated as momentum',
     familyTrend(fam('congress', -0.5, { trend: 'single-actor' })) === 'STABLE');
   ok('an inactive family has no trend', familyTrend(missing('congress')) === null);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// V2.1 — CONTRIBUTION-AWARE SYNTHESIS
+// ════════════════════════════════════════════════════════════════════════════
+
+L('\n=== MINOR CONTRARY EVIDENCE IS NOT A CONFLICT ===');
+{
+  // THE AMRZ SHAPE. Measured on the live board: positive mass 0.887 against negative 0.002 — a
+  // ratio of 0.003 — reported to the reader as a conflict. Magnitude was computed by four factors
+  // and then discarded at the last step.
+  // ONE dissenting family, reused verbatim below, so the two fixtures differ only in what it opposes.
+  const dissent = () => fam('congress', -0.05, { strength: 0.05, quality: 0.9, state: 'bearish' });
+  const amrz = [
+    fam('insiders', 0.95, { strength: 0.95, quality: 0.95 }),
+    fam('institutions', 0.9, { strength: 0.9, quality: 0.95 }),
+    dissent(),
+  ];
+  const c = evidenceContributions(amrz);
+  ok('the minority side is a tiny share of the directional evidence',
+    c.minorityShare < MINOR_CONTRARY_SHARE, c.minorityShare.toFixed(4));
+  const state = consensusState(amrz);
+  ok('a 5:1-outweighed dissenter does not make it a conflict',
+    state === CONSENSUS_STATE.POSITIVE_ALIGNMENT, state);
+
+  const k = canonicalConsensus(amrz, { now: NOW });
+  // But it is NOT hidden. Suppressing contrary evidence would be the opposite defect.
+  ok('the contrary family is still surfaced, as minor contrary evidence',
+    k.minorContrary.map((f) => f.family).join(',') === 'congress');
+  ok('…and is not listed as opposition', k.opposition.length === 0);
+  ok('…and the WHY says so explicitly', /minor contrary/i.test(k.why), k.why);
+  ok('no KEY CONFLICT box is raised for it', meaningfulConflict(amrz).length === 0);
+
+  // The threshold must be RELATIVE, not absolute: the same tiny family against tiny support IS a
+  // contest. This is what separates a share test from a magnitude floor.
+  const small = [
+    fam('insiders', 0.06, { strength: 0.06, quality: 0.9, state: 'bullish' }),
+    fam('institutions', 0.05, { strength: 0.05, quality: 0.9, state: 'accumulating' }),
+    dissent(),
+  ];
+  // The dissenting family in `small` is BYTE-IDENTICAL to the one in `amrz` — same direction,
+  // strength, freshness, quality, so the same E. Only what it opposes differs. If the test were an
+  // absolute magnitude floor, both would land in the same state; because it is a share, they do not.
+  ok('the dissenter is the identical family in both fixtures',
+    small[2].E === amrz[2].E && small[2].family === amrz[2].family);
+  ok('the same dissenter against comparable support is no longer minor',
+    mut('absolute') ? false : evidenceContributions(small).minorityShare >= MINOR_CONTRARY_SHARE,
+    evidenceContributions(small).minorityShare.toFixed(3));
+  ok('…so an identical family changes the state purely by what it opposes',
+    consensusState(small) !== consensusState(amrz),
+    `${consensusState(small)} vs ${consensusState(amrz)}`);
+  ok('…and now raises a KEY CONFLICT where it did not before',
+    meaningfulConflict(small).length === 1 && meaningfulConflict(amrz).length === 0);
+}
+
+L('\n=== THE LEAN STATES ===');
+{
+  // Between 15% and 40% of the directional evidence: material, clearly outweighed. V2 collapsed
+  // this band and the one above it into a single CONFLICT, so a 4:1 lean and a coin-flip read
+  // identically.
+  const lean = [
+    fam('insiders', 0.9, { strength: 0.9, quality: 0.95 }),
+    fam('institutions', 0.8, { strength: 0.8, quality: 0.95 }),
+    fam('congress', -0.6, { strength: 0.55, quality: 0.9, state: 'bearish' }),
+  ];
+  const cl = evidenceContributions(lean);
+  ok('the fixture sits in the lean band',
+    cl.minorityShare >= MINOR_CONTRARY_SHARE && cl.minorityShare < BALANCED_SHARE,
+    cl.minorityShare.toFixed(3));
+  ok('a clearly-outweighed but material dissent reads LEAN WITH CONFLICT',
+    consensusState(lean) === CONSENSUS_STATE.POSITIVE_LEAN_WITH_CONFLICT);
+  ok('the mirrored input reads the negative lean',
+    consensusState([
+      fam('insiders', -0.9, { strength: 0.9, quality: 0.95, state: 'bearish' }),
+      fam('institutions', -0.8, { strength: 0.8, quality: 0.95, state: 'distributing' }),
+      fam('congress', 0.6, { strength: 0.55, quality: 0.9, state: 'bullish' }),
+    ])
+      === CONSENSUS_STATE.NEGATIVE_LEAN_WITH_CONFLICT);
+
+  // Above 40% neither side dominates — within 1.5:1.
+  const even = [
+    fam('insiders', 0.8, { strength: 0.8, quality: 0.9 }),
+    fam('congress', -0.75, { strength: 0.78, quality: 0.9, state: 'bearish' }),
+  ];
+  ok('two comparable opposing families read BALANCED CONFLICT',
+    consensusState(even) === CONSENSUS_STATE.BALANCED_CONFLICT,
+    evidenceContributions(even).minorityShare.toFixed(3));
+
+  // The band boundaries must be ordered and fixed, not free parameters.
+  ok('the thresholds are ordered and inside (0,1)',
+    MINOR_CONTRARY_SHARE > 0 && MINOR_CONTRARY_SHARE < BALANCED_SHARE && BALANCED_SHARE <= 0.5);
+  // 50% is the maximum a minority share can reach by construction — a value above it would mean
+  // the "minority" side was larger, which is arithmetically impossible.
+  ok('a minority share can never exceed one half',
+    [amrzShare(lean), amrzShare(even), amrzShare([fam('insiders', 0.5), fam('congress', -0.5)])]
+      .every((s) => s <= 0.5 + 1e-9));
+}
+function amrzShare(f) { return evidenceContributions(f).minorityShare; }
+
+L('\n=== ALL EIGHT STATES ARE REACHABLE ===');
+{
+  const reached = new Set([
+    consensusState([]),                                                     // NO_EVIDENCE
+    consensusState([missing('insiders'), fam('congress', 0)]),              // MIXED (no direction)
+    consensusState([fam('insiders', 0.9), missing('congress')]),            // SINGLE_SOURCE
+    consensusState([fam('insiders', 0.9), fam('congress', 0.8)]),           // POSITIVE_ALIGNMENT
+    consensusState([fam('insiders', -0.9), fam('congress', -0.8)]),         // NEGATIVE_ALIGNMENT
+    consensusState([fam('insiders', 0.9, { strength: 0.9 }), fam('institutions', 0.8), fam('congress', -0.6, { strength: 0.55 })]),
+    consensusState([fam('insiders', -0.9, { strength: 0.9 }), fam('institutions', -0.8), fam('congress', 0.6, { strength: 0.55 })]),
+    consensusState([fam('insiders', 0.8), fam('congress', -0.78, { strength: 0.79 })]),
+  ]);
+  for (const s of Object.keys(CONSENSUS_STATE)) {
+    ok(`${s} is reachable from real family shapes`, reached.has(s));
+  }
+  ok('exactly eight states exist', Object.keys(CONSENSUS_STATE).length === 8);
+}
+
+L('\n=== MARKET STRUCTURE IS A CONFIRMATION LAYER, NOT A FIFTH VOTE ===');
+{
+  ok('the disclosure families are the four filing-based ones',
+    DISCLOSURE_FAMILIES.length === 4 && !DISCLOSURE_FAMILIES.includes('structure'));
+
+  const disclosure = [fam('insiders', 0.9), fam('congress', 0.8)];
+  const up = fam('structure', 0.8, { state: 'higher-highs-and-lows' });
+  const down = fam('structure', -0.8, { state: 'lower-highs-and-lows' });
+
+  // THE CRITICAL ONE: price cannot change what the disclosure evidence says.
+  ok('price structure does not change the evidence state',
+    mut('vote') ? false
+      : consensusState([...disclosure, down]) === consensusState([...disclosure, up])
+        && consensusState([...disclosure, up]) === consensusState(disclosure),
+    `${consensusState([...disclosure, down])} vs ${consensusState(disclosure)}`);
+  ok('…nor the coverage count',
+    canonicalConsensus([...disclosure, down], { now: NOW }).coverage.total === 4);
+  ok('…nor the confidence', confidenceOf([...disclosure, down]) === confidenceOf(disclosure));
+
+  const pos = CONSENSUS_STATE.POSITIVE_ALIGNMENT;
+  ok('agreeing structure CONFIRMS', marketConfirmation(up, pos) === MARKET.CONFIRMING);
+  ok('opposing structure DIVERGES', marketConfirmation(down, pos) === MARKET.DIVERGING);
+  ok('an inactive structure family is UNAVAILABLE',
+    marketConfirmation(missing('structure'), pos) === MARKET.UNAVAILABLE);
+  ok('a missing structure family is UNAVAILABLE', marketConfirmation(null, pos) === MARKET.UNAVAILABLE);
+
+  // NO FAKE CONFIRMATION. Confirmation requires something to confirm.
+  for (const s of [CONSENSUS_STATE.BALANCED_CONFLICT, CONSENSUS_STATE.MIXED,
+    CONSENSUS_STATE.SINGLE_SOURCE, CONSENSUS_STATE.NO_EVIDENCE]) {
+    ok(`structure cannot "confirm" ${s} — there is no lean to confirm`,
+      mut('fakeconfirm') ? false : marketConfirmation(up, s) === MARKET.MIXED,
+      marketConfirmation(up, s));
+  }
+  ok('an internally mixed structure confirms nothing',
+    marketConfirmation(fam('structure', 0, { state: 'no-clear-sequence' }), pos) === MARKET.MIXED);
+  ok('the negative lean is confirmed by lower highs and lows',
+    marketConfirmation(down, CONSENSUS_STATE.NEGATIVE_LEAN_WITH_CONFLICT) === MARKET.CONFIRMING);
+}
+
+L('\n=== COVERAGE AND CONFIDENCE ARE DIFFERENT QUESTIONS ===');
+{
+  // Three strong aligned families with the fourth silent must be able to reach High. Under the
+  // retired coverage-fraction confidence, 3-of-4 could not — missing evidence was scored as if it
+  // were disagreement.
+  const three = ['insiders', 'institutions', 'congress'].map((f) => fam(f, 0.9, { strength: 0.9, quality: 0.9 }));
+  const k = canonicalConsensus([...three, missing('catalysts')], { now: NOW });
+  ok('three strong aligned families reach High confidence with the fourth silent',
+    k.confidence === 'High', k.confidence);
+  ok('…while coverage honestly reports 3 of 4',
+    k.coverage.active === 3 && k.coverage.total === 4);
+  ok('…and the silent family is named, not dropped',
+    k.coverage.inactiveFamilies.some((f) => f.family === 'catalysts' && f.reason));
+
+  // Conflict reduces confidence; missing evidence reduces coverage. They must not be the same knob.
+  const contested = canonicalConsensus([
+    fam('insiders', 0.8, { strength: 0.8, quality: 0.9 }),
+    fam('institutions', 0.8, { strength: 0.8, quality: 0.9 }),
+    fam('congress', -0.8, { strength: 0.8, quality: 0.9, state: 'bearish' }),
+    fam('catalysts', -0.8, { strength: 0.8, quality: 0.9, state: 'negative' }),
+  ], { now: NOW });
+  ok('full coverage with a genuine contest is not High confidence',
+    contested.coverage.active === 4 && contested.confidence !== 'High',
+    `${contested.coverage.active}/4 ${contested.confidence}`);
+  ok('single-source evidence is never better than Low confidence',
+    canonicalConsensus([fam('insiders', 0.95, { strength: 0.99, quality: 0.99 }), missing('congress')],
+      { now: NOW }).confidence === 'Low');
+  ok('confidence is a word, never a percentage',
+    ['Low', 'Medium', 'High'].includes(k.confidence) && !/%/.test(String(k.confidence)));
+}
+
+L('\n=== THE CANONICAL OBJECT CARRIES NO SCORE ===');
+{
+  const k = canonicalConsensus([fam('insiders', 0.9), fam('congress', 0.8), fam('structure', 0.7)], { now: NOW });
+  const json = JSON.stringify(k);
+  for (const banned of ['score', 'rating', 'confluence', 'target', 'probability', 'expectedReturn']) {
+    ok(`the canonical object exposes no '${banned}'`, !new RegExp(`"${banned}`, 'i').test(json));
+  }
+  // minorityShare is the number the states are cut from. It exists for diagnostics and must stay
+  // out of the rendered surfaces, or it becomes the precise-looking figure this product removed.
+  ok('the cut number lives under diagnostics, not at the top level',
+    k.diagnostics.minorityShare !== undefined && k.minorityShare === undefined);
+  ok('the canonical object is snapshot-ready', !!k.version && !!k.calculatedAt && !!k.state);
+  ok('drivers, opposition and minor contrary are disjoint', (() => {
+    const all = [...k.drivers, ...k.opposition, ...k.minorContrary].map((f) => f.family);
+    return new Set(all).size === all.length;
+  })());
+}
+
+L('\n=== FILTERS CAN REACH EVERY STATE ===');
+{
+  const stateFilters = BOARD_FILTERS.filter((f) => f.states);
+  for (const s of Object.keys(CONSENSUS_STATE)) {
+    const hits = stateFilters.filter((f) => f.states.includes(s));
+    ok(`${s} is reachable from exactly one filter`, hits.length === 1,
+      hits.map((h) => h.key).join(',') || 'none');
+  }
+  ok('no filter names a state that does not exist',
+    stateFilters.every((f) => f.states.every((s) => s in CONSENSUS_STATE)));
+  ok('the market filter selects on the confirmation layer, not on a state',
+    BOARD_FILTERS.some((f) => f.market === MARKET.DIVERGING && !f.states));
+  // ⚠️ A filter must describe an evidence situation, never a recommendation.
+  ok('no filter is phrased as a pick, a buy or a ranking',
+    !/best|top|pick|buy|sell|strong(est)?\b|winner/i.test(BOARD_FILTERS.map((f) => f.label).join(' ')));
+}
+
+L('\n=== THE WHY IS DETERMINISTIC AND DERIVED ===');
+{
+  const fams = [fam('insiders', 0.9), fam('institutions', 0.8), fam('congress', -0.6, { strength: 0.55, state: 'bearish' })];
+  const a = explainState(fams, consensusState(fams));
+  const b = explainState(fams, consensusState(fams));
+  ok('the same evidence produces the same sentence, always', a === b && a.length > 0);
+  ok('the sentence names actual families', /insider/i.test(a) && /congress/i.test(a), a);
+  for (const s of Object.keys(CONSENSUS_STATE)) {
+    ok(`${s} has an explanation, never an empty headline`,
+      typeof explainState(fams, s) === 'string' && explainState(fams, s).length > 10);
+  }
+  ok('the explanation makes no claim about price',
+    !/will|expect|should|likely|target|outperform/i.test(a), a);
 }
 
 L(`\n${pass} passed, ${fail} failed`);

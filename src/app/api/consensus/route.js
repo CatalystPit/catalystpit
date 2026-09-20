@@ -1,6 +1,6 @@
 import { resolveEvidence } from '../../../lib/consensus/evidence';
 import { computeConsensus, METHODOLOGY_VERSION } from '../../../lib/consensus/consensus-v1.mjs';
-import { synthesise } from '../../../lib/consensus/synthesis.mjs';
+import { synthesise, canonicalConsensus } from '../../../lib/consensus/synthesis.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -46,6 +46,8 @@ export async function GET(request) {
     const now = Date.now();
     const families = await resolveEvidence(ticker, { now });
     const synthesis = synthesise(families, { now });
+    // THE CANONICAL OBJECT — identical to what the market-wide board renders.
+    const canonical = canonicalConsensus(families, { now });
 
     // Legacy aggregate, computed over the four ORIGINAL families only. Market structure is
     // deliberately excluded from it: adding a fifth family to a sum we no longer believe in would
@@ -55,6 +57,7 @@ export async function GET(request) {
     return Response.json({
       ticker,
       ...synthesis,
+      canonical,
       deprecated: {
         note: 'Aggregate direction/alignment/confidence are unvalidated and are no longer shown to '
           + 'users. Retained only for consumer compatibility; do not build on these.',

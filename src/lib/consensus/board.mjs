@@ -30,7 +30,7 @@
 // parts of this module — the family list, the bounds and the ordering — loadable in plain Node, so
 // the ordering rules can be tested without standing up a database.
 import { computeConsensus, CONSTANTS, FAMILIES } from './consensus-v1.mjs';
-import { normaliseFamily, SYNTHESIS_FAMILIES, consensusState, describeConflicts } from './synthesis.mjs';
+import { SYNTHESIS_FAMILIES, canonicalConsensus } from './synthesis.mjs';
 
 /**
  * THE FIVE CANONICAL FAMILIES — identical to the ticker page.
@@ -140,12 +140,22 @@ async function mapLimit(items, limit, fn) {
  * Deterministic to the last tiebreak so the same inputs always produce the same page.
  */
 const CONF_RANK = { High: 3, Medium: 2, Low: 1 };
+// Rows with something decided read before rows that are still ambiguous. This is coverage and
+// decidedness, not bullishness: a negative alignment ranks exactly as high as a positive one.
+const STATE_RANK = {
+  POSITIVE_ALIGNMENT: 4, NEGATIVE_ALIGNMENT: 4,
+  POSITIVE_LEAN_WITH_CONFLICT: 3, NEGATIVE_LEAN_WITH_CONFLICT: 3,
+  BALANCED_CONFLICT: 2,
+  SINGLE_SOURCE: 1, MIXED: 1, NO_EVIDENCE: 0,
+};
 export function orderBoard(list) {
+  const k = (r) => r.canonical || {};
   return [...list].sort((a, b) =>
-    (b.activeCount - a.activeCount)
-    || ((CONF_RANK[b.confidence] || 0) - (CONF_RANK[a.confidence] || 0))
-    || ((b.alignment ?? 0) - (a.alignment ?? 0))
-    || (Math.abs(b.directionValue ?? 0) - Math.abs(a.directionValue ?? 0))
+    ((STATE_RANK[k(b).state] ?? 0) - (STATE_RANK[k(a).state] ?? 0))
+    || ((CONF_RANK[k(b).confidence] || 0) - (CONF_RANK[k(a).confidence] || 0))
+    || ((k(b).coverage?.active ?? 0) - (k(a).coverage?.active ?? 0))
+    || ((k(b).diagnostics?.positiveMass ?? 0) + (k(b).diagnostics?.negativeMass ?? 0)
+      - ((k(a).diagnostics?.positiveMass ?? 0) + (k(a).diagnostics?.negativeMass ?? 0)))
     || a.ticker.localeCompare(b.ticker));
 }
 
@@ -176,15 +186,10 @@ export async function buildConsensusBoard(db, sql, { limit = BOARD_LIMIT, now = 
       const all = families.filter((f) => BOARD_FAMILIES.includes(f.family));
       const k = computeConsensus(disclosure, { now });
       if (!all.some((f) => f.active)) return null;
-      // THE HEADLINE IS THE STATE COUNT OVER ALL FIVE FAMILIES — identical to the ticker page.
-      // k.direction/alignment/confidence remain for Pit Scan and are not shown.
-      return {
-        ticker, ...k,
-        families: all,
-        normalised: all.map(normaliseFamily),
-        state: consensusState(all),
-        conflicts: describeConflicts(all.filter((f) => f.active)),
-      };
+      // THE CANONICAL OBJECT. Every surface renders from this; nothing recomputes it.
+      // k.direction/alignment/confidence remain ONLY for Pit Scan and are shown to nobody.
+      const canonical = canonicalConsensus(all, { now });
+      return { ticker, ...k, families: all, canonical };
     } catch {
       // One ticker failing must not empty the board, and must not be reported as "no evidence".
       return { ticker, error: true };
