@@ -30,10 +30,22 @@
 // parts of this module — the family list, the bounds and the ordering — loadable in plain Node, so
 // the ordering rules can be tested without standing up a database.
 import { computeConsensus, CONSTANTS, FAMILIES } from './consensus-v1.mjs';
+import { normaliseFamily, SYNTHESIS_FAMILIES, consensusState, describeConflicts } from './synthesis.mjs';
 
-/** The four independent families this product is about. Market structure is not one of them here:
- *  it is price, not public disclosure, and Consensus is an account of DISCLOSED evidence. */
-export const BOARD_FAMILIES = FAMILIES;
+/**
+ * THE FIVE CANONICAL FAMILIES — identical to the ticker page.
+ *
+ * Market structure is included deliberately. It is not public disclosure like the other four; its
+ * job is to say whether PRICE is confirming, rejecting or ambiguous relative to them. Leaving it off
+ * the board while the ticker page showed it was a way for the two surfaces to describe the same
+ * company differently, which is the defect this product cannot have.
+ *
+ * ⚠️ The DEPRECATED aggregate (direction/alignment/confidence) is still computed over the four
+ * DISCLOSURE families only, because Pit Scan's divergence board compares evidence against price and
+ * folding price into the evidence side would make that comparison circular.
+ */
+export const BOARD_FAMILIES = SYNTHESIS_FAMILIES;
+export const AGGREGATE_FAMILIES = FAMILIES;
 
 export const BOARD_LIMIT = 60;
 /** Resolved at a time. Above this the driver serialises and wall-clock gets worse, not better. */
@@ -158,10 +170,21 @@ export async function buildConsensusBoard(db, sql, { limit = BOARD_LIMIT, now = 
     try {
       const families = await resolveEvidence(ticker, { now });
       // Structure is resolved for the ticker page; the board is an account of DISCLOSED evidence.
-      const four = families.filter((f) => BOARD_FAMILIES.includes(f.family));
-      const k = computeConsensus(four, { now });
-      if (!k.activeCount) return null;
-      return { ticker, ...k };
+      // The aggregate excludes structure (see AGGREGATE_FAMILIES); the FAMILY ROWS include it, so
+      // the board shows the same five families the ticker page does.
+      const disclosure = families.filter((f) => AGGREGATE_FAMILIES.includes(f.family));
+      const all = families.filter((f) => BOARD_FAMILIES.includes(f.family));
+      const k = computeConsensus(disclosure, { now });
+      if (!all.some((f) => f.active)) return null;
+      // THE HEADLINE IS THE STATE COUNT OVER ALL FIVE FAMILIES — identical to the ticker page.
+      // k.direction/alignment/confidence remain for Pit Scan and are not shown.
+      return {
+        ticker, ...k,
+        families: all,
+        normalised: all.map(normaliseFamily),
+        state: consensusState(all),
+        conflicts: describeConflicts(all.filter((f) => f.active)),
+      };
     } catch {
       // One ticker failing must not empty the board, and must not be reported as "no evidence".
       return { ticker, error: true };

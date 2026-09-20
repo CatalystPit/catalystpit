@@ -519,28 +519,28 @@ function WhyMovingBody({ symbol }) {
 }
 
 // ── CATALYST CONVERGENCE — surfaces the Pit Consensus board (insiders + Congress + 13F stacking the
-// same direction) inside the Terminal. Reuses /api/confluence; free sees a teaser, Pro the full board. ──
-const CONV_SRC = { insider: 'INSIDER', congress: 'CONGRESS', fund: '13F' };
+// same direction) inside the Terminal. Reads the CANONICAL consensus board; free sees a teaser, Pro the full board. ──
+const CONV_SRC = { insiders: 'INSIDER', congress: 'CONGRESS', institutions: '13F', catalysts: 'CATALYST', structure: 'STRUCTURE' };
 function ConvergenceBody({ onPick }) {
-  const [dir, setDir] = useState('bull');
   const [data, setData] = useState(null);
   const [ref, w] = useContainerSize();
   useEffect(() => {
     let alive = true; setData(null);
-    const load = () => fetch(`/api/confluence?dir=${dir}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setData(j); }).catch(() => { if (alive) setData({ list: [] }); });
+    const load = () => fetch('/api/consensus-board', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setData(j); }).catch(() => { if (alive) setData({ rows: [] }); });
     load(); const id = setInterval(load, 120000);
     return () => { alive = false; clearInterval(id); };
-  }, [dir]);
-  const list = data ? (data.list || []) : null; const locked = data?.lockedCount || 0;
+  }, []);
+  const list = data ? (data.rows || []) : null; const locked = data?.lockedCount || 0;
   const showChips = w >= 300;
-  const dirBtn = (k, label) => (
-    <button key={k} onClick={() => setDir(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', border: 'none', background: dir === k ? (k === 'bull' ? C.green : C.red) : 'transparent', color: dir === k ? '#fff' : C.muted }}>{label}</button>
-  );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-        {dirBtn('bull', 'Accumulation')}{dirBtn('bear', 'Distribution')}
-        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>◆ SIGNALS STACKED</span>
+        {/* THE BULL/BEAR TABS ARE GONE. They filed a ticker under Accumulation or Distribution
+            before the reader saw any evidence, and the board behind them could only ever query one
+            side — action='BUY' for bull — so a ticker with heavy opposing evidence still appeared
+            as clean accumulation. The canonical board reports the state it actually finds. */}
+        <span style={{ fontSize: 10.5, fontWeight: 700, color: C.ink }}>Evidence alignment</span>
+        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>◆ CANONICAL CONSENSUS</span>
       </div>
       <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
         {list === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading the board…</div>
@@ -562,7 +562,7 @@ function ConvergenceBody({ onPick }) {
                           ))}
                         </span>
                       </td>}
-                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', fontWeight: 800, color: dir === 'bull' ? C.green : C.red }}>{r.signals}</td>
+                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', fontWeight: 800, color: r.state === 'POSITIVE_ALIGNMENT' ? C.green : r.state === 'NEGATIVE_ALIGNMENT' || r.state === 'CONFLICT' ? C.red : C.muted }}>{(r.normalised || []).filter((f) => f.active).length}</td>
                     </tr>
                   ))}
                 </tbody>

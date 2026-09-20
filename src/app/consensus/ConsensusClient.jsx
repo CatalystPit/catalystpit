@@ -64,16 +64,33 @@ function SkeletonRow() {
   );
 }
 
-/** One family's line: its own state in its own vocabulary, plus the fact that produced it. */
+/**
+ * One family's line, rendered from the NORMALISED family.
+ *
+ * State and trend are separate axes and both are shown: "Positive · Strengthening" and "Positive ·
+ * Weakening" are different readings and collapsing them would lose the more useful half. The
+ * family's own word ("Accumulating", "Single actor") is kept beside the normalised state because it
+ * carries detail the four canonical states cannot.
+ */
+const NSTATE_COLOR = { POSITIVE: C.green, NEGATIVE: C.red, MIXED: C.muted, INACTIVE: C.dim };
+const NSTATE_LABEL = { POSITIVE: 'Positive', NEGATIVE: 'Negative', MIXED: 'Mixed', INACTIVE: 'Inactive' };
+const TREND_LABEL = { NEW: 'New', STRENGTHENING: 'Strengthening', WEAKENING: 'Weakening', STABLE: null };
+
 function FamilyLine({ f }) {
+  const descriptor = f.descriptor && STATE_LABEL[f.descriptor];
+  const trend = TREND_LABEL[f.trend];
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12, flexWrap: 'wrap' }}>
-      <span style={{ minWidth: 78, color: C.muted, flexShrink: 0 }}>{FAMILY_LABEL[f.family] || f.family}</span>
+      <span style={{ minWidth: 92, color: C.muted, flexShrink: 0 }}>{f.label}</span>
       {f.active ? (
         <>
-          <span style={{ fontWeight: 600, color: stateColor(f.state), minWidth: 0 }}>
-            {STATE_LABEL[f.state] || f.state}
+          <span style={{ fontWeight: 600, color: NSTATE_COLOR[f.state], minWidth: 0 }}>
+            {NSTATE_LABEL[f.state]}
           </span>
+          {trend && <span style={{ color: C.muted }}>· {trend}</span>}
+          {descriptor && descriptor !== NSTATE_LABEL[f.state] && (
+            <span style={{ color: C.dim }}>· {descriptor}</span>
+          )}
           {f.reasons?.[0] && (
             <span style={{ color: C.dim, minWidth: 0, overflowWrap: 'anywhere' }}>· {f.reasons[0]}</span>
           )}
@@ -87,21 +104,35 @@ function FamilyLine({ f }) {
   );
 }
 
+const STATE_UI = {
+  POSITIVE_ALIGNMENT: { label: 'Positive alignment', color: C.green },
+  NEGATIVE_ALIGNMENT: { label: 'Negative alignment', color: C.red },
+  CONFLICT: { label: 'Conflict', color: C.red },
+  MIXED: { label: 'No clear agreement', color: C.muted },
+  SINGLE_SOURCE: { label: 'Single-source evidence', color: C.muted },
+  NO_EVIDENCE: { label: 'No current evidence', color: C.muted },
+};
+
 function Row({ r }) {
   const [open, setOpen] = useState(false);
-  const fams = r.families || [];
+  // The NORMALISED families — the same five the ticker page renders, from the same function.
+  const fams = r.normalised || [];
   const active = fams.filter((f) => f.active);
 
-  // ALIGNMENT AS A COUNT, NOT A PERCENTAGE, and only when it means something. One active family
-  // agrees with itself by definition; printing 100% there would be the most misleading number on
-  // the page, so it reads SINGLE-SOURCE instead.
-  const up = (r.leanUp || []).length;
-  const down = (r.leanDown || []).length;
-  const alignText = !r.alignmentMeaningful
+  // THE HEADLINE IS THE STATE COUNT, NOT THE ARITHMETIC LEAN. On GOLD the sum said "Bullish Lean"
+  // because institutional magnitude outweighed two dissenting families; the state count says
+  // Conflict, which is what the ticker page says and what is true.
+  const ui = STATE_UI[r.state] || STATE_UI.MIXED;
+
+  // ALIGNMENT AS A COUNT, NOT A PERCENTAGE. One active family agrees with itself by definition;
+  // printing 100% there would be the most misleading number on the page.
+  const up = active.filter((f) => f.state === 'POSITIVE').length;
+  const down = active.filter((f) => f.state === 'NEGATIVE').length;
+  const alignText = active.length < 2
     ? 'Single-source'
     : up && down
-      ? `${up} point positive, ${down} negative`
-      : `${Math.max(up, down)} of ${active.length} families aligned`;
+      ? `${up} positive, ${down} negative of ${active.length} active`
+      : `${Math.max(up, down)} of ${active.length} active families aligned`;
 
   // The 13F date pair, never collapsed: a filing published yesterday describes a position up to
   // ~135 days old.
@@ -115,7 +146,7 @@ function Row({ r }) {
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
             <a href={`/ticker/${encodeURIComponent(r.ticker)}`} className="cp-tkr"
               style={{ fontSize: 15, fontWeight: 800, color: C.ink, textDecoration: 'none' }}>{r.ticker}</a>
-            <span style={{ fontSize: 14, fontWeight: 700, color: dirTone(r.direction) }}>{r.directionLabel}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: ui.color }}>{ui.label}</span>
             <span title={CONF_TITLE} style={{ fontSize: 11.5, color: C.muted, cursor: 'help' }}>
               {r.confidence} confidence
             </span>
@@ -125,6 +156,14 @@ function Row({ r }) {
           <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
             {fams.map((f) => <FamilyLine key={f.family} f={f} />)}
           </div>
+
+          {/* CONFLICT IS A FIRST-CLASS OUTPUT, not a failed calculation. */}
+          {r.conflicts?.length > 0 && (
+            <div style={{ marginTop: 8, padding: '7px 10px', background: '#FFF4F4', border: `1px solid ${C.red}33`, borderRadius: 6 }}>
+              <span style={{ fontSize: 9.5, fontWeight: 700, color: C.red, letterSpacing: '0.5px' }}>KEY CONFLICT</span>
+              <div style={{ fontSize: 11.5, color: C.text, marginTop: 2, lineHeight: 1.4 }}>{r.conflicts[0].text}</div>
+            </div>
+          )}
 
           {inst?.dates?.quarterEnd && (
             <div style={{ marginTop: 7, fontSize: 10.5, color: C.dim }}>

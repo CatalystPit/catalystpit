@@ -7,9 +7,9 @@
 //
 // Run: node scripts/verify-consensus-board.mjs [--mutate=<mode>]
 
-import { orderBoard, BOARD_FAMILIES, BOARD_LIMIT, CONCURRENCY } from '../src/lib/consensus/board.mjs';
+import { orderBoard, BOARD_FAMILIES, AGGREGATE_FAMILIES, BOARD_LIMIT, CONCURRENCY } from '../src/lib/consensus/board.mjs';
 import { computeConsensus, familyValue, FAMILIES, CONSTANTS } from '../src/lib/consensus/consensus-v1.mjs';
-import { familyLean } from '../src/lib/consensus/synthesis.mjs';
+import { familyLean, consensusState, CONSENSUS_STATE, describeConflicts, synthesise, normaliseFamily, familyState, familyTrend } from '../src/lib/consensus/synthesis.mjs';
 
 const L = (s = '') => console.log(s);
 const MUT = (process.argv.find((a) => a.startsWith('--mutate')) || '').split('=')[1]
@@ -36,10 +36,15 @@ L('=== THE OLD MODEL IS GONE ===');
     ok(`no '${banned}' field in the consensus payload`, !(banned in k));
   }
   ok('the payload declares consensus_v1', k.version === 'consensus_v1');
-  ok('the board asks about the four disclosure families', BOARD_FAMILIES.length === 4
-    && ['insiders', 'institutions', 'congress', 'catalysts'].every((f) => BOARD_FAMILIES.includes(f)));
-  // Market structure is price, not disclosure — it belongs on the ticker page, not this board.
-  ok('market structure is not a board family', !BOARD_FAMILIES.includes('structure'));
+  // FIVE families, identical to the ticker page. Market structure is included so the two surfaces
+  // describe the same company with the same rows; leaving it off the board was a way for them to
+  // differ. The ARITHMETIC aggregate still covers only the four disclosure families (see
+  // AGGREGATE_FAMILIES) because Pit Scan compares evidence against price, and folding price into
+  // the evidence side would make that comparison circular.
+  ok('the board shows all five canonical families', BOARD_FAMILIES.length === 5
+    && ['insiders', 'institutions', 'congress', 'catalysts', 'structure'].every((f) => BOARD_FAMILIES.includes(f)));
+  ok('the arithmetic aggregate covers only the four disclosure families',
+    AGGREGATE_FAMILIES.length === 4 && !AGGREGATE_FAMILIES.includes('structure'));
 }
 
 L('\n=== ACTIVE vs MISSING vs MIXED ===');
@@ -194,6 +199,89 @@ L('\n=== PIT SCAN CONTRACT ===');
   }
   ok('directionValue is a finite signed number', Number.isFinite(k.directionValue) && k.directionValue > 0);
   ok('confidence is one of the ranks divergence knows', ['Low', 'Medium', 'High'].includes(k.confidence));
+}
+
+L('\n=== THE GOLD REGRESSION ===');
+{
+  // The exact shape that broke the product. GOLD: institutions strongly positive, congress and
+  // catalysts negative, insiders mixed, structure mixed. The ARITHMETIC said "Bullish Lean" because
+  // institutional magnitude outweighed two dissenting families and neither dissenter individually
+  // cleared the conflict threshold. The board printed accumulation; the ticker page printed a
+  // conflict; both were reading the same evidence.
+  const gold = [
+    fam('institutions', 0.9, { state: 'accumulating', strength: 0.95 }),
+    fam('congress', -0.4, { state: 'bearish', strength: 0.3 }),
+    fam('catalysts', -0.4, { state: 'negative', strength: 0.3 }),
+    fam('insiders', 0, { state: 'mixed' }),
+    fam('structure', 0, { state: 'no-clear-sequence' }),
+  ];
+
+  const state = consensusState(gold);
+  ok('GOLD reads CONFLICT, not positive alignment',
+    mut('gold') ? state === CONSENSUS_STATE.POSITIVE_ALIGNMENT : state === CONSENSUS_STATE.CONFLICT, state);
+
+  // The specific failure: one high-magnitude family outvoting two opposing families.
+  ok('one strong family cannot outvote two opposing families',
+    state !== CONSENSUS_STATE.POSITIVE_ALIGNMENT);
+
+  // And the arithmetic still leans positive — proving the headline no longer comes from it.
+  const arithmetic = computeConsensus(gold.filter((f) => f.family !== 'structure'), { now: NOW });
+  ok('the retired arithmetic still leans positive on this input (so the fix is the source, not the data)',
+    arithmetic.directionValue > 0, String(arithmetic.directionValue?.toFixed(3)));
+  ok('…and the canonical headline disagrees with it, deliberately',
+    state === CONSENSUS_STATE.CONFLICT);
+
+  // The conflict must be NAMED, not just detected.
+  const conflicts = describeConflicts(gold.filter((f) => f.active));
+  ok('the conflict names both sides', conflicts.length === 1
+    && conflicts[0].positive.includes('institutions')
+    && conflicts[0].negative.includes('congress'));
+}
+
+L('\n=== BOARD AND TICKER CANNOT DISAGREE ===');
+{
+  // The hard invariant (§20). Both surfaces call the same function on the same families, so this
+  // asserts they are literally the same computation rather than two that happen to match today.
+  const cases = [
+    [fam('institutions', 0.9), fam('congress', -0.5), fam('catalysts', -0.5)],
+    [fam('insiders', 0.8), fam('congress', 0.7)],
+    [fam('insiders', 0.8), missing('congress'), missing('catalysts')],
+    [missing('insiders'), missing('congress')],
+    [fam('insiders', 0), fam('congress', 0)],
+  ];
+  const MAP = {
+    NO_EVIDENCE: 'no-evidence', CONFLICT: 'conflicting', SINGLE_SOURCE: 'single-family',
+    POSITIVE_ALIGNMENT: 'aligned', NEGATIVE_ALIGNMENT: 'aligned', MIXED: 'no-clear-agreement',
+  };
+  let agree = 0;
+  for (const c of cases) {
+    const boardState = consensusState(c);          // what the market-wide board headlines
+    const tickerView = synthesise(c);              // what the ticker page renders
+    if (tickerView.state === boardState && tickerView.agreement === MAP[boardState]) agree++;
+  }
+  ok(`board state and ticker state agree on every case (${agree}/${cases.length})`,
+    agree === cases.length);
+
+  // And the family states themselves must match, not merely the headline.
+  const fams = [fam('institutions', 0.9, { state: 'accumulating' }), fam('congress', -0.5, { state: 'bearish' })];
+  const norm = fams.map(normaliseFamily);
+  ok('normalised family states are shared, so no surface can invent its own reading',
+    norm[0].state === 'POSITIVE' && norm[1].state === 'NEGATIVE');
+  ok('the family keeps its own descriptor for UI alongside the canonical state',
+    norm[0].descriptor === 'accumulating' && norm[0].state === 'POSITIVE');
+}
+
+L('\n=== STATE AND TREND ARE SEPARATE AXES ===');
+{
+  const posWeak = fam('insiders', 0.8, { state: 'bullish', trend: 'weakening' });
+  const negStrong = fam('congress', -0.8, { state: 'bearish', trend: 'strengthening' });
+  ok('positive + weakening is representable', familyState(posWeak) === 'POSITIVE' && familyTrend(posWeak) === 'WEAKENING');
+  ok('negative + strengthening is representable', familyState(negStrong) === 'NEGATIVE' && familyTrend(negStrong) === 'STRENGTHENING');
+  ok('a fresh catalyst reads NEW', familyTrend(fam('catalysts', -0.5, { trend: 'fresh' })) === 'NEW');
+  // A descriptor that merely describes evidence is NOT a change claim.
+  ok('"single actor" is not treated as momentum',
+    familyTrend(fam('congress', -0.5, { trend: 'single-actor' })) === 'STABLE');
+  ok('an inactive family has no trend', familyTrend(missing('congress')) === null);
 }
 
 L(`\n${pass} passed, ${fail} failed`);

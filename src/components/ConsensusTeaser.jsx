@@ -14,12 +14,25 @@ const money = (v) => {
   return `$${Math.round(v)}`;
 };
 
+// The canonical state words, matching the board and the ticker page exactly.
+const STATE_UI = {
+  POSITIVE_ALIGNMENT: { label: 'Positive alignment', color: '#1E5C38' },
+  NEGATIVE_ALIGNMENT: { label: 'Negative alignment', color: '#A83030' },
+  CONFLICT: { label: 'Conflict', color: '#A83030' },
+  MIXED: { label: 'No clear agreement', color: null },
+  SINGLE_SOURCE: { label: 'Single-source', color: null },
+  NO_EVIDENCE: { label: 'No current evidence', color: null },
+};
+
+/** Which families are active and how they split — never a count of raw transactions. */
 function summarize(r) {
-  const parts = [];
-  if (r.insider) parts.push(`${r.insider.execs} insider${r.insider.execs > 1 ? 's' : ''}`);
-  if (r.congress) parts.push(`${r.congress.members} in Congress`);
-  if (r.fund) parts.push(`${r.fund.net} fund${r.fund.net > 1 ? 's' : ''}`);
-  return parts.join(' · ');
+  const active = (r.normalised || []).filter((f) => f.active);
+  if (!active.length) return 'No active families';
+  const up = active.filter((f) => f.state === 'POSITIVE').length;
+  const down = active.filter((f) => f.state === 'NEGATIVE').length;
+  if (up && down) return `${up} positive, ${down} negative of ${active.length} families`;
+  if (up || down) return `${Math.max(up, down)} of ${active.length} families aligned`;
+  return `${active.length} active families, none directional`;
 }
 
 export default function ConsensusTeaser() {
@@ -29,9 +42,13 @@ export default function ConsensusTeaser() {
     let alive = true;
     (async () => {
       try {
-        const r = await fetch('/api/confluence?dir=bull', { cache: 'no-store' });
+        // CANONICAL BOARD, not the confluence engine. The old source counted rows on one side
+        // only — it queried action='BUY' for the bull board — so it could never see opposing
+        // evidence. That is how GOLD appeared here as clean accumulation on one insider purchase
+        // while five insiders had sold $7.0M and the canonical engine read the ticker as a conflict.
+        const r = await fetch('/api/consensus-board', { cache: 'no-store' });
         const j = r.ok ? await r.json() : null;
-        if (alive) setRows((j?.list || []).slice(0, 3));
+        if (alive) setRows((j?.rows || []).slice(0, 3));
       } catch { if (alive) setRows([]); }
     })();
     return () => { alive = false; };
@@ -44,7 +61,7 @@ export default function ConsensusTeaser() {
         <Dot />
         <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>PIT CONSENSUS</span>
         <span style={{ fontSize: 9, background: C.greenLight, color: C.green, padding: '2px 7px',
-          borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 600 }}>SMART MONEY STACKING</span>
+          borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 600 }}>EVIDENCE ALIGNMENT</span>
         <a href="/consensus" style={{ marginLeft: 'auto', fontSize: 11, color: C.green, textDecoration: 'none', fontWeight: 600 }}>
           Full board →
         </a>
@@ -54,7 +71,7 @@ export default function ConsensusTeaser() {
           <div style={{ padding: 8 }}>{[0, 1, 2].map((i) => <Skel key={i} h={40} mb={i < 2 ? 8 : 0} />)}</div>
         ) : rows.length === 0 ? (
           <div style={{ padding: '18px 8px', textAlign: 'center', fontSize: 12, color: C.muted, fontWeight: 300 }}>
-            No confluence right now. This lights up when insiders, Congress, and funds line up on the same name.
+            No ticker currently has qualifying evidence in two or more independent families.
           </div>
         ) : (
           rows.map((r, i) => (
@@ -66,8 +83,10 @@ export default function ConsensusTeaser() {
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                   <span className="cp-tkr" style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{r.ticker}</span>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: C.green, background: C.greenLight, borderRadius: 3, padding: '1px 6px' }}>
-                    {r.signals}/3
+                  {/* The badge takes the STATE's colour. Hardcoding green painted a conflict row
+                      green while its own label said "Conflict". */}
+                  <span style={{ fontSize: 9, fontWeight: 700, color: (STATE_UI[r.state] || STATE_UI.MIXED).color || C.muted, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, padding: '1px 6px' }}>
+                    {(STATE_UI[r.state] || STATE_UI.MIXED).label}
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -76,8 +95,8 @@ export default function ConsensusTeaser() {
               </div>
               <div style={{ textAlign: 'right' }}>
                 {/* Aligned families, not the deprecated 0-100 blend. */}
-                <div className="cp-num" style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{r.signals}</div>
-                <div style={{ fontSize: 7, color: C.dim, letterSpacing: '0.5px' }}>SCORE</div>
+                <div className="cp-num" style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{(r.normalised || []).filter((f) => f.active).length}</div>
+                <div style={{ fontSize: 7, color: C.dim, letterSpacing: '0.5px' }}>FAMILIES</div>
               </div>
             </a>
           ))
