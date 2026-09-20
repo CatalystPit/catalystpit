@@ -166,7 +166,23 @@ if (allDeltas.length) {
       + `  median ${a.length ? med(a).toFixed(3) : '-'}pp  max ${a.length ? Math.max(...a).toFixed(3) : '-'}pp`);
   }
 }
-L(`\n  sign flips (a positive reaction became negative or vice versa): ${signFlips}`);
+L(`\n  sign flips, ABSOLUTE return: ${signFlips}`);
+
+// ── BENCHMARK-RELATIVE ──
+// The figure the benchmark defect actually corrupted. It is reported separately because it can move
+// where the absolute return does not: before the repair the stock leg was split-adjusted while the
+// SPY leg was total-return, so the subtraction mixed two conventions.
+L('\n=== BENCHMARK-RELATIVE ===');
+L(`  relative values that changed : ${relDeltas.length}`);
+if (relDeltas.length) {
+  L(`  change in percentage points  : median ${med(relDeltas).toFixed(3)}pp, max ${Math.max(...relDeltas).toFixed(3)}pp`);
+  for (const h of HORIZONS) {
+    const r = perHorizonRel[h];
+    L(`    ${String(h).padStart(3)}d  ${String(r.length).padStart(5)} changed`
+      + `  median ${r.length ? med(r).toFixed(3) : '-'}pp  max ${r.length ? Math.max(...r).toFixed(3) : '-'}pp`);
+  }
+}
+L(`  sign flips, RELATIVE: ${relSignFlips}`);
 if (bigMoves.length) {
   L(`\n  changes of 1pp or more (${bigMoves.length}) — the ones a user could actually notice:`);
   for (const m of bigMoves.slice(0, 15)) {

@@ -1,0 +1,153 @@
+benchmark SPY: 8467 bars, sources [tiingo_split_adj, polygon]
+  rows still on the retired total-return basis: 0  (canonical)
+  benchmark bars whose value changed in this repair: 633
+
+ticker  events reactions  changed  max Δpp  med Δpp  horizons affected
+STT         37        37       25     1.10     0.80  20, 63
+RGTI        32        32        0        -        -  -
+UVXY         0         0        0        -        -  -
+RDDT        87        87        0        -        -  -
+CRWV       147       147        0        -        -  -
+NBIS        21        21        0        -        -  -
+AMZN       128       128        0        -        -  -
+DRI         29        29       22     3.20     0.80  5, 20, 63
+EOG         21        21        7     1.10     0.80  20, 63
+CVX         43        43       16     1.10     0.90  20, 63
+COP         24        24       11     1.00     0.70  63
+SLB         21        21        0        -        -  -
+SCTH         3         1        0        -        -  -
+DIA          0         0        0        -        -  -
+LCID         9         9        0        -        -  -
+AAPL       107       107       75     0.30     0.10  1, 5, 20, 63
+RIVN        35        16        0        -        -  -
+NVDA       128       128       11     0.10     0.10  5, 20, 63
+VTI          0         0        0        -        -  -
+GME         21         7        0        -        -  -
+XLK          0         0        0        -        -  -
+MARA        38        12        0        -        -  -
+RIOT        16         6        0        -        -  -
+XLF          0         0        0        -        -  -
+VOO          0         0        0        -        -  -
+NIO          1         1        0        -        -  -
+APLD        23         3        0        -        -  -
+IEP          2         1        0        -        -  -
+WRAP         9         3        0        -        -  -
+CAI         12         4        0        -        -  -
+KEEL         5         5        0        -        -  -
+ACHC         2         0        0        -        -  -
+AAAU         0         0        0        -        -  -
+GROV        18         6        0        -        -  -
+SBSI         7         2        0        -        -  -
+SYM         65         7        0        -        -  -
+SPY          5         5        0        -        -  -
+PLTR        61        61        0        -        -  -
+UPS         17        17        3     1.90     1.70  5, 20, 63
+LMT          7         7        0        -        -  -
+MS          19        19        8     0.70     0.50  1, 5, 20, 63
+BLK         37        37        4     0.60     0.60  5, 20, 63
+PFE         26        26        6     1.90     1.70  5, 20, 63
+RTX         22        22        5     0.40     0.40  20, 63
+SCHW        99        99       20     0.50     0.30  5, 20, 63
+ABBV        41        41        5     0.80     0.80  5, 20, 63
+HOOD       102       102        0        -        -  -
+META       176       176      109     0.20     0.10  1, 5, 20, 63
+LILA        23        15        0        -        -  -
+BA          31        31        0        -        -  -
+COIN        78        78        0        -        -  -
+HD          55        55        4     0.70     0.60  1, 5, 20, 63
+SOFI        36        36        0        -        -  -
+DE          12        12        0        -        -  -
+C           22        22       14     0.60     0.50  1, 5, 20, 63
+MRK         21        21        4     0.80     0.70  20
+UBER        40        40        0        -        -  -
+NOW         58        58        0        -        -  -
+CVS         25        25        5     1.20     0.80  1, 5, 20, 63
+SPGI        19        19        0        -        -  -
+PEP         28        28        4     0.90     0.80  1, 5, 20, 63
+SHOP         4         4        0        -        -  -
+GILD        60        60        5     0.70     0.50  1, 5, 20, 63
+ICE         69        69       10     0.40     0.30  1, 5, 20, 63
+MU          69        69        1     0.10     0.10  20
+TSLA        42        42        0        -        -  -
+BAC         24        24        3     0.60     0.60  1, 5, 20, 63
+NKE         39        39        0        -        -  -
+TGT         21        21        5     1.10     1.00  63
+XOM         33        33        9     0.90     0.70  20, 63
+WMT        103       103       26     0.50     0.20  1, 5, 20, 63
+MSTR        79        79        0        -        -  -
+NET        104       104        0        -        -  -
+USB         16        16        3     1.00     0.90  20, 63
+AMGN        40        40       13     1.00     0.80  1, 5, 20, 63
+DHR         23        23        2     0.20     0.20  20, 63
+LOW         28        28        7     0.70     0.50  5, 20, 63
+ABT         65        65       11     0.60     0.50  20, 63
+GS          42        42        2     0.50     0.50  1, 5
+MCD         41        41        2     0.70     0.70  63
+DDOG       126       126        0        -        -  -
+TMO         45        45        8     0.10     0.10  1, 5, 20, 63
+TXN         29        29       12     0.60     0.50  1, 5, 20, 63
+PANW        58        58        0        -        -  -
+IBM         35        35        5     0.90     0.80  5, 20, 63
+WFC         21        21        8     0.70     0.60  5, 20, 63
+SNOW       103       103        0        -        -  -
+BMY         22        22        3     1.10     1.00  1, 5, 20, 63
+AXP         37        37        7     0.40     0.30  20, 63
+QCOM        54        54        1     0.50     0.50  63
+ABNB       130       130        0        -        -  -
+UNH         31        31        0        -        -  -
+V           46        46        8     0.20     0.20  20, 63
+SBUX        32        32       12     0.70     0.60  1, 20, 63
+PYPL        42        42        1     0.30     0.30  1, 5, 20, 63
+DIS         24        24        1     0.80     0.80  5
+CSCO        51        51       10     0.80     0.60  5, 20, 63
+ARKK         1         1        0        -        -  -
+XLE          1         1        0        -        -  -
+IWM          5         5        1     0.20     0.20  20
+ADBE        65        65        0        -        -  -
+
+=== SUMMARY ===
+  reactions computed on repaired tickers : 3820
+  reactions whose numbers changed        : 534 (14.0%)
+  anchors that moved to a different date : 0  (must be 0 — dates were not touched)
+  horizon values that changed            : 760
+  change in percentage points            : median 0.400pp, max 3.200pp
+
+  by horizon (trading sessions):
+      1d     19 changed  median 0.500pp  max 1.100pp
+      5d     74 changed  median 0.500pp  max 1.700pp
+     20d    228 changed  median 0.400pp  max 1.900pp
+     63d    439 changed  median 0.300pp  max 3.200pp
+
+  sign flips, ABSOLUTE return: 22
+
+=== BENCHMARK-RELATIVE ===
+  relative values that changed : 1221
+  change in percentage points  : median 0.300pp, max 3.200pp
+      1d     31 changed  median 0.300pp  max 1.000pp
+      5d    160 changed  median 0.300pp  max 1.700pp
+     20d    428 changed  median 0.300pp  max 1.900pp
+     63d    602 changed  median 0.300pp  max 3.200pp
+  sign flips, RELATIVE: 21
+
+  changes of 1pp or more (46) — the ones a user could actually notice:
+    STT     2024-08-21   63d   20.6% -> 19.5%
+    DRI     2025-03-26   63d   1.8% -> 5.0%
+    DRI     2025-03-27   63d   1.0% -> 4.1%
+    DRI     2025-03-28   63d   0.8% -> 3.9%
+    DRI     2025-04-01   63d   2.5% -> 5.7%
+    EOG     2026-01-05   63d   32.3% -> 33.4%
+    CVX     2026-01-07   63d   22.1% -> 23.2%
+    CVX     2026-01-15   63d   11.5% -> 12.5%
+    CVX     2026-01-30   63d   11.9% -> 12.9%
+    CVX     2026-02-03   20d   7.5% -> 8.5%
+    CVX     2026-02-03   63d   9.5% -> 10.5%
+    CVX     2026-02-05   20d   3.8% -> 4.8%
+    CVX     2026-02-20   20d   8.0% -> 9.0%
+    CVX     2026-05-08   20d   3.6% -> 2.6%
+    CVX     2026-01-15   63d   11.5% -> 12.5%
+    ... 31 more
+
+Direction of correctness: the "before" numbers were computed on a total-return series, which
+inflates historic returns by the dividends paid since. The "after" numbers are split-adjusted,
+which is the convention this feature requires. Every difference above is the removal of a
+dividend that was previously being reported as price movement.
