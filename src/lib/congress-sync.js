@@ -70,7 +70,16 @@ async function insertRecs(recs, chamber) {
   if (!rows.length) return 0;
   const inserted = await db.insert(congressTrades).values(rows)
     .onConflictDoNothing({ target: congressTrades.txHash })
-    .returning({ id: congressTrades.id });
+    .returning({ id: congressTrades.id, ticker: congressTrades.ticker });
+
+  // Mark affected tickers for consensus recomputation. Never throws, never awaited into the
+  // ingest's own result: the disclosure rows above are authoritative and have committed. A lost
+  // mark is repaired by the reconciliation cron; a rolled-back ingest is not repaired by anything.
+  // Only actually-inserted rows count — tx_hash dedup means a re-read generates no work.
+  if (inserted.length) {
+    const { markConsensusDirty } = await import('./consensus/materialization.mjs');
+    await markConsensusDirty(inserted.map((r) => r.ticker).filter(Boolean));
+  }
   return inserted.length;
 }
 

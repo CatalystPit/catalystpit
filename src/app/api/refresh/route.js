@@ -563,7 +563,22 @@ async function insertInsiderTrades(insiderTrades) {
   if (!rows.length) return 0;
   const inserted = await db.insert(insiderTradesTable).values(rows)
     .onConflictDoNothing({ target: [insiderTradesTable.accession, insiderTradesTable.transactionDate, insiderTradesTable.transactionCode, insiderTradesTable.securityTitle, insiderTradesTable.shares, insiderTradesTable.pricePerShare, insiderTradesTable.sharesOwnedAfter] })
-    .returning({ id: insiderTradesTable.id });
+    .returning({ id: insiderTradesTable.id, ticker: insiderTradesTable.ticker });
+
+  // MARK THE AFFECTED TICKERS FOR CONSENSUS RECOMPUTATION.
+  //
+  // ⚠️ EVIDENCE FIRST, DERIVED CONSENSUS SECOND. The insert above is authoritative and has already
+  // committed. markConsensusDirty never throws, and this is deliberately NOT awaited into the
+  // return value or wrapped around the insert — a derived cache that could roll back an SEC filing
+  // ingest would be trading real data for a convenience. If this mark is lost, the reconciliation
+  // cron repairs it within 30 minutes; if the insert were lost, nothing repairs it.
+  //
+  // Only ACTUALLY-INSERTED rows are marked. onConflictDoNothing means a re-parse of the same filing
+  // returns nothing, so re-reading a feed cannot generate recomputation work.
+  if (inserted.length) {
+    const { markConsensusDirty } = await import('../../../lib/consensus/materialization.mjs');
+    await markConsensusDirty(inserted.map((r) => r.ticker));
+  }
   return inserted.length;
 }
 

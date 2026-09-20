@@ -1,26 +1,46 @@
 import { db } from '../../../../lib/db';
 import { sql } from 'drizzle-orm';
-import { buildConsensusBoard, BOARD_LIMIT } from '../../../../lib/consensus/board.mjs';
+import { BOARD_LIMIT } from '../../../../lib/consensus/board.mjs';
+import { rebuildBoardExclusive } from '../../../../lib/consensus/refresh';
+import { MATERIALIZATION_VERSION } from '../../../../lib/consensus/materialization.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-// PIT CONSENSUS BOARD — built here, never in a request.
+// RECONCILIATION — the safety net, no longer the only mechanism.
 //
-// resolveEvidence costs ~1.6s per ticker and the Neon HTTP driver serialises under concurrency, so
-// a sixty-ticker board takes ~90s. That cannot live in a page load at any parallelism, which is why
-// this is a cron writing KV — the same shape the confluence board and pit-snapshot already use.
+// ── WHAT THIS USED TO BE ────────────────────────────────────────────────────
 //
-// The KV entry carries its own build time and is served with a long TTL, so a failed or slow cron
-// degrades to a STALE board rather than an empty one. /api/consensus-board distinguishes the two.
+// The whole freshness story. It rebuilt the board every 30 minutes into one fixed, unversioned KV
+// key, and nothing else ever updated the board. So the worst-case age of any row was the full cron
+// interval plus the build — including, after a methodology change, rows computed by code that no
+// longer existed, served as current because the read path had no way to tell.
+//
+// ── WHAT IT IS NOW ──────────────────────────────────────────────────────────
+//
+// Freshness belongs to /api/cron/consensus-refresh, which drains the tickers evidence ingestion
+// marked and rebuilds the board index from already-materialized rows. This pass catches what that
+// cannot:
+//
+//   · evidence that changed without anything marking it dirty — a 13F ingest touches thousands of
+//     tickers at once and deliberately marks none of them individually
+//   · marks lost because KV was briefly unavailable when a filing committed
+//   · materialization drift: a ticker cached once and never touched again
+//   · board MEMBERSHIP changes driven by the passage of time rather than by a write — evidence
+//     ageing out of its activation window makes a ticker stop qualifying, and no ingest happens
+//     when nothing is filed
+//
+// That last case is why this pass recomputes EVERYTHING rather than reusing materialized tickers.
+// Reconciliation that trusted the cache would perpetuate exactly the drift it exists to repair.
+//
+// ── WHY STILL 30 MINUTES ────────────────────────────────────────────────────
+//
+// A full pass is ~60 tickers at ~1.6s each with concurrency 4 — roughly 90 seconds of Neon time.
+// Targeted invalidation now carries freshness, so running this more often would buy no correctness
+// and spend real database capacity; running it much less often would let a lost mark or an
+// aged-out activation window persist. It is a repair interval, not a freshness interval.
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
-export const BOARD_KEY = 'consensus:board:v1';
-// Well beyond the 30-minute cron cadence. A board that is hours old is still a truthful account of
-// the evidence — filings do not move quickly — and is far better than a blank page.
-const TTL = 6 * 60 * 60;
 
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
@@ -30,20 +50,27 @@ export async function GET(request) {
 
   const t0 = Date.now();
   try {
-    const board = await buildConsensusBoard(db, sql, { limit: BOARD_LIMIT });
-    const payload = { ...board, ms: Date.now() - t0 };
+    // reuseTickers defaults to false — see above. Every candidate is recomputed from the database.
+    const r = await rebuildBoardExclusive(db, sql, { limit: BOARD_LIMIT, reason: 'reconcile' });
+    const rows = r.payload?.rows?.length ?? 0;
+    const ms = Date.now() - t0;
 
-    if (KV_URL && KV_TOKEN) {
-      await fetch(`${KV_URL}/set/${encodeURIComponent(BOARD_KEY)}?EX=${TTL}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+    // 'locked' is a normal outcome, not a failure: a drain was already rebuilding, which means the
+    // board is being kept current by the mechanism this pass exists to back up.
+    if (!r.published) {
+      const benign = r.reason === 'locked';
+      console.warn(`[consensus-board] not published (${r.reason}) after ${ms}ms`);
+      return Response.json({
+        ok: benign, published: false, why: r.reason, version: MATERIALIZATION_VERSION, ms,
+      }, { status: benign ? 200 : 500 });
     }
-    console.log(`[consensus-board] ${board.rows.length} rows / ${board.candidates} candidates,`
-      + ` ${board.failed} failed, ${payload.ms}ms`);
-    return Response.json({ ok: true, rows: board.rows.length, candidates: board.candidates,
-      failed: board.failed, ms: payload.ms });
+
+    console.log(`[consensus-board] ${rows} rows / ${r.payload.candidates} candidates,`
+      + ` ${r.payload.failed} failed, ${ms}ms`);
+    return Response.json({
+      ok: true, published: true, rows, candidates: r.payload.candidates,
+      failed: r.payload.failed, version: MATERIALIZATION_VERSION, ms,
+    });
   } catch (e) {
     // A failed build leaves the PREVIOUS board in KV. Overwriting it with an empty one would turn a
     // build failure into "no evidence exists", which is a different and false statement.

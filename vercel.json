@@ -123,6 +123,10 @@
     {
       "path": "/api/cron/consensus-board",
       "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/cron/consensus-refresh",
+      "schedule": "* * * * *"
     }
   ],
   "headers": [
@@ -241,6 +245,9 @@
       "maxDuration": 60
     },
     "src/app/api/cron/consensus-board/route.js": {
+      "maxDuration": 300
+    },
+    "src/app/api/cron/consensus-refresh/route.js": {
       "maxDuration": 300
     }
   }

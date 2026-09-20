@@ -189,8 +189,18 @@ export async function ingestEightK() {
 
   let inserted = 0;
   if (rows.length) {
-    const res = await db.insert(eightkFilings).values(rows).onConflictDoNothing({ target: eightkFilings.accession }).returning({ id: eightkFilings.id });
+    const res = await db.insert(eightkFilings).values(rows)
+      .onConflictDoNothing({ target: eightkFilings.accession })
+      .returning({ id: eightkFilings.id, ticker: eightkFilings.ticker });
     inserted = res.length;
+
+    // Mark affected tickers for consensus recomputation. Catalysts are the fastest-moving family,
+    // so this is the hook that matters most for freshness. It never throws and never affects the
+    // ingest's result — the filings above are authoritative and have already committed.
+    if (res.length) {
+      const { markConsensusDirty } = await import('./consensus/materialization.mjs');
+      await markConsensusDirty(res.map((r) => r.ticker).filter(Boolean));
+    }
   }
   return { scanned, inserted };
 }

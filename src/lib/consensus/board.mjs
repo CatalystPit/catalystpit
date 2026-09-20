@@ -170,26 +170,50 @@ export function orderBoard(list) {
  * page with absence. A ticker with ONE active family is KEPT — single-source is a real, useful and
  * honestly-labelled state, not a failure.
  */
-export async function buildConsensusBoard(db, sql, { limit = BOARD_LIMIT, now = Date.now() } = {}) {
-  const candidates = await selectCandidates(db, sql, { limit });
-  if (!candidates.length) return { rows: [], candidates: 0, builtAt: new Date(now).toISOString() };
+/**
+ * ONE TICKER'S ROW — the single place a consensus row is computed.
+ *
+ * THE BOARD AND THE TICKER PAGE BOTH COME THROUGH HERE. Caching and materialization may differ
+ * between the two surfaces; interpretation may not. Two code paths that "happen to agree today" is
+ * exactly how GOLD ended up described two different ways, and this function is the structural
+ * answer to it rather than a promise to keep them in step.
+ *
+ * Returns null when no family is active — the ticker has nothing to say, and a row saying so would
+ * pad the board with absence. A ticker with ONE active family is KEPT: single-source is a real and
+ * honestly-labelled state, not a failure.
+ */
+export async function consensusRow(ticker, { now = Date.now(), resolve } = {}) {
+  const resolveEvidence = resolve || (await import('./evidence.js')).resolveEvidence;
+  const families = await resolveEvidence(ticker, { now });
+  // Structure is resolved for the ticker page; the board is an account of DISCLOSED evidence.
+  // The aggregate excludes structure (see AGGREGATE_FAMILIES); the FAMILY ROWS include it, so
+  // the board shows the same five families the ticker page does.
+  const disclosure = families.filter((f) => AGGREGATE_FAMILIES.includes(f.family));
+  const all = families.filter((f) => BOARD_FAMILIES.includes(f.family));
+  if (!all.some((f) => f.active)) return null;
+  const k = computeConsensus(disclosure, { now });
+  // THE CANONICAL OBJECT. Every surface renders from this; nothing recomputes it.
+  // k.direction/alignment/confidence remain ONLY for Pit Scan and are shown to nobody.
+  const canonical = canonicalConsensus(all, { now });
+  return { ticker, ...k, families: all, canonical };
+}
 
-  const { resolveEvidence } = await import('./evidence.js');
+/**
+ * @param {object} opts
+ * @param {(ticker:string)=>Promise<object|null>} [opts.rowFor]
+ *   Supplies each row. The default computes it. A drain passes a function that reuses an already
+ *   materialized ticker when it is recent enough, which is what makes a targeted refresh cheap: the
+ *   board index is rebuilt from cached rows rather than re-resolving sixty tickers to move one.
+ */
+export async function buildConsensusBoard(db, sql, { limit = BOARD_LIMIT, now = Date.now(), rowFor } = {}) {
+  const candidates = await selectCandidates(db, sql, { limit });
+  if (!candidates.length) return { rows: [], candidates: 0, failed: 0, builtAt: new Date(now).toISOString() };
+
+  const build = rowFor || ((ticker) => consensusRow(ticker, { now }));
 
   const built = await mapLimit(candidates, CONCURRENCY, async (ticker) => {
     try {
-      const families = await resolveEvidence(ticker, { now });
-      // Structure is resolved for the ticker page; the board is an account of DISCLOSED evidence.
-      // The aggregate excludes structure (see AGGREGATE_FAMILIES); the FAMILY ROWS include it, so
-      // the board shows the same five families the ticker page does.
-      const disclosure = families.filter((f) => AGGREGATE_FAMILIES.includes(f.family));
-      const all = families.filter((f) => BOARD_FAMILIES.includes(f.family));
-      const k = computeConsensus(disclosure, { now });
-      if (!all.some((f) => f.active)) return null;
-      // THE CANONICAL OBJECT. Every surface renders from this; nothing recomputes it.
-      // k.direction/alignment/confidence remain ONLY for Pit Scan and are shown to nobody.
-      const canonical = canonicalConsensus(all, { now });
-      return { ticker, ...k, families: all, canonical };
+      return await build(ticker);
     } catch {
       // One ticker failing must not empty the board, and must not be reported as "no evidence".
       return { ticker, error: true };

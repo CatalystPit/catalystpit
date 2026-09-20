@@ -1,6 +1,8 @@
 import { resolveEvidence } from '../../../lib/consensus/evidence';
 import { computeConsensus, METHODOLOGY_VERSION } from '../../../lib/consensus/consensus-v1.mjs';
 import { synthesise, canonicalConsensus } from '../../../lib/consensus/synthesis.mjs';
+import { readTickerFamilies } from '../../../lib/consensus/refresh';
+import { coalesce } from '../../../lib/market/refresh-policy.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -44,7 +46,14 @@ export async function GET(request) {
 
   try {
     const now = Date.now();
-    const families = await resolveEvidence(ticker, { now });
+    // MATERIALIZED FIRST, COMPUTED ONLY ON A MISS — and the computation is coalesced, so a burst of
+    // requests for the same ticker resolves evidence once rather than once each. A miss costs one
+    // ticker (~1.6s), never the universe: this route must never be a way to make a visitor pay for
+    // a board rebuild.
+    const families = await coalesce(`consensus:${ticker}`, async () => {
+      const cached = await readTickerFamilies(ticker, now);
+      return cached || resolveEvidence(ticker, { now });
+    });
     const synthesis = synthesise(families, { now });
     // THE CANONICAL OBJECT — identical to what the market-wide board renders.
     const canonical = canonicalConsensus(families, { now });
