@@ -9,7 +9,7 @@
 
 import {
   isCurrent, evidenceConfidence, catalystDirectional, CURRENT_BOARD_DAYS, FRESH_CATALYST_HOURS,
-  STALE_CONFIDENCE_DAYS,
+  STALE_CONFIDENCE_DAYS, EXCEPTIONAL_CARRY_DAYS,
   familySignificance, significantByFamily, dollarWeight, congressAmountWeight,
   evidenceSynthesis, normalizeReaction, joinEvidenceMarket, researchPriority, freshnessDecay,
   MEANINGFUL_SIGNIFICANCE, EXCEPTIONAL_SIGNIFICANCE, REACTION_FLOOR_PCT, JOIN, CONFLICT_CHI,
@@ -457,11 +457,25 @@ L('\n=== ACCEPTANCE: BOARD QUALITY (A–J) ===');
   ok('A. 45-day-old ordinary evidence is not a current situation',
     mut('staleboard') ? false : !oldOrdinary.current, oldOrdinary.why);
 
-  // B. Historically EXCEPTIONAL evidence survives the age gate.
-  const oldExceptional = isCurrent({
-    significantFamilies: [sig(FAMILY.INSIDER, 0.72, ins({ days: 45 }))], now: NOW });
+  // B. Historically EXCEPTIONAL evidence EXTENDS the window — but does not suspend it.
+  const exceptional10 = isCurrent({
+    significantFamilies: [sig(FAMILY.INSIDER, 0.75, ins({ days: 12 }))], now: NOW });
   ok('B. exceptional evidence survives normal age gating',
-    oldExceptional.current && oldExceptional.why === 'exceptional-evidence', oldExceptional.why);
+    exceptional10.current && exceptional10.why === 'exceptional-evidence', exceptional10.why);
+  const exceptionalExpired = isCurrent({
+    significantFamilies: [sig(FAMILY.INSIDER, 0.75, ins({ days: 40 }))], now: NOW });
+  ok('…but the carry is CAPPED at 10 trading sessions',
+    mut('uncappedcarry') ? false
+      : !exceptionalExpired.current && exceptionalExpired.why === 'exceptional-but-expired',
+    exceptionalExpired.why);
+  ok('…and the cap is 10 sessions', EXCEPTIONAL_CARRY_DAYS === 14);
+  // ⚠️ PRICE NEVER RESURRECTS A STALE CASE.
+  // ⚠️ PRICE NEVER RESURRECTS A STALE CASE. isCurrent takes no reaction argument and reads no
+  // price term; eligibility is decided by evidence and its age, full stop.
+  ok('…and nothing about price can bring it back',
+    !/reaction|R_eff|changePct|price/i.test(isCurrent.toString()));
+  ok('…isCurrent is not even given the reaction to look at',
+    !/reaction/.test(isCurrent.toString().slice(0, isCurrent.toString().indexOf(')') + 1)));
   ok('…and recent ordinary evidence is current',
     isCurrent({ significantFamilies: [sig(FAMILY.INSIDER, 0.42, ins({ days: 3 }))], now: NOW }).current);
   ok('…the ordinary window is 5 trading days', CURRENT_BOARD_DAYS === 7);

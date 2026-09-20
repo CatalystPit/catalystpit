@@ -474,6 +474,16 @@ export const WEIGHTS = Object.freeze({
 // on day six. It still decays hard in ranking; it just is not silently dropped.
 export const CURRENT_BOARD_DAYS = 7;
 export const FRESH_CATALYST_HOURS = 72;
+// ⚠️ THE EXCEPTION IS CAPPED. Exceptional significance EXTENDS the normal window; it does not
+// suspend it. Uncapped, BRVE/BLSM/INTC/CE sat on the current board at 35-41 days old, which defeats
+// the point of a current board. Past 10 trading sessions the evidence stays fully available on the
+// ticker and evidence surfaces — it simply stops qualifying a company as a situation worth looking
+// at TODAY, all by itself.
+//
+// If NEW meaningful evidence arrives, the ticker qualifies again through the ordinary path. And
+// note what is deliberately absent: there is no price term here. A stale case is never resurrected
+// because the stock started moving — that is Pit Scan's question, not this one.
+export const EXCEPTIONAL_CARRY_DAYS = 14;   // 10 trading sessions
 
 /**
  * Is this company a CURRENT research situation?
@@ -490,16 +500,24 @@ export function isCurrent({ significantFamilies = [], freshCatalystAgeMs = null,
   };
   const newestAgeMs = Math.min(...meaningful.map(ageOf));
 
-  // A genuinely fresh catalyst is its own reason, on a tighter clock.
-  if (Number.isFinite(freshCatalystAgeMs) && freshCatalystAgeMs <= FRESH_CATALYST_HOURS * 3_600_000) {
+  // A genuinely fresh catalyst is its own reason, on a tighter clock — but it has to be a
+  // MEANINGFUL filing. BLSM sat on the current board at 39.7 days old because an insignificant
+  // 8-K arrived within 72 hours while the card's actual reason, its insider evidence, was six weeks
+  // stale. A filing too slight to qualify a company on its own cannot make an old case current.
+  const freshCatalystMeaningful = meaningful.some((f) => f.family === FAMILY.CATALYST);
+  if (freshCatalystMeaningful
+    && Number.isFinite(freshCatalystAgeMs) && freshCatalystAgeMs <= FRESH_CATALYST_HOURS * 3_600_000) {
     return { current: true, why: 'fresh-catalyst', newestAgeMs };
   }
   if (newestAgeMs <= CURRENT_BOARD_DAYS * 86_400_000) {
     return { current: true, why: 'recent-evidence', newestAgeMs };
   }
-  // THE EXCEPTION.
+  // THE EXCEPTION, AND ITS CEILING.
   const exceptional = meaningful.find((f) => f.significance >= EXCEPTIONAL_SIGNIFICANCE);
-  if (exceptional) return { current: true, why: 'exceptional-evidence', newestAgeMs };
+  if (exceptional && newestAgeMs <= EXCEPTIONAL_CARRY_DAYS * 86_400_000) {
+    return { current: true, why: 'exceptional-evidence', newestAgeMs };
+  }
+  if (exceptional) return { current: false, why: 'exceptional-but-expired', newestAgeMs };
 
   return { current: false, why: 'stale', newestAgeMs };
 }
