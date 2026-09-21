@@ -12,7 +12,7 @@
 // Run: node scripts/verify-impact.mjs [--mutate=<mode>]
 
 import fs from 'node:fs';
-import { impactOf, matchesKeyword, IMPACT_RANK, rankByImpact, isHeroWorthy } from '../src/lib/impact.js';
+import { impactOf, matchesKeyword, IMPACT_RANK, rankByImpact, isHeroWorthy, deskSelection, DESK_SLOTS } from '../src/lib/impact.js';
 
 const fsRead = (p) => fs.readFileSync(new URL(p, new URL('..', import.meta.url)), 'utf8');
 
@@ -324,8 +324,101 @@ L('\n=== THE FRONT DOOR RANKS BY THE SAME RULE AS THE NEWS PAGE ===');
   ok('an 8-K filing is hero-worthy', isHeroWorthy({ headline: 'INM · Delisting risk', sym: 'INM', material: true }));
   ok('a macro print is hero-worthy',
     isHeroWorthy({ headline: 'Minutes of the Federal Open Market Committee', tag: 'MACRO' }));
-  ok('ordinary tickerless market news is hero-worthy',
-    isHeroWorthy({ headline: 'Nvidia-Backed Cloud Startup Nscale Files for IPO', tag: 'IPO' }));
+  // ⚠️ NOTABLE IS NO LONGER ENOUGH FOR THE FRONT DOOR. A well-reported tickerless feature keeps
+  // its place in the news river; the hero is reserved for a material issuer event or a scheduled
+  // macro print, because the hero is the page saying "this is what matters today".
+  ok('ordinary tickerless market news is NOT hero-worthy',
+    mut('heroroutine') ? false
+      : !isHeroWorthy({ headline: 'Nvidia-Backed Cloud Startup Nscale Files for IPO', tag: 'IPO' }));
+}
+
+L('\n=== THE FOUR-UP IS FOUR CLAIMS, NOT ONE CLAIM AND THREE SPACERS ===');
+{
+  const JUNK = [
+    { headline: 'I have $125,000 in credit-card debt. Will $17,000 affect my bankruptcy?', tag: 'MACRO' },
+    { headline: "'My total balance should be $20 million': I invested $1.1 million in crypto", tag: 'CRYPTO' },
+    { headline: 'Lakers Buyers Lay Out Plans to Reach $30 Billion Valuation', tag: 'M&A' },
+    { headline: "Don't Count Out Corporate Bonds Just Because the Fed Is Raising Rates", tag: 'FED' },
+    { headline: 'Le Guide MICHELIN dévoile sa sélection 2026', tag: 'MARKETS' },
+  ];
+  const FILINGS = [
+    { headline: 'INM · Delisting risk', tag: 'SEC', sym: 'INM', material: true, imageUrl: null },
+    { headline: 'CACC · Material agreement', tag: 'SEC', sym: 'CACC', material: true, imageUrl: null },
+    { headline: 'DAKT · Exec / board change', tag: 'SEC', sym: 'DAKT', material: true, imageUrl: null },
+    { headline: 'RIV · Material agreement', tag: 'SEC', sym: 'RIV', material: true, imageUrl: null },
+    { headline: 'BCBP · Material agreement', tag: 'SEC', sym: 'BCBP', material: true, imageUrl: null },
+  ];
+
+  // ⚠️ THE TICKET'S CORE REQUIREMENT. With filings available, no junk may occupy ANY slot —
+  // hero or supporting — and the four-up must not be padded to look full.
+  const withFilings = deskSelection(JUNK, FILINGS);
+  ok('with an 8-K HIGH available, nothing routine is selected',
+    mut('padsjunk') ? false : withFilings.items.every((n) => impactOf(n) === 'high'),
+    withFilings.items.map((n) => impactOf(n)).join(','));
+  ok('…not in the hero', mut('padsjunk') ? false : !/credit-card|Lakers|crypto/i.test(withFilings.items[0]?.headline || ''));
+  ok('…and not in any supporting tile',
+    mut('padsjunk') ? false
+      : !withFilings.items.slice(1).some((n) => /credit-card|Lakers|crypto|MICHELIN/i.test(n.headline)));
+  ok('…the module is labelled as filings', withFilings.leadingWithFilings === true);
+  ok('…and it is capped at four', withFilings.items.length <= DESK_SLOTS);
+  ok('…with no borrowed photograph on any card',
+    mut('borrowsimage') ? false : withFilings.items.every((n) => !n.imageUrl));
+
+  // ⚠️ NEVER PAD. Three real filings and a gap is a true page; four slots of advice is not.
+  const thin = deskSelection(JUNK, FILINGS.slice(0, 2));
+  ok('two filings produce two cards, not four',
+    mut('padsjunk') ? false : thin.items.length === 2, String(thin.items.length));
+  ok('…and the gap is never filled with a repeat',
+    new Set(thin.items.map((n) => n.headline)).size === thin.items.length);
+
+  // A genuine HIGH story outranks the filings floor and is used directly.
+  const withReal = deskSelection([
+    ...JUNK,
+    { headline: 'Minutes of the Federal Open Market Committee', tag: 'MACRO' },
+  ], FILINGS);
+  ok('a real macro print is used instead of the filings floor',
+    withReal.items[0].headline === 'Minutes of the Federal Open Market Committee');
+  ok('…and the module is NOT labelled as filings', withReal.leadingWithFilings === false);
+  ok('…while the junk still cannot fill the remaining tiles',
+    mut('padsjunk') ? false : withReal.items.length === 1, String(withReal.items.length));
+
+  // Nothing at all is a real state, and the module has its own empty copy for it.
+  const nothing = deskSelection(JUNK, []);
+  ok('all-routine with no filings selects nothing at all',
+    mut('padsjunk') ? false : nothing.items.length === 0);
+  ok('…and does not claim to be showing filings', nothing.leadingWithFilings === false);
+
+  // The render must honour the cap and never repeat.
+  const home = fsRead('src/components/CatalystPit.jsx');
+  ok('the render takes at most three supporting tiles',
+    mut('rendercap') ? false : /news\.slice\(1, 4\)/.test(home));
+  ok('…and the old padding expression is gone',
+    mut('rendercap') ? false : !/news\[i % Math\.min/.test(home));
+  ok('homepage story cards carry no publisher photograph',
+    mut('borrowsimage') ? false : !/imageUrl:\s*s\.image_url/.test(home));
+}
+
+L('\n=== THE CONSENSUS TEASER READS THE CANONICAL ROW ===');
+{
+  // It printed "No active families" and a green 0 while /consensus showed the same ticker as a
+  // cross-source conflict: it read r.normalised, a V2.1 field the V3.8 payload dropped, and
+  // `(r.normalised || [])` turned a missing field into a confident zero.
+  const teaser = fsRead('src/components/ConsensusTeaser.jsx');
+  // Against the CODE: the file explains the bug in prose, and naming the dropped field in a
+  // comment is the explanation, not a read of it.
+  const teaserCode = teaser.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok('the teaser no longer reads the dropped V2.1 field',
+    mut('staleschema') ? false : !/r\.normalised/.test(teaserCode));
+  ok('…it reads activeCount from the canonical row',
+    /evidence_layer\?\.activeCount/.test(teaser));
+  ok('…and names the setup the board itself named', /r\?\.setup\?\.label/.test(teaser));
+  // ⚠️ NO SUMMARY IS BETTER THAN A FALSE ONE.
+  ok('an unreadable row shows an em dash, never a confident 0',
+    mut('confidentzero') ? false : /familyCount\(r\) \?\? '—'/.test(teaser));
+  ok('…and points at the board instead of inventing a count',
+    /See the full board for this setup/.test(teaser));
+  ok('the teaser still reads ONE board, not a second Consensus',
+    (teaser.match(/fetch\('\/api\//g) || []).length === 1 && /api\/consensus-board/.test(teaser));
 }
 
 L('\n=== EVERY SURFACE CALLS THE SAME DESK ===');
@@ -342,13 +435,13 @@ L('\n=== EVERY SURFACE CALLS THE SAME DESK ===');
   ok('/api/news uses the shared desk', /rankByImpact\(/.test(newsRoute));
   ok('…and no longer carries its own sort',
     mut('twodesks') ? false : !/rankOf\(y\.a\) - rankOf\(x\.a\)/.test(newsRoute));
-  ok('the homepage re-ranks what it reads',
-    mut('unrankedhome') ? false : /rankByImpact\(rawNews\)/.test(home));
+  ok('the homepage selects through the shared desk',
+    mut('unrankedhome') ? false : /deskSelection\(rawNews, filingCards\)/.test(home));
 
   // The filings floor.
   ok('the homepage fetches canonical filings', /fetchFilings/.test(home));
   ok('…and falls back to them when nothing earns a hero',
-    mut('nofloor') ? false : /heroWorthy \? rankedNews/.test(home) && /filingCards\.length > 0/.test(home));
+    mut('nofloor') ? false : /leadingWithFilings/.test(home) && /fetchFilings/.test(home));
   ok('…labelling the module when it does', /8-K FILINGS/.test(home));
   // No publisher artwork is fetched or stored for a filing card.
   ok('filing cards carry no borrowed image',

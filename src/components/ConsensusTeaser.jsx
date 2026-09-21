@@ -28,15 +28,42 @@ const STATE_UI = {
   NO_EVIDENCE: { label: 'No current evidence', color: null },
 };
 
-/** Which families are active and how they split — never a count of raw transactions. */
+// ── READING THE CANONICAL ROW, NOT A FIELD IT STOPPED EMITTING ──────────────
+//
+// ⚠️ THIS PRINTED "No active families" AND A BIG GREEN 0 WHILE /consensus SHOWED THE SAME TICKER
+// AS A CROSS-SOURCE CONFLICT. Both surfaces read the same board; this one read `r.normalised`,
+// a V2.1 field the V3.8 payload no longer carries, so `(r.normalised || [])` silently became an
+// empty array and every row reported zero. A missing field read through `|| []` does not fail —
+// it reports absence as fact, which is the worst way for a schema change to land.
+//
+// The row does carry the answer: evidence_layer.activeCount, and a per-family fact sheet whose
+// blocks each state a direction. Same row, same board, no second Consensus.
+
+/** Active families on the canonical row, or null when the shape is not one we recognise. */
+function familyCount(r) {
+  const n = r?.evidence_layer?.activeCount;
+  return Number.isFinite(n) ? n : null;
+}
+
+/** How the active families split. Null when the row cannot be read safely. */
 function summarize(r) {
-  const active = (r.normalised || []).filter((f) => f.active);
-  if (!active.length) return 'No active families';
-  const up = active.filter((f) => f.state === 'POSITIVE').length;
-  const down = active.filter((f) => f.state === 'NEGATIVE').length;
-  if (up && down) return `${up} positive, ${down} negative of ${active.length} families`;
-  if (up || down) return `${Math.max(up, down)} of ${active.length} families aligned`;
-  return `${active.length} active families, none directional`;
+  const total = familyCount(r);
+  if (total == null) return null;
+  const blocks = Object.values(r.families || {}).flat().filter(Boolean);
+  const up = blocks.filter((b) => b.direction === 'positive').length;
+  const down = blocks.filter((b) => b.direction === 'negative').length;
+  if (up && down) return `${up} positive, ${down} negative of ${total} families`;
+  if (up || down) return `${Math.max(up, down)} of ${total} families aligned`;
+  return `${total} active families, none directional`;
+}
+
+/** The setup the board itself named. Falls back to the state map only if the label is absent. */
+function setupLabel(r) {
+  return r?.setup?.label || (STATE_UI[r?.state] || STATE_UI.MIXED).label;
+}
+function setupColor(r) {
+  if (r?.setup?.setup === 'CROSS_SOURCE_CONFLICT') return C.conflictAccent;
+  return (STATE_UI[r?.state] || STATE_UI.MIXED).color || C.muted;
 }
 
 export default function ConsensusTeaser() {
@@ -89,17 +116,23 @@ export default function ConsensusTeaser() {
                   <span className="cp-tkr" style={{ fontSize: 14, fontWeight: 800, color: C.ink }}>{r.ticker}</span>
                   {/* The badge takes the STATE's colour. Hardcoding green painted a conflict row
                       green while its own label said "Conflict". */}
-                  <span style={{ fontSize: 9, fontWeight: 700, color: (STATE_UI[r.state] || STATE_UI.MIXED).color || C.muted, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, padding: '1px 6px' }}>
-                    {(STATE_UI[r.state] || STATE_UI.MIXED).label}
+                  <span style={{ fontSize: 9, fontWeight: 700, color: setupColor(r), background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, padding: '1px 6px' }}>
+                    {setupLabel(r)}
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {summarize(r)}
+                  {/* ⚠️ NO SUMMARY IS BETTER THAN A FALSE ONE. When the row cannot be read the
+                      teaser points at the board rather than inventing a count — the board is the
+                      one place the full setup is always rendered correctly. */}
+                  {summarize(r) || 'See the full board for this setup →'}
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                {/* Aligned families, not the deprecated 0-100 blend. */}
-                <div className="cp-num" style={{ fontSize: 16, fontWeight: 800, color: C.green }}>{(r.normalised || []).filter((f) => f.active).length}</div>
+                {/* Active families from the canonical row, not the deprecated 0-100 blend — and
+                    an em dash rather than a confident 0 when the count is unavailable. */}
+                <div className="cp-num" style={{ fontSize: 16, fontWeight: 800, color: familyCount(r) == null ? C.dim : C.green }}>
+                  {familyCount(r) ?? '—'}
+                </div>
                 <div style={{ fontSize: 7, color: C.dim, letterSpacing: '0.5px' }}>FAMILIES</div>
               </div>
             </a>

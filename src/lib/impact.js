@@ -246,12 +246,43 @@ export function rankByImpact(items, { read = (x) => x } = {}) {
  * May this story stand as the hero?
  *
  * ⚠️ A HERO IS A CLAIM, NOT A SLOT TO FILL. The homepage hero is the largest thing on the page
- * and reads as "this is what matters today". A routine item there is worse than no hero at all,
- * which is why the caller is expected to fall back to filings rather than promote the least-bad
+ * and reads as "this is what matters today". Anything less than HIGH there is worse than no hero
+ * at all, which is why the caller falls back to filings rather than promoting the least-bad
  * magazine feature.
  */
 export function isHeroWorthy(item) {
-  return impactOf(item) !== 'routine';
+  return impactOf(item) === 'high';
+}
+
+/** Hero plus supporting tiles. Four slots, and none of them may be padded. */
+export const DESK_SLOTS = 4;
+
+/**
+ * WHAT THE FRONT DOOR IS ALLOWED TO SHOW.
+ *
+ * ⚠️ RANKING WAS NOT ENOUGH, AND THIS IS THE SECOND TIME THAT LESSON HAS COST A DEPLOY. Sorting
+ * the pool put the best item first but left the rest of the module to be filled in order, so the
+ * homepage still ran a WSJ Fed feature as its hero with credit-card and crypto-advice columns in
+ * the supporting tiles. A four-up is four claims, not one claim and three spacers.
+ *
+ * So selection is a FILTER, not a sort: only HIGH — a material event at a listed issuer, or a
+ * scheduled macro print — may occupy a slot. When nothing qualifies, the module shows canonical
+ * filings instead. When neither exists it shows fewer cards, or none, and the module's own empty
+ * state says the desk is quiet.
+ *
+ * ⚠️ IT MAY RETURN FEWER THAN FOUR, AND MUST NEVER PAD TO REACH FOUR. The old render repeated
+ * `news[i % …]` to fill the grid, which is how one story became four photographs of itself. Three
+ * real filings and a gap is a true page; four slots filled with advice columns is not.
+ */
+export function deskSelection(stories, filings, { limit = DESK_SLOTS } = {}) {
+  const high = (Array.isArray(stories) ? stories : []).filter(isHeroWorthy);
+  if (high.length) return { items: rankByImpact(high).slice(0, limit), leadingWithFilings: false };
+
+  const fromFilings = (Array.isArray(filings) ? filings : []).filter(isHeroWorthy);
+  if (fromFilings.length) {
+    return { items: rankByImpact(fromFilings).slice(0, limit), leadingWithFilings: true };
+  }
+  return { items: [], leadingWithFilings: false };
 }
 
 // Editorial flag styling — subtle colored tag, no number, no emoji. null = don't render a flag.

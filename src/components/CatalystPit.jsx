@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import ConsensusTeaser from "./ConsensusTeaser";
 import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mjs";
-import { rankByImpact, isHeroWorthy } from "../lib/impact";
+import { deskSelection } from "../lib/impact";
 import HeatMap from "./HeatMap";
 import CompactChart from "./chart/CompactChart";
 import {
@@ -134,7 +134,11 @@ const fetchAll = async () => {
       tag:      (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
       sym:      (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || s.sym || null),
       summary:  s.summary || s.description || '',
-      imageUrl: s.image_url || s.imageUrl || s.image || s.thumbnail || s.photo_url || null,
+      // ⚠️ NO PUBLISHER PHOTOGRAPHS ON THE FRONT DOOR. A desk is not a magazine: these cards
+      // carry a ticker, a type and an age, and the gradient card already renders a null image.
+      // Dropping the field also means no WSJ/MW/Benzinga artwork is ever requested from, or
+      // cached on, our origin — which is a licensing question we do not need to have.
+      imageUrl: null,
       url:      s.url || null,
     }));
 
@@ -279,16 +283,13 @@ export default function CatalystPit() {
   // front door should not show yesterday's ordering for a day. rankByImpact is stable, so
   // re-ranking an already-ranked list changes nothing.
   const rawNews = data?.news || [];
-  const rankedNews = rankByImpact(rawNews);
   const filingCards = data?.filingCards || [];
 
-  // ⚠️ A HERO IS A CLAIM. If nothing in the pool earns it — every item routine, which is the
-  // normal state of a weekend — the module shows canonical filings rather than promoting the
-  // least-bad magazine feature into the largest slot on the page. Sparse and honest.
-  const heroWorthy = rankedNews.length > 0 && isHeroWorthy(rankedNews[0]);
-  const news = heroWorthy ? rankedNews
-    : (filingCards.length > 0 ? filingCards : rankedNews);
-  const leadingWithFilings = !heroWorthy && filingCards.length > 0;
+  // ⚠️ A FOUR-UP IS FOUR CLAIMS, NOT ONE CLAIM AND THREE SPACERS. Ranking alone left the tiles to
+  // be filled in order, so the hero was a WSJ Fed feature and the supporting cards were
+  // credit-card and crypto-advice columns. deskSelection FILTERS to HIGH and never pads — see
+  // lib/impact.js. It may return fewer than four, and that is the correct page.
+  const { items: news, leadingWithFilings } = deskSelection(rawNews, filingCards);
   const insiders = data?.insiders || [];
   // The feed is ticker-facing too: each row renders its symbol and links to /ticker/<sym>. The same
   // Liberty Mutual filing that reached the card sits in this list, so without the gate the feed would
@@ -467,12 +468,16 @@ export default function CatalystPit() {
                       <NewsPhotoCard key={i} n={n} idx={0} hero/>
                     ))}
                   </div>
-                  <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:12}}>
-                    {Array.from({length:4}, (_, i) => news[1 + i] || news[i % Math.min(1, news.length)])
-                      .filter(Boolean).map((n, i) => (
-                      <NewsPhotoCard key={i} n={n} idx={i + 1}/>
-                    ))}
-                  </div>
+                  {/* ⚠️ NO PADDING. This was `news[1 + i] || news[i % …]`, which repeated the
+                      hero to fill the grid — one story rendered as four photographs of itself.
+                      Up to three supporting tiles, and fewer when there are fewer. */}
+                  {news.length > 1 && (
+                    <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:12}}>
+                      {news.slice(1, 4).map((n, i) => (
+                        <NewsPhotoCard key={i} n={n} idx={i + 1}/>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
               {!loading && news.length > 0 && (
