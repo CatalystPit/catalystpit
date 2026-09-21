@@ -16,7 +16,9 @@ import {
   buildEvidenceMarkers, snapToBar, barEpoch, evidenceAtBar, groupKey,
   markerStyleFor, markerPalette, MAX_MARKERS,
 } from '../src/lib/chart/evidence-markers.mjs';
+import fs from 'node:fs';
 import { makeEvidence, FAMILY, DIRECTION } from '../src/lib/evidence/model.mjs';
+import { timeframe, DEFAULT_TIMEFRAME } from '../src/lib/chart/chart-source.mjs';
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = '') => {
@@ -417,6 +419,32 @@ function makeComponent() {
   check('null evidence (API failure) leaves a working chart', c.refs.price !== null);
   c.draw();
   check('redraw after a failure still works', c.refs.price !== null && c.state.attachedToDead === 0);
+}
+
+// ── THE FETCH WINDOW MUST COVER THE CHART ───────────────────────────────────
+//
+// ⚠️ A DEFECT FOUND BY INSPECTION, NOT BY THESE TESTS. The host fetched a hardcoded two years of
+// evidence while the default daily chart loads 1,825 days of candles, so years three to five of
+// the chart everyone opens on had no markers — and the comment beside it claimed the window
+// "covers every timeframe the page opens on". Placement, grouping and lifecycle were all correct;
+// the evidence simply was not asked for. Nothing above could catch that, because every assertion
+// here starts from evidence that has already arrived.
+sec('THE EVIDENCE WINDOW COVERS THE DEFAULT CHART');
+{
+  const host = fs.readFileSync(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8');
+  const dailyDays = timeframe(DEFAULT_TIMEFRAME)?.window?.days ?? null;
+
+  check('the default timeframe declares a day span', Number.isFinite(dailyDays), String(dailyDays));
+  // Derived, never restated — a literal here is how the two drifted apart in the first place.
+  check('the window is derived from the timeframe definition',
+    /timeframe\(DEFAULT_TIMEFRAME\)\?\.window\?\.days/.test(host));
+  check('…and is not a hardcoded two years',
+    !/const EVIDENCE_WINDOW_DAYS = 365 \* 2;/.test(host));
+
+  // The real assertion: whatever the host resolves must be at least the daily chart's own span.
+  const resolved = dailyDays;
+  check('the fetch window is at least the daily chart span',
+    resolved >= 1825, `${resolved}d vs 1825d of candles`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

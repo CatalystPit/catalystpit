@@ -165,8 +165,12 @@ L('\n=== /api/health REPORTS LIVENESS SEPARATELY FROM FRESHNESS ===');
 {
   const health = read('src/app/api/health/route.js');
   ok('health reads the heartbeats', /readJobHeartbeats\(\)/.test(health));
+  // ⚠️ LINE-ENDING AGNOSTIC. This was /\n    jobs,\n/ and passed for days, then failed the moment
+  // a git checkout rewrote the file with CRLF — the code was identical, the assertion was not.
+  // A test that depends on how the working tree happens to store newlines reports on the checkout,
+  // not on the product.
   ok('…and reports them as their own block',
-    mut('foldedin') ? false : /\n    jobs,\n/.test(health));
+    mut('foldedin') ? false : /^\s*jobs,\s*$/m.test(health));
   // A weekday-only job at the weekend is idle, not late — otherwise the check cries wolf every
   // Saturday and gets ignored by Monday.
   ok('a weekday-only job is idle-by-design at the weekend',

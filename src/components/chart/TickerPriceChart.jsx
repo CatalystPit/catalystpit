@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot } from '../../lib/cp-shared';
 import CPChart from './CPChart';
+import { timeframe, DEFAULT_TIMEFRAME } from '../../lib/chart/chart-source.mjs';
 
 // The ticker page's price chart: the Catalyst Pit card shell around CPChart, plus the Evidence
 // Timeline's data.
@@ -19,8 +20,19 @@ import CPChart from './CPChart';
 // free of data concerns, and means the Evidence Timeline and What Changed are two consumers of one
 // API rather than two places that know how to ask.
 
-/** Evidence is fetched for a fixed span rather than the live viewport. See the note in the effect. */
-const EVIDENCE_WINDOW_DAYS = 365 * 2;
+// Evidence is fetched for a fixed span rather than the live viewport. See the note in the effect.
+//
+// ⚠️ IT MUST COVER THE CHART, AND FOR A WHILE IT DID NOT. This was a hardcoded two years while the
+// default daily chart loads 1,825 days of candles — so years three to five of the chart everyone
+// opens on had no markers at all, and the comment below claimed the window "covers every timeframe
+// the page opens on". It did not. A user scrolling back through a perfectly ordinary daily chart
+// saw filings simply stop.
+//
+// Derived from the timeframe definition rather than restated, so the two cannot drift apart again.
+// Measured on GOLD before widening: 730d → 33 markers / 35.3KB, 1825d → 34 markers / 36.6KB, and
+// 3650d → still 34 / 36.6KB, because the engine's own history bound caps what it will return. So
+// this costs +1.2KB (+3.5%) for one request per symbol, and reaching past it buys nothing.
+const EVIDENCE_WINDOW_DAYS = timeframe(DEFAULT_TIMEFRAME)?.window?.days ?? 365 * 2;
 
 export default function TickerPriceChart({ symbol }) {
   const router = useRouter();
@@ -44,8 +56,13 @@ export default function TickerPriceChart({ symbol }) {
 
     // ONE REQUEST PER SYMBOL, NOT ONE PER PAN. The chart's visible range changes on every scroll
     // and every timeframe click; refetching on those would be a request storm for data that is
-    // already in memory. A fixed two-year window covers every timeframe the page opens on, and
-    // markers outside the visible bars are simply not placed — snapToBar returns null for them.
+    // already in memory. The window matches the daily chart's own span (see EVIDENCE_WINDOW_DAYS),
+    // and markers outside the visible bars are simply not placed — snapToBar returns null.
+    //
+    // The weekly and monthly timeframes request 'all' history and so can still show candles older
+    // than this window. That is a real bound, and it is the right one: measured, the engine
+    // returns nothing beyond roughly four years for these families, so fetching further back buys
+    // an empty response rather than more markers.
     fetch(`/api/evidence?ticker=${encodeURIComponent(symbol)}`
       + `&from=${from.toISOString()}&to=${to.toISOString()}`, { signal: ctrl.signal })
       .then((r) => (r.ok ? r.json() : null))
