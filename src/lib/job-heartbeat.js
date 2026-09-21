@@ -84,6 +84,7 @@ export const TRACKED_JOBS = Object.freeze([
   { name: 'quotes',         label: 'Quotes / EOD candles',   maxAgeHours: 26 },
   { name: 'alerts',         label: 'Alerts evaluation',      maxAgeHours: 24, weekdaysOnly: true },
   { name: 'insider-alerts', label: 'Insider alert emails',   maxAgeHours: 2 },
+  { name: 'evidence-alerts', label: 'Evidence alerts',       maxAgeHours: 2 },
   { name: 'refresh-content', label: 'News enrichment',       maxAgeHours: 24, weekdaysOnly: true },
 ]);
 

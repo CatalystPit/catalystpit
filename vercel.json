@@ -49,6 +49,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/evidence-alerts",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/brief",
       "schedule": "0 10 * * 1-5"
     },

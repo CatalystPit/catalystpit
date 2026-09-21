@@ -97,6 +97,7 @@ L('\n=== EVERY TRACKED JOB HAS A CRON THAT COULD TICK IT ===');
     quotes: ['/api/refresh'],
     alerts: ['/api/cron/alerts'],
     'insider-alerts': ['/api/cron/insider-alerts'],
+    'evidence-alerts': ['/api/cron/evidence-alerts'],
     'refresh-content': ['/api/refresh-content'],
   };
   for (const j of JOBS) {

@@ -3,6 +3,7 @@ import { insiderTrades, watchlist } from '../../../../lib/schema';
 import { and, gt, lte, inArray, asc } from 'drizzle-orm';
 import { clerkClient } from '@clerk/nextjs/server';
 import { recordJobRun } from '../../../../lib/job-heartbeat';
+import { claim, insiderAccessionKey, ensureEvidenceAlertTables } from '../../../../lib/evidence-alerts';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -110,6 +111,9 @@ export async function GET(request) {
     ticker: insiderTrades.ticker, company: insiderTrades.company, executive: insiderTrades.executive,
     action: insiderTrades.action, totalValue: insiderTrades.totalValue,
     filingDate: insiderTrades.filingDate, code: insiderTrades.transactionCode,
+    // Selected so the send can be CLAIMED against the evidence alerter — without the accession
+    // there is no shared key and one filing would produce both an email and a bell.
+    accession: insiderTrades.accession,
   }).from(insiderTrades)
     .where(and(
       inArray(insiderTrades.action, ['BUY', 'SELL']),
@@ -148,6 +152,9 @@ export async function GET(request) {
     userTickers.get(w.userId).add(w.ticker);
   }
 
+  // The shared claim table must exist before the first send tries to write to it.
+  await ensureEvidenceAlertTables();
+
   const client = await clerkClient();
   const users = [...userTickers.entries()].slice(0, MAX_EMAILS);
   let sent = 0, failed = 0, skipped = 0;
@@ -164,7 +171,25 @@ export async function GET(request) {
     for (const t of tset) for (const f of byTicker.get(t)) items.push(f);
     items.sort((a, b) => Number(b.totalValue) - Number(a.totalValue));
     const { subject, html } = buildEmail(items, [...tset]);
-    (await sendEmail(email, subject, html)) ? sent++ : failed++;
+    const ok = await sendEmail(email, subject, html);
+    ok ? sent++ : failed++;
+
+    // ⚠️ CLAIM WHAT WE JUST EMAILED, SO IT CANNOT ALSO RING THE BELL.
+    //
+    // The evidence alerter notifies on the same Form 4 accessions this digest covers — its insider
+    // evidence IS these filings. Without a shared key a watcher gets an email and an in-app alert
+    // for one filing. Both paths key on `insider:<accession>`, and whichever runs first owns the
+    // event. Recorded only on a SUCCESSFUL send: claiming a failed email would silence the bell
+    // for a filing nobody was ever told about.
+    if (ok) {
+      for (const f of items) {
+        if (!f.accession) continue;
+        try {
+          await claim(userId, insiderAccessionKey(f.accession),
+            { ticker: f.ticker, family: 'insider', channel: 'email' });
+        } catch { /* bookkeeping must never fail a send that already happened */ }
+      }
+    }
   }
 
   await kvSet(WATERMARK_KEY, runStartIso);
