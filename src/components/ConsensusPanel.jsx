@@ -115,8 +115,14 @@ export default function ConsensusPanel({ symbol }) {
       <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface,
         display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>PIT CONSENSUS</span>
-        <span style={{ marginLeft: 'auto', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px' }}>
-          {String(data.version || '').toUpperCase()}
+        {/* ⚠️ A METHODOLOGY SLUG IS NOT A LABEL FOR A READER. This rendered the raw internal id —
+            CONSENSUS_V38A_SETUP.CONSENSUS_V2_SYNTHESIS.CONSENSUS_V1.B3 — in the panel header, which
+            tells a trader nothing and tells everyone else that the page is a debug view. The value
+            still matters when something is wrong, so it moves to the title attribute: reachable on
+            hover and in the DOM for support, absent from the reading experience. */}
+        <span title={`Methodology ${String(data.version || 'unknown')}`}
+          style={{ marginLeft: 'auto', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px' }}>
+          EVIDENCE ALIGNMENT
         </span>
       </div>
 

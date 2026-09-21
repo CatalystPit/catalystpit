@@ -246,20 +246,24 @@ export default function InstitutionsClient() {
           </div>
         )}
 
-        {/* Corporate Buying Activity — market-wide NEW/INCREASED positions across corporate filers */}
+        {/* Corporate 13F holdings — market-wide NEW/INCREASED positions across corporate filers.
+            ⚠️ THE COPY HERE USED TO SAY "What public companies just bought". A 13F reports a
+            quarter that has already ended, disclosed up to 45 days later, so "just bought" claimed
+            a trade at a time nobody could have acted on — the same overclaim the Latest 13F
+            Filings module above was built to avoid. The DATA is unchanged; only the words are. */}
         {corpActivity.length > 0 && (
           <div style={{ marginBottom: 26 }}>
             <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 4 }}>
-              CORPORATE BUYING ACTIVITY <span style={{ fontWeight: 400, color: C.muted }}>· latest 13F new &amp; increased stakes</span>
+              CORPORATE 13F HOLDINGS <span style={{ fontWeight: 400, color: C.muted }}>· latest reported new &amp; increased stakes</span>
             </div>
-            <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginBottom: 10 }}>What public companies just bought, from their newest 13F filings: a new stake or an added position.</div>
+            <div style={{ fontSize: 11, color: C.muted, fontWeight: 300, marginBottom: 10 }}>New and increased positions as disclosed in each filer&rsquo;s most recent 13F. Holdings describe the quarter reported, not today; the date on each row is when it was disclosed.</div>
             <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
               {corpActivity.slice(0, 40).map((e, i) => (
                 <div key={i} className="card-hov" onClick={() => router.push(`/institutions/${e.filerSlug}`)}
                   style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderTop: i ? `1px solid ${C.surface}` : 'none', cursor: 'pointer' }}>
                   <TickerLogo symbol={e.filerTicker} size={22} />
                   <span style={{ fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: 13, color: C.ink, minWidth: 46 }}>{e.filerTicker}</span>
-                  <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.3px', padding: '3px 7px', borderRadius: 4, whiteSpace: 'nowrap', background: e.action === 'NEW' ? C.greenLight : C.surface, color: e.action === 'NEW' ? C.green : C.muted }}>{e.action === 'NEW' ? 'NEW POSITION' : 'ADDED'}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.3px', padding: '3px 7px', borderRadius: 4, whiteSpace: 'nowrap', background: e.action === 'NEW' ? C.greenLight : C.surface, color: e.action === 'NEW' ? C.green : C.muted }}>{e.action === 'NEW' ? 'NEW HOLDING' : 'INCREASED'}</span>
                   <span style={{ color: C.dim, fontSize: 13 }}>→</span>
                   {e.ticker && <TickerLogo symbol={e.ticker} size={18} />}
                   <span style={{ fontFamily: "'DM Sans',sans-serif", fontWeight: 700, fontSize: 13, color: C.green }}>{e.ticker || '—'}</span>

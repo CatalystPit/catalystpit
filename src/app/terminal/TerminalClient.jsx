@@ -30,7 +30,9 @@ const PANELS = [
   { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
   { id: 'movers',    title: 'Movers',       tag: 'DELAYED' },
   { id: 'why',       title: 'Why Moving',   tag: 'CATALYST' },
-  { id: 'convergence', title: 'Catalyst Convergence', tag: '◆ SMART MONEY' },
+  // '◆ SMART MONEY' was the old confluence vocabulary. The panel shows public evidence lining up
+  // across independent sources, which is what the tag now says.
+  { id: 'convergence', title: 'Catalyst Convergence', tag: '◆ EVIDENCE' },
   { id: 'alerts',    title: 'Alerts',       tag: 'ENGINE' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
