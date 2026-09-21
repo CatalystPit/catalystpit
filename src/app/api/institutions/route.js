@@ -140,6 +140,55 @@ async function corporatePortfolios(limit = 300) {
   } catch (e) { console.log(`[institutions_api] corporate failed: ${e.message}`); return []; }
 }
 
+// ── LATEST 13F FILINGS ──────────────────────────────────────────────────────
+//
+// What has just been DISCLOSED, newest disclosure first. The rest of this page is organised by
+// holdings and by quarter, which answers "what does this manager own" but never "what landed
+// today" — so a filer catching up on four old quarters in one afternoon was invisible.
+//
+// ⚠️ ORDERED BY filed_date, NEVER BY QUARTER. The quarter is the period the positions describe;
+// the filing date is when the market could first read them, and they are routinely months apart.
+// Sorting by quarter would bury exactly the rows this module exists to surface: measured on the
+// live table, a single day's filings covered quarters ending 2024-09-30 through 2026-06-30, and
+// every one of the older ones would sink out of view under a quarter sort.
+//
+// ⚠️ AND IT NEVER SAYS ANYONE BOUGHT TODAY. A 13F is a snapshot of a quarter that has already
+// ended, disclosed up to 45 days later; the row states both dates and claims nothing about what a
+// manager is doing now.
+//
+// Amendments and restatements are included as stored — several rows may share a cik and quarter
+// with different accessions, which is what a corrected filing looks like. They are not labelled
+// as amendments because the table carries no flag for it, and inferring one from row order would
+// be a guess.
+async function latestFilings(limit = 25) {
+  const { rows } = await db.execute(sql`
+    select f.cik, f.accession, f.filed_date::text as filed_date, f.quarter::text as quarter,
+           f.holdings_count, i.name, i.slug
+      from fund_filings f
+      join institutions i on i.cik = f.cik
+     where f.filed_date is not null
+       and i.name is not null and trim(i.name) <> ''
+       and i.slug is not null
+     order by f.filed_date desc, f.inserted_at desc
+     limit ${limit}`);
+  return (rows ?? []).map((r) => ({
+    cik: r.cik,
+    accession: r.accession,
+    manager: r.name,
+    slug: r.slug,
+    // ⚠️ A DATE, NOT A TIMESTAMP. SEC's 13F index publishes a filing DATE; we store a date and
+    // there is no time to show. Rendering one would mean inventing 00:00.
+    disclosed: r.filed_date,
+    quarterEnd: r.quarter,
+    holdings: Number.isFinite(Number(r.holdings_count)) ? Number(r.holdings_count) : null,
+    managerUrl: `/institutions/${r.slug}`,
+    // The primary document, built from the accession the row already stores.
+    filingUrl: r.accession
+      ? `https://www.sec.gov/Archives/edgar/data/${r.cik}/${String(r.accession).replace(/-/g, '')}/${r.accession}-index.htm`
+      : null,
+  }));
+}
+
 // Corporate Buying Activity: market-wide NEW + INCREASED stock positions across corporate filers,
 // newest filings first — "NVIDIA disclosed a new stake in XYZ." Feeds Catalyst Convergence.
 async function corporateActivity(limit = 120) {
@@ -446,6 +495,14 @@ export async function GET(request) {
     const q = (sp.get('q') || '').trim().slice(0, 60);
     const page = Math.max(0, parseInt(sp.get('page') || '0', 10) || 0);
     const pageSize = Math.min(100, Math.max(10, parseInt(sp.get('pageSize') || '48', 10) || 48));
+    // ⚠️ A SHORTER TTL THAN THE REST OF THIS ROUTE, DELIBERATELY. The page's other views describe
+    // quarterly holdings and are happy on a 1-hour edge cache with a 24-hour stale window. This
+    // one answers "what landed today", and a filing that appears next week is the one thing it
+    // must never do. Five minutes fresh, fifteen stale.
+    if (view === 'latest-filings') {
+      return Response.json({ view: 'latest-filings', filings: await latestFilings() },
+        { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' } });
+    }
     if (view === 'corporate') return Response.json({ view: 'corporate', portfolios: await corporatePortfolios() }, { headers: CACHE });
     if (view === 'corporate-activity') return Response.json({ view: 'corporate-activity', events: await corporateActivity() }, { headers: CACHE });
     const payload = ticker ? await tickerView(ticker.toUpperCase().trim())

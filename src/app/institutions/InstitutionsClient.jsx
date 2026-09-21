@@ -54,7 +54,69 @@ function CorporateCard({ f, onClick }) {
   );
 }
 
+// ── LATEST 13F FILINGS ──────────────────────────────────────────────────────
+//
+// ⚠️ TWO DATES, ALWAYS BOTH. A 13F describes a quarter that has already ended and is disclosed up
+// to 45 days later, so a row showing only one of them is misleading whichever one it picks. The
+// module states the disclosure date it is sorted by AND the quarter the positions describe, and
+// says nothing about what any manager is doing now.
+//
+// No AUM, no tickers, no inferred amendment labels — only what the row already stores.
+function LatestFilings({ filings }) {
+  if (!filings) {
+    return (
+      <div style={{ marginBottom: 26 }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 10 }}>LATEST 13F FILINGS</div>
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
+          {[0, 1, 2].map((i) => <Skel key={i} h={16} mb={i < 2 ? 8 : 0} />)}
+        </div>
+      </div>
+    );
+  }
+  if (!filings.length) return null;   // nothing disclosed → no module, never an invented row
+
+  return (
+    <div style={{ marginBottom: 26 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>LATEST 13F FILINGS</span>
+        <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 300 }}>
+          Newest disclosure first. Positions describe the quarter shown, not today.
+        </span>
+      </div>
+      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
+        {filings.map((f, i) => (
+          <div key={`${f.accession}-${i}`}
+            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px',
+              borderTop: i ? `1px solid ${C.surface}` : 'none', flexWrap: 'wrap' }}>
+            <a href={f.managerUrl} style={{ flex: 1, minWidth: 180, fontSize: 13, fontWeight: 600, color: C.ink, textDecoration: 'none' }}>
+              {f.manager}
+            </a>
+            <span style={{ fontSize: 11.5, color: C.text, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+              Disclosed {f.disclosed}
+            </span>
+            <span style={{ fontSize: 11.5, color: C.muted, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+              Quarter ended {f.quarterEnd}
+            </span>
+            {f.holdings != null && (
+              <span style={{ fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>
+                {f.holdings.toLocaleString('en-US')} positions
+              </span>
+            )}
+            {f.filingUrl && (
+              <a href={f.filingUrl} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 10.5, fontWeight: 700, color: C.green, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                Filing ↗
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function InstitutionsClient() {
+  const [latest, setLatest] = useState(null);
   const [featured, setFeatured] = useState(null);
   const [largest, setLargest] = useState([]);
   const [corporate, setCorporate] = useState([]);
@@ -83,6 +145,7 @@ export default function InstitutionsClient() {
   useEffect(() => {
     loadDir('', 0);
     (async () => { try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; setAdmin(!!j?.admin); } catch {} })();
+    (async () => { try { const r = await fetch('/api/institutions?view=latest-filings'); const j = r.ok ? await r.json() : null; setLatest(j?.filings || []); } catch { setLatest([]); } })();
     (async () => { try { const r = await fetch('/api/institutions?view=corporate'); const j = r.ok ? await r.json() : null; setCorporate(j?.portfolios || []); } catch {} })();
     (async () => { try { const r = await fetch('/api/institutions?view=corporate-activity'); const j = r.ok ? await r.json() : null; setCorpActivity(j?.events || []); } catch {} })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -153,6 +216,10 @@ export default function InstitutionsClient() {
       </div>
 
       <div style={{ maxWidth: 1380, margin: '20px auto', padding: '0 24px 48px' }}>
+        {/* What has just been DISCLOSED. Everything below is organised by holdings and by quarter,
+            which never answers "what landed today". */}
+        <LatestFilings filings={latest} />
+
         {/* Signature visual: where institutions actually moved this quarter, before the fund lists. */}
         <InstitutionsHeatmap />
 
