@@ -180,15 +180,20 @@ L('\n=== THE NEWS FEED RANKS BEFORE IT SLICES ===');
   // The curated pool expires nightly and all weekend, which silently made the raw PR wire the
   // hero. Signed-out visitors only ever receive the first six elements, so the ranking has to
   // happen server-side — client-side sorting could never reach a story sitting at index 20.
+  // The sort itself now lives in lib/impact.js as rankByImpact, so the homepage snapshot cron and
+  // this route cannot order the same pool by two different rules — which is exactly what they
+  // were doing while the News page led with FOMC minutes and the front door led with a
+  // credit-card column. These assert the route still ranks, and still ranks first.
   const news = read('src/app/api/news/route.js');
-  const rankAt = news.indexOf('rankOf');
+  const rankAt = news.indexOf('rankByImpact');
   const sliceAt = news.indexOf('raw.slice(0, SIGNED_OUT_VISIBLE)');
   ok('the feed is ranked by impact', mut('noranking') ? false : rankAt > 0);
   ok('…before the signed-out slice', mut('slicefirst') ? false : rankAt > 0 && rankAt < sliceAt);
-  ok('…using the same impactOf the High-impact filter uses',
+  ok('…using the same shared desk the High-impact filter uses',
     /from '\.\.\/\.\.\/\.\.\/lib\/impact'/.test(news));
+  // Ranking each pool separately and concatenating is what preserves curated-before-wire.
   ok('curated stories still outrank the wire',
-    mut('wirefirst') ? false : /x\.tier - y\.tier/.test(news));
+    mut('wirefirst') ? false : /\[\.\.\.rankByImpact\(raw\), \.\.\.rankByImpact\(wire\)\]/.test(news));
   // ⚠️ RANKING, NOT FILTERING. Nothing may be dropped — the routine items stay, lower down.
   ok('nothing is filtered out of the feed',
     mut('drops') ? false : !/\.filter\(\s*\(?a\)?\s*=>\s*impactOf/.test(news));

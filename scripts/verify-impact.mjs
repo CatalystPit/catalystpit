@@ -11,7 +11,10 @@
 //
 // Run: node scripts/verify-impact.mjs [--mutate=<mode>]
 
-import { impactOf, matchesKeyword, IMPACT_RANK } from '../src/lib/impact.js';
+import fs from 'node:fs';
+import { impactOf, matchesKeyword, IMPACT_RANK, rankByImpact, isHeroWorthy } from '../src/lib/impact.js';
+
+const fsRead = (p) => fs.readFileSync(new URL(p, new URL('..', import.meta.url)), 'utf8');
 
 const L = (s = '') => console.log(s);
 const MUT = (process.argv.find((a) => a.startsWith('--mutate')) || '').split('=')[1]
@@ -274,6 +277,84 @@ L('\n=== THE CONTRACT IS UNCHANGED ===');
   ok('sym and symbol are accepted as the ticker too',
     impactOf({ title: 'FDA approves drug', sym: 'BIIB' }) === 'high'
     && impactOf({ title: 'FDA approves drug', symbol: 'BIIB' }) === 'high');
+}
+
+L('\n=== THE FRONT DOOR RANKS BY THE SAME RULE AS THE NEWS PAGE ===');
+{
+  // The pool the homepage actually had on the day this was written: two pieces of junk, some
+  // tickerless features, and real filings underneath.
+  const pool = [
+    { headline: 'I have $125,000 in credit-card debt. Will $17,000 affect my bankruptcy?', tag: 'MACRO' },
+    { headline: 'Lakers Buyers Lay Out Plans to Reach $30 Billion Valuation', tag: 'M&A' },
+    { headline: 'Nvidia-Backed Cloud Startup Nscale Files for IPO', tag: 'IPO' },
+    { headline: 'INM · Delisting risk', tag: 'SEC', sym: 'INM', material: true },
+    { headline: 'Minutes of the Federal Open Market Committee', tag: 'MACRO' },
+  ];
+  const ranked = rankByImpact(pool);
+
+  // ⚠️ THE TICKET'S CORE REQUIREMENT: neither piece of junk may lead while an 8-K HIGH exists.
+  ok('an 8-K HIGH item leads the homepage pool',
+    mut('herojunk') ? false : ['INM · Delisting risk', 'Minutes of the Federal Open Market Committee']
+      .includes(ranked[0].headline), ranked[0].headline);
+  ok('…the advice column is not first',
+    mut('herojunk') ? false : !/credit-card/.test(ranked[0].headline));
+  ok('…the Lakers feature is not first',
+    mut('herojunk') ? false : !/Lakers/.test(ranked[0].headline));
+  const posAdvice = ranked.findIndex((r) => /credit-card/.test(r.headline));
+  const posLakers = ranked.findIndex((r) => /Lakers/.test(r.headline));
+  const posReal = ranked.findIndex((r) => /Nscale/.test(r.headline));
+  ok('advice ranks below ordinary market news', posAdvice > posReal, `advice@${posAdvice} news@${posReal}`);
+  ok('the Lakers feature ranks below ordinary market news', posLakers > posReal);
+
+  // Stability: equal tiers keep their arrival order, so this is a re-rank and not a re-shuffle.
+  const twoNotable = rankByImpact([
+    { headline: 'Nscale Files for IPO', tag: 'IPO' },
+    { headline: 'Bond Yields Could Come Down', tag: 'FED' },
+  ]);
+  ok('equal tiers keep their original order',
+    mut('unstable') ? false : twoNotable[0].headline === 'Nscale Files for IPO');
+
+  // isHeroWorthy is the gate the homepage uses to decide whether to show a hero at all.
+  ok('a routine item is never hero-worthy',
+    mut('heroroutine') ? false
+      : !isHeroWorthy({ headline: 'I have $125,000 in credit-card debt… my bankruptcy?', tag: 'MACRO' }));
+  ok('…nor is a sports-franchise feature',
+    mut('heroroutine') ? false
+      : !isHeroWorthy({ headline: 'Lakers Buyers Lay Out Plans to Reach $30 Billion Valuation', tag: 'M&A' }));
+  ok('an 8-K filing is hero-worthy', isHeroWorthy({ headline: 'INM · Delisting risk', sym: 'INM', material: true }));
+  ok('a macro print is hero-worthy',
+    isHeroWorthy({ headline: 'Minutes of the Federal Open Market Committee', tag: 'MACRO' }));
+  ok('ordinary tickerless market news is hero-worthy',
+    isHeroWorthy({ headline: 'Nvidia-Backed Cloud Startup Nscale Files for IPO', tag: 'IPO' }));
+}
+
+L('\n=== EVERY SURFACE CALLS THE SAME DESK ===');
+{
+  const read = (p) => fsRead(p);
+  const snapshot = read('src/app/api/cron/pit-snapshot/route.js');
+  const newsRoute = read('src/app/api/news/route.js');
+  const home = read('src/components/CatalystPit.jsx');
+
+  // ⚠️ RANK BEFORE SLICING. The cron kept the first 12 of an unranked list, and the homepage
+  // renders element 0 as its hero.
+  ok('the snapshot cron ranks before it slices',
+    mut('unrankedsnapshot') ? false : /rankByImpact\(storiesRaw\)\.slice\(0, 12\)/.test(snapshot));
+  ok('/api/news uses the shared desk', /rankByImpact\(/.test(newsRoute));
+  ok('…and no longer carries its own sort',
+    mut('twodesks') ? false : !/rankOf\(y\.a\) - rankOf\(x\.a\)/.test(newsRoute));
+  ok('the homepage re-ranks what it reads',
+    mut('unrankedhome') ? false : /rankByImpact\(rawNews\)/.test(home));
+
+  // The filings floor.
+  ok('the homepage fetches canonical filings', /fetchFilings/.test(home));
+  ok('…and falls back to them when nothing earns a hero',
+    mut('nofloor') ? false : /heroWorthy \? rankedNews/.test(home) && /filingCards\.length > 0/.test(home));
+  ok('…labelling the module when it does', /8-K FILINGS/.test(home));
+  // No publisher artwork is fetched or stored for a filing card.
+  ok('filing cards carry no borrowed image',
+    mut('borrowsimage') ? false : /imageUrl: null/.test(home));
+  ok('…and every filing card names a renderable ticker',
+    /filter\(\(f\) => isRenderableTicker\(f\?\.ticker\)\)/.test(home));
 }
 
 L(`\n${pass} passed, ${fail} failed`);

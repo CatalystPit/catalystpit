@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import ConsensusTeaser from "./ConsensusTeaser";
 import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mjs";
+import { rankByImpact, isHeroWorthy } from "../lib/impact";
 import HeatMap from "./HeatMap";
 import CompactChart from "./chart/CompactChart";
 import {
@@ -32,6 +33,21 @@ const fetchPoliticians = async () => {
     if (!r.ok) return null;
     return await r.json();            // { view:'feed', count, trades:[...] }
   } catch { return null; }
+};
+
+// Canonical 8-K filings, shaped exactly like a story card so the Top Stories module can render
+// them without a second layout.
+//
+// ⚠️ THIS IS THE FRONT DOOR'S FLOOR, NOT AN EXTRA FEATURE. When nothing in the news pool is worth
+// a hero — every item routine, which is the normal state of a weekend — the module shows filings
+// instead of promoting the least-bad magazine feature. A ticker, an item type, an age and a link
+// to the filing is a smaller claim than a photo hero, and it is one a trader can verify.
+const fetchFilings = async () => {
+  try {
+    const r = await fetch('/api/eightk?limit=12');
+    const j = r.ok ? await r.json() : null;
+    return Array.isArray(j?.list) ? j.list : [];
+  } catch { return []; }
 };
 
 // Top Stories now come from the dedicated /api/news route (real news, auth-gated),
@@ -83,10 +99,11 @@ const fetchAll = async () => {
     // Tape + market-snapshot prices stay on the market-cache reader. pit_snapshot (B1)
     // drives stories/catalysts/insiders/congress in ONE read; the per-API fetches below
     // are the fallback for the deploy→first-cron gap or a cron failure.
-    const [tape, marketSnap, snap] = await Promise.all([
+    const [tape, marketSnap, snap, filings] = await Promise.all([
       fetchKey("ticker_tape"),
       fetchKey("market_snapshot"),
       fetchKey("pit_snapshot"),
+      fetchFilings(),
     ]);
 
     const usingSnapshot = !!snap && (Array.isArray(snap.insiders) || Array.isArray(snap.stories));
@@ -199,7 +216,24 @@ const fetchAll = async () => {
         sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
     }
 
-    return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg };
+    // Canonical filings in the story-card shape. No image, deliberately: the gradient card
+    // already handles a null photo, and there is no publisher artwork for an SEC filing to
+    // borrow — a ticker, a type and an age is the whole card.
+    const filingCards = (filings || [])
+      .filter((f) => isRenderableTicker(f?.ticker))
+      .map((f) => ({
+        headline: `${f.ticker} · ${f.primaryLabel || 'Filing'}`,
+        source: 'SEC 8-K',
+        mins: minsSince(f.filedAt),
+        tag: 'SEC',
+        sym: f.ticker,
+        summary: '',
+        imageUrl: null,
+        url: f.url || `/ticker/${f.ticker}`,
+        material: f.material,
+      }));
+
+    return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg, filingCards };
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -233,7 +267,28 @@ export default function CatalystPit() {
     return () => { alive = false; clearInterval(id); };
   }, []);
 
-  const news = data?.news || [];
+  // ── WHAT THE FRONT DOOR LEADS WITH ────────────────────────────────────────
+  //
+  // ⚠️ THE HOMEPAGE AND THE NEWS PAGE MUST RANK BY THE SAME RULE. They did not: /api/news ranked
+  // with impactOf while the homepage rendered pit_snapshot.stories in whatever order the cron
+  // sliced them. The News page led with FOMC minutes; the front door led with "I have $125,000
+  // in credit-card debt… affect my bankruptcy?".
+  //
+  // The cron now ranks before it slices, so a fresh snapshot arrives ordered. This re-ranks
+  // anyway — a snapshot has a 24h TTL, so one written before that deploy outlives it, and the
+  // front door should not show yesterday's ordering for a day. rankByImpact is stable, so
+  // re-ranking an already-ranked list changes nothing.
+  const rawNews = data?.news || [];
+  const rankedNews = rankByImpact(rawNews);
+  const filingCards = data?.filingCards || [];
+
+  // ⚠️ A HERO IS A CLAIM. If nothing in the pool earns it — every item routine, which is the
+  // normal state of a weekend — the module shows canonical filings rather than promoting the
+  // least-bad magazine feature into the largest slot on the page. Sparse and honest.
+  const heroWorthy = rankedNews.length > 0 && isHeroWorthy(rankedNews[0]);
+  const news = heroWorthy ? rankedNews
+    : (filingCards.length > 0 ? filingCards : rankedNews);
+  const leadingWithFilings = !heroWorthy && filingCards.length > 0;
   const insiders = data?.insiders || [];
   // The feed is ticker-facing too: each row renders its symbol and links to /ticker/<sym>. The same
   // Liberty Mutual filing that reached the card sits in this list, so without the gate the feed would
@@ -367,6 +422,14 @@ export default function CatalystPit() {
               <div style={{display:"flex", alignItems:"center", gap:7}}>
                 <Dot/>
                 <span style={{fontSize:13, fontWeight:600, color:C.ink, letterSpacing:"-0.2px"}}>TOP STORIES</span>
+                {/* Said out loud rather than swapped silently: when nothing in the news pool
+                    earns a hero, the module is showing filings and the reader should know which
+                    of the two they are looking at. */}
+                {leadingWithFilings && (
+                  <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, fontWeight:700,
+                    letterSpacing:"0.5px", color:C.muted, border:`1px solid ${C.border2}`,
+                    borderRadius:3, padding:"1px 6px"}}>8-K FILINGS</span>
+                )}
               </div>
               <div style={{display:"flex", alignItems:"center", gap:6,
                 fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.dim}}>

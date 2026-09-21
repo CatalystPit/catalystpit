@@ -75,15 +75,10 @@ export async function GET() {
   //
   // This matters most for signed-out visitors, who only ever receive the first six elements —
   // client-side sorting could never have reached a material story that sat at index 20.
-  const rankOf = (a) => IMPACT_RANK[impactOf(a)] ?? 1;   // high 3 · notable 2 · routine 1
-  raw = [
-    ...raw.map((a, i) => ({ a, tier: 0, i })),
-    ...wire.map((a, i) => ({ a, tier: 1, i })),
-  ]
-    .sort((x, y) => (x.tier - y.tier)                    // curated before wire
-      || (rankOf(y.a) - rankOf(x.a))                     // material before routine
-      || (x.i - y.i))                                    // else the order the pool arrived in
-    .map((r) => r.a);
+  // Curated still outranks wire, which is preserved by ranking each pool on its own and
+  // concatenating. rankByImpact is the shared desk — the homepage snapshot cron calls the same
+  // function, so the front door and the news river cannot order the same pool differently.
+  raw = [...rankByImpact(raw), ...rankByImpact(wire)];
 
   // Slice the ranked array (element 0 is now the most material story available) so NewsFeed's
   // existing client-side normalization works unchanged. Signed-in users get the full feed;

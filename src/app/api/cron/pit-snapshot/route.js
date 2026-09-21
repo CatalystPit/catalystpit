@@ -1,5 +1,6 @@
 import { db } from '../../../../lib/db';
 import { isRenderableTicker, firstRenderable } from '../../../../lib/security-identity.mjs';
+import { rankByImpact } from '../../../../lib/impact';
 import { insiderTrades, congressTrades } from '../../../../lib/schema';
 import { and, eq, inArray, desc, sql } from 'drizzle-orm';
 
@@ -149,8 +150,18 @@ export async function GET(request) {
     safe('stories',  () => kvGet('catalystpit:top_stories'), null),
   ]);
 
+  // ⚠️ RANK BEFORE SLICING, WITH THE SAME DESK THE NEWS PAGE USES.
+  //
+  // This took `.slice(0, 12)` off catalystpit:top_stories in whatever order the enrichment
+  // happened to write it, and the homepage renders element 0 as its hero. Meanwhile /api/news
+  // ranked the identical pool with impactOf. Two surfaces, one pool, two rules — so the News page
+  // led with FOMC minutes while the front door led with "I have $125,000 in credit-card debt…".
+  //
+  // Ranking here means the snapshot itself is ordered, so every reader of pit_snapshot inherits
+  // it rather than each one re-deciding. The slice keeps 12, exactly as before; only the order
+  // it slices from has changed.
   const hasNews = Array.isArray(storiesRaw) && storiesRaw.length > 0;
-  const stories = hasNews ? storiesRaw.slice(0, 12) : storyFallback(insiders);
+  const stories = hasNews ? rankByImpact(storiesRaw).slice(0, 12) : storyFallback(insiders);
   const catalysts = buildCatalysts(insiders, clusters, congress);
 
   const snapshot = { generatedAt: startedAt, stories, catalysts, insiders, congress, earnings: [] };

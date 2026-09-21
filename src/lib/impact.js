@@ -222,6 +222,38 @@ export function impactOf(item = {}) {
 
 export const IMPACT_RANK = { high: 3, notable: 2, routine: 1 };
 
+/**
+ * ONE DESK. Order a list of stories by what matters, newest-first within a tier.
+ *
+ * ⚠️ THE FRONT DOOR AND THE NEWS PAGE MUST NOT DISAGREE. /api/news ranked its river with
+ * impactOf, but the homepage read `pit_snapshot.stories` — which the cron sliced straight off
+ * catalystpit:top_stories in the enrichment's arbitrary order — so the two surfaces were ranking
+ * the same pool by two different rules. The News page led with FOMC minutes while the front door
+ * led with a credit-card column. This is the shared implementation; if a surface ranks stories,
+ * it calls this.
+ *
+ * Stable: equal tiers keep the order they arrived in, so this is a re-ranking of what we already
+ * had, not a re-shuffle. Nothing is dropped — routine items are still there, lower down.
+ */
+export function rankByImpact(items, { read = (x) => x } = {}) {
+  return (Array.isArray(items) ? items : [])
+    .map((x, i) => ({ x, i, r: IMPACT_RANK[impactOf(read(x))] ?? 1 }))
+    .sort((a, b) => (b.r - a.r) || (a.i - b.i))
+    .map((e) => e.x);
+}
+
+/**
+ * May this story stand as the hero?
+ *
+ * ⚠️ A HERO IS A CLAIM, NOT A SLOT TO FILL. The homepage hero is the largest thing on the page
+ * and reads as "this is what matters today". A routine item there is worse than no hero at all,
+ * which is why the caller is expected to fall back to filings rather than promote the least-bad
+ * magazine feature.
+ */
+export function isHeroWorthy(item) {
+  return impactOf(item) !== 'routine';
+}
+
 // Editorial flag styling — subtle colored tag, no number, no emoji. null = don't render a flag.
 export const IMPACT_STYLE = {
   high:    { label: 'HIGH IMPACT', bg: '#FCE9E7', fg: '#B23B2E' },
