@@ -216,6 +216,13 @@ export async function recentEightK({ materialOnly = true, limit = 40, days = 7 }
   return rows.map((r) => {
     const cls = classifyItems(r.items);
     return {
+      // ⚠️ THE ACCESSION TRAVELS WITH THE ROW. It was omitted, which meant no consumer could
+      // dedupe by the one identifier the SEC guarantees is unique — the schema has
+      // uniqueIndex('uq_eightk_accession') on it, and the ingest already conflicts on it, but
+      // the read path dropped it. A caller wanting "one event, one row" had nothing to key on
+      // and had to guess from ticker+label, which silently merges two genuinely different
+      // filings by one issuer on the same day.
+      accession: r.accession,
       ticker: r.ticker,
       company: r.company,
       items: cls.labels,

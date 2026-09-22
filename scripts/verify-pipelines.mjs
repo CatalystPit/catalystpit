@@ -197,8 +197,24 @@ L('\n=== THE NEWS FEED RANKS BEFORE IT SLICES ===');
   ok('…using the same shared desk the High-impact filter uses',
     /from '\.\.\/\.\.\/\.\.\/lib\/impact'/.test(news));
   // Ranking each pool separately and concatenating is what preserves curated-before-wire.
+  //
+  // ⚠️ PINNED TO THE ORDER, NOT TO THE LITERAL LINE. This read the exact text
+  // `[...rankByImpact(raw), ...rankByImpact(wire)]`, so adding a THIRD, more material tier above
+  // them — issuer 8-K filings — failed an assertion whose actual subject (curated still beats
+  // wire) was never violated. An assertion that breaks when correct code is extended is
+  // measuring the spelling of the implementation rather than the guarantee.
+  // The concatenation is the assignment that actually ranks — `let raw = []` on line 48 matches a
+  // looser pattern first and captures nothing, which made both assertions below fail on correct
+  // code. Anchored on rankByImpact so it can only select the real one.
+  const concat = /raw\s*=\s*\[([^\]]*rankByImpact[^\]]*)\]/.exec(news)?.[1] || '';
+  const posOf = (pool) => concat.indexOf(`rankByImpact(${pool})`);
   ok('curated stories still outrank the wire',
-    mut('wirefirst') ? false : /\[\.\.\.rankByImpact\(raw\), \.\.\.rankByImpact\(wire\)\]/.test(news));
+    mut('wirefirst') ? false : posOf('raw') > -1 && posOf('wire') > -1 && posOf('raw') < posOf('wire'),
+    concat.trim());
+  // …and the material issuer filings lead both, which is what makes High Impact answerable:
+  // the publisher pools carry no ticker, so impactOf's rule (A) can never fire on them.
+  ok('material 8-K filings lead the column',
+    mut('nofilings') ? false : posOf('filings') > -1 && posOf('filings') < posOf('raw'));
   // ⚠️ RANKING, NOT FILTERING. Nothing may be dropped — the routine items stay, lower down.
   ok('nothing is filtered out of the feed',
     mut('drops') ? false : !/\.filter\(\s*\(?a\)?\s*=>\s*impactOf/.test(news));
