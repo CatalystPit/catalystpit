@@ -4,6 +4,7 @@ import { heatmapBoard, compactRows } from '../../../../lib/heatmap/heatmap-store
 import { isTimeframe, DEFAULT_TIMEFRAME, TIMEFRAMES } from '../../../../lib/heatmap/heatmap-window.mjs';
 import { universeLimit, DEFAULT_UNIVERSE, UNIVERSES } from '../../../../lib/heatmap/heatmap-universe.mjs';
 import { coalesce } from '../../../../lib/market/refresh-policy.mjs';
+import { SNAPSHOT_FRESH_MS } from '../../../../lib/heatmap/heatmap-realtime.mjs';
 
 // THE MARKET HEATMAP API — performance over a selected window.
 //
@@ -28,6 +29,12 @@ import { coalesce } from '../../../../lib/market/refresh-policy.mjs';
 //
 // ⚠️ 'realtime' DESCRIBES THE ROWS, NOT THE READER. An entitled viewer whose quote feed returned
 // nothing usable gets 'eod', because that is what is on their screen.
+//
+// ⚠️ AND THE BOARD HAS A SESSION LIFECYCLE, NOT AN ALWAYS-ON FEED. Snapshots are rebuilt only
+// between the bells; after the close the board freezes at its final snapshot and then hands over
+// to the official completed-session close when that lands; overnight, at weekends and on holidays
+// it stays there. `session` on every response says which of those states the reader is in, so the
+// page never has to run a market clock of its own and disagree with this one.
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -62,16 +69,20 @@ export async function GET(request) {
       if (userId) { const { tier, beta } = await resolveUserAccess(); realtime = isRealtime(tier) && !beta; }
     } catch { /* signed out → delayed entitlement, same EOD board today */ }
 
-    // ⚠️ CONCURRENT VIEWERS SHARE ONE COMPUTATION, AND NOTHING IS STORED. coalesce() collapses
-    // requests that are in flight at the same moment for the same board; it is not a cache. That
-    // is the same choice /api/quotes makes for entitled prices — reusing one entitled reader's
-    // realtime values for another, from storage, is a redistribution question we have not answered,
-    // and collapsing two identical questions asked at the same instant is not that.
+    // ⚠️ TWO LAYERS OF SHARING, AND THEY DEFEND AGAINST DIFFERENT THINGS.
     //
-    // The cost of declining to store: an unsynchronised Pro poller triggers its own refresh, so
-    // upstream load grows with concurrent Pro viewers rather than staying flat. Measured against
-    // TIINGO_BUDGET that is roughly 900 requests/hour per viewer at top500/20s — comfortable now,
-    // and the thing to revisit before it is not.
+    // coalesce() collapses requests in flight at the same instant INSIDE THIS INSTANCE, so a burst
+    // hitting one lambda does one board assembly. It stores nothing and expires with the promise.
+    //
+    // The provider work is shared separately and durably, by the 15-minute snapshot in
+    // heatmap-realtime.mjs, ACROSS instances. That is the layer that matters for cost: the earlier
+    // design stored nothing at all, which meant upstream load grew with concurrent Pro viewers —
+    // roughly 900 requests/hour per unsynchronised poller at top500/20s. It is now a function of
+    // time instead: ~5 Tiingo requests per rebuild × 4 rebuilds/hour ≈ 20 requests/hour, the same
+    // number for ten viewers or ten thousand.
+    //
+    // ⚠️ WHAT IS SHARED IS THE HEATMAP'S NUMERATOR, IN ITS OWN NAMESPACE — not /api/quotes. That
+    // route still refuses to store an entitled quote, and this changes nothing about it.
     const board = await coalesce(`heatmap:${timeframe}:${limit}:${realtime ? 'rt' : 'eod'}`,
       () => heatmapBoard({ timeframe, limit, realtime }));
 
@@ -83,11 +94,42 @@ export async function GET(request) {
     const freshness = realtime && liveRows > 0 ? 'realtime' : 'eod';
     const measured = board.rows.filter((r) => r.pct != null).length;
 
+    // ⚠️ A SNAPSHOT PAST ITS REFRESH IS STILL THE BEST ANSWER WE HAVE — AND MUST NOT BE PRESENTED
+    // AS A CURRENT ONE. When the provider fails at a rebuild the board falls back to the last good
+    // prices rather than blanking or fabricating; the reader is then owed the fact that the next
+    // refresh did not land. Derived here, from the timestamp actually on the board, so the client
+    // cannot disagree with it.
+    const snapshotAt = board.snapshotAt ?? null;
+    const snapAge = snapshotAt ? Date.now() - Date.parse(snapshotAt) : null;
+    // ⚠️ ONLY MEANINGFUL WHILE THE SESSION IS OPEN. A frozen board is supposed to be hours old —
+    // calling that "stale" would turn the correct after-hours state into a permanent warning.
+    const open = board.session?.phase === 'regular' && !board.session?.frozen;
+    const snapshotStale = open && Number.isFinite(snapAge) && snapAge > SNAPSHOT_FRESH_MS;
+
     return Response.json({
       timeframe, universe, asOf: board.asOf,
       // What the percentages are measured FROM. A reader comparing against another site needs this
       // more than anything else on the page.
       baselineDate: board.baselineDate,
+      // When the shared snapshot was captured. The board is ONE moment, not 500 refresh times.
+      snapshotAt,
+      snapshotStale,
+      // ⚠️ WHERE THE BOARD IS IN THE SESSION LIFECYCLE, so the page can say "Market closed" without
+      // inferring it from a clock of its own. Two clocks disagreeing about whether the market is
+      // open is exactly the bug this prevents.
+      //
+      //   phase    'regular' between the bells on a trading day, otherwise 'closed'
+      //   frozen   true when the board is the final intraday snapshot of a session that has ended
+      //   final    true when the official completed-session close is what is on screen
+      session: board.session
+        ? {
+          phase: board.session.phase,
+          sessionDate: board.session.sessionDate ?? null,
+          frozen: Boolean(board.session.frozen),
+          final: Boolean(board.session.final),
+          earlyClose: Boolean(board.session.earlyClose),
+        }
+        : null,
       anchorDate: board.anchorDate ?? null,
       freshness,
       // ⚠️ `applied` IS NOW A FACT ABOUT THIS RESPONSE, NOT A PLACEHOLDER. It used to be hardcoded
@@ -99,10 +141,16 @@ export async function GET(request) {
         applied: freshness === 'realtime',
         liveRows,
         note: freshness === 'realtime'
-          ? 'Intraday return from the previous close, on live prices.'
-          : (realtime
-            ? 'Entitled, but no live prices were available — showing the completed session.'
-            : 'Completed-session data.'),
+          ? (board.session?.frozen
+            ? 'The regular session has ended — this board is frozen at its final snapshot.'
+            : snapshotStale
+              ? 'Showing the last snapshot we captured — the latest refresh has not landed.'
+              : 'Return from the previous session close to the latest market snapshot.')
+          : (board.session?.phase === 'closed'
+            ? 'The market is closed — completed-session data.'
+            : realtime
+              ? 'Entitled, but no snapshot prices were available — showing the completed session.'
+              : 'Completed-session data.'),
       },
       // Where the NUMERATOR came from. The baseline is always a stored session close.
       source: freshness === 'realtime' ? 'tiingo-realtime + ticker_daily_candles' : 'ticker_daily_candles',

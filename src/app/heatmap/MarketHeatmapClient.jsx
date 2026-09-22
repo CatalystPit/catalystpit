@@ -22,9 +22,12 @@ import {
 // the boundary rules. The leaders lists follow the SAME window as the board, because "Top Gainers"
 // beside a 1Y heatmap that silently ranked daily movers would be quietly wrong.
 //
-// ⚠️ The board is END-OF-DAY until the licensed provider lands. The freshness strip says so, on
-// every render, with the exact sessions the percentages are measured between — a reader comparing
-// this against a live source needs that more than anything else on the page.
+// ⚠️ WHAT THIS BOARD IS, IN ONE PLACE: end-of-day for everyone on 1W/1M/1Y and for unentitled
+// readers on 1D; on 1D for an entitled reader it is a SHARED 15-MINUTE SNAPSHOT of a licensed
+// real-time source — not a live ticker, and not a delayed feed. The freshness strip states which
+// one is on screen on every render, along with the sessions the percentages are measured between
+// and the instant the snapshot was captured. A reader comparing this against another source needs
+// those more than anything else on the page.
 
 const pctText = (v) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`);
 const capText = (v) => {
@@ -44,6 +47,16 @@ const volText = (v) => {
 const priceText = (v) => (v == null || !Number.isFinite(v) ? '—' : `$${Number(v).toFixed(2)}`);
 const longDay = (s) => (s ? new Date(`${s}T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' }) : '—');
 
+// ⚠️ ALWAYS ET, NEVER THE VIEWER'S CLOCK. "Last updated 11:45 AM" means nothing to someone in
+// London unless it says which market clock it is on, and the whole board is measured against a US
+// session. Rendered from the snapshot's own ISO stamp, so it cannot drift from the prices.
+const etTime = (iso) => {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return `${new Date(t).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })} ET`;
+};
+
 // Why a tile has no percentage. Stated plainly; never shown as 0%.
 const REASON_COPY = {
   [NO_RETURN.NO_HISTORY]: 'Not listed this far back, so this window has no starting price.',
@@ -53,12 +66,30 @@ const REASON_COPY = {
 
 // Matches the server snapshot's TTL: asking faster returns the same snapshot, asking slower
 // leaves it on screen past its life.
-const HEATMAP_POLL_MS = 15000;
+// ⚠️ THE CLIENT POLL IS NOT THE REFRESH RATE. The snapshot is rebuilt server-side at most once
+// every 15 minutes and shared by everyone; this only decides how soon a viewer SEES a new one. A
+// poll costs a KV read, never a Tiingo batch, so 60s picks up a new snapshot promptly without
+// upstream cost — and a viewer polling faster could not cause a rebuild even if they tried.
+const HEATMAP_POLL_MS = 60000;
 
 const FRESHNESS_COPY = {
   eod: { label: 'End of day', tone: 'muted', text: 'Completed-session data. Not live or intraday.' },
   delayed: { label: 'Delayed', tone: 'muted', text: 'Licensed delayed market data.' },
-  realtime: { label: 'Live', tone: 'green', text: 'Real-time market data.' },
+  // ⚠️ NOT "LIVE", AND NOT "DELAYED" EITHER — both would be wrong in different directions. The
+  // board is a periodic SNAPSHOT of a licensed real-time source: the prices were current at the
+  // moment of capture, and the board is rebuilt at most every 15 minutes so the upstream cost
+  // stays flat however many people are watching. "Live" promises a ticking board this does not
+  // provide; "15-minute delayed" describes a delayed FEED, which is not what we consume.
+  realtime: { label: 'Updated every 15 min', tone: 'green', text: 'Periodic snapshots of our licensed real-time market data.' },
+  // The provider missed a refresh and the board fell back to the last prices we genuinely had.
+  // Serving those is the right call; serving them under the line above would not be.
+  stale: { label: 'Snapshot delayed', tone: 'muted', text: 'The latest refresh has not landed — showing the last snapshot we captured.' },
+  // ⚠️ THE BELL HAS RUNG AND THE BOARD HAS STOPPED. Continuing to show "Updated every 15 min" at
+  // 9pm would promise refreshes that are deliberately not happening, which is the whole reason
+  // overnight traffic costs nothing. Two closed states, because they are genuinely different:
+  // `frozen` is the session's last snapshot, `closed` is the official settled close.
+  frozen: { label: 'Market closed', tone: 'muted', text: 'Frozen at the final snapshot of the session. Official closing data pending.' },
+  closed: { label: 'Market closed', tone: 'muted', text: 'Final session data.' },
 };
 
 export default function MarketHeatmapClient({ initial }) {
@@ -122,8 +153,16 @@ export default function MarketHeatmapClient({ initial }) {
   // ⚠️ A SERVER SNAPSHOT THAT REFRESHES EVERY 15s IS WORTH NOTHING IF THE BROWSER NEVER ASKS AGAIN.
   // This component fetched exactly once, so even a correct payload would have frozen on screen.
   // Only the intraday window polls: 1W/1M/1Y are historical and would be re-fetching a constant.
+  //
+  // ⚠️ AND IT STOPS WHEN THE MARKET DOES. The board is frozen after the bell, so polling it
+  // overnight would re-fetch a constant — pointless for the reader and, at scale, a standing load
+  // on the route for no possible change. The server is the authority on whether the session is
+  // open (`data.session.phase`); the browser never runs a market clock of its own. When the next
+  // session begins, the server's answer changes on the reader's next visit or refresh and polling
+  // resumes on its own.
+  const sessionOpen = data?.session ? data.session.phase === 'regular' && !data.session.frozen : true;
   useEffect(() => {
-    if (!entitled || timeframe !== '1D') return undefined;
+    if (!entitled || timeframe !== '1D' || !sessionOpen) return undefined;
     const id = setInterval(() => {
       // A hidden tab is not watching the market; the visibility handler catches it up on return.
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
@@ -132,7 +171,7 @@ export default function MarketHeatmapClient({ initial }) {
     const onVis = () => { if (document.visibilityState === 'visible') load(timeframe, universe, true); };
     document.addEventListener('visibilitychange', onVis);
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
-  }, [entitled, timeframe, universe, load]);
+  }, [entitled, timeframe, universe, sessionOpen, load]);
 
   const allRows = data?.rows || [];
   const sectors = useMemo(() => sectorOptions(allRows), [allRows]);
@@ -141,7 +180,26 @@ export default function MarketHeatmapClient({ initial }) {
   const losers = useMemo(() => topMovers(rows, { direction: 'down', limit: 10 }), [rows]);
   const active = useMemo(() => mostActive(rows, { limit: 10 }), [rows]);
 
-  const fresh = FRESHNESS_COPY[data?.freshness] || null;
+  // ⚠️ THE STRIP IS DRIVEN BY THE SERVER'S SESSION STATE, NOT BY A CLOCK IN THE BROWSER. A viewer
+  // in Singapore, a viewer with a skewed system clock and a viewer in New York must all be told
+  // the same thing about a market none of their machines know the hours of.
+  //
+  // A frozen board is still realtime-SOURCED, so `freshness` stays 'realtime' — but the reader
+  // must not be told it is updating. Order matters: closed beats stale beats live.
+  const fresh = (() => {
+    const s = data?.session;
+    if (s?.frozen) return FRESHNESS_COPY.frozen;
+    if (s?.phase === 'closed' && data?.freshness === 'eod') return FRESHNESS_COPY.closed;
+    if (data?.freshness === 'realtime' && data?.snapshotStale) return FRESHNESS_COPY.stale;
+    return FRESHNESS_COPY[data?.freshness] || null;
+  })();
+  // "Last updated" belongs to a board that is still being updated. A frozen one states its session
+  // date instead — "Final session data for <date>" — because the capture time of its last snapshot
+  // is not what the reader is asking.
+  const updatedAt = (data?.freshness === 'realtime' && !data?.session?.frozen)
+    ? etTime(data?.snapshotAt) : null;
+  const finalFor = (fresh === FRESHNESS_COPY.frozen || fresh === FRESHNESS_COPY.closed)
+    ? longDay(data?.session?.sessionDate || data?.asOf) : null;
   const scale = scaleFor(timeframe);
   const go = (t) => router.push(`/ticker/${encodeURIComponent(t)}`);
 
@@ -259,6 +317,20 @@ export default function MarketHeatmapClient({ initial }) {
               border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px', fontSize: 10,
               textTransform: 'uppercase', letterSpacing: '0.04em' }}>{fresh.label}</span>
             <span>{fresh.text}</span>
+            {/* ⚠️ THE ACTUAL CAPTURE TIME, NOT A CADENCE RESTATED. "Updated every 15 min" is a
+                promise about the schedule; this is the fact about THIS board, read from the
+                snapshot stamp the server sent. If a refresh is missed, the label above changes and
+                this time visibly stops advancing — which is exactly what should happen. */}
+            {updatedAt && (
+              <span style={{ color: C.dim }}>
+                · Last updated <strong style={{ color: C.ink, fontWeight: 600 }}>{updatedAt}</strong>
+              </span>
+            )}
+            {finalFor && (
+              <span style={{ color: C.dim }}>
+                · Final session data for <strong style={{ color: C.ink, fontWeight: 600 }}>{finalFor}</strong>
+              </span>
+            )}
             <span style={{ color: C.dim }}>
               {/* ⚠️ A LIVE BOARD DOES NOT END AT A CLOSE, AND SAYING SO WAS THE VISIBLE HALF OF A
                   REAL ARITHMETIC BUG. While the numerator was live the strip still read "from the
@@ -268,9 +340,14 @@ export default function MarketHeatmapClient({ initial }) {
                   the rows were actually measured from, so this sentence cannot drift from the
                   number beside it. Nothing here is hardcoded. */}
               {timeframe} return measured from the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.baselineDate)}</strong> close
-              {data?.freshness === 'realtime'
-                ? <> to the <strong style={{ color: C.ink, fontWeight: 600 }}>current market price</strong>.</>
-                : <> to the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.asOf)}</strong> close.</>}
+              {/* ⚠️ "LATEST MARKET SNAPSHOT", NOT "CURRENT MARKET PRICE". The numerator is a price
+                  captured at a known instant, not a continuously updating one, and the previous
+                  wording promised a board that ticks. The strip already names the instant. */}
+              {data?.freshness !== 'realtime'
+                ? <> to the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.asOf)}</strong> close.</>
+                : data?.session?.frozen
+                  ? <> to that session&rsquo;s <strong style={{ color: C.ink, fontWeight: 600 }}>final snapshot</strong>.</>
+                  : <> to the <strong style={{ color: C.ink, fontWeight: 600 }}>latest market snapshot</strong>.</>}
             </span>
             {data?.counts && (
               <span style={{ color: C.dim }}>

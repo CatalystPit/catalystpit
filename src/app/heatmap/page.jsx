@@ -59,6 +59,12 @@ export default async function HeatmapPage() {
       // moment /api/me/plan resolves. What must never happen is this literal claiming to be
       // something it is not: it says eod because it IS eod, for everyone, for one frame.
       freshness: 'eod',
+      // ⚠️ AND DELIBERATELY NO `session`, FOR THE SAME REASON THE FRESHNESS IS HARDCODED. Whether
+      // the market is open is a fact about NOW, and this render is cached for five minutes — a
+      // cached "regular session" served at 16:02, or a cached "market closed" served at 09:31,
+      // would be a confidently wrong statement about the market. Omitting it makes the first paint
+      // say only what it can prove ("End of day"), and the client fills in the session state from
+      // the API, which is computed per request. An absent field is honest; a stale one is not.
       access: { realtime: false, applied: false, liveRows: 0, note: 'Completed-session data.' },
       source: 'ticker_daily_candles',
       counts: { rows: board.rows.length, measured, unmeasured: board.rows.length - measured },

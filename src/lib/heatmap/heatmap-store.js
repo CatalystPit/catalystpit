@@ -162,30 +162,143 @@ async function qualityFor(tickers) {
  * volume this entitlement carries is one venue's — 0.17%–0.40% of the tape. A realtime price and a
  * completed-session volume side by side is honest; relabelling that volume would not be.
  *
- * @returns Map<ticker, {price, asOf}> — only for symbols with a quote the SERVER stamped realtime.
+ * ⚠️ AND ONLY WHILE THE REGULAR SESSION IS OPEN — see the lifecycle note below.
+ *
+ * @returns { prices: Map<ticker,{price,asOf}>, session } — `prices` is empty whenever the board
+ *          should render from completed sessions; `session` describes why.
  */
-async function intradayPrices(tickers, { realtime = false, timeframe = '1D', limit = 0 } = {}) {
-  if (!realtime || timeframe !== '1D' || !tickers.length) return new Map();
-  const out = new Map();
-  try {
-    const { readSnapshot, writeSnapshot } = await import('./heatmap-realtime.mjs');
+async function intradayPrices(tickers, { realtime = false, timeframe = '1D', limit = 0, asOf = null, now = Date.now() } = {}) {
+  const none = (session = null) => ({ prices: new Map(), session });
+  if (timeframe !== '1D' || !tickers.length) return none();
 
-    // ⚠️ THE SHARED SNAPSHOT FIRST. Without it, provider load grows with CONCURRENT VIEWERS rather
-    // than with time: every unsynchronised Pro poller would issue its own five upstream requests
-    // for a board that is identical for all of them. With it, the work happens once per 15-second
-    // snapshot — ~1,200 requests/hour at Top 500 regardless of how many people are watching.
-    const cached = await readSnapshot(limit);
-    if (cached?.prices) {
-      for (const [sym, price] of Object.entries(cached.prices)) {
-        if (Number.isFinite(Number(price))) out.set(sym, { price: Number(price), asOf: cached.calculatedAt });
+  // ── THE SESSION LIFECYCLE ──────────────────────────────────────────────────
+  //
+  // ⚠️ THE SNAPSHOT EXISTS ONLY BETWEEN THE BELLS. 09:30–16:00 ET on a real trading day (13:00 on
+  // a scheduled half-day) is the ONLY window in which this function may reach a provider. Outside
+  // it — evenings, overnight, weekends, holidays — heatmap traffic must generate zero upstream
+  // requests no matter how many people are looking, so every exit below happens BEFORE any batch.
+  //
+  // The reason is not only cost. A 1D return the reader believes runs close-to-close must not be
+  // re-measured by overnight or pre-market movement: a board that drifts at 3am is a different
+  // number wearing the same label.
+  // `now` is a clock seam, not a feature: it exists so the closed-market, weekend and holiday
+  // paths can be exercised against the REAL store, KV and provider rather than only against a
+  // simulation of them. No route passes it, and it defaults to the wall clock.
+  const { marketPhase } = await import('../market/market-session.mjs');
+  const session = marketPhase(now);
+
+  // ⚠️ THE OFFICIAL CLOSE WINS THE MOMENT IT EXISTS, AND A 15:59 QUOTE IS NOT IT. A price captured
+  // just before the bell is a trade, not the exchange's settled closing print, and freezing it as
+  // "the close" would leave the board permanently disagreeing with every other source by a few
+  // cents. So the test is not the clock — it is whether the completed-session data has ARRIVED:
+  // once `ticker_daily_candles` carries the session the board belongs to, that row IS the final
+  // board and the snapshot is no longer consulted at all.
+  const official = Boolean(session.sessionDate && asOf && String(asOf) >= session.sessionDate);
+  if (official) return none({ ...session, frozen: false, final: true });
+
+  // ⚠️ THE SESSION STATE IS REPORTED EVEN WITHOUT ENTITLEMENT, because it is a fact about the
+  // MARKET rather than about the reader. "The market is closed" is equally true for a Free viewer,
+  // and withholding it would leave them reading "End of day" at 2am with no idea whether that is
+  // the latest board or a stalled one. Only the PRICES are gated — which is the correct boundary.
+  if (!realtime) return none({ ...session, frozen: false, final: false });
+
+  // ⚠️ AND IF THE VENDOR SIDE IS NOT LIVE, DO NOT ASK IT. With the realtime flag off every quote
+  // comes back stamped 'eod' by design, so the batch is guaranteed to yield nothing usable —
+  // five upstream requests spent to learn what the configuration already knew. Checked here, above
+  // the lock, so a non-realtime environment neither pays for the batch nor takes a lock that would
+  // stall an environment that IS entitled.
+  const { tiingoRealtimeEnabled } = await import('../market/tiingo.mjs');
+  if (!tiingoRealtimeEnabled()) return none({ ...session, frozen: false, final: false });
+
+  if (session.phase !== 'regular') {
+    // Between the bell and the official close landing, the last intraday snapshot of THAT session
+    // is the best board available — frozen, never refreshed, and never called final. Serving it
+    // costs one KV read and zero provider requests, which is the whole point.
+    try {
+      const { readSnapshot } = await import('./heatmap-realtime.mjs');
+      const { snap } = await readSnapshot(limit);
+      // ⚠️ KEYED TO THE SESSION IT WAS CAPTURED IN. Without this a Saturday viewer would be served
+      // Thursday's snapshot labelled as Friday's final board. Age is deliberately NOT the test —
+      // a frozen snapshot is supposed to be hours old.
+      if (snap && snap.sessionDate && snap.sessionDate === session.sessionDate) {
+        const out = new Map();
+        for (const [sym, price] of Object.entries(snap.prices || {})) {
+          if (Number.isFinite(Number(price))) out.set(sym, { price: Number(price), asOf: snap.calculatedAt });
+        }
+        if (out.size) return { prices: out, session: { ...session, frozen: true, final: false } };
       }
-      if (out.size) return out;
+    } catch { /* fall through to the completed-session board */ }
+    return none({ ...session, frozen: false, final: false });
+  }
+
+  const out = new Map();
+  const useSnapshot = (snap) => {
+    for (const [sym, price] of Object.entries(snap.prices || {})) {
+      if (Number.isFinite(Number(price))) out.set(sym, { price: Number(price), asOf: snap.calculatedAt });
+    }
+    return out.size > 0;
+  };
+
+  const live = (frozen = false) => ({ prices: out, session: { ...session, frozen, final: false } });
+
+  try {
+    const { readSnapshot, writeSnapshot, acquireRebuildLock, snapshotState,
+      isSessionSuspended, suspendSession } = await import('./heatmap-realtime.mjs');
+
+    // ⚠️ THE SHARED SNAPSHOT FIRST, AND THIS IS THE WHOLE ECONOMICS OF THE FEATURE. Without it,
+    // provider load grows with CONCURRENT VIEWERS rather than with time: every poller would issue
+    // its own five upstream requests for a board identical to everyone else's. With it the work
+    // happens once per 15-minute snapshot — about 20 Tiingo requests/hour at Top 500, the same
+    // number for ten viewers or ten thousand.
+    const { snap, state } = await readSnapshot(limit);
+    const ofSession = snap && snap.sessionDate === session.sessionDate;
+    if (state === 'fresh' && ofSession && useSnapshot(snap)) return live();
+
+    // ⚠️ THE CALENDAR KNOWS THE SCHEDULED CLOSURES AND CANNOT KNOW THE REST. A national day of
+    // mourning or a weather closure follows no rule, so the clock will say "regular session" on a
+    // day the market never opened. That is detected rather than guessed: if a rebuild comes back
+    // with nothing the entitlement gate calls realtime, the session is marked suspended for the
+    // remainder of the ET day and every later request exits here. The cost of an unforeseen
+    // closure is therefore ONE futile batch per day, not one per rebuild.
+    if (await isSessionSuspended(session.etDate)) {
+      if (snap && ofSession && useSnapshot(snap)) return live(true);
+      return none({ ...session, frozen: false, final: false, suspended: true });
+    }
+
+    // ⚠️ ONE REBUILD, NOT ONE PER INSTANCE. When the snapshot expires under load, every serverless
+    // instance handling that burst would otherwise launch its own batch. The loser of the lock
+    // serves the previous snapshot for a few seconds instead — a slightly older board is a far
+    // better answer than a thundering herd against the provider.
+    const mine = await acquireRebuildLock(limit);
+    if (!mine) {
+      // stale is better than nothing while it rebuilds
+      if (snap && ofSession && useSnapshot(snap)) return live();
+      return live();
     }
 
     const { getQuotes } = await import('../market-data');
-    // getQuotes batches internally (100 per upstream request) and applies the entitlement gate
-    // itself — this asks for prices, it does not decide who may have them.
-    const quotes = await getQuotes(tickers, { realtime: true });
+    // ⚠️ getQuotes DOES NOT BATCH — IT TRUNCATES, AND THIS QUIETLY HALVED THE BOARD.
+    //
+    // It caps its input at 100 symbols (`slice(0, 100)`) and silently discards the rest, which is
+    // the right default for a watchlist and wrong for a 500-tile board: measured, a Top 500
+    // rebuild made ONE upstream request and returned 100 live prices, so 400 tiles rendered
+    // completed-session while the strip said the board was a market snapshot. Nothing failed and
+    // nothing logged — the board was simply 20% live.
+    //
+    // So the chunking happens HERE rather than by widening a shared helper every other caller
+    // depends on. Five sequential requests for Top 500, which is exactly the upstream cost this
+    // feature is budgeted for, and the entitlement gate still runs inside each call.
+    const QUOTE_BATCH = 100;
+    const quotes = {};
+    for (let i = 0; i < tickers.length; i += QUOTE_BATCH) {
+      Object.assign(quotes, await getQuotes(tickers.slice(i, i + QUOTE_BATCH), { realtime: true }));
+    }
+    // ⚠️ ONE CAPTURE INSTANT FOR THE WHOLE BATCH, NOT EACH QUOTE'S OWN STAMP. The UI shows a single
+    // "last updated" time, and per-symbol vendor timestamps would make that time depend on which
+    // row happened to sort first — a board captured at one moment must report one moment. This is
+    // also the value writeSnapshot records as `calculatedAt`, so a board served from the store and
+    // the board that built it describe themselves identically.
+    const capturedAt = new Date().toISOString();
     const fresh = {};
     for (const [sym, q] of Object.entries(quotes || {})) {
       // ⚠️ THE SERVER'S OWN STAMP, NOT A GUESS FROM THE NUMBER. A quote is usable here only if the
@@ -196,7 +309,7 @@ async function intradayPrices(tickers, { realtime = false, timeframe = '1D', lim
       // prevClose renders that tile at exactly −100%: the most alarming number on the board,
       // produced by a missing value rather than a market event.
       if (q && q.freshness === 'realtime' && q.price != null && Number.isFinite(Number(q.price)) && Number(q.price) > 0) {
-        out.set(sym, { price: Number(q.price), asOf: q.asOf ?? null });
+        out.set(sym, { price: Number(q.price), asOf: capturedAt });
         fresh[sym] = Number(q.price);
       }
     }
@@ -204,12 +317,43 @@ async function intradayPrices(tickers, { realtime = false, timeframe = '1D', lim
     // and must never become it: /api/quotes still refuses to store an entitled quote, and that
     // policy is unchanged. What is shared here is one board's numerator, behind a key no
     // unentitled path reads.
-    if (Object.keys(fresh).length) await writeSnapshot(limit, fresh);
-  } catch { /* the board must render without it — see the caller's fallback */ }
-  return out;
+    if (Object.keys(fresh).length) {
+      await writeSnapshot(limit, fresh, { calculatedAt: capturedAt, sessionDate: session.sessionDate });
+    } else {
+      // ⚠️ THE PROVIDER ANSWERED WITH NOTHING USABLE DURING WHAT THE CALENDAR CALLS A SESSION.
+      // The likeliest explanation is an unscheduled closure the rule set cannot know about, so the
+      // day is stood down rather than re-batched every 15 minutes.
+      //
+      // ⚠️ BUT ONLY IF WE WERE ACTUALLY ENTITLED TO REALTIME PRICES IN THE FIRST PLACE, AND THIS
+      // DISTINCTION IS NOT THEORETICAL — it fired on the first run of the probe. With the realtime
+      // flag off, every quote comes back stamped 'eod' BY DESIGN, which looks identical to a shut
+      // market from here. Suspending on that would let a configuration state (or a local script
+      // sharing the production KV) silently freeze the real board for the rest of the day.
+      //
+      // "We cannot obtain realtime prices" and "the market is not trading" are different facts and
+      // only the second one justifies standing down.
+      const { tiingoRealtimeEnabled } = await import('../market/tiingo.mjs');
+      if (tiingoRealtimeEnabled()) await suspendSession(session.etDate);
+      if (snap && ofSession && snapshotState(snap) === 'stale') {
+        // The choice is a blank board, a fabricated one, or the last thing we genuinely knew —
+        // and only the third is honest, provided it is labelled as what it is. The route reports
+        // the snapshot's age, so a stale board says so.
+        useSnapshot(snap);
+      }
+    }
+  } catch {
+    // Same reasoning on a thrown request: prefer the last known good prices over nothing, and let
+    // the caller describe their age rather than silently presenting them as current.
+    try {
+      const { readSnapshot: rs } = await import('./heatmap-realtime.mjs');
+      const fb = await rs(limit);
+      if (fb.snap && fb.state && fb.snap.sessionDate === session.sessionDate) useSnapshot(fb.snap);
+    } catch { /* nothing to fall back to — the board renders end-of-day */ }
+  }
+  return live();
 }
 
-export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = false } = {}) {
+export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = false, now = Date.now() } = {}) {
   const asOf = await latestSessionDate();
   if (!asOf) return { asOf: null, baselineDate: null, rows: [] };
 
@@ -220,14 +364,15 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = f
   // The anchor for everything except 1D, which is expressed as "strictly before the latest session".
   const anchor = anchorDateFor(timeframe, asOf);
 
-  const [live, latest, baseline, quality] = await Promise.all([
-    intradayPrices(tickers, { realtime, timeframe, limit }),
+  const [intraday, latest, baseline, quality] = await Promise.all([
+    intradayPrices(tickers, { realtime, timeframe, limit, asOf, now }),
     latestSession(tickers, asOf),
     timeframe === '1D'
       ? sessionPerTicker(tickers, asOf, { strictlyBefore: true, floorDays: 10 })
       : sessionPerTicker(tickers, anchor),
     qualityFor(tickers),
   ]);
+  const live = intraday.prices;
 
   const rows = universe.map((u) => {
     const l = latest.get(u.ticker);
@@ -268,6 +413,7 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = f
     const base = lq ? l.close : b.close;
     if (lq) {
       row.price = lq.price;
+      row.priceAsOf = lq.asOf ?? null;
       row.live = true;
       // The row states what it was actually measured FROM, so the banner cannot disagree with it.
       row.baselineDate = l.date;
@@ -284,7 +430,12 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = f
   for (const r of rows) if (r.baselineDate) counts.set(r.baselineDate, (counts.get(r.baselineDate) || 0) + 1);
   const baselineDate = [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))[0]?.[0] ?? null;
 
-  return { asOf, baselineDate, anchorDate: anchor, rows };
+  // ⚠️ THE BOARD IS ONE SNAPSHOT, NOT 500 UNRELATED MOMENTS. Every live row carries the same
+  // `asOf` because they all came from one capture, and reporting it is what lets the page say
+  // "last updated 11:45" truthfully instead of implying a continuously ticking board.
+  const snapshotAt = rows.find((r) => r.live)?.priceAsOf ?? null;
+
+  return { asOf, baselineDate, anchorDate: anchor, snapshotAt, session: intraday.session, rows };
 }
 
 /**
