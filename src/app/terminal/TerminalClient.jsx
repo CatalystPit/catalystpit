@@ -415,6 +415,8 @@ function MoversBody({ onPick }) {
   const [tab, setTab] = useState('gainers');
   const [data, setData] = useState(null);
   const [configured, setConfigured] = useState(true);
+  // What the server says these rows ARE. The panel no longer asserts a delay of its own.
+  const freshness = data?.freshness ?? null;
   const [ref, w] = useContainerSize();
   useEffect(() => {
     let alive = true;
@@ -443,12 +445,23 @@ function MoversBody({ onPick }) {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
         {tabBtn('gainers', 'Gainers')}{tabBtn('losers', 'Losers')}{tabBtn('active', 'Active')}
-        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>~15m DELAYED</span>
+        {/* ⚠️ FROM THE SERVER'S FRESHNESS, NOT A HARDCODED STRING. This read "~15m DELAYED"
+            because that described Polygon's Stocks Starter plan; the source is now the licensed
+            Tiingo snapshot and what a viewer gets depends on their entitlement. */}
+        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>
+          {freshness === 'realtime' ? 'SNAPSHOT · 15 MIN' : freshness === 'delayed' ? '15 MIN DELAYED' : 'LAST SESSION'}
+        </span>
       </div>
       <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
         {rows === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading movers…</div>
           : !configured ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Movers needs a market-data feed.</div>
-            : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No movers right now.</div>
+            : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>
+              {tab === 'active'
+                // Honest about a capability we do not have, rather than an empty list that reads
+                // as an outage. Our intraday volume is one venue's print, not the market's.
+                ? 'Most active needs consolidated intraday volume, which our market-data licence does not cover.'
+                : 'No movers right now.'}
+            </div>
               : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <tbody>

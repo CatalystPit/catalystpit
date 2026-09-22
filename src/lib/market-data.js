@@ -46,9 +46,21 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
     } catch { /* fall through to a provider that may still answer */ }
   }
   if (PROVIDER === 'twelvedata' && TWELVE_KEY) {
-    try { return await twelveQuotes(syms, realtime); } catch { return POLYGON_KEY ? polygonQuotes(syms) : {}; }
+    try { return await twelveQuotes(syms, realtime); } catch { return {}; }
   }
-  return polygonQuotes(syms);
+
+  // ⚠️ NO POLYGON FALLBACK ON A CUSTOMER-FACING QUOTE. This used to end
+  // `return polygonQuotes(syms)`, so any Tiingo hiccup silently served Polygon prices to a
+  // customer — and our redistribution rights for public commercial display of Polygon market data
+  // were never established. "It works technically" is not a right, and a fallback that only fires
+  // during an outage is the worst place to discover that.
+  //
+  // Returning {} is the honest degrade: the caller already treats an absent quote as absent, and
+  // /api/quotes falls back to the licensed delayed snapshot or to stored end-of-day closes. A
+  // missing price is a visible, recoverable state; an unlicensed one is not.
+  //
+  // polygonQuotes() below is kept, unreferenced from this path, for a future licensed use.
+  return {};
 }
 
 // ── Polygon snapshot (batch) — 15-min delayed on Stocks Starter; one call per ~50 symbols. ──

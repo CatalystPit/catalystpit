@@ -1,78 +1,65 @@
 import { auth } from '@clerk/nextjs/server';
+import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
+import { marketMovers } from '../../../lib/movers/movers-store';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
-
-// Market movers for the Terminal — top gainers / losers / most-active from Polygon snapshots
-// (15-min delayed on Stocks Starter). One combined KV-cached payload (~60s) so all three tabs share
-// a single upstream fetch. Provider stays server-side; the panel gets normalized rows only.
-const POLYGON_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
-const TTL = 60;
-// An empty result is cached only long enough to stop a hot loop against the provider.
-const EMPTY_TTL = 15;
-const CACHE_KEY = 'movers:v1';
-const MIN_PRICE = 1;          // drop sub-$1 noise
-const MIN_VOL = 200000;       // liquidity floor
 const LIMIT = 25;
 
-async function kvGet(k) {
-  if (!KV_URL || !KV_TOKEN) return null;
-  try { const r = await fetch(`${KV_URL}/get/${encodeURIComponent(k)}`, { headers: { Authorization: `Bearer ${KV_TOKEN}` }, cache: 'no-store' }); if (!r.ok) return null; const { result } = await r.json(); return result ? JSON.parse(result) : null; } catch { return null; }
-}
-async function kvSet(k, v, ttl) {
-  if (!KV_URL || !KV_TOKEN) return;
-  try { await fetch(`${KV_URL}/set/${encodeURIComponent(k)}?EX=${ttl}`, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(v) }); } catch { /* non-fatal */ }
-}
-
-const CLEAN = /^[A-Z]{1,5}$/;
-const shape = (t) => ({
-  ticker: t.ticker,
-  price: t.lastTrade?.p ?? t.day?.c ?? t.prevDay?.c ?? null,
-  changePct: t.todaysChangePerc ?? null,
-  volume: t.day?.v ?? null,
-});
-const usable = (r) => r.ticker && CLEAN.test(r.ticker) && r.price != null && r.price >= MIN_PRICE && (r.volume ?? 0) >= MIN_VOL;
-
-async function fetchDirection(kind) {   // 'gainers' | 'losers'
-  const r = await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/${kind}?apiKey=${POLYGON_KEY}`, { cache: 'no-store' });
-  if (!r.ok) return [];
-  const j = await r.json();
-  return (j.tickers || []).map(shape).filter(usable).slice(0, LIMIT);
-}
-
-async function fetchActive() {
-  // Full-market snapshot in one call → sort by day volume for most-active (delayed).
-  const r = await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers?apiKey=${POLYGON_KEY}`, { cache: 'no-store' });
-  if (!r.ok) return [];
-  const j = await r.json();
-  return (j.tickers || []).map(shape).filter(usable).sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, LIMIT);
-}
+// MARKET MOVERS FOR THE TERMINAL PANEL.
+//
+// ⚠️ MIGRATED OFF POLYGON. This served gainers, losers and most-active from Polygon snapshots
+// (`/v2/snapshot/locale/us/markets/stocks/...`), and our redistribution rights for public
+// commercial display of Polygon market data were never established. "It works technically" is not
+// a right, so the source moved rather than the feature.
+//
+// Gainers and losers now come from the LICENSED market-wide Tiingo movers the product already
+// builds — the same shared 15-minute snapshot the Heatmap page's lists read. This panel therefore
+// adds NO upstream cost at all, and inherits everything that snapshot already gets right: the
+// eligible-security universe, split-adjusted baselines, stale/dead-print rejection, the session
+// lifecycle and the after-close freeze.
+//
+// ⚠️ MOST ACTIVE RETURNS EMPTY, AND THAT IS THE POINT. Polygon's "active" ranked INTRADAY volume,
+// which is exactly the claim we do not have: the intraday volume on this Tiingo entitlement is one
+// venue's print, measured at 0.17%–0.40% of the consolidated tape. Migrating it would have meant
+// either keeping the unlicensed source or inventing a volume standard we have already decided we
+// cannot defend. An empty tab is what "we do not have this" should look like.
+//
+// No RVOL, no VWAP, no unusual-volume signal is introduced here, and `volume` is returned as null
+// rather than as a number nobody should rank on.
 
 export async function GET(request) {
   const _rl = await apiRateLimit(request, 'movers', 'provider');
   if (_rl) return _rl;
 
   try {
-    await auth();
-    if (!POLYGON_KEY) return Response.json({ configured: false, gainers: [], losers: [], active: [] }, { headers: NO_STORE });
-    const cached = await kvGet(CACHE_KEY);
-    if (cached) return Response.json({ configured: true, cached: true, ...cached }, { headers: NO_STORE });
+    // Entitlement from the session ONLY. Pro sees the current shared snapshot, everyone else the
+    // completed session; no query parameter reaches this decision.
+    let realtime = false;
+    try {
+      const { userId } = await auth();
+      if (userId) { const { tier, beta } = await resolveUserAccess(); realtime = isRealtime(tier) && !beta; }
+    } catch { /* signed out → completed session */ }
 
-    const [gainers, losers, active] = await Promise.all([fetchDirection('gainers'), fetchDirection('losers'), fetchActive()]);
-    const payload = { gainers, losers, active, asOf: null };   // asOf stamped client-side to avoid Date in cache key
-    // DO NOT CACHE A FAILURE AS IF IT WERE AN ANSWER. Each fetch above returns [] for any non-OK
-    // response, so a single provider error used to be written to KV and served back as a normal,
-    // empty result for the full TTL — the panel went blank and nothing said why. Caching an empty
-    // payload briefly still protects the provider from a hot loop, but the panel recovers on the
-    // next minute instead of holding an outage open.
-    const empty = !gainers.length && !losers.length && !active.length;
-    await kvSet(CACHE_KEY, payload, empty ? EMPTY_TTL : TTL);
-    return Response.json({ configured: true, cached: false, ...payload }, { headers: NO_STORE });
+    const m = await marketMovers({ realtime, limit: LIMIT });
+    const row = (r) => ({ ticker: r.ticker, company: r.company ?? null, price: r.price, changePct: r.pct, volume: null });
+
+    return Response.json({
+      configured: true,
+      gainers: (m.gainers || []).map(row),
+      losers: (m.losers || []).map(row),
+      active: [],
+      // Describes the rows, so the panel can label itself honestly instead of assuming a delay.
+      freshness: m.freshness,
+      asOf: m.snapshotAt || m.asOf || null,
+      session: m.session ? { phase: m.session.phase, frozen: Boolean(m.session.frozen) } : null,
+    }, { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ configured: !!POLYGON_KEY, gainers: [], losers: [], active: [], error: e.message }, { status: 200, headers: NO_STORE });
+    console.log(`[movers] ${e.message}`);
+    // Explicit failure, never empty lists presented as "nothing is moving".
+    return Response.json({ configured: true, gainers: [], losers: [], active: [], error: 'unavailable' },
+      { status: 200, headers: NO_STORE });
   }
 }

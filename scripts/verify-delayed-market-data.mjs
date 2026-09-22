@@ -198,5 +198,48 @@ L('\n=== 16. NOTHING BULK, NOTHING SECRET, REACHES THE BROWSER ===');
   ok('…and rejects anything that is not a symbol', /TICKER_RE\.test/.test(route));
 }
 
+L('\n=== ⚠️ INTRADAY CHARTS: THE FREE CUTOFF IS SERVER-SIDE AND CUTS ON BAR END ===');
+{
+  const { truncateForDelay } = await import('../src/app/api/chart-intraday/route.js');
+  const T = (hhmm) => Math.floor(Date.parse(`2026-09-22T${hhmm}:00Z`) / 1000);
+  const NOWC = Date.parse('2026-09-22T18:30:00Z');          // 14:30 ET
+  const bars5 = ['18:00', '18:05', '18:10', '18:15', '18:20', '18:25']
+    .map((t) => ({ time: T(t), open: 1, high: 2, low: 1, close: 2 }));
+
+  const free = mut('chartleak') ? bars5 : truncateForDelay(bars5, 5, NOWC);
+  const last = free[free.length - 1];
+  ok('⚠️ a Free chart stops ~15 minutes back',
+    mut('chartleak') ? false : Boolean(last) && last.time === T('18:10'),
+    last ? new Date(last.time * 1000).toISOString().slice(11, 16) : 'none');
+  ok('⚠️ …cut on the bar END, not its stamp — an 18:15 bar contains trading through 18:20',
+    mut('chartleak') ? false : !free.some((b) => b.time >= T('18:15')),
+    'cutting on the stamp would leak data only 10 minutes old');
+  ok('a Pro chart keeps every bar', bars5.length === 6);
+  ok('the cutoff scales with bar length',
+    truncateForDelay([{ time: T('18:00') }], 60, NOWC).length === 0,
+    'a 60-minute bar opening 18:00 closes 19:00 and is not eligible at 18:30');
+  ok('an empty or missing bar set is handled',
+    truncateForDelay([], 5, NOWC).length === 0 && truncateForDelay(null, 5, NOWC).length === 0);
+  ok('yesterday’s bars are always eligible',
+    truncateForDelay([{ time: T('18:00') - 86400 }], 5, NOWC).length === 1);
+
+  const routeSrc = await readFile(new URL('../src/app/api/chart-intraday/route.js', import.meta.url), 'utf8');
+  const code = routeSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok('⚠️ the chart source is Tiingo, not Polygon',
+    mut('keeppolygon') ? false : !/polygon/i.test(code) && /getIntradayBars/.test(code));
+  ok('⚠️ entitlement is resolved from the session, not a query parameter',
+    /isRealtime\(tier\) && !beta/.test(code) && !/get\(['"](rt|realtime|tier)['"]\)/.test(code));
+  // ⚠️ NAME THE THREE PATHS RATHER THAN COUNTING CALLS. A count is satisfied by any four uses and
+  // says nothing about WHICH exits are covered; these are the three ways a bar set can leave the
+  // handler, and every one of them must go through the truncating builder.
+  ok('⚠️ the fresh path truncates', /return respond\(payload, false\)/.test(code));
+  ok('⚠️ the cache-hit path truncates', /return respond\(JSON\.parse\(hit\), true\)/.test(code));
+  ok('⚠️ the stale-fallback path truncates', /return respond\(JSON\.parse\(stale\), true\)/.test(code));
+  ok('…and no path returns the untruncated payload directly',
+    mut('chartleak') ? false : !/return Response\.json\(payload\)/.test(code));
+  ok('⚠️ no volume is emitted on an intraday bar',
+    !/volume/.test(code.slice(code.indexOf('const mapped'), code.indexOf('const dates'))));
+}
+
 L(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

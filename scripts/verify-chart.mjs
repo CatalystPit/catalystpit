@@ -937,7 +937,9 @@ if (!process.env.POLYGON_API_KEY && !process.env.POLYGON_KEY) {
   ok('the default is unchanged', /params\.get\('session'\) === 'extended' \? 'extended' : 'regular'/.test(route));
   // A shared cache key would serve one session's bars for the other.
   ok('the cache key separates the two sessions', /:ext' : ''/.test(route));
-  ok('the payload says which session it is', /source: 'polygon', session/.test(route));
+  // The property is that the payload NAMES its session, not which vendor produced it — this used
+  // to require `source: 'polygon'` and so failed on a provider migration that changed no behaviour.
+  ok('the payload says which session it is', /session \}/.test(route) && /source: 'tiingo'/.test(route));
 }
 
 section('18. menus overlay the chart and are never clipped by the Terminal panel');
