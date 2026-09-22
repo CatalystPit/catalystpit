@@ -1,5 +1,4 @@
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
-import { logoSignature, recordLogoSignature } from '../../../lib/logo-store.mjs';
 export const runtime = 'nodejs';
 
 // Ticker logo proxy. Resolves a per-ticker logo server-side and streams it back.
@@ -58,22 +57,7 @@ export async function GET(request) {
 
   for (const src of sources) {
     const hit = await tryLogo(src);
-    if (hit) {
-      // ⚠️ HASH IT HERE, WHERE THE BYTES ALREADY EXIST. This is the one place in the system that
-      // holds a logo's actual content, so it is the only place the "is this picture shared with
-      // other securities?" question can be answered without fetching anything extra. Recorded on
-      // a CDN MISS only — hits never reach this function — so the cost is once per ticker per
-      // cache lifetime, not once per view.
-      //
-      // Awaited rather than fired and forgotten: serverless kills un-awaited work, which would
-      // make the signature appear or not depending on how fast the response drained. Two small
-      // KV writes on a path that just did a cross-internet image fetch.
-      await recordLogoSignature(t, logoSignature(hit.buf)).catch(() => {});
-      return new Response(hit.buf, { status: 200, headers: { 'Content-Type': hit.ct, 'Cache-Control': HIT_CACHE } });
-    }
+    if (hit) return new Response(hit.buf, { status: 200, headers: { 'Content-Type': hit.ct, 'Cache-Control': HIT_CACHE } });
   }
-  // A miss is a fact worth keeping too: it is what lets the map render the ticker mark
-  // immediately next time instead of waiting for an image that will never arrive.
-  await recordLogoSignature(t, 'none').catch(() => {});
   return miss();
 }

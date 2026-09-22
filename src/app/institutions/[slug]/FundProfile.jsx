@@ -2,7 +2,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo, useLogoBg, LOGO_DARK_BG } from '../../../lib/cp-shared';
-import { showsLogo, LOGO_STATE } from '../../../lib/logo-identity.mjs';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -31,24 +30,25 @@ function PC({ pc }) {
 
 // Holding-map tile: the company logo fills the box (no color fill); ticker + % on a strip below.
 // Falls back to ticker/issuer text when there's no logo (unresolved, or FMP has no image).
-//
-// ⚠️ AND NOW ALSO WHEN THE LOGO IS ABOUT THE FAMILY RATHER THAN THE SECURITY. Seven Avantis ETFs
-// rendered seven identical "A" tiles — correct tickers, correct CUSIPs, a provider legitimately
-// returning fund-family branding. But a map is a visual index, and a picture shared with six
-// neighbours identifies the issuer, not the holding. `logoState` carries that verdict down from
-// the page, which asks once for every ticker on screen rather than per tile.
-//
-// The fallback is the one this tile already had — the centred ticker mark — so nothing new was
-// designed, it is simply reached for a second, better reason. AVDE and AVLV then differ by the
-// only thing that actually distinguishes them.
-function MapTile({ h, pct, flexGrow, onClick, logoState }) {
+function MapTile({ h, pct, flexGrow, onClick }) {
   const [failed, setFailed] = useState(false);
-  const showLogo = h.ticker && !failed && showsLogo(logoState);
+  const showLogo = h.ticker && !failed;
   const { bgMode, ref, onLoad } = useLogoBg(h.ticker || '');   // adaptive contrast (same logic as TickerLogo)
   return (
     <div onClick={onClick} title={`${h.ticker || h.issuer} · ${pct.toFixed(1)}%${h.putCall ? ' ' + h.putCall.toUpperCase() : ''}`}
+      // ⚠️ A TILE WITH NO LOGO MUST NOT KEEP THE LOGO BACKDROP. This read `showLogo && bgMode ===
+      // 'dark' ? LOGO_DARK_BG : '#fff'`, so the no-logo branch fell through to a HARDCODED white
+      // tile — while the ticker on it is C.ink, which in dark mode is #EEF3EF. Near-white text on
+      // a forced-white tile: the fallback was invisible in dark mode, which is exactly the
+      // "barely visible ticker" that was reported.
+      //
+      // The white backdrop exists for LOGOS — provider PNGs are drawn for light backgrounds — so
+      // it now applies only when a logo is actually painted. With no logo there is nothing to
+      // back, so the tile uses the themed surface and flips WITH its text: 15.0:1 in dark,
+      // 18.4:1 in light.
       style={{ flexGrow: Math.max(flexGrow, 1), flexBasis: 120, minWidth: 104, height: 92, borderRadius: 6, overflow: 'hidden',
-        position: 'relative', background: showLogo && bgMode === 'dark' ? LOGO_DARK_BG : '#fff', border: `1px solid ${C.border}`, cursor: h.ticker ? 'pointer' : 'default' }}>
+        position: 'relative', background: showLogo ? (bgMode === 'dark' ? LOGO_DARK_BG : '#fff') : C.white,
+        border: `1px solid ${C.border}`, cursor: h.ticker ? 'pointer' : 'default' }}>
       {showLogo ? (
         // Lazy for the same reason TickerLogo is: this page paints ~430 logos at once and the
         // map alone is 30 of them. See the note in cp-shared's TickerLogo.
@@ -107,10 +107,6 @@ function ActivityList({ title, rows, kind, onPick }) {
 
 export default function FundProfile({ slug }) {
   const [d, setD] = useState(null);
-  // Which of the securities on screen have a picture that is actually about them. One request for
-  // the whole map, answered from signatures /api/logo recorded when it first proxied each image —
-  // no provider calls, and nothing compared at render time.
-  const [logoStates, setLogoStates] = useState({});
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
   const [admin, setAdmin] = useState(false);
@@ -149,25 +145,6 @@ export default function FundProfile({ slug }) {
     (async () => { try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; if (alive) setAdmin(!!j?.admin); } catch {} })();
     return () => { alive = false; };
   }, [slug]);
-
-  // ⚠️ ONE REQUEST FOR THE WHOLE MAP, KEYED ON THE TICKERS IT ACTUALLY SHOWS. Asking per tile
-  // would be 30 round trips to decide 30 pictures. This is a KV lookup — it starts no provider
-  // work and cannot make the page wait on an upstream: until it answers, every tile is UNKNOWN
-  // and renders its logo exactly as before.
-  const mapTickers = (d?.holdings || []).slice(0, 30).map((h) => h.ticker).filter(Boolean);
-  const mapKey = mapTickers.join(',');
-  useEffect(() => {
-    if (!mapKey) return;
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch(`/api/logo/identity?tickers=${encodeURIComponent(mapKey)}`);
-        const j = r.ok ? await r.json() : null;
-        if (alive && j?.states) setLogoStates(j.states);
-      } catch { /* leave everything UNKNOWN — the map renders as it always did */ }
-    })();
-    return () => { alive = false; };
-  }, [mapKey]);
 
   const fund = d?.fund;
   const holdings = d?.holdings || [];
@@ -237,8 +214,7 @@ export default function FundProfile({ slug }) {
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 12 }}>
                 {holdings.slice(0, 30).map((h, i) => (
-                  <MapTile key={i} h={h} pct={(h.value || 0) / shownTotal * 100} flexGrow={h.value || 1}
-                    onClick={() => go(h.ticker)} logoState={logoStates[h.ticker] || LOGO_STATE.UNKNOWN} />
+                  <MapTile key={i} h={h} pct={(h.value || 0) / shownTotal * 100} flexGrow={h.value || 1} onClick={() => go(h.ticker)} />
                 ))}
               </div>
             </div>
