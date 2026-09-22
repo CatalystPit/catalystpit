@@ -2,9 +2,24 @@
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../../lib/cp-shared';
-import TradingViewChart from '../../../components/TradingViewChart';
+import dynamic from 'next/dynamic';
 import TickerPriceChart from '../../../components/chart/TickerPriceChart';
 import { resolveFutures } from '../../../lib/futures';
+
+/**
+ * ⚠️ THE ONLY TRADINGVIEW-HOSTED CHART LEFT, AND IT LOADS ONLY FOR FUTURES.
+ *
+ * /ES, /CL, /GC and the rest address TradingView/CapitalCom symbols; we hold no futures data, so
+ * there is nothing of ours to draw. The obvious substitution is worse than no chart:
+ * ticker_daily_candles HAS rows for those roots and every one is an unrelated US equity —
+ * /CL is Colgate-Palmolive, /ES is Eversource Energy, /NG is NovaGold. Rendering those under
+ * "Crude Oil (WTI)" would be a confident lie, so the widget stays for this one view.
+ *
+ * Statically imported it shipped inside the bundle of EVERY ticker page, including the thousands
+ * of equity pages that can never render it. `dynamic` means an equity page never downloads it and
+ * therefore cannot reach the vendor at all, while /ES still works.
+ */
+const TradingViewChart = dynamic(() => import('../../../components/TradingViewChart'), { ssr: false });
 import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
