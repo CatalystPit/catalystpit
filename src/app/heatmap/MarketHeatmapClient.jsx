@@ -9,7 +9,7 @@ import { TIMEFRAMES, DEFAULT_TIMEFRAME, TIMEFRAME_LABEL, NO_RETURN } from '../..
 import { scaleFor } from '../../lib/heatmap/heatmap-layout.mjs';
 import {
   UNIVERSES, DEFAULT_UNIVERSE, ALL_SECTORS, SECTOR_OTHER, sectorOptions, filterBySector,
-  topMovers, mostActive,
+  mostActive,
 } from '../../lib/heatmap/heatmap-universe.mjs';
 
 // THE MARKET HEATMAP PAGE.
@@ -163,6 +163,17 @@ export default function MarketHeatmapClient({ initial }) {
   // open (`data.session.phase`); the browser never runs a market clock of its own. When the next
   // session begins, the server's answer changes on the reader's next visit or refresh and polling
   // resumes on its own.
+  // ⚠️ THE MARKET-WIDE MOVERS, ON THEIR OWN ENDPOINT AND THEIR OWN SCHEDULE. Same entitlement
+  // split as the board (`rt=1` is a cache key, never an authorisation) and the same rule that the
+  // poll costs a KV read rather than a provider call — one shared snapshot serves every viewer.
+  const [movers, setMovers] = useState(null);
+  const loadMovers = useCallback(async (rt) => {
+    try {
+      const r = await fetch(`/api/market-movers${rt ? '?rt=1' : ''}`, rt ? { cache: 'no-store' } : undefined);
+      if (r.ok) setMovers(await r.json());
+    } catch { /* the previous lists stay on screen rather than blanking */ }
+  }, []);
+
   const sessionOpen = data?.session ? data.session.phase === 'regular' && !data.session.frozen : true;
   useEffect(() => {
     if (!entitled || timeframe !== '1D' || !sessionOpen) return undefined;
@@ -176,12 +187,38 @@ export default function MarketHeatmapClient({ initial }) {
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
   }, [entitled, timeframe, universe, sessionOpen, load]);
 
+  // Fetched once entitlement resolves, then on the same cadence and the same stop condition as the
+  // board. Independent of the timeframe chips: these lists are always the current session.
+  useEffect(() => { loadMovers(entitled); }, [entitled, loadMovers]);
+  useEffect(() => {
+    if (!sessionOpen) return undefined;
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      loadMovers(entitled);
+    }, HEATMAP_POLL_MS);
+    return () => clearInterval(id);
+  }, [entitled, sessionOpen, loadMovers]);
+
   const allRows = data?.rows || [];
   const sectors = useMemo(() => sectorOptions(allRows), [allRows]);
   const rows = useMemo(() => filterBySector(allRows, sector), [allRows, sector]);
-  const gainers = useMemo(() => topMovers(rows, { direction: 'up', limit: 10 }), [rows]);
-  const losers = useMemo(() => topMovers(rows, { direction: 'down', limit: 10 }), [rows]);
+  // ⚠️ GAINERS AND LOSERS NO LONGER COME FROM THE BOARD. They rank the whole eligible US market
+  // from their own endpoint; the board is the Top 500 by market cap and is a different question.
+  // MOST ACTIVE still comes from the board, deliberately and unchanged: it is completed-session
+  // consolidated volume, which this entitlement does have, and nothing here makes it intraday.
+  const gainers = movers?.gainers ?? [];
+  const losers = movers?.losers ?? [];
   const active = useMemo(() => mostActive(rows, { limit: 10 }), [rows]);
+
+  // What the two market-wide lists are measured between, and when they were captured. Shown on the
+  // cards themselves because they no longer share the board's freshness strip.
+  const moversNote = movers
+    ? (movers.session?.frozen
+      ? `Final · ${longDay(movers.session.sessionDate || movers.asOf)} session`
+      : movers.freshness === 'realtime'
+        ? `Market-wide · from the ${longDay(movers.baselineDate)} close · updated ${etTime(movers.snapshotAt) || 'every 15 min'}`
+        : `Market-wide · ${longDay(movers.baselineDate)} → ${longDay(movers.asOf)} close · final`)
+    : null;
 
   // ⚠️ THE STRIP IS DRIVEN BY THE SERVER'S SESSION STATE, NOT BY A CLOCK IN THE BROWSER. A viewer
   // in Singapore, a viewer with a skewed system clock and a viewer in New York must all be told
@@ -404,10 +441,19 @@ export default function MarketHeatmapClient({ initial }) {
         {/* ── LEADERSHIP. Three equal cards across the full width; wrapping at medium widths and
                stacking on a phone. ── */}
         <div className="cp-hm-cards">
-          <LeaderList title={`Top gainers · ${shownTimeframe}`} items={gainers}
-            help={{ title: 'Top Gainers', body: `The largest positive returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
-          <LeaderList title={`Top losers · ${shownTimeframe}`} items={losers}
-            help={{ title: 'Top Losers', body: `The largest negative returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
+          {/* ⚠️ THESE TWO RANK THE WHOLE MARKET, NOT THE BOARD ABOVE THEM — and they are always 1D.
+                 "What is moving most today" is a different question from "what does the market look
+                 like", and the honest answer is usually a small-cap that could never appear on a
+                 Top 500 board: on 2026-09-22 all ten true top gainers were outside it, led by JAGX
+                 at +478% against the board's biggest move of +7.9%.
+
+                 So they carry a FIXED 1D label and their own data source. They deliberately do NOT
+                 follow the timeframe chips: a "Top gainers · 1Y" built from this feed would be
+                 claiming something it has not measured. */}
+          <LeaderList title="Top gainers · 1D" items={gainers} note={moversNote}
+            help={{ title: 'Top Gainers', body: `The largest gains today across every eligible US-listed operating company${movers?.universeCount ? ` (${movers.universeCount.toLocaleString()} ranked)` : ''} — not just the securities on the heatmap. Measured from the previous official close to the latest market snapshot. ETFs, funds, warrants, rights, units and preferreds are excluded.` }} />
+          <LeaderList title="Top losers · 1D" items={losers} note={moversNote}
+            help={{ title: 'Top Losers', body: `The largest declines today across every eligible US-listed operating company${movers?.universeCount ? ` (${movers.universeCount.toLocaleString()} ranked)` : ''} — not just the securities on the heatmap. Measured from the previous official close to the latest market snapshot. ETFs, funds, warrants, rights, units and preferreds are excluded.` }} />
           {/* Most Active is a SESSION measure, so it is labelled with its session rather than with the
               selected window — "Most active 1M" would claim something we are not measuring. Omitted
               entirely when no row carries a real volume, rather than shown empty. */}

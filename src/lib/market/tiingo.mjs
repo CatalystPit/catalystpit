@@ -505,6 +505,12 @@ export async function getAllTickersSnapshot() {
     if (price == null) continue;
     rows.push({
       symbol: sym, price, prevClose,
+      // ⚠️ THE LIVE PRINT ON ITS OWN, WITH NO FALLBACK — additive, and `price` above is unchanged.
+      // `price` deliberately degrades to prevClose so a caller always has a number; a RANKING
+      // cannot use that. A reverse-split symbol whose live print is missing would otherwise be
+      // measured as (unadjusted prevClose ÷ our split-adjusted close) and appear as a −99% loser.
+      // Callers that must distinguish "trading now" from "last known" read this instead.
+      lastPrice: live,
       changePct: (prevClose != null && prevClose !== 0) ? ((price - prevClose) / prevClose) * 100 : null,
       open: num(q.open), high: num(q.high), low: num(q.low),
       volume: num(q.volume),
