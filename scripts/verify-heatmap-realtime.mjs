@@ -42,6 +42,52 @@ L('=== THE INTRADAY RETURN IS (LIVE − PREVCLOSE) / PREVCLOSE ===');
   ok('a zero baseline yields no return rather than infinity', rowPct(343, 0, 343) === null);
 }
 
+L('\n=== ⚠️ THE LIVE BASELINE IS THE PREVIOUS CLOSE, NOT THE EOD BASELINE ===');
+{
+  // THE BUG THIS PINS, with the real production numbers from 2026-09-22:
+  //
+  //   the board's EOD 1D pair is   Sep 18 close → Sep 21 close
+  //   the LIVE 1D pair must be     Sep 21 close → current price
+  //
+  // The first version swapped only the NUMERATOR and kept the Sep 18 baseline, so it computed a
+  // TWO-DAY return and stamped it LIVE: NVDA read +2.72% against a true +0.41%, and the banner
+  // said "from the Sep 18 close to the Sep 21 close" while showing a live number. Both halves of
+  // the fraction have to move together.
+  const NVDA = { live: 228.32, prevClose: 227.38, eodBaseline: 222.27 };
+  const AAPL = { live: 342.765, prevClose: 338.98, eodBaseline: 336.13 };
+  // The board's own rule, as heatmap-store now applies it.
+  const boardPct = (live, latestClose, eodBaseline) =>
+    pctReturn(live != null ? live : latestClose, live != null ? latestClose : eodBaseline);
+
+  ok('a live row measures from the PREVIOUS CLOSE',
+    mut('eodbaseline') ? false : Math.abs(boardPct(NVDA.live, NVDA.prevClose, NVDA.eodBaseline) - 0.4134) < 0.01,
+    String(boardPct(NVDA.live, NVDA.prevClose, NVDA.eodBaseline)));
+  ok('…and NOT from the end-of-day baseline (which gave the reported +2.7%)',
+    mut('eodbaseline') ? false
+      : Math.abs(boardPct(NVDA.live, NVDA.prevClose, NVDA.eodBaseline) - 2.7219) > 1,
+    'a two-day return wearing a live label');
+  ok('AAPL agrees too', Math.abs(boardPct(AAPL.live, AAPL.prevClose, AAPL.eodBaseline) - 1.1165) < 0.01);
+
+  // ⚠️ IT MUST EQUAL WHAT THE WATCHLIST COMPUTES, BY CONSTRUCTION. Same numerator, same
+  // denominator — if these ever diverge the product is telling one reader two numbers.
+  const watchlistPct = (live, prevClose) => ((live - prevClose) / prevClose) * 100;
+  for (const [name, s] of [['NVDA', NVDA], ['AAPL', AAPL]]) {
+    ok(`${name}: Heatmap live % equals the Watchlist's`,
+      mut('eodbaseline') ? false
+        : Math.abs(boardPct(s.live, s.prevClose, s.eodBaseline) - watchlistPct(s.live, s.prevClose)) < 1e-9);
+  }
+
+  // An EOD row is unchanged: it still measures between the two completed sessions.
+  ok('an EOD row still measures Sep 18 → Sep 21',
+    Math.abs(boardPct(null, NVDA.prevClose, NVDA.eodBaseline) - 2.2989) < 0.01,
+    String(boardPct(null, NVDA.prevClose, NVDA.eodBaseline)));
+
+  ok('the store picks the baseline from whether a live price exists',
+    /const base = lq \? l\.close : b\.close;/.test(storeCode));
+  ok('…and a live row reports the session it was measured from',
+    mut('wrongbanner') ? false : /row\.baselineDate = l\.date;/.test(storeCode));
+}
+
 L('=== ONLY 1D, AND ONLY FOR AN ENTITLED READER ===');
 {
   // The guard the store applies before it fetches anything.

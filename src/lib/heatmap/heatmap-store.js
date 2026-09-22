@@ -250,9 +250,29 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = f
     // Everything above — the universe, the baseline, the quality gates — has already decided that
     // this row is measurable. A symbol the quote feed has nothing for keeps its close, so a partial
     // feed produces a board that is partly intraday and wholly correct, rather than a gap.
+    // ⚠️ A LIVE 1D RETURN MEASURES FROM A DIFFERENT SESSION THAN AN END-OF-DAY ONE, AND GETTING
+    // THIS WRONG PRODUCED A TWO-DAY RETURN WEARING A LIVE LABEL.
+    //
+    //   EOD 1D:  Sep 18 close  →  Sep 21 close      baseline = b.close (strictly before `asOf`)
+    //   LIVE 1D: Sep 21 close  →  current price     baseline = l.close (the PREVIOUS close, which
+    //                                               is the latest completed session)
+    //
+    // The first version swapped only the numerator and kept b.close, so it computed
+    // (live Sep 22 price − Sep 18 close) and NVDA read +2.72% against a true +0.41%. The baseline
+    // has to move forward one session the moment the numerator does — they are two halves of one
+    // question, and the whole point of 1D is that the two ends are one session apart.
+    //
+    // This is also why it must agree with the Watchlist by construction: both are now
+    // (current price − prevClose) / prevClose over the same pair of numbers.
     const lq = live.get(u.ticker);
-    if (lq) { row.price = lq.price; row.live = true; }
-    const pct = pctReturn(lq ? lq.price : l.close, b.close);
+    const base = lq ? l.close : b.close;
+    if (lq) {
+      row.price = lq.price;
+      row.live = true;
+      // The row states what it was actually measured FROM, so the banner cannot disagree with it.
+      row.baselineDate = l.date;
+    }
+    const pct = pctReturn(lq ? lq.price : l.close, base);
     if (pct === null) { row.reason = NO_RETURN.NO_PRICE; return row; }
     row.pct = pct;
     return row;

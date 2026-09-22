@@ -260,8 +260,17 @@ export default function MarketHeatmapClient({ initial }) {
               textTransform: 'uppercase', letterSpacing: '0.04em' }}>{fresh.label}</span>
             <span>{fresh.text}</span>
             <span style={{ color: C.dim }}>
+              {/* ⚠️ A LIVE BOARD DOES NOT END AT A CLOSE, AND SAYING SO WAS THE VISIBLE HALF OF A
+                  REAL ARITHMETIC BUG. While the numerator was live the strip still read "from the
+                  Sep 18 close to the Sep 21 close" — which was accurate about the calculation and
+                  wrong about the product, because the calculation itself was measuring the wrong
+                  pair of sessions. Both ends now come from the data: `baselineDate` is whatever
+                  the rows were actually measured from, so this sentence cannot drift from the
+                  number beside it. Nothing here is hardcoded. */}
               {timeframe} return measured from the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.baselineDate)}</strong> close
-              to the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.asOf)}</strong> close.
+              {data?.freshness === 'realtime'
+                ? <> to the <strong style={{ color: C.ink, fontWeight: 600 }}>current market price</strong>.</>
+                : <> to the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.asOf)}</strong> close.</>}
             </span>
             {data?.counts && (
               <span style={{ color: C.dim }}>
