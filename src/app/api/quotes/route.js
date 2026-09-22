@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
 import { getQuotes } from '../../../lib/market-data';
 import { coalesce } from '../../../lib/market/refresh-policy.mjs';
-import { captureIfDue, readDelayed, delayedQuotesFor } from '../../../lib/market/delayed-store.mjs';
+import { readDelayed, delayedQuotesFor } from '../../../lib/market/delayed-store.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -93,11 +93,16 @@ export async function GET(request) {
     // snapshot that passed servableToFree(), which refuses anything under 15 minutes old. A Free
     // reader cannot receive a current price through this path even if the collector misbehaved.
     //
-    // The capture itself is attempted here rather than on a cron so the data follows demand, but
-    // it is session-gated and interval-gated inside captureIfDue(): outside the bells it returns
-    // without touching the provider, and inside them only one instance per 15 minutes gets past
-    // the lock. Failure is ignored — a viewer must never wait on a collection.
-    captureIfDue().catch(() => {});
+    // ⚠️ THE CAPTURE IS NOT TRIGGERED HERE, AND THE FIRST VERSION'S ATTEMPT TO IS WHY.
+    //
+    // It called `captureIfDue().catch(() => {})` without awaiting, so a viewer never waited on a
+    // 3-second market-wide collection. The platform froze the instance the moment the response was
+    // returned and killed the promise: in production `cp:dq:latest` was written once and never
+    // again, and nothing was ever released. An unawaited promise in a serverless response path is
+    // not a background job.
+    //
+    // Collection lives in /api/cron/delayed-snapshot, which is also the better shape — the cadence
+    // should follow the MARKET, not whether someone happened to load a page. This route only READS.
 
     const delayedSnap = await readDelayed();
     if (delayedSnap) {

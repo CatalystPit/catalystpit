@@ -171,7 +171,18 @@ L('\n=== 8, 11. CACHE ISOLATION AND STAMPEDE PROTECTION ===');
   // ⚠️ THE ROUTE MUST NOT AWAIT A CAPTURE. A viewer waiting on a 5-second market-wide collection
   // is how a traffic spike becomes a queue.
   const route = (await readFile(new URL('../src/app/api/quotes/route.js', import.meta.url), 'utf8'));
-  ok('⚠️ a Free request never waits on a collection', /captureIfDue\(\)\.catch/.test(route));
+  // ⚠️ THE READ PATH MUST NOT COLLECT AT ALL. The first version called captureIfDue() unawaited
+  // from here; the platform killed the promise when the response returned, and production
+  // captured once and then stopped for good. Collection moved to a cron and this route only reads.
+  // Comments stripped, because the note explaining that names the function it forbids.
+  const routeCode = route.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok('⚠️ a Free request never collects, so it can never wait on one',
+    !/captureIfDue/.test(routeCode), 'an unawaited promise in a response path is not a background job');
+  const cron = await readFile(new URL('../src/app/api/cron/delayed-snapshot/route.js', import.meta.url), 'utf8');
+  ok('…collection lives in a cron that AWAITS it', /await captureIfDue\(\)/.test(cron));
+  ok('…the cron is authenticated', /CRON_SECRET/.test(cron));
+  ok('…and it still defers to the session gate rather than trusting its own schedule',
+    /captureIfDue\(\)/.test(cron) && !/16:00|hardcod/.test(cron.replace(/\/\/.*$/gm, '')));
   ok('…and entitled realtime never reads the delayed snapshot',
     route.indexOf('if (realtime) {') < route.indexOf('readDelayed()'));
 }

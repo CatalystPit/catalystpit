@@ -135,6 +135,10 @@
     {
       "path": "/api/cron/consensus-refresh",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/delayed-snapshot",
+      "schedule": "*/15 13-21 * * 1-5"
     }
   ],
   "headers": [
