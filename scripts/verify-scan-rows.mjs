@@ -333,6 +333,105 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   const panel = read('../src/components/scan/PitScanPanel.jsx');
   const terminal = read('../src/app/terminal/TerminalClient.jsx');
 
+  // ─── BADGE / MUTED-TEXT CONTRAST ──────────────────────────────────────────
+  //
+  // ⚠️ THESE ASSERTIONS COMPUTE THE RATIO, THEY DO NOT MATCH A HEX. An assertion that pins
+  // `#B2BEB4` would pass forever while saying nothing about whether the pill is readable, and
+  // would fail the moment someone legitimately retuned the palette. So the suite parses the real
+  // token values out of both theme blocks and runs the WCAG relative-luminance formula on them.
+  // Retune the greens freely; the floor is what is protected.
+  //
+  // The floors: 4.5:1 for badge text, because these pills are 8.5–9px and the "large text" 3:1
+  // relaxation begins at 18.66px bold — nowhere near. 3:1 for the border, which is a UI boundary
+  // under WCAG 1.4.11 rather than text.
+  const lum = (hex) => {
+    const c = hex.replace('#', '').match(/../g).map((h) => {
+      const v = parseInt(h, 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const ratio = (a, b) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  // Pull a token out of a named theme block, so light and dark are checked independently.
+  const themeBlock = (sel) => {
+    const i = shared.indexOf(sel);
+    return i < 0 ? '' : shared.slice(i, shared.indexOf('}', i));
+  };
+  const tok = (block, name) => {
+    const m = new RegExp(`--cp-${name}:\\s*(#[0-9A-Fa-f]{6})`).exec(block);
+    return m && m[1];
+  };
+  const DARK = themeBlock(':root[data-theme="dark"]{');
+  const LIGHT = themeBlock(':root{');
+  ok('both theme blocks were found', !!DARK && !!LIGHT);
+
+  for (const [name, block] of [['dark', DARK], ['light', LIGHT]]) {
+    const fg = tok(block, 'badgeFg');
+    const bd = tok(block, 'badgeBorder');
+    const surface = tok(block, 'surface');
+    const white = tok(block, 'white');
+    ok(`${name}: the badge tokens are defined`,
+      mut('nobadgetoken') ? false : !!fg && !!bd, `fg=${fg} border=${bd}`);
+    if (!fg || !bd) continue;
+    // The pill sits on the card (white) and on the banner (surface); both must clear.
+    for (const [bgName, bg] of [['surface', surface], ['card', white]]) {
+      const r = ratio(fg, bg);
+      ok(`${name}: badge text clears 4.5:1 on ${bgName}`,
+        mut('dimbadge') ? false : r >= 4.5, `${fg} on ${bg} = ${r.toFixed(2)}:1`);
+    }
+    const rb = ratio(bd, surface);
+    ok(`${name}: the badge border clears 3:1 and actually draws the pill`,
+      mut('fadeborder') ? false : rb >= 3, `${bd} on ${surface} = ${rb.toFixed(2)}:1`);
+  }
+
+  // ⚠️ THE BADGE MUST OUT-CONTRAST `muted`, NOT MATCH IT. 8.5px uppercase needs more separation
+  // than an 11.5px sentence to read as comfortably. If someone "restores the hierarchy" by pulling
+  // badgeFg back down to muted, the pill goes quietly unreadable again — so the inversion is
+  // asserted rather than left as a comment.
+  {
+    const r = ratio(tok(DARK, 'badgeFg'), tok(DARK, 'surface'));
+    const m = ratio(tok(DARK, 'muted'), tok(DARK, 'surface'));
+    ok('dark: badge text out-contrasts muted body text',
+      mut('badgeequalsmuted') ? false : r > m, `badge ${r.toFixed(2)} vs muted ${m.toFixed(2)}`);
+  }
+
+  // The 9px row keys (STRUCTURE / EVIDENCE / JOIN) are --cp-dim. Dark mode had them at 4.08:1.
+  {
+    const d = ratio(tok(DARK, 'dim'), tok(DARK, 'surface'));
+    ok('dark: the smallest row labels clear 4.5:1',
+      mut('dimlabels') ? false : d >= 4.5, `${tok(DARK, 'dim')} = ${d.toFixed(2)}:1`);
+    // …and hierarchy is preserved: dim stays quieter than muted.
+    const m = ratio(tok(DARK, 'muted'), tok(DARK, 'surface'));
+    ok('dark: dim is still quieter than muted', d < m, `dim ${d.toFixed(2)} vs muted ${m.toFixed(2)}`);
+  }
+
+  // ⚠️ LIGHT MODE IS NOT COLLATERAL. A dark-mode fix that dims the light pill is a regression, so
+  // the light tokens are asserted at the same floors above, and the banner sentence is checked
+  // here: it is --cp-muted at 10.5px and was already comfortable in both themes. It must not get
+  // "fixed" into near-white, which is how secondary text stops reading as secondary.
+  for (const [name, block] of [['dark', DARK], ['light', LIGHT]]) {
+    const r = ratio(tok(block, 'muted'), tok(block, 'surface'));
+    ok(`${name}: secondary text stays readable without going bright`,
+      r >= 4.5 && r < ratio(tok(block, 'ink'), tok(block, 'surface')), `${r.toFixed(2)}:1`);
+  }
+
+  // ONE BADGE, NOT FOUR. The contrast bug existed in triplicate because the pill was hand-rolled
+  // at each call site; the fix only holds if they keep sharing the primitive.
+  ok('the badge is a shared primitive', /export function Badge/.test(shared));
+  ok('…used by the feed banner and the row',
+    mut('inlinebadge') ? false : /<Badge>/.test(rows) && /<Badge size="xs">/.test(rows));
+  ok('…and by the Terminal panel header', /<Badge dot>/.test(panel));
+  ok('…with no hand-rolled pill left behind in the scan surface',
+    mut('rollsown') ? false
+      : !/border:\s*`1px solid \$\{C\.border2\}`,\s*borderRadius:\s*3/.test(rows + panel));
+  // Colour is not a prop — a badge that can be told to be any colour will be told to be an
+  // unreadable one.
+  ok('the badge does not take a colour prop',
+    !/function Badge\(\{[^}]*\b(color|fg|tone)\b/.test(shared));
+
   // ⚠️ THE PANEL IS THE PRODUCT SURFACE, so it has to be in the DEFAULT layout. The boards had a
   // reserved position and two station presets but were absent from DEFAULT_VISIBLE — reachable only
   // by adding the panel by hand, which is the same as not shipping them.

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import ScanBoardRows from './ScanBoardRows';
-import { C, TickerLogo } from '../../lib/cp-shared';
+import { C, Badge, TickerLogo } from '../../lib/cp-shared';
 
 // THE PIT SCAN PANEL.
 //
@@ -82,10 +82,7 @@ export default function PitScanPanel({ onPick }) {
               wrong in the other direction — it described the unfed SIGNAL engine while the
               evidence boards were full — and read as a broken product. What is printed is the
               freshness the rows actually carry. */}
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.dim }} />
-          <span style={{ fontSize: 9, color: C.dim, letterSpacing: 0.3 }}>
-            {state?.freshnessLabel || 'LAST CLOSE'}
-          </span>
+          <Badge dot>{state?.freshnessLabel || 'LAST CLOSE'}</Badge>
         </span>
       </div>
 

@@ -27,7 +27,7 @@
 // something untrue at the moment they act.
 
 import { useEffect, useState } from 'react';
-import { C, TickerLogo } from '../../lib/cp-shared';
+import { C, Badge, TickerLogo } from '../../lib/cp-shared';
 
 const BOARD_TABS = [
   // ⚠️ "MOVING NOW" MUST NOT IMPLY 9:31. Realtime is not entitled, so the move shown is the last
@@ -61,8 +61,7 @@ export function FeedBanner({ freshness, compact = false }) {
       background: C.surface, border: `1px solid ${C.border2}`,
       fontSize: compact ? 10.5 : 11.5, color: C.muted, marginBottom: compact ? 9 : 16,
     }}>
-      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.7px', color: C.dim,
-        border: `1px solid ${C.border2}`, borderRadius: 3, padding: '1px 6px' }}>{label}</span>
+      <Badge>{label}</Badge>
       <span>{text}</span>
       {!compact && (
         <span style={{ color: C.dim }}>
@@ -119,10 +118,7 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
         </span>
         {/* Never hidden, never abbreviated away. */}
         {r.freshnessLabel && (
-          <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: '0.6px', color: C.dim,
-            border: `1px solid ${C.border2}`, borderRadius: 3, padding: '1px 5px' }}>
-            {r.freshnessLabel}
-          </span>
+          <Badge size="xs">{r.freshnessLabel}</Badge>
         )}
       </div>
 

@@ -37,6 +37,27 @@ export const C = {
   contraryRule:"var(--cp-contraryRule,#DCC8C4)", contraryText:"var(--cp-contraryText,#7A6660)",
   // Chip fills for the family/state pills. Themed for the same reason.
   negBg:"var(--cp-negBg,#FBEDED)", warnBg:"var(--cp-warnBg,#FFF6E8)", warnFg:"var(--cp-warnFg,#7A5018)",
+
+  // ─── SMALL OUTLINED BADGES ────────────────────────────────────────────────
+  //
+  // The LAST CLOSE / DELAYED pills and their siblings. These get their OWN tokens rather than
+  // reusing dim + border2, because a badge is not body text and the numbers say so:
+  //
+  //   8.5–9px, bold, uppercase, letter-spaced — the smallest type in the product. WCAG's 4.5:1
+  //   floor is for NORMAL text; the "large text" 3:1 relaxation starts at 18.66px bold. These sit
+  //   an order of magnitude the wrong side of that, so they need MORE contrast than body copy,
+  //   not less. dim gave them 4.08:1 in dark and 2.90:1 in light — both failing, the dark one
+  //   visibly so against the panel's near-black green.
+  //
+  //   The border is a UI boundary, not text, so it answers to WCAG 1.4.11 at 3:1. border2 gave
+  //   it 1.59:1 in dark and 1.70:1 in light — present in the DOM, absent to the eye, which is
+  //   why the pill read as a floating word rather than a badge.
+  //
+  // ⚠️ BADGE FOREGROUND OUTRANKS `muted`, DELIBERATELY. badgeFg is 8.28:1 where muted is 6.16:1.
+  // That inversion is not a hierarchy mistake — it is what keeps a 8.5px pill and a 11.5px
+  // sentence reading as equally comfortable. Equal contrast at unequal sizes is not equal
+  // legibility. Do not "restore order" by dimming this back toward muted.
+  badgeFg:"var(--cp-badgeFg,#636E61)", badgeBorder:"var(--cp-badgeBorder,#7E8878)",
 };
 
 // ─── CATEGORY TAGS (all 16 from enrichment prompt) ──────────────────────────
@@ -198,12 +219,20 @@ export function BrandStyles() {
         --cp-conflictBg:#FBF1F0;--cp-conflictBorder:#E3C0BC;--cp-conflictAccent:#A83030;--cp-conflictText:#3C2523;
         --cp-contraryRule:#DCC8C4;--cp-contraryText:#7A6660;
         --cp-negBg:#FBEDED;--cp-warnBg:#FFF6E8;--cp-warnFg:#7A5018;
+        /* Outlined badges — see the badge block in C. 4.74:1 text, 3.28:1 border on --cp-surface. */
+        --cp-badgeFg:#636E61;--cp-badgeBorder:#7E8878;
       }
       :root[data-theme="dark"]{
         color-scheme:dark;
         --cp-bg:#0E1512;--cp-white:#161F1A;--cp-surface:#1B241F;--cp-surface2:#232E28;
         --cp-border:#2A342E;--cp-border2:#3A453E;
-        --cp-ink:#EEF3EF;--cp-text:#D8DED8;--cp-muted:#98A49B;--cp-dim:#78847B;--cp-hint:#48524C;
+        /* --cp-dim was #78847B: 4.08:1 on --cp-surface, under the 4.5:1 floor, and it carries the
+           smallest labels in the product (the 9px STRUCTURE / EVIDENCE / JOIN row keys). Raised to
+           5.05:1. Still below --cp-muted (6.16:1), so the dim < muted < text < ink hierarchy is
+           unchanged — this is the same tier, made legible, not promoted.
+           ⚠️ LIGHT --cp-dim IS 2.90:1 AND ALSO FAILS. Left alone deliberately: this ticket is a
+           dark-mode fix and changing it would restyle every light-mode surface in the app. */
+        --cp-ink:#EEF3EF;--cp-text:#D8DED8;--cp-muted:#98A49B;--cp-dim:#88948B;--cp-hint:#48524C;
         --cp-green:#46A874;--cp-greenMid:#58BE86;--cp-greenLight:#16301F;--cp-greenBorder:#2E5A40;
         --cp-red:#E06B6B;--cp-redLight:#3A1E1E;--cp-gold:#C79A3C;--cp-blue:#6B8FE0;--cp-blueLight:#1A2540;
         /* Burgundy-tinted surface, not a bright panel. The luminance step from the card is small on
@@ -212,6 +241,11 @@ export function BrandStyles() {
         --cp-conflictBg:#3A2024;--cp-conflictBorder:#6B383C;--cp-conflictAccent:#F09490;--cp-conflictText:#EBD9D6;
         --cp-contraryRule:#4A3438;--cp-contraryText:#A89490;
         --cp-negBg:#33201F;--cp-warnBg:#3A2E16;--cp-warnFg:#E8C06A;
+        /* Outlined badges — see the badge block in C. A light muted green rather than cream or
+           white: 8.28:1 on --cp-surface and 7.39:1 on the darkest green the pill ever sits on,
+           readable at 8.5px without the glare a #FFF pill would throw off a near-black panel.
+           Border 3.50:1, so the outline actually draws the pill. */
+        --cp-badgeFg:#B2BEB4;--cp-badgeBorder:#6A7A6C;
       }
       html,body{background:var(--cp-bg);}
       @keyframes cp-pulse{0%,100%{opacity:1}50%{opacity:0.2}}
@@ -233,6 +267,44 @@ export function BrandStyles() {
 }
 
 // ─── PRIMITIVES ─────────────────────────────────────────────────────────────
+
+// THE SMALL OUTLINED BADGE — LAST CLOSE, DELAYED, and their siblings.
+//
+// One implementation, because there were three: the feed banner's pill, the per-row freshness
+// chip and the Terminal panel's header chip each hand-rolled `color: dim` + `border: border2` at
+// slightly different sizes. Three copies of a contrast bug is three places to forget, which is
+// exactly what happened — the dark-mode pill was unreadable on all three at once.
+//
+// `size` is the only knob, and it only moves type scale and padding. Colour is not a prop: a
+// badge that can be told to be any colour is a badge that will eventually be told to be an
+// unreadable one. Anything needing a different tone (the category tags, the family chips) is a
+// different component and should stay that way.
+//
+// `dot` renders the leading status dot for the Terminal panel header, which reads as a status
+// light rather than an outlined pill and so drops the border.
+export function Badge({ children, size = "sm", dot = false, style }) {
+  const s = size === "xs"
+    ? { fontSize: 8.5, letterSpacing: "0.6px", padding: "1px 5px" }
+    : { fontSize: 9,   letterSpacing: "0.7px", padding: "1px 6px" };
+  if (dot) {
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, ...style }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.badgeFg, flexShrink: 0 }} />
+        <span style={{ fontSize: s.fontSize, fontWeight: 700, letterSpacing: s.letterSpacing, color: C.badgeFg }}>
+          {children}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span style={{
+      fontSize: s.fontSize, fontWeight: 700, letterSpacing: s.letterSpacing, color: C.badgeFg,
+      border: `1px solid ${C.badgeBorder}`, borderRadius: 3, padding: s.padding,
+      whiteSpace: "nowrap", ...style,
+    }}>{children}</span>
+  );
+}
+
 export const Skel = ({w="100%", h=14, mb=6}) => (
   <div style={{width:w, height:h, borderRadius:3, marginBottom:mb,
     background:"linear-gradient(90deg,var(--cp-surface2,#E8EAE5) 25%,var(--cp-surface,#F0F2EE) 50%,var(--cp-surface2,#E8EAE5) 75%)",
