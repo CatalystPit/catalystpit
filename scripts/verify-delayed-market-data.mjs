@@ -239,6 +239,16 @@ L('\n=== ⚠️ INTRADAY CHARTS: THE FREE CUTOFF IS SERVER-SIDE AND CUTS ON BAR 
     mut('chartleak') ? false : !/return Response\.json\(payload\)/.test(code));
   ok('⚠️ no volume is emitted on an intraday bar',
     !/volume/.test(code.slice(code.indexOf('const mapped'), code.indexOf('const dates'))));
+
+  // ⚠️ THE DEFAULT RANGE MUST BE ONE THIS ROUTE CAN ACTUALLY SERVE. It was '1D' — the DAILY
+  // timeframe, absent from the intraday map — so any request with a missing or unrecognised range
+  // destructured undefined, threw, and answered data_unavailable. Asserted against the registry
+  // rather than against a literal, so the two cannot drift apart again.
+  const { TIMEFRAMES, isServable } = await import('../src/lib/chart/chart-source.mjs');
+  const intradayIds = TIMEFRAMES.filter((t) => t.kind === 'intraday' && isServable(t.id)).map((t) => t.id);
+  const def = (code.match(/const DEFAULT_RANGE = '([^']+)'/) || [])[1];
+  ok('⚠️ the default intraday range is servable', intradayIds.includes(def),
+    `${def} not in ${intradayIds.join(',')}`);
 }
 
 L(`\n${pass} passed, ${fail} failed`);

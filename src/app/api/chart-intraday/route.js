@@ -18,7 +18,12 @@ const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const INTRADAY = new Map(
   TIMEFRAMES.filter((t) => t.kind === 'intraday' && isServable(t.id)).map((t) => [t.id, t.request]),
 );
-const DEFAULT_RANGE = '1D';
+// ⚠️ MUST BE A SERVABLE INTRADAY ID. This was '1D', which is the DAILY timeframe — not in the
+// INTRADAY map at all — so a request with a missing or unrecognised range fell back to it,
+// INTRADAY.get() returned undefined, destructuring threw, and the route answered
+// `data_unavailable` every time. Pre-existing and invisible in practice, because barsUrl() always
+// sends an explicit id; found by requesting ?range=1D by hand.
+const DEFAULT_RANGE = '5m';
 const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;     // same gate as /api/ticker & /api/chart-daily
 
 const DAY = 86_400_000;

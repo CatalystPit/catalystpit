@@ -3,7 +3,7 @@ import { congressTrades, tickerDailyCandles, tickerPriceQuality } from '../../..
 import { and, eq, gte, lte, sql, asc } from 'drizzle-orm';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import {
-  resolveRange, startDateFor, isoDate, fetchPolygonDaily, spanToFetch, DEFAULT_RANGE, RANGES,
+  resolveRange, startDateFor, isoDate, fetchLicensedDaily, spanToFetch, DEFAULT_RANGE, RANGES,
   lastFetchableDay, MAX_RANGE,
 } from '../../../lib/congress-chart.mjs';
 
@@ -70,13 +70,16 @@ export async function GET(request) {
     const fetchTo = lastFetchableDay(now);
     let fetched = 0, priceError = null;
 
-    // Skip when the only missing day is today: Polygon rejects a today-only window on our plan.
+    // Skip when the only missing day is today: a today-only window has no settled bar to return.
     if (fetchFrom && fetchFrom <= fetchTo) {
-      const { ok, bars, reason } = await fetchPolygonDaily(ticker, fetchFrom, fetchTo);
+      const { ok, bars, reason } = await fetchLicensedDaily(ticker, fetchFrom, fetchTo);
       if (!ok) {
         priceError = reason;
       } else if (bars.length) {
-        const rows = bars.map((b) => ({ ...b, ticker, source: 'polygon' }));
+        // ⚠️ STAMPED AS THE CANONICAL TIINGO CONVENTION, matching every other writer to this
+        // table. A row labelled 'polygon' here would sit beside split-adjusted ones under the
+        // same column names with no way to tell them apart.
+        const rows = bars.map((b) => ({ ...b, ticker, source: 'tiingo_split_adj' }));
         // 8 columns per row against Postgres' 65535 bind-param cap; 1000 keeps a wide margin
         // and comfortably handles a cold 3-year fetch (~750 rows).
         const CHUNK = 1000;

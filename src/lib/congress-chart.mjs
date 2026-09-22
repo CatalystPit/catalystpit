@@ -87,7 +87,39 @@ export const historyFloor = (now = new Date()) => {
   return isoDate(d);
 };
 
-// ─── Polygon daily bars ─────────────────────────────────────────────────────
+// ─── Daily bars, from our licensed feed ─────────────────────────────────────
+//
+// ⚠️ TIINGO, NOT POLYGON. This chart's price line is customer-facing market data, and our
+// redistribution rights for public commercial display of Polygon data were never established.
+// The bars land in the SAME ticker_daily_candles table /api/chart-daily writes, through the same
+// canonical converter — so the congress markers sit on a price line built exactly like every
+// other price line in the product, split-adjusted the same way and stamped 'tiingo_split_adj'
+// rather than a second convention that would put a trade marker at the wrong height.
+//
+// fetchPolygonDaily below is preserved, uncalled, for a future licensed use.
+export async function fetchLicensedDaily(ticker, from, to) {
+  const [{ getDailyBars }, { tiingoDailyToCanonical }] = await Promise.all([
+    import('./market/tiingo.mjs'), import('./market/candles.mjs'),
+  ]);
+  const res = await getDailyBars(ticker, { from, to });
+  if (!res?.ok) return { ok: false, reason: res?.reason || 'tiingo_unavailable', bars: [] };
+  // getDailyBars names the day `time`; the canonical converter expects `date`. Everything else —
+  // OHLC, volume and splitFactor — passes straight through, and splitFactor is what makes the
+  // adjustment correct rather than approximate.
+  const rows = (res.bars || []).map((b) => ({
+    date: b.time, open: b.open, high: b.high, low: b.low, close: b.close,
+    volume: b.volume, splitFactor: b.splitFactor,
+  }));
+  try {
+    // The converter returns canonical split-adjusted rows and THROWS on a contract violation
+    // rather than writing something subtly wrong into a table every other chart reads.
+    return { ok: true, bars: tiingoDailyToCanonical(rows, { ticker }) };
+  } catch (e) {
+    return { ok: false, reason: e.message, bars: [] };
+  }
+}
+
+// ─── Polygon daily bars — PRESERVED, NOT CALLED ─────────────────────────────
 // adjusted=true so splits do not create artificial gaps, matching how the Tiingo path stores
 // adjusted OHLC under the same column names. Mixing adjusted and raw in one table would make a
 // trade marker sit at the wrong height on the price line.
