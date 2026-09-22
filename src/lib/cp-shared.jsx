@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 import { selectTerminalSymbol, onTerminalRoute } from './terminalSymbolBus';
+import { fitCount } from './nav-overflow.mjs';
 
 // ─── PALETTE ────────────────────────────────────────────────────────────────
 // Colors are CSS variables (defined in BrandStyles for light + [data-theme="dark"]) so the whole app
@@ -552,8 +553,13 @@ export function SymbolSearch({ mobile = false, onNavigate }) {
   const showDrop = focused && results.length > 0 && !v.startsWith('/');
 
   return (
+    // ⚠️ A FLOOR, NOT A FIXED WIDTH. This was a hard `width: 210` inside a group that refused to
+    // shrink, so the search kept every one of its pixels while navigation destinations were being
+    // clipped off the end of the bar. It now gives ground first, down to 132px — still wide enough
+    // to type a symbol and read it back — and only then do links move into More.
     <form onSubmit={submit} style={{ position: "relative", display: "flex", alignItems: "center",
-      height: 32, width: mobile ? "100%" : 210,
+      height: 32,
+      ...(mobile ? { width: "100%" } : { flex: "0 1 210px", minWidth: 132, maxWidth: 210 }),
       background: "#FFFFFF", borderRadius: 999,
       border: `1px solid ${focused ? "#1E5C38" : "rgba(0,0,0,0.08)"}` }}>
       <button type="submit" aria-label="Search ticker symbol" tabIndex={-1}
@@ -753,11 +759,71 @@ export function NotificationBell() {
   );
 }
 
+/**
+ * HOW MANY NAV ITEMS FIT IN THE SPACE THE NAV ACTUALLY HAS.
+ *
+ * ⚠️ THE BUG THIS EXISTS FOR: the nav was the only shrinkable child of the header (`flex: 1 1 auto;
+ * min-width: 0; overflow: hidden`) while the search/account group was `flexShrink: 0`. Every open
+ * dock narrows #cp-shell by 330px — the header is INSIDE the shell, so it shrank correctly — and
+ * all of that loss came out of the nav, which then silently clipped its tail. Politicians and
+ * Institutions are last in source order, so they were the first to disappear, and `overflow:
+ * hidden` put them outside the clip rect where they could not even be clicked.
+ *
+ * ⚠️ AND WHY MEDIA QUERIES COULD NEVER HAVE FIXED IT. The existing responsive rules are all
+ * `@media (max-width: 860px)` — VIEWPORT width. With two docks open on a 1920px monitor the
+ * viewport is still 1920, so the rule never matches, the hamburger never appears, and the full
+ * desktop link row stays mounted inside a 1260px shell. The measurement has to be of the
+ * container, which is what ResizeObserver gives and a media query cannot.
+ *
+ * Measurement comes from a hidden row holding every link at its natural width, so widths are
+ * always available even for items currently in the overflow menu — measuring the visible row
+ * instead would be circular, since hiding an item destroys the width you need to decide whether
+ * to hide it.
+ */
+function useNavOverflow(count) {
+  const barRef = useRef(null);
+  const measureRef = useRef(null);
+  const [visible, setVisible] = useState(count);
+
+  useEffect(() => {
+    const bar = barRef.current, meas = measureRef.current;
+    if (!bar || !meas) return;
+
+    const recompute = () => {
+      const kids = Array.from(meas.children);
+      if (!bar.clientWidth || kids.length === 0) return;
+      // Last child of the measuring row is the "More" control, measured at its real width rather
+      // than guessed — a wrong reservation here is what makes the last item flicker in and out.
+      setVisible(fitCount(
+        kids.slice(0, count).map((k) => k.getBoundingClientRect().width),
+        bar.clientWidth,
+        kids.length > count ? kids[count].getBoundingClientRect().width : 0,
+      ));
+    };
+
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    ro.observe(bar);
+    // Fonts land after first paint and change every width — re-measure once they do.
+    if (document.fonts?.ready) document.fonts.ready.then(recompute).catch(() => {});
+    return () => ro.disconnect();
+  }, [count]);
+
+  return { barRef, measureRef, visible };
+}
+
 export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
   const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Dividends", "Insiders", "Politicians", "Institutions"];
   const [menuOpen, setMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  // Container-width driven, not viewport-width driven — see useNavOverflow.
+  const { barRef, measureRef, visible } = useNavOverflow(links.length);
+  const overflowed = links.slice(visible);
+  // A dock closing widens the bar and pulls items back inline; a menu left open over nothing is
+  // a stale menu, so it closes when its contents become empty.
+  useEffect(() => { if (overflowed.length === 0) setMoreOpen(false); }, [overflowed.length]);
   const linkColor = (l) => active === l ? "#FFFFFF" : "rgba(255,255,255,0.75)";
   // Most links map to /<lowercased>; multi-word names get an explicit path.
   const hrefFor = (l) => l === "Pit Consensus" ? "/consensus" : `/${l.toLowerCase()}`;
@@ -767,22 +833,92 @@ export function TopNav({ active }) {
       borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
       <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
 
-      {/* Desktop links — hidden ≤860px via .cp-nav-links */}
-      <div className="cp-nav-links" style={{gap:16, alignItems:"center", marginLeft:24,
-        paddingLeft:24, flex:"1 1 auto", minWidth:0, overflow:"hidden"}}>
-        {links.map(l => (
+      {/* Desktop links — hidden ≤860px via .cp-nav-links, and beyond that width the count is
+          decided by the CONTAINER, so opening a dock moves items into More instead of clipping.
+
+          ⚠️ flexShrink:0 + nowrap ON EVERY ITEM IS LOAD-BEARING. Default flex children are
+          `0 1 auto`, so before anything was clipped the labels squashed to min-content and
+          "Pit Consensus" wrapped to two lines inside a 50px bar. Refusing to shrink is what makes
+          a link's measured width its real width, which is the number the overflow maths needs. */}
+      <div ref={barRef} className="cp-nav-links" style={{gap:16, alignItems:"center", marginLeft:24,
+        paddingLeft:24, flex:"1 1 auto", minWidth:0, overflow:"hidden", position:"relative"}}>
+        {links.slice(0, visible).map(l => (
           <a key={l} href={hrefFor(l)} className="nbtn"
             style={{fontSize:15, color:linkColor(l), cursor:"pointer", transition:"color 0.2s",
               fontWeight: active === l ? 600 : 400, letterSpacing:"0.02em", textDecoration:"none",
+              flexShrink:0, whiteSpace:"nowrap",
               borderBottom: active === l ? "2px solid #5AB87A" : "none", paddingBottom: active === l ? 2 : 0}}>
             {l}
           </a>
         ))}
+
+        {overflowed.length > 0 && (
+          <div style={{position:"relative", flexShrink:0}}>
+            <button type="button" onClick={() => setMoreOpen(o => !o)}
+              aria-haspopup="true" aria-expanded={moreOpen}
+              style={{background:"transparent", border:"none", cursor:"pointer", padding:0,
+                fontSize:15, fontFamily:"inherit", whiteSpace:"nowrap", letterSpacing:"0.02em",
+                // An active destination hiding inside More must still look active, or the header
+                // claims you are nowhere.
+                color: overflowed.includes(active) ? "#FFFFFF" : "rgba(255,255,255,0.75)",
+                fontWeight: overflowed.includes(active) ? 600 : 400,
+                borderBottom: overflowed.includes(active) ? "2px solid #5AB87A" : "none",
+                paddingBottom: overflowed.includes(active) ? 2 : 0}}>
+              More ▾
+            </button>
+            {moreOpen && (
+              <>
+                {/* Click-away, behind the panel and in front of everything else. */}
+                <div onClick={() => setMoreOpen(false)}
+                  style={{position:"fixed", inset:0, zIndex:150}} />
+                <div style={{position:"absolute", top:"calc(100% + 10px)", right:0, zIndex:151,
+                  background:C.white, border:`1px solid ${C.border}`, borderRadius:8,
+                  boxShadow:"0 8px 28px rgba(0,0,0,0.16)", padding:"6px 0", minWidth:190}}>
+                  {overflowed.map(l => (
+                    <a key={l} href={hrefFor(l)} onClick={() => setMoreOpen(false)}
+                      style={{display:"block", padding:"9px 16px", fontSize:14, textDecoration:"none",
+                        whiteSpace:"nowrap", fontFamily:"'DM Sans',sans-serif",
+                        color: active === l ? C.green : C.text,
+                        fontWeight: active === l ? 700 : 400,
+                        background: active === l ? C.greenLight : "transparent"}}
+                      onMouseEnter={e => { if (active !== l) e.currentTarget.style.background = C.surface; }}
+                      onMouseLeave={e => { if (active !== l) e.currentTarget.style.background = "transparent"; }}>
+                      {l}
+                    </a>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      <div style={{display:"flex", gap:8, alignItems:"center", marginLeft:20, flexShrink:0}}>
-        <span className="cp-nav-search"><SymbolSearch /></span>
-        <ThemeToggle style={{color:"rgba(255,255,255,0.85)"}} />
+      {/* THE MEASURING ROW. Every link plus the More control at natural width, laid out but never
+          painted, so the widths of items currently inside More are still knowable. aria-hidden and
+          inert to assistive tech and hit-testing — it is a ruler, not a second navigation. */}
+      {/* ⚠️ ZERO-SIZE CLIPPER AROUND THE RULER. The measuring row is ~900px of nowrap text; left
+          loose it would be a 900px absolutely-positioned box inside a 375px header on a phone,
+          which is horizontal page scroll — the one side effect this fix must not introduce. The
+          wrapper is 0×0 with overflow hidden, so the row has no layout footprint at any width
+          while its children still report their natural widths to getBoundingClientRect. */}
+      <div aria-hidden="true" style={{position:"absolute", width:0, height:0, overflow:"hidden"}}>
+        <div ref={measureRef} style={{position:"absolute", top:0, left:0,
+          display:"flex", gap:16, whiteSpace:"nowrap"}}>
+          {links.map(l => (
+            <span key={l} style={{fontSize:15, letterSpacing:"0.02em",
+              fontWeight: active === l ? 600 : 400, flexShrink:0}}>{l}</span>
+          ))}
+          <span style={{fontSize:15, letterSpacing:"0.02em", flexShrink:0}}>More ▾</span>
+        </div>
+      </div>
+
+      {/* ⚠️ THIS GROUP WAS flexShrink:0, WHICH IS WHY THE NAV PAID FOR EVERY OPEN DOCK ON ITS OWN.
+          It now shrinks — but only by squeezing the search box, which has its own floor. The
+          controls that cannot usefully get smaller (theme, auth, avatar, burger) keep
+          flexShrink:0 individually, so an account button is never the thing that gets crushed. */}
+      <div style={{display:"flex", gap:8, alignItems:"center", marginLeft:20, minWidth:0}}>
+        <span className="cp-nav-search" style={{display:"flex", minWidth:0, flexShrink:1}}><SymbolSearch /></span>
+        <ThemeToggle style={{color:"rgba(255,255,255,0.85)", flexShrink:0}} />
         {/* Log In / Start Free are hidden ≤430px via .cp-nav-auth and reappear inside the menu.
             Measured: with both buttons in this row the hamburger sat at x384-420, so at 320/360/390
             it was 100/60/30px PAST the right edge and the menu could not be opened at all — and at
