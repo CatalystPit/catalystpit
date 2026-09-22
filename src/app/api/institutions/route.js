@@ -188,7 +188,12 @@ async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, 
     )
     select distinct on (cik, filed_date) cik, quarter, filed_date, accession, prev_quarter
       from ranked
-     where filed_date >= (select max(filed_date) - ${windowDays} from fund_filings)
+     -- ⚠️ ::int ON THE PARAMETER, NOT JUST THE NUMBER. Inlined as a literal this reads fine, but
+     -- every value through drizzle arrives as a placeholder of UNKNOWN type, and subtracting an
+     -- unknown from a date is ambiguous to Postgres — so the query reads fine, runs fine against
+     -- an inlined literal, and throws only on the deployed route. Same shape of trap as the array
+     -- binding above: correct-looking SQL that fails only once it is actually bound.
+     where filed_date >= (select max(filed_date) - ${windowDays}::int from fund_filings)
        and prev_quarter is not null
      order by cik, filed_date, quarter desc`);
 
@@ -264,7 +269,7 @@ async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, 
            r.quarter::text as quarter, r.filed_date::text as filed_date, r.accession, r.action,
            i.name, i.slug
       from ranked r join institutions i on i.cik = r.cik
-     where r.rn <= ${perManager}
+     where r.rn <= ${perManager}::int
        and i.name is not null and trim(i.name) <> '' and i.slug is not null
      order by r.filed_date desc, coalesce(r.value, 0) desc
      limit ${limit}`);

@@ -109,6 +109,14 @@ L('\n=== THE ROUTE KEEPS THE TWO CLOCKS APART, AND NEVER CLAIMS A TRADE ===');
   // single placeholder, so `${arr}::text[]` becomes `($1)::text[]` with a scalar param. It passes
   // against the raw driver and fails only once deployed, which is the worst possible place to
   // find out. A VALUES list built with sql.join is the form that works and stays parameterised.
+  // ⚠️ AND NO BACKTICK INSIDE A SQL COMMENT. A tagged template ends at the first backtick, so
+  // quoting an identifier the way prose does — in a `--` line inside sql`…` — silently terminates
+  // the query string and the file stops parsing. It broke this route's build twice in one sitting,
+  // both times from a comment explaining a different trap. Cheap to assert, invisible to review.
+  const tickInSqlComment = /^\s*--.*`/m;
+  ok('no SQL comment contains a backtick',
+    mut('backtick') ? false : !tickInSqlComment.test(route), (tickInSqlComment.exec(route) || [])[0]?.trim() || '');
+
   const arrayBind = /\$\{[^}]*\}::(?:text|date|int\d?|numeric)\[\]/;
   ok('no JS array is cast to a Postgres array inside a sql template',
     mut('arraybind') ? false : !arrayBind.test(route), (arrayBind.exec(route) || [])[0] || '');
