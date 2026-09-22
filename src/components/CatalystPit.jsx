@@ -709,8 +709,16 @@ export default function CatalystPit() {
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
               letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO · $20/MO</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
-              {["Full real-time news feed","All insider filings · live",
-                "Full screener · 12 filters","Live charts · all timeframes","Options flow & dark pool",
+              {/* ⚠️ THIS LIST IS A PROMISE, AND TWO OF ITS ITEMS WERE NOT TRUE.
+                  "Options flow & dark pool" is a product we do not have and have no feed for.
+                  "Live charts · all timeframes" and "real-time"/"live" on the first two items
+                  claimed a realtime entitlement that is switched off — charts are end-of-day and
+                  every quote surface says LAST CLOSE or DELAYED. Selling a feed we are not
+                  licensed for is the one marketing mistake that is also a contract problem.
+                  Each line below is now something a paying user actually receives today. */}
+              {["Full market news feed","Every insider filing, minutes after it lands",
+                "Full screener · 12 filters","Charts · all timeframes, end-of-day",
+                "Evidence alerts on your watchlist",
                 "Daily 6 AM catalyst brief"].map(f => (
                 <li key={f} style={{fontSize:12, color:C.green, display:"flex", gap:7,
                   alignItems:"center", fontWeight:400}}>

@@ -9,7 +9,7 @@
 // Run: node scripts/verify-tiingo.mjs
 
 import { readFileSync } from 'node:fs';
-import { TIINGO_VOLUME, volumeLabel, TIINGO_EOD_CAPABILITIES } from '../src/lib/market/tiingo.mjs';
+import { TIINGO_VOLUME, volumeLabel, TIINGO_EOD_CAPABILITIES, resolveQuoteEntitlement, tiingoRealtimeEnabled } from '../src/lib/market/tiingo.mjs';
 import { VOLUME_METHODOLOGY, methodologyCompatible } from '../src/lib/scan/provider-contract.mjs';
 import { FRESHNESS, freshnessAtLeast } from '../src/lib/scan/market-capabilities.mjs';
 
@@ -137,6 +137,70 @@ console.log('\n=== entitlement: asking for realtime cannot produce realtime ==='
   ok('PRO user on an EOD plan still gets EOD', serve(true, false) === FRESHNESS.EOD);
   ok('PRO user on an entitled plan gets realtime', serve(true, true) === FRESHNESS.REALTIME);
   ok('free user on an entitled plan still gets EOD', serve(false, true) === FRESHNESS.EOD);
+}
+
+// ── THE FLAG IS THE GATE, NOT THE VENDOR'S FIELDS ───────────────────────────
+//
+// ⚠️ THE CHECK ABOVE MODELS THE RULE; THIS ONE CALLS IT. getQuotes() took only `symbols` while
+// market-data.js passed `{ realtime: wantLive }`, so the entitlement decision was computed and
+// then dropped. What kept free users on EOD was an accident of the payload — on this account
+// lastSaleTimestamp, last, bidPrice and quoteTimestamp all return null, so the realtime branch
+// never fired. That is the vendor withholding data, not us declining to serve it.
+console.log('\n=== the entitlement gate, exercised directly ===');
+{
+  const g = (entitled, vendorIsLive) => resolveQuoteEntitlement({ entitled, vendorIsLive });
+
+  ok('unentitled + no live print → EOD', g(false, false).freshness === FRESHNESS.EOD);
+  ok('unentitled + a LIVE print → still EOD',
+    g(false, true).freshness === FRESHNESS.EOD);
+  // The part that matters most: we must not even serve the price, whatever we call it.
+  ok('…and the live price is refused, not merely relabelled',
+    g(false, true).useLivePrice === false);
+  ok('entitled + no live print → EOD', g(true, false).freshness === FRESHNESS.EOD);
+  ok('entitled + a live print → realtime', g(true, true).freshness === FRESHNESS.REALTIME);
+  ok('the settled close is always servable', g(false, false).useLivePrice === true);
+
+  // The flag itself, as this build reads it.
+  ok('TIINGO_REALTIME_ENABLED is OFF in this environment', tiingoRealtimeEnabled() === false);
+
+  const src = readFileSync(new URL('../src/lib/market/tiingo.mjs', import.meta.url), 'utf8');
+  ok('getQuotes accepts the entitlement option it is passed',
+    /export async function getQuotes\(symbols, \{ realtime = false \} = \{\}\)/.test(src));
+  ok('…and both halves must agree before a quote is live',
+    /const entitled = realtime && tiingoRealtimeEnabled\(\);/.test(src));
+  // No production subscribe may exist until the flag is real.
+  ok('no WebSocket subscribe is implemented', !/new WebSocket|wss:\/\/api\.tiingo/.test(src.replace(/\/\/.*$/gm, '')));
+}
+
+console.log('\n=== query budget is recorded, and caching is the real limiter ===');
+{
+  const src = readFileSync(new URL('../src/lib/market/tiingo.mjs', import.meta.url), 'utf8');
+  ok('the contract budget is written down', /PER_DAY: 400_000/.test(src) && /PER_HOUR: 30_000/.test(src));
+  ok('every outbound call is counted', /countCall\(\);/.test(src));
+  ok('…and the count is readable', /export const tiingoBudget/.test(src));
+  // ⚠️ A COUNTER IS NOT A THROTTLE, and pretending otherwise would be worse than having neither.
+  ok('the counter does not silently drop a request',
+    !/if \(budget\.\w+Count >[^\n]*return/.test(src));
+  ok('the bucket each endpoint draws on is documented',
+    /WHICH CONTRACT BUCKET EACH ENDPOINT DRAWS ON/.test(src));
+}
+
+console.log('\n=== attribution the agreement requires ===');
+{
+  const dis = readFileSync(new URL('../src/app/disclaimer/DisclaimerClient.jsx', import.meta.url), 'utf8');
+  ok('the disclaimer carries the exact required phrase', /Market Data from/.test(dis));
+  ok('…with Tiingo.com hyperlinked', /href="https:\/\/www\.tiingo\.com"[\s\S]{0,120}Tiingo\.com/.test(dis));
+  ok('…and Tiingo is named among the sources', /aggregates data from[\s\S]{0,200}Tiingo/.test(dis));
+}
+
+console.log('\n=== marketing promises only what the feed can serve ===');
+{
+  const home = readFileSync(new URL('../src/components/CatalystPit.jsx', import.meta.url), 'utf8')
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  for (const claim of ['dark pool', 'options flow', 'unusual volume']) {
+    ok(`the Pro list does not promise ${claim}`, !new RegExp(claim, 'i').test(home));
+  }
+  ok('…nor live charts', !/Live charts/i.test(home));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

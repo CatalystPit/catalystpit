@@ -255,6 +255,15 @@ export default function ScreenerClient() {
       <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '7px 20px' }}>
         <div style={{ maxWidth: 1760, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 19, fontWeight: 600, color: C.ink, marginRight: 4 }}>Screener</span>
+          {/* ⚠️ Rel Vol HERE IS A DAILY RATIO, NOT AN INTRADAY ONE. It is last session's composite
+              volume over the average — computed from end-of-day bars by the nightly screener job.
+              The column was unlabelled, which let "Rel Vol" read as the live intraday measure the
+              product deliberately does not have. The label is the whole fix; the number is sound. */}
+          <span title="Columns are computed from the last completed session's end-of-day bars."
+            style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: '0.6px',
+              color: C.dim, border: `1px solid ${C.border2}`, borderRadius: 3, padding: '1px 6px', marginRight: 4 }}>
+            END OF DAY
+          </span>
           <select onChange={(e) => { if (e.target.value) applyPreset(PRESETS[e.target.value]); e.target.value = ''; }} style={selStyle} defaultValue="">
             <option value="">Presets…</option>
             {Object.keys(PRESETS).map((p) => <option key={p} value={p}>{p}</option>)}

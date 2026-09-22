@@ -54,6 +54,24 @@ export const tiingoConfigured = () => Boolean(TOKEN) && ENABLED;
 export const tiingoRealtimeEnabled = () => tiingoConfigured() && REALTIME_ENABLED;
 
 /**
+ * THE ENTITLEMENT GATE, AS A FUNCTION SO IT CAN BE TESTED RATHER THAN ASSERTED.
+ *
+ * Both halves are required. `vendorIsLive` says Tiingo sent a timestamped sale; `entitled` says we
+ * are permitted to redistribute one. Either alone yields EOD — which is the whole point, because
+ * the previous behaviour let the VENDOR decide by simply populating a field.
+ *
+ * @returns {{ freshness: string, useLivePrice: boolean }}
+ */
+export function resolveQuoteEntitlement({ entitled = false, vendorIsLive = false } = {}) {
+  const live = Boolean(entitled && vendorIsLive);
+  return {
+    freshness: live ? FRESHNESS.REALTIME : FRESHNESS.EOD,
+    // Unentitled, a live print is not ours to serve at any label — fall back to the settled close.
+    useLivePrice: !(vendorIsLive && !entitled),
+  };
+}
+
+/**
  * VOLUME METHODOLOGY, named for what it actually is.
  *
  * These map onto the shared VOLUME_METHODOLOGY vocabulary so the scan engine's compatibility rule
@@ -104,11 +122,77 @@ export const TIINGO_EOD_CAPABILITIES = describeProvider({
   universeSize: 42764,                    // measured from the all-ticker snapshot
 });
 
+// ── WHICH CONTRACT BUCKET EACH ENDPOINT DRAWS ON ─────────────────────────────
+//
+// Three buckets, priced and entitled differently. Knowing which one a call lands in is the
+// difference between a supported request and an invoice conversation, so it is written down here
+// rather than inferred from the path each time:
+//
+//   /tiingo/daily/<sym>            EOD    metadata for a symbol. Entitled today.
+//   /tiingo/daily/<sym>/prices     EOD    end-of-day bars. Entitled today; this is the feed the
+//                                         whole product runs on — charts, Scan, Consensus levels.
+//   /iex/  (batch)                 IEX    the quote path. Reachable with the token, but NOT
+//                                         entitled for live redistribution: getQuotes() below
+//                                         refuses a timestamped live print unless
+//                                         tiingoRealtimeEnabled() is true.
+//   /iex/<sym>/prices              IEX    getIntradayBars — currently called from NOWHERE. Built
+//   /iex                           IEX    getAllTickersSnapshot — likewise uncalled. Neither is
+//                                         reachable by a page today; both must acquire the same
+//                                         entitlement check before anything calls them.
+//   wss://api.tiingo.com/equity/intraday  STREAM — deliberately NOT implemented. No subscribe
+//                                         exists in this codebase, and none may be added until
+//                                         the realtime flag is on for a real entitlement.
+//
+// ⚠️ DERIVED ≠ ENTITLED. An IEX last is a single-venue print, not the consolidated tape. It may
+// never be presented as "the" price or as consolidated volume — see TIINGO_VOLUME above.
+//
+// ── QUERY BUDGET: 400,000/day, 30,000/hour ───────────────────────────────────
+//
+// ⚠️ CACHING IS THE REAL LIMITER, AND IT HAS TO BE. Scan fans out over the whole Consensus board
+// and the watchlist surfaces fan out per ticker, so a per-page-view Tiingo call would burn the
+// hourly budget on one busy afternoon. The defences, in order of importance:
+//
+//   1. Nothing here is called from a page render. Quotes come from the shared quote cache
+//      (5-minute TTL, same key as /api/ticker), and Scan reads the ALREADY-materialized Consensus
+//      board rather than resolving anything per visitor.
+//   2. Daily bars are written to ticker_daily_candles by the warmers and read from Postgres.
+//   3. The counter below records what did leave the building, so "are we near the ceiling" is a
+//      question with an answer instead of a guess.
+//
+// The counter is observability, not a throttle: it does not block a call, because silently
+// dropping a market-data request would corrupt a board more quietly than exceeding a quota.
+
+/** Rolling in-process call counts. Per-instance, so treat as a floor, not a total. */
+const budget = { day: null, dayCount: 0, hour: null, hourCount: 0 };
+export const TIINGO_BUDGET = Object.freeze({ PER_DAY: 400_000, PER_HOUR: 30_000 });
+
+function countCall() {
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const hour = now.toISOString().slice(0, 13);
+  if (budget.day !== day) { budget.day = day; budget.dayCount = 0; }
+  if (budget.hour !== hour) { budget.hour = hour; budget.hourCount = 0; }
+  budget.dayCount++; budget.hourCount++;
+  // Logged at the thresholds that matter, not on every call — a log line per request would itself
+  // be the cost problem. 80% is the point at which someone should look.
+  if (budget.hourCount === Math.floor(TIINGO_BUDGET.PER_HOUR * 0.8)
+    || budget.dayCount === Math.floor(TIINGO_BUDGET.PER_DAY * 0.8)) {
+    console.warn(`[tiingo] budget 80%: ${budget.hourCount}/h ${budget.dayCount}/day (this instance)`);
+  }
+}
+
+/** What this instance has spent. Exposed for /api/health and for tests. */
+export const tiingoBudget = () => ({
+  day: budget.day, calls24h: budget.dayCount, perDay: TIINGO_BUDGET.PER_DAY,
+  hour: budget.hour, callsThisHour: budget.hourCount, perHour: TIINGO_BUDGET.PER_HOUR,
+});
+
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 // The token goes in the Authorization header, never the query string, so it cannot leak through a
 // logged URL, a referrer or an error message that echoes the request.
 async function tiingo(path, { searchParams = {} } = {}) {
   if (!tiingoConfigured()) return { ok: false, status: 0, reason: 'not-configured', data: null };
+  countCall();
   const url = new URL(`${BASE}${path}`);
   for (const [k, v] of Object.entries(searchParams)) if (v != null) url.searchParams.set(k, String(v));
   try {
@@ -230,7 +314,21 @@ export async function getIntradayBars(symbol, { from, to, freq = '5min', extende
  * print. Both are null outside an entitled session, in which case the previous close is used and
  * the change is reported against it — a real number with a truthful label, not a fabricated one.
  */
-export async function getQuotes(symbols) {
+export async function getQuotes(symbols, { realtime = false } = {}) {
+  // ⚠️ OUR FLAG DECIDES, NOT THE VENDOR'S FIELDS.
+  //
+  // This function took only `symbols` while its one caller passed `{ realtime: wantLive }` — so
+  // the entitlement gate in market-data.js was computed and then dropped on the floor. What kept
+  // free users on EOD was an accident of the payload: on this account `lastSaleTimestamp`, `last`,
+  // `bidPrice` and `quoteTimestamp` all come back null and only `tngoLast` (the settled close) is
+  // populated, so the REALTIME branch never fired. That is the VENDOR withholding live data, not
+  // us declining to serve it. The day an entitlement is switched on at Tiingo's end, this would
+  // have started serving and labelling live prices with TIINGO_REALTIME_ENABLED still false.
+  //
+  // Now the flag is the gate. Unentitled, a payload that DOES carry a live print is refused and
+  // the previous close is served instead — because a live last we are not licensed to
+  // redistribute must not reach a page, however it is labelled.
+  const entitled = realtime && tiingoRealtimeEnabled();
   const syms = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))];
   if (!syms.length) return { ok: true, quotes: {}, freshness: FRESHNESS.EOD, provider: 'tiingo' };
 
@@ -246,7 +344,12 @@ export async function getQuotes(symbols) {
       if (!sym) continue;
       const live = num(q.tngoLast) ?? num(q.last);
       const prevClose = num(q.prevClose);
-      const price = live ?? prevClose;
+      // A live print is one the vendor timestamps as a sale. Unentitled, such a payload is not
+      // ours to serve, so the settled previous close is used instead. Outside a session this
+      // branch never fires — tngoLast is then the official close and is served as it always was.
+      const vendorIsLive = live != null && !!q.lastSaleTimestamp;
+      const gate = resolveQuoteEntitlement({ entitled, vendorIsLive });
+      const price = gate.useLivePrice ? (live ?? prevClose) : prevClose;
       if (price == null) continue;                       // no price is no quote; omit rather than zero
       const changePct = (prevClose != null && prevClose !== 0 && price != null)
         ? ((price - prevClose) / prevClose) * 100 : null;
@@ -260,8 +363,9 @@ export async function getQuotes(symbols) {
         volume: num(q.volume),
         volumeMethodology: num(q.volume) == null ? null : TIINGO_VOLUME.COMPOSITE_EOD,
         asOf: q.timestamp || null,
-        // Whether this price is live is a fact about the feed, not a hope.
-        freshness: (live != null && q.lastSaleTimestamp) ? FRESHNESS.REALTIME : FRESHNESS.EOD,
+        // Whether this price is live is a fact about the feed AND about our entitlement. Both
+        // have to be true; the vendor alone cannot promote a quote to REALTIME.
+        freshness: gate.freshness,
         provider: 'tiingo',
       };
     }
