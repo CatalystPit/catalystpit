@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo, useLogoBg, LOGO_DARK_BG } from '../../../lib/cp-shared';
+import { showsLogo, LOGO_STATE } from '../../../lib/logo-identity.mjs';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -30,9 +31,19 @@ function PC({ pc }) {
 
 // Holding-map tile: the company logo fills the box (no color fill); ticker + % on a strip below.
 // Falls back to ticker/issuer text when there's no logo (unresolved, or FMP has no image).
-function MapTile({ h, pct, flexGrow, onClick }) {
+//
+// ⚠️ AND NOW ALSO WHEN THE LOGO IS ABOUT THE FAMILY RATHER THAN THE SECURITY. Seven Avantis ETFs
+// rendered seven identical "A" tiles — correct tickers, correct CUSIPs, a provider legitimately
+// returning fund-family branding. But a map is a visual index, and a picture shared with six
+// neighbours identifies the issuer, not the holding. `logoState` carries that verdict down from
+// the page, which asks once for every ticker on screen rather than per tile.
+//
+// The fallback is the one this tile already had — the centred ticker mark — so nothing new was
+// designed, it is simply reached for a second, better reason. AVDE and AVLV then differ by the
+// only thing that actually distinguishes them.
+function MapTile({ h, pct, flexGrow, onClick, logoState }) {
   const [failed, setFailed] = useState(false);
-  const showLogo = h.ticker && !failed;
+  const showLogo = h.ticker && !failed && showsLogo(logoState);
   const { bgMode, ref, onLoad } = useLogoBg(h.ticker || '');   // adaptive contrast (same logic as TickerLogo)
   return (
     <div onClick={onClick} title={`${h.ticker || h.issuer} · ${pct.toFixed(1)}%${h.putCall ? ' ' + h.putCall.toUpperCase() : ''}`}
@@ -96,6 +107,10 @@ function ActivityList({ title, rows, kind, onPick }) {
 
 export default function FundProfile({ slug }) {
   const [d, setD] = useState(null);
+  // Which of the securities on screen have a picture that is actually about them. One request for
+  // the whole map, answered from signatures /api/logo recorded when it first proxied each image —
+  // no provider calls, and nothing compared at render time.
+  const [logoStates, setLogoStates] = useState({});
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
   const [admin, setAdmin] = useState(false);
@@ -134,6 +149,25 @@ export default function FundProfile({ slug }) {
     (async () => { try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; if (alive) setAdmin(!!j?.admin); } catch {} })();
     return () => { alive = false; };
   }, [slug]);
+
+  // ⚠️ ONE REQUEST FOR THE WHOLE MAP, KEYED ON THE TICKERS IT ACTUALLY SHOWS. Asking per tile
+  // would be 30 round trips to decide 30 pictures. This is a KV lookup — it starts no provider
+  // work and cannot make the page wait on an upstream: until it answers, every tile is UNKNOWN
+  // and renders its logo exactly as before.
+  const mapTickers = (d?.holdings || []).slice(0, 30).map((h) => h.ticker).filter(Boolean);
+  const mapKey = mapTickers.join(',');
+  useEffect(() => {
+    if (!mapKey) return;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/logo/identity?tickers=${encodeURIComponent(mapKey)}`);
+        const j = r.ok ? await r.json() : null;
+        if (alive && j?.states) setLogoStates(j.states);
+      } catch { /* leave everything UNKNOWN — the map renders as it always did */ }
+    })();
+    return () => { alive = false; };
+  }, [mapKey]);
 
   const fund = d?.fund;
   const holdings = d?.holdings || [];
@@ -203,7 +237,8 @@ export default function FundProfile({ slug }) {
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 12 }}>
                 {holdings.slice(0, 30).map((h, i) => (
-                  <MapTile key={i} h={h} pct={(h.value || 0) / shownTotal * 100} flexGrow={h.value || 1} onClick={() => go(h.ticker)} />
+                  <MapTile key={i} h={h} pct={(h.value || 0) / shownTotal * 100} flexGrow={h.value || 1}
+                    onClick={() => go(h.ticker)} logoState={logoStates[h.ticker] || LOGO_STATE.UNKNOWN} />
                 ))}
               </div>
             </div>
