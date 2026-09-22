@@ -1362,7 +1362,16 @@ section('21. the chart surface: legend, crosshair and the readout that is always
     /\{Number\.isFinite\(bar\.o\) && cell\('O'/.test(leg));
   // The 15-minute delay is a fact about the feed and the reader has to be told.
   ok('a delayed feed is badged', /DELAYED<\/span>/.test(leg));
-  ok('...only when the feed actually says so', /delayed=\{meta\?\.delayed === true\}/.test(cmp));
+  // ⚠️ THE BADGE IS STILL DRIVEN BY THE FEED, BUT BY BOTH HALVES OF IT NOW. This pinned the exact
+  // text `delayed={meta?.delayed === true}`, which described the world before an entitled realtime
+  // price could sit on top of delayed history. meta.delayed is the HISTORICAL source's flag; it
+  // says nothing about the live price now driving the forming candle, and badging an entitled
+  // realtime quote as delayed is as wrong as the reverse. The guarantee is unchanged — the badge
+  // still comes from the feed and never from a hardcoded value — so the assertion tracks the
+  // guarantee rather than the spelling.
+  ok('...only when the feed actually says so',
+    /delayed=\{!liveIsRealtime && meta\?\.delayed === true\}/.test(cmp));
+  ok('...and a verified realtime price clears it', /liveIsRealtime/.test(cmp));
 
   // ── IT MUST NOT EAT THE CHART ───────────────────────────────────────────────────────────────
   ok('the legend is pointer-transparent', /pointerEvents: 'none'/.test(leg));

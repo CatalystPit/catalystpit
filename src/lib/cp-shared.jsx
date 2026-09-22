@@ -267,6 +267,83 @@ export function BrandStyles() {
   );
 }
 
+/**
+ * THE ONE PLACE A CLIENT SURFACE GETS A CURRENT PRICE.
+ *
+ * ⚠️ WHY A POLL AND NOT A WEBSOCKET. Tiingo's realtime socket needs the API key to authenticate,
+ * so a browser connection would mean shipping the key — and one socket per tab would burn the
+ * account's connection budget on however many tabs are open. /api/quotes already resolves the
+ * session server-side, calls the canonical getQuotes, batches symbols into one upstream request
+ * and coalesces concurrent callers. Polling it is the smallest thing that reuses all of that, and
+ * a server-side fan-out socket can replace the transport later without any caller changing.
+ *
+ * ⚠️ AND THE ENTITLEMENT IS NOT THIS HOOK'S DECISION. It asks for prices and renders what comes
+ * back. The route decides whether that is a live print or the settled close, from the session —
+ * so a Free user polling faster simply receives the same previous close more often, and there is
+ * no client-side flag anyone can flip to obtain a Pro value.
+ *
+ * Returns { quotes, asOf, stale, loading }. `stale` means the last successful response is older
+ * than the staleness window: the caller should keep showing the number but must stop calling it
+ * live, which is the distinction that matters when a feed drops mid-session.
+ */
+export const QUOTE_POLL_MS = 5000;
+export const QUOTE_STALE_MS = 30_000;
+
+export function useRealtimeQuotes(symbols, { intervalMs = QUOTE_POLL_MS } = {}) {
+  // A stable primitive key: the effect must re-run when the SYMBOLS change, not when the caller
+  // happens to rebuild the array. Passing the array itself re-subscribes on every render, which is
+  // how a polling hook quietly becomes several polling hooks.
+  const key = (Array.isArray(symbols) ? symbols : [])
+    .map((s) => String(s || '').toUpperCase().trim()).filter(Boolean)
+    .filter((s, i, a) => a.indexOf(s) === i).sort().join(',');
+
+  const [state, setState] = useState({ quotes: {}, asOf: 0, loading: true });
+
+  useEffect(() => {
+    if (!key) { setState({ quotes: {}, asOf: 0, loading: false }); return undefined; }
+    let alive = true;
+    let timer = null;
+
+    const tick = async () => {
+      // A hidden tab is not watching a price. Skipping keeps a wall of background tabs from
+      // multiplying provider load for nobody's benefit; the next visible tick refreshes.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      try {
+        const r = await fetch(`/api/quotes?symbols=${encodeURIComponent(key)}`, { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        // ⚠️ A FAILED POLL KEEPS THE LAST GOOD QUOTES AND LETS THEM AGE. Blanking the price on one
+        // dropped request would flicker the whole surface on ordinary network noise; the asOf
+        // stamp is what turns "briefly unanswered" into "visibly stale" a few seconds later.
+        if (alive && j && typeof j === 'object') setState({ quotes: j, asOf: Date.now(), loading: false });
+        else if (alive) setState((s) => ({ ...s, loading: false }));
+      } catch { if (alive) setState((s) => ({ ...s, loading: false })); }
+    };
+
+    tick();
+    timer = setInterval(tick, intervalMs);
+    // Coming back to a tab should not wait a full interval to show a current price.
+    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [key, intervalMs]);
+
+  const stale = state.asOf > 0 && (Date.now() - state.asOf) > QUOTE_STALE_MS;
+  return { ...state, stale };
+}
+
+/**
+ * Is this quote a live print, per the SERVER's own labelling?
+ *
+ * ⚠️ NEVER INFERRED FROM THE PRICE. A quote that happens to differ from the previous close is not
+ * evidence of entitlement, and a quote that happens to equal it is not evidence of staleness. The
+ * route stamps `freshness` from the entitlement gate; this only reads it.
+ */
+export const isRealtimeQuote = (q) => q?.freshness === 'realtime';
+
 // ─── PRIMITIVES ─────────────────────────────────────────────────────────────
 
 // THE SMALL OUTLINED BADGE — LAST CLOSE, DELAYED, and their siblings.

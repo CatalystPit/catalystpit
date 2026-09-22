@@ -8,8 +8,8 @@ import CPChart from '../../components/chart/CPChart';
 import PitScanPanel from '../../components/scan/PitScanPanel';
 import CustomScannerPanel from '../../components/scan/CustomScannerPanel';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2 } from '../../lib/cp-shared';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, useRealtimeQuotes, isRealtimeQuote } from '../../lib/cp-shared';
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
@@ -906,6 +906,36 @@ function WatchlistBody({ onPick }) {
     load(); const id = setInterval(load, 45000);
     return () => { alive = false; clearInterval(id); };
   }, [rows]);
+
+  // ⚠️ THE WATCHLIST DID NOT UPDATE BECAUSE IT NEVER ASKED TWICE. loadRows() ran once on mount
+  // with no interval, so the prices were whatever they had been at page load — no amount of
+  // entitlement could have changed that. It also read /api/watchlist?prices=1, which serves a
+  // Finnhub quote out of a SHARED cache with no tier in the key; that path is fine for the
+  // durable row (it is the same close everyone sees) but it is not, and never was, the canonical
+  // entitled price.
+  //
+  // The current price now comes from the one endpoint that resolves entitlement server-side. The
+  // stored row still supplies identity and the fallback close, so a symbol the quote feed has
+  // nothing for renders exactly as it does today rather than blanking.
+  const wlSymbols = useMemo(() => (rows || []).map((r) => r.ticker).filter(Boolean), [rows]);
+  const { quotes: wlQuotes, stale: wlStale } = useRealtimeQuotes(wlSymbols);
+
+  // ⚠️ PERCENT IS COMPUTED FROM THE PAIR WE ACTUALLY HAVE, NEVER MIXED. Taking a live price and
+  // dividing by a previous close from a different provider's cached row would produce a percentage
+  // describing neither. If the quote carries both, use both; otherwise fall back to the stored
+  // row wholesale.
+  const priceOf = (r) => {
+    const q = wlQuotes[r.ticker];
+    return q && q.price != null ? q.price : r.price;
+  };
+  const changeOf = (r) => {
+    const q = wlQuotes[r.ticker];
+    if (q && q.price != null && q.prevClose != null && q.prevClose !== 0) {
+      return ((q.price - q.prevClose) / q.prevClose) * 100;
+    }
+    return r.changePct;
+  };
+
   const badgesFor = (t) => ['halt', 'news', 'pit'].filter((k) => (sig[k] || []).includes(t));
   if (rows === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading…</div>;
   if (rows.length === 0) return <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>Your watchlist is empty. Tap the ★ on any ticker page to track it here. <a href="/watchlist" style={{ color: C.green, fontWeight: 600 }}>Manage</a></div>;
@@ -922,9 +952,11 @@ function WatchlistBody({ onPick }) {
                 {badgesFor(r.ticker).map((k) => { const b = WL_BADGE[k]; return <span key={k} title={`${b.label} · live`} style={{ marginLeft: 4, fontSize: 8, fontWeight: 800, color: b.fg, background: b.bg, borderRadius: 3, padding: '1px 4px', verticalAlign: 'middle' }}>{b.label}</span>; })}
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
               </td>
-              {showPrice && <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>{r.price != null ? (r.price > 1000 ? (+r.price).toLocaleString() : fmt2(+r.price)) : '—'}</td>}
-              <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: r.changePct == null ? C.dim : r.changePct >= 0 ? C.green : C.red, fontWeight: 600 }}>
-                {r.changePct == null ? '—' : `${r.changePct > 0 ? '+' : ''}${fmt2(r.changePct)}%`}
+              {showPrice && <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>
+                {priceOf(r) != null ? (priceOf(r) > 1000 ? (+priceOf(r)).toLocaleString() : fmt2(+priceOf(r))) : '—'}
+              </td>}
+              <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: changeOf(r) == null ? C.dim : changeOf(r) >= 0 ? C.green : C.red, fontWeight: 600 }}>
+                {changeOf(r) == null ? '—' : `${changeOf(r) > 0 ? '+' : ''}${fmt2(changeOf(r))}%`}
               </td>
             </tr>
           ))}

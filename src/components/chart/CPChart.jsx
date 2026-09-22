@@ -1,6 +1,6 @@
 'use client';
 import { Fragment, useEffect, useRef, useState, useCallback } from 'react';
-import { useTheme } from '../../lib/cp-shared';
+import { useTheme, useRealtimeQuotes, isRealtimeQuote } from '../../lib/cp-shared';
 import {
   DEFAULT_TIMEFRAME, timeframe, timeframesByGroup, unavailableReason, isIntraday,
   supportsExtendedHours, barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol, initialBarsFor,
@@ -1141,6 +1141,57 @@ export default function CPChart({
     draw();
   }, [active, theme, draw]);
 
+  // ── REALTIME OVERLAY ────────────────────────────────────────────────────────
+  //
+  // The historical bars stay exactly where they come from — a delayed historical source, which is
+  // why this chart said DELAYED and why enabling the realtime entitlement changed nothing here.
+  // The entitled live price is a SEPARATE fact, and this merges it onto the bar still forming.
+  //
+  // ⚠️ NO VENDOR IS NAMED IN THIS FILE, DELIBERATELY, and my first draft of these comments broke
+  // that — verify-chart asserts the component never mentions one. The boundary is the point: the
+  // chart asks the market-data layer for a price and never learns who supplied it.
+  //
+  // ⚠️ IT UPDATES THE BAR IN PROGRESS; IT NEVER CREATES ONE. Appending a candle would mean
+  // inventing a bar boundary for whatever timeframe is selected, and a fabricated 5-minute candle
+  // built from price ticks is not a candle. The forming bar's CLOSE follows the latest tick and
+  // its HIGH/LOW stretch to the extremes seen; when a real new bar exists, the polling refresh
+  // above brings it from the source with genuine OHLC and this starts extending that one instead.
+  //
+  // ⚠️ AND IT NEVER TOUCHES VOLUME. There is no defensible consolidated intraday volume in this
+  // entitlement (measured at 0.17%–0.40% of the tape), so the bar keeps whatever volume its
+  // source gave it. A live candle whose price is current and whose volume is not is honest; one
+  // with a volume number assembled from venue prints is not.
+  const { quotes: liveQuotes, stale: liveStale } = useRealtimeQuotes(sym ? [sym] : []);
+  const liveQuote = liveQuotes?.[String(sym || '').toUpperCase()];
+  // Realtime is the SERVER's verdict, never inferred from the number moving.
+  const liveIsRealtime = isRealtimeQuote(liveQuote) && !liveStale;
+  const livePrice = liveIsRealtime && Number.isFinite(Number(liveQuote?.price)) ? Number(liveQuote.price) : null;
+
+  useEffect(() => {
+    if (livePrice == null) return;
+    const bars = barsRef.current;
+    if (!bars.length || !priceRef.current) return;
+    const last = bars[bars.length - 1];
+    if (!last) return;
+
+    const close = livePrice;
+    const high = Math.max(Number(last.high), close);
+    const low = Math.min(Number(last.low), close);
+    // Nothing to redraw if the tick is inside the bar and equal to the last close.
+    if (close === last.close && high === last.high && low === last.low) return;
+
+    const merged = { ...last, close, high, low };
+    bars[bars.length - 1] = merged;
+    try {
+      priceRef.current.update(chartTypeOf(typeRef.current).map(merged));
+    } catch { /* a series mid-teardown must not take the panel down */ }
+    // Keep the readout in step with the candle it describes.
+    setTail({
+      bar: { o: merged.open, h: merged.high, l: merged.low, c: merged.close, v: merged.volume },
+      prevClose: bars.length > 1 ? bars[bars.length - 2].close : null,
+    });
+  }, [livePrice]);
+
   // ── polling refresh. There is no stream to subscribe to; see REALTIME in chart-source.mjs ──
   useEffect(() => {
     const ms = refreshIntervalMs(tf);
@@ -1393,7 +1444,9 @@ export default function CPChart({
             theme={theme} symbol={sym}
             intervalLabel={timeframe(tf)?.short ?? tf}
             chartTypeLabel={chartTypeOf(chartType).label}
-            delayed={meta?.delayed === true}
+            // The DELAYED badge answers the same question as the footer and must not disagree with
+            // it: a live price is not delayed just because its history came from a delayed source.
+            delayed={!liveIsRealtime && meta?.delayed === true}
             bar={(cursor || tail).bar} prevClose={(cursor || tail).prevClose}
             compact={narrow}
             // THE STUDIES THEMSELVES ARE UNTOUCHED by this flag — it reaches only the legend rows.
@@ -1607,7 +1660,13 @@ export default function CPChart({
 
       {/* Apache-2.0 attribution — required, and asserted by scripts/verify-chart.mjs */}
       <div style={{ paddingTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: p.text, letterSpacing: '0.3px' }}>
-        {meta?.delayed === true ? '15-min delayed · ' : ''}
+        {/* ⚠️ THE LABEL DESCRIBES THE PRICE ON SCREEN, NOT THE SOURCE OF THE HISTORY. It read
+            meta.delayed, which is the HISTORICAL source's flag and is constant for that feed —
+            so an entitled user watching a live price was told it was 15 minutes old.
+            When a verified realtime quote is driving the forming candle, that is what it says;
+            otherwise the historical caveat stands exactly as before. A Free user never reaches
+            the first branch, because the server never stamps their quote realtime. */}
+        {liveIsRealtime ? 'Real-time price · ' : (meta?.delayed === true ? '15-min delayed · ' : '')}
         {extended && canExtend ? 'Extended hours · ' : ''}
         {/* Stated only on a long interval, where a reader is judging the length of the record: the
             refresh failed, so this start date is a floor rather than the security's inception. */}
