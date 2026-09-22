@@ -68,7 +68,7 @@ const institution = (daysAgo, extra = {}) => ({
   evidenceId: `n${daysAgo}`, family: FAMILY.INSTITUTION, type: 'institution_breadth_change',
   direction: 'positive', materiality: 0.45, quality: 0.8,
   publicTime: ago(daysAgo), eventTime: '2026-06-30T00:00:00.000Z', referencePeriod: 'Q2 2026',
-  summary: 'Manager breadth increased from 433 to 448', source: 'sec_13f', url: null,
+  summary: 'Institutions holding this stock increased from 433 to 448', source: 'sec_13f', url: null,
   facts: { quarter: 'Q2 2026', quarterEnd: '2026-06-30', breadthFrom: 433, breadthTo: 448,
     delta: 15, unusual: false, basis: 'insufficient_history', disclosedAt: '2026-08-06' }, ...extra,
 });
@@ -116,7 +116,7 @@ L('\n=== FAMILY FACTS COME FROM CANONICAL FIELDS ONLY ===');
   ok('verification uses the stored URL', i.url.startsWith('https://www.sec.gov/'));
 
   const n = evidenceFacts(institution(45), { now: NOW });
-  ok('institutions show the manager delta', n.lines.some((l) => /15 managers added/.test(l)), n.lines.join(' | '));
+  ok('institutions show the manager delta', n.lines.some((l) => /15 more institutions reported holding it/.test(l)), n.lines.join(' | '));
   ok('…and never fabricate a link when none exists',
     mut('fakeurl') ? false : n.url === null);
 

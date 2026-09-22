@@ -208,7 +208,7 @@ check('too few priors makes "largest" vacuous and silent',
   extremeContext({ value: 999999, priorValues: [1], coverageStart: cov3y, now: NOW }) === null);
 
 check('a rising streak is reported',
-  streakContext({ series: [10, 20, 30, 40] })?.text === 'Institutional breadth increased for 3 consecutive quarters');
+  streakContext({ series: [10, 20, 30, 40] })?.text === 'Institutional ownership count increased for 3 consecutive quarters');
 check('a falling streak is reported', streakContext({ series: [40, 30, 20, 10] })?.direction === 'down');
 check('a two-quarter run is not a streak', streakContext({ series: [10, 5, 20, 30] }) === null);
 check('too short a series produces nothing', streakContext({ series: [10, 20] }) === null);
@@ -219,7 +219,7 @@ check('a breadth change with thin history is stated, not characterised',
 check('a breadth change with thin history reports why',
   breadthChangeContext({ from: 42, to: 57, priorChanges: [3] })?.reason === 'insufficient_history');
 check('a breadth change with thin history states the fact',
-  breadthChangeContext({ from: 42, to: 57, priorChanges: [3] })?.text === 'Manager breadth increased from 42 to 57');
+  breadthChangeContext({ from: 42, to: 57, priorChanges: [3] })?.text === 'Institutions holding this stock increased from 42 to 57');
 check('a normal-sized change is not called unusual',
   breadthChangeContext({ from: 42, to: 45, priorChanges: [3, 4, 2, 5, 3] })?.unusual === false);
 check('a genuinely outsized change is called unusual',
@@ -228,7 +228,7 @@ check('a genuinely outsized change is called unusual',
 // ticker page printed the identical sentence twice — once as the summary, once as its own context.
 check('an unusual change keeps its text plain',
   breadthChangeContext({ from: 42, to: 116, priorChanges: [3, 4, 2, 5, 3] })?.text
-    === 'Manager breadth increased from 42 to 116');
+    === 'Institutions holding this stock increased from 42 to 116');
 check('the unusualness note is its own field',
   breadthChangeContext({ from: 42, to: 116, priorChanges: [3, 4, 2, 5, 3] })?.note
     === 'Largest quarterly change in our history for this ticker');
@@ -242,7 +242,7 @@ check('a flat history cannot manufacture unusualness',
   breadthChangeContext({ from: 42, to: 50, priorChanges: [3, 3, 3, 3] })?.unusual === false,
   JSON.stringify(breadthChangeContext({ from: 42, to: 50, priorChanges: [3, 3, 3, 3] })));
 check('a flat history still reports the factual change',
-  breadthChangeContext({ from: 42, to: 50, priorChanges: [3, 3, 3, 3] })?.text === 'Manager breadth increased from 42 to 50');
+  breadthChangeContext({ from: 42, to: 50, priorChanges: [3, 3, 3, 3] })?.text === 'Institutions holding this stock increased from 42 to 50');
 check('a zero change produces nothing', breadthChangeContext({ from: 42, to: 42, priorChanges: [1, 2, 3, 4] }) === null);
 
 // Implausible breadth — every case below is LIVE DATA, not hypothetical.
@@ -292,10 +292,10 @@ check('stale is returned rather than dropped', Array.isArray(grouped.stale));
 
 // A context that merely restates the summary is dropped at construction.
 check('a context echoing the summary is dropped',
-  ev({ summary: 'Manager breadth increased from 14 to 26',
-       context: { text: 'Manager breadth increased from 14 to 26' } }).evidence.context === null);
+  ev({ summary: 'Institutions holding this stock increased from 14 to 26',
+       context: { text: 'Institutions holding this stock increased from 14 to 26' } }).evidence.context === null);
 check('a context saying something new is kept',
-  ev({ summary: 'Manager breadth increased from 14 to 26',
+  ev({ summary: 'Institutions holding this stock increased from 14 to 26',
        context: { text: 'Largest quarterly change in our history for this ticker' } })
     .evidence.context?.text === 'Largest quarterly change in our history for this ticker');
 
@@ -322,6 +322,52 @@ check('freshness of a malformed object is stale', freshness({}, { now: NOW }) ==
 check('rankEvidence on null returns empty', rankEvidence(null, { now: NOW }).length === 0);
 check('optional fields default to null rather than undefined',
   ev().evidence.subtype === null && ev().evidence.context === null && ev().evidence.url === null);
+
+// ─── THE INSTITUTIONAL SENTENCES ARE READABLE, AND CLAIM ONLY WHAT 13F SUPPORTS ──────────────
+//
+// Two separate rules, both easy to break with one well-meaning edit:
+//
+//   READABLE — "breadth" is the right word for the measure and stays in the variables, the field
+//   and the maths. It is not a word a retail reader knows, and a sentence nobody parses is worth
+//   nothing however correct the number behind it is.
+//
+//   ⚠️ AND NOT A TRADE. A change in this count says more FILERS REPORTED a position between two
+//   quarters. It is not evidence that anyone transacted — the positions are up to 45 days stale on
+//   the day they are published — so "bought", "buying" and "currently own" are all claims the data
+//   cannot carry, in either direction.
+console.log('\n=== CUSTOMER-FACING INSTITUTIONAL COPY ===');
+{
+  const texts = [
+    breadthChangeContext({ from: 677, to: 732, priorChanges: [3] })?.text,
+    breadthChangeContext({ from: 732, to: 677, priorChanges: [3] })?.text,
+    breadthChangeContext({ from: 42, to: 50, priorChanges: [3, 3, 3, 3] })?.text,
+    streakContext({ series: [600, 640, 660, 677, 700, 715, 720, 732] })?.text,
+    streakContext({ series: [732, 720, 700, 690, 677] })?.text,
+  ].filter(Boolean);
+
+  check('every institutional sentence was produced', texts.length === 5);
+  check('none of them says "breadth" to the reader', !texts.some((t) => /breadth/i.test(t)),
+    texts.find((t) => /breadth/i.test(t)) || '');
+
+  const trade = /\b(bought|buys?|buying|sold|sells?|selling|currently own|new institutions)\b/i;
+  check('none of them claims a trade', !texts.some((t) => trade.test(t)),
+    texts.find((t) => trade.test(t)) || '');
+
+  // The exact card from the report, both directions.
+  check('the reported card reads in plain English',
+    texts[0] === 'Institutions holding this stock increased from 677 to 732', texts[0]);
+  check('…and the opposite direction is symmetrical',
+    texts[1] === 'Institutions holding this stock decreased from 732 to 677', texts[1]);
+  check('the streak line names the count, not the jargon',
+    texts[3] === 'Institutional ownership count increased for 7 consecutive quarters', texts[3]);
+  check('…and reads correctly falling too',
+    /^Institutional ownership count decreased for \d+ consecutive quarters$/.test(texts[4]), texts[4]);
+
+  // ⚠️ COPY ONLY. The numbers, direction and classification behind the sentence must be untouched.
+  const c = breadthChangeContext({ from: 677, to: 732, priorChanges: [8, 9, 7, 11] });
+  check('the numbers and classification are unchanged by the rewording',
+    c.delta === 55 && c.unusual === true && /677/.test(c.text) && /732/.test(c.text));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

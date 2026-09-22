@@ -125,13 +125,18 @@ export function extremeContext({ value, priorValues = [], coverageStart = null, 
 }
 
 /**
- * "Institutional breadth increased for 3 consecutive quarters" / null.
+ * "Institutional ownership count increased for 3 consecutive quarters" / null.
  *
  * `series` is oldest-first breadth counts. A run of two is noise; the floor keeps this from firing
  * on every mega-cap every quarter.
+ *
+ * ⚠️ THE DEFAULT NOUN IS CUSTOMER-FACING COPY, NOT A LABEL FOR THE MEASURE. "Breadth" is the right
+ * word internally and stays everywhere else in this file, but a retail reader does not know it —
+ * and a sentence nobody parses is worth nothing however correct the number is. What the count
+ * actually is: how many institutions reported a position in the comparable periods.
  */
 export const MIN_STREAK_QUARTERS = 3;
-export function streakContext({ series = [], noun = 'Institutional breadth' } = {}) {
+export function streakContext({ series = [], noun = 'Institutional ownership count' } = {}) {
   const s = series.filter((n) => typeof n === 'number' && Number.isFinite(n));
   if (s.length < MIN_STREAK_QUARTERS + 1) return null;
   let up = 0, down = 0;
@@ -153,7 +158,8 @@ export function streakContext({ series = [], noun = 'Institutional breadth' } = 
  * does not lose 99% of its institutional holders in a quarter, and a mega-cap does not triple its
  * holder base. They are CUSIP→ticker resolution shifts, where a quarter's positions landed under a
  * different symbol. Breadth alone cannot distinguish that from a genuine mass exit, and
- * "Manager breadth decreased from 912 to 6" is a fabricated finding stated with total confidence.
+ * "Institutions holding this stock decreased from 912 to 6" is a fabricated finding stated with
+ * total confidence.
  *
  * THE TOLERANCE SCALES WITH THE HOLDER BASE, because stability does. A micro-cap moving from 14
  * managers to 26 is ordinary; a 600-holder name tripling is not. One flat ratio cannot express
@@ -189,7 +195,11 @@ export function breadthChangeContext({ from, to, priorChanges = [] } = {}) {
   const delta = to - from;
   if (delta === 0) return null;
   const verb = delta > 0 ? 'increased' : 'decreased';
-  const factual = `Manager breadth ${verb} from ${from} to ${to}`;
+  // ⚠️ "INSTITUTIONS HOLDING THIS STOCK", NOT "MANAGERS BOUGHT". The sentence states a change in
+  // how many filers REPORTED a position between two 13F periods — it is not evidence that anyone
+  // transacted, and both directions must read as a count moving, never as buying or selling.
+  // The variable, the field and the maths keep the word breadth; only the sentence changes.
+  const factual = `Institutions holding this stock ${verb} from ${from} to ${to}`;
 
   const hist = priorChanges.filter((n) => Number.isFinite(n)).map(Math.abs);
   if (hist.length < MIN_BREADTH_HISTORY) {

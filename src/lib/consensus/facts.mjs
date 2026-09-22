@@ -113,13 +113,18 @@ function institutionFacts(ev) {
   // front of the reader as a fact. The quarter and disclosure dates below still render.
   const artifact = implausibleBreadth(f.breadthFrom, f.breadthTo);
 
-  // The engine's summary already reads "Manager breadth increased from 433 to 448", so repeating
-  // it as "448 managers vs 433 prior quarter" printed the same fact twice on every card.
+  // The engine's summary already reads "Institutions holding this stock increased from 433 to
+  // 448", so repeating it as "448 managers vs 433 prior quarter" printed the same fact twice.
+  //
+  // ⚠️ AND THE WORDING HERE HAS TO MATCH IT. This line sits directly under that summary on the
+  // same card, so "55 managers added" beside "Institutions holding this stock increased" gave one
+  // concept two vocabularies in two adjacent sentences. "added"/"dropped" also read as trades,
+  // which 13F cannot support — what changed is how many filers REPORTED a position.
   if (!artifact && Number.isFinite(f.delta) && f.delta !== 0) {
-    const dir = f.delta > 0 ? 'added' : 'dropped';
-    lines.push(`${Math.abs(f.delta)} managers ${dir} since the prior quarter`);
+    const dir = f.delta > 0 ? 'more' : 'fewer';
+    lines.push(`${Math.abs(f.delta)} ${dir} institutions reported holding it than the prior quarter`);
   }
-  if (artifact) lines.push('Breadth change not shown — inconsistent ticker mapping between quarters');
+  if (artifact) lines.push('Institutional ownership count not shown — inconsistent ticker mapping between quarters');
 
   const qEnd = shortDate(f.quarterEnd);
   const disclosed = shortDate(f.disclosedAt || ev.publicTime);

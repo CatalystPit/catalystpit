@@ -40,7 +40,7 @@ const ins = (o = {}) => ({ evidenceId: 'i1', family: FAMILY.INSIDER, type: o.typ
     officer: o.officer !== false, title: 'CEO' } });
 const inst = (o = {}) => ({ evidenceId: 'n1', family: FAMILY.INSTITUTION, type: 'institution_breadth_change',
   direction: 'positive', materiality: 0.45, quality: 0.8, publicTime: ago(o.days ?? 45),
-  summary: 'Manager breadth increased', context: o.context || null,
+  summary: 'Institutions holding this stock increased', context: o.context || null,
   facts: { breadthFrom: o.from ?? 433, breadthTo: o.to ?? 448, unusual: o.unusual === true,
     quarterEnd: '2026-06-30', disclosedAt: '2026-08-06' } });
 const con = (o = {}) => ({ evidenceId: 'g1', family: FAMILY.CONGRESS, type: 'congress_disclosure',
@@ -575,7 +575,7 @@ L('\n=== DISPLAY CORRECTNESS: THE CARD CANNOT CONTRADICT ITSELF ===');
   const sheet = {
     catalyst: [{ familyLabel: 'CATALYST', direction: 'negative', headline: 'Delisting / listing-standard notice', publicAgo: '1 day ago' }],
     insider: [{ familyLabel: 'INSIDERS', direction: 'negative', headline: '5 insiders sold $7.0M outside a 10b5-1 plan' }],
-    institution: [{ familyLabel: 'INSTITUTIONS', direction: 'positive', headline: 'Manager breadth increased from 217 to 222' }],
+    institution: [{ familyLabel: 'INSTITUTIONS', direction: 'positive', headline: 'Institutions holding this stock increased from 217 to 222' }],
   };
 
   // ⚠️ C — GOLD CLASS. The sentence must describe each family the way its own visible block does.

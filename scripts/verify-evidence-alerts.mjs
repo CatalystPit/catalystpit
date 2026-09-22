@@ -46,7 +46,7 @@ const insider = {
 };
 const thirteenF = {
   ticker: 'ALK', family: 'institution', type: 'institution_breadth_change',
-  summary: 'Manager breadth increased from 434 to 478',
+  summary: 'Institutions holding this stock increased from 434 to 478',
   publicTime: '2026-08-06T00:00:00.000Z', referencePeriod: 'Q2 2026',
   source: 'sec_13f', sourceId: '13f|ALK|2026-06-30',
 };
