@@ -316,5 +316,54 @@ section('7. saved layouts still work, and still mean the same thing');
       && resizeRect(R(100, 100, 400, 300), 'e', 0, 0, MIN).w === 400);
 }
 
+
+// ─── ONE PANEL MUST NOT BE ABLE TO TAKE THE WORKSPACE DOWN ──────────────────
+//
+// ⚠️ THIS SECTION EXISTS BECAUSE IT HAPPENED. Enabling TIINGO_REALTIME_ENABLED made the scan
+// runtime report live, /api/pitscan started returning BOARD-shaped rows (ticker/last/structure)
+// where ScanTable expects SIGNAL-shaped rows (symbol/price/signals), and `r.signals.map(...)`
+// threw during render. With no error boundary anywhere, React unmounted the entire Terminal —
+// chart, wire, watchlist, tape and layout — over one bad field in one panel.
+//
+// Two independent defences, asserted separately because either alone would have prevented the
+// outage and neither alone is sufficient:
+//   1. the panel selects rows by SHAPE, so the wrong rows never reach the table
+//   2. a boundary isolates any panel that throws anyway
+section('\n=== TERMINAL PANEL ISOLATION ===');
+{
+  const panel = await readFile(new URL('../src/components/scan/PitScanPanel.jsx', import.meta.url), 'utf8');
+  const term = await readFile(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8');
+  const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  // 1. THE ROOT CAUSE — behaviour, replayed against the real production payload shape.
+  const boardRow = { ticker: 'OPTU', last: 1.08, changePct: 0, structure: ['BELOW PRIOR CLOSE'],
+    evidence: 'x', join: 'NO REACTION', facts: [] };
+  const signalRow = { symbol: 'AAPL', price: 1, changePct: 0, signals: [{ id: 's', label: 'x', category: 'momentum' }] };
+  const selectSignalRows = (rows) => (rows || []).filter((r) => r && r.symbol && Array.isArray(r.signals));
+
+  ok('board rows are not handed to the signal table',
+    selectSignalRows([boardRow, boardRow]).length === 0);
+  ok('…so the boards keep rendering when the feed goes live',
+    selectSignalRows([boardRow]).length === 0);
+  ok('genuine signal rows still reach it', selectSignalRows([signalRow]).length === 1);
+  ok('a mixed payload keeps only the rows the table understands',
+    selectSignalRows([boardRow, signalRow, null]).length === 1);
+  ok('the panel selects by shape, not by count',
+    /r\.symbol && Array\.isArray\(r\.signals\)/.test(code(panel)));
+  ok('…and passes only those rows to the table', /<ScanTable rows=\{signalRows\}/.test(code(panel)));
+
+  // 2. THE DEFENCE — the line that actually threw is no longer able to.
+  ok('the signals cell cannot throw on a row without signals',
+    /\(r\.signals \|\| \[\]\)\.map/.test(code(panel)));
+
+  // 3. THE BLAST RADIUS — every panel body is wrapped, not just the one that failed.
+  ok('a panel error boundary exists', /class PanelBoundary/.test(code(term)));
+  ok('…it is a real boundary', /getDerivedStateFromError/.test(code(term)) && /componentDidCatch/.test(code(term)));
+  ok('…and EVERY panel body goes through it, not just Pit Scan',
+    /const bodyOf = \(def\) => <PanelBoundary id=\{def\.id\}>\{rawBodyOf\(def\)\}<\/PanelBoundary>/.test(code(term)));
+  ok('a failed panel says so rather than rendering empty',
+    /This panel could not load/.test(term));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -62,7 +62,20 @@ export default function PitScanPanel({ onPick }) {
   // So the legacy signal tables render only when they genuinely have something, and the boards —
   // which are the product — render the rest of the time. Neither path changed; only the question
   // being asked to choose between them.
-  const hasSignalRows = live && ((state?.rows?.length || 0) > 0 || (state?.events?.length || 0) > 0);
+  // ⚠️ AND IT IS NOT ENOUGH TO ASK WHETHER `rows` IS EMPTY — THIS TOOK THE TERMINAL DOWN.
+  //
+  // I guarded on `rows.length > 0` assuming the array would stay empty until an ingestion worker
+  // existed. It did not. With TIINGO_REALTIME_ENABLED=true the scan runtime reports live, and
+  // /api/pitscan began returning four rows — but they are BOARD rows (ticker, last, structure,
+  // evidence, join, facts), not SIGNAL-engine rows (symbol, price, velocity, signals, context).
+  // Two different shapes behind one field name. ScanTable then ran `r.signals.map(...)` on rows
+  // that have no `signals`, threw a TypeError during render, and — with no error boundary
+  // anywhere — unmounted the entire Terminal, not just this panel.
+  //
+  // So the question is the SHAPE, not the count. A row belongs to the signal table only if it
+  // carries the fields that table reads.
+  const signalRows = (state?.rows || []).filter((r) => r && r.symbol && Array.isArray(r.signals));
+  const hasSignalRows = live && (signalRows.length > 0 || (state?.events?.length || 0) > 0);
   const byCategory = useMemo(() => {
     const out = new Map();
     for (const s of state?.signals?.disabled || []) {
@@ -176,7 +189,7 @@ export default function PitScanPanel({ onPick }) {
           )}
         </div>
       ) : tab === 'scan' ? (
-        <ScanTable rows={state.rows} onPick={onPick} />
+        <ScanTable rows={signalRows} onPick={onPick} />
       ) : (
         <PulseTape events={state.events} onPick={onPick} />
       )}
@@ -220,7 +233,13 @@ function ScanTable({ rows, onPick }) {
               {/* THE COLUMN THE PRODUCT IS ABOUT: what is true, not a score. */}
               <td style={{ padding: '5px 8px' }}>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {r.signals.map((s) => (
+                  {/* ⚠️ OPTIONAL, BECAUSE THIS EXACT LINE TOOK PRODUCTION DOWN. It read
+                      `r.signals.map(...)`, which is correct for every row this table was designed
+                      for and a TypeError for any row that is not one. A rendering component must
+                      not be the thing that decides a payload is malformed — it should draw what it
+                      can and leave the row selection to the caller. The caller now filters by
+                      shape; this is the belt to that pair of braces. */}
+                  {(r.signals || []).map((s) => (
                     <span key={s.id} title={s.detail}
                       style={{ fontSize: 8.5, fontWeight: 700, padding: '2px 5px', borderRadius: 3,
                         color: '#fff', background: CATEGORY_TONE[s.category] || C.ink }}>

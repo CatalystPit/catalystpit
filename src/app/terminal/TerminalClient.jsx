@@ -1,4 +1,5 @@
 'use client';
+import React from 'react';
 import ErrorState from '../../components/ErrorState';
 import {
   cursorFor, moveRect, applyResize, findSharedEdge, resizeStrips, isResizeHandle,
@@ -1301,7 +1302,20 @@ function Workspace() {
   useEffect(() => onTerminalSymbol(selectSymbol), [selectSymbol]);
   const setColor = (id, key) => { const l = layoutRef.current; const nl = { ...l, [id]: { ...l[id], color: key } }; setLayout(nl); persist(nl); };
 
-  const bodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={selectedSymbol} />
+  // ⚠️ ONE PANEL MUST NOT BE ABLE TO TAKE THE WORKSPACE WITH IT — AND ONE JUST DID.
+  //
+  // Pit Scan threw a TypeError while rendering (a row shape it did not expect), and because there
+  // was no boundary anywhere in the Terminal, React unmounted the ENTIRE client tree. The chart,
+  // the wire, the watchlist, the tape and the layout itself all disappeared over one bad field in
+  // one panel. That is the wrong failure mode for a workspace: market data is the least reliable
+  // input in the product, and the shell is the last thing that should depend on it.
+  //
+  // So every panel body is isolated. A panel that throws shows a small notice in its own frame and
+  // leaves everything around it alone. This is not a framework — it is the smallest thing that
+  // makes the blast radius a panel instead of the page.
+  const bodyOf = (def) => <PanelBoundary id={def.id}>{rawBodyOf(def)}</PanelBoundary>;
+
+  const rawBodyOf = (def) => (def.id === 'chart' ? <ChartBody symbol={selectedSymbol} />
     : def.id === 'halts' ? <HaltBody onPick={(s) => linkSymbol('halts', s)} />
     : def.id === 'watchlist' ? <WatchlistBody onPick={(s) => linkSymbol('watchlist', s)} />
     : def.id === 'chat' ? <PitChat bare onSymbol={selectSymbol} />
@@ -1432,6 +1446,39 @@ function Workspace() {
       </div>
     </>
   );
+}
+
+/**
+ * PANEL ISOLATION.
+ *
+ * A class component because an error boundary still has to be one — there is no hook equivalent.
+ * Deliberately tiny: it catches, it tells the reader which panel failed, and it does nothing else.
+ * No retry loop (a render that throws once on a payload will throw again on the same payload), no
+ * reporting pipeline, no fallback UI per panel type.
+ *
+ * ⚠️ IT REPORTS RATHER THAN HIDES. A panel that silently renders empty teaches a trader that the
+ * product has nothing to say, which is the same lie an empty scanner tells. Saying "this panel
+ * failed" is worse-looking and far more honest, and it is what makes the failure findable instead
+ * of mysterious.
+ */
+class PanelBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false }; }
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error) {
+    // Server-side logs are where a production regression actually gets diagnosed.
+    console.log(`[terminal_panel] ${this.props.id} failed to render: ${error?.message}`);
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div style={{ padding: '18px 14px', fontSize: 12, color: C.muted, fontFamily: "'DM Sans',sans-serif" }}>
+        <div style={{ fontWeight: 700, color: C.ink, marginBottom: 4 }}>This panel could not load</div>
+        <div style={{ fontWeight: 300, lineHeight: 1.5 }}>
+          The rest of the Terminal is unaffected. Remove and re-add the panel, or reload the page.
+        </div>
+      </div>
+    );
+  }
 }
 
 export default function TerminalClient() {
