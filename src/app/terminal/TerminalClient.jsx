@@ -439,7 +439,7 @@ function MoversBody({ onPick }) {
     // dark mode, so #fff put white text on a white pill at 1.06:1. C.white inverts with it, keeping
     // the fill and the label opposite in both themes. Inactive moves muted → text so the unselected
     // labels stay legible next to that high-contrast pill.
-    <button key={k} onClick={() => setTab(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', border: 'none', background: tab === k ? C.ink : 'transparent', color: tab === k ? C.white : C.text }}>{label}</button>
+    <button key={k} onClick={() => setTab(k)} style={{ fontSize: 10.5, fontWeight: 700, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', border: 'none', background: tab === k ? C.selBg : 'transparent', color: tab === k ? C.selFg : C.text }}>{label}</button>
   );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -722,7 +722,7 @@ function FeedBody({ onPick }) {
     setPosts((ps) => (ps || []).map((p) => p.id === post.id ? { ...p, myReaction: target, reactionTotal: Math.max(0, (p.reactionTotal || 0) + (target ? 1 : -1)) } : p));
     try { await fetch('/api/feed/like', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ postId: post.id, emoji: target }) }); } catch { /* optimistic */ }
   };
-  const tab = (id, label) => <button key={id} onClick={() => setScope(id)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, cursor: 'pointer', border: 'none', background: scope === id ? C.ink : 'transparent', color: scope === id ? '#fff' : C.muted }}>{label}</button>;
+  const tab = (id, label) => <button key={id} onClick={() => setScope(id)} style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5, cursor: 'pointer', border: 'none', background: scope === id ? C.selBg : 'transparent', color: scope === id ? C.selFg : C.muted }}>{label}</button>;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div style={{ padding: 8, borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>

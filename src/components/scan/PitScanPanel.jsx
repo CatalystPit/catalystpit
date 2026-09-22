@@ -89,7 +89,7 @@ export default function PitScanPanel({ onPick }) {
     <button key={id} onClick={() => setTab(id)}
       style={{
         fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 5, cursor: 'pointer',
-        border: 'none', background: tab === id ? C.ink : 'transparent', color: tab === id ? '#fff' : C.muted,
+        border: 'none', background: tab === id ? C.selBg : 'transparent', color: tab === id ? C.selFg : C.muted,
       }}>{label}</button>
   );
 

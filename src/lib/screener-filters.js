@@ -134,7 +134,11 @@ export const FILTERS = {
   congressBuy90d:  b('Congress Buy', 'Ownership', 'congressBuy90d', { pit: true, available: true }),
   congressNet90d:  r('Congress Net$', 'Ownership', 'congressNet90d', { unit: '$', pit: true, available: true }),
   fundNetQoq:      r('13F Net', 'Ownership', 'fundNetQoq', { pit: true, available: true }),
-  instOwnPct:      r('Inst Own %', 'Ownership', 'instOwnPct', { unit: '%' }),
+  // ⚠️ ENABLED. It was disabled with the rest of the 'soon' set, but unlike them it has a real
+  // column that the nightly ingest already fills: inst_own_pct is populated for 4,063 of the
+  // visible universe, it is not a  field, and buildConds compiles a range against it
+  // generically. The only thing keeping it dark was the missing flag.
+  instOwnPct:      r('Inst Own %', 'Ownership', 'instOwnPct', { unit: '%', available: true, sparse: true }),
 
   // ══ NEWS ══
   hasMaterial8k: b('Material 8-K', 'News', 'hasMaterial8k', { pit: true, available: true }),

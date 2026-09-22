@@ -7,10 +7,45 @@ import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { liveFieldsWithAvailability } from '../../../lib/scan/scanner-fields.mjs';
 import { signalAvailability } from '../../../lib/scan/market-capabilities.mjs';
 import { activeCapabilities } from '../../../lib/scan/runtime';
+import { toOptions } from '../../../lib/screener-taxonomy.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
 const NO_STORE = { 'Cache-Control': 'public, max-age=30' };
+
+// Distinct sectors and industries actually present in the visible universe.
+//
+// ⚠️ MEMOISED PER INSTANCE. The screener is rebuilt nightly, so this answer changes once a day
+// while the meta endpoint is hit on every page load — re-running two DISTINCT scans over 17k rows
+// per viewer would be exactly the "scales with users" shape the rest of this codebase spent a
+// week removing.
+let _taxonomy = null, _taxonomyAt = 0;
+const TAXONOMY_TTL_MS = 30 * 60 * 1000;
+
+async function classificationOptions() {
+  if (_taxonomy && Date.now() - _taxonomyAt < TAXONOMY_TTL_MS) return _taxonomy;
+  try {
+    // market_cap > 0 is the visible universe — the same gate the rows themselves pass, so the
+    // dropdown cannot offer a classification no result can have.
+    const res = await db.execute(sql`
+      select 'sector' as kind, sector as v from screener_stocks
+        where market_cap > 0 and sector is not null and trim(sector) <> '' group by sector
+      union all
+      select 'industry', industry from screener_stocks
+        where market_cap > 0 and industry is not null and trim(industry) <> '' group by industry`);
+    const rows = res.rows ?? res;
+    _taxonomy = {
+      sectors: toOptions(rows.filter((r) => r.kind === 'sector').map((r) => r.v), { contains: false }),
+      industries: toOptions(rows.filter((r) => r.kind === 'industry').map((r) => r.v)),
+    };
+    _taxonomyAt = Date.now();
+  } catch {
+    // A failed query leaves the registry's own lists in place rather than emptying the dropdowns.
+    _taxonomy = { sectors: [], industries: [] };
+    _taxonomyAt = Date.now();
+  }
+  return _taxonomy;
+}
 
 // GET ?filters=<json>&sort=&dir=&page=&ticker=  → screen our screener_stocks universe.
 // Also returns the filter registry (once) so the client renders categories without hardcoding.
@@ -29,8 +64,15 @@ export async function GET(request) {
       // from, while buildConds below still only ever sees the daily half.
       const caps = activeCapabilities();
       const live = liveFieldsWithAvailability(caps, signalAvailability);
+      // ⚠️ THE CLASSIFICATION OPTIONS COME FROM THE DATA, NOT FROM A LIST SOMEBODY MAINTAINS.
+      // Industry offered 27 hand-written options against 373 industries actually present, and one
+      // of them matched zero rows. See lib/screener-taxonomy.mjs.
+      const taxonomy = await classificationOptions();
+      const filters = { ...FILTERS, ...live };
+      if (taxonomy.industries.length) filters.industry = { ...filters.industry, opts: taxonomy.industries };
+      if (taxonomy.sectors.length) filters.sector = { ...filters.sector, options: taxonomy.sectors.map((o) => o.value) };
       return Response.json({
-        filters: { ...FILTERS, ...live },
+        filters,
         capabilities: {
           provider: caps.id,
           label: caps.label,

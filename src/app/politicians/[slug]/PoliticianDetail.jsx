@@ -123,9 +123,9 @@ export default function PoliticianDetail({ slug }) {
             {/* TRADE HISTORY TABLE */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '18px 0 10px' }}>
               {[['all', 'All'], ['buy', 'Buys'], ['sell', 'Sells']].map(([s, lbl]) => (
-                <button key={s} onClick={() => setFlt((f) => ({ ...f, side: s }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: flt.side === s ? C.ink : C.white, color: flt.side === s ? C.white : C.muted }}>{lbl}</button>
+                <button key={s} onClick={() => setFlt((f) => ({ ...f, side: s }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: flt.side === s ? C.selBg : C.white, color: flt.side === s ? C.selFg : C.muted }}>{lbl}</button>
               ))}
-              <button onClick={() => setFlt((f) => ({ ...f, opt: !f.opt }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: flt.opt ? C.ink : C.white, color: flt.opt ? C.white : C.muted }}>Options</button>
+              <button onClick={() => setFlt((f) => ({ ...f, opt: !f.opt }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: flt.opt ? C.selBg : C.white, color: flt.opt ? C.selFg : C.muted }}>Options</button>
               <select value={flt.min} onChange={(e) => setFlt((f) => ({ ...f, min: Number(e.target.value) }))} style={{ ...FBTN, border: `1px solid ${C.border}`, background: C.white, color: C.muted }}>
                 <option value={0}>Any size</option>
                 <option value={50000}>&gt; $50k</option>

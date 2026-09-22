@@ -16,6 +16,16 @@ export const C = {
   ink:"var(--cp-ink,#0C1410)", text:"var(--cp-text,#1A2018)", muted:"var(--cp-muted,#5A6458)", dim:"var(--cp-dim,#8A9088)", hint:"var(--cp-hint,#C0C4BC)",
   green:"var(--cp-green,#1E5C38)", greenMid:"var(--cp-greenMid,#2A7848)", greenLight:"var(--cp-greenLight,#E8F5EE)", greenBorder:"var(--cp-greenBorder,#A8CEB8)",
   greenOnDark:"#4FB37C", // brand-green sibling, brightened for readability on dark surfaces — constant
+  // ⚠️ THE SELECTED STATE OF A PILL OR TAB. Its own token pair, because the bug it replaces came
+  // from using `ink` — a FOREGROUND token — as a BACKGROUND. `ink` is near-black in light and
+  // near-white in dark, so `background: C.ink` with white text rendered at 1.12:1 in dark mode: a
+  // white blob with invisible text. Measured, on the Screener category pills and the Pit Scan tab.
+  //
+  // A foreground token used as a background inverts with the theme in exactly the wrong direction,
+  // and no amount of care at the call site fixes that. These two say what they are for, so the
+  // theme can give each mode the right value: light keeps today's near-black chip unchanged, dark
+  // gets the brand's mid-green at 5.41:1 against its text and 3.42:1 against the page behind it.
+  selBg:"var(--cp-selBg,#0C1410)", selFg:"var(--cp-selFg,#FFFFFF)",
   red:"var(--cp-red,#A83030)", redLight:"var(--cp-redLight,#FAEAEA)", gold:"var(--cp-gold,#7A5818)",
   blue:"var(--cp-blue,#1A3A78)", blueLight:"var(--cp-blueLight,#E8F0FF)",
   navBg:"#1E5C38",
@@ -216,6 +226,8 @@ export function BrandStyles() {
         --cp-border:#E0E2DC;--cp-border2:#C4C8BE;
         --cp-ink:#0C1410;--cp-text:#1A2018;--cp-muted:#5A6458;--cp-dim:#8A9088;--cp-hint:#C0C4BC;
         --cp-green:#1E5C38;--cp-greenMid:#2A7848;--cp-greenLight:#E8F5EE;--cp-greenBorder:#A8CEB8;
+        /* Selected pill/tab. UNCHANGED from what light mode already rendered: 18.70:1. */
+        --cp-selBg:#0C1410;--cp-selFg:#FFFFFF;
         --cp-red:#A83030;--cp-redLight:#FAEAEA;--cp-gold:#7A5818;--cp-blue:#1A3A78;--cp-blueLight:#E8F0FF;
         --cp-conflictBg:#FBF1F0;--cp-conflictBorder:#E3C0BC;--cp-conflictAccent:#A83030;--cp-conflictText:#3C2523;
         --cp-contraryRule:#DCC8C4;--cp-contraryText:#7A6660;
@@ -235,6 +247,10 @@ export function BrandStyles() {
            dark-mode fix and changing it would restyle every light-mode surface in the app. */
         --cp-ink:#EEF3EF;--cp-text:#D8DED8;--cp-muted:#98A49B;--cp-dim:#88948B;--cp-hint:#48524C;
         --cp-green:#46A874;--cp-greenMid:#58BE86;--cp-greenLight:#16301F;--cp-greenBorder:#2E5A40;
+        /* ⚠️ Selected pill/tab. This is the fix: the old rule resolved to --cp-ink (#EEF3EF) behind
+           white text at 1.12:1 — invisible. The brand mid-green gives 5.41:1 against the label and
+           3.42:1 against the page, so the chip reads as selected without becoming a white block. */
+        --cp-selBg:#2A7848;--cp-selFg:#FFFFFF;
         --cp-red:#E06B6B;--cp-redLight:#3A1E1E;--cp-gold:#C79A3C;--cp-blue:#6B8FE0;--cp-blueLight:#1A2540;
         /* Burgundy-tinted surface, not a bright panel. The luminance step from the card is small on
            purpose — the left accent bar (#F09490, 7.5:1 against the card) is what makes the block

@@ -292,7 +292,11 @@ export default function ScreenerClient() {
           <div style={{ maxWidth: 1760, margin: '0 auto' }}>
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
               {CATS.map((cat) => (
-                <button key={cat} onClick={() => setActiveCat(cat)} style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 11, cursor: 'pointer', border: `1px solid ${activeCat === cat ? C.ink : C.border}`, background: activeCat === cat ? C.ink : C.white, color: activeCat === cat ? '#fff' : C.muted }}>{cat}</button>
+                // ⚠️ C.selBg / C.selFg, NOT C.ink + '#fff'. `ink` is a FOREGROUND token — near-black
+                // in light, near-WHITE in dark — so using it as a background rendered this pill
+                // white-on-white at 1.12:1 the moment the theme flipped. The selected tokens carry
+                // the right value per theme: light is unchanged, dark is the brand mid-green.
+                <button key={cat} onClick={() => setActiveCat(cat)} style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 11, cursor: 'pointer', border: `1px solid ${activeCat === cat ? C.selBg : C.border}`, background: activeCat === cat ? C.selBg : C.white, color: activeCat === cat ? C.selFg : C.muted }}>{cat}</button>
               ))}
             </div>
             {groupsToShow.map((cat) => {
