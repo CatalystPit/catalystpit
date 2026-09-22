@@ -259,7 +259,7 @@
       "maxDuration": 300
     },
     "src/app/api/institutions/route.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   }
 }
