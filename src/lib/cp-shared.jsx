@@ -1020,7 +1020,18 @@ export function TickerLogo({ symbol, size = 18 }) {
 
   if (sym && sym !== '?' && !failed) {
     return (
+      // ⚠️ LAZY, BECAUSE SOME PAGES PAINT HUNDREDS OF THESE. A fund profile renders roughly 430
+      // logos in one go (map tiles + four activity lists + options + holdings). Requesting all of
+      // them on load is what pushed /api/logo past its rate limit and turned the overflow into
+      // initials badges — and most of those rows are far below the fold and may never be seen.
+      //
+      // Native loading="lazy" rather than an IntersectionObserver: the browser already does this
+      // well, it costs no JS, and it cannot get the arithmetic wrong on a virtualised or scrolled
+      // container. width/height are already set, so deferring changes no geometry and there is no
+      // layout shift when one arrives. decoding="async" keeps a burst of decodes off the main
+      // thread during scroll.
       <img ref={ref} src={`/api/logo?ticker=${encodeURIComponent(sym)}&v=3`} alt="" width={size} height={size}
+        loading="lazy" decoding="async"
         onLoad={onLoad} onError={() => setFailed(true)}
         style={{ width: size, height: size, borderRadius: 4, objectFit: 'contain',
           background: bgMode === 'dark' ? LOGO_DARK_BG : '#fff', border: `1px solid ${C.border}`,

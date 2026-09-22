@@ -629,6 +629,62 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
   return { cik, status, quarters, stored, skipped, unresolved, unreadable: unresolved.map((u) => u.quarter) };
 }
 
+/**
+ * APPLY THE CUSIPS WE HAVE ALREADY RESOLVED TO ROWS THAT ARE STILL NULL.
+ *
+ * ⚠️ THIS STEP WAS MISSING, AND IT IS WHY A FUND PROFILE SHOWED "?" NEXT TO APPLE. Holdings are
+ * inserted with `ticker: null` unconditionally (storeFilingSuperseded), even for a CUSIP whose
+ * mapping we have known for months. The only resolver in the steady-state cycle is
+ * resolveHoldingTickers, which deliberately selects `WHERE h.ticker IS NULL AND m.cusip IS NULL`
+ * — never-attempted CUSIPs only, so it does not re-thrash permanently unmappable bonds. Correct
+ * for what it is for, and it means an ALREADY-MAPPED CUSIP is never copied onto a new row.
+ *
+ * Nothing else closed that loop. The only code that did lived in scripts/apply-cusip-map.mjs, a
+ * one-off a human had to remember to run. So every newly ingested filer arrived 100% NULL and the
+ * mega-caps — precisely the CUSIPs most certain to be in cusip_map — sat in a permanent hole:
+ * TickerLogo receives symbol="" and renders the green "?" badge, which is reachable ONLY when the
+ * symbol is empty. It was never a logo bug on this page; it was a missing join.
+ *
+ * ⚠️ NO NEW IDENTITY IS INVENTED HERE. This copies mappings that already exist and are already
+ * marked `status = 'resolved'` — it resolves nothing itself, guesses nothing from issuer names,
+ * and leaves a genuinely unresolved security NULL so it keeps its fallback. Idempotent: rows that
+ * already have a ticker are untouched, so it is safe on every cron pass.
+ */
+export async function applyResolvedCusipMap({ cap = 200000 } = {}) {
+  // ⚠️ COUNT BY MEASURING, NOT BY TRUSTING rowCount. This driver does not surface a row count for
+  // a tagged-template UPDATE — it reads 0 even when rows changed, which is the trap documented in
+  // scripts/apply-cusip-map.mjs, where it silently ended a chunked loop after one pass. Reporting
+  // a confident "applied: 0" into the job heartbeat while 300k rows moved is worse than not
+  // reporting at all, so the count is a before/after difference of the outstanding backlog.
+  const outstanding = async () => {
+    const r = await db.execute(sql`
+      SELECT count(*)::int AS n FROM fund_holdings h
+       WHERE h.ticker IS NULL
+         AND EXISTS (SELECT 1 FROM cusip_map m
+                      WHERE m.cusip = h.cusip AND m.status = 'resolved' AND m.ticker IS NOT NULL)`);
+    return Number(r?.rows?.[0]?.n) || 0;
+  };
+  const before = await outstanding();
+  if (!before) return { applied: 0, remaining: 0 };
+  await db.execute(sql`
+    UPDATE fund_holdings h
+       SET ticker = m.ticker
+      FROM cusip_map m
+     WHERE m.cusip = h.cusip
+       AND m.status = 'resolved'
+       AND m.ticker IS NOT NULL
+       AND h.ticker IS NULL
+       AND h.ctid IN (
+         SELECT h2.ctid FROM fund_holdings h2
+           JOIN cusip_map m2 ON m2.cusip = h2.cusip
+            AND m2.status = 'resolved' AND m2.ticker IS NOT NULL
+          WHERE h2.ticker IS NULL
+          LIMIT ${cap})
+  `);
+  const after = await outstanding();
+  return { applied: Math.max(0, before - after), remaining: after };
+}
+
 // Resolve tickers for holdings, draining the backlog of NEVER-ATTEMPTED CUSIPs (not yet in
 // cusip_map), highest-value first. Excluding CUSIPs already in cusip_map stops the resolver from
 // re-thrashing permanently-unmappable bonds/foreign that clog the top-by-value slots. Chunked +
@@ -792,12 +848,17 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
     catch (e) { return { ...out, disputed: { error: e?.message }, ms: Date.now() - t0 }; }
   }
   if (tickerOnly) {
-    let tick = { resolved: 0, checked: 0 }, named = { resolved: 0 };
+    let tick = { resolved: 0, checked: 0 }, named = { resolved: 0 }, applied = { applied: 0 };
+    // FIRST, and before any network call: copy mappings we already hold onto rows that are still
+    // NULL. Cheap, idempotent, and it is what fills a freshly ingested filer's mega-caps — see
+    // applyResolvedCusipMap. Draining new CUSIPs from OpenFIGI cannot do this job.
+    try { applied = await applyResolvedCusipMap(); }
+    catch (e) { console.log(`[institutions-universe] cusip-map apply failed: ${e?.message}`); }
     try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
     catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
     try { named = await resolveHoldingsByName({ cap: tickerCap }); }
     catch (e) { console.log(`[institutions-universe] name resolve failed: ${e?.message}`); }
-    return { ...out, tickerOnly: true, tickersResolved: tick.resolved, tickersChecked: tick.checked, namesResolved: named.resolved, ms: Date.now() - t0 };
+    return { ...out, tickerOnly: true, mapApplied: applied.applied, tickersResolved: tick.resolved, tickersChecked: tick.checked, namesResolved: named.resolved, ms: Date.now() - t0 };
   }
   const featured = await buildFeaturedMap();
   const disc = await discoverFilers({ indexes, featured });
@@ -850,10 +911,15 @@ export async function runInstitutionsUniverse({ indexes = 2, ingestCap = 60, tic
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, POOL) }, worker));
-  let tick = { resolved: 0 }, named = { resolved: 0 };
+  let tick = { resolved: 0 }, named = { resolved: 0 }, applied = { applied: 0 };
+  // This pass has just INGESTED filings, every row of which was inserted with ticker: null. Apply
+  // the mappings we already hold before anything else, or those rows wait for a resolver that by
+  // design will never look at them. See applyResolvedCusipMap.
+  try { applied = await applyResolvedCusipMap(); }
+  catch (e) { console.log(`[institutions-universe] cusip-map apply failed: ${e?.message}`); }
   try { tick = await resolveHoldingTickers({ cap: tickerCap, timeBudgetMs, t0 }); }
   catch (e) { console.log(`[institutions-universe] ticker resolve failed: ${e?.message}`); }
   try { named = await resolveHoldingsByName({ cap: tickerCap }); }
   catch (e) { console.log(`[institutions-universe] name resolve failed: ${e?.message}`); }
-  return { ...out, cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, failedNow, errorsSample, tickersResolved: tick.resolved, namesResolved: named.resolved, ms: Date.now() - t0 };
+  return { ...out, cutoff, ...disc, filersRemaining: todo.length, ingestedNow, storedNow, failedNow, errorsSample, mapApplied: applied.applied, tickersResolved: tick.resolved, namesResolved: named.resolved, ms: Date.now() - t0 };
 }

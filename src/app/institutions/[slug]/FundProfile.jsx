@@ -39,7 +39,10 @@ function MapTile({ h, pct, flexGrow, onClick }) {
       style={{ flexGrow: Math.max(flexGrow, 1), flexBasis: 120, minWidth: 104, height: 92, borderRadius: 6, overflow: 'hidden',
         position: 'relative', background: showLogo && bgMode === 'dark' ? LOGO_DARK_BG : '#fff', border: `1px solid ${C.border}`, cursor: h.ticker ? 'pointer' : 'default' }}>
       {showLogo ? (
-        <img ref={ref} src={`/api/logo?ticker=${encodeURIComponent(h.ticker)}`} alt={h.ticker} onLoad={onLoad} onError={() => setFailed(true)}
+        // Lazy for the same reason TickerLogo is: this page paints ~430 logos at once and the
+        // map alone is 30 of them. See the note in cp-shared's TickerLogo.
+        <img ref={ref} src={`/api/logo?ticker=${encodeURIComponent(h.ticker)}`} alt={h.ticker}
+          loading="lazy" decoding="async" onLoad={onLoad} onError={() => setFailed(true)}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 22, width: '100%', height: 'calc(100% - 22px)', objectFit: 'contain', padding: '12px' }} />
       ) : (
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', textAlign: 'center' }}>

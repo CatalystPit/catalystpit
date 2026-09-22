@@ -90,5 +90,50 @@ section('5. realistic traffic stays well under the limits');
     LIMITS.provider.max < 200 && LIMITS.heavy.max < 300);
 }
 
+section('6. the logo proxy is budgeted as an image, not as a provider call');
+{
+  // ⚠️ THE FAILURE THIS PINS ALREADY HAPPENED, IN PRODUCTION, AND IT LOOKED LIKE A DIFFERENT BUG.
+  // /api/logo sat on the `provider` bucket (40/60s). Measured against production, 59 distinct
+  // tickers in one window returned 40 images and 19 × 429 — and a 429 is not an image, so
+  // <TickerLogo>'s onError fired and every rate-limited row rendered an initials badge. It was
+  // reported as "company logos are missing on Politicians", which is the limiter blocking the
+  // wrong thing: exactly the risk the top of this file says these assertions exist to pin.
+  const guard = await readFile(new URL('../src/lib/api-guard.mjs', import.meta.url), 'utf8');
+  const route = await readFile(new URL('../src/app/api/logo/route.js', import.meta.url), 'utf8');
+  const code = route.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  ok('a logo bucket exists, distinct from provider', !!LIMITS.logo);
+  ok('…and /api/logo actually uses it',
+    /apiRateLimit\(\s*request\s*,\s*['"]logo['"]\s*,\s*['"]logo['"]/.test(code),
+    code.match(/apiRateLimit\([^)]*\)/)?.[0]);
+  // A page legitimately paints hundreds of logos; the cap has to clear a full holdings table.
+  ok('the cap clears a real page of holdings (>= 200)', (LIMITS.logo?.max ?? 0) >= 200,
+    `max=${LIMITS.logo?.max}`);
+  ok('…while still bounding an enumeration of the ticker universe', (LIMITS.logo?.max ?? 0) <= 1000);
+  ok('the provider bucket was not loosened to achieve it', LIMITS.provider.max === 40);
+
+  // ⚠️ THE CDN CACHE IS WHAT ACTUALLY MAKES THIS SCALE, so the route must not become per-user.
+  // Reading a session here would risk turning day-long CDN hits into misses — trading the thing
+  // that scales for the thing that merely rations.
+  ok('the logo route stays anonymous so its response stays CDN-cacheable',
+    !/\bauth\s*\(\s*\)/.test(code) && !/@clerk/.test(route));
+  ok('…and still declares a shared-cache lifetime', /s-maxage=\d+/.test(route));
+
+  // The other half of the fix: hundreds of <img> must not all be requested at once.
+  //
+  // ⚠️ STRIP THE COMMENTS FIRST. Written naively this passed while the attribute was deleted: the
+  // prose above the <img> says `Native loading="lazy" rather than an IntersectionObserver`, and the
+  // assertion matched the explanation instead of the code. Scoped to TickerLogo's own body, with
+  // comments removed, so it reports on what renders rather than on what is claimed about it.
+  const decomment = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const shared = decomment(await readFile(new URL('../src/lib/cp-shared.jsx', import.meta.url), 'utf8'));
+  const fund = decomment(await readFile(new URL('../src/app/institutions/[slug]/FundProfile.jsx', import.meta.url), 'utf8'));
+  const tickerLogoBody = shared.slice(
+    shared.indexOf('function TickerLogo'),
+    shared.indexOf('function MarketSnapshotCard'));
+  ok('the canonical logo renders lazily', /loading="lazy"/.test(tickerLogoBody));
+  ok('…as does the holding-map tile', /loading="lazy"/.test(fund));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

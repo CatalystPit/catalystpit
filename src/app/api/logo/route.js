@@ -30,7 +30,17 @@ async function tryLogo(url) {
 }
 
 export async function GET(request) {
-  const _rl = await apiRateLimit(request, 'logo', 'provider');
+  // ⚠️ THE 'logo' BUCKET, NOT 'provider'. See LIMITS in api-guard: on provider (40/60s) this
+  // endpoint returned 19 × 429 out of 59 distinct tickers in one window, and every 429 became an
+  // initials badge on the page.
+  //
+  // ⚠️ AND DELIBERATELY NO auth() HERE, even though passing a userId would exempt signed-in users
+  // from the IP limit. A logo is a public image and this response is CDN-cached for a day
+  // (X-Vercel-Cache: HIT in production) — that cache is what actually makes a 200-row holdings
+  // table cost nothing on every visit after the first. Reading the session would make the route
+  // per-user and risk turning those hits into misses, trading the thing that scales for the thing
+  // that merely rations. The raised bucket solves the shared-IP case without touching the cache.
+  const _rl = await apiRateLimit(request, 'logo', 'logo');
   if (_rl) return _rl;
 
   const t = (new URL(request.url).searchParams.get('ticker') || '').toUpperCase().trim();

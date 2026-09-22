@@ -43,6 +43,23 @@ export function clientIp(request) {
 export const LIMITS = {
   provider: { max: 40, window: 60 },   // a provider call and often a DB write
   heavy:    { max: 90, window: 60 },   // expensive reads, no provider cost
+  // ─── THE LOGO PROXY IS NOT A PROVIDER CALL ────────────────────────────────
+  //
+  // ⚠️ IT WAS ON `provider` (40/60s) AND THAT WAS THE BUG BEHIND THE MISSING LOGOS. Measured
+  // against production: 59 distinct tickers requested in one window returned 40 images and
+  // **19 × 429**. A 429 is not an image, so <TickerLogo>'s onError fires and the row falls back
+  // to an initials badge — which is exactly the "missing logos" reported on Politicians, and an
+  // amplifier on a fund profile that paints ~430 logos at once.
+  //
+  // A logo is a cacheable, immutable-ish image, not a metered upstream: HIT_CACHE puts it on the
+  // CDN for a day (confirmed in production, X-Vercel-Cache: HIT), so repeat views and every
+  // subsequent visitor cost zero invocations. Only cache-cold tickers reach the function, and a
+  // page legitimately showing 200 holdings needs 200 cold logos exactly once. Rationing that was
+  // rationing the product, not an abuser.
+  //
+  // The cap stays low enough to stop a scraper enumerating the ticker universe through this
+  // endpoint, which is the only thing it was ever there to prevent.
+  logo:     { max: 300, window: 60 },
 };
 
 async function kv(path) {
