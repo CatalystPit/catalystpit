@@ -357,6 +357,79 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   ok('boards are fetched, never hard-coded', /\/api\/scan-board\?board=/.test(rows));
   ok('the panel ships no literal row data', !/ticker:\s*'[A-Z]{1,5}'/.test(panel));
 
+  // ── ONE PIT SCAN, AND THE DEAD ONE IS GONE ────────────────────────────────
+  //
+  // ⚠️ THE TERMINAL CARRIED A SECOND IMPLEMENTATION. PitScanBody rendered /api/scan?mode=pit —
+  // the old weighted signal engine — and had been unreachable since the panel switched to
+  // PitScanPanel: defined, never mounted. Two implementations of one product is how the Terminal
+  // and /scan eventually disagree about what is on the board.
+  ok('the Terminal defines no second Pit Scan body',
+    mut('twoscans') ? false : !/function PitScanBody/.test(terminal));
+  // Against the CODE: the note explaining the removal names the old endpoint, and an explanation
+  // of what was deleted is not a call to it.
+  const terminalCode = terminal.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  ok('…and no longer reads the legacy pit engine',
+    mut('twoscans') ? false : !/api\/scan\?mode=pit/.test(terminalCode));
+  ok('the panel is rendered from the shared component',
+    /def\.id === 'pitscan' \? <PitScanPanel/.test(terminal));
+
+  // ── TICKER SYNC, THROUGH THE TERMINAL'S OWN MECHANISM ─────────────────────
+  //
+  // ⚠️ onPick REACHED ONLY THE LEGACY TABLES. It was threaded to ScanTable and PulseTape — which
+  // render only when the signal engine is live, i.e. never today — while the evidence boards that
+  // actually display got nothing. Clicking a ticker on the board did not move the linked chart.
+  ok('the Terminal passes its existing link helper to the panel',
+    /<PitScanPanel onPick=\{\(s\) => linkSymbol\('pitscan', s\)\}/.test(terminal));
+  ok('…and linkSymbol is the Terminal-wide mechanism, not a new one',
+    /const linkSymbol = \(sourceId, sym\) => selectSymbol\(sym\)/.test(terminal));
+  ok('the panel threads onPick into the boards',
+    mut('nosync') ? false : /<ScanBoardRows onPick=\{onPick\}/.test(panel));
+  ok('…the wrapper accepts it', /export default function ScanBoardRows\(\{ onPick \} = \{\}\)/.test(rows));
+  ok('…the board accepts it', /export function ScanBoard\(\{ board, title, onState, onPick \}\)/.test(rows));
+  ok('…and the row receives it', /<Row [^>]*onPick=\{onPick\}/.test(rows));
+
+  // ⚠️ THE SYMBOL STAYS A REAL LINK. /scan has nowhere to sync to, and middle-click, open-in-new-tab
+  // and assistive tech all depend on the href surviving.
+  ok('the ticker keeps its href on both surfaces',
+    mut('losesLink') ? false : /<a href=\{`\/ticker\/\$\{encodeURIComponent\(r\.ticker\)\}`\}/.test(rows));
+  ok('…a plain left click is intercepted only when onPick exists',
+    /if \(!onPick\) return;/.test(rows));
+  ok('…and a modified click is never hijacked',
+    mut('hijacksclick') ? false : /metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey \|\| e\.button !== 0/.test(rows));
+  ok('the dedicated page passes no onPick, so its links behave as links',
+    mut('pagesync') ? false : !/onPick/.test(page));
+
+  // ── NARROW PANELS SCROLL, THEY DO NOT SHED FIELDS ─────────────────────────
+  //
+  // A Terminal panel can be dragged to MIN_W (240px). Dropping columns to fit would remove the
+  // very fields that explain why a row is on the board.
+  ok('the panel gives the cards a floor and scrolls past it',
+    mut('dropsfields') ? false : /overflowX: 'auto'/.test(panel) && /minWidth: 300/.test(panel));
+  ok('…and the panel body scrolls vertically', /overflow: 'auto', flex: 1/.test(panel));
+  // Every field the cards carry must still be rendered by the one Row.
+  for (const [label, re] of [
+    ['ticker', /r\.ticker/], ['price', /r\.last/], ['move %', /r\.changePct/],
+    ['freshness', /r\.freshnessLabel/], ['structure', /r\.structure/], ['evidence', /r\.evidence/],
+    ['JOIN', /\{r\.join\}/], ['facts', /r\.facts/],
+    ['Chart action', />Chart</], ['Evidence action', />Evidence</],
+    ['Watch action', />Watch</], ['Alert action', />Alert</],
+  ]) {
+    ok(`the card still renders ${label}`, mut('dropsfields') ? false : re.test(rows));
+  }
+
+  // ── NO DUPLICATE POLLING ──────────────────────────────────────────────────
+  ok('the board poll is cleaned up on unmount',
+    mut('leakstimer') ? false : /return \(\) => \{ alive = false; clearInterval\(id\); \};/.test(rows));
+  ok('…and the panel clears its own interval too',
+    /clearInterval\(id\)/.test(panel));
+  ok('one board is fetched at a time, behind tabs', /<ScanBoard board=\{board\}/.test(rows));
+
+  // ── ENTITLEMENT STAYS SERVER-SIDE, AND IS SHARED ──────────────────────────
+  // Both surfaces call the same endpoint; neither decides entitlement in the browser.
+  ok('the panel makes no entitlement decision of its own',
+    mut('clientgate') ? false : !/resolveUserAccess|isRealtime|tier ===/.test(panel));
+  ok('…nor does the shared row module', !/resolveUserAccess|isRealtime/.test(rows));
+
   // ⚠️ NEVER "LIVE". Realtime is not entitled, so a LIVE branch could only ever be wrong — and a
   // dead branch that renders "LIVE" is one refactor away from rendering it for real.
   ok('the banner has no LIVE state at all',

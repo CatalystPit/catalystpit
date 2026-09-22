@@ -82,9 +82,24 @@ const JOIN_TONE = {
   '—': C.dim,
 };
 
-function Row({ r, onWatch, onAlert, busy }) {
+function Row({ r, onWatch, onAlert, busy, onPick }) {
   const up = Number.isFinite(r.changePct) && r.changePct > 0;
   const moveColor = !Number.isFinite(r.changePct) ? C.dim : up ? C.green : C.red;
+
+  // ⚠️ THE SAME ROW SERVES A PAGE AND A TERMINAL PANEL, AND THE TICKER MEANS SOMETHING DIFFERENT
+  // IN EACH. On /scan there is nowhere to sync to, so the symbol is a link to the ticker page and
+  // must stay one. Inside the Terminal the panels are wired together, so the symbol should drive
+  // the linked chart rather than navigate the whole workspace away from it.
+  //
+  // It stays an <a> with a real href either way — middle-click, "open in new tab" and a
+  // screen reader all keep working — and `onPick` merely intercepts the plain left click. A
+  // button would have thrown that away to save nothing.
+  const pickTicker = (e) => {
+    if (!onPick) return;                       // /scan: let the link do what a link does
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    onPick(r.ticker);
+  };
 
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
@@ -93,6 +108,8 @@ function Row({ r, onWatch, onAlert, busy }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <TickerLogo symbol={r.ticker} size={20} />
         <a href={`/ticker/${encodeURIComponent(r.ticker)}`} className="cp-tkr"
+          onClick={pickTicker}
+          title={onPick ? `Load ${r.ticker} in the linked Terminal panels` : undefined}
           style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, textDecoration: 'none' }}>{r.ticker}</a>
         <span style={{ fontSize: 12.5, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
           {Number.isFinite(r.last) ? `$${r.last.toFixed(2)}` : '—'}
@@ -155,7 +172,7 @@ function Row({ r, onWatch, onAlert, busy }) {
  * ONE BOARD. Used on its own by /scan (three stacked) and behind tabs in the Terminal panel.
  * There is exactly one Row design and one fetch path; the two surfaces differ only in arrangement.
  */
-export function ScanBoard({ board, title, onState }) {
+export function ScanBoard({ board, title, onState, onPick }) {
   const [state, setState] = useState(null);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(null);
@@ -242,7 +259,7 @@ export function ScanBoard({ board, title, onState }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {rows.map((r) => (
-            <Row key={r.ticker} r={r} onWatch={watch} onAlert={alert} busy={busy} />
+            <Row key={r.ticker} r={r} onWatch={watch} onAlert={alert} busy={busy} onPick={onPick} />
           ))}
         </div>
       )}
@@ -258,7 +275,7 @@ export function ScanBoard({ board, title, onState }) {
  * THE TERMINAL ARRANGEMENT — the same boards behind tabs, because a panel has one board's worth of
  * height. /scan stacks all three instead. Same component, same API, same row.
  */
-export default function ScanBoardRows() {
+export default function ScanBoardRows({ onPick } = {}) {
   const [board, setBoard] = useState('catalysts-now');
   const [feed, setFeed] = useState(null);
 
@@ -283,7 +300,7 @@ export default function ScanBoardRows() {
         {BOARD_TABS.find((t) => t.key === board)?.blurb}
       </div>
 
-      <ScanBoard board={board} onState={(j) => setFeed(j?.freshness || null)} />
+      <ScanBoard board={board} onState={(j) => setFeed(j?.freshness || null)} onPick={onPick} />
     </div>
   );
 }

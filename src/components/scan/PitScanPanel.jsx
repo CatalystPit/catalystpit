@@ -100,7 +100,21 @@ export default function PitScanPanel({ onPick }) {
               end-of-day data: one is timestamped from public filings, the other only needs the sign
               of a move. Every row states the freshness of its own price, so nothing here claims to
               be a live tape. */}
-          <ScanBoardRows />
+          {/* ⚠️ DETAIL IS PRESERVED BY SCROLLING, NEVER BY DROPPING FIELDS. A Terminal panel can be
+              dragged down to MIN_W (240px), which is narrower than these cards read well at. The
+              answer is a floor plus a horizontal scrollbar: every field — structure, evidence,
+              JOIN, the facts, the freshness chip and all four actions — stays on the card at any
+              panel width, and the user scrolls to reach it. Hiding columns to fit would be the one
+              thing this panel must not do, because the fields it would drop are the reasons the
+              row is on the board at all.
+
+              `onPick` is the Terminal's existing ticker link, threaded to the SAME card the /scan
+              page renders. On /scan no onPick is passed and the symbol stays a plain link. */}
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: 300 }}>
+              <ScanBoardRows onPick={onPick} />
+            </div>
+          </div>
 
           <div style={{ height: 1, background: C.border, margin: '18px 0 14px' }} />
 

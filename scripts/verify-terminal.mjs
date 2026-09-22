@@ -254,7 +254,12 @@ section('6. resizing, dragging and using a panel do not fight');
   // One layout write per animation frame, however fast the pointer stream arrives.
   ok('pointer moves are coalesced to one frame', /if \(!raf\) raf = window\.requestAnimationFrame\(flush\);/.test(src));
   ok('...and only record the delta until then', /pending = \{ dx: ev\.clientX - sx, dy: ev\.clientY - sy \};/.test(src));
-  ok('the final position is flushed before the gesture ends', /flush\(\);\n      window\.removeEventListener\('pointermove', move\);/.test(src));
+  // ⚠️ LINE-ENDING AGNOSTIC. This matched a literal \n and so reported on how the working tree
+  // happened to store newlines rather than on the code: it failed for days on a CRLF checkout and
+  // "passed" again the moment an unrelated edit rewrote the file with LF. Identical code either
+  // way. \s* spans both.
+  ok('the final position is flushed before the gesture ends',
+    /flush\(\);\s*window\.removeEventListener\('pointermove', move\);/.test(src));
   ok('each frame is computed from the captured baseline, not the last frame',
     /const o = \{ \.\.\.base\[id\] \};/.test(src) && /const sharedBase = shared \? \{ \.\.\.base\[shared\.id\] \} : null;/.test(src));
 
