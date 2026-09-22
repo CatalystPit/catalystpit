@@ -103,6 +103,17 @@ L('\n=== THE ROUTE KEEPS THE TWO CLOCKS APART, AND NEVER CLAIMS A TRADE ===');
   const client = await fs.readFile(new URL('../src/app/institutions/InstitutionsClient.jsx', import.meta.url), 'utf8');
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/^\s*--.*$/gm, '');
 
+  // ⚠️ NO JS ARRAY IS EVER BOUND INTO A DRIZZLE sql TEMPLATE. This exact mistake has now cost two
+  // production outages: /api/health died binding an array into any(), and this feed 500d binding
+  // one into unnest(). Drizzle does not marshal a JS array as a Postgres array — it expands to a
+  // single placeholder, so `${arr}::text[]` becomes `($1)::text[]` with a scalar param. It passes
+  // against the raw driver and fails only once deployed, which is the worst possible place to
+  // find out. A VALUES list built with sql.join is the form that works and stays parameterised.
+  const arrayBind = /\$\{[^}]*\}::(?:text|date|int\d?|numeric)\[\]/;
+  ok('no JS array is cast to a Postgres array inside a sql template',
+    mut('arraybind') ? false : !arrayBind.test(route), (arrayBind.exec(route) || [])[0] || '');
+  ok('…the pair list is passed as a VALUES list instead', /values \$\{sql\.join\(/.test(route));
+
   // Both dates travel on every row, under names that cannot be confused.
   ok('activity rows carry the disclosure date', /disclosed:\s*r\.filed_date/.test(code(route)));
   ok('…and the quarter separately', /quarterEnd:\s*r\.quarter/.test(code(route)));

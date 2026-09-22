@@ -204,12 +204,14 @@ async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, 
   //    verdicts — a live example showed AAPL as both REDUCED and INCREASED. Summing to
   //    (cusip, put_call) is one row per real position, which is what the fund page's Map does.
   const { rows } = await db.execute(sql`
-    with p as (
-      select * from unnest(
-        ${pairs.map((x) => x.cik)}::text[], ${pairs.map((x) => x.quarter)}::date[],
-        ${pairs.map((x) => x.prev_quarter)}::date[], ${pairs.map((x) => x.filed_date)}::date[],
-        ${pairs.map((x) => x.accession)}::text[]
-      ) as t(cik, quarter, prev_quarter, filed_date, accession)
+    -- ⚠️ A VALUES LIST BUILT WITH sql.join, NOT unnest() OVER BOUND ARRAYS. The array form reads
+    -- naturally and works against the raw driver, but drizzle's sql template does not bind a JS
+    -- array as a Postgres array — it expands to a parameter list, and the query 500s in
+    -- production while passing locally. Exactly the trap that took /api/health down once before
+    -- (a JS array bound into any()). Each value is still a placeholder, so this is parameterised,
+    -- not interpolated.
+    with p(cik, quarter, prev_quarter, filed_date, accession) as (
+      values ${sql.join(pairs.map((x) => sql`(${x.cik}::text, ${x.quarter}::date, ${x.prev_quarter}::date, ${x.filed_date}::date, ${x.accession}::text)`), sql`, `)}
     ),
     cur as (
       select p.cik, p.quarter, p.filed_date, p.accession, h.cusip, h.put_call,
