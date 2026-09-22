@@ -28,6 +28,32 @@
 // close for ONE named session. Every row in a ranking divides by a close from the same date, which
 // is what "the same baseline for every security" has to mean to be checkable.
 
+/**
+ * WHAT THE CARD SUBTITLE SHOULD SAY — the decision, separated from the formatting.
+ *
+ * ⚠️ IT SAYS HOW CURRENT THE LIST IS AND NOTHING ELSE. An earlier version read "Market-wide · from
+ * the Sep 21, 2026 close · updated 1:33 PM ET", which explained the baseline to a reader who had
+ * not asked and buried the one fact they came for. The card title already says what the list is;
+ * the methodology belongs on the info icon.
+ *
+ * ⚠️ AND IT NEVER SAYS "LIVE" OR "REAL-TIME". The board is a periodic snapshot of a real-time
+ * source, so "Updated <time>" is the honest phrasing: it states an instant rather than promising a
+ * ticker. Once the session is frozen or settled the time stops being the point — the SESSION is —
+ * so it becomes "Final · <date>".
+ *
+ * @returns { kind: 'updated', at } | { kind: 'final', date } | null
+ */
+export function moversNoteState(movers) {
+  if (!movers) return null;
+  const frozen = Boolean(movers.session?.frozen);
+  if (movers.freshness === 'realtime' && !frozen) {
+    return { kind: 'updated', at: movers.snapshotAt ?? null };
+  }
+  // The session the rankings actually represent: the frozen one after the bell, otherwise the
+  // latest completed session the board was built from.
+  return { kind: 'final', date: (frozen ? (movers.session?.sessionDate || movers.asOf) : movers.asOf) ?? null };
+}
+
 /** A row is only rankable if BOTH halves of the fraction are trustworthy. */
 export const MOVER_REJECT = Object.freeze({
   NOT_ELIGIBLE: 'not_eligible',     // not a Stock/ADRC per the security master

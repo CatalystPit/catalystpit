@@ -205,5 +205,33 @@ L('\n=== CONCURRENT VIEWERS REUSE ONE SNAPSHOT ===');
   ok('…and all see the identical list', seen.size === 1);
 }
 
+L('\n=== THE CARD SUBTITLE SAYS HOW CURRENT, NOT HOW COMPUTED ===');
+{
+  const { moversNoteState } = await import('../src/lib/movers/movers-universe.mjs');
+  const live = moversNoteState({ freshness: 'realtime', snapshotAt: '2026-09-22T17:33:00Z', asOf: '2026-09-21', session: { phase: 'regular', frozen: false } });
+  ok('during the session it reports the snapshot instant',
+    live.kind === 'updated' && live.at === '2026-09-22T17:33:00Z', JSON.stringify(live));
+
+  const frozen = moversNoteState({ freshness: 'realtime', snapshotAt: '2026-09-22T19:59:00Z', asOf: '2026-09-21', session: { phase: 'closed', frozen: true, sessionDate: '2026-09-22' } });
+  ok('⚠️ after the close it reports the SESSION, not the capture time',
+    frozen.kind === 'final' && frozen.date === '2026-09-22', JSON.stringify(frozen));
+
+  const settled = moversNoteState({ freshness: 'eod', snapshotAt: null, asOf: '2026-09-21', session: { phase: 'closed', frozen: false, final: true } });
+  ok('overnight, at a weekend or on a holiday it reports the session the rankings represent',
+    settled.kind === 'final' && settled.date === '2026-09-21', JSON.stringify(settled));
+
+  ok('nothing renders before the data arrives', moversNoteState(null) === null);
+
+  // ⚠️ THE RULED-OUT WORDS CANNOT BE PRODUCED BY ANY STATE, because the state carries only a kind
+  // and one timestamp — there is nothing in it for a formatter to say "Market-wide", "from the
+  // … close", "previous close", "baseline", "live" or "real-time" WITH.
+  const states = [live, frozen, settled];
+  ok('⚠️ no state carries a baseline, a universe or a liveness claim',
+    states.every((x) => Object.keys(x).every((k) => ['kind', 'at', 'date'].includes(k))),
+    JSON.stringify(states));
+  ok('…and the only two kinds are "updated" and "final"',
+    states.every((x) => x.kind === 'updated' || x.kind === 'final'));
+}
+
 L(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

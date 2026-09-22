@@ -11,6 +11,7 @@ import {
   UNIVERSES, DEFAULT_UNIVERSE, ALL_SECTORS, SECTOR_OTHER, sectorOptions, filterBySector,
   mostActive,
 } from '../../lib/heatmap/heatmap-universe.mjs';
+import { moversNoteState } from '../../lib/movers/movers-universe.mjs';
 
 // THE MARKET HEATMAP PAGE.
 //
@@ -74,6 +75,24 @@ const REASON_COPY = {
 // poll costs a KV read, never a Tiingo batch, so 60s picks up a new snapshot promptly without
 // upstream cost — and a viewer polling faster could not cause a rebuild even if they tried.
 const HEATMAP_POLL_MS = 60000;
+
+/**
+ * ⚠️ MOST ACTIVE IS HIDDEN, NOT REMOVED — AND THIS ONE CONSTANT IS THE WHOLE MECHANISM.
+ *
+ * It ranks COMPLETED-SESSION consolidated volume, which is honest but sits oddly beside two lists
+ * that are showing today. It comes back when we have defensible intraday consolidated volume;
+ * this entitlement's intraday volume is one venue's print (0.17%–0.40% of the tape) and must never
+ * be substituted for it.
+ *
+ * Everything behind it stays: mostActive() in heatmap-universe.mjs, its tests, the per-row volume
+ * on the board and the session-volume note. Re-enabling is this flag and nothing else.
+ *
+ * ⚠️ AND IT COSTS NOTHING TO LEAVE THE DATA IN PLACE. Most Active was never a request of its own —
+ * it is derived from board rows the heatmap already fetched, so hiding it saves no upstream call
+ * and disabling anything further upstream would degrade the board itself.
+ */
+const SHOW_MOST_ACTIVE = false;
+const CARD_COLUMNS = SHOW_MOST_ACTIVE ? 3 : 2;
 
 const FRESHNESS_COPY = {
   eod: { label: 'End of day', tone: 'muted', text: 'Completed-session data. Not live or intraday.' },
@@ -210,15 +229,19 @@ export default function MarketHeatmapClient({ initial }) {
   const losers = movers?.losers ?? [];
   const active = useMemo(() => mostActive(rows, { limit: 10 }), [rows]);
 
-  // What the two market-wide lists are measured between, and when they were captured. Shown on the
-  // cards themselves because they no longer share the board's freshness strip.
-  const moversNote = movers
-    ? (movers.session?.frozen
-      ? `Final · ${longDay(movers.session.sessionDate || movers.asOf)} session`
-      : movers.freshness === 'realtime'
-        ? `Market-wide · from the ${longDay(movers.baselineDate)} close · updated ${etTime(movers.snapshotAt) || 'every 15 min'}`
-        : `Market-wide · ${longDay(movers.baselineDate)} → ${longDay(movers.asOf)} close · final`)
-    : null;
+  // ⚠️ A CARD SUBTITLE IS NOT THE PLACE FOR THE METHODOLOGY. The earlier version read
+  // "Market-wide · from the Sep 21, 2026 close · updated 1:33 PM ET", which explained the baseline
+  // to a reader who had not asked and buried the one fact they came for. "TOP GAINERS · 1D"
+  // already says what the list is; this says only how current it is.
+  //
+  // The baseline, the universe and the exclusions are still stated in full — on the info icon,
+  // where someone who wants them can find them.
+  const moversNote = (() => {
+    const s = moversNoteState(movers);
+    if (!s) return null;
+    if (s.kind === 'updated') return etTime(s.at) ? `Updated ${etTime(s.at)}` : 'Updated every 15 min';
+    return s.date ? `Final · ${longDay(s.date)}` : null;
+  })();
 
   // ⚠️ THE STRIP IS DRIVEN BY THE SERVER'S SESSION STATE, NOT BY A CLOCK IN THE BROWSER. A viewer
   // in Singapore, a viewer with a skewed system clock and a viewer in New York must all be told
@@ -457,7 +480,7 @@ export default function MarketHeatmapClient({ initial }) {
           {/* Most Active is a SESSION measure, so it is labelled with its session rather than with the
               selected window — "Most active 1M" would claim something we are not measuring. Omitted
               entirely when no row carries a real volume, rather than shown empty. */}
-          {active.length > 0 && (
+          {SHOW_MOST_ACTIVE && active.length > 0 && (
             <LeaderList title="Most active" items={active} metric="volume"
               note={`Share volume · ${longDay(data?.asOf)} session · end of day`}
               help={{ title: 'Most Active', body: 'Share volume for the most recent completed trading session. This is a session measure, so it does NOT follow the selected return window. When a licensed live feed is connected this can become intraday volume.' }} />
@@ -481,9 +504,11 @@ export default function MarketHeatmapClient({ initial }) {
            treemap needs, and sets it; the page scrolls, which is far better than crushing a sector. */
         .cp-hm-board { min-height: 0; }
         /* Three equal leadership cards across the full width. */
-        .cp-hm-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
-        /* Medium widths: two across, the third wraps beneath. */
-        @media (max-width: 1100px) { .cp-hm-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        /* ⚠️ THE COLUMN COUNT FOLLOWS THE NUMBER OF CARDS, so hiding one leaves no empty slot.
+           Driven by the same constant that decides whether Most Active renders at all — two
+           places agreeing by construction rather than by someone remembering to edit both. */
+        .cp-hm-cards { display: grid; grid-template-columns: repeat(${CARD_COLUMNS}, minmax(0, 1fr)); gap: 12px; align-items: start; }
+        @media (max-width: 1100px) { .cp-hm-cards { grid-template-columns: repeat(${Math.min(2, CARD_COLUMNS)}, minmax(0, 1fr)); } }
         /* Phones: stacked cards. The board still sizes itself — a narrow screen needs MORE height,
            not less, because the same sectors have less width to spread across. */
         @media (max-width: 720px) { .cp-hm-cards { grid-template-columns: 1fr; } }

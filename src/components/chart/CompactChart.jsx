@@ -44,7 +44,21 @@ const BAR_SPACING = 6;
 // pan.
 const MAX_BARS = 120;
 
-export default function CompactChart({ symbol, height = 150 }) {
+/**
+ * ⚠️ ONE PREVIEW COMPONENT, TWO CALLERS, AND THE DEFAULTS ARE THE HOMEPAGE'S.
+ *
+ * The hover card needs what a 150px tile cannot show — a price axis, a date axis and the last
+ * price — so those are OPT-IN rather than a second component. Every default below is exactly what
+ * the homepage tiles already had, so they render identically to before this was generalised.
+ *
+ * `showAxes` also turns the crosshair back on, because axes without one are labels nobody can line
+ * a candle up against.
+ */
+export default function CompactChart({
+  symbol, height = 150,
+  showAxes = false, showLastValue = false,
+  maxBars = MAX_BARS, barSpacing = BAR_SPACING, range = null,
+}) {
   const hostRef = useRef(null);
   const theme = useTheme();
   const [state, setState] = useState('loading');   // loading | ready | empty
@@ -56,7 +70,8 @@ export default function CompactChart({ symbol, height = 150 }) {
 
     (async () => {
       if (!isValidSymbol(symbol)) { setState('empty'); return; }
-      const url = barsUrl(symbol, '1D');
+      // `range` narrows the daily request for short previews; null keeps the timeframe's own.
+      const url = barsUrl(symbol, '1D', { range });
       if (!url) { setState('empty'); return; }
 
       let bars = [];
@@ -70,7 +85,7 @@ export default function CompactChart({ symbol, height = 150 }) {
 
       // Enough history to fill the widest tile at BAR_SPACING, and no more. The chart shows the
       // right-hand end of this, so anything further back is only there to fill a wide card.
-      const slice = bars.slice(-MAX_BARS);
+      const slice = bars.slice(-maxBars);
 
       const lwc = await import('lightweight-charts');
       if (disposed || !hostRef.current) return;
@@ -81,19 +96,19 @@ export default function CompactChart({ symbol, height = 150 }) {
       chart = lwc.createChart(hostRef.current, {
         autoSize: true,
         layout: { background: { color: 'transparent' }, textColor: p.text, attributionLogo: false },
-        grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+        grid: { vertLines: { visible: false }, horzLines: { visible: showAxes, color: p.grid ?? undefined } },
         // Hidden, not absent. The series still autoscales to the VISIBLE candles, which is what
         // keeps the bodies filling the tile instead of collapsing toward a flat line; the margins
         // stop the extremes touching the edges.
-        rightPriceScale: { visible: false, autoScale: true, scaleMargins: { top: 0.12, bottom: 0.08 } },
+        rightPriceScale: { visible: showAxes, borderVisible: showAxes, autoScale: true, scaleMargins: { top: 0.12, bottom: 0.08 } },
         leftPriceScale: { visible: false },
         // ⚠️ barSpacing, NOT fitContent(). fitContent squeezes every loaded bar into the tile, and at
         // this width that renders candles about a pixel wide — the "unreadable hairlines" a compact
         // chart is most likely to become. Fixing the spacing instead makes the WIDTH decide how many
         // candles are shown: a wide card shows more, a narrow one fewer, each of them legible, and
         // the count re-adapts on resize with no refetch.
-        timeScale: { visible: false, rightOffset: 1, barSpacing: BAR_SPACING, minBarSpacing: 2, fixRightEdge: true },
-        crosshair: { mode: 0, vertLine: { visible: false, labelVisible: false }, horzLine: { visible: false, labelVisible: false } },
+        timeScale: { visible: showAxes, borderVisible: showAxes, rightOffset: 1, barSpacing, minBarSpacing: 2, fixRightEdge: true, timeVisible: false },
+        crosshair: { mode: 0, vertLine: { visible: showAxes, labelVisible: showAxes }, horzLine: { visible: showAxes, labelVisible: showAxes } },
         handleScroll: false,
         handleScale: false,
       });
@@ -106,8 +121,8 @@ export default function CompactChart({ symbol, height = 150 }) {
       const series = chart.addSeries(lwc[ct.series], {
         ...ct.options(p),
         // The only departures, and both are because a 150px tile has no room for them.
-        priceLineVisible: false,
-        lastValueVisible: false,
+        priceLineVisible: showLastValue,
+        lastValueVisible: showLastValue,
       });
       series.setData(slice.map(ct.map));           // full OHLC — never reduced to close
       chart.timeScale().scrollToRealTime();
@@ -126,7 +141,7 @@ export default function CompactChart({ symbol, height = 150 }) {
       try { ro?.disconnect(); } catch { /* already gone */ }
       try { chart?.remove(); } catch { /* already gone */ }
     };
-  }, [symbol, theme]);
+  }, [symbol, theme, showAxes, showLastValue, maxBars, barSpacing, range]);
 
   const C = palette(theme);
   return (

@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { C } from '../lib/cp-shared';
+import CompactChart from './chart/CompactChart';
 
 // THE FINVIZ-STYLE TICKER HOVER PREVIEW — one implementation, every table that lists tickers.
 //
@@ -16,34 +17,59 @@ const W = 360, H = 224;
 const OPEN_DELAY_MS = 220;   // long enough that sweeping the cursor down a column opens nothing
 
 /**
- * The chart itself: a daily candlestick embed.
+ * The chart itself: SYMBOL · DAILY · 3M, drawn by our own renderer on our own data.
  *
- * The ADVANCED-chart widget rather than the mini widget, because the mini widget is line-only and
- * this is a candle preview. The tradingview-widget-container / __widget class names are REQUIRED —
- * the embed renders blank without them.
+ * ── WHAT THIS REPLACED ───────────────────────────────────────────────────────
  *
- * NO CATALYST PIT MARKET-DATA REQUEST. The embed fetches its own data from the vendor, so adding
- * this to a second page adds nothing to our own API load, and there is no cache to share or
- * invalidate. Remounting on symbol change is the vendor's own teardown, not ours.
+ * A TradingView-HOSTED advanced-chart embed: a <script> from s3.tradingview.com that fetched its
+ * own prices from the vendor. Every hover on the Screener, the Dividend Calendar and the heatmap's
+ * movers loaded third-party code into the page and showed a reader TradingView's data rather than
+ * the data the rest of the product is measured on — so a preview could disagree with the tile that
+ * opened it, and we could not explain why.
+ *
+ * ⚠️ THE RENDERER IS STILL LIGHTWEIGHT CHARTS, AND THAT IS NOT THE SAME THING. That library is
+ * TradingView's, used under its licence with the attribution the product already carries. What is
+ * gone is the HOSTED WIDGET and the VENDOR DATA behind it. Removing the library would mean
+ * rewriting every chart in the product for no benefit.
+ *
+ * ── WHY CompactChart AND NOT A NEW MINI CHART ────────────────────────────────
+ *
+ * It already exists, already speaks barsUrl()/normalizeBars(), already themes from palette() and
+ * already tears itself down on symbol change. The hover card needs three things a 150px homepage
+ * tile does not — a price axis, a date axis and the last price — and those are opt-in props on
+ * that one component rather than a second implementation to drift.
+ *
+ * ── COST ─────────────────────────────────────────────────────────────────────
+ *
+ * /api/chart-daily reads ticker_daily_candles from Postgres and only contacts a provider when the
+ * stored tail is stale. Measured on JAGX: 62 candles, `upstream: false`, `fetched: 0`. Sweeping a
+ * cursor across ten tickers is ten Postgres reads and no vendor requests at all.
  */
 function MiniChart({ symbol }) {
-  const host = useRef(null);
-  useEffect(() => {
-    const h = host.current; if (!h) return; h.innerHTML = '';
-    const c = document.createElement('div'); c.className = 'tradingview-widget-container'; c.style.height = '100%'; c.style.width = '100%';
-    const w = document.createElement('div'); w.className = 'tradingview-widget-container__widget'; w.style.height = '100%'; w.style.width = '100%'; c.appendChild(w);
-    const s = document.createElement('script');
-    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-    s.async = true;
-    s.innerHTML = JSON.stringify({
-      autosize: true, symbol, interval: 'D', range: '3M', timezone: 'America/New_York', theme: (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark') ? 'dark' : 'light',
-      style: '1', locale: 'en', hide_top_toolbar: true, hide_side_toolbar: true, hide_legend: true,
-      allow_symbol_change: false, save_image: false, withdateranges: false, support_host: 'https://www.tradingview.com',
-    });
-    c.appendChild(s); h.appendChild(c);
-    return () => { h.innerHTML = ''; };
-  }, [symbol]);
-  return <div ref={host} style={{ position: 'absolute', inset: 0 }} />;
+  return (
+    // ⚠️ `key` FORCES A FRESH MOUNT PER SYMBOL, which is the structural version of the SPY→AAPL
+    // fix. CompactChart already disposes its chart on cleanup and guards its async fetch, but a
+    // remount makes it impossible for one symbol's price scale, candles or last-price line to
+    // survive into another's even if that internal guard were ever weakened.
+    <div style={{ position: 'absolute', inset: 0, padding: '2px 2px 0' }}>
+      <CompactChart
+        key={symbol}
+        symbol={symbol}
+        height={H - 34}
+        // The preview contract: a price axis, a date axis and the latest price. No toolbar, no
+        // drawings, no indicators, no evidence markers — CompactChart mounts none of them.
+        showAxes
+        showLastValue
+        // ~3 months of daily history. 66 sessions is a quarter, and 4px spacing is what fits that
+        // many legibly across the 360px card once the price axis has taken its width.
+        // ⚠️ ASK FOR 3 MONTHS, NOT THE DAILY TIMEFRAME'S NATURAL 5Y. Without this every hover
+        // downloads ~1,250 candles to draw ~62 of them.
+        range="3M"
+        maxBars={66}
+        barSpacing={4}
+      />
+    </div>
+  );
 }
 
 /**

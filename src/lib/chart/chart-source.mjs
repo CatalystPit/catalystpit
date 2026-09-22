@@ -226,7 +226,22 @@ export const isValidSymbol = (s) => SYMBOL_RE.test(String(s || '').toUpperCase()
  * it. Asking for extended hours on a daily timeframe is not an error; it is simply meaningless, so
  * the parameter is omitted rather than sent and ignored.
  */
-export function barsUrl(symbol, timeframeId, { session = 'regular' } = {}) {
+/**
+ * ⚠️ `range` NARROWS A DAILY REQUEST, AND EXISTS FOR COST RATHER THAN FOR LOOKS.
+ *
+ * The daily timeframe's natural range is 5Y — right for the full chart, which can pan back through
+ * all of it. A 3-month preview that shows ~62 candles would otherwise download ~1,250, on every
+ * hover, for every ticker a cursor settles on. Measured on JAGX: 62 candles at range=3M against
+ * 1,255 at the default.
+ *
+ * Only the DAILY endpoint honours it; an intraday timeframe already encodes its own range, so the
+ * parameter is ignored there rather than silently changing the resolution. An unrecognised value
+ * falls back to the timeframe's natural range instead of being forwarded — the route would default
+ * it anyway, and guessing here would hide the mistake.
+ */
+const DAILY_RANGES = new Set(['1M', '3M', '6M', 'YTD', '1Y', '5Y', 'all']);
+
+export function barsUrl(symbol, timeframeId, { session = 'regular', range = null } = {}) {
   const sym = String(symbol || '').toUpperCase().trim();
   const tf = timeframe(timeframeId);
   if (!tf || !isValidSymbol(sym)) return null;
@@ -240,7 +255,7 @@ export function barsUrl(symbol, timeframeId, { session = 'regular' } = {}) {
     if (session === 'extended' && tf.extendedCapable) q.set('session', 'extended');
     return `/api/chart-intraday?${q}`;
   }
-  q.set('range', routeRange(tf.id));
+  q.set('range', range && DAILY_RANGES.has(range) ? range : routeRange(tf.id));
   return `/api/chart-daily?${q}`;
 }
 
