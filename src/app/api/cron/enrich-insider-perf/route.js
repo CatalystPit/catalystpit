@@ -1,3 +1,4 @@
+import { dailyCloses } from '../../../../lib/market/daily-series.mjs';
 // Cron: keep insider-trade subsequent-performance (1d/1w/1m/6m) fresh via Polygon (unlimited stocks).
 // Prices never-attempted trades AND re-fills recent trades whose later horizons have since elapsed.
 // Bounded per run (the initial backfill is a one-time script); one bars fetch + updates per ticker.
@@ -10,17 +11,17 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const CRON_SECRET = process.env.CRON_SECRET;
-const K = process.env.POLYGON_API_KEY;
 const TODAY = () => new Date().toISOString().slice(0, 10);
 const TICKER_CAP = 12;
 
-async function polyBars(ticker) {
-  try {
-    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/2018-01-01/${TODAY()}?adjusted=true&sort=asc&limit=50000&apiKey=${K}`);
-    if (!r.ok) return [];
-    const j = await r.json();
-    return (j.results || []).map((b) => ({ date: new Date(b.t).toISOString().slice(0, 10), c: b.c }));
-  } catch { return []; }
+// ⚠️ STORED CANDLES FIRST, TIINGO FOR THE GAP — this was a direct Polygon aggregates call per
+// ticker per run. Same question, same split-adjusted convention, but it now reads the history the
+// product already holds and only asks a provider for a security we have never needed. See
+// lib/market/daily-series.mjs. `c` is kept as the close field name so the callers below are
+// unchanged.
+async function dailyBars(ticker) {
+  const series = await dailyCloses(ticker, '2018-01-01', TODAY());
+  return series.map((b) => ({ date: b.date, c: b.close }));
 }
 
 export async function GET(request) {
@@ -46,7 +47,7 @@ export async function GET(request) {
   for (const { ticker } of tickers) {
     const trades = await db.select({ id: insiderTrades.id, td: insiderTrades.transactionDate, pps: insiderTrades.pricePerShare })
       .from(insiderTrades).where(and(eq(insiderTrades.ticker, ticker), needsPerf));
-    const bars = await polyBars(ticker);
+    const bars = await dailyBars(ticker);
     if (!bars.length) {
       await db.update(insiderTrades).set({ perfPricedAt: new Date() }).where(and(eq(insiderTrades.ticker, ticker), isNull(insiderTrades.perfPricedAt)));
       noData++; continue;

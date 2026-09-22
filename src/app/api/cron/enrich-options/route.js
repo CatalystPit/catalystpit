@@ -26,7 +26,25 @@ async function priceAndStore(r, results) {
   } catch (e) { results.errors.push(`${r.id}:${e.message}`); }
 }
 
+// ⚠️ DISABLED — NO LICENSED OPTIONS DATA.
+//
+// Congressional option trades were priced from Polygon option aggregates. We hold no licensed
+// options feed at all: Tiingo's entitlement is equities, and there is nothing to migrate to.
+//
+// The three tempting substitutions are all worse than doing nothing — pricing an option from the
+// UNDERLYING equity is a different instrument, reusing the last Polygon values serves stale data
+// from an unlicensed source, and interpolating is fabrication. So the enricher stands down and
+// leaves the rows unpriced; congressional EQUITY trades are unaffected and keep pricing normally.
+//
+// priceOption() and the OCC symbol construction in lib/congress-options.mjs are preserved intact.
+// Re-enabling is this flag plus a licensed options provider.
+const OPTIONS_PRICING_ENABLED = false;
+
 export async function GET(request) {
+  if (!OPTIONS_PRICING_ENABLED) {
+    return Response.json({ ok: true, disabled: true, priced: 0,
+      reason: 'options pricing requires a licensed options data source' });
+  }
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
   if (!isVercelCron && request.headers.get('authorization') !== `Bearer ${CRON_SECRET}`)
     return Response.json({ error: 'Unauthorized' }, { status: 401 });

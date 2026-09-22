@@ -189,49 +189,60 @@ const fetchFinnhubNews = async (sym) => {
       image:    a.image || null,
     }));
 };
-// Polygon /v2/reference/news — per-ticker, diverse publishers (Motley Fool, Benzinga,
-// GlobeNewswire, …), every item carries an image_url. published_utc is already ISO.
-const fetchPolygonNews = async (sym) => {
-  if (!POLYGON_API_KEY) return null;
+// TIINGO NEWS — per-ticker, diverse publishers, under our own licence.
+//
+// ⚠️ MIGRATED OFF POLYGON (/v2/reference/news), whose redistribution rights for public commercial
+// display were never established. Tiingo's news endpoint is covered by the agreement and answers
+// for the whole universe — verified on a small-cap (JAGX), not only on mega-caps, because the
+// FUNDAMENTALS endpoint on this same plan IS capped to the Dow 30 and it was worth confirming
+// which restriction applied where.
+//
+// ⚠️ ONE FIELD IS GENUINELY LOST. Polygon returned an image_url per article; Tiingo does not. It
+// is reported as null rather than sourced elsewhere or guessed at — the ticker page already falls
+// back to the company logo when an article has no image, so the degrade is visible and harmless.
+// Inventing an image to preserve a layout would be a fabrication.
+const fetchTiingoNews = async (sym) => {
+  const token = process.env.TIINGO_API_KEY;
+  if (!token) return null;
   try {
-    const r = await fetch(`https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(sym)}&limit=15&apiKey=${POLYGON_API_KEY}`);
+    const r = await fetch(`https://api.tiingo.com/tiingo/news?tickers=${encodeURIComponent(String(sym).toLowerCase())}&limit=15&token=${token}`,
+      { headers: { 'Content-Type': 'application/json' }, cache: 'no-store' });
     if (!r.ok) return null;
     const j = await r.json();
-    if (!Array.isArray(j.results)) return null;
-    return j.results
-      .filter(a => a.title && a.article_url)
+    if (!Array.isArray(j)) return null;
+    return j
+      .filter(a => a.title && a.url)
       .map(a => ({
         headline: a.title,
-        source:   a.publisher?.name || 'Polygon',
-        url:      a.article_url,
-        datetime: a.published_utc || null,
-        image:    a.image_url || null,
+        source:   a.source || 'Tiingo',
+        url:      a.url,
+        datetime: a.publishedDate || null,
+        image:    null,
       }));
   } catch { return null; }
 };
 
 const NEWS_CAP = 15;
-const POLYGON_ENOUGH = 6;   // Polygon-primary: only fall back to Finnhub (Yahoo-heavy) when Polygon is this thin
+const PRIMARY_ENOUGH = 6;   // licensed-primary: only fall back to Finnhub (Yahoo-heavy) when it is this thin
 const newsTs = (n) => (n.datetime ? (Date.parse(n.datetime) || 0) : 0);
 
-// Polygon-primary, Finnhub fallback. Both fetched in parallel; Finnhub results are only
-// merged in when Polygon returns too few (keeps Yahoo out of the common case). null only
-// when BOTH sources fail (so the cache won't persist a transient double-failure).
-// Returns { items, degraded }. degraded = Polygon fetch FAILED (poly == null) so we leaned on
-// the Finnhub/Yahoo fallback — the caller caches that briefly so it self-heals. items == null
-// only when BOTH sources fail (caller won't persist a transient double-failure).
+// Licensed-primary (Tiingo), Finnhub fallback. Both fetched in parallel; Finnhub results are only
+// merged in when the primary returns too few (keeps Yahoo out of the common case).
+// Returns { items, degraded }. degraded = the licensed fetch FAILED so we leaned on the
+// Finnhub/Yahoo fallback — the caller caches that briefly so it self-heals. items == null only
+// when BOTH sources fail (caller won't persist a transient double-failure).
 const fetchNews = async (sym) => {
-  const [poly, fin] = await Promise.all([fetchPolygonNews(sym), fetchFinnhubNews(sym)]);
-  if (poly == null && fin == null) return { items: null, degraded: false };
-  const polyArr = poly || [], finArr = fin || [];
+  const [primary, fin] = await Promise.all([fetchTiingoNews(sym), fetchFinnhubNews(sym)]);
+  if (primary == null && fin == null) return { items: null, degraded: false };
+  const primaryArr = primary || [], finArr = fin || [];
   let items;
-  if (polyArr.length >= POLYGON_ENOUGH) {
-    items = polyArr;                                     // enough diverse coverage — Polygon only
+  if (primaryArr.length >= PRIMARY_ENOUGH) {
+    items = primaryArr;                                  // enough diverse coverage — licensed only
   } else {
-    const seen = new Set(polyArr.map(a => a.url));       // fallback: top up with Finnhub, dedupe by URL
-    items = [...polyArr, ...finArr.filter(a => !seen.has(a.url))];
+    const seen = new Set(primaryArr.map(a => a.url));    // fallback: top up with Finnhub, dedupe by URL
+    items = [...primaryArr, ...finArr.filter(a => !seen.has(a.url))];
   }
-  return { items: items.sort((a, b) => newsTs(b) - newsTs(a)).slice(0, NEWS_CAP), degraded: poly == null };
+  return { items: items.sort((a, b) => newsTs(b) - newsTs(a)).slice(0, NEWS_CAP), degraded: primary == null };
 };
 
 // News cache with dynamic TTL (Polygon-fail fallback caches briefly). Mirrors cached()'s shape.

@@ -81,13 +81,21 @@ async function polygonEarnings(ticker) {
   } catch { return []; }
 }
 // When SEC XBRL has no earnings, try Polygon; cache + return whichever we get (empty if neither).
+// ⚠️ FAILS CLOSED. This fell back to Polygon financials for foreign issuers and ADRs that file
+// 20-F/IFRS rather than us-gaap quarters, which SEC XBRL cannot serve — on a provider whose
+// redistribution rights we never established.
+//
+// Tiingo is NOT a replacement here, measured rather than assumed:
+// /tiingo/fundamentals/statements answers 200 for AAPL and 400 for NBIS with "Free and Power
+// plans are limited to the DOW 30". The Dow is precisely the set that already has clean SEC XBRL,
+// so the entitlement covers exactly the tickers that never needed a fallback and none of the ones
+// that did.
+//
+// The honest outcome is no earnings for those issuers rather than earnings from an unlicensed
+// source. What must NOT happen is substituting something semantically different — SEC actuals
+// presented as estimates, or a sibling issuer's figures — to keep a table populated.
+// polygonEarnings() above is preserved, uncalled, for a future licensed use.
 async function earningsFallback(ticker, cik) {
-  const rows = await polygonEarnings(ticker);
-  if (rows.length) {
-    const payload = { ticker, cik: cik ?? null, count: rows.length, earnings: rows, meta: { cached: false, source: 'polygon' } };
-    await kvSet(`earnings:${ticker}`, JSON.stringify(payload), TTL_EARNINGS);
-    return Response.json(payload);
-  }
   return empty(ticker, cik);
 }
 

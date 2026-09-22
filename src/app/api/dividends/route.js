@@ -54,38 +54,53 @@ const EMPTY = (ticker) => ({
   mostRecent: null, currentPrice: null, ttmYield: null,
 });
 
-// Previous-day close from Polygon — the price basis for yield.
-async function polyPrice(ticker) {
+// The price basis for yield — our own stored completed-session close.
+//
+// ⚠️ THIS WAS A POLYGON prev-close CALL PER TICKER PER REQUEST, on a provider whose
+// redistribution rights we never established, for a number we already hold.
+// ticker_daily_candles is Tiingo split-adjusted history; reading the last close costs an indexed
+// query and no vendor request at all, so the Dividends tab stops scaling with page views.
+async function lastClose(ticker) {
   try {
-    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?adjusted=true&apiKey=${POLYGON_KEY}`);
-    if (!r.ok) return null;
-    const c = Number((await r.json())?.results?.[0]?.c);
-    return Number.isFinite(c) && c > 0 ? c : null;
+    const { dailyCloses } = await import('../../../lib/market/daily-series.mjs');
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const series = await dailyCloses(ticker, from, to);
+    const last = series[series.length - 1];
+    return last && Number.isFinite(last.close) && last.close > 0 ? last.close : null;
   } catch { return null; }
 }
 
+// ⚠️ MIGRATED OFF POLYGON. The ticker page's Dividends tab fetched dividend events AND the yield
+// price basis from Polygon — and a comment on the page already claimed Tiingo, which it was not.
+//
+// Events now come from Tiingo corporate actions, derived from the daily bars' divCash on the feed
+// the whole product runs on, so a dividend and the price it is measured against share one source
+// and one adjustment convention.
+//
+// ⚠️ ONE FIELD IS GENUINELY LOST: Polygon returned pay_date and a numeric frequency code. Tiingo's
+// derivation carries neither, so payDate is null and the frequency is INFERRED from ex-date
+// spacing — which inferFrequency() already did whenever Polygon's code was absent. Reporting a
+// pay date we do not have would be a fabrication; an absent one is a visible gap.
 async function buildDividends(ticker) {
-  if (!POLYGON_KEY) return { ...EMPTY(ticker), error: true };
-
-  let results;
+  let actions;
   try {
-    const r = await fetch(`https://api.polygon.io/v3/reference/dividends?ticker=${encodeURIComponent(ticker)}&limit=100&order=desc&sort=ex_dividend_date&apiKey=${POLYGON_KEY}`);
-    if (r.status === 429 || r.status >= 500) return { ...EMPTY(ticker), error: true };   // transient → DON'T cache
-    if (!r.ok) { return { ...EMPTY(ticker), currentPrice: await polyPrice(ticker) }; }   // 404 → genuinely no data
-    results = (await r.json())?.results;
-    if (!Array.isArray(results)) results = [];
+    const { getCorporateActions } = await import('../../../lib/market/tiingo.mjs');
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - 6 * 365 * 86400000).toISOString().slice(0, 10);
+    actions = await getCorporateActions(ticker, { from, to });
+    if (!actions?.ok) return { ...EMPTY(ticker), error: true };        // transient → DON'T cache
   } catch { return { ...EMPTY(ticker), error: true }; }
 
-  const currentPrice = await polyPrice(ticker);
-  const events = results
-    .filter((d) => Number(d.cash_amount) > 0 && d.ex_dividend_date)
-    .map((d) => ({ exDate: d.ex_dividend_date, amount: Number(d.cash_amount), payDate: d.pay_date || null }))
+  const currentPrice = await lastClose(ticker);
+  const events = (actions.dividends || [])
+    .filter((d) => Number(d.amount) > 0 && d.exDate)
+    .map((d) => ({ exDate: String(d.exDate).slice(0, 10), amount: Number(d.amount), payDate: null }))
     .sort((a, b) => a.exDate.localeCompare(b.exDate));
 
   if (!events.length) return { ...EMPTY(ticker), currentPrice };   // valid ticker, simply doesn't pay
 
-  const freqInt = Number(results[0]?.frequency);
-  const frequency = FREQ_LABEL[freqInt] || inferFrequency(events.map((e) => e.exDate)).label;
+  const frequency = inferFrequency(events.map((e) => e.exDate)).label;
 
   const cutoff = Date.now() - 365 * MS_DAY;
   const ttmDividend = +events

@@ -1,3 +1,4 @@
+import { dailyCloses } from '../../../lib/market/daily-series.mjs';
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices, tickerPriceQuality } from '../../../lib/schema';
 import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
@@ -21,13 +22,15 @@ const TODAY = () => new Date().toISOString().slice(0, 10);
 const isoDay = (d) => (typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
 
 // Whole-history split-adjusted daily bars for a ticker (asc). One call covers entry + current.
-async function polyBars(ticker) {
-  try {
-    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/2022-01-01/${TODAY()}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_API_KEY}`);
-    if (!r.ok) return [];
-    const j = await r.json();
-    return (j.results || []).map((b) => ({ date: new Date(b.t).toISOString().slice(0, 10), c: b.c }));
-  } catch { return []; }
+//
+// ⚠️ STORED CANDLES FIRST, TIINGO FOR THE GAP. This was a direct Polygon aggregates call per
+// ticker per run, on a provider whose redistribution rights we never established. The question
+// and the split-adjusted convention are identical; the source is now the history the product
+// already holds, with a provider request only for a security we have never needed — so this cron
+// costs progressively less as coverage grows. See lib/market/daily-series.mjs.
+async function dailyBars(ticker) {
+  const series = await dailyCloses(ticker, '2022-01-01', TODAY());
+  return series.map((x) => ({ date: x.date, c: x.close }));
 }
 const onOrBefore = (bars, target) => { let hit = null; for (const b of bars) { if (b.date <= target) hit = b; else break; } return hit; };
 
@@ -45,7 +48,7 @@ async function enrichPrices(results) {
       const rows = await db.select({ id: congressTrades.id, td: congressTrades.transactionDate })
         .from(congressTrades)
         .where(and(eq(congressTrades.ticker, ticker), isNull(congressTrades.priceAtTrade)));
-      const bars = await polyBars(ticker);
+      const bars = await dailyBars(ticker);
       if (!bars.length) continue;
       for (const row of rows) {
         if (!row.td) continue;
@@ -84,7 +87,7 @@ async function refreshCurrentPrices(results) {
 
     let updated = 0;
     for (const { ticker } of stale) {
-      const bars = await polyBars(ticker);
+      const bars = await dailyBars(ticker);
       const cur = bars.length ? bars[bars.length - 1].c : null;
       // Always bump updated_at (even on null) so the ticker rotates to the back of the queue.
       await db.insert(congressTickerPrices)
