@@ -1,51 +1,53 @@
-// Futures are looked up with a leading slash (trader convention: /ES, /CL, /GC) so their roots never
-// collide with real stock tickers (ES=Eversource, CL=Colgate, GC, SI, NG, etc.). Each maps to a
-// TradingView continuous front-month symbol (…1!) for the chart. Bare symbols stay stock lookups.
-// NOTE: the free TradingView embed gates real CME contracts (…1!) behind a paid/login data plan
-// ("only available to TradingView users"), so each future points at a FREE-rendering symbol that
-// tracks the same market — TVC feeds (indices/metals/energy/vol/yields), FX pairs, crypto. These
-// render for anonymous visitors. Swap any that still show the wall.
+// Futures roots are looked up with a leading slash (trader convention: /ES, /CL, /GC) or a FUT.
+// prefix, so they never collide with real stock tickers — ES is Eversource, CL is Colgate, and NG,
+// SI, HG and BTC are all live equities or ETFs too. Bare symbols stay stock lookups, always.
+//
+// ⚠️ NO VENDOR SYMBOLS LIVE HERE ANY MORE. They moved to futures-vendor-symbols.js, which nothing
+// imports, so no Capital.com/TradingView symbol ships in a browser bundle. What remains is the
+// root, its human label and its category — the parts a licensed provider would still need.
 export const FUTURES = {
-  // Index (CapitalCom CFDs render free in the embed; TradingView's own index feeds are gated)
-  ES:  { label: 'S&P 500',              tv: 'CAPITALCOM:US500',  cat: 'Index' },
-  MES: { label: 'S&P 500 (Micro)',      tv: 'CAPITALCOM:US500',  cat: 'Index' },
-  NQ:  { label: 'Nasdaq 100',           tv: 'CAPITALCOM:US100',  cat: 'Index' },
-  MNQ: { label: 'Nasdaq 100 (Micro)',   tv: 'CAPITALCOM:US100',  cat: 'Index' },
-  YM:  { label: 'Dow Jones',            tv: 'CAPITALCOM:US30',   cat: 'Index' },
-  RTY: { label: 'Russell 2000',         tv: 'CAPITALCOM:US2000', cat: 'Index' },
-  VIX: { label: 'Volatility (VIX)',     tv: 'CAPITALCOM:VIX',    cat: 'Index' },
-  DXY: { label: 'US Dollar Index',      tv: 'CAPITALCOM:DXY',    cat: 'FX' },
+  // Index
+  ES:  { label: 'S&P 500',  cat: 'Index' },
+  MES: { label: 'S&P 500 (Micro)',  cat: 'Index' },
+  NQ:  { label: 'Nasdaq 100',  cat: 'Index' },
+  MNQ: { label: 'Nasdaq 100 (Micro)',  cat: 'Index' },
+  YM:  { label: 'Dow Jones',   cat: 'Index' },
+  RTY: { label: 'Russell 2000', cat: 'Index' },
+  VIX: { label: 'Volatility (VIX)',    cat: 'Index' },
+  DXY: { label: 'US Dollar Index',    cat: 'FX' },
   // Energy
-  CL:  { label: 'Crude Oil (WTI)',      tv: 'CAPITALCOM:OIL_CRUDE', cat: 'Energy' },
-  MCL: { label: 'Crude Oil (Micro)',    tv: 'CAPITALCOM:OIL_CRUDE', cat: 'Energy' },
-  BZ:  { label: 'Brent Crude',          tv: 'CAPITALCOM:OIL_BRENT', cat: 'Energy' },
-  NG:  { label: 'Natural Gas',          tv: 'CAPITALCOM:NATURALGAS', cat: 'Energy' },
-  // Metals (TVC gold/silver + CapitalCom copper/platinum — confirmed rendering)
-  GC:  { label: 'Gold',                 tv: 'TVC:GOLD',          cat: 'Metals' },
-  MGC: { label: 'Gold (Micro)',         tv: 'TVC:GOLD',          cat: 'Metals' },
-  SI:  { label: 'Silver',               tv: 'TVC:SILVER',        cat: 'Metals' },
-  HG:  { label: 'Copper',               tv: 'CAPITALCOM:COPPER', cat: 'Metals' },
-  PL:  { label: 'Platinum',             tv: 'CAPITALCOM:PLATINUM', cat: 'Metals' },
-  // FX (spot pair proxy)
-  '6E': { label: 'Euro / USD',          tv: 'CAPITALCOM:EURUSD', cat: 'FX' },
-  '6B': { label: 'British Pound / USD', tv: 'CAPITALCOM:GBPUSD', cat: 'FX' },
-  '6J': { label: 'USD / Japanese Yen',  tv: 'CAPITALCOM:USDJPY', cat: 'FX' },
-  '6A': { label: 'Aussie / USD',        tv: 'CAPITALCOM:AUDUSD', cat: 'FX' },
-  '6C': { label: 'USD / Canadian',      tv: 'CAPITALCOM:USDCAD', cat: 'FX' },
+  CL:  { label: 'Crude Oil (WTI)', cat: 'Energy' },
+  MCL: { label: 'Crude Oil (Micro)', cat: 'Energy' },
+  BZ:  { label: 'Brent Crude', cat: 'Energy' },
+  NG:  { label: 'Natural Gas', cat: 'Energy' },
+  // Metals
+  GC:  { label: 'Gold',          cat: 'Metals' },
+  MGC: { label: 'Gold (Micro)',          cat: 'Metals' },
+  SI:  { label: 'Silver',        cat: 'Metals' },
+  HG:  { label: 'Copper', cat: 'Metals' },
+  PL:  { label: 'Platinum', cat: 'Metals' },
+  // FX
+  '6E': { label: 'Euro / USD', cat: 'FX' },
+  '6B': { label: 'British Pound / USD', cat: 'FX' },
+  '6J': { label: 'USD / Japanese Yen', cat: 'FX' },
+  '6A': { label: 'Aussie / USD', cat: 'FX' },
+  '6C': { label: 'USD / Canadian', cat: 'FX' },
   // Crypto
-  BTC: { label: 'Bitcoin',              tv: 'BINANCE:BTCUSDT',   cat: 'Crypto' },
-  ETH: { label: 'Ether',                tv: 'BINANCE:ETHUSDT',   cat: 'Crypto' },
+  BTC: { label: 'Bitcoin',   cat: 'Crypto' },
+  ETH: { label: 'Ether',   cat: 'Crypto' },
 };
 
 // Common suggestions to surface in search.
 export const FUTURES_POPULAR = ['ES', 'NQ', 'YM', 'RTY', 'VIX', 'CL', 'NG', 'GC', 'SI', 'DXY', '6E', 'BTC'];
 
 /**
- * ⚠️ OFF UNTIL WE LICENCE A FUTURES FEED. THE `tv:` SYMBOLS ABOVE ARE NOT A DATA SOURCE WE HOLD.
+ * ⚠️ OFF UNTIL WE LICENCE A FUTURES FEED.
  *
- * Every mapping in FUTURES addresses a TradingView/Capital.com symbol, which the product no longer
- * consumes on a customer-facing page. Until a licensed futures provider exists, /ES, /CL, /GC and
- * the rest render an unavailable state rather than a chart drawn from somebody else's data.
+ * The only futures data this product ever showed came from a TradingView-hosted widget addressing
+ * Capital.com and TVC symbols — a vendor we do not licence it from. Until a licensed futures
+ * provider exists, /ES, /CL, /GC and the rest render an unavailable state rather than a chart
+ * drawn from somebody else's data. The old vendor symbols are kept, unimported, in
+ * futures-vendor-symbols.js.
  *
  * ⚠️ AND THE EQUITY DATABASE IS NEVER THE FALLBACK. `ticker_daily_candles` holds rows for these
  * very roots and not one of them is the contract:
@@ -59,7 +61,8 @@ export const FUTURES_POPULAR = ['ES', 'NQ', 'YM', 'RTY', 'VIX', 'CL', 'NG', 'GC'
  * nothing should ever be added that does.
  *
  * TO RE-ENABLE: flip this and point the futures view at a component backed by the licensed feed.
- * The roots, labels, categories and routing below are all still here and still correct.
+ * The roots, labels, categories and routing below are all still here and still correct — but the
+ * new provider will have its own symbology, so do not assume the old mapping transfers.
  */
 export const FUTURES_ENABLED = false;
 

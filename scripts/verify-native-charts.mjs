@@ -187,6 +187,32 @@ L('\n=== ⚠️ FUTURES FAIL CLOSED, AND CANNOT RESOLVE THROUGH THE EQUITY DATAB
   ok('the futures map is preserved for the licensed migration',
     Object.keys(FUTURES).length > 10 && FUTURES.ES?.label === 'S&P 500');
 
+  // ⚠️ NO VENDOR SYMBOL REACHES THE BROWSER. Inert strings are not a request, but shipping
+  // "CAPITALCOM:US500" in every ticker-page bundle made a production sweep for Capital.com return
+  // hits that nobody could distinguish from a live dependency. They now live in an unimported file.
+  ok('⚠️ the futures map carries no vendor symbol',
+    Object.values(FUTURES).every((f) => !Object.values(f).some((v) => /CAPITALCOM|TVC:|BINANCE/i.test(String(v)))),
+    JSON.stringify(FUTURES.ES));
+  {
+    // Walks src/ and asserts no module imports the preserved mapping — so it cannot enter a bundle.
+    const { readdir, readFile: rf } = await import('node:fs/promises');
+    const root = new URL('../src/', import.meta.url);
+    const importers = [];
+    const scan = async (dir) => {
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const u = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) { await scan(u); continue; }
+        if (!/\.(js|jsx|mjs)$/.test(e.name)) continue;
+        if (e.name === 'futures-vendor-symbols.js') continue;
+        const src = (await rf(u, 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+        if (/futures-vendor-symbols/.test(src)) importers.push(e.name);
+      }
+    };
+    await scan(root);
+    ok('…and the preserved vendor mapping is imported by nothing',
+      importers.length === 0, importers.join(','));
+  }
+
   // The page itself: render a futures route and a normal ticker, and inspect the output.
   const futTree = TickerPage({ symbol: '/ES' });
   const found = { scripts: [], iframes: [], tv: [], text: [] };
