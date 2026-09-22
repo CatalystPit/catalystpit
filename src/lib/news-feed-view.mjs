@@ -49,6 +49,26 @@ export function filterArticles(articles, {
  * ⚠️ THE ORDER IS UNTOUCHED. When the first story has no photo it becomes the first ROW rather
  * than being dropped or reordered; nothing is hidden and nothing is promoted past anything else.
  */
+/**
+ * THE LOCKED-STORIES CALL TO ACTION.
+ *
+ * ⚠️ `lockedCount` DESCRIBES THE WHOLE FEED, NOT THE FILTERED VIEW. The server sends one number
+ * for everything a signed-out visitor is not receiving — measured, 84 while six stories are shown.
+ * Rendering it under a ticker filter said "Sign in to see all 84 stories" directly beneath a
+ * single FDCT result, which reads as a promise of 84 FDCT stories. There are not 84; there is one.
+ *
+ * ⚠️ AND THE HONEST FIX IS TO DROP THE NUMBER, NOT TO RECOUNT. A per-ticker locked count does not
+ * exist in the payload and inventing one would mean another query for a line of copy. So a
+ * filtered view states the truth it can afford — that there is more behind sign-in — and only the
+ * unfiltered view, where the number genuinely describes what is being hidden, quotes it.
+ */
+export function lockedCtaText(lockedCount, { tickerFiltered = false } = {}) {
+  const n = Number(lockedCount) || 0;
+  if (n <= 0) return null;
+  if (tickerFiltered) return 'Sign in to see more news';
+  return `Sign in to see all ${n} ${n === 1 ? 'story' : 'stories'}`;
+}
+
 export function splitHeroAndRows(filtered) {
   const list = filtered || [];
   const canHero = Boolean(list[0] && list[0].imageUrl);

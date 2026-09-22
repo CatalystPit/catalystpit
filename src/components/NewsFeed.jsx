@@ -12,9 +12,11 @@ import {
 } from "../lib/cp-shared";
 import { useTickerHover, TickerHoverPreview } from "./TickerHoverChart";
 import { isRenderableTicker } from "../lib/security-identity.mjs";
-import { filterArticles, splitHeroAndRows } from "../lib/news-feed-view.mjs";
+import { filterArticles, splitHeroAndRows, lockedCtaText } from "../lib/news-feed-view.mjs";
 
-const LOCKED_PREVIEW_ROWS = 3; // how many faint placeholder rows to tease (CTA shows the true count)
+// How many faint placeholder rows to tease. The CTA beside them quotes the feed-wide count only
+// when the feed-wide view is on screen — see lockedCtaText.
+const LOCKED_PREVIEW_ROWS = 3;
 
 const fetchNews = async () => {
   // Articles now come from the dedicated, AUTH-gated /api/news (server truncates
@@ -468,8 +470,11 @@ export default function NewsFeed() {
                   ))}
                   <div style={{marginTop:4, padding:"14px 18px", display:"flex", alignItems:"center", gap:14,
                     flexWrap:"wrap", background:C.greenLight, border:`1px solid ${C.greenBorder}`, borderRadius:8}}>
+                    {/* ⚠️ The count belongs to the WHOLE feed, so it is only quoted when the whole
+                        feed is on screen — see lockedCtaText. Under a ticker filter it would read
+                        as a promise of that many stories for that one symbol. */}
                     <span style={{flex:1, minWidth:0, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:C.ink}}>
-                      🔒 Sign in to see all {lockedCount} {lockedCount === 1 ? 'story' : 'stories'}
+                      🔒 {lockedCtaText(lockedCount, { tickerFiltered: Boolean(tickerQuery) })}
                     </span>
                     {/* Free login gate (not Pro) — matches the app's existing /sign-in entry (TopNav, watchlist) */}
                     <a href="/sign-in" style={{background:C.green, color:"#fff", textDecoration:"none", whiteSpace:"nowrap",

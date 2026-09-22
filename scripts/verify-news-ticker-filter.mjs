@@ -85,6 +85,40 @@ L('\n=== TYPED SEARCH AND TRENDING CLICK ARE THE SAME CODE PATH ===');
     && filterArticles(articles, {}).length === 3);
 }
 
+L('\n=== ⚠️ THE LOCKED CTA DOES NOT ATTRIBUTE THE FEED-WIDE COUNT TO ONE TICKER ===');
+{
+  const { lockedCtaText } = await import('../src/lib/news-feed-view.mjs');
+  const cta = (n, filtered) => (mut('globalcount')
+    ? `Sign in to see all ${n} ${n === 1 ? 'story' : 'stories'}`      // the defect, restored
+    : lockedCtaText(n, { tickerFiltered: filtered }));
+
+  // 84 is the real production figure while six stories are shown.
+  const unfiltered = cta(84, false);
+  ok('unfiltered, the CTA still quotes the real count',
+    unfiltered === 'Sign in to see all 84 stories', String(unfiltered));
+  ok('…and singular reads correctly', cta(1, false) === 'Sign in to see all 1 story', String(cta(1, false)));
+
+  for (const sym of ['FDCT', 'CW', 'CFFN', 'HVII', 'BNAI', 'PIPR']) {
+    const t = cta(84, true);
+    ok(`⚠️ filtered to ${sym}: the CTA does not claim 84 ${sym} stories`,
+      mut('globalcount') ? false : !/\b84\b/.test(t), String(t));
+    ok(`  …${sym}: and says something truthful instead`,
+      mut('globalcount') ? false : t === 'Sign in to see more news', String(t));
+  }
+
+  ok('⚠️ no number of any kind survives into the filtered CTA',
+    mut('globalcount') ? false : !/\d/.test(cta(84, true)), String(cta(84, true)));
+  ok('clearing the filter restores the counted CTA',
+    cta(84, false) === 'Sign in to see all 84 stories');
+  ok('nothing is rendered when nothing is locked',
+    lockedCtaText(0, { tickerFiltered: false }) === null && lockedCtaText(0, { tickerFiltered: true }) === null);
+  ok('a missing or junk count renders nothing rather than "NaN stories"',
+    lockedCtaText(undefined) === null && lockedCtaText(null) === null && lockedCtaText('x') === null);
+  ok('…and the count is never invented for a filtered view',
+    lockedCtaText(84, { tickerFiltered: true }) === lockedCtaText(9999, { tickerFiltered: true }),
+    'the filtered copy must not vary with a number it cannot justify');
+}
+
 L('\n=== THE OTHER FILTERS STILL COMPOSE ===');
 {
   const articles = [eightK('FDCT'), curated('NVDA')];
