@@ -204,5 +204,56 @@ L('\n=== NO FUTURE-DATED CONGRESS ROW REACHES THE HOMEPAGE ===');
     /traded: p\.transactionDate/.test(home) && /disclosed: p\.disclosureDate/.test(home));
 }
 
+// ─── THE HOMEPAGE TEASER GATES KNOW WHO IS LOOKING ──────────────────────────
+//
+// ⚠️ THE BUG THESE COVER WAS NOT A BROKEN AUTH CHECK — IT WAS THE ABSENCE OF ONE. Both lock
+// overlays were unconditional JSX. CatalystPit.jsx never imported Clerk, never read a session and
+// never touched the `loggedIn` / `lockedCount` its own APIs returned, so a signed-in subscriber
+// was told to sign in and no amount of upgrading changed the markup. Nothing failed, which is why
+// nothing caught it: the component rendered exactly what it was written to render.
+//
+// So these assert the three states are DISTINGUISHED, not that a particular one looks right.
+L('\n=== HOMEPAGE TEASER GATES ===');
+{
+  const home = read('../src/components/CatalystPit.jsx');
+  const code = home.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  ok('the homepage reads the session at all',
+    mut('noauth') ? false : /import\s*\{[^}]*\buseAuth\b[^}]*\}\s*from\s*["']@clerk\/nextjs["']/.test(code));
+  ok('…through the canonical Clerk hook, not a second auth system',
+    /const\s*\{\s*isLoaded\s*,\s*isSignedIn\s*\}\s*=\s*useAuth\(\)/.test(code));
+  ok('…and the canonical per-user plan endpoint for entitlement',
+    mut('noplan') ? false : /fetch\(\s*['"]\/api\/me\/plan['"]/.test(code));
+  ok('…which is never cached across users', /\/api\/me\/plan['"]\s*,\s*\{\s*cache:\s*['"]no-store['"]/.test(code));
+
+  // ⚠️ THE CORE OF THE BUG: "not Pro" must not be answered with "not signed in".
+  ok('a signed-in user is never shown the sign-in call to action',
+    mut('anonfallback') ? false
+      : /const anon = !isSignedIn;/.test(code) && /anon \? ['"]\/sign-in['"]/.test(code));
+  ok('…and the signed-out copy is reached only when actually signed out',
+    /anon \? anonTitle/.test(code) && /anon \? ['"]Sign in['"]/.test(code));
+
+  // Resolving is its own state. A flash of "sign in" at a signed-in user is the same lie, briefer.
+  ok('the gate renders nothing while the session is resolving',
+    mut('flashgate') ? false : /if \(!isLoaded\) return null;/.test(code));
+  ok('…and nothing while the plan is still resolving',
+    /if \(isSignedIn && tier === null\) return null;/.test(code));
+  ok('a Pro subscriber sees no lock at all',
+    mut('progated') ? false : /tier === ['"]pro['"] \|\| tier === ['"]elite['"]\)\) return null/.test(code));
+
+  // ONE GATE, NOT TWO. The overlay existed twice as copied markup, which is how one bug shipped
+  // to two sections; the fix only holds if they keep sharing the component.
+  ok('the gate is a single shared component', /function HomeTeaserGate\(/.test(code));
+  ok('…used by both Insider Trades and Politician Trades',
+    (code.match(/<HomeTeaserGate/g) || []).length === 2);
+  ok('…with no unconditional lock overlay left behind',
+    mut('rawoverlay') ? false : !/Sign in to explore all (insider|politician) trades/.test(
+      code.replace(/anonTitle="[^"]*"/g, '')));
+
+  // Server-side entitlement is not weakened by any of this — the gate is presentation only.
+  ok('the homepage still does not fetch gated rows itself',
+    !/lockedCount\s*[:=]/.test(code));
+}
+
 L(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

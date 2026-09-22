@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import ConsensusTeaser from "./ConsensusTeaser";
 import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mjs";
 import { deskSelection } from "../lib/impact";
@@ -14,6 +15,87 @@ import {
   BrandStyles, Skel, Dot, NewsPhotoCard, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
 } from "../lib/cp-shared";
+
+/**
+ * THE HOMEPAGE TEASER GATE — one component, because the bug was that there were none.
+ *
+ * ⚠️ WHAT THIS REPLACED: two hand-written, UNCONDITIONAL lock overlays. Not a broken auth check —
+ * no auth check at all. This file never imported Clerk, never read a session, and never looked at
+ * the `loggedIn` / `lockedCount` fields its own APIs were already returning. A signed-out visitor,
+ * a signed-in Free user and a Pro subscriber all got the same "Sign in to explore…" overlay, and
+ * making someone Pro changed nothing. The markup reads as a copy of the /insiders teaser
+ * (InsidersClient.jsx:1117) with its `{lockedCount > 0 && (` wrapper stripped off.
+ *
+ * ⚠️ AUTHENTICATION AND ENTITLEMENT ARE TWO QUESTIONS, AND THE BUG WAS ANSWERING ONE WITH THE
+ * OTHER. "Not Pro" is not "not signed in". A signed-in Free user is a customer we have already
+ * converted; telling them to sign in is both wrong and insulting. So:
+ *
+ *   signed out            → the sign-in gate (unchanged copy — it was right for this case)
+ *   signed in, not Pro    → the Pro treatment, pointing at the page that owns the real upgrade
+ *   signed in, Pro        → nothing. Nothing is locked, so nothing pretends to be.
+ *   still resolving       → nothing. NEVER the signed-out gate; a flash of "sign in" at someone
+ *                           who is signed in is the same lie, just briefer.
+ *
+ * ⚠️ WHY THE PRO BRANCH LINKS OUT RATHER THAN SELLING HERE. The homepage rows come from
+ * pit_snapshot, a session-less cron blob — every visitor gets the identical rows, so there is no
+ * per-user withheld data on THIS surface to unlock. The genuinely gated history lives on
+ * /insiders and /politicians, which already carry the canonical Pro lock and checkout. Pointing
+ * there reuses that surface instead of growing a second checkout on the front door.
+ */
+function HomeTeaserGate({ children, anonTitle, anonSub, proTitle, proSub, href, proCta }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  const [tier, setTier] = useState(null);          // null = not yet known
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+    let alive = true;
+    (async () => {
+      // The canonical per-user plan read, same endpoint the Terminal, ticker page and billing
+      // card use. Never CDN-cached, so it cannot serve one user's plan to another.
+      try {
+        const r = await fetch('/api/me/plan', { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        if (alive) setTier(j?.tier || 'free');
+      } catch { if (alive) setTier('free'); }
+    })();
+    return () => { alive = false; };
+  }, [isLoaded, isSignedIn]);
+
+  if (!isLoaded) return null;                                    // session resolving
+  if (isSignedIn && tier === null) return null;                  // plan resolving
+  if (isSignedIn && (tier === 'pro' || tier === 'elite')) return null;   // nothing is locked
+
+  const anon = !isSignedIn;
+  const title = anon ? anonTitle : proTitle;
+  const sub   = anon ? anonSub   : proSub;
+  const to    = anon ? '/sign-in' : href;
+  const cta   = anon ? 'Sign in'  : proCta;
+
+  return (
+    <div style={{position:"relative", overflow:"hidden"}}>
+      {children}
+      <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center",
+        justifyContent:"center", background:"rgba(248,250,247,0.7)"}}>
+        <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
+          borderRadius:8, padding:"12px 20px", display:"flex", alignItems:"center", gap:12,
+          boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
+          <span style={{fontSize:16}}>🔒</span>
+          <div>
+            <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>{title}</div>
+            <div style={{fontSize:12, color:C.muted, fontWeight:300}}>{sub}</div>
+          </div>
+          <a href={to} style={{background:C.green, border:"none", color:"#fff",
+            padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",
+            cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
+            onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
+            onMouseLeave={e => e.currentTarget.style.background = C.green}>
+            {cta}
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Insider trades come from Postgres via /api/insiders (not KV). Homepage shows
 // only real BUY/SELL transactions (view=transactions), excluding OTHER grants.
@@ -554,7 +636,12 @@ export default function CatalystPit() {
               </tbody>
             </table>
             </div>
-            <div style={{position:"relative", overflow:"hidden"}}>
+            <HomeTeaserGate
+              anonTitle="Sign in to explore all insider trades"
+              anonSub="Free account · SEC Form 4 filings"
+              proTitle="More insider trades with Pro"
+              proSub="Full Form 4 history, filters and pagination"
+              href="/insiders" proCta="Open Insiders">
               {[1,2,3].map(i => (
                 <div key={i} style={{padding:"11px 16px", borderTop:`1px solid ${C.surface}`,
                   display:"flex", gap:16, filter:"blur(4px)", userSelect:"none",
@@ -571,26 +658,7 @@ export default function CatalystPit() {
                   <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim, width:60}}>██h ago</div>
                 </div>
               ))}
-              <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center",
-                justifyContent:"center", background:"rgba(248,250,247,0.7)"}}>
-                <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
-                  borderRadius:8, padding:"12px 20px", display:"flex", alignItems:"center", gap:12,
-                  boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
-                  <span style={{fontSize:16}}>🔒</span>
-                  <div>
-                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Sign in to explore all insider trades</div>
-                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Free account · SEC Form 4 filings</div>
-                  </div>
-                  <a href="/sign-in" style={{background:C.green, border:"none", color:"#fff",
-                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",
-                    cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-                    onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-                    onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Sign in
-                  </a>
-                </div>
-              </div>
-            </div>
+            </HomeTeaserGate>
           </div>
 
           {/* POLITICIAN TRADES */}
@@ -650,7 +718,12 @@ export default function CatalystPit() {
             <div style={{padding:"8px 16px", fontSize:10, color:C.dim, fontWeight:300, borderTop:`1px solid ${C.surface}`}}>
               Disclosed under the STOCK Act. Trades may be reported up to ~45 days after execution.
             </div>
-            <div style={{position:"relative", overflow:"hidden"}}>
+            <HomeTeaserGate
+              anonTitle="Sign in to explore all politician trades"
+              anonSub="Free account · STOCK Act disclosures"
+              proTitle="More politician trades with Pro"
+              proSub="Full STOCK Act history, by member and by ticker"
+              href="/politicians" proCta="Open Politicians">
               {[1,2,3].map(i => (
                 <div key={i} style={{padding:"11px 16px", borderTop:`1px solid ${C.surface}`,
                   display:"flex", gap:16, filter:"blur(4px)", userSelect:"none",
@@ -670,26 +743,7 @@ export default function CatalystPit() {
                   <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim, width:64}}>██████</div>
                 </div>
               ))}
-              <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center",
-                justifyContent:"center", background:"rgba(248,250,247,0.7)"}}>
-                <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
-                  borderRadius:8, padding:"12px 20px", display:"flex", alignItems:"center", gap:12,
-                  boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
-                  <span style={{fontSize:16}}>🔒</span>
-                  <div>
-                    <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>Sign in to explore all politician trades</div>
-                    <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Free account · STOCK Act disclosures</div>
-                  </div>
-                  <a href="/sign-in" style={{background:C.green, border:"none", color:"#fff",
-                    padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",
-                    cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-                    onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-                    onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Sign in
-                  </a>
-                </div>
-              </div>
-            </div>
+            </HomeTeaserGate>
           </div>
 
         </div>
