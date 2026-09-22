@@ -450,5 +450,69 @@ L('\n=== EVERY SURFACE CALLS THE SAME DESK ===');
     /filter\(\(f\) => isRenderableTicker\(f\?\.ticker\)\)/.test(home));
 }
 
+// ─── EVERY CONSUMER IMPORTS WHAT IT CALLS ───────────────────────────────────
+//
+// ⚠️ THIS SUITE HAD 139 GREEN ASSERTIONS WHILE /api/news RETURNED 500 ON EVERY REQUEST.
+//
+// 1d5ca543 replaced an inline rankOf/.sort() with rankByImpact() and did not update the import
+// line, so the route called an identifier that was never bound. The throw sat outside the route's
+// try/catch, so Next answered 500; the client did `r.ok ? r.json() : null`, so the page rendered
+// "No stories match those filters" and the outage looked like an empty news day. It survived a
+// deploy and a full suite run because every test here imports lib/impact DIRECTLY — nothing
+// imported the route, so nothing ever evaluated its module scope.
+//
+// Testing impact.js harder would not have caught it: the bug was in a caller. So this checks the
+// seam instead, across every consumer at once — for each file that imports from lib/impact, every
+// exported name it USES must also be a name it IMPORTS. Cheap, static, and it fails on the whole
+// class rather than on the one line that happened to break this time.
+L('\n=== EVERY CONSUMER IMPORTS WHAT IT CALLS ===');
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const ROOT = new URL('../src/', import.meta.url);
+
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) return walk(p);
+    return /\.(js|jsx|mjs)$/.test(e.name) ? [p] : [];
+  });
+
+  // The exported names a caller could plausibly reference.
+  const impactSrc = fs.readFileSync(new URL('lib/impact.js', ROOT), 'utf8');
+  const EXPORTS = [...impactSrc.matchAll(/^export (?:function|const) (\w+)/gm)].map((m) => m[1]);
+  ok('the impact module exports were discovered', EXPORTS.length >= 6, EXPORTS.join(', '));
+
+  const files = walk(path.join(path.dirname(new URL(import.meta.url).pathname.slice(1)), '..', 'src'));
+  let checked = 0, offenders = [];
+  for (const f of files) {
+    const raw = fs.readFileSync(f, 'utf8');
+    const imp = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*\/impact(?:\.js)?['"]/.exec(raw);
+    if (!imp) continue;                                   // not a consumer
+    checked++;
+    const imported = new Set(imp[1].split(',').map((s) => s.trim().split(/\s+as\s+/)[0]).filter(Boolean));
+    // Strip comments and the import line itself — a name in prose is not a call.
+    //
+    // ⚠️ AND NORMALISE THE SPREAD. The first version of this check passed while the bug was still
+    // in the tree — a false green, caught only by re-breaking the import on purpose. The real call
+    // site is `[...rankByImpact(raw)]`, and the `(?<![.\w])` lookbehind below — there to reject
+    // member access like `obj.rankByImpact()` — cannot tell the spread's dot from a property dot,
+    // so it rejected the one line that mattered. Spreads become a space first.
+    const code = raw
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(imp[0], '')
+      .replace(/\.\.\./g, ' ');
+    for (const name of EXPORTS) {
+      // Used as a value: `name(` or `name` as a bare reference, not `.name` or `name:`.
+      if (new RegExp(`(?<![.\\w])${name}\\s*\\(`).test(code) && !imported.has(name)) {
+        offenders.push(`${path.relative(process.cwd(), f)} calls ${name}() without importing it`);
+      }
+    }
+  }
+  ok('consumers of lib/impact were found to check', checked >= 3, `${checked} files import it`);
+  ok('…and every one imports every impact function it calls',
+    mut('unimported') ? false : offenders.length === 0, offenders.join(' | '));
+}
+
 L(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

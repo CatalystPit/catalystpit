@@ -1,5 +1,10 @@
 import { auth } from '@clerk/nextjs/server';
-import { impactOf, IMPACT_RANK } from '../../../lib/impact';
+// ⚠️ IMPORT WHAT LINE 81 ACTUALLY CALLS. This read `{ impactOf, IMPACT_RANK }` — the two names the
+// inline rankOf/.sort() block used before 1d5ca543 replaced it with rankByImpact(). That commit
+// swapped the call and left the import, so the route threw ReferenceError: rankByImpact is not
+// defined on EVERY request, and had been 500ing in production ever since. The two old names were
+// dead by then; both are gone.
+import { rankByImpact } from '../../../lib/impact';
 
 export const runtime = 'nodejs';
 
