@@ -10,6 +10,9 @@ import {
   BrandStyles, Skel, Dot, TagBadge, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
 } from "../lib/cp-shared";
+import { useTickerHover, TickerHoverPreview } from "./TickerHoverChart";
+import { isRenderableTicker } from "../lib/security-identity.mjs";
+import { filterArticles, splitHeroAndRows } from "../lib/news-feed-view.mjs";
 
 const LOCKED_PREVIEW_ROWS = 3; // how many faint placeholder rows to tease (CTA shows the true count)
 
@@ -47,7 +50,7 @@ const fetchNews = async () => {
   return { articles, tickers, lockedCount: newsRes?.lockedCount || 0 };
 };
 
-function NewsRowCard({n, idx}) {
+function NewsRowCard({n, idx, bindTicker}) {
   const [bg1, bg2] = CARD_COLORS[idx % CARD_COLORS.length];
   const [imgFailed, setImgFailed] = useState(false);
   const showImg = n.imageUrl && !imgFailed;
@@ -80,7 +83,8 @@ function NewsRowCard({n, idx}) {
           ) : null; })()}
           <TagBadge tag={n.tag}/>
           {hasValidTicker && (
-            <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
+            <span className="cp-tkr" {...(bindTicker ? bindTicker(n.sym) : {})}
+              style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
               color:C.green, background:C.greenLight, padding:"2px 7px", borderRadius:3}}>
               {n.sym}
             </span>
@@ -138,7 +142,7 @@ function LockedNewsRow() {
   );
 }
 
-function TickerSearchCard({query, onQueryChange, trending}) {
+function TickerSearchCard({query, onQueryChange, trending, bindTicker}) {
   return (
     <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, padding:14}}>
       <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:10}}>
@@ -163,6 +167,7 @@ function TickerSearchCard({query, onQueryChange, trending}) {
               const active = query === sym;
               return (
                 <button key={sym} onClick={() => onQueryChange(active ? '' : sym)}
+                  {...(bindTicker ? bindTicker(sym) : {})}
                   className="chip-hov cp-tkr"
                   style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, fontWeight:600,
                     // White on C.green is 2.95:1 once C.green lightens for dark mode. C.bg is the
@@ -192,6 +197,22 @@ function TickerSearchCard({query, onQueryChange, trending}) {
 }
 
 export default function NewsFeed() {
+  // ⚠️ ONE HOVER OWNER FOR EVERY TICKER ON THE PAGE — the feed rows, Top Catalysts, the 8-K Wire
+  // and the Trending chips. Each surface gets the SAME binder, so there is one open timer, one
+  // popup and one implementation, exactly as the Screener and Dividend Calendar use.
+  const { hover, bind } = useTickerHover();
+
+  // ⚠️ IDENTITY SAFETY: NO CHART WITHOUT A RESOLVED SECURITY. A news row can carry '?', 'N/A',
+  // 'null', a company name a filer typed into a symbol field, or nothing at all — charting any of
+  // those would invent a security. isRenderableTicker() is the product's existing answer to "may
+  // this string be shown as a ticker on a card", so the chart reuses that judgement rather than
+  // inventing a looser one. Returning {} leaves the element with no handlers, so a macro story or
+  // an unresolved row simply has no hover behaviour.
+  const bindTicker = useCallback(
+    (sym) => (isRenderableTicker(sym) ? bind(String(sym).toUpperCase()) : {}),
+    [bind],
+  );
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUp, setLastUp] = useState(null);
@@ -249,15 +270,11 @@ export default function NewsFeed() {
   }, [articles]);
 
   // Filter pipeline
-  const filtered = useMemo(() => {
-    return articles.filter(a => {
-      if (activeCategory !== 'ALL' && a.tag !== activeCategory) return false;
-      if (tickerQuery && (!a.sym || !a.sym.toUpperCase().includes(tickerQuery))) return false;
-      if (a.source && hiddenSources.has(a.source)) return false;
-      if (impactOnly && impactOf({ title: a.headline, category: a.tag, source: a.source, ticker: a.sym }) === 'routine') return false;
-      return true;
-    });
-  }, [articles, activeCategory, tickerQuery, hiddenSources, impactOnly]);
+  // ONE filter implementation, shared by the typed search and the Trending chips — see
+  // news-feed-view.mjs. Both set `tickerQuery`, so they cannot disagree.
+  const filtered = useMemo(() => filterArticles(articles, {
+    category: activeCategory, ticker: tickerQuery, hiddenSources, impactOnly, impactOf,
+  }), [articles, activeCategory, tickerQuery, hiddenSources, impactOnly]);
 
   // Trending tickers — unique syms from the unfiltered set (so chips don't disappear when filtering)
   const trendingTickers = useMemo(() => {
@@ -268,8 +285,12 @@ export default function NewsFeed() {
     return Array.from(seen).slice(0, 10);
   }, [articles]);
 
-  const hero = filtered[0];
-  const restRows = filtered.slice(1);   // all rows the server sent (already gated); render as-is
+  // ⚠️ THE HERO IS A PHOTO CARD, so only a story with a photo may occupy it. Promoting
+  // `filtered[0]` unconditionally is what made ticker filtering look broken: every SEC 8-K row
+  // has imageUrl null, so filtering to a ticker whose only story is an 8-K rendered a 340px empty
+  // gradient panel instead of the event. See splitHeroAndRows — order is unchanged; a photo-less
+  // first story simply becomes the first ROW, which already handles a missing image.
+  const { hero, rows: restRows } = useMemo(() => splitHeroAndRows(filtered), [filtered]);
 
   const timeStr = lastUp
     ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"})
@@ -279,6 +300,11 @@ export default function NewsFeed() {
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
       <BrandStyles/>
       <TopNav/>
+      {/* ⚠️ ONE PREVIEW FOR THE WHOLE PAGE, rendered outside every card. The news rows, the 8-K
+          Wire and the catalyst list each sit inside their own bordered container; a popup rendered
+          within one of them would be clipped by it. Fixed-positioned here, it floats above all
+          three and the existing flip/clamp logic keeps the right-hand column on screen. */}
+      <TickerHoverPreview hover={hover}/>
       <TickerTape tickers={data?.tickers}/>
 
       {/* PAGE HEADER STRIP */}
@@ -388,7 +414,7 @@ export default function NewsFeed() {
 
         {/* LEFT — FEED */}
         <div style={{display:"flex", flexDirection:"column", gap:14, minWidth:0}}>
-          <TopCatalysts/>
+          <TopCatalysts bindTicker={bindTicker}/>
           {loading ? (
             <>
               <div style={{background:C.surface, borderRadius:8, overflow:"hidden"}}>
@@ -409,8 +435,10 @@ export default function NewsFeed() {
           ) : filtered.length === 0 ? (
             <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8,
               padding:"48px 24px", textAlign:"center"}}>
+              {/* Names the ticker when one is filtering, because "no stories match those filters"
+                  reads as a fault when the reader has filtered to exactly one symbol. */}
               <div style={{fontSize:15, fontWeight:600, color:C.ink, marginBottom:6}}>
-                No stories match those filters.
+                {tickerQuery ? `No recent news found for ${tickerQuery}.` : 'No stories match those filters.'}
               </div>
               <div style={{fontSize:13, color:C.muted, fontWeight:300, marginBottom:14}}>
                 Try a different category or clear the ticker search.
@@ -429,7 +457,7 @@ export default function NewsFeed() {
 
               {/* ROWS RECEIVED — free: hero + up to 5; pro/elite: all. Already gated server-side. */}
               {restRows.map((n, i) => (
-                <NewsRowCard key={`row-${i}`} n={n} idx={i + 1}/>
+                <NewsRowCard key={`row-${i}`} n={n} idx={i + 1} bindTicker={bindTicker}/>
               ))}
 
               {/* LOCKED — the server sent NO data for these; render absence placeholders + ONE CTA */}
@@ -461,8 +489,9 @@ export default function NewsFeed() {
             query={tickerQuery}
             onQueryChange={setTickerQuery}
             trending={trendingTickers}
+            bindTicker={bindTicker}
           />
-          <EightKWire limit={30}/>
+          <EightKWire limit={30} bindTicker={bindTicker}/>
           <MarketSnapshotCard tickers={data?.tickers} loading={loading}/>
           <CatalystBriefCard/>
         </div>

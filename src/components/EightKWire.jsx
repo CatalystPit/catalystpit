@@ -5,11 +5,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { C, Dot, TickerLogo, timeAgo, minsSince } from '../lib/cp-shared';
 
-function Row({ f, onPick }) {
+function Row({ f, onPick, bindTicker = null }) {
   const mat = f.material;
   const chipBg = mat ? '#FFF6E8' : C.surface;
   const chipFg = mat ? '#7A5018' : C.muted;
   const extra = Math.max(0, (f.items?.length || 0) - 1);
+  // The hover binder comes from the page so every News surface shares ONE preview and one open
+  // timer; passing null (the default) simply leaves the row as it was.
+  const hov = bindTicker ? bindTicker(f.ticker) : {};
   const tickerInner = (
     <>
       <TickerLogo symbol={f.ticker} size={20} />
@@ -52,7 +55,7 @@ function Row({ f, onPick }) {
   );
 }
 
-export default function EightKWire({ bare = false, limit = 30, onPick = null }) {
+export default function EightKWire({ bare = false, limit = 30, onPick = null, bindTicker = null }) {
   const [all, setAll] = useState(false);
   const [list, setList] = useState(null);
 
@@ -86,7 +89,7 @@ export default function EightKWire({ bare = false, limit = 30, onPick = null }) 
           No {all ? '' : 'material '}8-K filings in the last few days.
         </div>
       ) : (
-        list.map((f, i) => <Row key={f.ticker + i} f={f} onPick={onPick} />)
+        list.map((f, i) => <Row key={f.ticker + i} f={f} onPick={onPick} bindTicker={bindTicker} />)
       )}
     </div>
   );

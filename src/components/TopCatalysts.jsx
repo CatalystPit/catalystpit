@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { C, Dot, TickerLogo, timeAgo, minsSince } from '../lib/cp-shared';
 import { impactOf, IMPACT_RANK, IMPACT_STYLE } from '../lib/impact';
 
-export default function TopCatalysts({ limit = 6 }) {
+export default function TopCatalysts({ limit = 6, bindTicker = null }) {
   const [items, setItems] = useState(null);
 
   useEffect(() => {
@@ -129,7 +129,7 @@ export default function TopCatalysts({ limit = 6 }) {
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                     {st && <span style={{ fontSize: 9, fontWeight: 700, color: st.fg, background: st.bg, borderRadius: 3, padding: '1px 6px' }}>{st.label}</span>}
-                    {hasTicker && <span className="cp-tkr" style={{ fontSize: 12, fontWeight: 700, color: C.green }}>{it.ticker}</span>}
+                    {hasTicker && <span className="cp-tkr" {...(bindTicker ? bindTicker(it.ticker) : {})} style={{ fontSize: 12, fontWeight: 700, color: C.green }}>{it.ticker}</span>}
                     <span style={{ marginLeft: 'auto', fontSize: 10, color: C.muted, whiteSpace: 'nowrap' }}>
                       {it.source}{it.published ? <span className="cp-num"> · {timeAgo(minsSince(it.published))}</span> : null}
                     </span>
