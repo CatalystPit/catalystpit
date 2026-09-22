@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
 import { getQuotes } from '../../../lib/market-data';
 import { coalesce } from '../../../lib/market/refresh-policy.mjs';
+import { captureIfDue, readDelayed, delayedQuotesFor } from '../../../lib/market/delayed-store.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -78,6 +79,41 @@ export async function GET(request) {
     if (realtime) {
       const quotes = await coalesce(`quotes:${key}`, () => getQuotes(syms, { realtime }));
       return Response.json(quotes, { headers: { 'Cache-Control': 'private, no-store' } });
+    }
+
+    // ── FREE: THE SHARED 15-MINUTE DELAYED MARKET SNAPSHOT ────────────────────
+    //
+    // ⚠️ THIS IS THE LINE THAT STOPS UPSTREAM COST SCALING WITH AUDIENCE. The `eod:` cache below
+    // is keyed on the SYMBOL SET, so a thousand viewers with a thousand different watchlists made
+    // a thousand distinct keys and a thousand upstream batches. One market-wide capture every 15
+    // minutes answers every symbol set at once: a Free request costs a KV read and no provider
+    // call at all, whatever symbols it asks for and however many people ask.
+    //
+    // ⚠️ AND IT IS GENUINELY DELAYED, NOT RELABELLED. delayedQuotesFor() only ever shapes a
+    // snapshot that passed servableToFree(), which refuses anything under 15 minutes old. A Free
+    // reader cannot receive a current price through this path even if the collector misbehaved.
+    //
+    // The capture itself is attempted here rather than on a cron so the data follows demand, but
+    // it is session-gated and interval-gated inside captureIfDue(): outside the bells it returns
+    // without touching the provider, and inside them only one instance per 15 minutes gets past
+    // the lock. Failure is ignored — a viewer must never wait on a collection.
+    captureIfDue().catch(() => {});
+
+    const delayedSnap = await readDelayed();
+    if (delayedSnap) {
+      const delayed = delayedQuotesFor(syms, delayedSnap);
+      const missing = syms.filter((s) => !delayed[s]);
+      // Symbols the snapshot does not cover fall through to completed-session data rather than
+      // this inventing a price for them — and they are labelled 'eod', not 'delayed'.
+      if (!missing.length) {
+        return Response.json(delayed, { headers: { 'Cache-Control': 'private, no-store' } });
+      }
+      const rest = await coalesce(`quotes:eod:${missing.join(',')}`, async () => {
+        const q = await getQuotes(missing, { realtime: false });
+        if (q && Object.keys(q).length) await quotesCacheSet(`eod:${missing.join(',')}`, q);
+        return q;
+      });
+      return Response.json({ ...rest, ...delayed }, { headers: { 'Cache-Control': 'private, no-store' } });
     }
 
     const cached = await quotesCacheGet(key);

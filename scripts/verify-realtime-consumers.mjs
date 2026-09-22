@@ -125,8 +125,12 @@ L('\n=== FREE CANNOT REACH A REALTIME VALUE THROUGH EITHER CONSUMER ===');
         && !/realtime=|tier=|pro=/.test(sharedCode));
   ok('the route derives entitlement from the session',
     /const \{ userId \} = await auth\(\)/.test(routeCode) && /resolveUserAccess\(\)/.test(routeCode));
-  ok('…and realtime is never written to the shared cache',
-    !/quotesCacheSet/.test(routeCode.slice(routeCode.indexOf('if (realtime)'), routeCode.indexOf('const cached'))));
+  // Scoped to the entitled branch itself — slicing to `const cached` now spans the Free delayed
+  // path, whose EOD fallback legitimately writes to the shared cache.
+  ok('…and realtime is never written to the shared cache', (() => {
+    const i = routeCode.indexOf('if (realtime) {');
+    return !/quotesCacheSet/.test(routeCode.slice(i, routeCode.indexOf('\n    }', i)));
+  })());
   ok('…nor served from a public cache', /'private, no-store'/.test(routeCode));
 
   // The percent the watchlist renders must come from one consistent pair.

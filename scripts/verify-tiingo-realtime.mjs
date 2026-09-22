@@ -121,7 +121,13 @@ L('\n=== FREE AND PRO CANNOT SHARE A CACHE OBJECT ===');
 
   // ⚠️ AND REALTIME IS NEVER WRITTEN TO A SHARED CACHE AT ALL. Namespacing alone would still
   // leave one entitled user's licensed quote sitting in a store another request could read.
-  const rtBranch = code.slice(code.indexOf('if (realtime)'), code.indexOf('const cached'));
+  // ⚠️ THE BRANCH ITSELF, NOT "EVERYTHING BEFORE THE NEXT LANDMARK". This used to slice up to
+  // `const cached`, which silently grew to include the whole Free path the moment a delayed tier
+  // was added between them — and then failed because the FREE fallback legitimately writes an EOD
+  // quote to the shared cache. The boundary being protected is that the ENTITLED branch never
+  // does, so the slice now ends where that branch returns.
+  const rtStart = code.indexOf('if (realtime) {');
+  const rtBranch = code.slice(rtStart, code.indexOf('\n    }', rtStart));
   ok('the realtime branch never writes to the shared cache',
     mut('cacherealtime') ? false : !/quotesCacheSet/.test(rtBranch), rtBranch.trim().slice(0, 90));
   ok('…and never reads from it', !/quotesCacheGet/.test(rtBranch));
