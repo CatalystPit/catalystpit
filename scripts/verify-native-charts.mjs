@@ -167,6 +167,79 @@ L('\n=== 4 & 6. THE DATA COMES FROM OUR OWN ENDPOINT, AND NO KEY GOES TO THE BRO
   ok('CompactChart is the only chart the preview mounts', previewFor('AAPL').compact.length === 1);
 }
 
+L('\n=== ⚠️ FUTURES FAIL CLOSED, AND CANNOT RESOLVE THROUGH THE EQUITY DATABASE ===');
+{
+  const { resolveFutures, FUTURES, FUTURES_ENABLED } = await import('../src/lib/futures.js');
+  const TickerPage = (await import('../src/app/ticker/[symbol]/TickerPage.jsx')).default;
+
+  ok('futures are disabled', FUTURES_ENABLED === false);
+
+  // ⚠️ THE COLLISION HAZARD, ASSERTED. Every one of these roots is ALSO a live US equity in
+  // ticker_daily_candles — /CL is Colgate-Palmolive, /ES is Eversource, /NG is NovaGold, /SI is
+  // Shoulder Innovations, /HG is Hamilton Insurance. A bare symbol must therefore stay an equity
+  // and a slash-symbol must never be looked up as one.
+  for (const root of ['CL', 'ES', 'NG', 'SI', 'HG', 'GC', 'NQ']) {
+    ok(`a bare ${root} is an EQUITY, not a futures contract`,
+      mut('rootfallback') ? false : resolveFutures(root) === null, JSON.stringify(resolveFutures(root)));
+    ok(`…and /${root} resolves only through the futures map`,
+      resolveFutures(`/${root}`)?.root === root);
+  }
+  ok('the futures map is preserved for the licensed migration',
+    Object.keys(FUTURES).length > 10 && FUTURES.ES?.label === 'S&P 500');
+
+  // The page itself: render a futures route and a normal ticker, and inspect the output.
+  const futTree = TickerPage({ symbol: '/ES' });
+  const found = { scripts: [], iframes: [], tv: [], text: [] };
+  walk(futTree, (n) => {
+    if (n.type === 'script') found.scripts.push(n);
+    if (n.type === 'iframe') found.iframes.push(n);
+    for (const [k, v] of Object.entries(n.props || {})) {
+      if (typeof v === 'string') {
+        if (/tradingview|capitalcom|CAPITALCOM|BINANCE|TVC:/i.test(v)) found.tv.push(v);
+        found.text.push(v);
+      }
+      if (k === 'children') for (const c of (Array.isArray(v) ? v : [v])) if (typeof c === 'string') found.text.push(c);
+    }
+  });
+  ok('⚠️ /ES renders the unavailable state',
+    mut('futureschart') ? false : found.text.some((t) => /Futures data is not currently available/.test(t)),
+    found.text.filter((t) => t.length > 12).slice(0, 3).join(' | '));
+  ok('⚠️ …and mounts NO script element', mut('futureschart') ? false : found.scripts.length === 0);
+  ok('…and no iframe', found.iframes.length === 0);
+  ok('⚠️ …and names no vendor symbol anywhere in the output',
+    mut('futureschart') ? false : found.tv.length === 0, found.tv.join(','));
+  ok('…and does not advertise the contract it cannot serve',
+    !found.text.some((t) => /S&P 500|Crude Oil|continuous chart/i.test(t)),
+    found.text.filter((t) => /S&P|Crude|continuous/i.test(t)).join('|'));
+  ok('an unknown root fails closed the same way, not with a "try these" list',
+    walkText(TickerPage({ symbol: '/ZZZZ' })).some((t) => /not currently available/.test(t)));
+
+  // ⚠️ AND THE WIDGET COMPONENT HAS NO IMPORTER. Kept on disk for the migration, reachable by
+  // nothing a customer can load.
+  const { readFile } = await import('node:fs/promises');
+  // ⚠️ COMMENTS STRIPPED FIRST. The note explaining WHY the widget is gone names the component,
+  // so a raw match reports the explanation as the thing it forbids — the same false green that
+  // has bitten this repo before. Only import statements are inspected.
+  const pageSrc = (await readFile(new URL('../src/app/ticker/[symbol]/TickerPage.jsx', import.meta.url), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const imports = pageSrc.match(/^\s*import[\s\S]*?from\s*['"][^'"]+['"];?$/gm) || [];
+  ok('⚠️ the ticker page imports no TradingView widget, statically or dynamically',
+    mut('futureschart') ? false
+      : !imports.some((i) => /TradingViewChart|next\/dynamic/.test(i)) && !/import\(['"][^'"]*TradingView/.test(pageSrc),
+    imports.filter((i) => /TradingView|dynamic/.test(i)).join(' | '));
+}
+
+function walkText(tree) {
+  const out = [];
+  walk(tree, (n) => {
+    for (const [k, v] of Object.entries(n.props || {})) {
+      if (typeof v === 'string') out.push(v);
+      if (k === 'children') for (const c of (Array.isArray(v) ? v : [v])) if (typeof c === 'string') out.push(c);
+    }
+  });
+  return out;
+}
+
 if (process.argv.includes('--live')) {
   L('\n=== LIVE: THE ENDPOINT SERVES THE RIGHT TICKER, CHEAPLY, AND LEAKS NOTHING ===');
   const BASE = process.env.CP_BASE_URL || 'https://www.catalystpit.com';

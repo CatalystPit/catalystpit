@@ -2,24 +2,13 @@
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../../lib/cp-shared';
-import dynamic from 'next/dynamic';
 import TickerPriceChart from '../../../components/chart/TickerPriceChart';
 import { resolveFutures } from '../../../lib/futures';
 
-/**
- * ⚠️ THE ONLY TRADINGVIEW-HOSTED CHART LEFT, AND IT LOADS ONLY FOR FUTURES.
- *
- * /ES, /CL, /GC and the rest address TradingView/CapitalCom symbols; we hold no futures data, so
- * there is nothing of ours to draw. The obvious substitution is worse than no chart:
- * ticker_daily_candles HAS rows for those roots and every one is an unrelated US equity —
- * /CL is Colgate-Palmolive, /ES is Eversource Energy, /NG is NovaGold. Rendering those under
- * "Crude Oil (WTI)" would be a confident lie, so the widget stays for this one view.
- *
- * Statically imported it shipped inside the bundle of EVERY ticker page, including the thousands
- * of equity pages that can never render it. `dynamic` means an equity page never downloads it and
- * therefore cannot reach the vendor at all, while /ES still works.
- */
-const TradingViewChart = dynamic(() => import('../../../components/TradingViewChart'), { ssr: false });
+// ⚠️ NO TRADINGVIEW WIDGET IS IMPORTED HERE ANY MORE, dynamically or otherwise. The futures view
+// fails closed (see FuturesView below), so there is nothing on a customer-facing page that can
+// load a vendor-hosted chart. components/TradingViewChart.jsx is kept on disk for the future
+// licensed migration, with no importer.
 import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
@@ -1200,31 +1189,46 @@ function TickerBody({ symbol }) {
   return <ValidView data={data} tab={tab} onTab={onTab} insider={insider} gov={gov} earnings={earnings} short={short} />;
 }
 
-// Futures view — slash-prefixed symbols (/ES, /CL, /GC). No SEC/insider/fundamentals apply to a
-// futures contract, so we show a clean header + the TradingView continuous front-month chart.
+/**
+ * FUTURES — FAILS CLOSED UNTIL WE LICENCE A FUTURES FEED.
+ *
+ * ⚠️ WHAT THIS USED TO DO, AND WHY IT STOPPED. It rendered a TradingView-hosted widget addressing
+ * TradingView/Capital.com symbols, so the only futures data Catalyst Pit ever showed came from a
+ * vendor we do not licence it from. Lacking a replacement is not a reason to keep shipping it:
+ * the product is removing its dependence on TradingView-hosted market data, and a surface we
+ * cannot supply ourselves should not be advertised.
+ *
+ * ⚠️ AND THERE IS NO FALLBACK TO REACH FOR. `ticker_daily_candles` HAS rows for these roots and
+ * every one is an unrelated US equity — /CL is Colgate-Palmolive, /ES is Eversource Energy, /NG is
+ * NovaGold, /SI is Shoulder Innovations, /HG is Hamilton Insurance. Resolving a futures root
+ * through the equity database would draw Colgate-Palmolive under "Crude Oil (WTI)". That is why
+ * this renders nothing rather than something.
+ *
+ * ⚠️ NOTHING IS DELETED. FUTURES and resolveFutures() in lib/futures.js still hold the symbol
+ * mapping, and components/TradingViewChart.jsx still exists. Re-enabling is FUTURES_ENABLED plus a
+ * chart component pointed at a licensed feed — the routing, the roots and the labels are all here.
+ */
+// eslint-disable-next-line no-unused-vars -- `fut` is the resolved contract; deliberately unused
+// while futures are disabled, and kept in the signature so re-enabling needs no call-site change.
 function FuturesView({ fut }) {
-  if (fut.unknown) {
-    return (
-      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center' }}>
-        <div style={{ fontSize: 16, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Unknown futures symbol /{fut.root}</div>
-        <div style={{ fontSize: 13, color: C.muted }}>Try /ES, /NQ, /YM, /RTY, /VIX, /CL, /NG, /GC, /SI, /HG, /DXY, /6E, /BTC.</div>
-      </div>
-    );
-  }
+  // Unconditional: EVERY futures root lands here, known or unknown, however it was reached. There
+  // is no flag check because there is nothing to flag between — the alternative branch does not
+  // exist yet. FUTURES_ENABLED in lib/futures.js documents the switch and the collision hazard
+  // for whoever wires up the licensed feed.
   return (
-    <>
-      <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '18px 20px' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <span className="cp-tkr" style={{ fontSize: 26, fontWeight: 800, color: C.ink }}>/{fut.root}</span>
-          <span style={{ fontSize: 15, color: C.ink, fontWeight: 600 }}>{fut.label}</span>
-          <span style={{ fontSize: 10, fontWeight: 700, color: C.green, background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 4, padding: '2px 7px', letterSpacing: 0.5 }}>FUTURES</span>
-        </div>
-        <div style={{ fontSize: 12, color: C.muted, marginTop: 5 }}>
-          {fut.cat} · continuous chart tracking the {fut.label} market
-        </div>
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 24px', textAlign: 'center' }}>
+      <div style={{ fontSize: 16, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
+        Futures data is not currently available.
       </div>
-      <TradingViewChart ticker={fut.tv} />
-    </>
+      <div style={{ fontSize: 13, color: C.muted, maxWidth: 460, margin: '0 auto', lineHeight: 1.5 }}>
+        {/* Deliberately says nothing about the specific contract. Naming it — "/CL · Crude Oil" —
+            would advertise a symbol we cannot serve, and the root is already in the URL. */}
+        Catalyst Pit covers US-listed equities. Search for a stock symbol to see its chart.
+      </div>
+      <a href="/" style={{ display: 'inline-block', marginTop: 16, fontSize: 13, fontWeight: 600, color: C.green, textDecoration: 'none' }}>
+        Back to Catalyst Pit
+      </a>
+    </div>
   );
 }
 

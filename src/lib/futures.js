@@ -40,6 +40,29 @@ export const FUTURES = {
 // Common suggestions to surface in search.
 export const FUTURES_POPULAR = ['ES', 'NQ', 'YM', 'RTY', 'VIX', 'CL', 'NG', 'GC', 'SI', 'DXY', '6E', 'BTC'];
 
+/**
+ * ⚠️ OFF UNTIL WE LICENCE A FUTURES FEED. THE `tv:` SYMBOLS ABOVE ARE NOT A DATA SOURCE WE HOLD.
+ *
+ * Every mapping in FUTURES addresses a TradingView/Capital.com symbol, which the product no longer
+ * consumes on a customer-facing page. Until a licensed futures provider exists, /ES, /CL, /GC and
+ * the rest render an unavailable state rather than a chart drawn from somebody else's data.
+ *
+ * ⚠️ AND THE EQUITY DATABASE IS NEVER THE FALLBACK. `ticker_daily_candles` holds rows for these
+ * very roots and not one of them is the contract:
+ *
+ *     /CL  Crude Oil (WTI)  →  COLGATE PALMOLIVE        /SI  Silver    →  SHOULDER INNOVATIONS
+ *     /ES  S&P 500          →  EVERSOURCE ENERGY        /HG  Copper    →  HAMILTON INSURANCE
+ *     /NG  Natural Gas      →  NOVAGOLD RESOURCES       /BTC Bitcoin   →  Grayscale Bitcoin ETF
+ *
+ * resolveFutures() therefore only ever answers a `/`- or `FUT.`-prefixed symbol, and a bare `CL`
+ * stays the equity it is. Nothing in this file resolves a root through the ticker tables, and
+ * nothing should ever be added that does.
+ *
+ * TO RE-ENABLE: flip this and point the futures view at a component backed by the licensed feed.
+ * The roots, labels, categories and routing below are all still here and still correct.
+ */
+export const FUTURES_ENABLED = false;
+
 // Resolve a ticker-page symbol to a futures contract, or null if it's a stock.
 // Accepts either the user convention "/ES" or the URL-safe route form "FUT.ES" (search converts
 // "/ES" → "FUT.ES" so we never put an encoded slash in the path, which Vercel can 404 on).
