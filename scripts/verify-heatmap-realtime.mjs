@@ -82,10 +82,26 @@ L('\n=== ⚠️ THE LIVE BASELINE IS THE PREVIOUS CLOSE, NOT THE EOD BASELINE ==
     Math.abs(boardPct(null, NVDA.prevClose, NVDA.eodBaseline) - 2.2989) < 0.01,
     String(boardPct(null, NVDA.prevClose, NVDA.eodBaseline)));
 
-  ok('the store picks the baseline from whether a live price exists',
-    /const base = lq \? l\.close : b\.close;/.test(storeCode));
-  ok('…and a live row reports the session it was measured from',
-    mut('wrongbanner') ? false : /row\.baselineDate = l\.date;/.test(storeCode));
+  // ⚠️ RUN THE REAL DECISION, DON'T GREP FOR IT. These two used to match the literal lines
+  // `const base = lq ? l.close : b.close;` and `row.baselineDate = l.date;`. Both were true of the
+  // code and said nothing about the result, and both broke the moment the identical logic moved
+  // into intradayRowReturn() — a test that fails on a refactor and would have passed on a rewrite
+  // that inverted the branch. Now the function is called with the real Sep 2026 numbers.
+  {
+    const { intradayRowReturn } = await import('../src/lib/heatmap/heatmap-window.mjs');
+    const call = (livePrice) => intradayRowReturn({
+      livePrice, latestClose: NVDA.prevClose, latestDate: '2026-09-21',
+      baselineClose: NVDA.eodBaseline, baselineDate: '2026-09-18', isLiveBoard: livePrice != null,
+    });
+    const live = call(NVDA.live), eod = call(null);
+    ok('the baseline follows whether a live price exists',
+      Math.abs(live.pct - boardPct(NVDA.live, NVDA.prevClose, NVDA.eodBaseline)) < 1e-9
+      && Math.abs(eod.pct - boardPct(null, NVDA.prevClose, NVDA.eodBaseline)) < 1e-9,
+      `${live.pct} / ${eod.pct}`);
+    ok('…and a live row reports the session it was measured from',
+      mut('wrongbanner') ? false : live.baselineDate === '2026-09-21' && eod.baselineDate === '2026-09-18',
+      `${live.baselineDate} / ${eod.baselineDate}`);
+  }
 }
 
 L('=== ONLY 1D, AND ONLY FOR AN ENTITLED READER ===');

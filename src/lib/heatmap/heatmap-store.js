@@ -20,7 +20,7 @@
 
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
-import { anchorDateFor, pctReturn, asDay, NO_RETURN, MAX_BASELINE_GAP_DAYS } from './heatmap-window.mjs';
+import { anchorDateFor, pctReturn, asDay, NO_RETURN, MAX_BASELINE_GAP_DAYS, intradayRowReturn } from './heatmap-window.mjs';
 import { TRADEABLE_ASSET_TYPES } from './heatmap-universe.mjs';
 import { returnBlocked } from '../price-continuity.mjs';
 
@@ -374,6 +374,17 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = f
   ]);
   const live = intraday.prices;
 
+  // ⚠️ IS THIS BOARD MEASURING TODAY, OR A COMPLETED SESSION? The whole board must answer ONE
+  // question, and which question it is depends on whether the snapshot produced anything.
+  //
+  //   live.size > 0  → previous official close → current price   (today, in progress or frozen)
+  //   live.size == 0 → the completed-session board, every row close-to-close, consistently
+  //
+  // The second case is not degraded: a board where EVERY row is close-to-close is internally
+  // consistent and correct — that is the Free board and the post-settlement board. It is only the
+  // MIXTURE that lies, which is why this is a property of the board rather than of a row.
+  const isLiveBoard = live.size > 0;
+
   const rows = universe.map((u) => {
     const l = latest.get(u.ticker);
     const b = baseline.get(u.ticker);
@@ -410,17 +421,35 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = f
     // This is also why it must agree with the Watchlist by construction: both are now
     // (current price − prevClose) / prevClose over the same pair of numbers.
     const lq = live.get(u.ticker);
-    const base = lq ? l.close : b.close;
-    if (lq) {
-      row.price = lq.price;
-      row.priceAsOf = lq.asOf ?? null;
-      row.live = true;
-      // The row states what it was actually measured FROM, so the banner cannot disagree with it.
-      row.baselineDate = l.date;
-    }
-    const pct = pctReturn(lq ? lq.price : l.close, base);
-    if (pct === null) { row.reason = NO_RETURN.NO_PRICE; return row; }
-    row.pct = pct;
+
+    // ⚠️ ON A LIVE BOARD, A ROW WITHOUT A LIVE PRICE MEASURES A DIFFERENT PERIOD — AND THAT IS
+    // WHAT CONTAMINATES TOP GAINERS.
+    //
+    // While the snapshot is in force every other row runs previous-official-close → current price,
+    // i.e. TODAY. A symbol the snapshot had no usable price for can only be measured
+    // close-to-close, which on 2026-09-22 meant Sep 18 → Sep 21: yesterday's move, rendered on the
+    // same board and ranked in the same list as today's. Measured in production, 3 of 500 rows
+    // were in this state and BBDO's stale +2.86% already ranked 26th among gainers — a top-ten
+    // slot on a quieter day, and a number a reader would act on believing it was today's.
+    //
+    // So the row is DEGRADED rather than given a percentage from the wrong period. This uses the
+    // board's existing unmeasured-row path (the same one a delisted or broken series takes), so
+    // the tile renders exactly as it already does for anything unmeasurable and topMovers, which
+    // already excludes rows with a null pct, stops ranking it. Nothing about the layout, the
+    // sizing or the ranking rule changes — only which rows are eligible to be ranked at all.
+    // Both of the above rules live in intradayRowReturn() as one pure decision, so the regression
+    // suite exercises the SAME code the board runs rather than a restatement of it.
+    const rr = intradayRowReturn({
+      livePrice: lq ? lq.price : null,
+      latestClose: l.close, latestDate: l.date,
+      baselineClose: b.close, baselineDate: b.date,
+      isLiveBoard,
+    });
+    if (rr.live) { row.price = lq.price; row.priceAsOf = lq.asOf ?? null; row.live = true; }
+    // The row states what it was actually measured FROM, so the banner cannot disagree with it.
+    if (rr.baselineDate) row.baselineDate = rr.baselineDate;
+    if (rr.reason) { row.reason = rr.reason; return row; }
+    row.pct = rr.pct;
     return row;
   });
 

@@ -193,7 +193,54 @@ export const NO_RETURN = Object.freeze({
   NO_HISTORY: 'no_history',       // the security did not trade that far back (a recent listing)
   NO_PRICE: 'no_price',           // a close we hold is missing or non-positive
   SERIES_BREAK: 'series_break',   // ticker_price_quality says a return across this span is unsafe
+  // ⚠️ THE BOARD IS MEASURING TODAY AND THIS ROW CANNOT. On a live 1D board every other row runs
+  // from the previous official close to the current price; a symbol the snapshot returned no
+  // usable price for can only be measured close-to-close, which is YESTERDAY'S move. Showing that
+  // number beside today's — and worse, ranking it in Top Gainers — compares two different periods.
+  NO_LIVE_PRICE: 'no_live_price',
 });
+
+/**
+ * THE 1D RETURN FOR ONE ROW OF A BOARD THAT MAY OR MAY NOT BE MEASURING TODAY.
+ *
+ * Pure, and separated from the store so the rule can be exercised with numbers rather than
+ * inspected as source. It answers one question: given what this row has, WHICH PERIOD can it
+ * honestly express, and is that the same period the rest of the board is expressing?
+ *
+ *   isLiveBoard && a live price   →  previous official close → current price   (today)
+ *   isLiveBoard && no live price  →  NOTHING. Degraded, because the only return available to it
+ *                                    is close-to-close, which is the PREVIOUS session's move.
+ *   !isLiveBoard                  →  close-to-close, consistently, for every row
+ *
+ * ⚠️ THE MIDDLE CASE IS THE DEFECT THIS EXISTS TO PREVENT. Ranking a row's yesterday-move against
+ * 499 rows' today-moves puts a stale number at the top of Top Gainers, and nothing about it looks
+ * wrong on the tile.
+ *
+ * @returns { pct, baselineDate, reason, live } — `pct` is null whenever `reason` is set.
+ */
+export function intradayRowReturn({
+  livePrice = null, latestClose = null, latestDate = null,
+  baselineClose = null, baselineDate = null, isLiveBoard = false,
+} = {}) {
+  const out = { pct: null, baselineDate: null, reason: null, live: false };
+  const live = Number(livePrice);
+  const hasLive = livePrice != null && Number.isFinite(live) && live > 0;
+
+  if (isLiveBoard && !hasLive) { out.reason = NO_RETURN.NO_LIVE_PRICE; return out; }
+
+  // ⚠️ BOTH HALVES MOVE TOGETHER OR NEITHER DOES. A live numerator against the completed-session
+  // baseline measures two days and calls it one — the bug that once put NVDA at +2.72% against a
+  // true +0.41%. The previous OFFICIAL CLOSE is `latestClose`; the window baseline is not.
+  const numerator = hasLive ? live : latestClose;
+  const denominator = hasLive ? latestClose : baselineClose;
+  out.baselineDate = hasLive ? (latestDate ?? null) : (baselineDate ?? null);
+  out.live = hasLive;
+
+  const pct = pctReturn(numerator, denominator);
+  if (pct === null) { out.reason = NO_RETURN.NO_PRICE; out.baselineDate = null; out.live = false; return out; }
+  out.pct = pct;
+  return out;
+}
 
 /**
  * The return for one security over one window.

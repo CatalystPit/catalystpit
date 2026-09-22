@@ -62,6 +62,9 @@ const REASON_COPY = {
   [NO_RETURN.NO_HISTORY]: 'Not listed this far back, so this window has no starting price.',
   [NO_RETURN.NO_PRICE]: 'No usable closing price for this security.',
   [NO_RETURN.SERIES_BREAK]: 'Price history breaks across this window, so a return would mislead.',
+  // The rest of the board is measuring today; this symbol had no price in the snapshot, so the
+  // only return available for it is the previous session's — a different period, not a smaller move.
+  [NO_RETURN.NO_LIVE_PRICE]: 'No current price in this snapshot, so today’s move can’t be measured.',
 };
 
 // Matches the server snapshot's TTL: asking faster returns the same snapshot, asking slower
@@ -200,7 +203,18 @@ export default function MarketHeatmapClient({ initial }) {
     ? etTime(data?.snapshotAt) : null;
   const finalFor = (fresh === FRESHNESS_COPY.frozen || fresh === FRESHNESS_COPY.closed)
     ? longDay(data?.session?.sessionDate || data?.asOf) : null;
-  const scale = scaleFor(timeframe);
+  // ⚠️ DESCRIBE THE BOARD THAT IS ON SCREEN, NOT THE BUTTON THAT WAS LAST PRESSED.
+  //
+  // `timeframe` is the SELECTED window and changes the instant a chip is clicked; `data` is the
+  // window that has actually loaded. Between the two — one network round trip — every label driven
+  // by `timeframe` describes a board that is not there yet, so switching to 1D rendered "Top
+  // gainers · 1D" above the previous window's rows and coloured them on the 1D scale. A reader
+  // glancing at that sees week-long moves presented as today's.
+  //
+  // Everything that makes a claim about the numbers therefore reads the PAYLOAD's timeframe. The
+  // chips keep using the selected one, because those describe intent rather than data.
+  const shownTimeframe = data?.timeframe || timeframe;
+  const scale = scaleFor(shownTimeframe);
   const go = (t) => router.push(`/ticker/${encodeURIComponent(t)}`);
 
   const chip = (on) => ({
@@ -339,7 +353,7 @@ export default function MarketHeatmapClient({ initial }) {
                   pair of sessions. Both ends now come from the data: `baselineDate` is whatever
                   the rows were actually measured from, so this sentence cannot drift from the
                   number beside it. Nothing here is hardcoded. */}
-              {timeframe} return measured from the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.baselineDate)}</strong> close
+              {shownTimeframe} return measured from the <strong style={{ color: C.ink, fontWeight: 600 }}>{longDay(data?.baselineDate)}</strong> close
               {/* ⚠️ "LATEST MARKET SNAPSHOT", NOT "CURRENT MARKET PRICE". The numerator is a price
                   captured at a known instant, not a continuously updating one, and the previous
                   wording promised a board that ticks. The strip already names the instant. */}
@@ -390,9 +404,9 @@ export default function MarketHeatmapClient({ initial }) {
         {/* ── LEADERSHIP. Three equal cards across the full width; wrapping at medium widths and
                stacking on a phone. ── */}
         <div className="cp-hm-cards">
-          <LeaderList title={`Top gainers · ${timeframe}`} items={gainers}
+          <LeaderList title={`Top gainers · ${shownTimeframe}`} items={gainers}
             help={{ title: 'Top Gainers', body: `The largest positive returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
-          <LeaderList title={`Top losers · ${timeframe}`} items={losers}
+          <LeaderList title={`Top losers · ${shownTimeframe}`} items={losers}
             help={{ title: 'Top Losers', body: `The largest negative returns over the selected window (${TIMEFRAME_LABEL[timeframe]}), within the securities currently on the board.` }} />
           {/* Most Active is a SESSION measure, so it is labelled with its session rather than with the
               selected window — "Most active 1M" would claim something we are not measuring. Omitted
