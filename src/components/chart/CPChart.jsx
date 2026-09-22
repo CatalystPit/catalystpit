@@ -253,6 +253,17 @@ export default function CPChart({
   const volumeOnRef = useRef(true);
   const barsRef = useRef([]);
   /**
+   * WHICH SYMBOL barsRef.current ACTUALLY DESCRIBES.
+   *
+   * ⚠️ WITHOUT THIS, "the bars in memory" AND "the symbol on screen" ARE DIFFERENT FACTS between a
+   * ticker change and the moment its fetch resolves — and anything that writes to the bars during
+   * that gap writes the new symbol's numbers into the old symbol's candles. The realtime overlay
+   * did exactly that. The bars are replaced asynchronously; this says whose they are right now.
+   */
+  const barsSymRef = useRef(null);
+  // The current symbol, readable from inside an async callback that closed over an older render.
+  const symRef = useRef(null);
+  /**
    * time -> index, rebuilt whenever the bars are.
    *
    * The crosshair handler needs the PREVIOUS bar's close on every pointer move, and it used to find
@@ -267,6 +278,7 @@ export default function CPChart({
   typeRef.current = chartType;
   activeRef.current = active;
   tfRef.current = tf;
+  symRef.current = sym;
 
   const volumeOn = active.some((a) => a.id === 'volume');
   // Assigned AFTER the const it reads: a `const` is hoisted but not initialised, so touching it
@@ -286,6 +298,24 @@ export default function CPChart({
     // onto this chart, so the stack is dropped when the symbol changes rather than carried over.
     historyRef.current = emptyHistory();
     setHistTick((t) => t + 1);
+
+    // ⚠️ THE PRICE SCALE IS PER SYMBOL AND NOTHING WAS RESETTING IT. draw() fits the TIME scale on
+    // every load and never touches the price axis, so a range left over from the previous security
+    // survived the switch — SPY's ~$770 axis with AAPL's ~$343 candles pinned to the bottom edge,
+    // or off-screen entirely. Manual scaling turns autoScale off, and it stayed off across symbols
+    // because nothing said the question had changed.
+    //
+    // Switching security is exactly the moment a retained range stops meaning anything, so
+    // autoscale is restored here. It is not restored on a timeframe change or a refresh, where a
+    // user's chosen range is still about the chart in front of them.
+    try {
+      chartRef.current?.priceScale('right').applyOptions({ autoScale: true });
+      setView((v) => (v.autoScale ? v : { ...v, autoScale: true }));
+    } catch { /* chart not mounted yet — the first draw autoscales anyway */ }
+
+    // The bars in memory still belong to the PREVIOUS symbol until the new fetch lands. Saying so
+    // is what stops the realtime overlay writing this symbol's price into them.
+    barsSymRef.current = null;
   }, [sym]);
 
   const drawingsDirty = useRef(false);
@@ -1092,20 +1122,33 @@ export default function CPChart({
     const url = barsUrl(sym, tf, { session: extended ? 'extended' : 'regular' });
     if (!url) { setStatus('error'); return; }
     if (!incremental) setStatus('loading');
+    // ⚠️ WHICH SYMBOL THIS REQUEST IS FOR, CAPTURED BEFORE THE AWAIT. Switching quickly —
+    // SPY → AAPL → NVDA — leaves several requests in flight, and they resolve in whatever order
+    // the network decides. Without this, a slow SPY response landing after NVDA has been selected
+    // overwrites NVDA's candles with SPY's and the chart quietly shows the wrong security under
+    // the right name.
+    const forSym = sym;
     try {
       const json = await fetchPayload(url, { fresh: incremental });
+      if (forSym !== symRef.current) return;              // a newer symbol won; discard this answer
       const { bars, meta: m } = normalizeBars(json, tf);
       setMeta(m);
       kindRef.current = m.kind;
       if (!bars.length) {
         barsRef.current = [];
+        barsSymRef.current = forSym;
         setStatus(json?.error ? 'error' : 'empty');
         return;
       }
       // INCREMENTAL WHERE POSSIBLE. A full setData() resets the user's zoom and pan, so a refresh
       // that only appends or updates the live bar is applied through update() instead.
-      const delta = incremental ? diffBars(barsRef.current, bars) : null;
+      // ⚠️ A DELTA IS ONLY MEANINGFUL AGAINST THE SAME SECURITY. diffBars against another symbol's
+      // bars would describe the difference between two different companies, so an incremental
+      // refresh that crosses a symbol change is treated as a full load.
+      const sameSymbol = barsSymRef.current === forSym;
+      const delta = incremental && sameSymbol ? diffBars(barsRef.current, bars) : null;
       barsRef.current = bars;
+      barsSymRef.current = forSym;
       barIndexRef.current = new Map(bars.map((b, i) => [b.time, i]));
       // The at-rest readout: the last bar, and the close before it for the change.
       const lastBar = bars[bars.length - 1];
@@ -1169,6 +1212,17 @@ export default function CPChart({
 
   useEffect(() => {
     if (livePrice == null) return;
+    // ⚠️ THE BARS MUST BELONG TO THE SYMBOL THIS PRICE IS ABOUT, AND THIS GUARD WAS MISSING.
+    //
+    // This is the bug that broke the price scale on a ticker change. On SPY → AAPL the quote poll
+    // re-keys immediately and /api/quotes answers in ~200ms, while the chart payload is larger and
+    // lands later. For that gap barsRef.current still held SPY's candles — and the overlay wrote
+    // AAPL's ~343 into the last SPY bar as its new LOW. That one bar then spanned 343 to 775, the
+    // axis autoscaled to fit it, and AAPL's real candles arrived pinned to the bottom edge.
+    //
+    // The price was right and the bars were right; only the pairing was wrong. A quote may only
+    // touch bars that are known to be the same security.
+    if (barsSymRef.current !== symRef.current) return;
     const bars = barsRef.current;
     if (!bars.length || !priceRef.current) return;
     const last = bars[bars.length - 1];
