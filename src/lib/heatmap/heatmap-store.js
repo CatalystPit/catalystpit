@@ -146,7 +146,70 @@ async function qualityFor(tickers) {
  * sized by market cap, coloured as unknown — with a `reason`, rather than dropping out of the board
  * and silently changing what the market looks like.
  */
-export async function heatmapBoard({ timeframe = '1D', limit = 150 } = {}) {
+/**
+ * THE INTRADAY NUMERATOR, FOR 1D AND FOR AN ENTITLED READER ONLY.
+ *
+ * ⚠️ IT REPLACES ONE NUMBER AND NOTHING ELSE. The universe, the sector classification, the tile
+ * sizing, the market-cap methodology, the baseline session and the quality gates are all untouched
+ * — the board already computes (latest − baseline) / baseline, and this changes only what "latest"
+ * means for the one window where an intraday price is the honest answer.
+ *
+ * ⚠️ 1D ONLY, DELIBERATELY. A live price against a 1Y baseline is still a legitimate return, but
+ * it would silently re-measure a window the reader believes is built from completed sessions, and
+ * the other windows have no intraday question to answer. They keep the close.
+ *
+ * ⚠️ AND NEVER VOLUME. Most Active stays on completed-session volume because the only intraday
+ * volume this entitlement carries is one venue's — 0.17%–0.40% of the tape. A realtime price and a
+ * completed-session volume side by side is honest; relabelling that volume would not be.
+ *
+ * @returns Map<ticker, {price, asOf}> — only for symbols with a quote the SERVER stamped realtime.
+ */
+async function intradayPrices(tickers, { realtime = false, timeframe = '1D', limit = 0 } = {}) {
+  if (!realtime || timeframe !== '1D' || !tickers.length) return new Map();
+  const out = new Map();
+  try {
+    const { readSnapshot, writeSnapshot } = await import('./heatmap-realtime.mjs');
+
+    // ⚠️ THE SHARED SNAPSHOT FIRST. Without it, provider load grows with CONCURRENT VIEWERS rather
+    // than with time: every unsynchronised Pro poller would issue its own five upstream requests
+    // for a board that is identical for all of them. With it, the work happens once per 15-second
+    // snapshot — ~1,200 requests/hour at Top 500 regardless of how many people are watching.
+    const cached = await readSnapshot(limit);
+    if (cached?.prices) {
+      for (const [sym, price] of Object.entries(cached.prices)) {
+        if (Number.isFinite(Number(price))) out.set(sym, { price: Number(price), asOf: cached.calculatedAt });
+      }
+      if (out.size) return out;
+    }
+
+    const { getQuotes } = await import('../market-data');
+    // getQuotes batches internally (100 per upstream request) and applies the entitlement gate
+    // itself — this asks for prices, it does not decide who may have them.
+    const quotes = await getQuotes(tickers, { realtime: true });
+    const fresh = {};
+    for (const [sym, q] of Object.entries(quotes || {})) {
+      // ⚠️ THE SERVER'S OWN STAMP, NOT A GUESS FROM THE NUMBER. A quote is usable here only if the
+      // entitlement gate called it realtime; anything else is the settled close wearing a
+      // different name, and substituting it would change nothing except the label.
+      // ⚠️ `q.price != null` IS NOT REDUNDANT WITH isFinite — Number(null) is 0, AND 0 IS FINITE.
+      // Without it a quote carrying a null price becomes a price of zero, and (0 − prevClose) /
+      // prevClose renders that tile at exactly −100%: the most alarming number on the board,
+      // produced by a missing value rather than a market event.
+      if (q && q.freshness === 'realtime' && q.price != null && Number.isFinite(Number(q.price)) && Number(q.price) > 0) {
+        out.set(sym, { price: Number(q.price), asOf: q.asOf ?? null });
+        fresh[sym] = Number(q.price);
+      }
+    }
+    // ⚠️ ONLY PRICES GO IN, AND ONLY INTO THE HEATMAP'S OWN NAMESPACE. This is not the quote cache
+    // and must never become it: /api/quotes still refuses to store an entitled quote, and that
+    // policy is unchanged. What is shared here is one board's numerator, behind a key no
+    // unentitled path reads.
+    if (Object.keys(fresh).length) await writeSnapshot(limit, fresh);
+  } catch { /* the board must render without it — see the caller's fallback */ }
+  return out;
+}
+
+export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = false } = {}) {
   const asOf = await latestSessionDate();
   if (!asOf) return { asOf: null, baselineDate: null, rows: [] };
 
@@ -157,7 +220,8 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150 } = {}) {
   // The anchor for everything except 1D, which is expressed as "strictly before the latest session".
   const anchor = anchorDateFor(timeframe, asOf);
 
-  const [latest, baseline, quality] = await Promise.all([
+  const [live, latest, baseline, quality] = await Promise.all([
+    intradayPrices(tickers, { realtime, timeframe, limit }),
     latestSession(tickers, asOf),
     timeframe === '1D'
       ? sessionPerTicker(tickers, asOf, { strictlyBefore: true, floorDays: 10 })
@@ -182,7 +246,13 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150 } = {}) {
     // that far — a recent listing. 0% would be a fabrication, so it is reported as missing history.
     if (!b || b.date >= l.date) { row.reason = NO_RETURN.NO_HISTORY; return row; }
     if (returnBlocked(quality.get(u.ticker) ?? null, b.date)) { row.reason = NO_RETURN.SERIES_BREAK; return row; }
-    const pct = pctReturn(l.close, b.close);
+    // ⚠️ THE LIVE PRICE REPLACES ONLY THE NUMERATOR, AND ONLY IF THERE IS ONE FOR THIS SYMBOL.
+    // Everything above — the universe, the baseline, the quality gates — has already decided that
+    // this row is measurable. A symbol the quote feed has nothing for keeps its close, so a partial
+    // feed produces a board that is partly intraday and wholly correct, rather than a gap.
+    const lq = live.get(u.ticker);
+    if (lq) { row.price = lq.price; row.live = true; }
+    const pct = pctReturn(lq ? lq.price : l.close, b.close);
     if (pct === null) { row.reason = NO_RETURN.NO_PRICE; return row; }
     row.pct = pct;
     return row;
