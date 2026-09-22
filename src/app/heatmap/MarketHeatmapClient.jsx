@@ -51,6 +51,10 @@ const REASON_COPY = {
   [NO_RETURN.SERIES_BREAK]: 'Price history breaks across this window, so a return would mislead.',
 };
 
+// Matches the server snapshot's TTL: asking faster returns the same snapshot, asking slower
+// leaves it on screen past its life.
+const HEATMAP_POLL_MS = 15000;
+
 const FRESHNESS_COPY = {
   eod: { label: 'End of day', tone: 'muted', text: 'Completed-session data. Not live or intraday.' },
   delayed: { label: 'Delayed', tone: 'muted', text: 'Licensed delayed market data.' },
@@ -68,10 +72,31 @@ export default function MarketHeatmapClient({ initial }) {
   // How much of the requested universe the board could actually draw, reported by the canvas.
   const [coverage, setCoverage] = useState({ total: 0, drawn: 0, hidden: 0 });
 
-  const load = useCallback(async (tf, uni) => {
+  // ⚠️ THE BOARD A PRO READER NEEDS IS AT A DIFFERENT URL, AND THIS IS WHY.
+  //
+  // Free and Pro used to request the identical path, so the first anonymous response populated the
+  // CDN with `public, s-maxage=300` and every entitled request afterwards was answered by the edge
+  // — never reaching the server, never running auth(), always EOD. Adding `rt=1` for an entitled
+  // reader puts the two audiences in different cache keys. It authorises nothing: the server
+  // resolves the session itself and hands a Free caller the EOD board regardless.
+  const [entitled, setEntitled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch('/api/me/plan', { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        if (alive) setEntitled(j?.tier === 'pro' || j?.tier === 'elite');
+      } catch { if (alive) setEntitled(false); }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const load = useCallback(async (tf, uni, rt) => {
     setStatus('loading');
     try {
-      const r = await fetch(`/api/heatmap/performance?timeframe=${encodeURIComponent(tf)}&universe=${encodeURIComponent(uni)}`);
+      const q = `timeframe=${encodeURIComponent(tf)}&universe=${encodeURIComponent(uni)}${rt ? '&rt=1' : ''}`;
+      const r = await fetch(`/api/heatmap/performance?${q}`, rt ? { cache: 'no-store' } : undefined);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setData(await r.json());
       setStatus('ready');
@@ -83,11 +108,31 @@ export default function MarketHeatmapClient({ initial }) {
   }, []);
 
   // The server rendered the opening board; the first effect must not refetch it.
+  //
+  // ⚠️ EXCEPT FOR AN ENTITLED READER, WHOSE FIRST PAINT IS WRONG. The SSR board is a statically
+  // cached EOD page — correct and fast for everyone else, and stale by definition for someone who
+  // is paying for live prices. So the moment entitlement resolves, the real board is fetched.
   const [first, setFirst] = useState(true);
   useEffect(() => {
-    if (first) { setFirst(false); return; }
-    load(timeframe, universe);
-  }, [timeframe, universe]);   // eslint-disable-line react-hooks/exhaustive-deps
+    if (first && !entitled) { setFirst(false); return; }
+    setFirst(false);
+    load(timeframe, universe, entitled);
+  }, [timeframe, universe, entitled]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ⚠️ A SERVER SNAPSHOT THAT REFRESHES EVERY 15s IS WORTH NOTHING IF THE BROWSER NEVER ASKS AGAIN.
+  // This component fetched exactly once, so even a correct payload would have frozen on screen.
+  // Only the intraday window polls: 1W/1M/1Y are historical and would be re-fetching a constant.
+  useEffect(() => {
+    if (!entitled || timeframe !== '1D') return undefined;
+    const id = setInterval(() => {
+      // A hidden tab is not watching the market; the visibility handler catches it up on return.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      load(timeframe, universe, true);
+    }, HEATMAP_POLL_MS);
+    const onVis = () => { if (document.visibilityState === 'visible') load(timeframe, universe, true); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [entitled, timeframe, universe, load]);
 
   const allRows = data?.rows || [];
   const sectors = useMemo(() => sectorOptions(allRows), [allRows]);

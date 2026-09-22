@@ -94,8 +94,15 @@ L('=== A PRO BOARD CAN NEVER BE SERVED FROM A PUBLIC CACHE ===');
 {
   // ⚠️ THE ONE THAT WOULD LEAK. A realtime board behind a CDN cache is a Pro board handed to the
   // next Free reader by the edge, with no code path involved at all.
-  ok('the cache header is chosen from the computed freshness',
-    mut('publiccache') ? false : /headers: freshness === 'eod' \? EOD_CACHE : PRIVATE/.test(routeCode));
+  // ⚠️ THIS ASSERTION USED TO ENFORCE THE BUG. It required the header to be chosen from the
+  // computed `freshness` — which sounds careful and is too late: by the time an outcome exists the
+  // CDN has already been handed a `public` answer for a URL both audiences share, and every
+  // entitled request afterwards is served from the edge without reaching auth(). The rule is that
+  // an entitled REQUEST is never publicly cacheable, decided before any work happens.
+  ok('an entitled request can never be publicly cached',
+    mut('publiccache') ? false : /headers: wantsRealtime \? PRIVATE : \(freshness === 'eod' \? EOD_CACHE : PRIVATE\)/.test(routeCode));
+  ok('…and an unentitled one still gets the shared public board',
+    /EOD_CACHE = \{ 'Cache-Control': 'public, s-maxage=300/.test(routeCode));
   ok('…and the realtime branch is private, no-store',
     /const PRIVATE = \{ 'Cache-Control': 'private, no-store' \}/.test(routeCode));
   ok('nothing realtime is written to a shared store',
@@ -164,6 +171,53 @@ L('\n=== THE SHARED SNAPSHOT COLLAPSES PROVIDER LOAD, NOT ENTITLEMENT ===');
       : /if \(!realtime \|\| timeframe !== '1D'[^)]*\) return new Map\(\);[\s\S]{0,600}readSnapshot\(limit\)/.test(storeCode));
   ok('the quote cache policy is untouched — no quote is stored by this path',
     !/quotesCacheSet/.test(storeCode));
+}
+
+L('\n=== THE BOARD ACTUALLY REACHES THE READER ===');
+{
+  // ⚠️ THIS SECTION EXISTS BECAUSE EVERY ASSERTION ABOVE PASSED WHILE PRO SAW "END OF DAY" IN
+  // PRODUCTION. The computation was right and the DELIVERY was broken in three separate places,
+  // none of which a test about arithmetic could see:
+  //
+  //   1. the API route answered Free and Pro on the SAME URL with `public, s-maxage=300`, so the
+  //      CDN served the anonymous EOD board to entitled requests and auth() never ran
+  //      (confirmed in production: X-Vercel-Cache: HIT, Cache-Control: public)
+  //   2. the page is statically cached with a hardcoded freshness of 'eod'
+  //   3. the client fetched once and had no interval at all
+  //
+  // A correct number nobody receives is not a feature.
+  const client = strip(await src('../src/app/heatmap/MarketHeatmapClient.jsx'));
+  const page = strip(await src('../src/app/heatmap/page.jsx'));
+
+  // 1. THE CACHE KEYS MUST DIFFER BEFORE THE ANSWER IS KNOWN.
+  ok('the entitled reader requests a different URL',
+    mut('sharedurl') ? false : /\$\{rt \? '&rt=1' : ''\}/.test(client));
+  ok('the route reads that marker', /sp\.get\('rt'\) === '1'/.test(routeCode));
+  ok('⚠️ the header is chosen from the REQUEST, not from the outcome',
+    mut('lateheader') ? false : /headers: wantsRealtime \? PRIVATE :/.test(routeCode),
+    'choosing from `freshness` is too late — the CDN has already cached the public answer');
+  ok('the entitled fetch also bypasses the browser cache', /rt \? \{ cache: 'no-store' \} : undefined/.test(client));
+
+  // ⚠️ AND THE MARKER GRANTS NOTHING. A Free reader appending rt=1 must still get EOD data.
+  ok('rt=1 is a cache key, never an authorisation',
+    mut('trustsparam') ? false
+      : /realtime = isRealtime\(tier\)/.test(routeCode) && !/realtime = wantsRealtime/.test(routeCode));
+
+  // 2. THE CLIENT MUST REPLACE THE STATIC FIRST PAINT FOR AN ENTITLED READER.
+  ok('entitlement is resolved in the browser from the canonical endpoint',
+    /fetch\('\/api\/me\/plan'/.test(client));
+  ok('…and the board is refetched once it resolves',
+    mut('keepsssr') ? false : /if \(first && !entitled\) \{ setFirst\(false\); return; \}/.test(client));
+  ok('the statically cached page never claims realtime', /freshness: 'eod'/.test(page));
+
+  // 3. AND IT MUST KEEP ASKING.
+  ok('the client polls',
+    mut('nopoll') ? false : /setInterval\(\(\) => \{[\s\S]{0,300}load\(timeframe, universe, true\)/.test(client));
+  ok(`…at the snapshot's cadence`, /const HEATMAP_POLL_MS = 15000/.test(client));
+  ok('…only on the intraday window', /if \(!entitled \|\| timeframe !== '1D'\) return undefined/.test(client));
+  ok('…and the interval is cleared', /clearInterval\(id\)/.test(client));
+  ok('…with a hidden tab skipped and caught up on return',
+    /visibilityState === 'hidden'/.test(client) && /visibilitychange/.test(client));
 }
 
 if (process.argv.includes('--live')) {

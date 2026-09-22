@@ -21,10 +21,15 @@ export const metadata = pageMeta({
 // request bought nothing. 300s matches the s-maxage the API route already uses, so the page and its
 // first refresh cannot disagree about how fresh the data is.
 //
-// ⚠️ REVISIT WHEN REALTIME ENTITLEMENTS SHIP. The moment the board differs by subscription tier this
-// must go back to per-request rendering, or a cached EOD page will be served to a realtime viewer —
-// and the reverse, which is the licensing-sensitive direction. The `access` object below is the
-// signal: while `realtime` is a constant false, this cache is safe.
+// ⚠️ REALTIME ENTITLEMENTS HAVE SHIPPED, AND THIS WARNING CAME TRUE. A cached EOD page WAS served
+// to a realtime viewer — it was one of three layers doing so, together with the API route's public
+// CDN entry and a client that fetched exactly once.
+//
+// The resolution is not per-request rendering, which would hand every anonymous reader the 2,431ms
+// cold render this cache was created to remove. It is that the page stays an EOD first paint for
+// everybody, and the CLIENT replaces it for an entitled reader as soon as the session resolves.
+// The licensing-sensitive direction is still safe: nothing realtime is ever rendered here, so
+// nothing realtime can be cached here.
 export const revalidate = 300;
 
 /**
@@ -45,10 +50,16 @@ export default async function HeatmapPage() {
     initial = {
       timeframe: DEFAULT_TIMEFRAME, universe: DEFAULT_UNIVERSE,
       asOf: board.asOf, baselineDate: board.baselineDate, anchorDate: board.anchorDate ?? null,
-      // Pre-launch: end-of-day for every viewer. The API route is the one place that decides this;
-      // the same literal is used here so the first paint cannot disagree with the first refresh.
+      // ⚠️ THIS FIRST PAINT IS ALWAYS END-OF-DAY, AND THAT IS NOW A DELIBERATE COMPROMISE RATHER
+      // THAN THE WHOLE TRUTH. The page is statically cached (revalidate below) and has no session,
+      // so it cannot know who is asking — and making it per-request would cost every anonymous
+      // reader the 2.4s cold render this cache exists to avoid.
+      //
+      // So an entitled reader's opening frame is the EOD board and the client replaces it the
+      // moment /api/me/plan resolves. What must never happen is this literal claiming to be
+      // something it is not: it says eod because it IS eod, for everyone, for one frame.
       freshness: 'eod',
-      access: { realtime: false, applied: false, note: 'Pre-launch: every viewer sees end-of-day data.' },
+      access: { realtime: false, applied: false, liveRows: 0, note: 'Completed-session data.' },
       source: 'ticker_daily_candles',
       counts: { rows: board.rows.length, measured, unmeasured: board.rows.length - measured },
       timeframes: TIMEFRAMES, universes: UNIVERSES,

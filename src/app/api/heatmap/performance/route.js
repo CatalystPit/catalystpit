@@ -49,6 +49,10 @@ export async function GET(request) {
     const universe = sp.get('universe') || DEFAULT_UNIVERSE;
     const limit = universeLimit(universe);
 
+    // Whether the CALLER is asking on the entitled URL. This decides the cache header only — see
+    // the response below. It grants nothing.
+    const wantsRealtime = sp.get('rt') === '1';
+
     // Resolved server-side from the session, and now ACTED ON for the 1D window. Free and signed-out
     // readers keep the completed-session board and its public cache; nothing a client sends can
     // change this value.
@@ -106,7 +110,22 @@ export async function GET(request) {
       timeframes: TIMEFRAMES,
       universes: UNIVERSES,
       rows: compactRows(board.rows, { asOf: board.asOf, baselineDate: board.baselineDate }),
-    }, { headers: freshness === 'eod' ? EOD_CACHE : PRIVATE });
+    // ⚠️ THE CACHE DECISION CANNOT WAIT FOR THE OUTCOME, AND THAT IS WHAT BROKE PRO IN PRODUCTION.
+    //
+    // Choosing the header from `freshness` looks right and is too late. Free and Pro requested the
+    // SAME URL, so the first anonymous response populated the edge with `public, s-maxage=300` —
+    // and every entitled request afterwards was answered by the CDN, never reaching this function.
+    // auth() never ran, `realtime` was never true, and a Pro viewer was served an EOD board by
+    // infrastructure rather than by any line of code. Confirmed in production:
+    // `X-Vercel-Cache: HIT` with `Cache-Control: public` on the second request.
+    //
+    // So the two audiences now occupy DIFFERENT URLs, and `wantsRealtime` — not the result — picks
+    // the header, before any caching can happen.
+    //
+    // ⚠️ `rt=1` IS A CACHE KEY, NEVER AN AUTHORISATION. A Free reader who adds it reaches this
+    // function, is resolved as unentitled, and receives the EOD board — just uncached. The
+    // entitlement still comes from the session and only from the session.
+    }, { headers: wantsRealtime ? PRIVATE : (freshness === 'eod' ? EOD_CACHE : PRIVATE) });
   } catch (e) {
     console.log(`[heatmap-performance] ${e.message}`);
     // Explicit failure, never an empty board that reads as "the market is flat".
