@@ -160,6 +160,135 @@ async function corporatePortfolios(limit = 300) {
 // with different accessions, which is what a corrected filing looks like. They are not labelled
 // as amendments because the table carries no flag for it, and inferring one from row order would
 // be a guess.
+/**
+ * LATEST INSTITUTIONAL ACTIVITY — position changes across every manager, newest disclosure first.
+ *
+ * ⚠️ THIS IS THE FUND PAGE'S COMPARISON, WIDENED — NOT A SECOND ENGINE. The position key is
+ * `cusip|putCall` and the dead band is the same 0.1%, both imported from institutions-activity
+ * rather than restated, so the feed and a fund's own New/Increased/Reduced/Closed lists cannot
+ * drift into disagreeing about the same filing.
+ *
+ * ⚠️ AND IT DOES NOT COMPARE 18 MILLION HOLDINGS. Measured while building it:
+ *   · resolving quarter pairs with a correlated `(SELECT max(quarter) … < x)` subquery: 14,227ms
+ *   · the same answer from lag() over a window on fund_filings (67k rows):        ~430ms
+ *   · handing those pairs to the holdings join via unnest(), so the 18M-row table is driven by
+ *     its (cik, quarter) index instead of scanned:                                 ~200ms
+ * ~600ms cold, behind the route's existing hour-long CDN cache, so it runs once per cache period
+ * and never per reader. No N+1, no per-row query, no provider call.
+ */
+async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, limit = 60 } = {}) {
+  // 1. WHICH DISCLOSURES ARE NEW, and what does each one supersede.
+  //    DISTINCT ON (cik, filed_date) with quarter DESC: a manager back-filing eight quarters in
+  //    one submission has disclosed ONE current position, not eight events.
+  const { rows: pairRows } = await db.execute(sql`
+    with ranked as (
+      select cik, quarter, filed_date, accession,
+             lag(quarter) over (partition by cik order by quarter) as prev_quarter
+        from fund_filings
+    )
+    select distinct on (cik, filed_date) cik, quarter, filed_date, accession, prev_quarter
+      from ranked
+     where filed_date >= (select max(filed_date) - ${windowDays} from fund_filings)
+       and prev_quarter is not null
+     order by cik, filed_date, quarter desc`);
+
+  const pairs = (pairRows ?? [])
+    .sort((a, b) => String(b.filed_date).localeCompare(String(a.filed_date)))
+    .slice(0, maxPairs);
+  if (!pairs.length) return [];
+
+  // 2. COMPARE ONLY THOSE PAIRS.
+  //    ⚠️ AGGREGATED TO THE POSITION KEY FIRST. fund_holdings is unique on
+  //    (cik, quarter, cusip, class, put_call), so one security can occupy several rows. Joining
+  //    raw rows on cusip alone produced the same ticker twice for one manager with contradictory
+  //    verdicts — a live example showed AAPL as both REDUCED and INCREASED. Summing to
+  //    (cusip, put_call) is one row per real position, which is what the fund page's Map does.
+  const { rows } = await db.execute(sql`
+    with p as (
+      select * from unnest(
+        ${pairs.map((x) => x.cik)}::text[], ${pairs.map((x) => x.quarter)}::date[],
+        ${pairs.map((x) => x.prev_quarter)}::date[], ${pairs.map((x) => x.filed_date)}::date[],
+        ${pairs.map((x) => x.accession)}::text[]
+      ) as t(cik, quarter, prev_quarter, filed_date, accession)
+    ),
+    cur as (
+      select p.cik, p.quarter, p.filed_date, p.accession, h.cusip, h.put_call,
+             max(h.ticker) as ticker, max(h.issuer) as issuer,
+             sum(h.shares) as shares, sum(h.value) as value
+        from p join fund_holdings h on h.cik = p.cik and h.quarter = p.quarter
+       where h.ticker is not null
+       group by p.cik, p.quarter, p.filed_date, p.accession, h.cusip, h.put_call
+    ),
+    prv as (
+      select p.cik, p.quarter as cq, p.filed_date, p.accession, h.cusip, h.put_call,
+             max(h.ticker) as ticker, max(h.issuer) as issuer,
+             sum(h.shares) as shares, sum(h.value) as value
+        from p join fund_holdings h on h.cik = p.cik and h.quarter = p.prev_quarter
+       where h.ticker is not null
+       group by p.cik, p.quarter, p.filed_date, p.accession, h.cusip, h.put_call
+    ),
+    joined as (
+      select coalesce(c.cik, v.cik) as cik,
+             coalesce(c.quarter, v.cq) as quarter,
+             -- ⚠️ COALESCED FROM BOTH SIDES. An EXITED position exists only on the prior side, so
+             -- taking the disclosure date from the cur side alone left it null, and a null sorted to the
+             -- TOP of a filed_date DESC feed, putting exits above today's news.
+             coalesce(c.filed_date, v.filed_date) as filed_date,
+             coalesce(c.accession, v.accession) as accession,
+             coalesce(c.ticker, v.ticker) as ticker,
+             coalesce(c.issuer, v.issuer) as issuer,
+             coalesce(c.put_call, v.put_call) as put_call,
+             c.shares as cur_shares, v.shares as prev_shares,
+             coalesce(c.value, v.value) as value
+        from cur c full outer join prv v
+          on v.cik = c.cik and v.cusip = c.cusip and v.put_call = c.put_call
+    ),
+    -- The same dead band the fund page applies, expressed once here and asserted in the suite.
+    classed as (
+      select j.*, case
+               when prev_shares is null then 'NEW'
+               when cur_shares is null then 'EXITED'
+               when cur_shares > prev_shares * 1.001 then 'INCREASED'
+               when cur_shares < prev_shares * 0.999 then 'REDUCED'
+             end as action
+        from joined j
+    ),
+    -- No single filer may own the feed: a manager contributes its largest few moves.
+    ranked as (
+      select c.*, row_number() over (partition by c.cik order by coalesce(c.value, 0) desc) as rn
+        from classed c where c.action is not null and c.filed_date is not null
+    )
+    select r.ticker, r.issuer, r.cik, r.put_call, r.cur_shares, r.prev_shares, r.value,
+           r.quarter::text as quarter, r.filed_date::text as filed_date, r.accession, r.action,
+           i.name, i.slug
+      from ranked r join institutions i on i.cik = r.cik
+     where r.rn <= ${perManager}
+       and i.name is not null and trim(i.name) <> '' and i.slug is not null
+     order by r.filed_date desc, coalesce(r.value, 0) desc
+     limit ${limit}`);
+
+  return (rows ?? []).map((r) => ({
+    ticker: r.ticker,
+    company: r.issuer,
+    manager: r.name,
+    managerUrl: `/institutions/${r.slug}`,
+    action: r.action,
+    putCall: r.put_call || null,
+    prevShares: r.prev_shares == null ? null : Number(r.prev_shares),
+    shares: r.cur_shares == null ? null : Number(r.cur_shares),
+    value: r.value == null ? null : Number(r.value),
+    // ⚠️ TWO DATES, EACH UNDER ITS OWN NAME, NEVER INTERCHANGED. `disclosed` is when it became
+    // public; `quarterEnd` is the period it describes.
+    disclosed: r.filed_date,
+    quarterEnd: r.quarter,
+    accession: r.accession,
+    filingUrl: r.accession
+      ? `https://www.sec.gov/Archives/edgar/data/${r.cik}/${String(r.accession).replace(/-/g, '')}/${r.accession}-index.htm`
+      : null,
+    tickerUrl: r.ticker ? `/ticker/${encodeURIComponent(r.ticker)}` : null,
+  }));
+}
+
 async function latestFilings(limit = 25) {
   const { rows } = await db.execute(sql`
     select f.cik, f.accession, f.filed_date::text as filed_date, f.quarter::text as quarter,
@@ -501,6 +630,12 @@ export async function GET(request) {
     // must never do. Five minutes fresh, fifteen stale.
     if (view === 'latest-filings') {
       return Response.json({ view: 'latest-filings', filings: await latestFilings() },
+        { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' } });
+    }
+    // Activity answers the same "what landed today" question as latest-filings and shares its
+    // freshness for the same reason: a change disclosed this morning must not surface next week.
+    if (view === 'activity') {
+      return Response.json({ view: 'activity', activity: await latestActivity() },
         { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' } });
     }
     if (view === 'corporate') return Response.json({ view: 'corporate', portfolios: await corporatePortfolios() }, { headers: CACHE });

@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, EntitySearch, TickerLogo } from '../../lib/cp-shared';
 import InstitutionsHeatmap from './InstitutionsHeatmap';
+import { groupFilingsByManager } from '../../lib/institutions-activity.mjs';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -54,62 +55,217 @@ function CorporateCard({ f, onClick }) {
   );
 }
 
-// ── LATEST 13F FILINGS ──────────────────────────────────────────────────────
-//
-// ⚠️ TWO DATES, ALWAYS BOTH. A 13F describes a quarter that has already ended and is disclosed up
-// to 45 days later, so a row showing only one of them is misleading whichever one it picks. The
-// module states the disclosure date it is sorted by AND the quarter the positions describe, and
-// says nothing about what any manager is doing now.
-//
-// No AUM, no tickers, no inferred amendment labels — only what the row already stores.
-function LatestFilings({ filings }) {
-  if (!filings) {
-    return (
-      <div style={{ marginBottom: 26 }}>
-        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', marginBottom: 10 }}>LATEST 13F FILINGS</div>
-        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: 14 }}>
-          {[0, 1, 2].map((i) => <Skel key={i} h={16} mb={i < 2 ? 8 : 0} />)}
-        </div>
+const nShares = (n) => {
+  if (n == null || !Number.isFinite(Number(n))) return '—';
+  const a = Math.abs(Number(n));
+  if (a >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return Math.round(n).toLocaleString('en-US');
+};
+const nDate = (s) => {
+  if (!s) return '—';
+  const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
+// ⚠️ TONE ON THE VERB, NOT ON THE ROW. Green for added exposure, red for removed — applied to the
+// action word and the delta only. A fully-tinted row turns a dense feed into a traffic light and
+// makes the ticker, which is what a reader scans for, the least visible thing on the line.
+const ACTION_LABEL = { NEW: 'NEW POSITION', INCREASED: 'INCREASED', REDUCED: 'REDUCED', EXITED: 'EXITED' };
+const actionColor = (a) => (a === 'NEW' || a === 'INCREASED' ? C.green : C.red);
+
+function ActivityRow({ r, first }) {
+  const up = r.action === 'NEW' || r.action === 'INCREASED';
+  const delta = r.prevShares != null && r.shares != null ? r.shares - r.prevShares : null;
+  const pct = r.prevShares ? (delta / r.prevShares) * 100 : null;
+  return (
+    <div style={{ display: 'grid', gap: 10, alignItems: 'center', padding: '9px 14px',
+      borderTop: first ? 'none' : `1px solid ${C.surface}`,
+      gridTemplateColumns: 'minmax(150px,1.3fr) minmax(130px,1.2fr) 108px minmax(150px,1.1fr) 92px 96px 74px' }}>
+
+      {/* TICKER + COMPANY */}
+      <div style={{ minWidth: 0 }}>
+        <a href={r.tickerUrl || '#'} className="cp-tkr"
+          style={{ fontSize: 13, fontWeight: 800, color: C.green, textDecoration: 'none' }}>{r.ticker}</a>
+        {r.putCall && (
+          <span style={{ fontSize: 9, fontWeight: 700, marginLeft: 5, padding: '1px 5px', borderRadius: 3,
+            background: /put/i.test(r.putCall) ? C.redLight : C.greenLight,
+            color: /put/i.test(r.putCall) ? C.red : C.green }}>{r.putCall.toUpperCase()}</span>
+        )}
+        <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 300, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.company || ''}</div>
       </div>
+
+      {/* MANAGER */}
+      <a href={r.managerUrl} style={{ fontSize: 11.5, color: C.text, textDecoration: 'none', minWidth: 0,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.manager}</a>
+
+      {/* ACTION */}
+      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.4px', color: actionColor(r.action),
+        whiteSpace: 'nowrap' }}>{ACTION_LABEL[r.action] || r.action}</span>
+
+      {/* POSITION CHANGE — the shape of the move, in shares */}
+      <div style={{ fontSize: 11.5, color: C.text, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+        {r.action === 'NEW' ? `${nShares(r.shares)} shares`
+          : r.action === 'EXITED' ? `${nShares(r.prevShares)} → 0`
+            : `${nShares(r.prevShares)} → ${nShares(r.shares)}`}
+        {delta != null && r.action !== 'NEW' && (
+          <div style={{ fontSize: 10.5, color: actionColor(r.action), fontWeight: 600 }}>
+            {up ? '+' : '−'}{nShares(Math.abs(delta))}{pct != null && isFinite(pct) ? ` · ${up ? '+' : '−'}${Math.abs(pct).toFixed(1)}%` : ''}
+          </div>
+        )}
+      </div>
+
+      {/* REPORTED VALUE */}
+      <span className="cp-num" style={{ fontSize: 11.5, color: C.text, textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{r.value ? fmtB(r.value) : '—'}</span>
+
+      {/* ⚠️ BOTH CLOCKS, EACH LABELLED. Disclosed is when it became public; the quarter is what it
+          describes. Showing one without the other is how "disclosed Sep 21" becomes "bought today". */}
+      <div style={{ fontSize: 10.5, color: C.muted, whiteSpace: 'nowrap', lineHeight: 1.35 }}>
+        <div>Disc. {nDate(r.disclosed)}</div>
+        <div style={{ color: C.dim }}>Q end {nDate(r.quarterEnd)}</div>
+      </div>
+
+      {/* LINKS */}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        {r.filingUrl && (
+          <a href={r.filingUrl} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 10, fontWeight: 700, color: C.green, textDecoration: 'none' }}>Filing ↗</a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── LATEST INSTITUTIONAL ACTIVITY ───────────────────────────────────────────
+//
+// ⚠️ TWO DATES, ALWAYS BOTH — the rule the old module established and this one keeps. A 13F
+// describes a quarter that has already ended and is disclosed up to 45 days later, so a row
+// showing only one of them misleads whichever it picks. Every row states the disclosure date it
+// is sorted by AND the quarter the positions describe, and nothing here says what any manager is
+// doing now: "disclosed an increased position", never "bought".
+//
+// Two views, because the page previously answered only the second one. ACTIVITY says what
+// CHANGED; LATEST FILINGS says who FILED, which is still worth having and is preserved intact.
+const LANDING_ROWS = 15;   // enough to scan, short enough not to own the landing page
+
+function LatestActivity({ activity, filings }) {
+  const [tab, setTab] = useState('activity');
+  const [filter, setFilter] = useState('ALL');
+  const [expanded, setExpanded] = useState(false);
+
+  const loading = activity == null && filings == null;
+  const rows = (activity || []).filter((r) => filter === 'ALL' || r.action === filter);
+  const groups = groupFilingsByManager(filings || []);
+
+  const tabBtn = (id, label) => (
+    <button key={id} type="button" onClick={() => setTab(id)}
+      style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.5px',
+        padding: '5px 12px', borderRadius: 5, cursor: 'pointer', border: 'none',
+        background: tab === id ? C.green : 'transparent', color: tab === id ? '#fff' : C.muted }}>{label}</button>
+  );
+  const chip = (id, label) => {
+    const on = filter === id;
+    return (
+      <button key={id} type="button" onClick={() => setFilter(id)}
+        style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10.5, fontWeight: on ? 700 : 500,
+          padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+          border: `1px solid ${on ? C.green : C.border}`,
+          background: on ? C.greenLight : C.white, color: on ? C.green : C.muted }}>{label}</button>
     );
-  }
-  if (!filings.length) return null;   // nothing disclosed → no module, never an invented row
+  };
 
   return (
     <div style={{ marginBottom: 26 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>LATEST 13F FILINGS</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>
+          LATEST INSTITUTIONAL ACTIVITY
+        </span>
+        <span style={{ display: 'flex', gap: 4 }}>{tabBtn('activity', 'ACTIVITY')}{tabBtn('filings', 'LATEST FILINGS')}</span>
         <span style={{ fontSize: 10.5, color: C.muted, fontWeight: 300 }}>
           Newest disclosure first. Positions describe the quarter shown, not today.
         </span>
       </div>
+
+      {tab === 'activity' && (
+        <div style={{ display: 'flex', gap: 5, marginBottom: 8, flexWrap: 'wrap' }}>
+          {chip('ALL', 'ALL')}{chip('NEW', 'NEW POSITIONS')}{chip('INCREASED', 'INCREASED')}
+          {chip('REDUCED', 'REDUCED')}{chip('EXITED', 'EXITED')}
+        </div>
+      )}
+
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, overflow: 'hidden' }}>
-        {filings.map((f, i) => (
-          <div key={`${f.accession}-${i}`}
-            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px',
-              borderTop: i ? `1px solid ${C.surface}` : 'none', flexWrap: 'wrap' }}>
-            <a href={f.managerUrl} style={{ flex: 1, minWidth: 180, fontSize: 13, fontWeight: 600, color: C.ink, textDecoration: 'none' }}>
-              {f.manager}
-            </a>
-            <span style={{ fontSize: 11.5, color: C.text, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-              Disclosed {f.disclosed}
-            </span>
-            <span style={{ fontSize: 11.5, color: C.muted, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-              Quarter ended {f.quarterEnd}
-            </span>
-            {f.holdings != null && (
-              <span style={{ fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>
-                {f.holdings.toLocaleString('en-US')} positions
-              </span>
-            )}
-            {f.filingUrl && (
-              <a href={f.filingUrl} target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: 10.5, fontWeight: 700, color: C.green, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-                Filing ↗
+        {loading ? (
+          <div style={{ padding: 14 }}>{[0, 1, 2].map((i) => <Skel key={i} h={16} mb={i < 2 ? 8 : 0} />)}</div>
+        ) : tab === 'activity' ? (
+          rows.length === 0 ? (
+            // Nothing invented to fill the module — the honest empty state the old one also used.
+            <div style={{ padding: '18px 14px', fontSize: 12, color: C.muted, fontWeight: 300 }}>
+              {(activity || []).length === 0
+                ? 'No position changes disclosed in the recent filing window.'
+                : 'No changes of that kind in the recent filing window.'}
+            </div>
+          ) : (
+            <>
+              <div style={{ overflowX: 'auto' }}>
+                <div style={{ minWidth: 900 }}>
+                  {rows.slice(0, expanded ? rows.length : LANDING_ROWS).map((r, i) => (
+                    <ActivityRow key={`${r.accession}-${r.ticker}-${r.action}-${i}`} r={r} first={i === 0} />
+                  ))}
+                </div>
+              </div>
+              {/* ⚠️ EXPANDS IN PLACE RATHER THAN LINKING AWAY. "View all activity" pointed at
+                  /institutions/activity, a route that does not exist — a 404 on the landing page's
+                  main call to action. The whole window is already in hand, so revealing it costs
+                  nothing and adds no page to maintain; the landing view stays short by default. */}
+              {rows.length > LANDING_ROWS && (
+                <button type="button" onClick={() => setExpanded((v) => !v)}
+                  style={{ display: 'block', width: '100%', padding: '9px 14px', borderTop: `1px solid ${C.surface}`,
+                    border: 'none', borderTopStyle: 'solid', background: 'transparent', cursor: 'pointer',
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.green }}>
+                  {expanded ? 'Show fewer' : `View all activity (${rows.length}) →`}
+                </button>
+              )}
+            </>
+          )
+        ) : groups.length === 0 ? (
+          <div style={{ padding: '18px 14px', fontSize: 12, color: C.muted, fontWeight: 300 }}>No filings disclosed recently.</div>
+        ) : (
+          groups.map((g, i) => (
+            <div key={`${g.manager}-${g.disclosed}-${i}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px',
+                borderTop: i ? `1px solid ${C.surface}` : 'none', flexWrap: 'wrap' }}>
+              <a href={g.managerUrl} style={{ flex: 1, minWidth: 180, fontSize: 13, fontWeight: 600, color: C.ink, textDecoration: 'none' }}>
+                {g.manager}
               </a>
-            )}
-          </div>
-        ))}
+              <span style={{ fontSize: 11.5, color: C.text, whiteSpace: 'nowrap' }}>Disclosed {nDate(g.disclosed)}</span>
+              {/* ⚠️ GROUPED FOR READING, NEVER MERGED. A manager catching up on several quarters
+                  files several legally distinct documents; the group says how many and which, and
+                  every individual filing keeps its own link below. */}
+              {g.count > 1 ? (
+                <span style={{ fontSize: 11.5, color: C.muted, whiteSpace: 'nowrap' }}>
+                  {g.count} filings · quarters ended {nDate(g.oldestQuarter)} – {nDate(g.latestQuarter)}
+                </span>
+              ) : (
+                <span style={{ fontSize: 11.5, color: C.muted, whiteSpace: 'nowrap' }}>Quarter ended {nDate(g.latestQuarter)}</span>
+              )}
+              {g.holdings != null && (
+                <span style={{ fontSize: 11, color: C.dim, whiteSpace: 'nowrap' }}>{g.holdings.toLocaleString('en-US')} positions</span>
+              )}
+              <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {g.filings.map((f) => f.filingUrl && (
+                  <a key={f.accession} href={f.filingUrl} target="_blank" rel="noopener noreferrer"
+                    title={`Filing for quarter ended ${f.quarterEnd}`}
+                    style={{ fontSize: 10.5, fontWeight: 700, color: C.green, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                    {g.count > 1 ? nDate(f.quarterEnd) : 'Filing'} ↗
+                  </a>
+                ))}
+              </span>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -117,6 +273,7 @@ function LatestFilings({ filings }) {
 
 export default function InstitutionsClient() {
   const [latest, setLatest] = useState(null);
+  const [activity, setActivity] = useState(null);
   const [featured, setFeatured] = useState(null);
   const [largest, setLargest] = useState([]);
   const [corporate, setCorporate] = useState([]);
@@ -146,6 +303,9 @@ export default function InstitutionsClient() {
     loadDir('', 0);
     (async () => { try { const r = await fetch('/api/me/admin'); const j = r.ok ? await r.json() : null; setAdmin(!!j?.admin); } catch {} })();
     (async () => { try { const r = await fetch('/api/institutions?view=latest-filings'); const j = r.ok ? await r.json() : null; setLatest(j?.filings || []); } catch { setLatest([]); } })();
+    // The cross-manager change feed. Separate request so a slow activity query can never hold up
+    // the filings tab, the heatmap or the directory — each section fills as its own data lands.
+    (async () => { try { const r = await fetch('/api/institutions?view=activity'); const j = r.ok ? await r.json() : null; setActivity(j?.activity || []); } catch { setActivity([]); } })();
     (async () => { try { const r = await fetch('/api/institutions?view=corporate'); const j = r.ok ? await r.json() : null; setCorporate(j?.portfolios || []); } catch {} })();
     (async () => { try { const r = await fetch('/api/institutions?view=corporate-activity'); const j = r.ok ? await r.json() : null; setCorpActivity(j?.events || []); } catch {} })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -218,7 +378,7 @@ export default function InstitutionsClient() {
       <div style={{ maxWidth: 1380, margin: '20px auto', padding: '0 24px 48px' }}>
         {/* What has just been DISCLOSED. Everything below is organised by holdings and by quarter,
             which never answers "what landed today". */}
-        <LatestFilings filings={latest} />
+        <LatestActivity activity={activity} filings={latest} />
 
         {/* Signature visual: where institutions actually moved this quarter, before the fund lists. */}
         <InstitutionsHeatmap />
