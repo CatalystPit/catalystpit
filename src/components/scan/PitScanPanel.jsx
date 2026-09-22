@@ -50,6 +50,19 @@ export default function PitScanPanel({ onPick }) {
   }, [preset]);
 
   const live = state?.readiness?.live === true;
+
+  // ⚠️ THE BOARDS MUST NOT DISAPPEAR THE MOMENT THE FEED GOES LIVE, AND THEY WOULD HAVE.
+  //
+  // This panel branched on `live` alone: false → the three evidence boards, true → ScanTable over
+  // state.rows. But scanState() returns rows: [] because no intraday INGESTION is wired — the
+  // runtime's own comment says so. So switching the provider descriptor to realtime, which is
+  // exactly what the commercial entitlement does, would have swapped a working product for an
+  // empty table. Live prices arriving is not the same event as an ingestion worker existing.
+  //
+  // So the legacy signal tables render only when they genuinely have something, and the boards —
+  // which are the product — render the rest of the time. Neither path changed; only the question
+  // being asked to choose between them.
+  const hasSignalRows = live && ((state?.rows?.length || 0) > 0 || (state?.events?.length || 0) > 0);
   const byCategory = useMemo(() => {
     const out = new Map();
     for (const s of state?.signals?.disabled || []) {
@@ -88,7 +101,7 @@ export default function PitScanPanel({ onPick }) {
 
       {!state ? (
         <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading Pit Scan…</div>
-      ) : !live ? (
+      ) : !hasSignalRows ? (
         <div style={{ overflow: 'auto', flex: 1, padding: '16px 14px' }}>
           {/* ── THE EVIDENCE BOARDS RUN TODAY ───────────────────────────────────────
               The signal engine still waits for a realtime feed — that part of the panel below is
@@ -116,11 +129,17 @@ export default function PitScanPanel({ onPick }) {
           <div style={{ height: 1, background: C.border, margin: '18px 0 14px' }} />
 
           <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 5 }}>
-            Intraday signals are still waiting on market data
+            {live ? 'Intraday signals are not running yet' : 'Intraday signals are still waiting on market data'}
           </div>
           <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.6, marginBottom: 14 }}>
-            {state.readiness?.reason
-              || 'Pit Scan goes live when the market-data provider is connected.'}
+            {/* ⚠️ TWO DIFFERENT REASONS, AND THEY MUST NOT BORROW EACH OTHER'S WORDS. Before the
+                entitlement the feed was the blocker. With realtime on, prices ARE live and the
+                blocker is that no intraday ingestion worker exists — saying "waiting on market
+                data" then would blame a provider that is now delivering. */}
+            {live
+              ? 'Live prices are connected. The intraday signal engine needs an ingestion worker, which is not running yet — so the signals below stay dark rather than showing a half-filled table.'
+              : (state.readiness?.reason
+                || 'Pit Scan goes live when the market-data provider is connected.')}
             {' '}The intraday signals below will not run on delayed prints: a fifteen-minute-old
             answer to “what is moving right now” is not a worse answer, it is a misleading one. The
             evidence boards above do run, because they are timestamped from public filings and label

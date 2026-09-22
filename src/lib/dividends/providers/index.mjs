@@ -11,9 +11,11 @@
 // No table, no API, no page and no test of the calendar itself changes.
 
 import { polygonDividendProvider } from './polygon-dividends.mjs';
+import { tiingoDividendProvider } from './tiingo-dividends.mjs';
 
 export const PROVIDERS = {
   [polygonDividendProvider.id]: polygonDividendProvider,
+  [tiingoDividendProvider.id]: tiingoDividendProvider,
 };
 
 /** Which adapter ingestion should use. Configuration, so a swap needs no deploy of new logic. */

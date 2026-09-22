@@ -13,6 +13,17 @@
 // canonical are dropped, and an event the provider does not carry simply does not exist here.
 
 import { activeDividendProvider } from './providers/index.mjs';
+
+/**
+ * Which credential a given dividend provider authenticates with.
+ *
+ * Exported so the mapping is testable, and kept here rather than inside each adapter so that the
+ * adapters stay pure functions over a key they are handed.
+ */
+export function providerApiKey(provider, env = process.env) {
+  if (provider?.id === 'tiingo') return env.TIINGO_API_KEY || env.TIINGO_API_TOKEN || null;
+  return env.POLYGON_API_KEY || env.POLYGON_KEY || null;
+}
 import { upsertDividendEvents } from './dividend-store';
 
 /** Default window: enough history to catch revisions, enough future to fill the calendar. */
@@ -30,7 +41,12 @@ export async function syncDividends({
   lookbackDays = LOOKBACK_DAYS,
   lookaheadDays = LOOKAHEAD_DAYS,
   provider = activeDividendProvider(),
-  apiKey = process.env.POLYGON_API_KEY || process.env.POLYGON_KEY,
+  // ⚠️ THE KEY MUST FOLLOW THE PROVIDER, NOT THE OTHER WAY ROUND. This read Polygon's key
+  // unconditionally, so pointing DIVIDEND_PROVIDER at Tiingo would have handed the Tiingo adapter
+  // a Polygon token and failed every request with an auth error that looked like an entitlement
+  // problem. Each adapter names its own credential; an unknown provider still falls back to the
+  // original behaviour rather than silently having none.
+  apiKey = providerApiKey(provider),
   fetchImpl = fetch,
 } = {}) {
   const startedAt = Date.now();

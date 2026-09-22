@@ -14,7 +14,7 @@ import 'server-only';
 // reason. Pit Scan renders that honestly rather than replaying fixtures — a scanner showing invented
 // movement is the most damaging thing this product could ship.
 
-import { TIINGO_EOD_CAPABILITIES } from '../market/tiingo.mjs';
+import { TIINGO_EOD_CAPABILITIES, tiingoCapabilities } from '../market/tiingo.mjs';
 import { INTERIM_PROVIDER, NO_PROVIDER, partitionSignals, signalAvailability } from './market-capabilities.mjs';
 import { SIGNALS } from './signals.mjs';
 import { createLifecycleStore } from './lifecycle.mjs';
@@ -35,8 +35,17 @@ export function activeCapabilities() {
   //
   // Activating the paid entitlement is an environment change plus that one descriptor. No signal,
   // filter, column, preset or board changes.
+  // ⚠️ THE DESCRIPTOR NOW FOLLOWS THE ENTITLEMENT FLAG, WHICH IS THE CHANGE THIS FILE PROMISED.
+  // "Activating the paid entitlement is an environment change plus that one descriptor" — this is
+  // that one descriptor. tiingoCapabilities() returns the realtime shape only when
+  // TIINGO_REALTIME_ENABLED is set, so Pit Scan's readiness flips by itself and no signal, filter,
+  // column, preset or board is touched. Unsetting the variable returns every surface to EOD.
+  //
+  // The realtime descriptor still reports liveVolume/consolidatedVolume false, so the
+  // volume-dependent signals stay dark exactly as they are today. Live prices arriving does not
+  // make volume appear.
   if (process.env.TIINGO_API_KEY && String(process.env.TIINGO_ENABLED ?? 'true').toLowerCase() !== 'false') {
-    return TIINGO_EOD_CAPABILITIES;
+    return tiingoCapabilities();
   }
   const hasPolygon = !!(process.env.POLYGON_KEY || process.env.POLYGON_API_KEY);
   if (!hasPolygon) return NO_PROVIDER;

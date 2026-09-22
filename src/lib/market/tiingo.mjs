@@ -2,35 +2,48 @@
 //
 // ── WHAT THIS ACCOUNT ACTUALLY SERVES, MEASURED ──────────────────────────────
 //
-// Probed against the live API on 2026-09-19 at 11:55 ET, with the market OPEN
-// (scripts/probe-tiingo-capabilities.mjs re-runs the whole matrix):
+// ⚠️ RE-PROBED 2026-09-22 ~10:10-10:15 ET, MARKET OPEN, ON THE COMMERCIAL KEY. This replaces the
+// 2026-09-19 matrix, which described the old entitlement and is now wrong in BOTH directions:
+// things that were blocked now work, and one field silently changed meaning.
+// (scripts/probe-tiingo-entitlement-2026.mjs, probe-tiingo-websocket.mjs, probe-tiingo-24x5-discovery.mjs)
 //
-//   PASS                  auth, security metadata, daily EOD OHLCV (composite volume),
-//                         historical intraday bars for PAST sessions, extended-hours history,
-//                         all-ticker snapshot, fundamentals
-//   ENTITLEMENT REQUIRED  real-time/reference last price, current-session intraday,
-//                         corporate-actions endpoints, WebSocket streaming
+//   PASS        auth, security master, daily EOD OHLCV (consolidated volume), intraday bars,
+//               all-ticker snapshot, fundamentals, CORPORATE ACTIONS (distributions + splits),
+//               REAL-TIME consolidated price via REST /iex tngoLast,
+//               REAL-TIME via wss://api.tiingo.com/equities level 6 (last price ticks),
+//               TOP OF BOOK via wss://api.tiingo.com/equities level 4 (bid/ask + sizes)
+//   UNAVAILABLE ANY intraday or real-time CONSOLIDATED volume -> no RVOL, no VWAP
+//   UNPROVEN    premarket / after-hours / overnight 24x5 — probed inside a regular session only
 //
-// The real-time answer is not inferred from a plan description. At 11:55 ET on a trading day the
-// IEX quote for AAPL returned last: null, lastSaleTimestamp: null, bidPrice: null, askPrice: null,
-// a timestamp of the PREVIOUS session's close, and tngoLast equal to the previous close. Intraday
-// bars for today came back as an empty array at both 1min and 5min. The WebSocket connects and
-// authenticates, then rejects every thresholdLevel with "not valid for your subscription tier".
+// ⚠️ THE 24x5 PRODUCT IS A DIFFERENT SOCKET FROM IEX, and that distinction cost a wrong report.
+// wss://api.tiingo.com/iex accepts ONLY level 6 and carries price alone. The provisioned product
+// is wss://api.tiingo.com/equities: level 4 returns
+//   [ts, ticker, spreadRatio, bidSize, bidPrice, mid, askPrice, askSize]
+// e.g. ["…10:15:05…","aapl",0.000044,60,339.38,339.39,339.395,140] — spread check
+// (339.395-339.38)/339.38 = 0.0000442. No REST equivalent exists: /tiingo/equities/*,
+// /realtime/*, /consolidated/* all 404. REST realtime is /iex tngoLast.
 //
-// So this file is written for an EOD feed, and says so in its capability descriptor. When the
-// Standard Startup Redistribution agreement activates, the descriptor changes and the signals that
-// require realtime switch on by themselves — that is what the capability layer is for.
+// ⚠️ AND lastSaleTimestamp IS NULL ON EVERY ROW, mid-session included. The live price arrives in
+// tngoLast, so any gate detecting liveness from lastSaleTimestamp concludes the feed is dead and
+// serves prevClose to an entitled user. See isFreshQuote.
 //
 // ── VOLUME, WHICH IS THE EASIEST THING HERE TO GET WRONG ─────────────────────
 //
 // Tiingo's DAILY bar volume is full composite market volume. Measured: SPY 65,395,148 for
 // 2026-09-18, which is tape-scale, not one venue's share.
 //
-// Tiingo's INTRADAY bars carry NO VOLUME FIELD AT ALL on this account — not a small number, not a
-// venue subset: absent. So participating-venue intraday volume is not something we are currently
-// receiving and therefore not something we can display, scale, or build an RVOL numerator from.
-// Under the future agreement it becomes available, delayed 15 minutes, at roughly 7-8% of
-// consolidated — which is why it gets its own methodology constant now rather than later.
+// ⚠️ INTRADAY VOLUME IS STILL NOT USABLE, AND THE COMMERCIAL KEY DID NOT CHANGE THAT. Two
+// separate measurements, both 2026-09-22:
+//
+//   · intraday bars requested WITH an explicit volume column return volume: 0 on every bar
+//   · /iex quote volume is real but is ONE VENUE'S — 0.17%-0.40% of the same day's consolidated
+//     tape (AAPL 139,475 vs 34,999,229; SPY 83,354 vs 50,484,685)
+//   · neither websocket payload carries a volume field at any permitted threshold level
+//
+// So there is no defensible full-market intraday volume anywhere in this entitlement. RVOL has no
+// numerator and VWAP has no weights. Both stay off, and the capability descriptor keeps
+// liveVolume/consolidatedVolume false so every dependent signal stays dark on its own rather than
+// relying on anyone remembering this.
 //
 // The one rule that matters: a comparison is computed only when both sides carry the SAME
 // methodology. methodologyCompatible() in scan/provider-contract.mjs enforces exact match with no
@@ -54,11 +67,37 @@ export const tiingoConfigured = () => Boolean(TOKEN) && ENABLED;
 export const tiingoRealtimeEnabled = () => tiingoConfigured() && REALTIME_ENABLED;
 
 /**
+ * IS THIS PAYLOAD ABOUT NOW?
+ *
+ * ⚠️ THE FRESHNESS TEST EXISTS BECAUSE THE VENDOR'S OWN LIVENESS FLAG DOES NOT. Tiingo leaves
+ * `lastSaleTimestamp` null on this account in every row, at every hour, so there is no field that
+ * says "this is a live print". What there IS, on every row, is `timestamp` — and during a session
+ * it tracks the wall clock to the second.
+ *
+ * The window is deliberately generous. It is not trying to measure latency; it is trying to tell
+ * a quote about the current market from a payload echoing the last close, and those differ by
+ * hours, not seconds. Too tight a window would flicker a Pro user between live and delayed on
+ * ordinary network jitter, which is worse than being a minute behind.
+ *
+ * Exported so the behaviour is testable without a network.
+ */
+export const QUOTE_FRESH_WINDOW_MS = 5 * 60 * 1000;
+export function isFreshQuote(timestamp, { now = Date.now() } = {}) {
+  if (!timestamp) return false;
+  const t = Date.parse(timestamp);
+  if (!Number.isFinite(t)) return false;
+  // A timestamp in the future is a clock problem, not a fresh quote; a small skew is tolerated
+  // for the same reason the window is generous.
+  const age = now - t;
+  return age >= -QUOTE_FRESH_WINDOW_MS && age <= QUOTE_FRESH_WINDOW_MS;
+}
+
+/**
  * THE ENTITLEMENT GATE, AS A FUNCTION SO IT CAN BE TESTED RATHER THAN ASSERTED.
  *
- * Both halves are required. `vendorIsLive` says Tiingo sent a timestamped sale; `entitled` says we
- * are permitted to redistribute one. Either alone yields EOD — which is the whole point, because
- * the previous behaviour let the VENDOR decide by simply populating a field.
+ * Both halves are required. `vendorIsLive` says the feed is carrying a price about now; `entitled`
+ * says we are permitted to redistribute one. Either alone yields EOD — which is the whole point,
+ * because the original behaviour let the VENDOR decide by simply populating a field.
  *
  * @returns {{ freshness: string, useLivePrice: boolean }}
  */
@@ -81,16 +120,20 @@ export function resolveQuoteEntitlement({ entitled = false, vendorIsLive = false
 export const TIINGO_VOLUME = Object.freeze({
   // Daily bars. Full composite market volume — the official tape figure.
   COMPOSITE_EOD: VOLUME_METHODOLOGY.CONSOLIDATED,
-  // Intraday participating venues, 15-minute delayed, ~7-8% of consolidated and varying by symbol
-  // and session. NOT AVAILABLE on this account today; defined so that when it arrives it cannot be
-  // mistaken for the tape.
+  // ⚠️ THIS ARRIVED, AND IT IS WHY THE CONSTANT EXISTED. Written as a placeholder for a capability
+  // we did not have; the commercial entitlement turned /iex volume into exactly this — one venue's
+  // intraday print, measured at 0.17%-0.40% of the tape. The name keeps DELAYED for compatibility
+  // with stored values, but no delay has been measured on this account; see volumeLabel.
   PARTICIPATING_VENUES_DELAYED: VOLUME_METHODOLOGY.SINGLE_VENUE,
 });
 
 /** The human-facing label. Displayed volume must never be called consolidated unless it is. */
 export const volumeLabel = (methodology) =>
   methodology === TIINGO_VOLUME.COMPOSITE_EOD ? 'composite end-of-day volume'
-    : methodology === TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED ? 'participating-venue volume, 15-minute delayed'
+    // ⚠️ NO DELAY IS CLAIMED. The old text said "15-minute delayed", inherited from the free-tier
+    // rules and never observed on this account. What IS measured is that the figure is one
+    // venue's and not the market's, so that is all it says.
+    : methodology === TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED ? 'single-venue volume, not the consolidated tape'
       : 'volume methodology unknown';
 
 /**
@@ -121,6 +164,55 @@ export const TIINGO_EOD_CAPABILITIES = describeProvider({
   haltStatus: false,
   universeSize: 42764,                    // measured from the all-ticker snapshot
 });
+
+/**
+ * THE SAME FEED WITH THE COMMERCIAL ENTITLEMENT SWITCHED ON.
+ *
+ * ⚠️ READ THE FALSE FIELDS FIRST — they are why this is a second descriptor and not an edit:
+ *
+ *   consolidatedVolume  measured 0.17%-0.40% of the tape. One venue's prints.
+ *   liveVolume          intraday bars return volume: 0; no websocket payload carries volume.
+ *   intradayVolumeHistory  no volume on intraday bars → no time-of-day baseline exists.
+ *
+ * Because those stay false, every volume-dependent signal stays dark by itself and RVOL cannot be
+ * computed however the rest is configured. That is the point of gating on measured capability
+ * rather than on a plan name: the entitlement improved, the volume did not, and only the parts
+ * that genuinely improved are allowed to notice.
+ *
+ * ⚠️ bidAsk IS TRUE BUT NOTHING CONSUMES IT YET. Top of book is real — wss .../equities level 4
+ * returns [ts, ticker, spreadRatio, bidSize, bidPrice, mid, askPrice, askSize] — so the descriptor
+ * records the truth. No surface displays a quote today, and none should start without its own
+ * decision.
+ *
+ * ⚠️ extendedHours IS NOT PROMOTED. The probes ran inside a regular session, so premarket,
+ * after-hours and overnight 24x5 were never observed. The plan says 24x5; this file records
+ * measurements, and it will say so when someone has watched it at 04:00 ET.
+ */
+export const TIINGO_REALTIME_CAPABILITIES = describeProvider({
+  ...TIINGO_EOD_CAPABILITIES,
+  id: 'tiingo-realtime',
+  label: 'Tiingo (real-time consolidated)',
+  streaming: true,                        // wss .../equities accepted levels 4 and 6
+  quoteFreshness: FRESHNESS.REALTIME,     // measured: tngoLast moves intraday and ≠ prevClose
+  observationsPerMinute: 60,              // conservative; the stream ran ~7 ticks/s over 4 symbols
+  bidAsk: true,                           // level 4 top of book, measured
+  // Unchanged, deliberately — see the note above.
+  liveVolume: false,
+  consolidatedVolume: false,
+  intradayVolumeHistory: false,
+  trades: false,                          // level 6 is a reference-price tick, not a sale print
+});
+
+/**
+ * Which Tiingo descriptor is in force right now.
+ *
+ * ⚠️ OUR FLAG DECIDES, NOT THE VENDOR'S PAYLOAD. tngoLast being live is Tiingo saying it CAN send
+ * a live price; TIINGO_REALTIME_ENABLED is us saying we are permitted to redistribute one. With
+ * the flag unset this returns the EOD descriptor and every surface behaves exactly as it does
+ * today — which is also the instant rollback if anything goes wrong.
+ */
+export const tiingoCapabilities = () =>
+  (tiingoRealtimeEnabled() ? TIINGO_REALTIME_CAPABILITIES : TIINGO_EOD_CAPABILITIES);
 
 // ── WHICH CONTRACT BUCKET EACH ENDPOINT DRAWS ON ─────────────────────────────
 //
@@ -344,10 +436,18 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
       if (!sym) continue;
       const live = num(q.tngoLast) ?? num(q.last);
       const prevClose = num(q.prevClose);
-      // A live print is one the vendor timestamps as a sale. Unentitled, such a payload is not
-      // ours to serve, so the settled previous close is used instead. Outside a session this
-      // branch never fires — tngoLast is then the official close and is served as it always was.
-      const vendorIsLive = live != null && !!q.lastSaleTimestamp;
+      // ⚠️ lastSaleTimestamp IS NULL ON EVERY ROW OF THIS ACCOUNT, EVEN MID-SESSION, AND THAT WAS
+      // THE BUG. Liveness was detected from that field, so with the commercial entitlement active
+      // the check concluded "vendor is not live", and an entitled Pro user would have been served
+      // prevClose while a genuinely live tngoLast sat in the same payload. Measured 2026-09-22
+      // 10:10 ET: lastSaleTimestamp null, tngoLast 339.32 vs prevClose 338.98, and the stream
+      // showing 339.56 at that moment. The field is not the signal it looks like.
+      //
+      // So liveness is now what it should always have been: a price that differs from the settled
+      // close, carried on a timestamp recent enough to be about NOW rather than about the last
+      // session. Both halves matter — the timestamp alone would call a stale payload live, and the
+      // price alone cannot distinguish an unchanged quote from a closed market.
+      const vendorIsLive = live != null && isFreshQuote(q.timestamp);
       const gate = resolveQuoteEntitlement({ entitled, vendorIsLive });
       const price = gate.useLivePrice ? (live ?? prevClose) : prevClose;
       if (price == null) continue;                       // no price is no quote; omit rather than zero
@@ -358,10 +458,21 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
         prevClose,
         changePct,
         open: num(q.open), high: num(q.high), low: num(q.low),
-        // The volume on this payload matches the DAILY composite figure, so it is labelled as such
-        // rather than as an intraday venue number.
+        // ⚠️ THIS FIELD CHANGED MEANING WHEN THE COMMERCIAL ENTITLEMENT WENT LIVE, AND THE OLD
+        // LABEL BECAME A FALSE CLAIM. It used to carry the previous DAILY composite figure,
+        // because nothing intraday flowed on the old key, and COMPOSITE_EOD was true of it. It now
+        // accumulates intraday and it is IEX's own venue print. Measured 2026-09-22 ~10:10 ET
+        // against the SAME day's consolidated EOD bar:
+        //
+        //   AAPL 139,475 / 34,999,229 = 0.40%     NVDA 336,981 / 109,806,067 = 0.31%
+        //   SPY   83,354 / 50,484,685 = 0.17%     AMD  134,714 /  44,494,272 = 0.30%
+        //
+        // Forty minutes into a session a consolidated figure would be a double-digit percentage of
+        // the day. A third of one percent is one venue's share. Calling that the tape is the exact
+        // mistake PARTICIPATING_VENUES_DELAYED was defined in advance to prevent, and anything
+        // computing a ratio from it would be inventing RVOL out of 0.3% of the market.
         volume: num(q.volume),
-        volumeMethodology: num(q.volume) == null ? null : TIINGO_VOLUME.COMPOSITE_EOD,
+        volumeMethodology: num(q.volume) == null ? null : TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED,
         asOf: q.timestamp || null,
         // Whether this price is live is a fact about the feed AND about our entitlement. Both
         // have to be true; the vendor alone cannot promote a quote to REALTIME.
@@ -397,9 +508,13 @@ export async function getAllTickersSnapshot() {
       changePct: (prevClose != null && prevClose !== 0) ? ((price - prevClose) / prevClose) * 100 : null,
       open: num(q.open), high: num(q.high), low: num(q.low),
       volume: num(q.volume),
-      volumeMethodology: num(q.volume) == null ? null : TIINGO_VOLUME.COMPOSITE_EOD,
+      // Same endpoint, same correction as getQuotes — /iex volume is one venue's print, measured
+      // at 0.17%–0.40% of the consolidated tape. It is never the market's volume.
+      volumeMethodology: num(q.volume) == null ? null : TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED,
       asOf: q.timestamp || null,
-      live: live != null && Boolean(q.lastSaleTimestamp),
+      // Same correction as getQuotes: lastSaleTimestamp is null on every row of this account, so
+      // deriving liveness from it reports every quote as stale.
+      live: live != null && isFreshQuote(q.timestamp),
     });
   }
   return { ok: true, reason: null, rows, asOf: rows[0]?.asOf ?? null, provider: 'tiingo' };

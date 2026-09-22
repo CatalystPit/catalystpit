@@ -40,11 +40,22 @@ console.log('\n=== displayed labels never overstate the feed ===');
   const composite = volumeLabel(TIINGO_VOLUME.COMPOSITE_EOD);
   const venue = volumeLabel(TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED);
   ok('composite label says composite', /composite/i.test(composite));
-  ok('venue label says participating-venue', /participating-venue/i.test(venue));
-  ok('venue label discloses the delay', /delay/i.test(venue));
-  // The forbidden words, on the number that is only ~7-8% of the tape.
+  ok('venue label says it is a single venue', /single-venue|participating-venue/i.test(venue), venue);
+  // ⚠️ THE DELAY ASSERTION IS GONE ON PURPOSE. It required the label to disclose a 15-minute delay
+  // that was inherited from the free-tier rules and has never been observed on this account. An
+  // assertion demanding an unmeasured claim is an assertion demanding a fabrication; what must be
+  // disclosed is the thing that IS measured — that the number is one venue's, not the market's.
+  ok('venue label states it is not the tape', /not the consolidated tape/i.test(venue), venue);
+
+  // The forbidden words, on a number measured at 0.17%-0.40% of the tape.
+  //
+  // ⚠️ STRIP THE DENIAL BEFORE SEARCHING FOR THE CLAIM. The honest label contains the phrase
+  // "not the consolidated tape", so a naive search for "consolidated" fails the correct string for
+  // being correct — the same shape of mistake as matching a comment that forbids a phrase.
+  const venueClaim = venue.replace(/not the consolidated tape/gi, '');
   for (const banned of ['consolidated', 'SIP', 'full-market', 'official tape', 'real-time']) {
-    ok(`venue label never says "${banned}"`, !new RegExp(banned.replace(/[-\s]/g, '[-\\s]?'), 'i').test(venue));
+    ok(`venue label never CLAIMS "${banned}"`,
+      !new RegExp(banned.replace(/[-\s]/g, '[-\\s]?'), 'i').test(venueClaim), venueClaim);
   }
   ok('an unknown methodology is labelled unknown, not assumed', /unknown/i.test(volumeLabel(null)));
 }
