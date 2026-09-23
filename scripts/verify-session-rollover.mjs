@@ -190,6 +190,28 @@ L('\n=== ⚠️ RTH IS UNTOUCHED — THE GATE IS AN EOD RULE ONLY ===');
   ok('the official-close handover still compares asOf against the session date',
     /String\(asOf\) >= session\.sessionDate/.test(intra));
 
+  // ⚠️ THE DEFECT ALSO KILLED THE LIVE BOARD MID-SESSION, AND THAT IS THE WORSE HALF OF IT.
+  //
+  // Today's 42 candles are `source=tiingo_split_adj` — the ON-DEMAND per-symbol path (a chart or
+  // ticker page), not the bulk EOD loader, which writes `source=polygon` and had not yet run. So
+  // one reader opening a SPY chart is enough to put a row for the current date in the table.
+  //
+  // `official` is (asOf >= session.sessionDate). Under max(date) that single write made asOf equal
+  // today, so `official` went TRUE while the market was still open: intradayPrices returned
+  // `final: true`, the shared 15-minute snapshot was discarded, and every Pro viewer got the
+  // completed-session board — which was itself 1% populated. The gate keeps asOf on the previous
+  // session until quorum, so the live path survives.
+  const officialAt = (asOf, sessionDate) => Boolean(sessionDate && asOf && String(asOf) >= sessionDate);
+  ok('⚠️ one on-demand candle for today used to end the live session board',
+    officialAt('2026-09-22', '2026-09-22') === true,
+    'max(date) = 2026-09-22 from 42 on-demand rows → official → snapshot discarded mid-session');
+  ok('⚠️ …and the gate keeps the live board alive until the EOD data genuinely lands',
+    officialAt(choose(SEP).date, '2026-09-22') === false,
+    'canonical asOf stays 2026-09-21, so official stays false and the snapshot still serves');
+  ok('…while a genuinely complete session still hands over to the official close',
+    officialAt(choose([{ date: '2026-09-22', count: 496 }, ...SEP.slice(1)]).date, '2026-09-22') === true,
+    'the handover must still happen — it must just wait for the data');
+
   // Methodology that must not have moved.
   ok('the Top 500 universe rule is unchanged', /order by coalesce\(s\.market_cap, m\.market_cap\) desc/.test(code));
   ok('asset-type eligibility is unchanged', /TRADEABLE_ASSET_TYPES/.test(code));
