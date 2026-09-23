@@ -25,10 +25,23 @@ import { authorityReading, priceContext, READING, READING_LABEL, PRICE_CONTEXT_L
 export const SETUP_BOARD_VERSION = SETUP_VERSION;
 
 /** How many tickers are EVALUATED. How many are SHOWN is decided by qualification, not by a quota. */
-// Raised from 150: BE sat just outside the budget while qualifying on evaluation, and a board that
-// asks "what deserves investigation" should not miss a company for want of ~7 seconds of database
-// time. Still bounded, still ~25s inside a 300s cron.
-export const EVALUATE_LIMIT = 200;
+// ⚠️ RAISED FROM 200, WHICH WAS LOOKING AT 6% OF OUR OWN CANDIDATE POOL.
+//
+// 3,267 tickers currently carry evidence inside the engine's windows — 2,646 with insider activity,
+// 734 with open-market buys, 966 with a material 8-K, 315 with a congressional disclosure. At 200
+// the board evaluated 6.1% of them and published 29 rows.
+//
+// The 200 was budgeted against a cost that is no longer real. The code assumed ~1s per ticker;
+// measured now it is 86ms, and concurrency is not the constraint (86ms at 4 parallel, 95ms at 16 —
+// it is round-trip latency, not contention). Measured end-to-end board builds:
+//
+//     200 ->  29 rows          600 ->  50 rows  (50s)
+//    1500 ->  93 rows (87s)   3267 ->  99 rows (180s, full coverage)
+//
+// 1500 is where the curve flattens: doubling to full coverage adds SIX rows for twice the time,
+// because the selector's ranking already concentrates the real evidence near the top. 87s inside a
+// 300s cron leaves room for a slow day rather than spending it on a tail that yields almost nothing.
+export const EVALUATE_LIMIT = 1500;
 
 /**
  * Candidate selection, widened.
