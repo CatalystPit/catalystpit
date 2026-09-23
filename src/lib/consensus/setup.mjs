@@ -448,6 +448,9 @@ export const SETUP_FILTERS = Object.freeze([
   // Positive, so the pill can never disagree with what it filters to.
   { key: 'positive', label: 'Positive', direction: 'POSITIVE' },
   { key: 'negative', label: 'Negative', direction: 'NEGATIVE' },
+  // ⚠️ AN ATTENTION FILTER, NOT A DIRECTION ONE. It sits beside Positive/Negative rather than
+  // inside them, because a high-significance row can read either way — or neither.
+  { key: 'highsig', label: 'High significance', highSignificance: true },
   { key: 'insider', label: 'Unusual insiders', setups: [SETUP.UNUSUAL_INSIDER_ACTIVITY] },
   { key: 'catalyst', label: 'Fresh catalyst', setups: [SETUP.FRESH_MATERIAL_CATALYST, SETUP.FRESH_CATALYST_SUPPORTED, SETUP.FRESH_CATALYST_CONTESTED] },
   { key: 'alignment', label: 'Cross-source alignment', setups: [SETUP.CROSS_SOURCE_ALIGNMENT] },
@@ -465,6 +468,7 @@ export function filterSetups(rows, key = 'all') {
   if (!key || key === 'all') return list;
   const f = SETUP_FILTERS.find((x) => x.key === key);
   if (!f) return list;
+  if (f.highSignificance) return list.filter((r) => r.highSignificance?.high === true);
   if (f.direction) return list.filter((r) => r.setup?.direction === f.direction);
   if (f.market) return list.filter((r) => r.setup?.marketState === f.market);
   return list.filter((r) => f.setups.includes(r.setup?.setup));

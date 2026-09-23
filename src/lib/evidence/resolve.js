@@ -26,6 +26,7 @@
 // cannot be answered from a 30-day window and must not cost 842 queries.
 
 import { sql } from 'drizzle-orm';
+import { isLeadRole } from '../consensus/high-significance.mjs';
 import { db } from '../db';
 import { FAMILY, DIRECTION, collectEvidence } from './model.mjs';
 import { firstInContext, burstContext, extremeContext, breadthChangeContext, streakContext, implausibleBreadth } from './history.mjs';
@@ -240,6 +241,31 @@ export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} 
         totalValue: totalValue || null, totalValueLabel: usdLabel(totalValue),
         officer: !!officerBuy, executive: officerBuy?.executive || newest.executive || null,
         title: officerBuy?.title || newest.title || null,
+        // ⚠️ STRUCTURED FIGURES FOR THE SIGNIFICANCE RULES, computed from the SAME recentBuys set
+        // the summary is built from. Without these a "$1M single purchase" rule would have to parse
+        // the summary sentence, which is prose and would break the first time the wording changed.
+        //
+        // topBuyer is the largest single insider's TOTAL across the window, not their largest
+        // ticket: three $400K purchases by one officer is a $1.2M commitment by one person, and
+        // splitting it across filings should not hide it.
+        ...(() => {
+          const byPerson = new Map();
+          for (const x of recentBuys) {
+            const k = x.executive || '(unknown)';
+            byPerson.set(k, (byPerson.get(k) || 0) + Number(x.total_value || 0));
+          }
+          let topBuyer = null, topBuyerValue = 0;
+          for (const [k, v] of byPerson) if (v > topBuyerValue) { topBuyer = k; topBuyerValue = v; }
+          // The filed title is the only role source; it is present on 100% of buys measured.
+          const lead = recentBuys.filter((x) => isLeadRole(x.title));
+          const leadValue = lead.reduce((sum, x) => sum + Number(x.total_value || 0), 0);
+          return {
+            topBuyer, topBuyerValue: topBuyerValue || null,
+            leadRoleValue: leadValue || null,
+            leadRoleTitle: lead[0]?.title || null,
+            leadRoleExecutive: lead[0]?.executive || null,
+          };
+        })(),
       },
       context,
     });
@@ -372,7 +398,7 @@ export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}
 
 export async function congressEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
   const res = await db.execute(sql`
-    select action, amount_mid, amount_range, member_slug, representative, party, chamber, state,
+    select action, amount_mid, amount_min, amount_range, member_slug, representative, party, chamber, state,
            disclosure_date, transaction_date, link
       from congress_trades
      where ticker = ${ticker}
@@ -423,6 +449,13 @@ export async function congressEvidence(ticker, { now = Date.now(), coverage = {}
       representative: newest.representative || null, chamber: newest.chamber || null,
       party: newest.party || null, state: newest.state || null,
       amountRange: newest.amount_range || null,
+      // ⚠️ THE LOWER BOUND, NOT THE MIDPOINT. Congressional amounts are disclosed as bands, and a
+      // "$500K+ purchase" claim must be true of the whole band: the $250,001-$500,000 band has a
+      // midpoint of $375,000 and a maximum of $500,000, so only amount_min can support the claim.
+      // Reported for purchases only — a disclosed sale of the same size is not the same fact.
+      buyAmountMin: buys.length
+        ? buys.reduce((mx, x) => Math.max(mx, Number(x.amount_min || 0)), 0) || null
+        : null,
       transactionDate: newest.transaction_date || null,
       disclosureDate: newest.disclosure_date || null,
       // The lag is a fact worth showing: it is the difference between when it happened and when

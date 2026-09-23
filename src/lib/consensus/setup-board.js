@@ -22,6 +22,7 @@ import { marketFactsFor } from './market-facts.js';
 import { FAMILY } from '../evidence/model.mjs';
 import { TRADEABLE_ASSET_TYPES } from '../heatmap/heatmap-universe.mjs';
 import { authorityReading, priceContext, READING, READING_LABEL, PRICE_CONTEXT_LABEL } from './authority.mjs';
+import { highSignificance } from './high-significance.mjs';
 
 export const SETUP_BOARD_VERSION = SETUP_VERSION;
 
@@ -325,6 +326,14 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     ticker: sym,
     version: SETUP_VERSION,
     calculatedAt: new Date(now).toISOString(),
+
+    // ⚠️ AN ATTENTION TAG, NOT A DIRECTION. Computed from the same canonical evidence records the
+    // cards render, so a reason can always be checked against the filing shown beneath it. It does
+    // not feed direction, confidence or qualification — a row can be high significance and Negative.
+    highSignificance: (() => {
+      const h = highSignificance(evidence);
+      return { high: h.high, reasons: h.reasons.slice(0, 3), count: h.reasons.length };
+    })(),
 
     // ⚠️ THE PLAIN-LANGUAGE ANSWER, derived in authority.mjs and carried whole so no surface
     // recomputes it and no two can disagree.

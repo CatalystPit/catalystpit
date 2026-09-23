@@ -119,6 +119,7 @@ export default function SetupCard({ row, bindTicker = null }) {
   // ⚠️ THE READING IS THE HEADLINE. Falls back to the legacy direction so a row materialised by an
   // older board version still renders rather than blanking.
   const rd = row?.reading ?? null;
+  const hs = row?.highSignificance?.high ? row.highSignificance : null;
   const readingUI = rd ? (DIR[rd.reading] || null) : null;
   const priceUI = rd?.price ? PRICE_UI[rd.price] : null;
   // The SECONDARY market state, not V2.1's structure verdict.
@@ -151,10 +152,35 @@ export default function SetupCard({ row, bindTicker = null }) {
               letterSpacing: '0.2px' }}>
               {s.label}
             </span>
+            {hs && (
+              // ⚠️ AN ATTENTION TAG, NOT A DIRECTION. It sits beside the setup chip rather than
+              // near the Positive/Negative word, so it cannot be read as agreeing with it.
+              <span title={hs.reasons.map((r) => r.reason).join(' · ')}
+                style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.5px', color: C.gold,
+                  background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 3,
+                  padding: '2px 6px' }}>
+                HIGH SIGNIFICANCE
+              </span>
+            )}
             {s.whyNowAgo && (
               <span style={{ fontSize: 10.5, color: C.dim }}>trigger {s.whyNowAgo}</span>
             )}
           </div>
+
+          {/* ⚠️ THE CONCRETE FACT, WITH ITS NUMBER. "CEO purchased $801K on the open market" can be
+              checked against the filing below it; a bare badge cannot. Only the largest reason is
+              shown inline — the rest are in the badge's title. */}
+          {hs && (
+            <div style={{ fontSize: 11.5, color: C.ink, fontWeight: 600, marginTop: 4 }}>
+              {hs.reasons[0].reason}
+              {hs.reasons[0].rarity && (
+                <span style={{ fontWeight: 400, color: C.muted }}> · {hs.reasons[0].rarity}</span>
+              )}
+              {hs.count > 1 && (
+                <span style={{ fontWeight: 400, color: C.dim }}> · +{hs.count - 1} more</span>
+              )}
+            </div>
+          )}
 
           {/* Direction is SECONDARY — useful, never the headline. */}
           <div style={{ fontSize: 11, color: C.muted, marginTop: 4, display: 'flex',
