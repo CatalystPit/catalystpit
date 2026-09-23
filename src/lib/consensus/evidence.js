@@ -47,6 +47,55 @@ const saturate = (n, k) => (n > 0 ? 1 - Math.exp(-n / k) : 0);
  * `rule_10b5_1` is the discriminator when present: a plan sale was decided before whatever is
  * happening now, and says little about today.
  */
+/**
+ * ⚠️ ONE CORRUPT FILING USED TO DECIDE THE WHOLE FAMILY.
+ *
+ * Measured in production, `insider_trades.total_value` carries values that cannot be real:
+ *
+ *     SCKT  $177,777,600,000  on a microcap        (median insider buy is $36,338)
+ *     CRWV  $253,022,580,000  of "discretionary selling"
+ *
+ * Strength is `saturate(total / 1_000_000, 1.5)`, so a single bad row pins S to 1.0, and D is
+ * whatever that row's side happens to be. The board then publishes a maximum-confidence reading
+ * built on a parsing error.
+ *
+ * ⚠️ THE CEILING IS NOT A NEW CONSTANT. $50M is `dollarWeight`'s existing ceiling in
+ * evidence-model.mjs — the value this codebase already treats as "as large as a transaction can
+ * meaningfully be" when scoring significance. Reusing it means there is one definition of a very
+ * large insider transaction rather than two that can drift.
+ *
+ * Winsorising rather than dropping is deliberate: a genuine $80M purchase is real evidence and
+ * should not vanish, it simply must not count for eighty times a $1M one. Above the ceiling the
+ * differences stop being informative anyway.
+ */
+export const TXN_VALUE_CEILING = 50_000_000;
+const txnValue = (x) => Math.min(Number(x?.total_value || 0), TXN_VALUE_CEILING);
+
+/**
+ * The share of observed insider dollars that reflects a CHOICE made now, rather than a plan filed
+ * months ago or a tax withholding. Below this, no direction is readable. See the worked measurement
+ * at the guard itself.
+ */
+export const MIN_DISCRETIONARY_SHARE = 0.25;
+
+/**
+ * CAN A DIRECTION BE READ FROM THIS INSIDER ACTIVITY AT ALL?
+ *
+ * Pure, and separated from the query so the rule can be exercised with numbers rather than only
+ * against the database — the same reason intradayRowReturn() was lifted out of the heatmap store.
+ * A guard that can only be tested by round-tripping Postgres does not get tested.
+ *
+ * @returns { readable, discretionaryShare } — `readable` false means the activity is real but
+ *          carries no view, so the family reports `routine-sale` and a direction of zero.
+ */
+export function directionReadable({ buyValue = 0, discSellValue = 0, routineValue = 0 } = {}) {
+  const disc = Math.max(0, Number(buyValue) || 0) + Math.max(0, Number(discSellValue) || 0);
+  const observed = disc + Math.max(0, Number(routineValue) || 0);
+  const discretionaryShare = observed > 0 ? disc / observed : 0;
+  return { readable: discretionaryShare >= MIN_DISCRETIONARY_SHARE, discretionaryShare };
+}
+
+
 export async function insiderEvidence(ticker, now) {
   const windowDays = CONSTANTS.activationWindowDays.insiders;
   const res = await db.execute(sql`
@@ -69,20 +118,56 @@ export async function insiderEvidence(ticker, now) {
 
   const buyers = new Set(buys.map((x) => x.executive)).size;
   const sellers = new Set(discretionarySells.map((x) => x.executive)).size;
-  const buyValue = buys.reduce((s, x) => s + Number(x.total_value || 0), 0);
-  const discSellValue = discretionarySells.reduce((s, x) => s + Number(x.total_value || 0), 0);
+  const buyValue = buys.reduce((s, x) => s + txnValue(x), 0);
+  const discSellValue = discretionarySells.reduce((s, x) => s + txnValue(x), 0);
 
   // A routine sale still counts, at a fraction — it is real evidence, just weak directional
   // evidence, and zeroing it entirely would be its own distortion.
   const ROUTINE_WEIGHT = 0.15;
-  const routineSellValue = routineSells.reduce((s, x) => s + Number(x.total_value || 0), 0) * ROUTINE_WEIGHT;
+  const rawRoutineValue = routineSells.reduce((s, x) => s + txnValue(x), 0);
+  const routineSellValue = rawRoutineValue * ROUTINE_WEIGHT;
 
   const bullWeight = buyValue * 1.0;
   const bearWeight = discSellValue * 0.55 + routineSellValue;   // a sold dollar says less than a bought one
   const total = bullWeight + bearWeight;
   if (total <= 0) return familyValue({ family: 'insiders', evidenceCount: 0 });
 
-  const D = (bullWeight - bearWeight) / total;
+  // ⚠️ A PRE-SCHEDULED SALE IS NOT A BEARISH OPINION, AND THE ARITHMETIC USED TO SAY IT WAS.
+  //
+  // D = (bull - bear) / total returns exactly -1.0 whenever there are NO BUYS, however routine the
+  // selling is — the ROUTINE_WEIGHT above discounts a plan sale's MAGNITUDE and never its
+  // DIRECTION. Measured on the live board, that put five of thirteen bearish insider readings on
+  // companies whose selling was overwhelmingly pre-scheduled:
+  //
+  //     AAPL   $0.00M discretionary   $2.72M planned    0.0% → read "bearish"
+  //     JPM    $0.00M discretionary   $1.79M planned    0.0% → read "bearish"
+  //     ENVA   $0.00M discretionary  $14.78M planned    0.0% → read "bearish"
+  //     ADI    $0.00M discretionary  $16.58M planned    0.0% → read "bearish"
+  //     MSFT   $7.27M discretionary  $64.15M planned   10.2% → read "bearish"
+  //
+  // Apple and JPMorgan were marked bearish on ZERO discretionary selling. Executives at large
+  // companies sell every quarter under plans filed months earlier and through tax withholding;
+  // reading that as a view on the business is the exact error this file's own header warns about
+  // ("an insider sells for many reasons — diversification, tax, a house, a pre-scheduled 10b5-1
+  // plan filed months earlier").
+  //
+  // ⚠️ THE THRESHOLD IS MEASURED, NOT PICKED. Across the same thirteen rows the discretionary
+  // share was 0.0%, 0.0%, 0.0%, 0.0% and 10.2% for the false readings, and 88.1%, 99.8%, 100%,
+  // 100%, 100%, 100%, 100%, 100% for the genuine ones. There is an empty band between 10.2% and
+  // 88.1%, and 25% sits in the middle of it — so the cut does not depend on where in that gap it
+  // is placed.
+  //
+  // It is a symmetric guard, not an anti-sell rule: a token purchase beside a large scheduled
+  // disposal fails it too, which is correct — that is not a bullish opinion either.
+  const { readable, discretionaryShare } =
+    directionReadable({ buyValue, discSellValue, routineValue: rawRoutineValue });
+
+  // ⚠️ DIRECTIONLESS, NOT ABSENT. The family stays ACTIVE and keeps its strength and freshness, so
+  // the card can still say "seven insiders sold, all under pre-scheduled plans" — which is a real
+  // and useful fact. Only the DIRECTION is withheld, because that is the only part the data cannot
+  // support. Marking it inactive would delete evidence we hold; `routine-sale` is already in
+  // synthesis.mjs's NEUTRAL set, so it counts toward coverage and toward neither side.
+  const D = readable ? (bullWeight - bearWeight) / total : 0;
   // Breadth first, then size. Four buyers at $50k each is stronger evidence than one at $200k.
   const breadth = saturate(buyers + sellers, 3);
   const size = saturate(total / 1_000_000, 1.5);
@@ -101,11 +186,17 @@ export async function insiderEvidence(ticker, now) {
   if (buyers >= 3) reasons.push('Cluster buying across multiple insiders');
   if (discretionarySells.length) reasons.push(`${sellers} insider${sellers > 1 ? 's' : ''} sold outside a 10b5-1 plan`);
   if (routineSells.length && !discretionarySells.length) reasons.push(`${routineSells.length} sale${routineSells.length > 1 ? 's' : ''} under a pre-scheduled 10b5-1 plan (routine)`);
+  // ⚠️ SAY WHY THE DIRECTION IS MISSING. A blank where a reading used to be invites the reader to
+  // assume we found nothing; the honest statement is that we found activity and it does not carry
+  // a view.
+  if (!readable) {
+    reasons.unshift(`${Math.round((1 - discretionaryShare) * 100)}% of insider dollars here are pre-scheduled or tax-related — no direction can be read from them`);
+  }
 
   return familyValue({
     family: 'insiders', direction: D, strength: S, freshness: F, quality: Q,
     evidenceCount: r.length,
-    state: D > 0.2 ? 'bullish' : D < -0.2 ? 'bearish' : 'mixed',
+    state: !readable ? 'routine-sale' : D > 0.2 ? 'bullish' : D < -0.2 ? 'bearish' : 'mixed',
     trend: insiderTrend(r, now),
     reasons,
     refs: [...new Set(r.map((x) => x.accession).filter(Boolean))].slice(0, 12),
