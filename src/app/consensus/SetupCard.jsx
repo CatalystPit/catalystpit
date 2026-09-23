@@ -33,6 +33,17 @@ const DIR = {
   MIXED: { fg: C.muted, bg: C.surface, label: 'Mixed' },
 };
 
+// ⚠️ WHERE PRICE SITS RELATIVE TO THE READING — an axis, never a vote. "Price has not moved yet"
+// was previously buried as a footnote on three of five public rows; it is the most useful thing on
+// the card, because evidence pointing somewhere before the move is the whole proposition.
+const PRICE_UI = {
+  EARLY:      { label: 'Price has not moved yet', fg: C.ink },
+  CONFIRMING: { label: 'Price moving with it', fg: C.green },
+  DIVERGING:  { label: 'Price moving against it', fg: C.red },
+  EXTENDED:   { label: 'Move already made', fg: C.muted },
+  UNKNOWN:    { label: '', fg: C.muted },
+};
+
 // MARKET IS SECONDARY. No ticker is forced into confirming or diverging: inside the dead zone, or
 // with no recent public event to measure from, the honest answer is that there was no meaningful
 // reaction — a real state, not a missing one.
@@ -108,6 +119,11 @@ export default function SetupCard({ row }) {
   if (!s) return null;
 
   const dir = DIR[s.direction] || DIR.MIXED;
+  // ⚠️ THE READING IS THE HEADLINE. Falls back to the legacy direction so a row materialised by an
+  // older board version still renders rather than blanking.
+  const rd = row?.reading ?? null;
+  const readingUI = rd ? (DIR[rd.reading] || null) : null;
+  const priceUI = rd?.price ? PRICE_UI[rd.price] : null;
   // The SECONDARY market state, not V2.1's structure verdict.
   const market = MARKET_UI[s.marketState] || MARKET_UI[row.market?.verdict] || MARKET_UI.UNAVAILABLE;
   const fams = FAM_ORDER.filter((f) => row.families?.[f]?.length);
@@ -141,13 +157,21 @@ export default function SetupCard({ row }) {
           {/* Direction is SECONDARY — useful, never the headline. */}
           <div style={{ fontSize: 11, color: C.muted, marginTop: 4, display: 'flex',
             gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-            <b style={{ color: dir.fg, fontWeight: 700 }}>{dir.label}</b>
+            <b style={{ color: (readingUI || dir).fg, fontWeight: 700 }}>{(readingUI || dir).label}</b>
+            {rd?.agreement?.total > 0 && (
+              <>
+                <span>·</span>
+                <span>{rd.agreement.agree} of {rd.agreement.total} source{rd.agreement.total === 1 ? '' : 's'}</span>
+              </>
+            )}
+            {priceUI?.label && (
+              <>
+                <span>·</span>
+                <b style={{ color: priceUI.fg, fontWeight: 700 }}>{priceUI.label}</b>
+              </>
+            )}
             <span>·</span>
             <span>{k?.confidence ?? '—'} confidence</span>
-            <span>·</span>
-            <span>{k?.coverage?.active ?? 0} of {k?.coverage?.total ?? 4} families</span>
-            <span>·</span>
-            <span>Market <b style={{ color: market.fg, fontWeight: 700 }}>{market.label}</b></span>
           </div>
         </div>
       </div>

@@ -20,6 +20,7 @@ import {
 import { familyFactSheet, evidenceFacts, publicAgo } from './facts.mjs';
 import { marketFactsFor } from './market-facts.js';
 import { FAMILY } from '../evidence/model.mjs';
+import { authorityReading, priceContext, READING, READING_LABEL, PRICE_CONTEXT_LABEL } from './authority.mjs';
 
 export const SETUP_BOARD_VERSION = SETUP_VERSION;
 
@@ -246,7 +247,7 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
   const confidence = evidenceConfidence({ significantFamilies, synthesis, newestAgeMs: currency.newestAgeMs });
 
   const q = qualifies({ significantFamilies, freshCatalyst: fresh.length > 0, reaction, synthesis });
-  const label = labelFor({
+  let label = labelFor({
     join, significantFamilies, freshCatalyst: fresh.length > 0,
     freshCatalystEvidence: fresh[0] || null, synthesis,
   });
@@ -263,14 +264,64 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
   // established by the meaningful-opposition branch while the join still read EVIDENCE_BUILDING.
   // Whatever route produced the conflict, a card that says these sources contradict each other
   // cannot also assert a lean.
+  // ⚠️ THE READING IS THE HEADLINE NOW, AND IT IS NOT A VOTE OF THE FAMILIES.
+  //
+  // The old direction was MIXED whenever any family dissented, which on the live board made
+  // "Cross-source conflict" 13 of 29 rows — including TELA, where a -0.028 stale catalyst was
+  // cancelling a +0.282 fresh insider cluster and the row's own synthesis said chi=0.085.
+  // authorityReading() asks instead which families are CURRENT AND SUBSTANTIAL enough to name a
+  // direction at all; background 13F breadth and price may agree but never veto. See authority.mjs.
+  // `row.families` is the signed per-family output of the v1 engine (D/S/F/Q/E/state) — the same
+  // array _consensusFamilies exposes. NOT `synthFamilies`, which has already had catalyst direction
+  // neutralised for display, and not `sheet`, which is the rendered fact blocks.
+  const engineFamilies = row?.families || [];
+  const reading = authorityReading(engineFamilies);
+  const price = priceContext(reading.direction, engineFamilies.find((f) => f?.family === 'structure'), reaction);
+
+  // ⚠️ A CARD CANNOT SAY "Positive" AND "Cross-source conflict" AT ONCE. The conflict archetype
+  // was assigned by the old any-family-dissents rule; once background 13F and a stale catalyst can
+  // no longer veto, the sources genuinely do not conflict and the label is simply wrong. It is
+  // corrected to what the reading found — alignment when two or more sources agree, a single-source
+  // finding when only one does. The conflict archetype survives for rows the reading also calls
+  // contested, which is the case it was always meant to describe.
+  const named = reading.reading === READING.POSITIVE || reading.reading === READING.NEGATIVE;
+  if (named && label.setup === SETUP.CROSS_SOURCE_CONFLICT) {
+    label = {
+      ...label,
+      setup: reading.agreement.total >= 2 ? SETUP.CROSS_SOURCE_ALIGNMENT : SETUP.SINGLE_SOURCE_SIGNIFICANCE,
+      reasons: [reading.why, ...(label.reasons || []).filter((r) => !/disagree|both directions|comparable weight/i.test(r))],
+    };
+  }
+
   const conflicted = label.setup === SETUP.CROSS_SOURCE_CONFLICT || join.state === JOIN.SOURCES_CONFLICT;
-  const direction = conflicted ? 'MIXED' : leanDirection(synthesis);
+  // The reading decides the direction when it can name one; the old lean remains the fallback so
+  // nothing downstream that expects POSITIVE/NEGATIVE/MIXED sees a shape it has not seen before.
+  const direction = reading.reading === READING.POSITIVE ? 'POSITIVE'
+    : reading.reading === READING.NEGATIVE ? 'NEGATIVE'
+      : conflicted ? 'MIXED' : leanDirection(synthesis);
   const unusualCount = Object.values(sheet).flat().filter((f) => f?.unusual).length;
 
   return {
     ticker: sym,
     version: SETUP_VERSION,
     calculatedAt: new Date(now).toISOString(),
+
+    // ⚠️ THE PLAIN-LANGUAGE ANSWER, derived in authority.mjs and carried whole so no surface
+    // recomputes it and no two can disagree.
+    reading: {
+      reading: reading.reading,
+      label: READING_LABEL[reading.reading],
+      direction: reading.direction,
+      leading: reading.leading,
+      corroborating: reading.corroborating,
+      against: reading.against,
+      belowFloor: reading.belowFloor || [],
+      agreement: reading.agreement,
+      why: reading.why,
+      price: price.context,
+      priceLabel: price.label,
+      priceWhy: price.why,
+    },
 
     setup: {
       setup: label.setup,
