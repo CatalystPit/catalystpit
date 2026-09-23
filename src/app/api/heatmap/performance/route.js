@@ -131,6 +131,11 @@ export async function GET(request) {
         }
         : null,
       anchorDate: board.anchorDate ?? null,
+      // ⚠️ THE COMPLETED-SESSION ROLLOVER GATE. `held` names any newer session whose EOD ingest has
+      // not yet reproduced enough of the previous session's coverage for this universe. Reported
+      // because "the board is holding at yesterday while today loads" and "the ingest is dead" both
+      // look like a stale `asOf` from outside, and only one of them is a problem.
+      sessionGate: board.sessionGate ?? null,
       freshness,
       // ⚠️ `applied` IS NOW A FACT ABOUT THIS RESPONSE, NOT A PLACEHOLDER. It used to be hardcoded
       // false with a pre-launch note, which was true when no live price existed. Entitlement alone

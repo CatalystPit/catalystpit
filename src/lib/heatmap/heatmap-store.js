@@ -22,12 +22,61 @@ import { sql } from 'drizzle-orm';
 import { db } from '../db';
 import { anchorDateFor, pctReturn, asDay, NO_RETURN, MAX_BASELINE_GAP_DAYS, intradayRowReturn } from './heatmap-window.mjs';
 import { TRADEABLE_ASSET_TYPES } from './heatmap-universe.mjs';
+import { canonicalSession } from './heatmap-session.mjs';
 import { returnBlocked } from '../price-continuity.mjs';
 
-/** The most recent session anywhere in our candle history — the board's `asOf`. */
+/**
+ * The most recent session anywhere in our candle history.
+ *
+ * ⚠️ THIS IS NOT THE BOARD'S `asOf` AND MUST NOT BE USED AS ONE. `max(date)` advances the moment
+ * the FIRST ticker of a new session is ingested, which during the nightly EOD load means the board
+ * jumps to a session 42 securities out of 12,191 have a print on. Measured in production that
+ * rendered `measured: 6, unmeasured: 494` — a 99% blank Top 500 — until the ingest caught up.
+ *
+ * `canonicalSessionDate()` below is what the board uses. This is kept only as the candidate window's
+ * upper bound.
+ */
 export async function latestSessionDate() {
   const res = await db.execute(sql`select max(date)::text as d from ticker_daily_candles`);
   return (res.rows ?? res)[0]?.d ?? null;
+}
+
+/**
+ * HOW MANY OF THE HEATMAP'S OWN UNIVERSE PRINTED ON EACH OF THE LAST FEW SESSIONS.
+ *
+ * ⚠️ COVERAGE IS MEASURED OVER THE UNIVERSE THE BOARD ACTUALLY DRAWS, not over the candle table.
+ * A global `count(*)` threshold would be calibrated against ~12,000 securities the Top 500 never
+ * renders, and would answer a question nobody asked — whether the market-wide ingest finished, not
+ * whether THIS board can be measured.
+ *
+ * ⚠️ AND IT IS ANCHORED TO THE DATA, NOT THE CLOCK. The window is 25 days back from the newest
+ * candle rather than from today, so a pipeline that has been stalled for a week still returns
+ * candidates instead of an empty set that would send the board back to `max(date)`.
+ *
+ * One `group by` over the (ticker, date) index, bounded by the universe and by 25 days.
+ */
+async function sessionCoverage(tickers, { window = 6 } = {}) {
+  if (!tickers.length) return [];
+  const res = await db.execute(sql`
+    select date::text as date, count(*)::int as count
+      from ticker_daily_candles
+     where ticker = any(${tickerArray(tickers)})
+       and date > (select max(date) from ticker_daily_candles) - 25
+     group by date
+     order by date desc
+     limit ${Math.max(2, Number(window) || 6)}`);
+  return (res.rows ?? res).map((r) => ({ date: r.date, count: Number(r.count) || 0 }));
+}
+
+/**
+ * THE SESSION THE BOARD IS ALLOWED TO CALL LATEST — see heatmap-session.mjs for the rule.
+ *
+ * Returns the full verdict, not just the date, so the route can report that a newer session exists
+ * and is being held back. A board that silently declines to advance is indistinguishable from a
+ * dead ingest.
+ */
+export async function canonicalSessionDate(tickers) {
+  return canonicalSession(await sessionCoverage(tickers));
 }
 
 /**
@@ -354,12 +403,17 @@ async function intradayPrices(tickers, { realtime = false, timeframe = '1D', lim
 }
 
 export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = false, now = Date.now() } = {}) {
-  const asOf = await latestSessionDate();
-  if (!asOf) return { asOf: null, baselineDate: null, rows: [] };
-
+  // ⚠️ THE UNIVERSE IS RESOLVED BEFORE THE SESSION IS, AND THAT ORDER IS THE FIX. The board's
+  // `asOf` is no longer "the newest date in the candle table" — it is "the newest session the
+  // securities THIS BOARD DRAWS have actually finished printing", so the universe has to exist
+  // before the question can be asked. One extra bounded query; see canonicalSessionDate().
   const universe = await heatmapUniverse(limit);
   const tickers = universe.map((u) => u.ticker);
-  if (!tickers.length) return { asOf, baselineDate: null, rows: [] };
+  if (!tickers.length) return { asOf: await latestSessionDate(), baselineDate: null, rows: [] };
+
+  const canonical = await canonicalSessionDate(tickers);
+  const asOf = canonical.date;
+  if (!asOf) return { asOf: null, baselineDate: null, rows: [] };
 
   // The anchor for everything except 1D, which is expressed as "strictly before the latest session".
   const anchor = anchorDateFor(timeframe, asOf);
@@ -464,7 +518,16 @@ export async function heatmapBoard({ timeframe = '1D', limit = 150, realtime = f
   // "last updated 11:45" truthfully instead of implying a continuously ticking board.
   const snapshotAt = rows.find((r) => r.live)?.priceAsOf ?? null;
 
-  return { asOf, baselineDate, anchorDate: anchor, snapshotAt, session: intraday.session, rows };
+  // ⚠️ A BOARD THAT DECLINES TO ADVANCE MUST SAY SO. Holding back an incomplete session and a dead
+  // ingest look identical from outside — both leave `asOf` on yesterday. This reports which it is.
+  const sessionGate = {
+    asOf,
+    coverage: canonical.count,
+    universe: universe.length,
+    held: (canonical.rejected || []).filter((r) => r.reason === 'below_quorum').map((r) => r.date),
+  };
+
+  return { asOf, baselineDate, anchorDate: anchor, snapshotAt, session: intraday.session, sessionGate, rows };
 }
 
 /**
