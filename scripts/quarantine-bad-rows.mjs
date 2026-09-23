@@ -30,9 +30,27 @@ const RULES = [
     where: `transaction_code IS NULL OR btrim(transaction_code) = ''`,
   },
   {
+    // ⚠️ THIS RULE DID NOT MIRROR form4.mjs, AND RUNNING IT WOULD HAVE DESTROYED REAL DATA.
+    //
+    // The parser quarantines a zero price ONLY when the filer DISCLOSED zero
+    // (`pricePerShare === 0 && row.priceDisclosed`). A price that was simply not stated
+    // numerically is a genuine transaction — form4.mjs: "filers routinely footnote it instead
+    // ('purchased for $0.80 per Unit', 'in lieu of cash compensation'). Discarding those threw
+    // away genuine purchases that had perfectly valid share counts."
+    //
+    // `priceDisclosed` is a parse-time fact and is NOT a column on insider_trades, so this sweep
+    // could not test it and dropped the condition entirely — making it strictly harsher than the
+    // ingest rule it claims to mirror. Measured before running: all 1,005 matching rows carry
+    // footnotes, 719 of them are BUYS, and together they account for $0.00B of value. Sweeping
+    // them would have removed 719 real insider purchases and corrected nothing.
+    //
+    // The presence of a footnote is the closest proxy the stored data allows for "the price was
+    // explained rather than declared zero", so it is required here. A disclosed $0 with no
+    // footnote remains sweepable.
     reason: 'ZERO_PRICE_OPEN_MARKET',
-    why: 'P/S priced at $0 - either a data error or not genuinely open-market',
-    where: `transaction_code IN ('P','S') AND shares > 0 AND price_per_share = 0`,
+    why: 'P/S disclosed at $0 with no explanatory footnote - a data error, not a footnoted price',
+    where: `transaction_code IN ('P','S') AND shares > 0 AND price_per_share = 0
+            AND (footnotes IS NULL OR btrim(footnotes) = '')`,
   },
   {
     reason: 'ABSURD_PRICE',
@@ -79,6 +97,39 @@ const RULES = [
                      WHERE s.ticker = insider_trades.ticker
                        AND s.market_cap > 0
                        AND insider_trades.total_value > s.market_cap * 5)`,
+  },
+  {
+    // ⚠️ THE GAP BOTH RULES ABOVE SHARE: THEY NEED EXTERNAL DATA.
+    //
+    // MARKET_PRICE_MISMATCH needs a candle within +/-10 days; EXCEEDS_ISSUER_VALUE needs a
+    // screener_stocks row. A ticker with neither is invisible to both, and that is not a rare
+    // corner: measured after the first sweep, the four largest surviving rows were all on tickers
+    // absent from screener_stocks, led by MYNZ at $258.83B.
+    //
+    // This rule needs neither. Within ONE ticker, a filed price fifty times that ticker's own
+    // median filed price is a unit or decimal error, because the same security cannot trade at
+    // both. Measured: TZUP $225,000 against its own median of $3.70 (60,811x), AREB $202,387
+    // against $1.01 (201,280x), GNL $726,946 against $9.38 (77,500x).
+    //
+    // ⚠️ VERIFIED NOT TO TOUCH LARGE LEGITIMATE FILINGS, which is the risk a blunt size threshold
+    // would carry. Genmab's real $7.36B acquisition of Merus (MRUS, 75.8M shares at $97) and Musk's
+    // real $7.09B TSLA option exercise both sit at their tickers' normal price levels and are NOT
+    // swept — confirmed at 0 rows each before this rule was added.
+    //
+    // The >=5 priced filings floor is load-bearing: with fewer, a corrupt row can be half the
+    // sample and poison the median it is measured against. MYNZ has exactly two priced rows, one
+    // of them corrupt, giving a median of $201,000 — so it is correctly excluded here and left for
+    // a human rather than judged against a number its own bad row created.
+    reason: 'PRICE_INCONSISTENT_WITHIN_TICKER',
+    why: 'filed price >50x this ticker own median filed price - unit/decimal error, needs no market data',
+    where: `price_per_share > 0 AND EXISTS (
+              SELECT 1 FROM insider_trades p
+               WHERE p.ticker = insider_trades.ticker AND p.price_per_share > 0
+              HAVING count(*) >= 5
+                 AND percentile_cont(0.5) WITHIN GROUP (ORDER BY p.price_per_share) > 0
+                 AND insider_trades.price_per_share >
+                     percentile_cont(0.5) WITHIN GROUP (ORDER BY p.price_per_share) * 50
+            )`,
   },
   {
     reason: 'VALUE_INCONSISTENT',
