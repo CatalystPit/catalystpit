@@ -324,6 +324,8 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     reading: {
       reading: reading.reading,
       label: READING_LABEL[reading.reading],
+      tier: reading.tier ?? null,
+      tierLabel: reading.tierLabel ?? '',
       direction: reading.direction,
       leading: reading.leading,
       corroborating: reading.corroborating,

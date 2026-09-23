@@ -235,6 +235,37 @@ export function priceContext(direction, structure, reaction) {
     why: `Price is making ${up ? 'higher' : 'lower'} highs and lows against a ${direction === 'up' ? 'positive' : 'negative'} reading.` };
 }
 
+/**
+ * HOW MANY INDEPENDENT SOURCES AGREE — a gradient, not a gate.
+ *
+ * ⚠️ WHY THIS IS NOT A HARD 3-SOURCE RULE. Requiring three agreeing sources before naming a
+ * direction sounds stricter and is, measured, catastrophic: on a 93-row board exactly ONE row
+ * survives it. The cause is structural rather than a threshold that needs tuning — there are only
+ * four evidence families, and most companies can never field three:
+ *
+ *     active evidence families per directional row:  1 fam 1 · 2 fams 11 · 3 fams 15 · 4 fams 1
+ *
+ * Congress exists on 315 tickers in window and catalysts on 966, so "three agreeing" demands three
+ * PRESENT and unanimous. Gating on it would have taken the board from 28 directional rows to 1.
+ *
+ * So the count is reported as a tier instead. A reader still sees at a glance that three sources
+ * agree on one name and one source speaks for another — which is the information the gate was
+ * reaching for — without the other 27 being thrown away to express it.
+ */
+export const TIER = Object.freeze({
+  STRONG: 'STRONG',   // 3+ agreeing — rare, and the reason the bubble view has something to size by
+  CONFIRMED: 'CONFIRMED', // 2 agreeing — independent corroboration
+  SINGLE: 'SINGLE',   // 1 source, labelled as such and never dressed up as agreement
+});
+
+export const TIER_LABEL = Object.freeze({
+  STRONG: 'Strong',
+  CONFIRMED: '',      // the plain reading word carries it; a qualifier here would be noise
+  SINGLE: 'Single source',
+});
+
+export const tierFor = (agree) => (agree >= 3 ? TIER.STRONG : agree === 2 ? TIER.CONFIRMED : TIER.SINGLE);
+
 /** The states this produces. Deliberately fewer than V2's eight, and each one is checkable. */
 export const READING = Object.freeze({
   POSITIVE: 'POSITIVE',
@@ -406,6 +437,8 @@ export function authorityReading(families) {
   out.direction = dir;
   out.reading = dir === 'up' ? READING.POSITIVE : READING.NEGATIVE;
   out.label = dir === 'up' ? READING_LABEL.POSITIVE : READING_LABEL.NEGATIVE;
+  out.tier = tierFor(agree);
+  out.tierLabel = TIER_LABEL[out.tier];
   out.belowFloor = belowFloor;
 
   const led = leading.map((v) => v.family).join(' and ');
