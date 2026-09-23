@@ -83,7 +83,15 @@ ok('listeners are removed on close', /removeEventListener\('keydown'/.test(menu)
 
 L('\n=== THEMING USES THE DESIGN SYSTEM ===');
 ok('⚠️ every colour is a C token — no literal hex', !/#[0-9A-Fa-f]{6}/.test(menu.replace(/rgba\([^)]*\)/g,'')));
-ok('…so dark mode follows the existing vars', /import \{ C, startCheckout \}/.test(menu));
+ok('…so dark mode follows the existing vars', /import \{ C \} from '\.\.\/lib\/cp-tokens\.mjs'/.test(menu));
+// ⚠️ THE TOKENS COME FROM THE LEAF MODULE, NOT FROM cp-shared. Importing C from cp-shared while
+// cp-shared imports this component is a cycle: Next tolerates it, esbuild does not, and the failure
+// was thirteen unrelated components throwing "reading 'text'" on an undefined C with nothing naming
+// the cycle. cp-tokens.mjs imports nothing, so it cannot participate in one.
+ok('⚠️ the palette module is a leaf — it imports nothing',
+  !/^\s*import /m.test(await read('../src/lib/cp-tokens.mjs')));
+ok('…and cp-shared still re-exports C for every existing caller',
+  /export \{ C \} from '\.\/cp-tokens\.mjs'/.test(await read('../src/lib/cp-shared.jsx')));
 ok('no imported hook is used unimported',
   (() => { const im=new Set((menu.match(/import \{([^}]+)\} from 'react'/)||[,''])[1].split(',').map(x=>x.trim()));
     const used = [...menuSrc.matchAll(/\b(use[A-Z]\w+)\s*\(/g)].map((m) => m[1]);

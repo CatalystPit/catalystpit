@@ -1,7 +1,8 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useUser, useClerk } from '@clerk/nextjs';
-import { C, startCheckout } from '../lib/cp-shared';
+import { C } from '../lib/cp-tokens.mjs';
+import { startCheckout } from '../lib/cp-shared';
 
 // THE CATALYST PIT ACCOUNT MENU.
 //

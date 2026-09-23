@@ -62,6 +62,10 @@ export const SignedOut = ({ children }) => children ?? null;
 export const UserButton = () => null;
 export const useAuth = () => ({ isLoaded: true, isSignedIn: false, userId: null });
 export const useUser = () => ({ isLoaded: true, isSignedIn: false, user: null });
+// ⚠️ EVERY CLERK EXPORT THE APP IMPORTS MUST EXIST HERE, or the bundle fails for every component
+// downstream of cp-shared — thirteen of them, all reporting "Build failed with 1 error" and none
+// naming the missing symbol. Adding AccountMenu's useClerk import broke the harness this way.
+export const useClerk = () => ({ signOut: async () => {}, openUserProfile: () => {} });
 export const ClerkProvider = ({ children }) => children ?? null;
 export default {};
 `);
