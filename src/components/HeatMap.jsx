@@ -14,34 +14,72 @@ import HeatmapCanvas from './heatmap/HeatmapCanvas';
 // drift. This file is now what it always should have been: a data source and a click handler. The
 // panel's appearance is unchanged — that is the same code, in one place.
 //
-// ⚠️ change_pct here is END-OF-DAY: screener_stocks is rebuilt once daily, pre-market, from settled
-// candles, so this panel shows the last COMPLETED session's move and not an intraday one. The
-// dedicated page states its own freshness; this panel's contract is unchanged pending the licensed
-// provider. See the heatmap section of HANDOFF.md.
+// ⚠️ TWO DATA SOURCES, CHOSEN BY THE CALLER — see the `shared` prop below.
+//
+//   default (Terminal)  /api/heatmap — change_pct off screener_stocks, rebuilt once daily
+//                       pre-market, so it shows the last COMPLETED session's move.
+//   shared (homepage)   /api/heatmap/performance — the shared 15-minute market snapshot the
+//                       dedicated /heatmap page uses, with its session lifecycle.
 
-export default function HeatMap({ onPick, limit = 150 }) {
+/**
+ * @param shared  Read the SHARED 15-minute market snapshot instead of the legacy board.
+ *
+ * ⚠️ THE HOMEPAGE WAS SHOWING LAST NIGHT'S CLOSES WHILE /heatmap SHOWED TODAY. Both render this
+ * component, but it fetched `/api/heatmap` — the Terminal's original endpoint, which reads prices
+ * off screener_stocks and is therefore only as fresh as the nightly rebuild. The dedicated page
+ * uses `/api/heatmap/performance`, which owns the shared snapshot: one market-wide capture every
+ * 15 minutes during the regular session, frozen after the bell, zero upstream requests overnight,
+ * at weekends or on holidays, and identical for every viewer.
+ *
+ * Opt-in rather than a default so the Terminal's panel keeps the contract it has today — this
+ * change is scoped to the homepage card.
+ *
+ * ⚠️ AND IT ADDS NO UPSTREAM COST. The performance route serves an existing snapshot; a homepage
+ * viewer costs a KV read and never a provider call, however many of them arrive.
+ */
+export default function HeatMap({ onPick, limit = 150, shared = false }) {
   const [rows, setRows] = useState(null);
   const router = useRouter();
+
+  // Entitlement decides only which URL is asked for — the server resolves the session itself and
+  // hands a Free caller the completed-session board regardless. `rt=1` is a cache key, never a
+  // grant; without the split the CDN would serve one audience's board to the other.
+  const [entitled, setEntitled] = useState(false);
+  useEffect(() => {
+    if (!shared) return undefined;
+    let alive = true;
+    fetch('/api/me/plan', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive) setEntitled(j?.tier === 'pro' || j?.tier === 'elite'); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [shared]);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch(`/api/heatmap?limit=${limit}`, { cache: 'no-store' });
+        const url = shared
+          ? `/api/heatmap/performance?timeframe=1D&universe=top500${entitled ? '&rt=1' : ''}`
+          : `/api/heatmap?limit=${limit}`;
+        const r = await fetch(url, { cache: 'no-store' });
         const j = r.ok ? await r.json() : null;
-        if (alive) setRows(j?.rows || []);
+        // The shared board is the Top 500; this card shows the largest `limit` of them, which is
+        // the same universe seen through a smaller window — never a different universe.
+        if (alive) setRows(shared ? (j?.rows || []).slice(0, limit) : (j?.rows || []));
       } catch { if (alive) setRows([]); }
     };
     load();
     const id = setInterval(load, 60000);
     return () => { alive = false; clearInterval(id); };
-  }, [limit]);
+  }, [limit, shared, entitled]);
 
   const pick = (t) => { if (onPick) onPick(t); else router.push(`/ticker/${encodeURIComponent(t)}`); };
 
-  // `changePct` is this endpoint's field name; the canvas reads `pct`, which is the name the
-  // performance board uses. Mapped here rather than renaming the Terminal's API contract.
-  const tiles = rows === null ? null : rows.map((r) => ({ ...r, pct: r.changePct ?? null }));
+  // ⚠️ THE TWO ENDPOINTS NAME THE SAME NUMBER DIFFERENTLY. The shared board returns `pct`; the
+  // legacy Terminal board returns `changePct`, and the canvas reads `pct`. Coalescing here keeps
+  // the Terminal's API contract untouched.
+  const tiles = rows === null ? null : rows.map((r) => ({ ...r, pct: r.pct ?? r.changePct ?? null }));
 
   return <HeatmapCanvas rows={tiles} onPick={pick} scale={3} />;
 }

@@ -805,7 +805,7 @@ export default function CatalystPit() {
               <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET HEAT MAP</span>
               <a href="/terminal" style={{fontSize:11, color:C.green, cursor:"pointer", fontWeight:400, textDecoration:"none"}}>Terminal →</a>
             </div>
-            <div style={{height:340}}><HeatMap limit={120}/></div>
+            <div style={{height:340}}><HeatMap limit={120} shared/></div>
           </div>
 
         </div>

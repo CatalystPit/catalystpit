@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
 import { selectTerminalSymbol, onTerminalRoute } from './terminalSymbolBus';
@@ -911,6 +911,51 @@ export function TopNav({ active }) {
   const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Dividends", "Insiders", "Politicians", "Institutions"];
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  // Where the fixed-position panel goes, measured from the button when it opens. Fixed coordinates
+  // are viewport coordinates, so they cannot be expressed in CSS relative to the trigger.
+  const [morePos, setMorePos] = useState({ top: 60, right: 24 });
+  const moreBtnRef = useRef(null);
+  const moreTimer = useRef(null);
+
+  const openMore = useCallback(() => {
+    clearTimeout(moreTimer.current);
+    const r = moreBtnRef.current?.getBoundingClientRect();
+    if (r) {
+      // Clamped so the panel stays on screen and never pushes the page sideways.
+      const right = Math.max(8, Math.min(window.innerWidth - 8, window.innerWidth - r.right));
+      setMorePos({ top: Math.round(r.bottom + 10), right: Math.round(right) });
+    }
+    setMoreOpen(true);
+  }, []);
+
+  // ⚠️ A DELAY, NOT AN IMMEDIATE CLOSE. The pointer has to cross the gap between the button and
+  // the panel; closing on the first `mouseleave` would shut the menu out from under it. 220ms is
+  // long enough to survive the transit and short enough not to feel stuck open.
+  const closeMoreSoon = useCallback(() => {
+    clearTimeout(moreTimer.current);
+    moreTimer.current = setTimeout(() => setMoreOpen(false), 220);
+  }, []);
+
+  useEffect(() => () => clearTimeout(moreTimer.current), []);
+
+  // Escape closes from anywhere, which is what a keyboard user expects of an open menu, and the
+  // focus returns to the control that opened it rather than being dropped on the document.
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { setMoreOpen(false); moreBtnRef.current?.focus(); } };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [moreOpen]);
+
+  // A fixed panel does not travel with the page, so a scroll or resize would leave it stranded
+  // beside nothing. Closing is the honest response and matches what every native menu does.
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    const close = () => setMoreOpen(false);
+    window.addEventListener('scroll', close, { passive: true });
+    window.addEventListener('resize', close);
+    return () => { window.removeEventListener('scroll', close); window.removeEventListener('resize', close); };
+  }, [moreOpen]);
   // Container-width driven, not viewport-width driven — see useNavOverflow.
   const { barRef, measureRef, visible } = useNavOverflow(links.length);
   const overflowed = links.slice(visible);
@@ -946,9 +991,20 @@ export function TopNav({ active }) {
         ))}
 
         {overflowed.length > 0 && (
-          <div style={{position:"relative", flexShrink:0}}>
-            <button type="button" onClick={() => setMoreOpen(o => !o)}
-              aria-haspopup="true" aria-expanded={moreOpen}
+          // ⚠️ HOVER AND CLICK BOTH OPEN IT, AND THE LEAVE IS DELAYED ON PURPOSE. The panel sits a
+          // few pixels below the button, so a pointer travelling towards it crosses a gap that
+          // belongs to neither element. Closing on `mouseleave` immediately would shut the menu
+          // under the cursor mid-journey; a short timer covers the transit without feeling slow.
+          // Both handlers live on the WRAPPER so moving from the button into the panel never
+          // leaves the hover region at all.
+          <div style={{position:"relative", flexShrink:0}}
+            onMouseEnter={openMore} onMouseLeave={closeMoreSoon}>
+            <button type="button"
+              ref={moreBtnRef}
+              onClick={() => (moreOpen ? setMoreOpen(false) : openMore())}
+              // Escape closes from anywhere inside the control; Enter/Space are the button's own.
+              onKeyDown={(e) => { if (e.key === 'Escape') { setMoreOpen(false); moreBtnRef.current?.focus(); } }}
+              aria-haspopup="menu" aria-expanded={moreOpen}
               style={{background:"transparent", border:"none", cursor:"pointer", padding:0,
                 fontSize:15, fontFamily:"inherit", whiteSpace:"nowrap", letterSpacing:"0.02em",
                 // An active destination hiding inside More must still look active, or the header
@@ -964,9 +1020,19 @@ export function TopNav({ active }) {
                 {/* Click-away, behind the panel and in front of everything else. */}
                 <div onClick={() => setMoreOpen(false)}
                   style={{position:"fixed", inset:0, zIndex:150}} />
-                <div style={{position:"absolute", top:"calc(100% + 10px)", right:0, zIndex:151,
+                {/* ⚠️ `fixed`, NOT `absolute`, AND THAT IS THE BUG. The nav-links row carries
+                    `overflow:hidden` + `position:relative` — load-bearing for the overflow maths —
+                    so it is simultaneously this panel's containing block AND its clipper. An
+                    absolutely-positioned menu was cropped to a 50px-tall bar: it opened correctly
+                    every time and was invisible, which reads exactly like "More does not work".
+                    Fixed positioning escapes the clip without touching the overflow algorithm;
+                    the coordinates come from the button's own rect, and `right` is clamped so the
+                    panel cannot leave the viewport or widen the page. */}
+                <div role="menu" aria-label="More destinations"
+                  style={{position:"fixed", top:morePos.top, right:morePos.right, zIndex:151,
                   background:C.white, border:`1px solid ${C.border}`, borderRadius:8,
-                  boxShadow:"0 8px 28px rgba(0,0,0,0.16)", padding:"6px 0", minWidth:190}}>
+                  boxShadow:"0 8px 28px rgba(0,0,0,0.16)", padding:"6px 0", minWidth:190,
+                  maxHeight:"calc(100vh - 70px)", overflowY:"auto"}}>
                   {overflowed.map(l => (
                     <a key={l} href={hrefFor(l)} onClick={() => setMoreOpen(false)}
                       style={{display:"block", padding:"9px 16px", fontSize:14, textDecoration:"none",
