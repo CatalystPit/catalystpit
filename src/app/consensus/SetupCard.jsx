@@ -98,21 +98,18 @@ function FamilyBlock({ f, compact }) {
       )}
       {!compact && (
         <div style={{ fontSize: 10.5, color: C.dim, marginTop: 2 }}>
+          {/* ⚠️ THE PUBLIC TIME STAYS; THE SECOND VERIFY LINK DOES NOT. Every card carried a
+              per-record "Verify →" beside each timestamp AND an "Open evidence →" at the foot —
+              two actions into the same evidence, competing for the same click. The foot action is
+              the single path now. Source and public time are untouched. */}
           Public {f.publicAgo}
-          {/* Only ever the stored canonical URL. Institutions have none — there is no per-ticker
-              13F document — and a fabricated link that does not open the filing looks like
-              verification, which is worse than no link at all. */}
-          {f.url
-            ? <> · <a href={f.url} target="_blank" rel="noopener noreferrer"
-              style={{ color: C.green, textDecoration: 'none', fontWeight: 600 }}>Verify →</a></>
-            : null}
         </div>
       )}
     </div>
   );
 }
 
-export default function SetupCard({ row }) {
+export default function SetupCard({ row, bindTicker = null }) {
   const [open, setOpen] = useState(false);
   const s = row?.setup;
   const k = row?.canonical;
@@ -140,7 +137,12 @@ export default function SetupCard({ row }) {
         <TickerLogo symbol={row.ticker} size={28} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {/* ⚠️ THE HOVER IS SPREAD ONTO THE EXISTING ANCHOR, NOT A WRAPPER. The link keeps its
+                href and its click; the preview is pointerEvents:'none' and fixed-positioned, so it
+                can neither swallow the navigation nor be clipped by the card. Same binder pattern
+                as News, Screener, Dividends and the Heatmap movers. */}
             <a href={`/ticker/${encodeURIComponent(row.ticker)}`} className="cp-tkr"
+              {...(bindTicker ? bindTicker(row.ticker) : {})}
               style={{ fontSize: 15, fontWeight: 800, color: C.ink, textDecoration: 'none' }}>
               {row.ticker}
             </a>
@@ -191,11 +193,11 @@ export default function SetupCard({ row }) {
         )))}
       </div>
 
-      {/* ── MARKET STRUCTURE — what price actually did, from public time ── */}
+      {/* ── MARKET REACTION — what price did AFTER the evidence became public ── */}
       {(row.market?.lines?.length > 0 || row.market?.explain) && (
         <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.surface}` }}>
           <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.7px', color: C.dim }}>
-            MARKET STRUCTURE · <span style={{ color: market.fg }}>{market.label.toUpperCase()}</span>
+            MARKET REACTION · <span style={{ color: market.fg }}>{market.label.toUpperCase()}</span>
           </div>
           {row.market.lines.slice(0, open ? 9 : 2).map((l, i) => (
             <div key={i} style={{ fontSize: 12, color: C.text, lineHeight: 1.45 }}>{l}</div>
@@ -207,6 +209,33 @@ export default function SetupCard({ row }) {
             // Stated plainly so nothing here is mistaken for live intraday data.
             <div style={{ fontSize: 10, color: C.dim, marginTop: 5, lineHeight: 1.45 }}>
               {row.market.basis}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── MARKET STRUCTURE — where price sits relative to daily-chart levels ──
+           A different question from the reaction above, so it gets its own block rather than
+           sharing a list. Levels are computed server-side in structure-levels.mjs; this renders
+           facts and contains no technical-analysis logic of its own. */}
+      {row.market?.structureLines?.length > 0 && (
+        <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.surface}` }}>
+          <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.7px', color: C.dim }}>
+            MARKET STRUCTURE
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 3 }}>
+            {row.market.structureLines.map((l, i) => (
+              <div key={i}>
+                <div style={{ fontSize: 12, fontWeight: l.emphasis ? 700 : 600,
+                  color: l.emphasis ? C.ink : C.text, lineHeight: 1.35 }}>{l.headline}</div>
+                <div style={{ fontSize: 11, color: C.muted, lineHeight: 1.35 }}>{l.detail}</div>
+              </div>
+            ))}
+          </div>
+          {open && row.market.structure?.asOf && (
+            <div style={{ fontSize: 10, color: C.dim, marginTop: 5 }}>
+              Completed daily sessions to {row.market.structure.asOf}. Swing levels are confirmed by
+              three sessions either side, so none uses a candle later than its own confirmation.
             </div>
           )}
         </div>

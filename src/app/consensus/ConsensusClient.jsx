@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react';
 import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
 import SetupCard from './SetupCard';
+import { useTickerHover, TickerHoverPreview, PREVIEW_1Y } from '../../components/TickerHoverChart';
 import ConsensusRow, { STATE_UI } from './ConsensusRow';
 import { BOARD_FILTERS } from '../../lib/consensus/synthesis.mjs';
 import { SETUP_FILTERS, filterSetups } from '../../lib/consensus/setup.mjs';
@@ -65,6 +66,10 @@ export default function ConsensusClient() {
   const [loadError, setLoadError] = useState(false);
   const [degraded, setDegraded] = useState(false);
   const [reloadAt, setReloadAt] = useState(0);
+  // ⚠️ ONE HOVER OWNER FOR THE WHOLE BOARD — one open timer, one popup, one implementation, as
+  // every other surface does it. Consensus asks for a YEAR rather than the usual 3M: these are
+  // research cards about a company's situation, and a quarter is too short to see the shape.
+  const { hover, bind } = useTickerHover();
   const [filter, setFilter] = useState('all');
   const [sort, setSort] = useState('default');
 
@@ -168,7 +173,7 @@ export default function ConsensusClient() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {list.map((r) => <SetupCard key={r.ticker} row={r} />)}
+            {list.map((r) => <SetupCard key={r.ticker} row={r} bindTicker={bind} />)}
 
             {locked > 0 && (
               <div style={{ position: 'relative', marginTop: 2 }}>
@@ -202,6 +207,10 @@ export default function ConsensusClient() {
           {data?.builtAt && <> · Built {new Date(data.builtAt).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET</>}
         </div>
       </div>
+      {/* ⚠️ OUTSIDE EVERY CARD. A popup rendered inside a card would be clipped by that card;
+          fixed positioning plus a top-level mount is what the other four hover surfaces rely on. */}
+      <TickerHoverPreview hover={hover} {...PREVIEW_1Y} />
+
       <Footer />
     </div>
   );

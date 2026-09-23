@@ -32,6 +32,8 @@
 // The database is imported LAZILY, inside loadBars. levelFacts() and marketNarrative() are pure and
 // must stay importable — and therefore testable — without a database connection.
 
+import { structureFacts, structureLines as linesForStructure } from './structure-levels.mjs';
+
 export const MARKET_FACTS_VERSION = 'consensus_v3_market_facts';
 
 /** Roughly 52 weeks of sessions plus padding, which is all any level below needs. */
@@ -128,23 +130,11 @@ export function marketNarrative({ reaction, levels, verdict, join, driverLabel =
     }
   }
 
-  // 2. CURRENT STRUCTURE — end-of-day facts, separate from the event reaction.
-  if (levels) {
-    if (Number.isFinite(levels.changePct)) {
-      lines.push(`${levels.changePct >= 0 ? '+' : ''}${levels.changePct.toFixed(1)}% last session`
-        + ` · ${levels.changePct >= 0 ? 'above' : 'below'} prior close`);
-    }
-    if (Number.isFinite(levels.fiveDayPct)) {
-      lines.push(`5D ${levels.fiveDayPct >= 0 ? '+' : ''}${levels.fiveDayPct.toFixed(1)}%`);
-    }
-    if (levels.at52wHigh) lines.push('At a 52-week closing high');
-    else if (levels.at52wLow) lines.push('At a 52-week closing low');
-    else if (levels.at20dHigh) lines.push('At a 20-day closing high');
-    else if (levels.at20dLow) lines.push('At a 20-day closing low');
-    else if (Number.isFinite(levels.pctFrom20dHigh)) {
-      lines.push(`${levels.pctFrom20dHigh.toFixed(1)}% below the 20-day high`);
-    }
-  }
+  // ⚠️ THE GENERIC-RETURN BLOCK THAT USED TO SIT HERE IS GONE. It emitted "+1.4% last session",
+  // "5D +0.7%" and "-39.7% below the 20-day high" under a MARKET STRUCTURE heading. The first two
+  // are performance a trader reads anywhere and say nothing about location; the third names a
+  // distance to a level it never showed. Location now comes from structure-levels.mjs, which names
+  // the level, and this function is left as what it always was: the event reaction.
 
   // 3. THE JOIN, in words. Inside the dead zone this is never confirming and never diverging.
   let explain = null;
@@ -168,13 +158,21 @@ export function marketNarrative({ reaction, levels, verdict, join, driverLabel =
 
 export async function marketFactsFor(ticker, { driver = null, reaction = null, join = null, verdict = 'UNAVAILABLE', driverLabel } = {}) {
   let levels = null;
+  let structure = null;
+  let structureLines = [];
   try {
-    levels = levelFacts(await loadBars(ticker));
+    // ⚠️ ONE BAR LOAD FOR BOTH. Structure and levels read the same completed-session candles, so
+    // adding structure costs no extra query — which is what keeps this out of the React card and
+    // free of an N+1.
+    const bars = await loadBars(ticker);
+    levels = levelFacts(bars);
+    structure = structureFacts(bars);
+    structureLines = linesForStructure(structure);
   } catch (e) {
     // A candle-query failure is unknown structure, not flat structure — but it is LOGGED, because a
     // silent null here is exactly how the level facts went missing from every card unnoticed.
     console.warn(`[market-facts] ${ticker} levels unavailable: ${e.message}`);
-    levels = null;
+    levels = null; structure = null; structureLines = [];
   }
   const narrative = marketNarrative({ reaction, levels, verdict, join, driverLabel });
   return {
@@ -185,6 +183,10 @@ export async function marketFactsFor(ticker, { driver = null, reaction = null, j
     joinState: join?.state || null,
     meaningfulReaction: Boolean(reaction?.meaningful),
     levels,
+    // WHERE PRICE SITS — named levels from completed daily candles. Separate from the reaction
+    // above, which is what price DID after the evidence became public.
+    structure,
+    structureLines,
     reaction: driver?.reaction
       ? { anchorDate: driver.reaction.anchorDate, anchorBasis: driver.reaction.anchorBasis,
         benchmark: driver.reaction.benchmark, horizons: driver.reaction.horizons }

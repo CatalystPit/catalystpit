@@ -14,6 +14,14 @@ import CompactChart from './chart/CompactChart';
 // navigates to the ticker page, and can never trap keyboard focus.
 
 const W = 360, H = 224;
+
+// ⚠️ THE 1Y VARIANT IS WIDER BECAUSE A YEAR DOES NOT FIT IN 360px. `fixRightEdge` plus a fixed
+// barSpacing means the card's WIDTH decides how many candles are reachable, not maxBars: at 4px
+// across a 360px card only ~75 are visible, so asking for 1Y there would download ~250 candles to
+// draw a quarter of them — the exact waste the 3M narrowing was introduced to stop, inverted.
+// 2px is CompactChart's own minBarSpacing floor, so 560px of card (~500px of plot once the price
+// axis takes its width) is what makes ~250 sessions both requested AND rendered.
+export const PREVIEW_1Y = Object.freeze({ range: '1Y', maxBars: 252, barSpacing: 2, width: 560, height: 300, label: '1Y' });
 const OPEN_DELAY_MS = 220;   // long enough that sweeping the cursor down a column opens nothing
 
 /**
@@ -45,7 +53,7 @@ const OPEN_DELAY_MS = 220;   // long enough that sweeping the cursor down a colu
  * stored tail is stale. Measured on JAGX: 62 candles, `upstream: false`, `fetched: 0`. Sweeping a
  * cursor across ten tickers is ten Postgres reads and no vendor requests at all.
  */
-function MiniChart({ symbol }) {
+function MiniChart({ symbol, range, maxBars, barSpacing, height }) {
   return (
     // ⚠️ `key` FORCES A FRESH MOUNT PER SYMBOL, which is the structural version of the SPY→AAPL
     // fix. CompactChart already disposes its chart on cleanup and guards its async fetch, but a
@@ -55,7 +63,7 @@ function MiniChart({ symbol }) {
       <CompactChart
         key={symbol}
         symbol={symbol}
-        height={H - 34}
+        height={height}
         // The preview contract: a price axis, a date axis and the latest price. No toolbar, no
         // drawings, no indicators, no evidence markers — CompactChart mounts none of them.
         showAxes
@@ -64,9 +72,9 @@ function MiniChart({ symbol }) {
         // many legibly across the 360px card once the price axis has taken its width.
         // ⚠️ ASK FOR 3 MONTHS, NOT THE DAILY TIMEFRAME'S NATURAL 5Y. Without this every hover
         // downloads ~1,250 candles to draw ~62 of them.
-        range="3M"
-        maxBars={66}
-        barSpacing={4}
+        range={range}
+        maxBars={maxBars}
+        barSpacing={barSpacing}
       />
     </div>
   );
@@ -105,15 +113,24 @@ export function useTickerHover() {
  * cross the viewport edge, and is clamped vertically so it never rides off the top or bottom. The
  * top clamp is what keeps it clear of the fixed navigation on the first rows of a table.
  */
-export function TickerHoverPreview({ hover }) {
+/**
+ * @param range/maxBars/barSpacing/width/height/label  OPTIONAL, defaulting to the 3M preview every
+ *        existing surface already uses. Pit Consensus passes PREVIEW_1Y; News, Screener, Dividends
+ *        and the Heatmap movers pass nothing and are byte-identical to before.
+ */
+export function TickerHoverPreview({
+  hover, range = '3M', maxBars = 66, barSpacing = 4, width = W, height = H, label = '3M',
+}) {
   if (!hover) return null;
   const rc = hover.rect;
-  let left = rc.right + 10; if (left + W > window.innerWidth - 8) left = Math.max(8, rc.left - W - 10);
-  let top = rc.top - 8; if (top + H > window.innerHeight - 8) top = window.innerHeight - H - 8; if (top < 8) top = 8;
+  // ⚠️ THE CLAMP MUST USE THE ACTUAL CARD SIZE, NOT THE MODULE DEFAULT. A 560px card clamped
+  // against 360 would hang 200px off the right edge on a narrow viewport.
+  let left = rc.right + 10; if (left + width > window.innerWidth - 8) left = Math.max(8, rc.left - width - 10);
+  let top = rc.top - 8; if (top + height > window.innerHeight - 8) top = window.innerHeight - height - 8; if (top < 8) top = 8;
   return (
-    <div style={{ position: 'fixed', top, left, width: W, height: H, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 8px 28px rgba(0,0,0,0.18)', zIndex: 70, pointerEvents: 'none', overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '5px 10px', fontSize: 11, fontWeight: 700, color: C.muted, borderBottom: `1px solid ${C.surface}`, background: C.surface }}>{hover.sym} · Daily · 3M</div>
-      <div style={{ position: 'absolute', top: 25, left: 0, right: 0, bottom: 0 }}><MiniChart symbol={hover.sym} /></div>
+    <div style={{ position: 'fixed', top, left, width, height, background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 8px 28px rgba(0,0,0,0.18)', zIndex: 70, pointerEvents: 'none', overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '5px 10px', fontSize: 11, fontWeight: 700, color: C.muted, borderBottom: `1px solid ${C.surface}`, background: C.surface }}>{`${hover.sym} · Daily · ${label}`}</div>
+      <div style={{ position: 'absolute', top: 25, left: 0, right: 0, bottom: 0 }}><MiniChart symbol={hover.sym} range={range} maxBars={maxBars} barSpacing={barSpacing} height={height - 34} /></div>
     </div>
   );
 }
