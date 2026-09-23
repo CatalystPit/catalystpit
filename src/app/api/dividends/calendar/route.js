@@ -1,6 +1,6 @@
 import { calendarRange, calendarCount, dividendSyncState } from '../../../../lib/dividends/dividend-store';
 import { dividendsVisible, dividendsDisplayMode } from '../../../../lib/dividends/providers/index.mjs';
-import { dividendYieldPct } from '../../../../lib/dividends/dividend-event.mjs';
+import { dividendYieldPct, marketCapApplies } from '../../../../lib/dividends/dividend-event.mjs';
 import { numParam } from '../../../../lib/dividends/dividend-view.mjs';
 
 // THE DIVIDEND CALENDAR API.
@@ -86,6 +86,11 @@ export async function GET(request) {
         company: r.company || null,
         sector: r.sector || null,
         marketCap: num(r.market_cap),
+        // ⚠️ WHETHER A BLANK MEANS "NOT APPLICABLE" OR "MISSING". An ETF has no market
+        // capitalisation — it has net assets, a different quantity — so rendering "—" told the
+        // reader we had failed to find a number that does not exist. This labels the blank; it
+        // never fills one, and never hides a cap the data actually has.
+        marketCapApplies: marketCapApplies(r.asset_type),
         exDividendDate: r.ex_dividend_date ? String(r.ex_dividend_date).slice(0, 10) : null,
         // Never inferred. A provider that has not published one leaves this null and the UI shows "—".
         paymentDate: r.payment_date ? String(r.payment_date).slice(0, 10) : null,

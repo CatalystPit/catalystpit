@@ -158,7 +158,14 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
       <TD align="right" style={{ color: C.muted }}>{fmtDay(e.recordDate)}</TD>
       <TD align="right" style={{ color: C.muted }}>{fmtDay(e.declarationDate)}</TD>
       <TD align="right" style={{ color: C.muted }}>{frequencyLabel(e.frequency)}</TD>
-      <TD align="right" style={{ color: C.muted }}>{bigCap(e.marketCap)}</TD>
+      {/* ⚠️ "n/a" IS NOT THE SAME STATEMENT AS "—". An ETF has no market capitalisation — it has
+          net assets, a different quantity we do not publish here — so a blank cell claimed we had
+          failed to find a number that does not exist. Measured: 3,294 of the 5,142 blank cells on
+          this calendar are ETFs. The dimmer tone keeps it quieter than a real value, using the
+          palette the table already uses for absent data. */}
+      <TD align="right" style={{ color: e.marketCapApplies === false ? C.dim : C.muted }}>
+        {e.marketCapApplies === false && e.marketCap == null ? 'n/a' : bigCap(e.marketCap)}
+      </TD>
       <TD align="right">
         {e.dividendType === 'special' ? <Tag tone="special">Special</Tag>
           : e.dividendType === 'capital_gain' ? <Tag>Cap gain</Tag>

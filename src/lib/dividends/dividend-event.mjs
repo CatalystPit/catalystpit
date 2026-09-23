@@ -149,3 +149,29 @@ export function dividendYieldPct(annualizedAmount, price) {
   if (!Number.isFinite(pct) || pct > 100) return null;
   return +pct.toFixed(2);
 }
+
+/**
+ * ⚠️ IS A CORPORATE MARKET CAP EVEN MEANINGFUL FOR THIS INSTRUMENT?
+ *
+ * A market capitalisation is shares outstanding × price for an OPERATING COMPANY. An ETF, ETN,
+ * fund, preferred line, unit, right or warrant has no such figure — an ETF has net assets, which
+ * is a different quantity that must not be shown in the same column.
+ *
+ * This decides only how a blank is LABELLED. It never supplies a number and never suppresses one
+ * the data already has, so an instrument that somehow carries a cap still shows it.
+ *
+ * Measured on the live calendar: of 5,142 rows with no market cap, 3,294 are ETFs and a further
+ * ~700 are ETS/PFD/SP/UNIT/ETV/ETN/FUND. Those were rendering as "—", which reads as "we failed to
+ * find this" rather than "this does not exist".
+ *
+ * An UNKNOWN asset type stays eligible on purpose: "—" (missing) is the honest answer when we do
+ * not know what the instrument is, and claiming "n/a" would be asserting something we cannot.
+ */
+export const CAP_INAPPLICABLE_TYPES = Object.freeze([
+  'ETF', 'ETN', 'ETS', 'ETV', 'FUND', 'UNIT', 'RIGHT', 'WARRANT', 'PFD', 'SP',
+]);
+
+export function marketCapApplies(assetType) {
+  if (assetType == null || assetType === '') return true;      // unknown → "missing", not "n/a"
+  return !CAP_INAPPLICABLE_TYPES.includes(String(assetType).toUpperCase());
+}

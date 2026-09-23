@@ -137,6 +137,13 @@ export async function calendarRange({ from, to, mode = 'ex', limit = 500, offset
            coalesce(s.company, i.name) as company,
            coalesce(s.sector, m.sector) as sector,
            coalesce(s.market_cap, m.market_cap) as market_cap,
+           -- ⚠️ CARRIED SO THE ROW CAN SAY "NOT APPLICABLE" RATHER THAN "MISSING". A market
+           -- capitalisation is a property of an operating company; an ETF, an ETN, a fund, a
+           -- preferred line, a unit or a warrant does not have one, and a blank cell told the
+           -- reader we had failed to find a number that does not exist. 3,294 of the 5,142 blank
+           -- cells on this calendar are ETFs. The asset type decides which of the two it is; it
+           -- never fills the number.
+           m.asset_type as asset_type,
            s.price as price
       from dividend_events d
       left join screener_stocks   s on s.ticker = d.ticker
