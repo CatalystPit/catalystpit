@@ -20,6 +20,7 @@ import {
 import { familyFactSheet, evidenceFacts, publicAgo } from './facts.mjs';
 import { marketFactsFor } from './market-facts.js';
 import { FAMILY } from '../evidence/model.mjs';
+import { TRADEABLE_ASSET_TYPES } from '../heatmap/heatmap-universe.mjs';
 import { authorityReading, priceContext, READING, READING_LABEL, PRICE_CONTEXT_LABEL } from './authority.mjs';
 
 export const SETUP_BOARD_VERSION = SETUP_VERSION;
@@ -38,10 +39,16 @@ export const SETUP_BOARD_VERSION = SETUP_VERSION;
 //     200 ->  29 rows          600 ->  50 rows  (50s)
 //    1500 ->  93 rows (87s)   3267 ->  99 rows (180s, full coverage)
 //
-// 1500 is where the curve flattens: doubling to full coverage adds SIX rows for twice the time,
-// because the selector's ranking already concentrates the real evidence near the top. 87s inside a
-// 300s cron leaves room for a slow day rather than spending it on a tail that yields almost nothing.
-export const EVALUATE_LIMIT = 1500;
+// ⚠️ RAISED AGAIN, THIS TIME TO STOP BINDING AT ALL. 1500 still truncated a 3,267-candidate pool,
+// so 1,767 companies with real in-window evidence were never evaluated — a stock could be absent
+// from Consensus purely because it sorted below an arbitrary cut, which is the one failure mode
+// full-market coverage has to rule out. 6000 is above any candidate count the evidence windows can
+// currently produce, so the LIMIT no longer decides anything; the evidence windows do.
+//
+// It is a ceiling, not a target: the pool is whatever has evidence, measured at 3,267 today.
+// Full coverage costs ~180s against the cron's 300s maxDuration, and a build that overruns is
+// killed before publishing, so the previous board survives rather than a partial one shipping.
+export const EVALUATE_LIMIT = 6000;
 
 /**
  * Candidate selection, widened.
@@ -418,8 +425,20 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
 /** Assemble the board: evaluate candidates, keep only what qualifies, order by research relevance. */
 export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALUATE_LIMIT, resolve, resolveConsensus } = {}) {
   const candidates = await selectSetupCandidates(db, sql, { limit });
+  // ⚠️ THE SCOPE LINE NEEDS A DENOMINATOR, AND IT MUST BE THE CANONICAL ONE. Reusing the screener's
+  // own asset-type taxonomy rather than inventing a second definition of "a US stock" — a reader
+  // seeing "99 setups from N companies" has to be able to trust N. One extra count per BUILD, never
+  // per view.
+  let universe = null;
+  try {
+    const u = await db.execute(sql`select count(*)::int n from screener_stocks s
+      left join screener_meta m on m.ticker = s.ticker
+      where coalesce(m.asset_type,'') = any(${`{${TRADEABLE_ASSET_TYPES.join(',')}}`}::text[])
+        and coalesce(s.market_cap, m.market_cap) > 0`);
+    universe = Number((Array.isArray(u) ? u : u?.rows || [])[0]?.n) || null;
+  } catch { universe = null; }
   if (!candidates.length) {
-    return { rows: [], candidates: 0, evaluated: 0, failed: 0, builtAt: new Date(now).toISOString() };
+    return { rows: [], candidates: 0, evaluated: 0, failed: 0, universe, builtAt: new Date(now).toISOString() };
   }
 
   const built = [];
@@ -459,6 +478,7 @@ export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALU
     // material but no longer current.
     droppedNoEvidence: built.length - qualified.length,
     droppedStale: qualified.length - active.length,
+    universe,
     failed,
     builtAt: new Date(now).toISOString(),
   };

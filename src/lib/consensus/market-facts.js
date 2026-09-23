@@ -120,7 +120,12 @@ export function marketNarrative({ reaction, levels, verdict, join, driverLabel =
   //    is REPORTED whatever its size, but it is only called meaningful once it clears the floor on
   //    both the absolute and the SPY-relative leg. V3 called +0.8% 'diverging'; that was the 25th
   //    to 50th percentile of ordinary daily noise wearing a market opinion.
-  if (reaction && Number.isFinite(reaction.abs)) {
+  // ⚠️ WHEN THE REACTION CANNOT BE MEASURED, SAY SO AND STOP. The old card filled this space with
+  // "+54.3% last session · above prior close" and "5D +41.6%" — returns that have nothing to do
+  // with the evidence and are not a reaction to anything. An empty, honest section beats a full,
+  // irrelevant one.
+  const measured = Boolean(reaction && Number.isFinite(reaction.abs));
+  if (measured) {
     const sign = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
     lines.push(`${sign(reaction.abs)} in the session after it became public`
       + (Number.isFinite(reaction.rel) ? ` · ${sign(reaction.rel)} vs SPY` : ''));
@@ -149,6 +154,7 @@ export function marketNarrative({ reaction, levels, verdict, join, driverLabel =
 
   return {
     lines,
+    measured,
     explain,
     // Stated so no reader mistakes any of this for live intraday data.
     basis: 'End-of-day closes. Intraday, volume and VWAP measures are unavailable on the current '

@@ -106,6 +106,12 @@ export default function ConsensusClient() {
       || x.ticker.localeCompare(y.ticker));
   }
   const counts = Object.fromEntries(FILTERS.map((x) => [x.key, filterSetups(all, x.key).length]));
+  // ⚠️ SCOPE, FROM COMPUTED VALUES ONLY. "Positive 46" invites the reading "there are 46 positive
+  // stocks in the market", which is false — it is 46 that currently MEET the evidence criteria.
+  // Both numbers come from the materialised board; neither is hardcoded.
+  const scope = all.length && data?.universe
+    ? `${all.length} current setups from ${data.universe.toLocaleString()} eligible US stocks · evidence windows differ by source`
+    : null;
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -122,7 +128,12 @@ export default function ConsensusClient() {
         {/* DISCOVERY CONTROLS. Every filter maps to canonical states, so a filter can never show a
             row whose own label contradicts it. None of these ranks securities by expected return. */}
         {!loading && !loadError && !degraded && all.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ marginBottom: 14 }}>
+          {/* ⚠️ ONE LINE, NOT A METHODOLOGY ESSAY. It exists to stop "Positive 50" being read as
+              "there are 50 positive stocks in the market", and to say the evidence windows are
+              source-specific rather than one arbitrary lookback. Both numbers are computed. */}
+          {scope && <div style={{ fontSize: 10.5, color: C.dim, marginBottom: 8 }}>{scope}</div>}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {FILTERS.filter((x) => x.key === 'all' || counts[x.key] > 0).map((x) => (
               <button key={x.key} type="button" onClick={() => setFilter(x.key)}
                 style={{
@@ -142,6 +153,7 @@ export default function ConsensusClient() {
                 {SORTS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
               </select>
             </span>
+          </div>
           </div>
         )}
 

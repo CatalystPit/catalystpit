@@ -151,8 +151,19 @@ L('\n=== ⚠️ REACTION AND STRUCTURE ARE DIFFERENT QUESTIONS ===');
     !/REACTION_FLOOR_PCT\s*=|floorPct\s*=/.test(mf));
 
   const card = await read('../src/app/consensus/SetupCard.jsx');
-  ok('the card has a MARKET REACTION block', /MARKET REACTION/.test(card));
-  ok('…and a separate MARKET STRUCTURE block', /MARKET STRUCTURE\n/.test(card) || /MARKET STRUCTURE</.test(card));
+  const structSrc = await read('../src/lib/consensus/structure-levels.mjs');
+  ok('the card has a REACTION TO EVIDENCE block', /REACTION TO EVIDENCE/.test(card));
+  ok('…and a separate DAILY CHART block', /DAILY CHART/.test(card));
+  // ⚠️ FAIL CLOSED RATHER THAN FILL THE SPACE — the whole defect was substituting unrelated return
+  // statistics whenever the evidence reaction could not be measured.
+  ok('⚠️ an unmeasurable reaction says so instead of substituting returns',
+    /Not measured yet/.test(card) && /!row\.market\?\.measured/.test(card));
+  ok('…and `measured` is derived from the reaction, never from levels',
+    /const measured = Boolean\(reaction && Number\.isFinite\(reaction\.abs\)\)/.test(mf));
+  ok('⚠️ stale and distant pivots are rejected BEFORE "nearest" is asked',
+    /MAX_PIVOT_AGE_SESSIONS/.test(structSrc) && /const relevant = \(p\) =>/.test(structSrc));
+  ok('…a pivot older than six months cannot be a level', S.MAX_PIVOT_AGE_SESSIONS === 126);
+  ok('…nor one more than 25% from price', S.MAX_LEVEL_DISTANCE_PCT === 25);
   ok('⚠️ the card contains NO technical-analysis logic',
     !/swing|pivot|movingAverage|\.slice\(-20\)|reduce\(/.test(card),
     'levels are computed in the shared layer and consumed as facts');

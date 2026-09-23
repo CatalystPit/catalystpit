@@ -45,6 +45,26 @@ export const PIVOT_LOOKBACK_SESSIONS = 252;
  */
 export const NEAR_LEVEL_PCT = 2.0;
 
+/**
+ * ⚠️ NEAREST IS NOT THE SAME AS RELEVANT, AND PROXIMITY ALONE WILL PRINT NONSENSE.
+ *
+ * Two rejections, because the nearest confirmed pivot can fail in opposite directions:
+ *
+ *   TOO OLD   A swing low from eleven months ago is history, not context. Price has traded through
+ *             that region dozens of times since and nobody is watching it. 126 sessions is about
+ *             six months — long enough to hold a real base, short enough that the level is still
+ *             part of the current chart.
+ *   TOO FAR   A level 60% below spot locates nothing. It is arithmetically the nearest pivot below
+ *             price only because everything nearer was taken out, which is precisely when it stops
+ *             being support. 25% is wide enough for a volatile microcap to keep a real level and
+ *             narrow enough to exclude one nobody would draw.
+ *
+ * Both are conservative and both FAIL CLOSED: a rejected level is omitted, never replaced with a
+ * 20-day high wearing the word "resistance".
+ */
+export const MAX_PIVOT_AGE_SESSIONS = 126;
+export const MAX_LEVEL_DISTANCE_PCT = 25;
+
 export const SESSIONS_20D = 20;
 export const MA_SHORT = 50;
 export const MA_LONG = 200;
@@ -116,8 +136,16 @@ export function structureFacts(bars) {
 
   // Nearest level on each side of the current close. "Support" is the highest confirmed swing low
   // still BELOW price; "resistance" the lowest confirmed swing high still ABOVE it.
-  const below = lows.filter((p) => p.price < close).sort((x, y) => y.price - x.price);
-  const above = highs.filter((p) => p.price > close).sort((x, y) => x.price - y.price);
+  // ⚠️ RECENCY AND RELEVANCE ARE APPLIED BEFORE "NEAREST" IS EVEN ASKED. Filtering after the sort
+  // would still let a stale or absurd level win when it happens to be closest.
+  const ageIndex = new Map(recent.map((x, i) => [x.date, recent.length - 1 - i]));
+  const relevant = (p) => {
+    const age = ageIndex.get(p.date);
+    if (!Number.isFinite(age) || age > MAX_PIVOT_AGE_SESSIONS) return false;
+    return Math.abs(pctFrom(p.price, close)) <= MAX_LEVEL_DISTANCE_PCT;
+  };
+  const below = lows.filter((p) => p.price < close && relevant(p)).sort((x, y) => y.price - x.price);
+  const above = highs.filter((p) => p.price > close && relevant(p)).sort((x, y) => x.price - y.price);
   const support = below[0] || null;
   const resistance = above[0] || null;
 

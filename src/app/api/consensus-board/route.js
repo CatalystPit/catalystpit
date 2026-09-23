@@ -140,6 +140,8 @@ export async function GET() {
     status: readStatus === 'ok' && !full.length ? 'empty' : readStatus,
     builtAt: board.builtAt ?? null,
     candidates: board.candidates ?? null,
+    // The denominator for the scope line — the canonical tradeable-equity count, computed at build.
+    universe: board.universe ?? null,
     // Surfaced so a partially-built board is visibly partial rather than quietly short.
     failed: board.failed ?? 0,
     // FRESHNESS METADATA — for validation, stale detection and operations, not for the UI.

@@ -193,26 +193,26 @@ export default function SetupCard({ row, bindTicker = null }) {
         )))}
       </div>
 
-      {/* ── MARKET REACTION — what price did AFTER the evidence became public ── */}
-      {(row.market?.lines?.length > 0 || row.market?.explain) && (
-        <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.surface}` }}>
-          <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.7px', color: C.dim }}>
-            MARKET REACTION · <span style={{ color: market.fg }}>{market.label.toUpperCase()}</span>
-          </div>
-          {row.market.lines.slice(0, open ? 9 : 2).map((l, i) => (
+      {/* ── REACTION TO EVIDENCE — what price did AFTER it became public. Nothing else. ── */}
+      <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.surface}` }}>
+        <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.7px', color: C.dim }}>
+          REACTION TO EVIDENCE{row.market?.measured && <> · <span style={{ color: market.fg }}>{market.label.toUpperCase()}</span></>}
+        </div>
+        {/* ⚠️ FAIL CLOSED. Too early, or no measurable window, means we say so — never a
+            last-session or 5D return standing in for a reaction it is not. */}
+        {!row.market?.measured ? (
+          <div style={{ fontSize: 12, color: C.muted }}>Not measured yet</div>
+        ) : (
+        <div>
+          {row.market.lines.slice(0, open ? 9 : 3).map((l, i) => (
             <div key={i} style={{ fontSize: 12, color: C.text, lineHeight: 1.45 }}>{l}</div>
           ))}
           {open && row.market.explain && (
             <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>{row.market.explain}</div>
           )}
-          {open && (
-            // Stated plainly so nothing here is mistaken for live intraday data.
-            <div style={{ fontSize: 10, color: C.dim, marginTop: 5, lineHeight: 1.45 }}>
-              {row.market.basis}
-            </div>
-          )}
         </div>
-      )}
+        )}
+      </div>
 
       {/* ── MARKET STRUCTURE — where price sits relative to daily-chart levels ──
            A different question from the reaction above, so it gets its own block rather than
@@ -221,7 +221,7 @@ export default function SetupCard({ row, bindTicker = null }) {
       {row.market?.structureLines?.length > 0 && (
         <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px solid ${C.surface}` }}>
           <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.7px', color: C.dim }}>
-            MARKET STRUCTURE
+            DAILY CHART
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 3 }}>
             {row.market.structureLines.map((l, i) => (
