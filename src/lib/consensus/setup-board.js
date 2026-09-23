@@ -22,7 +22,7 @@ import { marketFactsFor } from './market-facts.js';
 import { FAMILY } from '../evidence/model.mjs';
 import { TRADEABLE_ASSET_TYPES } from '../heatmap/heatmap-universe.mjs';
 import { authorityReading, priceContext, READING, READING_LABEL, PRICE_CONTEXT_LABEL } from './authority.mjs';
-import { highSignificance } from './high-significance.mjs';
+import { highSignificance, SIGNIFICANCE_SOURCE } from './high-significance.mjs';
 
 export const SETUP_BOARD_VERSION = SETUP_VERSION;
 
@@ -332,7 +332,16 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
     // not feed direction, confidence or qualification — a row can be high significance and Negative.
     highSignificance: (() => {
       const h = highSignificance(evidence);
-      return { high: h.high, reasons: h.reasons.slice(0, 3), count: h.reasons.length };
+      return {
+        high: h.high,
+        reasons: h.reasons.slice(0, 3),
+        count: h.reasons.length,
+        // ⚠️ COMPUTED FROM THE FULL LIST, BEFORE THE SLICE. The reasons are trimmed to three for
+        // the wire, so testing the trimmed array would drop a qualifying insider reason on a row
+        // that happened to carry more than three. No new rule — this is the SAME qualification
+        // highSignificance() already performed, asked a narrower question.
+        insider: h.reasons.some((r) => r.source === SIGNIFICANCE_SOURCE.INSIDER),
+      };
     })(),
 
     // ⚠️ THE PLAIN-LANGUAGE ANSWER, derived in authority.mjs and carried whole so no surface

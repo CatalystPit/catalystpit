@@ -259,8 +259,14 @@ L('\n=== FILTERS MAP TO REAL ARCHETYPES ===');
   ok('every filter names archetypes that exist',
     SETUP_FILTERS.every((f) => !f.setups || f.setups.every((s) => s in SETUP)));
   // ⚠️ NOT A RECOMMENDATION SURFACE.
+  // ⚠️ WORD BOUNDARIES, BECAUSE THE SUBSTRING FORM FLAGS A DESCRIPTION AS A RECOMMENDATION.
+  // "Major insider buying" says what insiders DID; /buy/i matched it and reported a factual label
+  // as a pick. The risk this guards is a RATING — "Strong Buy", "Best buys", "Top picks" — all of
+  // which still match below, while a gerund describing someone else's disclosed action does not.
   ok('no filter is phrased as a pick or a rating',
-    !/best|top|pick|buy|sell|strongest|winner/i.test(SETUP_FILTERS.map((f) => f.label).join(' ')));
+    !/\b(best|top|pick|picks|buy|buys|sell|sells|strongest|winner)\b/i.test(
+      SETUP_FILTERS.map((f) => f.label).join(' ')),
+    SETUP_FILTERS.map((f) => f.label).join(' | '));
 }
 
 L(`\n${pass} passed, ${fail} failed`);

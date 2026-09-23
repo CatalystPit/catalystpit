@@ -451,6 +451,9 @@ export const SETUP_FILTERS = Object.freeze([
   // ⚠️ AN ATTENTION FILTER, NOT A DIRECTION ONE. It sits beside Positive/Negative rather than
   // inside them, because a high-significance row can read either way — or neither.
   { key: 'highsig', label: 'High significance', highSignificance: true },
+  // ⚠️ A VIEW OF THE SAME QUALIFICATION, NOT A SECOND ONE. It reads the insider flag
+  // highSignificance() already set, so this pill can never disagree with the badge on the card.
+  { key: 'majorinsider', label: 'Major insider buying', insiderBuying: true },
   { key: 'insider', label: 'Unusual insiders', setups: [SETUP.UNUSUAL_INSIDER_ACTIVITY] },
   { key: 'catalyst', label: 'Fresh catalyst', setups: [SETUP.FRESH_MATERIAL_CATALYST, SETUP.FRESH_CATALYST_SUPPORTED, SETUP.FRESH_CATALYST_CONTESTED] },
   { key: 'alignment', label: 'Cross-source alignment', setups: [SETUP.CROSS_SOURCE_ALIGNMENT] },
@@ -469,6 +472,7 @@ export function filterSetups(rows, key = 'all') {
   const f = SETUP_FILTERS.find((x) => x.key === key);
   if (!f) return list;
   if (f.highSignificance) return list.filter((r) => r.highSignificance?.high === true);
+  if (f.insiderBuying) return list.filter((r) => r.highSignificance?.insider === true);
   if (f.direction) return list.filter((r) => r.setup?.direction === f.direction);
   if (f.market) return list.filter((r) => r.setup?.marketState === f.market);
   return list.filter((r) => f.setups.includes(r.setup?.setup));

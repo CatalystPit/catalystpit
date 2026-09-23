@@ -138,7 +138,20 @@ L('\n=== ⚠️ IT IS NOT A DIRECTION AND CANNOT BECOME ONE ===');
   ok('the badge sits beside the setup chip, above the direction word',
     cardRaw.indexOf('HIGH SIGNIFICANCE') > 0
     && cardRaw.indexOf('HIGH SIGNIFICANCE') < cardRaw.indexOf('(readingUI || dir).label'));
-  ok('the filter is its own pill', /key: 'highsig'/.test(strip(await read('../src/lib/consensus/setup.mjs'))));
+  const setupSrc = strip(await read('../src/lib/consensus/setup.mjs'));
+  ok('the filter is its own pill', /key: 'highsig'/.test(setupSrc));
+
+  // ⚠️ MAJOR INSIDER BUYING IS A VIEW OF THE SAME QUALIFICATION, NOT A SECOND ONE.
+  ok('Major insider buying is a pill', /key: 'majorinsider'/.test(setupSrc));
+  ok('⚠️ …and it reads the flag highSignificance already set',
+    setupSrc.includes('f.insiderBuying) return list.filter((r) => r.highSignificance?.insider === true)'),
+    'a second copy of the insider rules could disagree with the badge on the card');
+  ok('⚠️ the flag is computed from the FULL reason list, before the wire slice',
+    board.includes('insider: h.reasons.some((r) => r.source === SIGNIFICANCE_SOURCE.INSIDER)')
+    && board.indexOf('insider: h.reasons.some') > board.indexOf('reasons: h.reasons.slice(0, 3)'),
+    'testing the trimmed array would drop a qualifying reason on a row carrying more than three');
+  ok('…the pill duplicates none of the thresholds',
+    !/ROLE_PURCHASE_USD|ANY_PURCHASE_USD|CLUSTER_PURCHASE_USD/.test(setupSrc));
   ok('…filtering by it only removes rows', /f\.highSignificance\) return list\.filter/.test(strip(await read('../src/lib/consensus/setup.mjs'))));
   ok('no page-only significance logic exists', !/leadRoleValue|topBuyerValue|ROLE_PURCHASE/.test(card));
 }
