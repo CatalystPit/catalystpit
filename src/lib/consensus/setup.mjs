@@ -442,6 +442,12 @@ export function orderSetups(rows) {
 // current examples does not get a decorative filter.
 export const SETUP_FILTERS = Object.freeze([
   { key: 'all', label: 'All' },
+  // ⚠️ THESE FILTER ON THE DIRECTION THE CARDS ALREADY SHOW — filterSetups' existing `direction`
+  // predicate reads setup.direction, the same canonical value the card headline renders. No second
+  // classification, no new scoring: a row is in Positive here precisely because its card says
+  // Positive, so the pill can never disagree with what it filters to.
+  { key: 'positive', label: 'Positive', direction: 'POSITIVE' },
+  { key: 'negative', label: 'Negative', direction: 'NEGATIVE' },
   { key: 'insider', label: 'Unusual insiders', setups: [SETUP.UNUSUAL_INSIDER_ACTIVITY] },
   { key: 'catalyst', label: 'Fresh catalyst', setups: [SETUP.FRESH_MATERIAL_CATALYST, SETUP.FRESH_CATALYST_SUPPORTED, SETUP.FRESH_CATALYST_CONTESTED] },
   { key: 'alignment', label: 'Cross-source alignment', setups: [SETUP.CROSS_SOURCE_ALIGNMENT] },

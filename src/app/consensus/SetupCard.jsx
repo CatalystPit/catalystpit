@@ -157,9 +157,7 @@ export default function SetupCard({ row }) {
           {/* Direction is SECONDARY — useful, never the headline. */}
           <div style={{ fontSize: 11, color: C.muted, marginTop: 4, display: 'flex',
             gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-            <b style={{ color: (readingUI || dir).fg, fontWeight: 700 }}>
-              {rd?.tierLabel ? `${rd.tierLabel} ${(readingUI || dir).label.toLowerCase()}` : (readingUI || dir).label}
-            </b>
+            <b style={{ color: (readingUI || dir).fg, fontWeight: 700 }}>{(readingUI || dir).label}</b>
             {rd?.agreement?.total > 0 && (
               <>
                 <span>·</span>

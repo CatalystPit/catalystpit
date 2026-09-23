@@ -25,7 +25,6 @@ import { useEffect, useState } from 'react';
 import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
 import SetupCard from './SetupCard';
-import ConsensusClusters from './ConsensusClusters';
 import ConsensusRow, { STATE_UI } from './ConsensusRow';
 import { BOARD_FILTERS } from '../../lib/consensus/synthesis.mjs';
 import { SETUP_FILTERS, filterSetups } from '../../lib/consensus/setup.mjs';
@@ -169,9 +168,6 @@ export default function ConsensusClient() {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* The board at a glance, above the cards it summarises — same rows, same filters. */}
-            <ConsensusClusters rows={list} />
-
             {list.map((r) => <SetupCard key={r.ticker} row={r} />)}
 
             {locked > 0 && (
