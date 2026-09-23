@@ -86,6 +86,15 @@ export const TRACKED_JOBS = Object.freeze([
   { name: 'insider-alerts', label: 'Insider alert emails',   maxAgeHours: 2 },
   { name: 'evidence-alerts', label: 'Evidence alerts',       maxAgeHours: 2 },
   { name: 'refresh-content', label: 'News enrichment',       maxAgeHours: 24, weekdaysOnly: true },
+  // ⚠️ THIS ONE RECORDS A VERDICT, NOT JUST A TICK. The heatmap rollover check writes ok:false when
+  // it FINDS something — a completed session whose EOD data never loaded — so a green clock here
+  // means both "the check ran" and "the board is on the session it should be on". Every other job
+  // in this table reports only the first of those.
+  //
+  // Hourly cron, so 3h of silence is three missed runs: late enough not to flap on one cold start,
+  // tight enough that the checker going dark is itself visible. NOT weekdaysOnly — Friday's session
+  // loads on Saturday, so the weekend is exactly when a missing ingest must still be caught.
+  { name: 'heatmap-gate',   label: 'Heatmap EOD rollover',   maxAgeHours: 3 },
 ]);
 
 /**

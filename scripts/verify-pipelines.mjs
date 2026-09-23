@@ -99,6 +99,7 @@ L('\n=== EVERY TRACKED JOB HAS A CRON THAT COULD TICK IT ===');
     'insider-alerts': ['/api/cron/insider-alerts'],
     'evidence-alerts': ['/api/cron/evidence-alerts'],
     'refresh-content': ['/api/refresh-content'],
+    'heatmap-gate': ['/api/cron/heatmap-gate'],
   };
   for (const j of JOBS) {
     const want = DRIVEN_BY[j.name] || [];

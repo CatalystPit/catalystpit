@@ -153,6 +153,40 @@ export async function GET() {
         excludedNoSic: { securities: r.no_sic_securities, mcapUsd: Math.round(r.no_sic_mcap) },
       };
     }),
+    // ── ROLLOVER: is the heatmap on the session it should be on ─────────────
+    //
+    // ⚠️ THE ONE FAILURE THE FRESHNESS PROBES ABOVE CANNOT SEE. `freshness.screener` watches
+    // screener_stocks.updated_at, which the same cron writes in an earlier step — so the screener
+    // can look perfectly fresh while step 4b's candle insert wrote nothing. The heatmap then holds
+    // on the previous completed session, correctly and indefinitely, and every other check is green.
+    //
+    // ⚠️ AND IT MUST NOT ALERT ON THE ORDINARY OVERNIGHT HOLD. Between the closing bell and the
+    // next morning's load, yesterday's candles legitimately do not exist and the board is SUPPOSED
+    // to be one session back. Only a session past its ingest deadline counts — see
+    // heatmap-gate-health.mjs for where that deadline comes from.
+    probe('heatmap.session_rollover', async () => {
+      const { heatmapUniverse, canonicalSessionDate } = await import('../../../lib/heatmap/heatmap-store');
+      const { assessRollover } = await import('../../../lib/heatmap/heatmap-gate-health.mjs');
+      const universe = await heatmapUniverse(500);
+      const canonical = await canonicalSessionDate(universe.map((u) => u.ticker));
+      const a = assessRollover({ canonical });
+      // Aggregate counts of our own universe — no tickers, no vendor names, no query text.
+      return {
+        ok: a.ok,
+        state: a.state,
+        canonicalSession: a.canonicalSession,
+        expectedSession: a.expectedSession,
+        candidateSession: a.candidateSession,
+        candidateCoverage: a.candidateCoverage,
+        previousCoverage: a.previousCoverage,
+        requiredCoverage: a.requiredCoverage,
+        ratioPct: a.ratio == null ? null : Math.round(a.ratio * 1000) / 10,
+        quorumPct: Math.round(a.quorum * 100),
+        overdueHours: a.overdueHours,
+        universe: universe.length,
+      };
+    }),
+
     // ── LIVENESS: did each clock actually tick ────────────────────────────
     //
     // ⚠️ THIS IS THE QUESTION FRESHNESS CANNOT ANSWER. Every probe above asks how new the DATA
