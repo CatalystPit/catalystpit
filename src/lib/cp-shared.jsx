@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { SignedIn, SignedOut, UserButton, useAuth } from '@clerk/nextjs';
+import { SignedIn, SignedOut, useAuth } from '@clerk/nextjs';
+import AccountMenu from '../components/AccountMenu';
 import { selectTerminalSymbol, onTerminalRoute } from './terminalSymbolBus';
 import { fitCount } from './nav-overflow.mjs';
 
@@ -1105,7 +1106,12 @@ export function TopNav({ active }) {
         <SignedIn>
           {/* Watchlist lives in the right-edge WatchlistDock now (desktop); still in the mobile menu. */}
           <NotificationBell/>
-          <UserButton afterSignOutUrl="/" userProfileMode="navigation" userProfileUrl="/account" appearance={{elements:{avatarBox:{width:32, height:32}}}}/>
+          {/* ⚠️ THE NATIVE MENU REPLACES CLERK'S PREBUILT DROPDOWN, NOT CLERK. Authentication, the
+              session, sign-out and account security remain Clerk's; /account is still Clerk's own
+              hosted UserProfile. What goes is the generic white card carrying "Secured by Clerk"
+              and "Development mode" in the middle of our header. No CSS is used to hide Clerk DOM —
+              the component simply is not mounted. */}
+          <AccountMenu/>
         </SignedIn>
         </span>
 
