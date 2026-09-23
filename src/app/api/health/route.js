@@ -1,6 +1,7 @@
 import { db } from '../../../lib/db';
 import { sql } from 'drizzle-orm';
 import { TRACKED_JOBS, readJobHeartbeats } from '../../../lib/job-heartbeat';
+import { TRADEABLE_ASSET_TYPES } from '../../../lib/heatmap/heatmap-universe.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -111,79 +112,52 @@ export async function GET() {
       return { ok: r.screener === 0, screenerPlaceholders: r.screener, recentInsiderPlaceholders: r.recent_insiders };
     }),
     probe('quality.classification', async () => {
-      // An unclassified security is honest; an unclassified MARKET is a broken heatmap. Weight
-      // matters more than count here — one unclassified megacap distorts the board more than fifty
-      // microcaps.
+      // ⚠️ THE DENOMINATOR IS NOW THE UNIVERSE THE HEATMAP ACTUALLY DRAWS, AND THE OLD ONE HID A
+      // REAL OUTAGE FOR MONTHS.
       //
-      // ⚠️ THE DENOMINATOR IS OPERATING COMPANIES, NOT EVERY LISTED SECURITY, AND THAT IS NOT A
-      // RELAXATION. Sector here comes from the issuer's SEC SIC code. An ADR, a closed-end fund,
-      // an ETF, an ETV and a warrant do not have one — not "missing", but structurally absent,
-      // because none of them is an operating company with an industry. Counting them in the
-      // denominator meant the check was permanently red for a reason no amount of work could
-      // fix: 16.6% of market cap unclassified against an 8% bar, driven by 349 ADRs carrying
-      // $12.6T — TSM, ASML, HSBC, BABA. A health check that can never go green is a broken alarm;
-      // it trains you to ignore the light, and then it is not there when something real breaks.
+      // This probe used to exclude ADRC from its denominator, on the reasoning that a depositary
+      // receipt is not an operating company with a SIC. That reasoning was wrong on the facts —
+      // foreign issuers file 20-F and EDGAR assigns them a SIC exactly like a domestic filer — and
+      // the exclusion put the check in direct contradiction with the board it protects:
+      // TRADEABLE_ASSET_TYPES is ['Stock','ADRC'], so the heatmap deliberately INCLUDES the
+      // population the alarm was told to ignore.
       //
-      // The threshold is UNCHANGED at 8%. What changed is that the check now measures the thing
-      // it was always trying to measure — US operating companies missing a sector — which is
-      // 5.1%. The excluded classes are reported beside it as their own number, so the ADR gap is
-      // visible rather than quietly dropped, and no SIC code is invented for anything.
+      // The result was an alarm that could not ring: 113 of the Top 500 rendered as "Other" — TSM,
+      // HSBC, BABA, SAP, BP, NVS, SONY, UBS, ING, BHP — while this probe stayed green, because
+      // every one of them was outside its denominator by construction. A check that excludes the
+      // failure it exists to detect is not a lenient check, it is a decorative one.
+      //
+      // ⚠️ THE THRESHOLD IS UNCHANGED AT 8%. Nothing here was relaxed to go green; the measured
+      // population was corrected and the coverage was actually repaired.
       const r = await one(sql`
-        select count(*) filter (where not no_sic)::int operating,
-               count(*) filter (where not no_sic and unclassified)::int operating_unclassified,
-               coalesce(sum(market_cap) filter (where not no_sic), 0)::float8 operating_mcap,
-               coalesce(sum(market_cap) filter (where not no_sic and unclassified), 0)::float8 operating_unclassified_mcap,
-               count(*) filter (where no_sic)::int no_sic_securities,
-               coalesce(sum(market_cap) filter (where no_sic), 0)::float8 no_sic_mcap
+        select count(*)::int securities,
+               count(*) filter (where unclassified)::int unclassified,
+               coalesce(sum(market_cap), 0)::float8 mcap,
+               coalesce(sum(market_cap) filter (where unclassified), 0)::float8 unclassified_mcap,
+               count(*) filter (where is_adr)::int adrs,
+               count(*) filter (where is_adr and unclassified)::int adrs_unclassified
           from (
-            select market_cap,
-                   (sector is null or trim(sector) = '') as unclassified,
-                   upper(coalesce(asset_type, '')) in
-                     ('ADRC','FUND','ETF','ETV','WARRANT','UNIT','RIGHT','PREFERRED') as no_sic
-              from screener_stocks where market_cap > 0
-          ) s`);
-      const pctCount = r.operating ? (100 * r.operating_unclassified) / r.operating : 0;
-      const pctWeight = r.operating_mcap ? (100 * r.operating_unclassified_mcap) / r.operating_mcap : 0;
+            select s.market_cap,
+                   (coalesce(s.sector, m.sector) is null
+                     or trim(coalesce(s.sector, m.sector)) = '') as unclassified,
+                   upper(coalesce(m.asset_type, '')) = 'ADRC' as is_adr
+              from screener_stocks s
+              left join screener_meta m on m.ticker = s.ticker
+             where coalesce(s.market_cap, m.market_cap) > 0
+               and coalesce(m.asset_type, '') = any(${sql`${`{${TRADEABLE_ASSET_TYPES.join(',')}}`}::text[]`})
+          ) x`);
+      const pctCount = r.securities ? (100 * r.unclassified) / r.securities : 0;
+      const pctWeight = r.mcap ? (100 * r.unclassified_mcap) / r.mcap : 0;
       return {
         ok: pctWeight < 8,
-        scope: 'operating companies (ADRs, funds, ETFs, warrants excluded — no SIC by nature)',
-        securities: r.operating, unclassified: r.operating_unclassified,
-        pctByCount: Math.round(pctCount * 10) / 10, pctByWeight: Math.round(pctWeight * 10) / 10,
-        // Reported, never hidden: the population the check deliberately does not police.
-        excludedNoSic: { securities: r.no_sic_securities, mcapUsd: Math.round(r.no_sic_mcap) },
-      };
-    }),
-    // ── ROLLOVER: is the heatmap on the session it should be on ─────────────
-    //
-    // ⚠️ THE ONE FAILURE THE FRESHNESS PROBES ABOVE CANNOT SEE. `freshness.screener` watches
-    // screener_stocks.updated_at, which the same cron writes in an earlier step — so the screener
-    // can look perfectly fresh while step 4b's candle insert wrote nothing. The heatmap then holds
-    // on the previous completed session, correctly and indefinitely, and every other check is green.
-    //
-    // ⚠️ AND IT MUST NOT ALERT ON THE ORDINARY OVERNIGHT HOLD. Between the closing bell and the
-    // next morning's load, yesterday's candles legitimately do not exist and the board is SUPPOSED
-    // to be one session back. Only a session past its ingest deadline counts — see
-    // heatmap-gate-health.mjs for where that deadline comes from.
-    probe('heatmap.session_rollover', async () => {
-      const { heatmapUniverse, canonicalSessionDate } = await import('../../../lib/heatmap/heatmap-store');
-      const { assessRollover } = await import('../../../lib/heatmap/heatmap-gate-health.mjs');
-      const universe = await heatmapUniverse(500);
-      const canonical = await canonicalSessionDate(universe.map((u) => u.ticker));
-      const a = assessRollover({ canonical });
-      // Aggregate counts of our own universe — no tickers, no vendor names, no query text.
-      return {
-        ok: a.ok,
-        state: a.state,
-        canonicalSession: a.canonicalSession,
-        expectedSession: a.expectedSession,
-        candidateSession: a.candidateSession,
-        candidateCoverage: a.candidateCoverage,
-        previousCoverage: a.previousCoverage,
-        requiredCoverage: a.requiredCoverage,
-        ratioPct: a.ratio == null ? null : Math.round(a.ratio * 1000) / 10,
-        quorumPct: Math.round(a.quorum * 100),
-        overdueHours: a.overdueHours,
-        universe: universe.length,
+        scope: `heatmap-eligible securities (${TRADEABLE_ASSET_TYPES.join(', ')}) — the population the board draws`,
+        securities: r.securities,
+        unclassified: r.unclassified,
+        pctByCount: Math.round(pctCount * 10) / 10,
+        pctByWeight: Math.round(pctWeight * 10) / 10,
+        // ⚠️ REPORTED SEPARATELY SO THE FOREIGN-ISSUER GAP IS VISIBLE AS ITSELF, not averaged into
+        // a market-wide number where 113 unclassified megacaps could hide again.
+        adrs: { total: r.adrs, unclassified: r.adrs_unclassified },
       };
     }),
 

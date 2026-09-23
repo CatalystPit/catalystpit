@@ -3,6 +3,7 @@ import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
+import { resolveClassifications } from './market/sec-classification.mjs';
 import { sicToMarketSector } from './market-taxonomy.mjs';
 import { isRenderableTicker } from './security-identity.mjs';
 import { readSecurityIdentity, refreshSecurityIdentity, filerNameMap } from './security-identity';
@@ -328,7 +329,49 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
     });
     saved += batch.length;
   }
-  return { requested: need.length, fetched: rows.length, saved };
+
+  // ⚠️ THE SEC FALLBACK, AND IT WRITES TO screener_meta BECAUSE THAT IS THE DURABLE TABLE.
+  //
+  // Polygon supplies no sic_code for foreign private issuers, which left 113 of the Top 500 with a
+  // null sector — TSM, HSBC, BABA, SAP, BP, NVS, SAN, SONY, UBS, ING, BHP. They are not missing
+  // data: they file 20-F and EDGAR assigns them a SIC like any other filer. So where the vendor
+  // returned nothing, SEC is asked.
+  //
+  // ⚠️ screener_meta, NOT screener_stocks. The previous attempt at this lived in a one-off script
+  // that wrote to screener_stocks — a table rebuildScreener() DELETEs nightly and repopulates FROM
+  // screener_meta, so every repair it made was erased at 08:30 UTC and nothing reported it. Writing
+  // here makes the recovery survive the rebuild by construction, and puts it on the same cron that
+  // already maintains the rest of the metadata, so new listings are covered without a second job.
+  //
+  // Bounded to the rows in THIS run that came back without a SIC, so it costs nothing once coverage
+  // is established: a steady-state run resolves zero.
+  let secResolved = 0;
+  try {
+    const missing = rows.filter((r) => !Number.isFinite(r.sicCode)).map((r) => r.ticker);
+    if (missing.length) {
+      const found = await resolveClassifications(missing);
+      for (const [ticker, c] of found) {
+        // ⚠️ coalesce ON THE EXISTING ROW, never a blind overwrite. If Polygon later starts
+        // supplying a code, this must not clobber it, and a null from SEC must not erase a good
+        // value — the map only contains tickers SEC could actually classify, and the write only
+        // fills what is empty.
+        await db.execute(sql`
+          update screener_meta
+             set sic_code = coalesce(sic_code, ${c.sicCode}),
+                 sector   = coalesce(nullif(trim(sector), ''), ${c.sector}),
+                 industry = coalesce(nullif(trim(industry), ''), ${c.industry}),
+                 updated_at = now()
+           where ticker = ${ticker}`);
+        if (c.sector) secResolved += 1;
+      }
+    }
+  } catch (e) {
+    // A SEC outage is missing classification, not wrong classification. Logged, never fatal — the
+    // Polygon-derived metadata this function exists for has already been saved above.
+    console.log(`[screener-meta] SEC classification fallback skipped: ${e.message}`);
+  }
+
+  return { requested: need.length, fetched: rows.length, saved, secResolved };
 }
 
 // Backfill technicals market-wide from Polygon grouped-daily history (Stocks Starter = unlimited
