@@ -89,7 +89,14 @@ export const viewport = {
 export default function RootLayout({ children }) {
   return (
     <ClerkProvider>
-      <html lang="en">
+      {/* ⚠️ suppressHydrationWarning IS LOAD-BEARING, NOT COSMETIC.
+          The no-flash script below sets data-theme on <html> before paint, so the client DOM
+          carries an attribute the server never rendered. Without this, that is a hydration
+          mismatch on the root element and React may reconcile the attribute AWAY — the page
+          reverts to light on arrival, and because the script only runs on a document load, it
+          does not come back until the reader clicks the toggle. This is the documented pattern
+          for a pre-paint theme script; every app-router theme library sets it. */}
+      <html lang="en" suppressHydrationWarning>
         <head>
           {/* Apply the saved theme before first paint to avoid a flash of light. */}
           <script dangerouslySetInnerHTML={{ __html: "try{if(localStorage.getItem('cp_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');}catch(e){}" }} />

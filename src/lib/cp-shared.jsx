@@ -362,7 +362,27 @@ export function useTheme() {
 // persists to localStorage. A no-flash script in the root layout applies the saved theme before paint.
 export function ThemeToggle({ style }) {
   const [dark, setDark] = useState(false);
-  useEffect(() => { setDark((typeof document !== "undefined" && document.documentElement.dataset.theme === "dark")); }, []);
+  // ⚠️ RE-ASSERT FROM STORAGE, DO NOT MERELY READ THE DOM.
+  //
+  // This used to read document.documentElement only, which trusts that whatever set the attribute
+  // before paint is still there. If anything removes it — a hydration reconcile on <html>, an
+  // extension, a stray re-render — the saved preference is still in localStorage but nothing puts
+  // it back, so the reader lands on a light page and has to click the toggle. Reading the STORED
+  // value and restoring it makes the toggle mount repair that state instead of reflecting it.
+  //
+  // Same key, same attribute, same persistence as before: this adds no second theme system, and it
+  // runs on every page because TopNav does.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    let saved = null;
+    try { saved = localStorage.getItem("cp_theme"); } catch { /* storage unavailable — DOM wins */ }
+    if (saved === "dark" && document.documentElement.dataset.theme !== "dark") {
+      document.documentElement.dataset.theme = "dark";
+    } else if (saved === "light" && document.documentElement.dataset.theme === "dark") {
+      delete document.documentElement.dataset.theme;
+    }
+    setDark(document.documentElement.dataset.theme === "dark");
+  }, []);
   const toggle = () => {
     const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
     if (next === "dark") document.documentElement.dataset.theme = "dark"; else delete document.documentElement.dataset.theme;
