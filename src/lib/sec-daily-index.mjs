@@ -107,3 +107,41 @@ export function recentDays(days, now = Date.now()) {
   for (let i = 0; i < days; i++) out.push(new Date(now - i * 86_400_000).toISOString().slice(0, 10));
   return out;
 }
+
+// ── CIK -> ticker ────────────────────────────────────────────────────────────
+//
+// ⚠️ NOT submissionDetail. The 8-K and Form 25 ingests resolve a ticker by pulling the issuer's
+// whole submissions JSON, which is megabytes and is worth it there because they also need the item
+// codes and the report date from it. Form 144 needs neither — the XML carries everything — so all
+// that remains is the CIK-to-ticker mapping, and SEC publishes that as one file for every listed
+// company. One ~1MB fetch per process against thousands of multi-megabyte ones.
+//
+// A CIK missing from this file has no ticker, which is the same "not a tradeable name" skip the
+// other two ingests apply.
+let _cikMap = null;
+let _cikMapAt = 0;
+const CIK_MAP_TTL_MS = 6 * 3600e3;
+
+export async function cikTickerMap({ now = Date.now() } = {}) {
+  if (_cikMap && now - _cikMapAt < CIK_MAP_TTL_MS) return _cikMap;
+  const m = new Map();
+  try {
+    const r = await fetch('https://www.sec.gov/files/company_tickers.json', { headers: SEC_HEADERS });
+    if (r.ok) {
+      const data = await r.json();
+      for (const k of Object.keys(data)) {
+        const row = data[k];
+        if (!row?.cik_str || !row?.ticker) continue;
+        const cik = String(row.cik_str);
+        // The FIRST ticker wins: company_tickers.json lists classes in order and the common one
+        // leads, so a dual-class issuer resolves to the class the market quotes.
+        if (!m.has(cik)) m.set(cik, { ticker: String(row.ticker).toUpperCase(), name: row.title || null });
+      }
+    }
+  } catch { /* an empty map means every filing is skipped this run, which is safe */ }
+  if (m.size) { _cikMap = m; _cikMapAt = now; }
+  return _cikMap || m;
+}
+
+/** Test seam. */
+export function __setCikMap(m) { _cikMap = m; _cikMapAt = Date.now(); }

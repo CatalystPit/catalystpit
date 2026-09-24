@@ -30,6 +30,8 @@ import {
   classifyCompanyEvent, extractScheduledDate, sourceQuality, stillRelevant, MAX_RELEVANCE_DAYS,
 } from './company-events.mjs';
 import { isLeadRole } from '../consensus/high-significance.mjs';
+import { schedule13dSignificance } from './schedule13d-significance.mjs';
+import { ITEM4_DISCLOSURES } from '../schedule13d-parse.mjs';
 import { db } from '../db';
 import { FAMILY, DIRECTION, collectEvidence } from './model.mjs';
 import { firstInContext, burstContext, extremeContext, breadthChangeContext, streakContext, implausibleBreadth } from './history.mjs';
@@ -612,6 +614,105 @@ export async function form144Evidence(ticker, { now = Date.now() } = {}) {
   return out;
 }
 
+// ── 2c. BENEFICIAL OWNERSHIP (Schedule 13D / 13D-A) ──────────────────────────
+//
+// ── ⚠️ WHAT THE FILING ESTABLISHES, AND NOTHING ELSE ────────────────────────
+//
+//   "Cevian Capital II GP LTD reports 19.4% beneficial ownership"          the cover page says so
+//   "... and discloses board representation agreed with the issuer"        Item 4 says so
+//   "activist stake" / "will push for a sale" / "takeover planned"         NOTHING says so
+//
+// A Schedule 13D is required of any holder above 5% who does not qualify for the passive 13G. That
+// is a legal category, not a character assessment, and this resolver never turns it into one. The
+// second clause of a summary exists only when classifyItem4 found a sentence stating a completed
+// act — see schedule13d-parse.mjs for why the modal verbs are stripped out first.
+//
+// ── ⚠️ AND MOST AMENDMENTS ARE NOT EVENTS ───────────────────────────────────
+//
+// 70 of 87 filings over 8 days were amendments. schedule13d-significance.mjs decides which of them
+// changed something, against the previous filing BY THE SAME FILER that we actually hold. When we
+// hold none, it produces nothing rather than inventing a baseline.
+
+export async function schedule13dEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
+  const res = await db.execute(sql`
+    select accession, issuer_name, security_class, form_type, is_amendment, filer_name, filer_type,
+           pct_of_class, shares, item4_codes, date_of_event, group_key, filed_at,
+           primary_doc_url, filing_url
+      from schedule13d_filings
+     where ticker = ${ticker}
+       and filed_at >= (now() - make_interval(days => ${HISTORY_WINDOW_DAYS}))
+     order by filed_at desc
+     limit 200`);
+  const all = rows(res);
+  if (!all.length) return [];
+
+  const cutoff = now - DISPLAY_WINDOW_DAYS * DAY;
+  const out = [];
+  for (const f of all) {
+    if ((ms(f.filed_at) ?? 0) < cutoff) continue;
+    // ⚠️ THE BASELINE IS THE SAME FILER'S PREVIOUS FILING, not the issuer's previous 13D. Two
+    // unrelated holders both at 8% would otherwise read as one of them doubling.
+    const prior = all.find((x) => x.group_key === f.group_key && (ms(x.filed_at) ?? 0) < (ms(f.filed_at) ?? 0));
+    const codes = Array.isArray(f.item4_codes) ? f.item4_codes : [];
+    const sig = schedule13dSignificance(
+      { isAmendment: f.is_amendment, pctOfClass: f.pct_of_class, item4Codes: codes },
+      prior ? { pctOfClass: prior.pct_of_class } : null,
+    );
+    if (!sig.promote) continue;
+
+    const pct = f.pct_of_class == null ? null : Number(f.pct_of_class);
+    const who = f.filer_name || 'A reporting person';
+    const form = f.is_amendment ? 'Schedule 13D/A' : 'Schedule 13D';
+    // ⚠️ NO PERCENTAGE, NO PERCENTAGE CLAIM. A filing whose cover page would not parse is still
+    // reported as having been filed, because that much is certain, and nothing more is said.
+    const head = pct != null
+      ? `${who} reports ${fmtPct(pct)}% beneficial ownership`
+      : `${who} filed a ${form}`;
+    // The second clause is quoted from Item 4 through a fixed label set; it is never composed here.
+    const disclosed = codes
+      .map((c) => ITEM4_DISCLOSURES.find((d) => d.code === c)?.label)
+      .filter(Boolean);
+    const summary = disclosed.length ? `${head} and ${disclosed.join(', ')}` : head;
+
+    out.push({
+      ticker, family: FAMILY.INSTITUTION, type: f.is_amendment ? 'sec_13d_amended' : 'sec_13d',
+      subtype: f.filer_type || null,
+      // ⚠️ UNKNOWN, ALWAYS. A 13D is not bullish because somebody bought and not bearish because
+      // somebody filed. Marking hundreds of them either way would put a standing tilt into
+      // Consensus that the document does not support.
+      direction: DIRECTION.UNKNOWN,
+      materiality: sig.materiality,
+      quality: 0.95,                       // a document filed with the SEC under liability
+      // ⚠️ POINT-IN-TIME. The cover page's date of event is the reference date the filer states,
+      // and the ingest has already dropped it if it postdated the filing.
+      eventTime: f.date_of_event || null,
+      publicTime: f.filed_at,
+      source: 'sec_13d', sourceId: f.accession,
+      url: f.primary_doc_url || f.filing_url || null,
+      summary,
+      facts: {
+        form: f.form_type, filer: f.filer_name || null, filerType: f.filer_type || null,
+        pctOfClass: pct, shares: f.shares == null ? null : Number(f.shares),
+        securityClass: f.security_class || null,
+        dateOfEvent: f.date_of_event || null,
+        item4: codes,
+        basis: sig.reason,
+        deltaPct: sig.deltaPct,
+        note: 'A Schedule 13D reports beneficial ownership and the disclosures the form requires. It does not establish intent beyond what Item 4 states.',
+      },
+      // "stake increased from 7.1% to 9.8%" — both numbers from filings we hold, or nothing.
+      context: sig.context,
+    });
+  }
+  return out;
+}
+
+/** 19.4 -> "19.4", 7 -> "7". The filing's own precision, not ours. */
+function fmtPct(n) {
+  const v = Math.round(Number(n) * 100) / 100;
+  return Number.isInteger(v) ? String(v) : String(v);
+}
+
 // ── 3. CONGRESS ──────────────────────────────────────────────────────────────
 //
 // Freshness is the DISCLOSURE. The transaction date is retained as eventTime so the UI can show
@@ -805,6 +906,7 @@ export async function tickerEvidence(ticker, { now = Date.now(), since = null } 
   const families = [
     ['insider', insiderEvidence],
     ['form144', form144Evidence],
+    ['schedule13d', schedule13dEvidence],
     ['catalyst', catalystEvidence],
     ['congress', congressEvidence],
     ['institution', institutionEvidence],

@@ -43,7 +43,7 @@
 
 import { sql } from 'drizzle-orm';
 import { db } from './db';
-import { dailyIndexFilings, recentDays } from './sec-daily-index.mjs';
+import { dailyIndexFilings, recentDays, cikTickerMap } from './sec-daily-index.mjs';
 import { parseForm144 } from './form144-parse.mjs';
 
 // The pure field extraction lives in form144-parse.mjs and is re-exported here so callers have one
@@ -91,43 +91,9 @@ export async function ensureForm144Table() {
   _ensured = true;
 }
 
-// ── CIK -> ticker ────────────────────────────────────────────────────────────
-//
-// ⚠️ NOT submissionDetail. The 8-K and Form 25 ingests resolve a ticker by pulling the issuer's
-// whole submissions JSON, which is megabytes and is worth it there because they also need the item
-// codes and the report date from it. Form 144 needs neither — the XML carries everything — so all
-// that remains is the CIK-to-ticker mapping, and SEC publishes that as one file for every listed
-// company. One ~1MB fetch per process against thousands of multi-megabyte ones.
-//
-// A CIK missing from this file has no ticker, which is the same "not a tradeable name" skip the
-// other two ingests apply.
-let _cikMap = null;
-let _cikMapAt = 0;
-const CIK_MAP_TTL_MS = 6 * 3600e3;
-
-export async function cikTickerMap({ now = Date.now() } = {}) {
-  if (_cikMap && now - _cikMapAt < CIK_MAP_TTL_MS) return _cikMap;
-  const m = new Map();
-  try {
-    const r = await fetch('https://www.sec.gov/files/company_tickers.json', { headers: SEC_HEADERS });
-    if (r.ok) {
-      const data = await r.json();
-      for (const k of Object.keys(data)) {
-        const row = data[k];
-        if (!row?.cik_str || !row?.ticker) continue;
-        const cik = String(row.cik_str);
-        // The FIRST ticker wins: company_tickers.json lists classes in order and the common one
-        // leads, so a dual-class issuer resolves to the class the market quotes.
-        if (!m.has(cik)) m.set(cik, { ticker: String(row.ticker).toUpperCase(), name: row.title || null });
-      }
-    }
-  } catch { /* an empty map means every filing is skipped this run, which is safe */ }
-  if (m.size) { _cikMap = m; _cikMapAt = now; }
-  return _cikMap || m;
-}
-
-/** Test seam. */
-export function __setCikMap(m) { _cikMap = m; _cikMapAt = Date.now(); }
+// The CIK -> ticker map moved to sec-daily-index.mjs when Schedule 13D needed the same lookup.
+// Re-exported here so a caller importing "the Form 144 module" still finds it.
+export { cikTickerMap, __setCikMap } from './sec-daily-index.mjs';
 
 // ── ingest ───────────────────────────────────────────────────────────────────
 
