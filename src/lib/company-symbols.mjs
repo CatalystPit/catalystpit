@@ -117,7 +117,21 @@ const NOT_A_COMPANY = new Set([
   'FDA', 'FTC', 'DOJ', 'CFTC', 'FCC', 'EPA', 'IRS', 'FBI', 'CIA', 'PENTAGON', 'CONGRESS', 'SENATE',
   'WHITEHOUSE', 'SUPREMECOURT', 'FOMC', 'FINRA', 'NYSE', 'NASDAQ', 'CBOE',
   // instruments and measures
-  'BRENT', 'WTI', 'CRUDE', 'GOLD', 'SILVER', 'COPPER', 'BITCOIN', 'ETHEREUM', 'DOLLAR', 'EURO',
+  // ⚠️ CRYPTO IS HERE BECAUSE A REGISTRANT IS LITERALLY NAMED "Crypto Co".
+  //
+  // tokens() strips CO as a legal suffix, so that name reduces to the single token CRYPTO and was
+  // indexed as a one-word company. Every headline containing the word then resolved to $CRCW —
+  // 204 canonical events, including "Crypto Fear and Greed Index: 71/100 = Greed". The asset class
+  // and the company are spelled identically, and when that happens the word belongs to the asset
+  // class: BITCOIN and ETHEREUM are already refused here for the same reason.
+  //
+  // ⚠️ A DATA-DRIVEN GATE WAS TRIED FIRST AND MEASURED, THEN REJECTED. Requiring a one-word name to
+  // carry a market capitalisation or a price removed 359 tickers from the index — Arcellx, Amedisys,
+  // ASGN, Assertio, BeiGene, BigCommerce and Couchbase among them — because screener_stocks holds
+  // null for both columns on plenty of real companies. It separated nothing: CRCW's row looks
+  // exactly like Arcellx's. Vocabulary is what actually distinguishes them, so vocabulary is where
+  // the rule lives.
+  'BRENT', 'WTI', 'CRUDE', 'GOLD', 'SILVER', 'COPPER', 'BITCOIN', 'ETHEREUM', 'CRYPTO', 'DOLLAR', 'EURO',
   'YEN', 'YUAN', 'STERLING', 'CPI', 'PPI', 'GDP', 'PCE', 'NFP', 'ISM', 'PMI',
   // desks and labels
   'MACRO', 'MARKETS', 'BREAKING', 'UPDATE', 'ALERT', 'EARNINGS', 'HALT',
@@ -227,6 +241,16 @@ export const ALIASES = new Map(Object.entries({
  * Build the lookup from reference rows. PURE.
  * @param {Array<{ticker:string,company:string}>} rows
  */
+/**
+ * Can we actually price or size this security?
+ *
+ * ⚠️ DELIBERATELY PERMISSIVE: either a market capitalisation or a price counts, because the two
+ * columns are populated by different jobs and a real company is rarely missing both. The point is
+ * to separate a security the market knows about from a name that reached us on a single filing and
+ * nothing else — not to grade liquidity.
+ */
+const hasMarketPresence = (row) => Number(row?.market_cap) > 0 || Number(row?.price) > 0;
+
 export function buildIndex(rows) {
   // Keyed on the FIRST token of the name. A headline reference has to start where the company's
   // name starts, so this is both the lookup and the first filter.
@@ -246,6 +270,7 @@ export function buildIndex(rows) {
     // index time rather than at match time means Pit Wire and the X post both stop seeing it, so
     // the two surfaces cannot disagree about a symbol that should never have existed.
     if (!curated && toks.length === 1 && AMBIGUOUS_WORD.has(head)) return;
+
     if (!byFirst.has(head)) byFirst.set(head, []);
     byFirst.get(head).push({ toks, ticker: String(ticker).toUpperCase(), curated });
   };
