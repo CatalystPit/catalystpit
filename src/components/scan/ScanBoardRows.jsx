@@ -78,6 +78,9 @@ const JOIN_TONE = {
   'PRICE SELLING OFF': C.red,
   'CONFLICT + MOVING': C.conflictAccent,
   'NO REACTION': C.muted,
+  // Neutral on purpose. "We have not matched this to evidence" is a statement about our coverage,
+  // not a judgement on the stock, and colouring it like a conflict would read as one.
+  'NO MATCHING EVIDENCE': C.dim,
   '—': C.dim,
 };
 
@@ -122,16 +125,25 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
         )}
       </div>
 
+      {/* ⚠️ A FIELD IS PRINTED ONLY WHEN IT HAS SOMETHING TO SAY.
+          Every row used to render all three labels, so a price-first mover with no filing behind it
+          read "STRUCTURE —  EVIDENCE —  JOIN NO REACTION": three lines, none of them informative
+          and one of them false. An empty field advertises what we do not have. The JOIN line stays
+          on every row because it is never empty — with no evidence it now says so explicitly. */}
       <div style={{ display: 'grid', gridTemplateColumns: '78px 1fr', gap: '2px 8px', marginTop: 7 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: C.dim, paddingTop: 2 }}>STRUCTURE</span>
-        <span style={{ fontSize: 11.5, color: r.structure?.length ? C.text : C.dim }}>
-          {r.structure?.length ? r.structure.join(' · ') : '—'}
-        </span>
+        {r.structure?.length > 0 && (
+          <>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: C.dim, paddingTop: 2 }}>STRUCTURE</span>
+            <span style={{ fontSize: 11.5, color: C.text }}>{r.structure.join(' · ')}</span>
+          </>
+        )}
 
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: C.dim, paddingTop: 2 }}>EVIDENCE</span>
-        <span style={{ fontSize: 11.5, color: r.evidence ? C.text : C.dim, overflowWrap: 'anywhere' }}>
-          {r.evidence || '—'}
-        </span>
+        {r.evidence && (
+          <>
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: C.dim, paddingTop: 2 }}>EVIDENCE</span>
+            <span style={{ fontSize: 11.5, color: C.text, overflowWrap: 'anywhere' }}>{r.evidence}</span>
+          </>
+        )}
 
         <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.6px', color: C.dim, paddingTop: 2 }}>JOIN</span>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: JOIN_TONE[r.join] || C.muted }}>

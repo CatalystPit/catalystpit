@@ -155,6 +155,19 @@ export const JOIN_LINE = Object.freeze({
   SELLING_OFF: 'PRICE SELLING OFF',
   CONFLICT_MOVING: 'CONFLICT + MOVING',
   NO_REACTION: 'NO REACTION',
+  /**
+   * ⚠️ "WE FOUND NO EVIDENCE" IS NOT "PRICE DID NOT MOVE", AND THIS LABEL EXISTS BECAUSE THEY WERE
+   * THE SAME STRING.
+   *
+   * The join asks whether price agrees with the evidence. When there is no evidence there is
+   * nothing to agree with — but the old code fell through to NO REACTION, so PMAX at +168.7% and
+   * APUS at +131.0% were labelled "NO REACTION" on a board whose entire purpose is movement. The
+   * statement was false on its face and it was the loudest thing on the card.
+   *
+   * This says the true thing instead: Catalyst Pit has not matched this move to canonical evidence.
+   * It is a statement about our evidence, not about the tape.
+   */
+  NO_EVIDENCE: 'NO MATCHING EVIDENCE',
   NONE: '—',
 });
 
@@ -179,7 +192,13 @@ export const SELLOFF_PCT = -5;
  * ⚠️ AND A MIXED OR CONFLICTED READING CAN NEVER BE "CONFIRMING". There is no single direction for
  * price to agree with, and a moving tape does not resolve a disagreement between sources.
  */
-export function joinLine({ setup, joinState, reaction, changePct, direction } = {}) {
+export function joinLine({ setup, joinState, reaction, changePct, direction, hasEvidence = true } = {}) {
+  // ⚠️ THE FIRST QUESTION IS WHETHER THERE IS ANYTHING TO JOIN. Every branch below compares price
+  // against an evidence reading, so without evidence none of them is a true sentence. Answered
+  // first and independently of the move, because a 168% move with no filing behind it is still a
+  // move with no filing behind it.
+  if (!hasEvidence) return JOIN_LINE.NO_EVIDENCE;
+
   const conflicted = setup === 'CROSS_SOURCE_CONFLICT' || joinState === 'SOURCES_CONFLICT'
     || direction === 'MIXED';
 
@@ -187,6 +206,8 @@ export function joinLine({ setup, joinState, reaction, changePct, direction } = 
   const move = Number.isFinite(changePct) ? changePct
     : (Number.isFinite(reaction?.abs) ? reaction.abs : null);
   if (move === null) return JOIN_LINE.NONE;
+  // Evidence exists and price has not moved on it. This is the ONE case NO REACTION describes, and
+  // it is exactly the Evidence Now thesis: something material is public and the tape is quiet.
   if (Math.abs(move) < SCAN_DEAD_ZONE_PCT) return JOIN_LINE.NO_REACTION;
 
   if (conflicted) {
@@ -195,7 +216,9 @@ export function joinLine({ setup, joinState, reaction, changePct, direction } = 
   // With a one-sided reading, does the move agree with it?
   const evidenceUp = direction === 'POSITIVE';
   const evidenceDown = direction === 'NEGATIVE';
-  if (!evidenceUp && !evidenceDown) return JOIN_LINE.NO_REACTION;
+  // Evidence with no directional lean: there is something on file but nothing for price to agree
+  // or disagree with, so the honest answer is no relationship rather than "no reaction".
+  if (!evidenceUp && !evidenceDown) return JOIN_LINE.NONE;
 
   const agrees = (evidenceUp && move > 0) || (evidenceDown && move < 0);
   if (agrees) return JOIN_LINE.CONFIRMING;
@@ -243,6 +266,15 @@ export function toScanRow(row, quote = null) {
 
   const catBlock = row.families?.[FAMILY.CATALYST]?.[0] || null;
 
+  // ⚠️ WHAT "WE HAVE EVIDENCE" MEANS, IN ONE PLACE. A Moving Now row can now arrive as a bare
+  // ticker from the market snapshot with no Consensus record behind it at all — that is the point
+  // of a price-first board — so every evidence-shaped field on such a row is absent rather than
+  // empty. Asked once here so the join, the evidence line and the card cannot disagree about it.
+  const hasEvidence = Boolean(
+    row.consensusV1 || row.setup
+    || Object.values(row.families || {}).some((list) => (list || []).length),
+  );
+
   return {
     // ── what boards.mjs reads ──
     symbol: row.ticker,
@@ -276,8 +308,12 @@ export function toScanRow(row, quote = null) {
       evidence: evidenceLine(row),
       join: joinLine({
         setup: row.setup?.setup, joinState: row.join_layer?.state, reaction: row.reaction_layer,
-        changePct, direction: row.setup?.direction,
+        changePct, direction: row.setup?.direction, hasEvidence,
       }),
+      // Carried so the card can OMIT evidence fields rather than print dashes into them. A row that
+      // says "STRUCTURE —  EVIDENCE —" advertises what we do not have; the card's job is to show
+      // what we know.
+      hasEvidence,
       facts: supportingFacts(row),
       setupLabel: row.setup?.label || null,
       evidenceUrl: `/ticker/${encodeURIComponent(row.ticker)}`,

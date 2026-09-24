@@ -27,6 +27,15 @@ const CATEGORY_TONE = {
   liquidity: C.muted,
 };
 
+/**
+ * Show the intraday SIGNAL engine surfaces (the Pit Pulse tape and the signals diagnostic).
+ *
+ * ⚠️ FALSE UNTIL AN INGESTION WORKER EXISTS. Both read data scanState() hard-codes as empty,
+ * so they can only render "nothing yet" and a list of signals that cannot fire. The code stays so
+ * that turning it on is one line when there is something to show.
+ */
+const SHOW_UNBUILT_ENGINE = false;
+
 export default function PitScanPanel({ onPick }) {
   const [state, setState] = useState(null);
   const [tab, setTab] = useState('scan');
@@ -98,7 +107,12 @@ export default function PitScanPanel({ onPick }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
         borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
         {tabBtn('scan', 'Scan')}
-        {tabBtn('pulse', 'Pit Pulse')}
+        {/* ⚠️ PIT PULSE IS HIDDEN, NOT DELETED — see SHOW_UNBUILT_ENGINE.
+            PulseTape reads state.events, and scanState() returns `events: []` as a hard-coded
+            empty list because no ingestion worker exists. The tab could therefore only ever say
+            "Nothing has crossed yet", which on a paid product reads as a broken feature rather
+            than a quiet tape. The component and its data contract are left intact. */}
+        {SHOW_UNBUILT_ENGINE && tabBtn('pulse', 'Pit Pulse')}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
           {/* THE FEED STATE IS ALWAYS VISIBLE. A scanner that does not say how fresh it is invites
               the reader to assume the best.
@@ -139,53 +153,67 @@ export default function PitScanPanel({ onPick }) {
             </div>
           </div>
 
-          <div style={{ height: 1, background: C.border, margin: '18px 0 14px' }} />
+          {/* ⚠️ THE UNFINISHED-ENGINE DIAGNOSTIC IS HIDDEN, NOT DELETED.
+              Everything below describes the intraday SIGNAL engine, which has no ingestion worker:
+              the heading read "Intraday signals are not running yet" above a list of signals that
+              can never fire. That is an engineering status note, and a paying trader should not be
+              shown one. The evidence boards above are the product and they run.
 
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 5 }}>
-            {live ? 'Intraday signals are not running yet' : 'Intraday signals are still waiting on market data'}
-          </div>
-          <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.6, marginBottom: 14 }}>
-            {/* ⚠️ TWO DIFFERENT REASONS, AND THEY MUST NOT BORROW EACH OTHER'S WORDS. Before the
-                entitlement the feed was the blocker. With realtime on, prices ARE live and the
-                blocker is that no intraday ingestion worker exists — saying "waiting on market
-                data" then would blame a provider that is now delivering. */}
-            {live
-              ? 'Live prices are connected. The intraday signal engine needs an ingestion worker, which is not running yet — so the signals below stay dark rather than showing a half-filled table.'
-              : (state.readiness?.reason
-                || 'Pit Scan goes live when the market-data provider is connected.')}
-            {' '}The intraday signals below will not run on delayed prints: a fifteen-minute-old
-            answer to “what is moving right now” is not a worse answer, it is a misleading one. The
-            evidence boards above do run, because they are timestamped from public filings and label
-            the freshness of every price they show.
-          </div>
-
-          {/* The signals that exist, grouped by what each is waiting for. This is the product, and a
-              trader can read it today. */}
-          <div style={{ fontSize: 9, color: C.dim, letterSpacing: 0.6, marginBottom: 6 }}>
-            SIGNALS BUILT · {(state.signals?.enabled?.length || 0) + (state.signals?.disabled?.length || 0)}
-          </div>
-          {[...byCategory.entries()].map(([cat, list]) => (
-            <div key={cat} style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: CATEGORY_TONE[cat] || C.ink, marginBottom: 3 }}>
-                {cat.toUpperCase()}
-              </div>
-              {list.slice(0, showDark ? list.length : 4).map((s) => (
-                <div key={s.id} style={{ display: 'flex', gap: 8, fontSize: 11, color: C.text, padding: '1px 0' }}>
-                  <span style={{ flex: 1 }}>{s.label}</span>
-                  <span style={{ color: C.dim, fontSize: 10 }}>{s.reason}</span>
-                </div>
-              ))}
-              {!showDark && list.length > 4 && (
-                <div style={{ fontSize: 10, color: C.dim }}>+{list.length - 4} more</div>
-              )}
-            </div>
-          ))}
-          {(state.signals?.disabled?.length || 0) > 4 && (
-            <button onClick={() => setShowDark((v) => !v)}
-              style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 4,
-                cursor: 'pointer', padding: '3px 10px', fontSize: 10.5, color: C.muted }}>
-              {showDark ? 'Show less' : 'Show every signal'}
-            </button>
+              Kept in place rather than removed so the day a feed exists this is one flag, not a
+              rebuild. Nothing in production reads state.signals or state.events for anything else
+              — scanState() hard-codes rows: [] and events: [] with that same explanation. */}
+          {SHOW_UNBUILT_ENGINE && (
+            <>
+            <div style={{ height: 1, background: C.border, margin: '18px 0 14px' }} />  
+    
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 5 }}>  
+              {live ? 'Intraday signals are not running yet' : 'Intraday signals are still waiting on market data'}  
+            </div>  
+            <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.6, marginBottom: 14 }}>  
+              {/* ⚠️ TWO DIFFERENT REASONS, AND THEY MUST NOT BORROW EACH OTHER'S WORDS. Before the  
+                  entitlement the feed was the blocker. With realtime on, prices ARE live and the  
+                  blocker is that no intraday ingestion worker exists — saying "waiting on market  
+                  data" then would blame a provider that is now delivering. */}  
+              {live  
+                ? 'Live prices are connected. The intraday signal engine needs an ingestion worker, which is not running yet — so the signals below stay dark rather than showing a half-filled table.'  
+                : (state.readiness?.reason  
+                  || 'Pit Scan goes live when the market-data provider is connected.')}  
+              {' '}The intraday signals below will not run on delayed prints: a fifteen-minute-old  
+              answer to “what is moving right now” is not a worse answer, it is a misleading one. The  
+              evidence boards above do run, because they are timestamped from public filings and label  
+              the freshness of every price they show.  
+            </div>  
+    
+            {/* The signals that exist, grouped by what each is waiting for. This is the product, and a  
+                trader can read it today. */}  
+            <div style={{ fontSize: 9, color: C.dim, letterSpacing: 0.6, marginBottom: 6 }}>  
+              SIGNALS BUILT · {(state.signals?.enabled?.length || 0) + (state.signals?.disabled?.length || 0)}  
+            </div>  
+            {[...byCategory.entries()].map(([cat, list]) => (  
+              <div key={cat} style={{ marginBottom: 10 }}>  
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: CATEGORY_TONE[cat] || C.ink, marginBottom: 3 }}>  
+                  {cat.toUpperCase()}  
+                </div>  
+                {list.slice(0, showDark ? list.length : 4).map((s) => (  
+                  <div key={s.id} style={{ display: 'flex', gap: 8, fontSize: 11, color: C.text, padding: '1px 0' }}>  
+                    <span style={{ flex: 1 }}>{s.label}</span>  
+                    <span style={{ color: C.dim, fontSize: 10 }}>{s.reason}</span>  
+                  </div>  
+                ))}  
+                {!showDark && list.length > 4 && (  
+                  <div style={{ fontSize: 10, color: C.dim }}>+{list.length - 4} more</div>  
+                )}  
+              </div>  
+            ))}  
+            {(state.signals?.disabled?.length || 0) > 4 && (  
+              <button onClick={() => setShowDark((v) => !v)}  
+                style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 4,  
+                  cursor: 'pointer', padding: '3px 10px', fontSize: 10.5, color: C.muted }}>  
+                {showDark ? 'Show less' : 'Show every signal'}  
+              </button>  
+            )}  
+  
+            </>
           )}
         </div>
       ) : tab === 'scan' ? (
