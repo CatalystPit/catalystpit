@@ -26,9 +26,29 @@ export const maxDuration = 300;
 // from already-materialized rows. A full rebuild happens only when a burst is large enough that
 // rebuilding is genuinely cheaper than recomputing the tickers one at a time.
 //
-// It is safe to run every minute, and it is safe to miss runs: the reconciliation cron
-// (/api/cron/consensus-board, every 30 minutes) recomputes everything from scratch and repairs
-// anything this missed.
+// It is safe to miss runs: the reconciliation cron (/api/cron/consensus-board, every 30 minutes)
+// recomputes everything from scratch and repairs anything this missed.
+//
+// ── ⚠️ WHY THIS NO LONGER RUNS EVERY MINUTE ─────────────────────────────────
+//
+// The paragraph above used to say "safe to run every minute", and that was true while a targeted
+// drain only recomputed the dirty tickers. It stopped being true when rebuildBoard began recomputing
+// every candidate on every call (see the `void reuseTickers` note there — reusing a cached row risks
+// publishing a setup classified against stale evidence, so it was removed deliberately). From that
+// point a "targeted" drain of a dozen tickers was a full board build, and a full build does not
+// reliably finish inside Vercel's 300s ceiling under production load.
+//
+// The failure mode that produced was not a slow board — it was a stopped one. The run that won the
+// lock was killed at 300s, so the `finally` that releases the lock never executed; the lock then
+// sat for the remainder of its own 300s TTL, and the next minute's invocation claimed it the instant
+// it expired and was killed in turn. Measured in production: a 504 every ~5 minutes forever, the
+// lock held in 56 of 56 samples, and the board frozen for hours.
+//
+// ⚠️ THE MINUTES ARE CHOSEN, NOT ROUNDED. :04,:14,…,:54 — never :00 or :30. Even in the worst case
+// where a drain claims the lock and is killed, its leaked lock expires 300s later (:09, :19, …
+// :59), so the reconciliation pass at :00 and :30 always finds the lock free. A plain */10 would
+// put a drain on those exact minutes and could starve the reconcile indefinitely, which is the
+// defect being repaired here rather than a theoretical one.
 
 const CRON_SECRET = process.env.CRON_SECRET;
 

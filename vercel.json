@@ -134,7 +134,7 @@
     },
     {
       "path": "/api/cron/consensus-refresh",
-      "schedule": "* * * * *"
+      "schedule": "4-54/10 * * * *"
     },
     {
       "path": "/api/cron/delayed-snapshot",

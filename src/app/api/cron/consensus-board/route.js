@@ -61,6 +61,21 @@ export async function GET(request) {
     if (!r.published) {
       const benign = r.reason === 'locked';
       console.warn(`[consensus-board] not published (${r.reason}) after ${ms}ms`);
+      // ⚠️ THIS PATH USED TO RECORD NOTHING AT ALL, AND THAT IS HOW A TOTAL OUTAGE STAYED INVISIBLE.
+      //
+      // A reconciliation pass that cannot start is a pass that did not happen, whatever the reason.
+      // Recording no heartbeat here meant last_polled_at never moved and consecutive_failures sat
+      // at 0, so /api/health could only report the job as "late" — indistinguishable from a cron
+      // that had simply never fired. In the incident this fixes, the pass was locked out on every
+      // single attempt for nearly six hours while the board sat frozen, and the only visible symptom
+      // was a clock that had stopped.
+      //
+      // `locked` is recorded as a FAILURE rather than a tick even though a healthy drain holds the
+      // same lock: the drain records nothing under this name, so treating locked as benign here
+      // leaves exactly the blind spot above. A single locked pass costs one increment and is
+      // forgotten by the next successful run; a persistently starved one now surfaces as rising
+      // consecutive_failures instead of silence.
+      await recordJobRun('consensus-board', { ok: false, note: `not published: ${r.reason}` });
       return Response.json({
         ok: benign, published: false, why: r.reason, version: MATERIALIZATION_VERSION, ms,
       }, { status: benign ? 200 : 500 });
