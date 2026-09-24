@@ -7,6 +7,21 @@ import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
+// ⚠️ THE MEMORY SETTING IN vercel.json IS WHAT MAKES THIS FIT, AND IT IS NOT ABOUT MEMORY.
+//
+// 300s is the plan ceiling, so a build that overruns cannot be given more time. It had to get
+// faster instead, and the build is CPU-BOUND: raising the resolve fan-out from 4 to 16 parallel
+// changed the wall clock by under 3% (173.1s -> 168.8s measured), which is the signature of work
+// that is computing rather than waiting. Node runs it on one thread, so more concurrency buys
+// nothing.
+//
+// Vercel allocates CPU in proportion to configured memory, so the function is pinned to 3009MB —
+// roughly 3x the default allocation's CPU. That is the whole fix: same code, same queries, same
+// output, more clock cycles per second to do it with.
+//
+// Measured before the change: a drain claimed the board lock at 13:24, held it for the full 300s
+// TTL, published nothing, and was killed — leaking the lock until 13:29:51. A laptop ran the same
+// build in 170s, which is why this looked like it fit and did not.
 
 // RECONCILIATION — the safety net, no longer the only mechanism.
 //
