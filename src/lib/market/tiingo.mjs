@@ -227,10 +227,21 @@ export const tiingoCapabilities = () =>
 //                                         entitled for live redistribution: getQuotes() below
 //                                         refuses a timestamped live print unless
 //                                         tiingoRealtimeEnabled() is true.
-//   /iex/<sym>/prices              IEX    getIntradayBars — currently called from NOWHERE. Built
-//   /iex                           IEX    getAllTickersSnapshot — likewise uncalled. Neither is
-//                                         reachable by a page today; both must acquire the same
-//                                         entitlement check before anything calls them.
+//   /tiingo/equity/intraday/<sym>/prices
+//                                  CONS   getIntradayBars — the intraday chart's bar source.
+//                                         Consolidated across venues, ~2s behind the tape, and it
+//                                         includes the bucket currently forming. Verified entitled
+//                                         on this token: 200 with live data, no plan refusal.
+//                                         ⚠️ Returns from 00:00 ET; the caller applies the 04:00
+//                                         session floor.
+//   /tiingo/equity/intraday        CONS   the consolidated realtime quote (tngoLast plus lq* book).
+//                                         Entitled, but nothing calls it yet: the chart gets its
+//                                         forming bar from the /prices bucket above, so there is
+//                                         no reason to also poll a quote and reconcile two sources.
+//   /iex                           IEX    getAllTickersSnapshot — uncalled. Single venue, and NOT
+//   /iex/<sym>/prices              IEX    no longer used by the chart. Single venue and delayed on
+//                                         this token (measured ~17 min); must not be mixed with
+//                                         consolidated bars in one series.
 //   wss://api.tiingo.com/equity/intraday  STREAM — deliberately NOT implemented. No subscribe
 //                                         exists in this codebase, and none may be added until
 //                                         the realtime flag is on for a real entitlement.
@@ -364,16 +375,38 @@ export async function getDailyBars(symbol, { from, to } = {}) {
   return { ok: true, reason: null, bars, methodology: TIINGO_VOLUME.COMPOSITE_EOD, provider: 'tiingo' };
 }
 
-// ── 3. INTRADAY OHLCV — past sessions, and NO VOLUME ─────────────────────────
+// ── 3. INTRADAY OHLCV — CONSOLIDATED, INCLUDING THE FORMING BAR, AND NO VOLUME ───
 /**
- * Intraday bars for PAST sessions.
+ * Intraday bars, consolidated across venues, up to and including the bucket currently forming.
  *
- * `volume` is deliberately null on every bar rather than 0. This account's intraday payload has no
- * volume field at all, and zero is a number a caller would happily divide by or chart. The
- * methodology comes back null for the same reason: there is no volume here to have a methodology.
+ * ── ⚠️ WHY THIS IS NO LONGER /iex ───────────────────────────────────────────
+ *
+ * /iex is a SINGLE VENUE and, on this token, delayed. Measured against the same token on the same
+ * morning: the /iex quote timestamp sat frozen at 08:38 across four samples from 08:55 to 08:57
+ * — a lag growing 17.2 -> 18.7 minutes — with `last`, `lastSaleTimestamp`, `quoteTimestamp` and
+ * `bidPrice` all null. Its 1-minute bars ended at 08:38 while the clock read 08:54.
+ *
+ * That delay was indistinguishable from a chart bug and was reported as one twice: a 5m chart
+ * "stuck" at 08:35 and a 15m chart "missing" its 08:45 bucket were both faithful renderings of a
+ * feed 17 minutes behind. There was no forming bar to append because no data existed in the bucket.
+ *
+ * The consolidated product answers the same query shape with a ~2-SECOND lag, and it already
+ * contains the in-progress bucket — at 08:59:40 it returned 1m through 08:59, 5m through 08:55 and
+ * 15m through 08:45. So "the current candle" needs no synthesis here: it is a real bar, built by
+ * the vendor from real prints, and this function simply stops throwing it away.
+ *
+ * ⚠️ IT ALSO STARTS AT MIDNIGHT ET, NOT 04:00. The caller is responsible for the session floor;
+ * see the route's inExtended. Passing the 00:00–04:00 bars straight through would put hours of
+ * thin overnight prints on a chart labelled "pre-market".
+ *
+ * `volume` is deliberately null on every bar rather than 0: the payload carries
+ * date/open/high/low/close and no volume field, and zero is a number a caller would happily divide
+ * by or chart. The realtime endpoint's `volume` is CUMULATIVE DAY volume and is not a per-bar
+ * figure — using it as one would invent a histogram. The methodology comes back null for the same
+ * reason: there is no volume here to have a methodology.
  */
 export async function getIntradayBars(symbol, { from, to, freq = '5min', extendedHours = false } = {}) {
-  const res = await tiingo(`/iex/${encodeURIComponent(String(symbol).toUpperCase())}/prices`,
+  const res = await tiingo(`/tiingo/equity/intraday/${encodeURIComponent(String(symbol).toUpperCase())}/prices`,
     { searchParams: { startDate: from, endDate: to, resampleFreq: freq, afterHours: extendedHours ? 'true' : undefined } });
   if (!res.ok || !Array.isArray(res.data)) return { ok: false, reason: res.reason, bars: [], methodology: null };
 

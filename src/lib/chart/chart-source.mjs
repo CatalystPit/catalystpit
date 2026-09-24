@@ -364,10 +364,24 @@ export function sessionKeyFor(timeframeId) {
  * bar size rather than to how live the chart should feel. Returns null when there is nothing worth
  * re-fetching — a five-year daily chart does not change during a session.
  */
+// ⚠️ THE POLL TRACKS THE PRICE, NOT THE BAR WIDTH.
+//
+// This was `max(60s, barSeconds)`, which polled the 15-minute chart every FIFTEEN MINUTES. That is
+// the right cadence for "has a new bar closed" and the wrong one for "what is the current bar
+// doing" — and it was the client half of the missing forming candle: the 15m bucket forming at
+// 08:45 could not appear until the next poll, however fresh the server was.
+//
+// A forming bucket updates continuously whatever its width, so every intraday interval polls on
+// the same clock. 60s is chosen against the SERVER cache (30s during live hours): fast enough that
+// the visible candle is never more than about a minute and a half behind, slow enough that a chart
+// left open costs one request a minute. Upstream cost does not scale with viewers — the server
+// cache collapses them onto one vendor call per symbol+interval per TTL.
+const INTRADAY_POLL_MS = 60_000;
+
 export function refreshIntervalMs(timeframeId) {
   const tf = timeframe(timeframeId);
   if (!tf || tf.kind !== 'intraday') return null;
-  return Math.max(60_000, tf.barSeconds * 1000);
+  return INTRADAY_POLL_MS;
 }
 
 /**

@@ -71,8 +71,17 @@ const inExtended = (info) => info.isWeekday && info.minutes >= PRE_MIN && info.m
 //
 // inExtended is 04:00–20:00 on a weekday, so pre-market and after-hours now get the same 300s TTL
 // the regular session always had. Outside the tape entirely, an hour is still right.
+// ⚠️ 30s WHILE THE TAPE IS LIVE, BECAUSE THE SOURCE IS NOW LIVE. Under /iex the bars were ~17
+// minutes stale, so a 300s cache cost nothing — there was never anything newer to fetch. The
+// consolidated feed is ~2s behind and carries the forming bucket, which makes this TTL the thing
+// that decides how current the visible candle is. At 300s a "realtime" chart would have sat up to
+// five minutes behind a feed that was two seconds behind.
+//
+// It is still a cache, and it still does the job that matters: every viewer of the same symbol and
+// interval collapses onto one vendor call per 30s, so cost scales with symbols watched rather than
+// with people watching. Outside 04:00–20:00 there is no new data to chase, so an hour stands.
 function ttlForNow() {
-  return inExtended(etInfo(Date.now())) ? 300 : 3600;
+  return inExtended(etInfo(Date.now())) ? 30 : 3600;
 }
 
 // ─── Upstash KV (REST) — mirrors /api/ticker ─────────────────────────────────
