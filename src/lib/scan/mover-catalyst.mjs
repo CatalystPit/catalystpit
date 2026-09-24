@@ -26,6 +26,7 @@
 // that resolver has a vocabulary of ambiguous words in the first place.
 
 import { kvGetJson, kvSetJson, kvConfigured } from '../consensus/materialization.mjs';
+import { classifyBiotechEvent, relevanceDays } from '../evidence/biotech-events.mjs';
 
 /** Only a genuinely large move is worth resolving; everything else keeps the cheap answer. */
 export const MAJOR_MOVE_PCT = 25;
@@ -35,6 +36,13 @@ export const MAX_RESOLVE = 12;
 
 /** How far back a catalyst may be and still plausibly relate to today's session. */
 export const LOOKBACK_HOURS = 48;
+
+/**
+ * How far back a CLASSIFIED event may be and still be useful context.
+ *
+ * The query bound only; each hit is then held to its own event type window via relevanceDays.
+ */
+export const CLASSIFIED_LOOKBACK_HOURS = 30 * 24;
 
 export const CACHE_KEY = 'scan:mover-catalyst:v1';
 /** One resolution per TTL for everybody — a hundred viewers cost what one costs. */
@@ -87,7 +95,7 @@ export async function resolveMoverCatalysts(db, sql, tickers = []) {
         select coalesce(source_headline, headline) h, source, canonical_url, original_url,
                published_at, tickers
           from primary_events
-         where published_at > now() - (${LOOKBACK_HOURS} || ' hours')::interval
+         where published_at > now() - (${CLASSIFIED_LOOKBACK_HOURS} || ' hours')::interval
            and coalesce(source_headline, headline) ilike ${'%' + head + '%'}
          order by published_at desc limit 40`)).rows;
 
@@ -98,7 +106,20 @@ export async function resolveMoverCatalysts(db, sql, tickers = []) {
         const resolved = resolveCompanies(headline, index) || [];
         const tagged = Array.isArray(e.tickers) ? e.tickers : [];
         if (!resolved.includes(ticker) && !tagged.includes(ticker)) continue;
+        // ⚠️ THE LONGER WINDOW IS EARNED, NOT GIVEN. Past 48 hours the item must classify as a real
+        // event under the canonical taxonomy, and then only for as long as its own type is relevant.
+        // An unrecognised headline stays stale at 48 hours, so months-old unrelated news cannot be
+        // dragged onto a card to explain today's move.
+        const ageH = e.published_at ? (Date.now() - new Date(e.published_at).getTime()) / 3600e3 : Infinity;
+        const spec = classifyBiotechEvent(headline);
+        if (ageH > LOOKBACK_HOURS) {
+          if (!spec) continue;
+          if (ageH > relevanceDays(spec.type) * 24) continue;
+        }
         out[ticker] = {
+          eventType: spec?.type || null,
+          // FRESH CATALYST vs RECENT RELEVANT CATALYST — the card says which, and neither says caused.
+          fresh: ageH <= LOOKBACK_HOURS,
           headline: headline.split('\n')[0].slice(0, 160),
           source: e.source || null,
           url: e.canonical_url || e.original_url || null,

@@ -174,7 +174,8 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
             r.display.catalystSource = hit.source || null;
             r.display.catalystUrl = hit.url || null;
             r.display.catalystPublicTime = hit.publicTime || null;
-            r.display.join = JOIN_LINE.MATCHING_CATALYST;
+            // FRESH vs RECENT RELEVANT — the distinction the timing supports, never causation.
+            r.display.join = hit.fresh === false ? JOIN_LINE.RECENT_CATALYST : JOIN_LINE.MATCHING_CATALYST;
           } else {
             // ⚠️ CHECKED AND FOUND NOTHING — a different statement from "we hold no record", and
             // the only one of the two worth a trader's attention.

@@ -203,6 +203,14 @@ export const JOIN_LINE = Object.freeze({
    */
   MATCHING_CATALYST: 'MATCHING CATALYST',
   /**
+   * A classified event older than the fresh window but still inside the relevance window its own
+   * TYPE earns — a regulatory submission or a pivotal readout, not an ordinary headline.
+   *
+   * ⚠️ STILL NOT CAUSATION. It says something material became public recently and the move is
+   * happening now. It does not say the first produced the second.
+   */
+  RECENT_CATALYST: 'RECENT RELEVANT CATALYST',
+  /**
    * ⚠️ "WE DID NOT IDENTIFY ONE", NOT "THERE IS NONE".
    *
    * Reached only after the bounded resolution actually ran and returned nothing, so it means the

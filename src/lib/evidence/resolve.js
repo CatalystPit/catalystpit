@@ -26,6 +26,7 @@
 // cannot be answered from a 30-day window and must not cost 842 queries.
 
 import { sql } from 'drizzle-orm';
+import { classifyBiotechEvent, relevanceDays, RELEVANCE_DAYS } from './biotech-events.mjs';
 import { isLeadRole } from '../consensus/high-significance.mjs';
 import { db } from '../db';
 import { FAMILY, DIRECTION, collectEvidence } from './model.mjs';
@@ -375,7 +376,15 @@ export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}
      order by filed_at desc
      limit 1000`);
   const r = rows(res);
-  if (!r.length) return [];
+  // ⚠️ NO 8-K IS NOT NO CATALYST, AND THIS EARLY RETURN WAS THE BUG IN MINIATURE.
+  //
+  // It returned before the press-release path at the end of this function, so a company that files
+  // no 8-K got no catalyst evidence at all — precisely the population that path exists for.
+  // Measured: LLY's FDA approval and ANIP's both resolved inside pressReleaseEvidence and were then
+  // discarded here, while QNRX worked only because it happened to have an 8-K as well.
+  if (!r.length) {
+    try { return await pressReleaseEvidence(ticker, { now }); } catch { return []; }
+  }
 
   const cutoff = now - DISPLAY_WINDOW_DAYS * DAY;
   const out = [];
@@ -423,6 +432,75 @@ export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}
       times: materialRecent.map((x) => ms(x.filed_at)), windowDays: 14, now, noun: 'material 8-K filings',
     });
     if (burst && !out[0].context) out[0].context = burst;
+  }
+
+  // ⚠️ A PRESS RELEASE IS ALSO A PUBLIC EVENT, and until now none could ever become evidence.
+  // See pressReleaseEvidence: small biotechs announce INDs, topline data and designations by wire
+  // and often file no 8-K at all, so the whole class was invisible to every consumer.
+  try {
+    out.push(...await pressReleaseEvidence(ticker, { now }));
+  } catch { /* the filing evidence above stands on its own */ }
+  return out;
+}
+
+/**
+ * CLASSIFIED COMPANY PRESS RELEASES AS CANONICAL CATALYST EVIDENCE.
+ *
+ * ── ⚠️ THE TICKER MUST ALREADY BE RESOLVED ──────────────────────────────────
+ *
+ * This reads `tickers`, the column the wire's own canonical resolver populates. It does NOT attempt
+ * its own attribution, so the CRCW failure class — a headline matched to a company because a word
+ * looked like a name — cannot recur here. No resolution, no evidence.
+ *
+ * ── ⚠️ AND THE HEADLINE MUST STATE AN EVENT ─────────────────────────────────
+ *
+ * classifyBiotechEvent refuses conference invitations, inducement grants, business updates and
+ * pipeline boilerplate before it looks for anything else, so biotech VOCABULARY alone produces
+ * nothing. An unclassified release stays what it always was: a wire item, not evidence.
+ */
+export async function pressReleaseEvidence(ticker, { now = Date.now() } = {}) {
+  // The longest event-type window bounds the query; each row is then held to its OWN window below.
+  const maxDays = Math.max(...Object.values(RELEVANCE_DAYS));
+  const res = await db.execute(sql`
+    select seq, source, coalesce(source_headline, headline) as headline, summary,
+           published_at, canonical_url, original_url, content_hash
+      from primary_events
+     where ${ticker} = any(tickers)
+       and published_at >= (now() - make_interval(days => ${maxDays}))
+     order by published_at desc
+     limit 60`);
+
+  const seen = new Set();
+  const out = [];
+  for (const e of rows(res)) {
+    const spec = classifyBiotechEvent(e.headline, e.summary);
+    if (!spec) continue;
+    const publicMs = ms(e.published_at);
+    if (publicMs == null) continue;
+    // ⚠️ EACH TYPE KEEPS ITS OWN RELEVANCE WINDOW. A trial-start notice is stale long before an
+    // IND submission is, and applying one global window would either bury the regulatory events or
+    // drag operational noise along with them.
+    const ageDays = (now - publicMs) / DAY;
+    if (ageDays > relevanceDays(spec.type)) continue;
+    // One record per event TYPE — the newest. A wire that republishes the same announcement four
+    // times must not look like four separate catalysts.
+    if (seen.has(spec.type)) continue;
+    seen.add(spec.type);
+
+    out.push({
+      ticker, family: FAMILY.CATALYST, type: spec.type, subtype: e.source || null,
+      direction: spec.direction, materiality: spec.materiality,
+      // Lower than a filing's 0.95: a company describing its own news is a weaker record than a
+      // document filed with the SEC under liability, and confidence reads this.
+      quality: 0.80,
+      eventTime: null,                 // the release states the announcement, not a separate event date
+      publicTime: e.published_at,      // ⚠️ POINT-IN-TIME: when the public could first act on it
+      source: 'press_release', sourceId: e.content_hash || String(e.seq),
+      url: e.canonical_url || e.original_url || null,
+      summary: spec.label,
+      facts: { headline: String(e.headline || '').split('\n')[0].slice(0, 180), wire: e.source || null },
+      context: null,
+    });
   }
   return out;
 }

@@ -83,6 +83,7 @@ const JOIN_TONE = {
   'NO MATCHING EVIDENCE': C.dim,
   // A recovered public item. Neutral-positive: it is an attribution, not a verdict on direction.
   'MATCHING CATALYST': C.blue,
+  'RECENT RELEVANT CATALYST': C.blue,
   // We looked and found nothing. Dim, because it reports our coverage rather than the stock.
   'NO PUBLIC CATALYST IDENTIFIED': C.dim,
   'REACTION UNAVAILABLE': C.dim,
