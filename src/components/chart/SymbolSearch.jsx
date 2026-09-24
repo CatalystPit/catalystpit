@@ -21,7 +21,13 @@ import { ToolButton, Popover } from './ChartUI';
 
 const MAX_ROWS = 8;
 
-export default function SymbolSearch({ theme, symbol, onPick, width = 96 }) {
+/**
+ * @param {{text:string,n:number}|null} [props.seed]  TYPE-TO-SEARCH. When `n` increases the popover
+ *   opens with `text` already in the box, so the keystroke that triggered it is not swallowed. A
+ *   COUNTER rather than a bare string, because typing the same first letter twice in a row has to
+ *   re-open the search and "N" === "N" would not.
+ */
+export default function SymbolSearch({ theme, symbol, onPick, width = 96, seed = null }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [results, setResults] = useState([]);
@@ -33,6 +39,18 @@ export default function SymbolSearch({ theme, symbol, onPick, width = 96 }) {
   const p = palette(theme);
 
   const close = useCallback(() => setOpen(false), []);
+
+  // TYPE-TO-SEARCH. Opening and seeding in the same tick is deliberate: the reset effect below
+  // only fires when `open` goes FALSE, so the query set here is not cleared by it, and the input's
+  // callback ref focuses the field the moment the popover mounts — which is what lets the rest of
+  // the ticker flow straight into the box without the user noticing a handover.
+  const seedN = seed?.n ?? 0;
+  useEffect(() => {
+    if (!seedN) return;
+    setOpen(true);
+    setQ(seed?.text || '');
+    setHi(0);
+  }, [seedN]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset on every open: the last search's results are not an answer to this one.
   useEffect(() => {

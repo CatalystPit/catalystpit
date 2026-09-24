@@ -63,6 +63,28 @@ export function shouldOpenQuickTimeframe(event, target) {
   return !isTypingTarget(target);
 }
 
+/**
+ * A bare LETTER starts a symbol search, the way a trading terminal does.
+ *
+ * ⚠️ LETTERS ONLY — DIGITS STAY WITH THE TIMEFRAME BOX. Both cannot own the number row, and a bare
+ * digit already means "change the interval" here. US equity tickers do not begin with a digit, so
+ * letters lose nothing by ceding it, and once the search is open its input takes every subsequent
+ * keystroke including digits — so "BRK.B" or a name with a number in it still types normally.
+ *
+ * ⚠️ AND IT SHADOWS THE SINGLE-LETTER CHART SHORTCUTS BY DESIGN. r/l/f/c were reset-view,
+ * log-scale, fullscreen and chart-type. A terminal where typing the first letter of a ticker
+ * toggles the chart type instead is the behaviour this replaces; every one of those four is a
+ * labelled item in the chart menus, so nothing became unreachable, it just stopped being a bare
+ * keystroke. The caller decides whether to enable this at all.
+ *
+ * The same exclusions as the digit gate: a keystroke inside a field belongs to that field.
+ */
+export function shouldOpenSymbolSearch(event, target) {
+  if (!event || event.ctrlKey || event.metaKey || event.altKey) return false;
+  if (!/^[A-Za-z]$/.test(event.key)) return false;
+  return !isTypingTarget(target);
+}
+
 /** Is this element one that a keystroke belongs to? */
 export function isTypingTarget(el) {
   if (!el) return false;

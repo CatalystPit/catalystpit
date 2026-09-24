@@ -51,7 +51,7 @@ import {
 import { emptyHistory, record, undo, redo, canUndo, canRedo } from '../../lib/chart/chart-history.mjs';
 import { composeExport, captionFor, exportFilename } from '../../lib/chart/chart-export.mjs';
 import {
-  resolveTypedTimeframe, shouldOpenQuickTimeframe, isTypingTarget, QUICK_TIMEFRAME_TIMEOUT_MS,
+  resolveTypedTimeframe, shouldOpenQuickTimeframe, shouldOpenSymbolSearch, isTypingTarget, QUICK_TIMEFRAME_TIMEOUT_MS,
 } from '../../lib/chart/chart-quick-timeframe.mjs';
 import IndicatorBrowser from './IndicatorBrowser';
 import { Dropdown, MenuItem, MenuLabel, Popover, ToolButton, VectorIcon } from './ChartUI';
@@ -160,6 +160,9 @@ export default function CPChart({
    * was not already going to a field that wanted it.
    */
   const [quickTf, setQuickTf] = useState(null);
+  // {text,n} — the letter that started a type-to-search, and a counter so the same first
+  // letter twice in a row still re-opens the box. Null until the first keystroke.
+  const [symbolSeed, setSymbolSeed] = useState(null);
   /**
    * WHAT EACH TOOL WAS LAST USED WITH.
    *
@@ -1095,6 +1098,28 @@ export default function CPChart({
         return;
       }
 
+      // A BARE LETTER STARTS A SYMBOL SEARCH — type-to-search, the way a terminal does.
+      //
+      // ⚠️ ONLY WHERE THIS CHART OWNS ITS SYMBOL. `onSymbolPick` provided means the HOST owns it,
+      // which is the ticker page: there the symbol is the whole page, and a keystroke silently
+      // re-pointing the chart at another company while the headlines and financials around it stay
+      // put would be worse than no shortcut. Unset is the Terminal panel, where the chart owning
+      // its own symbol is the entire point. Same distinction the in-panel search already draws, so
+      // this adds no second notion of who is in charge.
+      //
+      // ⚠️ IT SHADOWS r / l / f / c. Those were reset-view, log-scale, fullscreen and chart-type as
+      // bare keys. A terminal where typing the first letter of a ticker toggles the chart type is
+      // the behaviour being replaced; all four remain one click away in the menus, and neither the
+      // drawing shortcuts (Escape, Delete, arrows, undo/redo) nor anything modified is touched.
+      //
+      // The panel scoping is free: this listener is bound to THIS chart's focusable root, so the
+      // keystroke reaches the panel the user last clicked and no other.
+      if (!onSymbolPick && shouldOpenSymbolSearch(e, t)) {
+        e.preventDefault();
+        setSymbolSeed((s) => ({ text: e.key.toUpperCase(), n: (s?.n || 0) + 1 }));
+        return;
+      }
+
       const mod = e.ctrlKey || e.metaKey;
 
       // UNDO / REDO. Bound on the chart element, so this never steals the browser's undo from a
@@ -1128,7 +1153,7 @@ export default function CPChart({
     el.addEventListener('keydown', onKey);
     return () => el.removeEventListener('keydown', onKey);
   }, [selectedIds, deleteSelected, resetView, patchView, view.logScale, view.chartType, fullscreen, setQuickTf,
-    undoDrawings, redoDrawings, nudgeSelected]);
+    undoDrawings, redoDrawings, nudgeSelected, onSymbolPick]);
 
   // ── theme: applied to the live chart, then the series are recoloured ──
   useEffect(() => {
@@ -1325,7 +1350,7 @@ export default function CPChart({
         // ⋯ menu instead — symbol, timeframe and chart type always survive.
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '0 2px 6px',
           flexWrap: 'nowrap', minWidth: 0, flexShrink: 0 }}>
-          <SymbolSearch theme={theme} symbol={sym} onPick={onSymbolPick || setSym}
+          <SymbolSearch theme={theme} symbol={sym} onPick={onSymbolPick || setSym} seed={symbolSeed}
             width={narrow ? 64 : 84} />
 
           <div style={{ width: 1, height: 16, background: p.border, margin: '0 4px', flexShrink: 0 }} />
