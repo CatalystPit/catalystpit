@@ -81,6 +81,11 @@ const JOIN_TONE = {
   // Neutral on purpose. "We have not matched this to evidence" is a statement about our coverage,
   // not a judgement on the stock, and colouring it like a conflict would read as one.
   'NO MATCHING EVIDENCE': C.dim,
+  // A recovered public item. Neutral-positive: it is an attribution, not a verdict on direction.
+  'MATCHING CATALYST': C.blue,
+  // We looked and found nothing. Dim, because it reports our coverage rather than the stock.
+  'NO PUBLIC CATALYST IDENTIFIED': C.dim,
+  'REACTION UNAVAILABLE': C.dim,
   '—': C.dim,
 };
 

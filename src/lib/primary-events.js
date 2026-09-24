@@ -182,7 +182,10 @@ function isDue(feed, state) {
 let _symIdx = null, _symAt = 0;
 const SYMBOL_TTL_MS = 6 * 60 * 60 * 1000;
 
-async function symbolIndex() {
+// Exported so Pit Scan's major-mover resolution uses THE SAME index, cache and vocabulary as the
+// wire's own ticker resolution. A second index would be a second standard for what a company
+// reference is, and the two would drift.
+export async function symbolIndex() {
   if (_symIdx && Date.now() - _symAt < SYMBOL_TTL_MS) return _symIdx;
   try {
     const a = await db.execute(sql`

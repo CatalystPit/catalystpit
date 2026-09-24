@@ -194,6 +194,22 @@ export const JOIN_LINE = Object.freeze({
    * says plainly that the other half of the comparison is missing.
    */
   REACTION_UNAVAILABLE: 'REACTION UNAVAILABLE',
+  /**
+   * A public item was found for a major mover that carried no canonical evidence.
+   *
+   * ⚠️ "MATCHING", NEVER "CAUSED". The wire published this near the move and the canonical resolver
+   * attributes it to this ticker. That is a statement about timing and attribution — not proof the
+   * headline moved the price, which we cannot establish and do not claim.
+   */
+  MATCHING_CATALYST: 'MATCHING CATALYST',
+  /**
+   * ⚠️ "WE DID NOT IDENTIFY ONE", NOT "THERE IS NONE".
+   *
+   * Reached only after the bounded resolution actually ran and returned nothing, so it means the
+   * wire was searched by company name and no defensible attribution came back. NO MATCHING EVIDENCE
+   * says we hold no record; this says we looked. A trader can act on the difference.
+   */
+  NO_CATALYST_IDENTIFIED: 'NO PUBLIC CATALYST IDENTIFIED',
   NONE: '—',
 });
 

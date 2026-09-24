@@ -1,5 +1,6 @@
 import { buildBoard, BOARDS, BOARDS_VERSION, THRESHOLDS } from './boards.mjs';
-import { toScanRows, servedRow, freshnessLabel, SCAN_ROWS_VERSION } from './scan-rows.mjs';
+import { toScanRows, servedRow, freshnessLabel, JOIN_LINE, SCAN_ROWS_VERSION } from './scan-rows.mjs';
+import { MAJOR_MOVE_PCT } from './mover-catalyst.mjs';
 import { readPublishedBoard } from '../consensus/refresh';
 import { scanReadiness, activeCapabilities } from './runtime';
 import { resolveUserAccess, isRealtime } from '../entitlements';
@@ -144,6 +145,45 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
 
   const scanRows = toScanRows(sourceRows, quotes);
   const built = buildBoard(boardId, scanRows, { limit: cap });
+
+  // ── WHY IS IT MOVING? Bounded, server-side, and only for the rows that warrant it ──
+  //
+  // ⚠️ AFTER buildBoard, NOT BEFORE. Resolution runs on the rows actually SERVED — at most a
+  // handful — rather than on every candidate the board considered. And only for major moves with
+  // no canonical evidence, because a row that already has evidence has its answer.
+  //
+  // ⚠️ THE RESULT IS CACHED SERVER-SIDE FOR EVERYBODY. A hundred people opening Pit Scan cost what
+  // one costs; there is no per-viewer lookup anywhere in this path.
+  if (boardId === 'moving-now' && built.rows?.length) {
+    const unmatched = built.rows.filter((r) => !r.display?.evidence
+      && Math.abs(r.changePct ?? 0) >= MAJOR_MOVE_PCT);
+    if (unmatched.length) {
+      try {
+        const [{ resolveMoverCatalysts }, { db }, { sql }] = await Promise.all([
+          import('./mover-catalyst.mjs'), import('../db'), import('drizzle-orm'),
+        ]);
+        const found = await resolveMoverCatalysts(db, sql, unmatched.map((r) => r.symbol));
+        for (const r of unmatched) {
+          if (!(r.symbol in found)) continue;              // never checked — leave it alone
+          const hit = found[r.symbol];
+          if (hit?.headline) {
+            // Promoted onto the card through the same display field evidence uses, so a reader
+            // cannot tell a recovered catalyst from a canonical one by its placement — only by the
+            // source it names.
+            r.display.evidence = hit.headline;
+            r.display.catalystSource = hit.source || null;
+            r.display.catalystUrl = hit.url || null;
+            r.display.catalystPublicTime = hit.publicTime || null;
+            r.display.join = JOIN_LINE.MATCHING_CATALYST;
+          } else {
+            // ⚠️ CHECKED AND FOUND NOTHING — a different statement from "we hold no record", and
+            // the only one of the two worth a trader's attention.
+            r.display.join = JOIN_LINE.NO_CATALYST_IDENTIFIED;
+          }
+        }
+      } catch { /* resolution is best effort; the board renders unchanged without it */ }
+    }
+  }
 
   // The freshness actually being served, taken from the quotes rather than from hope.
   //
