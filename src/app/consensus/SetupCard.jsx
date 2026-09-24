@@ -142,8 +142,15 @@ export default function SetupCard({ row, bindTicker = null }) {
                 href and its click; the preview is pointerEvents:'none' and fixed-positioned, so it
                 can neither swallow the navigation nor be clipped by the card. Same binder pattern
                 as News, Screener, Dividends and the Heatmap movers. */}
+            {/* ⚠️ NO HOVER WHERE THERE IS NOTHING TO DRAW. Measured on the live board, 5 of 95 rows
+                are SEC filers with real insider evidence and no vendor price coverage at all —
+                CYBN, HYAC, CBKM, WINV, ZCAR, each with a null price, market cap and exchange
+                because Form 4 ingest admitted them and the screener universe never did. Binding a
+                chart preview to them opened a popup that could only ever say "no data".
+                isRenderableTicker cannot catch this: it tests the SHAPE of a symbol, and these are
+                perfectly well-formed. What decides it is whether we hold candles. */}
             <a href={`/ticker/${encodeURIComponent(row.ticker)}`} className="cp-tkr"
-              {...(bindTicker ? bindTicker(row.ticker) : {})}
+              {...(bindTicker && row.market?.sessions > 0 ? bindTicker(row.ticker) : {})}
               style={{ fontSize: 15, fontWeight: 800, color: C.ink, textDecoration: 'none' }}>
               {row.ticker}
             </a>

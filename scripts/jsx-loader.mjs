@@ -37,7 +37,11 @@ const STUBS = new Map([
      export const SignedIn = Null, SignedOut = Null, UserButton = Null, SignInButton = Null,
        SignUpButton = Null, ClerkProvider = ({ children }) => React.createElement(React.Fragment, null, children);
      export const useUser = () => ({ isSignedIn: false, isLoaded: true, user: null });
-     export const useAuth = () => ({ isSignedIn: false, isLoaded: true, userId: null });`],
+     export const useAuth = () => ({ isSignedIn: false, isLoaded: true, userId: null });
+     // ⚠️ EVERY CLERK EXPORT THE APP IMPORTS MUST EXIST HERE. A missing one is not a soft failure:
+     // the module throws "does not provide an export named X" and every suite that loads anything
+     // downstream of cp-shared dies at import, reporting a stack trace instead of an assertion.
+     export const useClerk = () => ({ signOut: async () => {}, openUserProfile: () => {} });`],
   ['@clerk/nextjs/server', `export const auth = async () => ({ userId: null });
      export const currentUser = async () => null;
      export const clerkClient = async () => ({ users: { getUser: async () => null } });`],

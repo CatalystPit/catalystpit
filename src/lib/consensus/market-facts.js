@@ -166,11 +166,16 @@ export async function marketFactsFor(ticker, { driver = null, reaction = null, j
   let levels = null;
   let structure = null;
   let structureLines = [];
+  // ⚠️ DO WE HOLD ANY PRICE HISTORY FOR THIS TICKER AT ALL? A separate question from whether a
+  // LEVEL can be drawn: a company can be a legitimate SEC filer with real insider evidence and no
+  // vendor price coverage, in which case every price surface must decline rather than render empty.
+  let sessions = 0;
   try {
     // ⚠️ ONE BAR LOAD FOR BOTH. Structure and levels read the same completed-session candles, so
     // adding structure costs no extra query — which is what keeps this out of the React card and
     // free of an N+1.
     const bars = await loadBars(ticker);
+    sessions = bars.length;
     levels = levelFacts(bars);
     structure = structureFacts(bars);
     structureLines = linesForStructure(structure);
@@ -178,7 +183,7 @@ export async function marketFactsFor(ticker, { driver = null, reaction = null, j
     // A candle-query failure is unknown structure, not flat structure — but it is LOGGED, because a
     // silent null here is exactly how the level facts went missing from every card unnoticed.
     console.warn(`[market-facts] ${ticker} levels unavailable: ${e.message}`);
-    levels = null; structure = null; structureLines = [];
+    levels = null; structure = null; structureLines = []; sessions = 0;
   }
   const narrative = marketNarrative({ reaction, levels, verdict, join, driverLabel });
   return {
@@ -193,6 +198,8 @@ export async function marketFactsFor(ticker, { driver = null, reaction = null, j
     // above, which is what price DID after the evidence became public.
     structure,
     structureLines,
+    // Consumed by any surface that would otherwise offer a chart for a ticker we cannot chart.
+    sessions,
     reaction: driver?.reaction
       ? { anchorDate: driver.reaction.anchorDate, anchorBasis: driver.reaction.anchorBasis,
         benchmark: driver.reaction.benchmark, horizons: driver.reaction.horizons }
