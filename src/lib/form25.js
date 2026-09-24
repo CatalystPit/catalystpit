@@ -29,6 +29,7 @@
 import { db } from './db';
 import { eightkFilings } from './schema';
 import { submissionDetail, ensureEightkTable, SEC_HEADERS } from './eightk';
+import { dailyIndexFilings, recentDays } from './sec-daily-index.mjs';
 
 const PAGES = 2;          // getcurrent pages; Form 25 volume is a fraction of 8-K volume
 const MAX_NEW = 40;
@@ -38,7 +39,10 @@ export function form25Code(title) {
   return /25-NSE/i.test(String(title || '')) ? '25-NSE' : '25';
 }
 
-export async function ingestForm25() {
+/** Days of the complete daily index to reconcile against — see lib/sec-daily-index.mjs. */
+export const RECONCILE_DAYS = 5;
+
+export async function ingestForm25({ days = RECONCILE_DAYS } = {}) {
   await ensureEightkTable();
 
   const filings = new Map();
@@ -75,6 +79,27 @@ export async function ingestForm25() {
       added++;
     }
     if (!added && p > 0) break;
+  }
+
+  // ⚠️ AND THE COMPLETE RECORD FOR THE LAST FEW DAYS. SRZN's Form 25-NSE was ruled unrecoverable
+  // because getcurrent had rolled past it. It had not been unrecoverable; we were reading the wrong
+  // endpoint. The daily index lists every Form 25 SEC disseminated that day.
+  for (const day of recentDays(days)) {
+    let rows25 = [];
+    try { rows25 = await dailyIndexFilings(day, ['25', '25-NSE']); } catch { continue; }
+    for (const f of rows25) {
+      if (filings.has(f.accession)) continue;
+      filings.set(f.accession, {
+        cik: f.cikPath,
+        accNoDashes: f.accession.replace(/-/g, ''),
+        accession: f.accession,
+        company: f.company,
+        // Dissemination date, not now — see the same note in form144.mjs.
+        filedAt: `${f.date}T12:00:00Z`,
+        code: f.form === '25-NSE' ? '25-NSE' : '25',
+        filingUrl: `https://www.sec.gov/Archives/edgar/data/${f.cikPath}/${f.accession.replace(/-/g, '')}/${f.accession}-index.htm`,
+      });
+    }
   }
 
   // Only accessions we have never stored — the same dedupe key the 8-K path uses.

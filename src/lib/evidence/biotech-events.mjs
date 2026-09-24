@@ -52,6 +52,14 @@ export const NOISE = [
   /\bpublishes?\s+(?:its\s+)?(?:annual|esg|sustainability)\b/i,
   /\bhighlights?\b/i,
   /\bbusiness\s+update\b/i,
+  /\bupcoming\s+(?:presentation|data|oral|poster)/i,
+
+  // ⚠️ MINERAL EXPLORATION WRITES "PHASE 2" AND "RESULTS" EXACTLY AS A TRIAL DOES, and BIO_CONTEXT
+  // cannot separate them, because the phase term in that gate is the very thing a mining release
+  // satisfies. Measured: "Blue Star Reports Completion of 2026 Phase 2 Drilling Program and Auma
+  // Results Including 4.3 m of 6.06 g/t Au" classified as Phase 2 clinical results. No drug
+  // release contains an assay grade.
+  /\b(?:drill(?:ing|ed|s)?|assays?|mineraliz|ore\s+body|exploration\s+(?:program|target))\b|\bg\/t\b/i,
 
   // ⚠️ SECURITIES-LITIGATION SPAM IS THE LARGEST BIOTECH-SHAPED NOISE CLASS ON THE WIRE.
   //
@@ -169,13 +177,20 @@ export const BIOTECH_EVENTS = Object.freeze([
  * @returns {{type,label,materiality,direction}|null} null whenever this is not a stated event.
  */
 export function classifyBiotechEvent(headline, summary = '') {
-  const text = `${String(headline || '')} ${String(summary || '')}`.trim();
+  const head = String(headline || '').trim();
+  const text = `${head} ${String(summary || '')}`.trim();
   if (text.length < 12) return null;
   for (const n of NOISE) if (n.test(text)) return null;
   // See BIO_CONTEXT: a taxonomy of drug events may not classify a mining release.
   if (!BIO_CONTEXT.test(text)) return null;
   for (const spec of BIOTECH_EVENTS) {
-    if (!spec.all.every((r) => r.test(text))) continue;
+    // ⚠️ THE SUMMARY MAY CONFIRM AN EVENT. IT MAY NOT INTRODUCE ONE. The first term is the SUBJECT
+    // and must be in the HEADLINE. Measured without this: "InspireMD Announces Amendments to
+    // Certain Series J and Series K Warrants" was reported as an FDA approval, and "FDA Grants
+    // Priority Review to Insmed's sNDA" was reported as an approval rather than a priority review
+    // — both because a later sentence, about something else, carried the missing word.
+    if (!spec.all[0].test(head)) continue;
+    if (!spec.all.slice(1).every((r) => r.test(text))) continue;
     if (spec.none?.some((r) => r.test(text))) continue;
     const { all, none, ...rest } = spec;
     return rest;

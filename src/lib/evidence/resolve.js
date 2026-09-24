@@ -26,7 +26,9 @@
 // cannot be answered from a 30-day window and must not cost 842 queries.
 
 import { sql } from 'drizzle-orm';
-import { classifyBiotechEvent, relevanceDays, RELEVANCE_DAYS } from './biotech-events.mjs';
+import {
+  classifyCompanyEvent, relevanceDays, extractScheduledDate, sourceQuality, MAX_RELEVANCE_DAYS,
+} from './company-events.mjs';
 import { isLeadRole } from '../consensus/high-significance.mjs';
 import { db } from '../db';
 import { FAMILY, DIRECTION, collectEvidence } from './model.mjs';
@@ -452,15 +454,22 @@ export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}
  * its own attribution, so the CRCW failure class — a headline matched to a company because a word
  * looked like a name — cannot recur here. No resolution, no evidence.
  *
+ * ── ⚠️ AND THE SOURCE MUST BE A RECORD, NOT A COLUMN ────────────────────────
+ *
+ * sourceQuality() decides. An issuer's own wire release and a professional news desk qualify;
+ * aggregator research and retail commentary do not, and returning null there is what keeps
+ * "SpaceX: Why I'm Turning Bullish After The Drop" from becoming a canonical SPCX event. The
+ * number it returns is also the record's quality — a desk report is weaker than the issuer's own.
+ *
  * ── ⚠️ AND THE HEADLINE MUST STATE AN EVENT ─────────────────────────────────
  *
- * classifyBiotechEvent refuses conference invitations, inducement grants, business updates and
- * pipeline boilerplate before it looks for anything else, so biotech VOCABULARY alone produces
+ * classifyCompanyEvent refuses conference invitations, awards, analyst ratings, litigation spam,
+ * roundups and marketing before it looks for anything else, so event VOCABULARY alone produces
  * nothing. An unclassified release stays what it always was: a wire item, not evidence.
  */
 export async function pressReleaseEvidence(ticker, { now = Date.now() } = {}) {
   // The longest event-type window bounds the query; each row is then held to its OWN window below.
-  const maxDays = Math.max(...Object.values(RELEVANCE_DAYS));
+  const maxDays = MAX_RELEVANCE_DAYS;
   const res = await db.execute(sql`
     select seq, source, coalesce(source_headline, headline) as headline, summary,
            published_at, canonical_url, original_url, content_hash
@@ -473,7 +482,10 @@ export async function pressReleaseEvidence(ticker, { now = Date.now() } = {}) {
   const seen = new Set();
   const out = [];
   for (const e of rows(res)) {
-    const spec = classifyBiotechEvent(e.headline, e.summary);
+    // ⚠️ THE SOURCE GATE COMES FIRST and is also where quality comes from — see sourceQuality.
+    const quality = sourceQuality(e.source);
+    if (quality == null) continue;
+    const spec = classifyCompanyEvent(e.headline, e.summary);
     if (!spec) continue;
     const publicMs = ms(e.published_at);
     if (publicMs == null) continue;
@@ -492,13 +504,93 @@ export async function pressReleaseEvidence(ticker, { now = Date.now() } = {}) {
       direction: spec.direction, materiality: spec.materiality,
       // Lower than a filing's 0.95: a company describing its own news is a weaker record than a
       // document filed with the SEC under liability, and confidence reads this.
-      quality: 0.80,
-      eventTime: null,                 // the release states the announcement, not a separate event date
+      quality,
+      // ⚠️ A SCHEDULED EVENT HAS A DATE OF ITS OWN, and the model has always had the field for it.
+      // "Targeting to launch Starship flight 14 as early as Sep 28" is public on the 17th and
+      // happens on the 28th; recording only the first loses the part a reader would act on. Null
+      // for everything else — see extractScheduledDate for the three things it demands first.
+      eventTime: extractScheduledDate(`${e.headline || ''} ${e.summary || ''}`, spec.type, publicMs),
       publicTime: e.published_at,      // ⚠️ POINT-IN-TIME: when the public could first act on it
       source: 'press_release', sourceId: e.content_hash || String(e.seq),
       url: e.canonical_url || e.original_url || null,
       summary: spec.label,
       facts: { headline: String(e.headline || '').split('\n')[0].slice(0, 180), wire: e.source || null },
+      context: null,
+    });
+  }
+  return out;
+}
+
+// ── 2b. PROPOSED INSIDER SALES (Form 144) ────────────────────────────────────
+//
+// ── ⚠️ THE SEMANTICS ARE THE WHOLE POINT ────────────────────────────────────
+//
+// A Form 144 is NOTICE OF A PROPOSED SALE. It is not a sale, and the summary this builds never
+// says one happened — "President/COO filed notice to sell $52.0M" is the strongest form of words
+// the document supports. The executed sale, if there is one, arrives later on a Form 4 and is
+// already a separate evidence family with its own direction and its own history.
+//
+// ── ⚠️ MOST FORM 144s ARE ROUTINE AND MUST NOT BECOME EVIDENCE ──────────────
+//
+// Restricted stock vests and the recipient files a 144 to sell enough to cover tax. Hundreds a day.
+// MIN_VALUE and MIN_PCT are the floor, and a notice below BOTH produces nothing at all rather than
+// a weak signal, because a board full of $250K vesting sales is worse than an empty board.
+//
+// ── ⚠️ AND DIRECTION IS UNKNOWN, DELIBERATELY ───────────────────────────────
+//
+// It is tempting to call a proposed insider sale bearish. But a 10b5-1 sale was decided months
+// ago, a diversification sale says nothing about the business, and marking hundreds of routine
+// notices NEGATIVE would inject a standing bearish tilt into Consensus for every large employer in
+// the market. The record states what was filed; the reader decides what it means.
+
+/** Proposed value at or above which a notice is worth showing on its own. */
+export const FORM144_MIN_VALUE = 5_000_000;
+/** Or, for a smaller company, this share of the class outstanding. */
+export const FORM144_MIN_PCT = 0.005;
+
+export async function form144Evidence(ticker, { now = Date.now() } = {}) {
+  const res = await db.execute(sql`
+    select accession, seller, relationship, shares, aggregate_value, shares_outstanding,
+           approx_sale_date, filed_at, primary_doc_url, filing_url
+      from form144_filings
+     where ticker = ${ticker}
+       and filed_at >= (now() - make_interval(days => ${DISPLAY_WINDOW_DAYS}))
+     order by filed_at desc
+     limit 100`);
+
+  const out = [];
+  for (const f of rows(res)) {
+    const value = num(f.aggregate_value);
+    const shares = num(f.shares);
+    const outstanding = num(f.shares_outstanding);
+    const pct = shares && outstanding ? shares / outstanding : null;
+    const big = (value != null && value >= FORM144_MIN_VALUE) || (pct != null && pct >= FORM144_MIN_PCT);
+    if (!big) continue;
+
+    const who = f.relationship || 'Affiliate';
+    const amount = usdLabel(value);
+    const pctText = pct != null && pct >= 0.001 ? ` (${(pct * 100).toFixed(1)}% of shares outstanding)` : '';
+    out.push({
+      ticker, family: FAMILY.INSIDER, type: 'sec_144_proposed_sale',
+      subtype: f.relationship || null,
+      direction: DIRECTION.UNKNOWN,
+      // Scaled by size within the qualifying population: a 5% notice is not a $5M notice.
+      materiality: pct != null && pct >= 0.02 ? 0.75 : value != null && value >= 50_000_000 ? 0.70 : 0.60,
+      quality: 0.95,                       // a document filed with the SEC under liability
+      // ⚠️ THE PROPOSED SALE DATE IS A FUTURE EVENT, and it is a typed field in the form rather
+      // than a date parsed out of prose — the strongest form of the WHAT/WHEN/WHO contract.
+      eventTime: f.approx_sale_date || null,
+      publicTime: f.filed_at,              // ⚠️ POINT-IN-TIME: when the notice became public
+      source: 'sec_144', sourceId: f.accession,
+      url: f.primary_doc_url || f.filing_url || null,
+      // ⚠️ "filed notice to sell", never "sold".
+      summary: `${who} filed notice to sell${amount ? ` ${amount}` : ''}${pctText}`,
+      facts: {
+        seller: f.seller || null, relationship: f.relationship || null,
+        shares, aggregateValue: value, pctOutstanding: pct,
+        proposedSaleDate: f.approx_sale_date || null,
+        note: 'Form 144 is notice of a proposed sale; it does not establish that a sale occurred.',
+      },
       context: null,
     });
   }
@@ -697,6 +789,7 @@ export async function tickerEvidence(ticker, { now = Date.now(), since = null } 
 
   const families = [
     ['insider', insiderEvidence],
+    ['form144', form144Evidence],
     ['catalyst', catalystEvidence],
     ['congress', congressEvidence],
     ['institution', institutionEvidence],

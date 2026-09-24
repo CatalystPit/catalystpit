@@ -26,7 +26,7 @@
 // that resolver has a vocabulary of ambiguous words in the first place.
 
 import { kvGetJson, kvSetJson, kvConfigured } from '../consensus/materialization.mjs';
-import { classifyBiotechEvent, relevanceDays } from '../evidence/biotech-events.mjs';
+import { classifyCompanyEvent, relevanceDays, isEvidenceSource } from '../evidence/company-events.mjs';
 
 /** Only a genuinely large move is worth resolving; everything else keeps the cheap answer. */
 export const MAJOR_MOVE_PCT = 25;
@@ -111,9 +111,13 @@ export async function resolveMoverCatalysts(db, sql, tickers = []) {
         // An unrecognised headline stays stale at 48 hours, so months-old unrelated news cannot be
         // dragged onto a card to explain today's move.
         const ageH = e.published_at ? (Date.now() - new Date(e.published_at).getTime()) / 3600e3 : Infinity;
-        const spec = classifyBiotechEvent(headline);
+        const spec = classifyCompanyEvent(headline);
         if (ageH > LOOKBACK_HOURS) {
-          if (!spec) continue;
+          // ⚠️ AND THE SOURCE MUST BE ONE EVIDENCE WOULD ACCEPT. Inside 48 hours a wire item is
+          // shown as an unclassified "fresh catalyst" and the reader can see what it is. Past that
+          // we are asserting a month-old item explains today, and an aggregator column is not
+          // good enough to carry that claim — the same standard pressReleaseEvidence applies.
+          if (!spec || !isEvidenceSource(e.source)) continue;
           if (ageH > relevanceDays(spec.type) * 24) continue;
         }
         out[ticker] = {
