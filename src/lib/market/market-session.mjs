@@ -189,6 +189,42 @@ export function previousTradingDay(date, { inclusive = false } = {}) {
 }
 
 /**
+ * The most recent trading session that has actually FINISHED.
+ *
+ * Today counts only once its own close has passed — and `closeMinute` knows about half-days, so a
+ * 13:00 early close is complete at 13:00 rather than at 16:00.
+ */
+export function lastCompletedSession(now = Date.now()) {
+  const et = easternNow(now);
+  const doneToday = isTradingDay(et.date) && et.minutes >= closeMinute(et.date);
+  return doneToday ? et.date : previousTradingDay(et.date, { inclusive: false });
+}
+
+/**
+ * How many completed trading sessions have passed since `date`.
+ *
+ * ⚠️ SESSIONS, NOT HOURS — THIS IS THE WHOLE POINT. A 24-hour or 48-hour age test calls every
+ * Monday-morning price stale because Saturday and Sunday happened, and calls a Tuesday price fresh
+ * after a Monday holiday. Counting actual sessions on the real calendar is the only test that means
+ * "this security has not printed while the market was open", which is the question being asked.
+ *
+ * 0 means the price is from the most recent completed session (or later — an intraday quote).
+ *
+ * @returns {number|null} null when either date is unusable, so a caller can fail closed.
+ */
+export function sessionsSince(date, now = Date.now()) {
+  const last = lastCompletedSession(now);
+  const from = date ? String(date).slice(0, 10) : null;
+  if (!last || !from || !/^\d{4}-\d{2}-\d{2}$/.test(from)) return null;
+  if (from >= last) return 0;
+  let n = 0;
+  let cur = last;
+  // Bounded: a price older than a trading year is stale by any measure and needs no exact count.
+  while (cur && cur > from && n < 260) { n += 1; cur = previousTradingDay(cur); }
+  return n;
+}
+
+/**
  * WHERE WE ARE IN THE SESSION LIFECYCLE. The single question the snapshot scheduler asks.
  *
  *   phase 'regular'  the regular session is open right now → snapshots may be rebuilt

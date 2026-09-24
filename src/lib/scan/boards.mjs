@@ -87,6 +87,9 @@ export function qualifiesMovingNow(row, { now = Date.now() } = {}) {
   // and the two are different failures. If the floor ever moved or a board without one reused this
   // gate, a $0.00 row would qualify. A price that is not positive is not a price.
   if (row.last <= 0) return no('non-positive-price');
+  // ⚠️ A PRICE SEVERAL SESSIONS OLD CANNOT SAY WHAT IS MOVING NOW. The row keeps its evidence on
+  // the evidence-first board; it simply cannot claim to be moving today.
+  if (row.freshness === 'stale') return no('stale-price');
   // Rejected by NAME, so the row appears in `rejected` with its reason rather than vanishing.
   if (row.last < t.minPrice) return no('sub-dollar');
 
@@ -145,6 +148,9 @@ export function qualifiesDivergence(row, { now = Date.now() } = {}) {
   if (!k) return no('no-consensus');
   if (k.version !== 'consensus_v1') return no('legacy-consensus-refused');
   if (!finite(row?.changePct)) return no('no-price');
+  // A disagreement needs a CURRENT reaction to disagree with. A stale last-known price is not one,
+  // so it can neither create a divergence nor rule one out.
+  if (row.freshness === 'stale') return no('stale-price');
 
   if ((k.activeCount ?? 0) < t.minActiveFamilies) return no('too-few-families');
   if ((CONFIDENCE_RANK[k.confidence] ?? -1) < CONFIDENCE_RANK[t.minConfidence]) return no('confidence-too-low');

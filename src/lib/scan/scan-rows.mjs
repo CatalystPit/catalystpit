@@ -19,6 +19,9 @@
 // does the evidence say". Duplicating the card here would make Scan a worse Consensus.
 
 import { FAMILY } from '../evidence/model.mjs';
+// The real exchange calendar, so staleness is measured in SESSIONS rather than in hours — a
+// weekend or a holiday must not make a current price look abandoned.
+import { sessionsSince } from '../market/market-session.mjs';
 
 export const SCAN_ROWS_VERSION = 'scan_rows_v1';
 
@@ -33,6 +36,10 @@ export const FRESHNESS_LABEL = Object.freeze({
   near: 'DELAYED',
   delayed: 'DELAYED',
   eod: 'LAST CLOSE',
+  // The security has not printed a close for multiple sessions. Not a claim about today.
+  stale: 'LAST KNOWN',
+  // No price at all. A freshness badge here would be a claim about a number that is not there.
+  unpriced: null,
 });
 // ⚠️ NOT `??` HERE. `realtime` maps to null meaning "nothing to disclose", and nullish-coalescing
 // would fall straight through to 'LAST CLOSE' — labelling a genuinely live quote as stale, the
@@ -149,6 +156,16 @@ export function evidenceLine(row) {
 //
 // Scan's vocabulary for what price is doing about the evidence. It reads the Consensus join and
 // reaction; it never re-derives them.
+/**
+ * How many completed sessions a price may fall behind before it stops being "last close".
+ *
+ * ⚠️ TWO, BECAUSE ONE IS ORDINARY DATA LAG. The screener rebuild runs daily, so a price one
+ * session behind is a pipeline that has not caught up yet rather than a security that stopped
+ * printing. Two or more completed sessions is a statement about the SECURITY, not about our
+ * refresh cadence.
+ */
+export const STALE_SESSIONS = 2;
+
 export const JOIN_LINE = Object.freeze({
   CONFIRMING: 'PRICE CONFIRMING',
   DIVERGING: 'PRICE DIVERGING',
@@ -168,6 +185,15 @@ export const JOIN_LINE = Object.freeze({
    * It is a statement about our evidence, not about the tape.
    */
   NO_EVIDENCE: 'NO MATCHING EVIDENCE',
+  /**
+   * ⚠️ THE PRICE IS TOO OLD TO SAY ANYTHING ABOUT THE EVIDENCE.
+   *
+   * Every other join label is a comparison between evidence and a CURRENT market reaction. A price
+   * several sessions behind cannot confirm, diverge or fail to react -- the market has not been
+   * asked yet as far as we can tell. Evidence Now keeps the row because the evidence is valid; this
+   * says plainly that the other half of the comparison is missing.
+   */
+  REACTION_UNAVAILABLE: 'REACTION UNAVAILABLE',
   NONE: '—',
 });
 
@@ -192,12 +218,15 @@ export const SELLOFF_PCT = -5;
  * ⚠️ AND A MIXED OR CONFLICTED READING CAN NEVER BE "CONFIRMING". There is no single direction for
  * price to agree with, and a moving tape does not resolve a disagreement between sources.
  */
-export function joinLine({ setup, joinState, reaction, changePct, direction, hasEvidence = true } = {}) {
+export function joinLine({ setup, joinState, reaction, changePct, direction, hasEvidence = true, stale = false } = {}) {
   // ⚠️ THE FIRST QUESTION IS WHETHER THERE IS ANYTHING TO JOIN. Every branch below compares price
   // against an evidence reading, so without evidence none of them is a true sentence. Answered
   // first and independently of the move, because a 168% move with no filing behind it is still a
   // move with no filing behind it.
   if (!hasEvidence) return JOIN_LINE.NO_EVIDENCE;
+
+  // A stale price cannot support ANY reaction claim, including "no reaction".
+  if (stale) return JOIN_LINE.REACTION_UNAVAILABLE;
 
   const conflicted = setup === 'CROSS_SOURCE_CONFLICT' || joinState === 'SOURCES_CONFLICT'
     || direction === 'MIXED';
@@ -205,7 +234,10 @@ export function joinLine({ setup, joinState, reaction, changePct, direction, has
   // Prefer the displayed move; fall back to the evidence-anchored reaction when there is no quote.
   const move = Number.isFinite(changePct) ? changePct
     : (Number.isFinite(reaction?.abs) ? reaction.abs : null);
-  if (move === null) return JOIN_LINE.NONE;
+  // Evidence with no usable price at all is the same statement as evidence with a stale one: we
+  // cannot measure what the market did. (hasEvidence is already true here — the no-evidence case
+  // returned above — so this never swallows the "we found nothing" answer.)
+  if (move === null) return JOIN_LINE.REACTION_UNAVAILABLE;
   // Evidence exists and price has not moved on it. This is the ONE case NO REACTION describes, and
   // it is exactly the Evidence Now thesis: something material is public and the tape is quiet.
   if (Math.abs(move) < SCAN_DEAD_ZONE_PCT) return JOIN_LINE.NO_REACTION;
@@ -264,7 +296,22 @@ export function toScanRow(row, quote = null) {
   // is the value that renders as "$0.00" beside a percentage move — a row asserting a price it
   // does not have. Absent is null, and the card already renders null as an em dash.
   const positive = (v) => Number.isFinite(v) && v > 0;
-  const hasQuote = quote && positive(quote.price);
+
+  // ⚠️ A QUOTE THAT HAS MISSED MULTIPLE SESSIONS IS NOT "LAST CLOSE".
+  //
+  // ADTX's quote feed was timestamped 2026-09-10 while the security kept trading — our own daily
+  // candles show 11.5M shares on 2026-09-22 — so the board presented a fourteen-day-old print as
+  // an ordinary last close. Counting SESSIONS rather than hours is what makes this correct across
+  // weekends and holidays: a Monday quote is not stale because Saturday happened.
+  //
+  // A session-stale quote is set aside, NOT patched: the row then falls through to the daily close
+  // we already store, which genuinely is the most recent completed session. Nothing is fabricated
+  // and no newer price is invented — a fresher legitimate number simply wins over an older one.
+  const quoteLive = quote?.freshness === 'realtime' || quote?.freshness === 'near';
+  const quoteSessions = quoteLive ? 0 : sessionsSince(quote?.asOf ?? null);
+  const quoteStale = quoteSessions != null && quoteSessions >= STALE_SESSIONS;
+
+  const hasQuote = quote && positive(quote.price) && !quoteStale;
   const rawLast = hasQuote ? quote.price : (positive(levels?.close) ? levels.close : null);
   const last = rawLast === null ? null : Math.round(rawLast * 10000) / 10000;
   // ⚠️ AND A MOVE IS NOT DERIVED FROM A PRICE WE REFUSED. Keeping the change while dropping the
@@ -276,7 +323,15 @@ export function toScanRow(row, quote = null) {
   // Rounded in the PAYLOAD, not only in the component. A raw -3.1007751937984525 in the API is a
   // precision the feed does not have, and any other consumer would render it verbatim.
   const changePct = rawChange === null ? null : Math.round(rawChange * 100) / 100;
-  const freshness = hasQuote ? (quote.freshness || 'eod') : 'eod';
+  // The age of the price we ACTUALLY ended up showing, whichever source supplied it.
+  const priceAsOf = hasQuote ? (quote.asOf ?? null) : (levels?.asOf ?? null);
+  const priceSessions = (hasQuote && quoteLive) ? 0 : sessionsSince(priceAsOf);
+  const priceStale = rawLast !== null && priceSessions != null && priceSessions >= STALE_SESSIONS;
+  // ⚠️ STALE IS ITS OWN FRESHNESS, NOT A VARIANT OF 'eod'. "LAST CLOSE" asserts that the number is
+  // the most recent completed session. When it is not, the row has to say the other thing.
+  const freshness = rawLast === null ? 'unpriced'
+    : priceStale ? 'stale'
+      : (hasQuote ? (quote.freshness || 'eod') : 'eod');
 
   const catBlock = row.families?.[FAMILY.CATALYST]?.[0] || null;
 
@@ -294,6 +349,12 @@ export function toScanRow(row, quote = null) {
     symbol: row.ticker,
     last,
     changePct,
+    // ⚠️ AT THE TOP LEVEL BECAUSE THE BOARD GATES READ IT. boards.mjs is pure and takes the row,
+    // not the display block, so a freshness that lived only under `display` would leave the gates
+    // unable to tell a current price from a last-known one — which is the whole point here.
+    freshness,
+    priceAsOf,
+    priceSessionsBehind: priceSessions,
     // Same snapshot as the change% above — see structureTags.
     structure: levelsToStructure(levels, changePct),
     // ⚠️ consensusV1, NOT canonical. `canonical` is the v2 SYNTHESIS object (version
@@ -337,7 +398,7 @@ export function toScanRow(row, quote = null) {
       evidence: evidenceLine(row),
       join: joinLine({
         setup: row.setup?.setup, joinState: row.join_layer?.state, reaction: row.reaction_layer,
-        changePct, direction: row.setup?.direction, hasEvidence,
+        changePct, direction: row.setup?.direction, hasEvidence, stale: priceStale,
       }),
       // Carried so the card can OMIT evidence fields rather than print dashes into them. A row that
       // says "STRUCTURE —  EVIDENCE —" advertises what we do not have; the card's job is to show
