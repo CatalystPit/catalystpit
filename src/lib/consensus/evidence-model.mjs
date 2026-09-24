@@ -543,7 +543,30 @@ export function evidenceConfidence({ significantFamilies = [], synthesis = null,
   // 0.6 (self-reported, banded, lagged), so averaging meant ADDING congressional corroboration to a
   // 0.95-quality Form 4 lowered confidence — punishing a company for having more evidence.
   const quality = Number.isFinite(meaningful[0].evidence?.quality) ? meaningful[0].evidence.quality : 0.5;
-  const mass = Number.isFinite(synthesis?.M) ? synthesis.M : 0;
+
+  // ⚠️ ALIGNED MASS, NOT TOTAL MASS — CONTRADICTION USED TO RAISE CONFIDENCE.
+  //
+  // M is Σ|E|: how much evidence there is. It says nothing about whether that evidence agrees, so a
+  // family pointing the OTHER way increased confidence exactly as much as one pointing the same way.
+  // Measured on fixtures: two bullish families against two bearish ones of comparable strength —
+  // net lean 0.01, a genuine standoff — returned High, because M was 2.87 and nothing asked which
+  // direction any of it pointed. That is the opposite of "confidence in the evidence conclusion".
+  //
+  // The correction uses what the synthesis ALREADY computes from the same signed values: L = ΣE/M
+  // is the net lean, so M·|L| = |ΣE| is the mass that actually points one way. No new constant, no
+  // new threshold, no new input — the disagreement term is derived from the existing signed
+  // representation rather than invented.
+  //
+  // ⚠️ IT CAN ONLY LOWER, NEVER RAISE, because |L| <= 1. This tightens confidence; it cannot
+  // manufacture a High row, and every threshold below is untouched.
+  //
+  //   agreeing family added      -> M and |ΣE| both rise      -> confidence can rise
+  //   contradicting family added -> M rises, |ΣE| FALLS       -> confidence falls
+  //   balanced disagreement      -> |ΣE| ~ 0                  -> cannot be strong, cannot be High
+  //   unanimous evidence         -> |L| = 1, aligned = M      -> unchanged
+  const totalMass = Number.isFinite(synthesis?.M) ? synthesis.M : 0;
+  const lean = Number.isFinite(synthesis?.L) ? Math.abs(synthesis.L) : 1;
+  const mass = totalMass * lean;
   const ageDays = Number.isFinite(newestAgeMs) ? newestAgeMs / 86_400_000 : Infinity;
 
   // ⚠️ AGE CAPS CONFIDENCE. Past ~10 trading days the only thing that still justifies confidence is

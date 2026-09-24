@@ -286,7 +286,22 @@ export function toScanRow(row, quote = null) {
     // 'consensus_v2_synthesis') and the divergence gate refuses it by design — measured, it
     // rejected all 28 rows as 'legacy-consensus-refused'. The v1 object carries the
     // version/activeCount/confidence/directionValue the gate actually reads.
-    consensus: row.consensusV1 || null,
+    // ⚠️ THE CONFIDENCE HERE IS THE CANONICAL ONE, NOT consensus_v1's.
+    //
+    // consensusV1 is the deprecated arithmetic the board carries for this gate's OTHER fields
+    // (version, activeCount, directionValue). Its confidence is a different generation of the
+    // methodology and the board's own comment says it "is shown to nobody" — but Divergence was
+    // gating on it, so Consensus could publish a High row while Pit Scan saw Low. Measured on one
+    // board: canonical High 2 / Medium 24 / Low 71 against v1's High 0 / Medium 17 / Low 80, and
+    // v1 caps confidence at active/4 — making High arithmetically impossible for any row with two
+    // or fewer families whatever the evidence said.
+    //
+    // Overridden here rather than recomputed: setup.confidence IS the production value, taken
+    // verbatim. Pit Scan must never own a second definition of confidence. Every other Divergence
+    // gate is untouched.
+    consensus: row.consensusV1
+      ? { ...row.consensusV1, confidence: row.setup?.confidence ?? row.consensusV1.confidence }
+      : null,
     catalyst: catBlock ? {
       family: catBlock.family,
       label: catBlock.headline,
