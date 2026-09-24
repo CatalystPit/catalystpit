@@ -68,6 +68,14 @@ export const TIMEFRAME_GROUPS = [
 // Intraday entries are Polygon aggregates at an arbitrary MINUTE multiplier — 240 minutes is the
 // four-hour bar, there is no separate hour endpoint. `sessions` is trading days kept; `lookbackDays`
 // is the calendar span requested, always wider so a long weekend cannot shorten the window.
+// ⚠️ 1m AND 5m KEEP FIVE SESSIONS, NOT ONE. They were the only intraday intervals that kept a
+// single trading day, so both opened on today alone — before the open that is an empty chart, and
+// minutes after it a handful of candles with nothing to read them against. Every other interval
+// already kept multiple sessions; these two were the outliers, not the rule.
+//
+// ⚠️ AND lookbackDays GOES TO 9, NOT 5. It is a CALENDAR span covering a count of TRADING days,
+// so five calendar days spans at most five weekdays and a single weekend leaves the window short.
+// Nine is what 15m already uses to guarantee five sessions across a weekend or a holiday.
 const intra = (id, label, short, group, barMinutes, sessions, lookbackDays) => ({
   id, label, short, group, kind: 'intraday', endpoint: 'intraday',
   barSeconds: barMinutes * 60,
@@ -120,10 +128,10 @@ export const initialBarsFor = (id) => timeframe(id)?.initialBars ?? null;
 
 export const TIMEFRAMES = [
   //     id      label          short  group      barMin  sessions  lookback
-  intra('1m',  '1 minute',   '1m',  'minutes',    1,     1,   5),
+  intra('1m',  '1 minute',   '1m',  'minutes',    1,     5,   9),
   intra('2m',  '2 minutes',  '2m',  'minutes',    2,     1,   5),
   intra('3m',  '3 minutes',  '3m',  'minutes',    3,     1,   5),
-  intra('5m',  '5 minutes',  '5m',  'minutes',    5,     1,   5),
+  intra('5m',  '5 minutes',  '5m',  'minutes',    5,     5,   9),
   intra('10m', '10 minutes', '10m', 'minutes',   10,     2,   9),
   intra('15m', '15 minutes', '15m', 'minutes',   15,     5,   9),
   intra('30m', '30 minutes', '30m', 'minutes',   30,    10,  18),

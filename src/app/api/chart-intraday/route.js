@@ -61,9 +61,18 @@ const PRE_MIN = 240, POST_MIN = 1200;   // 04:00 and 20:00 ET
 const inExtended = (info) => info.isWeekday && info.minutes >= PRE_MIN && info.minutes < POST_MIN;
 
 // TTL from the REQUEST time (not bar data): tighter cache while the market is live.
+//
+// ⚠️ "LIVE" MEANS THE EXTENDED SESSION, NOT THE REGULAR ONE — and getting that wrong is what froze
+// the pre-market chart. This asked `minutes >= OPEN_MIN`, so at 08:05 ET the market counted as
+// closed and the payload was cached for a full HOUR. The 15-minute series built at 08:05 held one
+// bar (08:00), and it kept serving that single bar until 09:05 while Tiingo already had 08:15 and
+// 08:30 — which is exactly the "one current-session candle" the chart showed, and why the forming
+// bucket appeared not to update. The bars were never mis-bucketed; the response was stale.
+//
+// inExtended is 04:00–20:00 on a weekday, so pre-market and after-hours now get the same 300s TTL
+// the regular session always had. Outside the tape entirely, an hour is still right.
 function ttlForNow() {
-  const i = etInfo(Date.now());
-  return (i.isWeekday && i.minutes >= OPEN_MIN && i.minutes < CLOSE_MIN) ? 300 : 3600;
+  return inExtended(etInfo(Date.now())) ? 300 : 3600;
 }
 
 // ─── Upstash KV (REST) — mirrors /api/ticker ─────────────────────────────────
@@ -156,7 +165,13 @@ export async function GET(request) {
 
     // THE SESSION BELONGS IN THE KEY. Without it the first caller's shape is served to the other —
     // a cache that returns the wrong data rather than a slow one.
-    const key     = `chart:intraday:${ticker}:${range}${session === 'extended' ? ':ext' : ''}`;
+    // ⚠️ THE SESSION COUNT BELONGS IN THE KEY FOR THE SAME REASON THE SESSION DOES. The number of
+    // trading days kept is part of the payload's SHAPE, so when the registry changes it — as it
+    // just did for 1m and 5m — every cached entry built under the old value stays valid for its
+    // full hour and keeps serving the old shape. Keying on it means the new window is live on
+    // deploy instead of an hour later, and a future registry change cannot silently serve stale
+    // geometry either.
+    const key     = `chart:intraday:${ticker}:${range}:s${keepN}${session === 'extended' ? ':ext' : ''}`;
     const lastKey = `${key}:last`;
 
     // HIT → serve fresh cache, no upstream call.
