@@ -121,6 +121,7 @@ export function groupByDate(events, mode = 'ex') {
 /** Everything the filter bar can send, defaulted — so "no filters" is one shape, not eleven nulls. */
 export const EMPTY_FILTERS = Object.freeze({
   q: '', sector: '', minYield: '', minAmount: '', frequency: '', type: '', minMarketCap: '',
+  // (see UNCLASSIFIED_SECTOR below for what a non-empty sector of '__unclassified__' means)
 });
 
 /**
@@ -192,6 +193,40 @@ export function numParam(v) {
 }
 
 /** The query string for the calendar API. Empty values are omitted rather than sent as blanks. */
+/**
+ * The sector-filter value meaning "this security has no sector".
+ *
+ * ⚠️ A SENTINEL, NOT AN EMPTY STRING. Empty already means "all sectors" in this filter, and the two
+ * are opposite instructions. It lives here rather than in dividend-store because the dropdown that
+ * emits it is a client component and the store imports the database.
+ *
+ * ETFs, closed-end funds, trusts, preferred lines and anything the screener has not resolved have
+ * no sector. They are a real part of this calendar — most of it, on some windows — so they get a
+ * named bucket instead of being silently unreachable.
+ */
+export const UNCLASSIFIED_SECTOR = '__unclassified__';
+export const UNCLASSIFIED_LABEL = 'Other / Unclassified';
+
+/**
+ * Dropdown options built from the SERVER'S OWN FACET, so the parts sum to the whole.
+ *
+ * ⚠️ THE "ALL" COUNT IS THE SUM OF THE PARTS, NOT A SEPARATE TOTAL. Deriving it from the same array
+ * the options come from is what makes reconciliation structural: there is no second number that can
+ * disagree, and a sector missing from the facet cannot go missing from the total.
+ *
+ * A null sector becomes the explicit bucket. Nothing is classified here — the facet reports what the
+ * data says, and a row with no sector is counted as having none rather than assigned one.
+ */
+export function sectorOptions(facet) {
+  if (!Array.isArray(facet) || !facet.length) return { options: [], total: null };
+  const options = facet.map(({ sector, n }) => ({
+    value: sector || UNCLASSIFIED_SECTOR,
+    label: sector || UNCLASSIFIED_LABEL,
+    n: Number(n) || 0,
+  }));
+  return { options, total: options.reduce((a, o) => a + o.n, 0) };
+}
+
 export function calendarQuery({ from, to, mode = 'ex', limit = 500, filters = EMPTY_FILTERS } = {}) {
   const p = new URLSearchParams({ from, to, mode, limit: String(limit) });
   for (const [k, v] of Object.entries(filters || {})) {

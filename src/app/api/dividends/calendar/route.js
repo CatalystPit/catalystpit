@@ -1,4 +1,4 @@
-import { calendarRange, calendarCount, dividendSyncState } from '../../../../lib/dividends/dividend-store';
+import { calendarRange, calendarCount, calendarSectorCounts, dividendSyncState } from '../../../../lib/dividends/dividend-store';
 import { dividendsVisible, dividendsDisplayMode } from '../../../../lib/dividends/providers/index.mjs';
 import { dividendYieldPct, marketCapApplies } from '../../../../lib/dividends/dividend-event.mjs';
 import { numParam } from '../../../../lib/dividends/dividend-view.mjs';
@@ -70,9 +70,12 @@ export async function GET(request) {
       covered: sp.get('covered') !== 'all',
     };
 
-    const [rows, total, sync] = await Promise.all([
+    const [rows, total, sectors, sync] = await Promise.all([
       calendarRange({ from, to, mode, limit: num(sp.get('limit')) ?? 500, offset: num(sp.get('offset')) ?? 0, ...filters }),
       calendarCount({ from, to, mode, ...filters }),
+      // The facet rides along on the request the rows already cost, so the dropdown needs no second
+      // round trip and cannot end up describing a different window than the table beneath it.
+      calendarSectorCounts({ from, to, mode, ...filters }),
       dividendSyncState(),
     ]);
 
@@ -108,7 +111,7 @@ export async function GET(request) {
     });
 
     return Response.json({
-      enabled: true, mode, from, to, total, events,
+      enabled: true, mode, from, to, total, events, sectors,
       // 'prelaunch' means real data from a TEMPORARY source, not cleared for public redistribution.
       display: dividendsDisplayMode(),
       asOf: sync.updatedAt, source: 'scheduled-ingest',

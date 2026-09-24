@@ -1,6 +1,6 @@
 import DividendsClient from './DividendsClient';
 import { pageMeta } from '../../lib/seo';
-import { calendarRange, calendarCount, dividendSyncState } from '../../lib/dividends/dividend-store';
+import { calendarRange, calendarCount, calendarSectorCounts, dividendSyncState } from '../../lib/dividends/dividend-store';
 import { dividendsVisible, dividendsDisplayMode } from '../../lib/dividends/providers/index.mjs';
 import { dividendYieldPct } from '../../lib/dividends/dividend-event.mjs';
 
@@ -36,14 +36,18 @@ export default async function DividendsPage() {
 
   let initial = { events: [], total: 0, from: today, to, mode: 'ex', asOf: null };
   try {
-    const [rows, total, sync] = await Promise.all([
+    // The facet is fetched with the first paint for the same reason the rows are: a dropdown that
+    // acquires its counts only after a client round trip shows "All sectors" with no numbers for
+    // the first second, and then renumbers itself under the reader.
+    const [rows, total, sectors, sync] = await Promise.all([
       calendarRange({ from: today, to, limit: 300 }),
       calendarCount({ from: today, to }),
+      calendarSectorCounts({ from: today, to }),
       dividendSyncState(),
     ]);
     const fresh = sync.updatedAt ? (Date.now() - Date.parse(sync.updatedAt)) < 5 * 86_400_000 : false;
     initial = {
-      from: today, to, mode: 'ex', total, asOf: sync.updatedAt,
+      from: today, to, mode: 'ex', total, sectors, asOf: sync.updatedAt,
       events: rows.map((r) => ({
         ticker: r.ticker,
         company: r.company || null,

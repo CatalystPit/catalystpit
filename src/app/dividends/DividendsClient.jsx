@@ -8,6 +8,7 @@ import { useTickerHover, TickerHoverPreview } from '../../components/TickerHover
 import InfoTip from '../../components/InfoTip';
 import {
   iso, shiftDays, rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS, COLUMN_HELP,
+  sectorOptions,
 } from '../../lib/dividends/dividend-view.mjs';
 
 // THE DIVIDEND CALENDAR.
@@ -91,6 +92,10 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
     const t = setTimeout(load, filters.q ? 250 : 0);     // debounce only the text field
     return () => clearTimeout(t);
   }, [load, filters.q]);
+
+  // Recomputed only when the server sends a new facet, so switching sector does not renumber the
+  // dropdown under the reader's cursor — the facet ignores the sector filter by design.
+  const sectorFacet = useMemo(() => sectorOptions(data?.sectors), [data?.sectors]);
 
   const events = data?.events || [];
   const sorted = useMemo(() => (sort.key ? sortEvents(events, sort.key, sort.dir) : events), [events, sort]);
@@ -259,9 +264,18 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
               <input value={filters.q} onChange={(e) => setFilter('q', e.target.value)}
                 placeholder="Ticker or company" style={{ ...field, minWidth: 170 }} />
+              {/* ⚠️ OPTIONS COME FROM THE FACET, NOT FROM A STATIC LIST. This offered the eleven
+                  canonical sectors, which had two consequences: a sector with no events in the
+                  window was still offered and selected nothing, and — worse — every row whose
+                  sector is null was reachable by no option at all, so the categories could not sum
+                  to "All sectors". The facet is computed by the same query the table is, with the
+                  sector filter dropped, so the counts describe exactly this window and these
+                  filters. Falls back to the static list only before the first response. */}
               <select value={filters.sector} onChange={(e) => setFilter('sector', e.target.value)} style={field}>
-                <option value="">All sectors</option>
-                {SECTORS.map((s) => <option key={s} value={s}>{s}</option>)}
+                <option value="">{sectorFacet.total == null ? 'All sectors' : `All sectors (${sectorFacet.total})`}</option>
+                {sectorFacet.options.length
+                  ? sectorFacet.options.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.n})`}</option>)
+                  : SECTORS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
               <select value={filters.type} onChange={(e) => setFilter('type', e.target.value)} style={field}>
                 <option value="">All types</option>

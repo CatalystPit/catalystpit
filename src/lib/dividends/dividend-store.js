@@ -7,6 +7,10 @@
 
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
+// ⚠️ THE SENTINEL LIVES IN THE VIEW MODULE, NOT HERE. The dropdown that emits it is a client
+// component, and importing this file to reach a constant would pull the database into the browser
+// bundle. dividend-view.mjs is the piece both sides already share.
+import { UNCLASSIFIED_SECTOR } from './dividend-view.mjs';
 
 /**
  * Upsert canonical events. IDEMPOTENT on (source, source_event_id).
@@ -113,7 +117,12 @@ function calendarConditions({
   }
   // Sector lives on both tables; screener_meta covers tickers the daily screener rebuild has not
   // reached yet, which is why this coalesces rather than picking one.
-  if (sector) conds.push(sql`coalesce(s.sector, m.sector) = ${sector}`);
+  // ⚠️ "UNCLASSIFIED" IS A SELECTABLE VALUE, NOT A MISSING ONE. The dropdown used to offer the
+  // eleven canonical sectors and nothing else, so every row whose sector is NULL — ETFs, funds,
+  // trusts, preferred lines, anything the screener has not resolved — was reachable by no option at
+  // all. The parts could not sum to the whole because a part had no name.
+  if (sector === UNCLASSIFIED_SECTOR) conds.push(sql`coalesce(s.sector, m.sector) is null`);
+  else if (sector) conds.push(sql`coalesce(s.sector, m.sector) = ${sector}`);
   if (type) conds.push(sql`d.dividend_type = ${type}`);
   if (frequency != null) conds.push(sql`d.frequency = ${Number(frequency)}`);
   if (minAmount != null) conds.push(sql`d.cash_amount >= ${Number(minAmount)}`);
@@ -170,6 +179,34 @@ export async function calendarCount({ from, to, mode = 'ex', ...filters } = {}) 
       left join security_identity i on i.ticker = d.ticker
      where ${where}`);
   return Number((res.rows ?? res)[0]?.n) || 0;
+}
+
+/**
+ * SECTOR FACET — the counts behind the dropdown.
+ *
+ * ⚠️ IT COUNTS THE SAME DATASET "ALL SECTORS" SHOWS, WHICH IS WHY IT RECONCILES. Same builder, same
+ * joins, same window, same filters — with the sector filter itself deliberately dropped, because a
+ * facet that applied the selection would report 1 for the chosen sector and 0 for every other one.
+ * Summing these therefore equals calendarCount() with no sector filter, by construction rather than
+ * by coincidence, and no row can be counted twice or missed: every row has exactly one
+ * coalesce(s.sector, m.sector), and NULL is a bucket rather than an exclusion.
+ *
+ * Nothing here classifies anything. The sector is read from the same two columns the rows render
+ * from; a row with no sector is reported as having no sector, never assigned one to tidy the total.
+ */
+export async function calendarSectorCounts({ from, to, mode = 'ex', ...filters } = {}) {
+  const dateCol = mode === 'payment' ? sql`d.payment_date` : sql`d.ex_dividend_date`;
+  const where = calendarConditions({ from, to, dateCol, ...filters, sector: null });
+  const res = await db.execute(sql`
+    select coalesce(s.sector, m.sector) as sector, count(*)::int as n
+      from dividend_events d
+      left join screener_stocks   s on s.ticker = d.ticker
+      left join screener_meta     m on m.ticker = d.ticker
+      left join security_identity i on i.ticker = d.ticker
+     where ${where}
+     group by 1
+     order by n desc, sector asc nulls last`);
+  return (res.rows ?? res).map((r) => ({ sector: r.sector || null, n: Number(r.n) || 0 }));
 }
 
 /** Freshness, so the page can say when it last synced rather than implying it is live. */
