@@ -52,3 +52,4 @@ research/.vendor-cache/
 .tmp*.json
 .hq.json
 placeholder-rows-removed-*.json
+scripts/tmp/
