@@ -24,6 +24,21 @@ export const THRESHOLDS = Object.freeze({
   version: BOARDS_VERSION,
 
   movingNow: Object.freeze({
+    /**
+     * ⚠️ A SUB-DOLLAR PRICE IS A PERCENTAGE-MOVE ARTEFACT, NOT A SMALLER COMPANY.
+     *
+     * This board ranks on the SIZE of the move, and at $0.05 a one-cent tick is 20%. Once Moving
+     * Now started ranking the whole eligible universe instead of the evidence board, sub-dollar
+     * names took the top of it by arithmetic rather than by significance — the first page was
+     * $0.175 and $0.053 tickers while $1+ movers with real moves sat below them.
+     *
+     * ⚠️ AND IT IS A PRICE FLOOR, NOT A SIZE FILTER. No market cap, no volume, no liquidity score —
+     * a small company trading at $3 belongs on this board and is untouched. It removes the one
+     * class of row whose percentage cannot mean what the column implies.
+     *
+     * Moving Now only. Evidence Now and Divergence are evidence-first and keep every price.
+     */
+    minPrice: 1.00,
     // A move must be big enough to be worth a trader's attention. Below this the "structure event"
     // is noise wearing a label.
     minAbsChangePct: 2.0,
@@ -67,6 +82,8 @@ export function qualifiesMovingNow(row, { now = Date.now() } = {}) {
   const t = THRESHOLDS.movingNow;
   const move = abs(row?.changePct);
   if (!finite(row?.changePct) || !finite(row?.last)) return no('no-price');
+  // Rejected by NAME, so the row appears in `rejected` with its reason rather than vanishing.
+  if (row.last < t.minPrice) return no('sub-dollar');
 
   const sig = row?.structure || null;
   const sigAgeMin = sig?.at ? (now - new Date(sig.at).getTime()) / 60000 : null;

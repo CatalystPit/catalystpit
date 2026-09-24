@@ -140,7 +140,12 @@ const fmtHalt = (t) => (t ? `${String(t).slice(0, 5)} ET` : '—');
 function ChartBody({ symbol }) {
   return (
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '4px 6px 2px' }}>
-      <CPChart symbol={symbol} initialTimeframe="1D" transparent />
+      {/* ⚠️ 5m IS THE TERMINAL'S DEFAULT, NOT THE PRODUCT'S. DEFAULT_TIMEFRAME stays '1D' because
+          the ticker page opens on it, and a trader arriving at a company's page wants its history,
+          not the last few hours. A Terminal panel is the opposite: it sits beside the tape and the
+          scanner, so it opens on the intraday resolution those are describing. The two defaults are
+          different questions and are set in the two places that ask them. */}
+      <CPChart symbol={symbol} initialTimeframe="5m" transparent />
     </div>
   );
 }

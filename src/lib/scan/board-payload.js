@@ -1,4 +1,4 @@
-import { buildBoard, BOARDS, BOARDS_VERSION } from './boards.mjs';
+import { buildBoard, BOARDS, BOARDS_VERSION, THRESHOLDS } from './boards.mjs';
 import { toScanRows, servedRow, freshnessLabel, SCAN_ROWS_VERSION } from './scan-rows.mjs';
 import { readPublishedBoard } from '../consensus/refresh';
 import { scanReadiness, activeCapabilities } from './runtime';
@@ -124,6 +124,14 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
   if (boardId === 'moving-now' && snapshot?.rows?.length) {
     const known = new Set(consensusRows.map((r) => String(r.ticker || '').toUpperCase()));
     const movers = [...snapshot.rows]
+      // ⚠️ THE FLOOR IS APPLIED BEFORE THE POOL IS SLICED, NOT ONLY AT QUALIFICATION.
+      //
+      // qualifiesMovingNow is the authority on membership and rejects sub-dollar rows by name. But
+      // this pool is the top 200 by move size, and sub-dollar names dominate that ordering by
+      // arithmetic — so filtering only downstream would fill the pool with rows destined to be
+      // rejected and hand the board a handful of survivors. Same constant, read from the same
+      // THRESHOLDS, so the two can never disagree about where the line is.
+      .filter((m) => Number.isFinite(m.last) && m.last >= THRESHOLDS.movingNow.minPrice)
       .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
       .slice(0, MOVER_POOL)
       .filter((m) => !known.has(m.symbol))
