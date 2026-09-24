@@ -26,7 +26,9 @@
 // that resolver has a vocabulary of ambiguous words in the first place.
 
 import { kvGetJson, kvSetJson, kvConfigured } from '../consensus/materialization.mjs';
-import { classifyCompanyEvent, relevanceDays, isEvidenceSource } from '../evidence/company-events.mjs';
+import {
+  classifyCompanyEvent, extractScheduledDate, stillRelevant, isEvidenceSource,
+} from '../evidence/company-events.mjs';
 
 /** Only a genuinely large move is worth resolving; everything else keeps the cheap answer. */
 export const MAJOR_MOVE_PCT = 25;
@@ -110,7 +112,8 @@ export async function resolveMoverCatalysts(db, sql, tickers = []) {
         // event under the canonical taxonomy, and then only for as long as its own type is relevant.
         // An unrecognised headline stays stale at 48 hours, so months-old unrelated news cannot be
         // dragged onto a card to explain today's move.
-        const ageH = e.published_at ? (Date.now() - new Date(e.published_at).getTime()) / 3600e3 : Infinity;
+        const publicMs = e.published_at ? new Date(e.published_at).getTime() : null;
+        const ageH = publicMs ? (Date.now() - publicMs) / 3600e3 : Infinity;
         const spec = classifyCompanyEvent(headline);
         if (ageH > LOOKBACK_HOURS) {
           // ⚠️ AND THE SOURCE MUST BE ONE EVIDENCE WOULD ACCEPT. Inside 48 hours a wire item is
@@ -118,7 +121,10 @@ export async function resolveMoverCatalysts(db, sql, tickers = []) {
           // we are asserting a month-old item explains today, and an aggregator column is not
           // good enough to carry that claim — the same standard pressReleaseEvidence applies.
           if (!spec || !isEvidenceSource(e.source)) continue;
-          if (ageH > relevanceDays(spec.type) * 24) continue;
+          // ⚠️ THE SAME RULE THE EVIDENCE ENGINE USES, so a dated event cannot age out of one
+          // surface while it is still explaining the move on the other.
+          const sd = extractScheduledDate(headline, spec.type, publicMs);
+          if (!stillRelevant(spec.type, publicMs, sd ? Date.parse(`${sd}T00:00:00Z`) : null)) continue;
         }
         out[ticker] = {
           eventType: spec?.type || null,

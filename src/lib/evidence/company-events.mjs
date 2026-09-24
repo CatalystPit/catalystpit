@@ -587,6 +587,26 @@ export function relevanceDays(type) {
   return 2;
 }
 
+/**
+ * ⚠️ IS THIS EVENT STILL EXPLAINING TODAY?
+ *
+ * For an ordinary release the answer is a function of how long ago it was published. For a
+ * SCHEDULED one it is not, and getting that wrong was measurable: SPCX's Starship flight was
+ * announced on the 17th for the 28th, and an operational window of five days from PUBLICATION
+ * retired it on the 22nd — six days before the thing happened. A dated event is relevant right up
+ * to its date and for its own window after it, which is the point of carrying eventTime at all.
+ *
+ * @param {string} type      classified event type
+ * @param {number} publicMs  when the release became public
+ * @param {number|null} eventMs  the scheduled date, when one was explicitly stated
+ * @param {number} now
+ */
+export function stillRelevant(type, publicMs, eventMs, now = Date.now()) {
+  const window = relevanceDays(type) * 86_400_000;
+  if (Number.isFinite(eventMs) && eventMs != null && now <= eventMs + window) return true;
+  return Number.isFinite(publicMs) && now - publicMs <= window;
+}
+
 /** The longest window any type can claim — bounds the evidence query. */
 export const MAX_RELEVANCE_DAYS = Math.max(
   ...Object.values(COMPANY_RELEVANCE_DAYS),

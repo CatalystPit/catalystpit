@@ -11,7 +11,7 @@
 
 import {
   classifyCompanyEvent, extractScheduledDate, sourceQuality, isEvidenceSource,
-  relevanceDays, COMPANY_EVENTS, SCHEDULED_TYPES, MAX_RELEVANCE_DAYS,
+  relevanceDays, stillRelevant, COMPANY_EVENTS, SCHEDULED_TYPES, MAX_RELEVANCE_DAYS,
 } from '../src/lib/evidence/company-events.mjs';
 import { classifyBiotechEvent } from '../src/lib/evidence/biotech-events.mjs';
 import { parseForm144, parseSaleDate } from '../src/lib/form144-parse.mjs';
@@ -266,6 +266,26 @@ check('⚠️ biotech keeps its OWN windows', relevanceDays('bio_ind_submitted')
 check('an unknown type gets the default', relevanceDays('something_else') === 2);
 check('nothing claims more than the query bound',
   COMPANY_EVENTS.every((s) => relevanceDays(s.type) <= MAX_RELEVANCE_DAYS));
+
+sec('⚠️ A SCHEDULED EVENT IS MEASURED FROM WHEN IT HAPPENS');
+
+const D = 86_400_000;
+const PUB17 = Date.parse('2026-09-17T17:13:00Z');
+const SEP28 = Date.parse('2026-09-28T00:00:00Z');
+check('an undated release ages out of its own window',
+  stillRelevant('oper_scheduled_launch', PUB17, null, PUB17 + 6 * D) === false);
+check('⚠️ THE SPCX CASE: 7 days after the announcement, 4 days before the launch, still relevant',
+  stillRelevant('oper_scheduled_launch', PUB17, SEP28, Date.parse('2026-09-24T12:00:00Z')) === true);
+check('...and on the day itself',
+  stillRelevant('oper_scheduled_launch', PUB17, SEP28, SEP28) === true);
+check('...and for its own window afterwards',
+  stillRelevant('oper_scheduled_launch', PUB17, SEP28, SEP28 + 4 * D) === true);
+check('...but not indefinitely',
+  stillRelevant('oper_scheduled_launch', PUB17, SEP28, SEP28 + 8 * D) === false);
+check('a fresh undated release is relevant on its own',
+  stillRelevant('earn_guidance_raised', PUB17, null, PUB17 + 2 * D) === true);
+check('a null publicTime with no schedule claims nothing',
+  stillRelevant('earn_results', null, null, PUB17) === false);
 
 // ── 11. TAXONOMY INTEGRITY ───────────────────────────────────────────────────
 sec('TAXONOMY INTEGRITY');

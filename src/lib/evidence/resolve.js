@@ -27,7 +27,7 @@
 
 import { sql } from 'drizzle-orm';
 import {
-  classifyCompanyEvent, relevanceDays, extractScheduledDate, sourceQuality, MAX_RELEVANCE_DAYS,
+  classifyCompanyEvent, extractScheduledDate, sourceQuality, stillRelevant, MAX_RELEVANCE_DAYS,
 } from './company-events.mjs';
 import { isLeadRole } from '../consensus/high-significance.mjs';
 import { db } from '../db';
@@ -492,8 +492,11 @@ export async function pressReleaseEvidence(ticker, { now = Date.now() } = {}) {
     // ⚠️ EACH TYPE KEEPS ITS OWN RELEVANCE WINDOW. A trial-start notice is stale long before an
     // IND submission is, and applying one global window would either bury the regulatory events or
     // drag operational noise along with them.
-    const ageDays = (now - publicMs) / DAY;
-    if (ageDays > relevanceDays(spec.type)) continue;
+    // ⚠️ AND A SCHEDULED EVENT IS MEASURED FROM WHEN IT HAPPENS, NOT FROM WHEN IT WAS ANNOUNCED —
+    // see stillRelevant, and the SPCX measurement that produced it.
+    const scheduledFor = extractScheduledDate(`${e.headline || ''} ${e.summary || ''}`, spec.type, publicMs);
+    const eventMs = scheduledFor ? Date.parse(`${scheduledFor}T00:00:00Z`) : null;
+    if (!stillRelevant(spec.type, publicMs, eventMs, now)) continue;
     // One record per event TYPE — the newest. A wire that republishes the same announcement four
     // times must not look like four separate catalysts.
     if (seen.has(spec.type)) continue;
@@ -505,16 +508,23 @@ export async function pressReleaseEvidence(ticker, { now = Date.now() } = {}) {
       // Lower than a filing's 0.95: a company describing its own news is a weaker record than a
       // document filed with the SEC under liability, and confidence reads this.
       quality,
-      // ⚠️ A SCHEDULED EVENT HAS A DATE OF ITS OWN, and the model has always had the field for it.
-      // "Targeting to launch Starship flight 14 as early as Sep 28" is public on the 17th and
-      // happens on the 28th; recording only the first loses the part a reader would act on. Null
-      // for everything else — see extractScheduledDate for the three things it demands first.
-      eventTime: extractScheduledDate(`${e.headline || ''} ${e.summary || ''}`, spec.type, publicMs),
+      // ⚠️ A SCHEDULED DATE IS NOT AN eventTime, AND PUTTING IT THERE WAS A REAL MISTAKE I MADE.
+      //
+      // model.mjs defines eventTime as WHEN THE THING HAPPENED and enforces publicTime >= eventTime
+      // as the invariant the whole engine rests on. A launch announced on the 17th for the 28th has
+      // not happened, so setting eventTime = the 28th quarantines the record as `future` — which is
+      // the model being right. The schedule is a DISCLOSED FACT about the future, so it lives in
+      // facts.scheduledFor, and eventTime stays null until there is an occurrence to date.
+      eventTime: null,
       publicTime: e.published_at,      // ⚠️ POINT-IN-TIME: when the public could first act on it
       source: 'press_release', sourceId: e.content_hash || String(e.seq),
       url: e.canonical_url || e.original_url || null,
-      summary: spec.label,
-      facts: { headline: String(e.headline || '').split('\n')[0].slice(0, 180), wire: e.source || null },
+      summary: scheduledFor ? `${spec.label} — scheduled ${scheduledFor}` : spec.label,
+      facts: {
+        headline: String(e.headline || '').split('\n')[0].slice(0, 180),
+        wire: e.source || null,
+        scheduledFor,
+      },
       context: null,
     });
   }
@@ -577,14 +587,19 @@ export async function form144Evidence(ticker, { now = Date.now() } = {}) {
       // Scaled by size within the qualifying population: a 5% notice is not a $5M notice.
       materiality: pct != null && pct >= 0.02 ? 0.75 : value != null && value >= 50_000_000 ? 0.70 : 0.60,
       quality: 0.95,                       // a document filed with the SEC under liability
-      // ⚠️ THE PROPOSED SALE DATE IS A FUTURE EVENT, and it is a typed field in the form rather
-      // than a date parsed out of prose — the strongest form of the WHAT/WHEN/WHO contract.
-      eventTime: f.approx_sale_date || null,
+      // ⚠️ THE PROPOSED SALE DATE IS NOT AN eventTime EITHER, FOR THE SAME REASON.
+      //
+      // It is the date the affiliate INTENDS to sell on. Nothing happened on it, and it is often
+      // in the future, which model.mjs quarantines as `future` — correctly: publicTime >= eventTime
+      // is the point-in-time invariant and a proposal has no occurrence to date. It is carried as a
+      // stated fact below, where a reader can see it without the engine claiming it as history.
+      eventTime: null,
       publicTime: f.filed_at,              // ⚠️ POINT-IN-TIME: when the notice became public
       source: 'sec_144', sourceId: f.accession,
       url: f.primary_doc_url || f.filing_url || null,
       // ⚠️ "filed notice to sell", never "sold".
-      summary: `${who} filed notice to sell${amount ? ` ${amount}` : ''}${pctText}`,
+      summary: `${who} filed notice to sell${amount ? ` ${amount}` : ''}${pctText}`
+        + (f.approx_sale_date ? `, proposed on or after ${isoDay(f.approx_sale_date)}` : ''),
       facts: {
         seller: f.seller || null, relationship: f.relationship || null,
         shares, aggregateValue: value, pctOutstanding: pct,
