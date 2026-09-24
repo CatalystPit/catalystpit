@@ -326,6 +326,43 @@ export const ITEM_TO_TYPE = Object.freeze({
   '2.02': { type: 'sec_8k_results', label: 'Results of operations', materiality: 0.70, direction: DIRECTION.UNKNOWN },
   '5.02': { type: 'sec_8k_officer_change', label: 'Officer / director change', materiality: 0.60, direction: DIRECTION.UNKNOWN },
   '8.01': { type: 'sec_8k_other', label: 'Other material event', materiality: 0.45, direction: DIRECTION.UNKNOWN },
+
+  // ── ⚠️ ITEMS THAT WERE BEING DISCARDED ENTIRELY ────────────────────────────
+  //
+  // This map is the REAL gate on canonical catalyst evidence — `if (!spec) continue` below — and it
+  // held nine of the SEC's twenty-five item codes. So a bankruptcy, a change of control and a
+  // completed acquisition all produced NOTHING, not a weak signal: nothing. APUS filed items
+  // 3.03/5.03/9.01 and the filing never became evidence, which is what sent a +144% mover to Pit
+  // Scan labelled "no matching evidence" while the 8-K sat in our own table.
+  //
+  // Every addition below is a NUMBERED SEC ITEM WHOSE OWN TITLE ASSERTS THE EVENT — the same
+  // standard the nine originals used, not a judgement about importance. Routine items stay out:
+  // 5.03 bylaw amendments, 5.07 shareholder votes, 7.01 Reg FD, 9.01 exhibits and the 6.x ABS
+  // series are unmapped by design, so conservative filtering is preserved.
+  '1.03': { type: 'sec_8k_bankruptcy', label: 'Bankruptcy or receivership', materiality: 1.00, direction: DIRECTION.NEGATIVE },
+  '5.01': { type: 'sec_8k_control_change', label: 'Change in control', materiality: 0.90, direction: DIRECTION.UNKNOWN },
+  '2.01': { type: 'sec_8k_acquisition', label: 'Acquisition or disposition completed', materiality: 0.80, direction: DIRECTION.UNKNOWN },
+  '1.05': { type: 'sec_8k_cyber', label: 'Material cybersecurity incident', materiality: 0.75, direction: DIRECTION.NEGATIVE },
+  // "Material Modification to Rights of Security Holders" — the SEC's own words. Direction is
+  // UNKNOWN because the same item covers a reverse split, a rights plan and a charter change.
+  '3.03': { type: 'sec_8k_holder_rights', label: 'Modification of security-holder rights', materiality: 0.70, direction: DIRECTION.UNKNOWN },
+  '3.02': { type: 'sec_8k_unregistered_sale', label: 'Unregistered equity sale', materiality: 0.70, direction: DIRECTION.NEGATIVE },
+  '2.06': { type: 'sec_8k_impairment', label: 'Material impairment', materiality: 0.70, direction: DIRECTION.NEGATIVE },
+  '5.06': { type: 'sec_8k_shell_status', label: 'Change in shell company status', materiality: 0.70, direction: DIRECTION.UNKNOWN },
+  '2.05': { type: 'sec_8k_exit_costs', label: 'Exit or disposal costs', materiality: 0.60, direction: DIRECTION.NEGATIVE },
+  '2.03': { type: 'sec_8k_obligation_created', label: 'Direct financial obligation created', materiality: 0.60, direction: DIRECTION.UNKNOWN },
+
+  // ── FORM 25 — DELISTING, CARRIED ON THE SAME PATH ──────────────────────────
+  //
+  // ⚠️ THE FORM TYPE ESTABLISHES WHO ACTED, so neither label is speculative. 25-NSE is filed BY THE
+  // EXCHANGE (Notification of Removal from Listing); a plain Form 25 is filed by the issuer to
+  // withdraw its own security. Stored in the same table under these pseudo-codes so dedupe,
+  // point-in-time ordering and the evidence path are the ones that already work — see eightk.js.
+  //
+  // ⚠️ AND NEITHER SAYS THE COMPANY IS FINISHED. A Form 25 also covers a move between exchanges and
+  // the retirement of a single class of security, so the summary states what was filed and stops.
+  '25-NSE': { type: 'sec_25_removal', label: 'Exchange filed notice of removal from listing', materiality: 0.90, direction: DIRECTION.NEGATIVE },
+  '25': { type: 'sec_25_withdrawal', label: 'Notice to withdraw security from listing', materiality: 0.80, direction: DIRECTION.NEGATIVE },
 });
 
 export async function catalystEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {

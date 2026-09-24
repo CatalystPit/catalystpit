@@ -7,7 +7,8 @@ import { eightkFilings } from './schema';
 // per-company submissions API, classifies material vs routine, and stores them. Read by
 // /api/eightk (News rail + Terminal panel). No paid data.
 
-const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com', 'Accept-Encoding': 'gzip, deflate' };
+// Exported so the Form 25 ingest identifies itself to SEC exactly as this one does.
+export const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com', 'Accept-Encoding': 'gzip, deflate' };
 const PAGES = 3;                 // getcurrent pages (start 0/100/200) → ~300 recent 8-Ks scanned
 const MAX_NEW = 40;              // cap detail fetches per run (submissions JSON is heavy)
 
@@ -27,7 +28,9 @@ const ITEM_MAP = {
   '2.06': { label: 'Material impairment', material: true },
   '3.01': { label: 'Delisting risk', material: true },
   '3.02': { label: 'Equity dilution', material: true },
-  '3.03': { label: 'Security-holder rights', material: false },
+  // SEC titles this "Material Modification to Rights of Security Holders". Measured over 90 days:
+  // 54 filings carry it (2.3%), and promoting it moves the material share 51.4% -> 52.5%.
+  '3.03': { label: 'Security-holder rights', material: true },
   '4.01': { label: 'Auditor change', material: true },
   '4.02': { label: 'Financial restatement', material: true },
   '5.01': { label: 'Change in control', material: true },
@@ -46,6 +49,10 @@ const ITEM_MAP = {
   '7.01': { label: 'Reg FD disclosure', material: false },
   '8.01': { label: 'Other event', material: false },
   '9.01': { label: 'Exhibits', material: false },
+  // Form 25 pseudo-codes. Not 8-K items -- these ride the same table so dedupe, ordering and the
+  // evidence path are the ones that already work. See ingestForm25 below.
+  '25-NSE': { label: 'Exchange removal from listing', material: true },
+  '25': { label: 'Withdrawal from listing', material: true },
 };
 
 // "2.02,9.01" (or space/semicolon separated) → { codes, labels, material, primaryLabel }
@@ -97,7 +104,8 @@ export async function ensureEightkTable() {
 const pad10 = (cik) => String(cik).padStart(10, '0');
 
 // Pull one company's submissions and extract the fields we need for a specific accession.
-async function submissionDetail(cik, accession, cache) {
+// Exported so Form 25 resolves its ticker through the SAME per-company submissions lookup.
+export async function submissionDetail(cik, accession, cache) {
   if (cache.has(cik)) return cache.get(cik)?.(accession);
   let lookup = () => null;
   try {
