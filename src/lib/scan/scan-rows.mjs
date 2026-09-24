@@ -253,12 +253,26 @@ export function toScanRow(row, quote = null) {
 
   // Prefer the live quote; fall back to the daily close the Consensus row already carries. Either
   // way the freshness that gets LABELLED is the freshness of the number actually shown.
-  const hasQuote = quote && Number.isFinite(quote.price);
-  const rawLast = hasQuote ? quote.price : (Number.isFinite(levels?.close) ? levels.close : null);
+  // ⚠️ A PRICE MUST BE POSITIVE TO BE A PRICE, AND ABSENT IS NOT ZERO.
+  //
+  // The realtime snapshot already refuses a non-positive or stale print (see usableMove), but the
+  // DELAYED path is a different function with no integrity checks at all — so a security that has
+  // stopped trading could carry a number onto a board through getQuotes while the snapshot would
+  // have rejected it. The gate belongs where both paths converge, which is here.
+  //
+  // `> 0` rather than `isFinite` alone: zero is finite, and a zero that means "we have no price"
+  // is the value that renders as "$0.00" beside a percentage move — a row asserting a price it
+  // does not have. Absent is null, and the card already renders null as an em dash.
+  const positive = (v) => Number.isFinite(v) && v > 0;
+  const hasQuote = quote && positive(quote.price);
+  const rawLast = hasQuote ? quote.price : (positive(levels?.close) ? levels.close : null);
   const last = rawLast === null ? null : Math.round(rawLast * 10000) / 10000;
-  const rawChange = hasQuote && Number.isFinite(quote.changePct)
-    ? quote.changePct
-    : (Number.isFinite(levels?.changePct) ? levels.changePct : null);
+  // ⚠️ AND A MOVE IS NOT DERIVED FROM A PRICE WE REFUSED. Keeping the change while dropping the
+  // price would leave "— / +4.7%", which is the same false claim with the evidence removed.
+  const rawChange = rawLast === null ? null
+    : (hasQuote && Number.isFinite(quote.changePct)
+      ? quote.changePct
+      : (Number.isFinite(levels?.changePct) ? levels.changePct : null));
   // Rounded in the PAYLOAD, not only in the component. A raw -3.1007751937984525 in the API is a
   // precision the feed does not have, and any other consumer would render it verbatim.
   const changePct = rawChange === null ? null : Math.round(rawChange * 100) / 100;

@@ -114,7 +114,14 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
           title={onPick ? `Load ${r.ticker} in the linked Terminal panels` : undefined}
           style={{ fontSize: 13.5, fontWeight: 800, color: C.ink, textDecoration: 'none' }}>{r.ticker}</a>
         <span style={{ fontSize: 12.5, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
-          {Number.isFinite(r.last) ? `$${r.last.toFixed(2)}` : '—'}
+          {/* ⚠️ TWO DECIMALS TURNS A REAL SUB-PENNY PRICE INTO "$0.00". ADTX last traded at
+              $0.0046 and the card printed $0.00 beside a percentage move — a row stating a price
+              of zero for a security that has one. Sub-dollar prices keep the digits that carry
+              their value; a dollar and above is unchanged at two decimals. Nothing is rounded INTO
+              existence: a null price is still an em dash. */}
+          {Number.isFinite(r.last)
+            ? `$${r.last >= 1 ? r.last.toFixed(2) : r.last.toPrecision(2)}`
+            : '—'}
         </span>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: moveColor, fontVariantNumeric: 'tabular-nums' }}>
           {Number.isFinite(r.changePct) ? `${up ? '+' : ''}${r.changePct.toFixed(1)}%` : '—'}

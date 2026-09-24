@@ -82,6 +82,11 @@ export function qualifiesMovingNow(row, { now = Date.now() } = {}) {
   const t = THRESHOLDS.movingNow;
   const move = abs(row?.changePct);
   if (!finite(row?.changePct) || !finite(row?.last)) return no('no-price');
+  // ⚠️ STATED, NOT INFERRED FROM THE FLOOR. The $1 floor happens to exclude a zero, so a
+  // non-positive price was never REJECTED for being impossible — it was rejected for being small,
+  // and the two are different failures. If the floor ever moved or a board without one reused this
+  // gate, a $0.00 row would qualify. A price that is not positive is not a price.
+  if (row.last <= 0) return no('non-positive-price');
   // Rejected by NAME, so the row appears in `rejected` with its reason rather than vanishing.
   if (row.last < t.minPrice) return no('sub-dollar');
 
