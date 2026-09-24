@@ -525,8 +525,13 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
  * Measured: 42,764 rows, ~12MB. That is a server-side ingestion, never something a browser receives,
  * and it is why this returns a normalised array rather than the raw payload.
  */
-export async function getAllTickersSnapshot() {
-  const res = await tiingo('/iex');
+export async function getAllTickersSnapshot({ consolidated = false } = {}) {
+  // ⚠️ OPT-IN, SO THE EXISTING CALLERS ARE UNTOUCHED. The Free delay pipeline and the movers store
+  // both read this function and both have their own licensing and freshness reasoning written
+  // around /iex; silently repointing them would change two products this change was not asked to
+  // touch. `consolidated: true` selects the entitled consolidated tape — one request for roughly
+  // 19,600 symbols, measured ~800ms — and everything below is shape-identical.
+  const res = await tiingo(consolidated ? '/tiingo/equity/intraday' : '/iex');
   if (!res.ok || !Array.isArray(res.data)) return { ok: false, reason: res.reason, rows: [], asOf: null };
   const rows = [];
   for (const q of res.data) {
@@ -546,10 +551,16 @@ export async function getAllTickersSnapshot() {
       lastPrice: live,
       changePct: (prevClose != null && prevClose !== 0) ? ((price - prevClose) / prevClose) * 100 : null,
       open: num(q.open), high: num(q.high), low: num(q.low),
-      volume: num(q.volume),
-      // Same endpoint, same correction as getQuotes — /iex volume is one venue's print, measured
-      // at 0.17%–0.40% of the consolidated tape. It is never the market's volume.
-      volumeMethodology: num(q.volume) == null ? null : TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED,
+      // ⚠️ VOLUME IS DROPPED ENTIRELY ON THE CONSOLIDATED READ, NOT RELABELLED.
+      //
+      // The consolidated payload does carry a volume, but it is the CUMULATIVE figure for the day
+      // so far, not this bar's or this interval's. The only methodology constant that fits the
+      // /iex shape is PARTICIPATING_VENUES_DELAYED, and stamping that on a consolidated cumulative
+      // number would describe it as something it is not — which is exactly how a fabricated RVOL
+      // gets built later by someone reading the field and trusting the label. Null is the honest
+      // answer until there is a constant that actually describes it.
+      volume: consolidated ? null : num(q.volume),
+      volumeMethodology: consolidated || num(q.volume) == null ? null : TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED,
       asOf: q.timestamp || null,
       // Same correction as getQuotes: lastSaleTimestamp is null on every row of this account, so
       // deriving liveness from it reports every quote as stale.

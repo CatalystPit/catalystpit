@@ -1,5 +1,5 @@
 import { buildBoard, BOARDS, BOARDS_VERSION } from './boards.mjs';
-import { toScanRows, servedRow, SCAN_ROWS_VERSION } from './scan-rows.mjs';
+import { toScanRows, servedRow, freshnessLabel, SCAN_ROWS_VERSION } from './scan-rows.mjs';
 import { readPublishedBoard } from '../consensus/refresh';
 import { scanReadiness, activeCapabilities } from './runtime';
 import { resolveUserAccess, isRealtime } from '../entitlements';
@@ -20,22 +20,39 @@ import { resolveUserAccess, isRealtime } from '../entitlements';
 // resolved here. Consensus recomputes on new public evidence or on its decay job; a Scan visitor
 // cannot trigger either, however many of them arrive at once.
 //
-// ⚠️ AND IT INVENTS NOTHING. No RVOL — there is no consolidated volume on this feed, and a ratio
-// computed against a different methodology would be a fabrication. No intraday structure — there
-// are no intraday bars in the database. Every row shows what the entitled feed actually said, with
-// the freshness of that number printed beside it.
+// ⚠️ AND IT INVENTS NOTHING. No RVOL. The consolidated feed does carry a volume, but it is the
+// day's CUMULATIVE figure rather than an interval's, so the provider read drops it instead of
+// relabelling it — a ratio built on a number that does not mean what its name suggests is a
+// fabrication whether or not the arithmetic is right. No intraday structure either: there are no
+// intraday bars in this database, so premarket highs, opening ranges and VWAP stay absent rather
+// than approximated. Every row shows what the entitled feed actually said, with the freshness of
+// that number printed beside it.
 
 export const DEFAULT_BOARD = 'catalysts-now';
 export const DEFAULT_LIMIT = 25;
+
+/**
+ * How many of the market's largest movers Moving Now ranks before the board's own gates run.
+ *
+ * ⚠️ A POOL, NOT A BOARD SIZE. qualifiesMovingNow still decides membership and the caller still
+ * caps the served rows; this only bounds how much of the snapshot is converted into row objects.
+ * Large enough that the board is drawn from the real market rather than a sliver of it, small
+ * enough that a request never maps twenty thousand symbols.
+ */
+export const MOVER_POOL = 200;
 
 /** The board payload, or `{ degraded: true }` when the evidence board cannot be read. */
 export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEFAULT_LIMIT } = {}) {
   const boardId = BOARDS.includes(board) ? board : DEFAULT_BOARD;
   const cap = Math.min(Number(limit) || DEFAULT_LIMIT, 50);
 
-  // 1. ENTITLEMENT FIRST. `realtime` narrows what may be served and can never widen it: getQuotes
-  //    only returns live data when the account is actually entitled, which it is not today, so
-  //    every row ends up labelled with the freshness it really has.
+  // 1. ENTITLEMENT FIRST. `realtime` narrows what may be served and can never widen it.
+  //
+  //    ⚠️ THIS NOW DECIDES SOMETHING REAL. It used to be near-decorative: the account had no
+  //    realtime entitlement, so every path returned completed-session data and the flag only chose
+  //    which label to print. The consolidated feed IS entitled, so this flag is now the boundary
+  //    between a live price and a delayed one, and it is resolved server-side before any price is
+  //    fetched rather than applied to a payload that already contains one.
   let realtime = false;
   try {
     const { tier, beta } = await resolveUserAccess();
@@ -57,22 +74,78 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
   const consensusRows = payload.rows || [];
   const symbols = consensusRows.map((r) => r.ticker).filter(Boolean).slice(0, 100);
 
-  // 3. QUOTES, through the entitlement boundary.
-  let quotes = {};
-  try {
-    const { getQuotes } = await import('../market-data');
-    quotes = (await getQuotes(symbols, { realtime })) || {};
-  } catch {
-    // No quotes is not no board: the evidence boards remain fully meaningful without a price.
-    quotes = {};
+  // 3. THE PRICE SIDE — ONE SHARED MARKET SNAPSHOT, GATED ON ENTITLEMENT.
+  //
+  // ⚠️ THE SNAPSHOT IS ONLY READ FOR AN ENTITLED VIEWER, which is what keeps realtime inside the
+  // boundary. An unentitled reader falls through to the same getQuotes path as before and receives
+  // the same delayed or completed-session numbers, labelled as such by toScanRow. There is no
+  // branch in which a free response contains a consolidated realtime print.
+  //
+  // ⚠️ AND IT IS ONE REQUEST FOR THE WHOLE MARKET, CACHED SERVER-SIDE. Upstream cost is one call
+  // per TTL, not one per viewer and not one per ticker — see market-snapshot.mjs.
+  let snapshot = null;
+  if (realtime) {
+    try {
+      const [{ movementSnapshot }, { db }, { sql }] = await Promise.all([
+        import('./market-snapshot.mjs'), import('../db'), import('drizzle-orm'),
+      ]);
+      snapshot = await movementSnapshot(db, sql);
+    } catch {
+      // A snapshot failure degrades to the quote path; it never empties the board.
+      snapshot = null;
+    }
   }
 
-  const scanRows = toScanRows(consensusRows, quotes);
+  let quotes = {};
+  if (snapshot?.rows?.length) {
+    for (const r of snapshot.rows) {
+      quotes[r.symbol] = { price: r.last, changePct: r.changePct, freshness: 'realtime' };
+    }
+  } else {
+    try {
+      const { getQuotes } = await import('../market-data');
+      quotes = (await getQuotes(symbols, { realtime })) || {};
+    } catch {
+      // No quotes is not no board: the evidence boards remain fully meaningful without a price.
+      quotes = {};
+    }
+  }
+
+  // 4. MOVING NOW RANKS THE MARKET, NOT THE EVIDENCE BOARD.
+  //
+  // ⚠️ THIS IS THE DEFECT THAT MADE THE BOARD WRONG RATHER THAN MERELY STALE. Every board was built
+  // from the published Consensus rows — about a hundred tickers, all of which carry evidence by
+  // definition — so a stock could only be "moving now" if a filing already explained it. That
+  // inverts the board's question. Price earns the row; evidence is attached when it exists, and a
+  // mover with no evidence is a legitimate row rather than an impossible one.
+  //
+  // The other two boards are evidence-first by design and keep the Consensus board as their source.
+  let sourceRows = consensusRows;
+  if (boardId === 'moving-now' && snapshot?.rows?.length) {
+    const known = new Set(consensusRows.map((r) => String(r.ticker || '').toUpperCase()));
+    const movers = [...snapshot.rows]
+      .sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
+      .slice(0, MOVER_POOL)
+      .filter((m) => !known.has(m.symbol))
+      // A bare row carries only the ticker: no evidence, no consensus, no catalyst. toScanRow
+      // fills the price from the snapshot and leaves every evidence field null, which is exactly
+      // what "moving, unexplained" should render as.
+      .map((m) => ({ ticker: m.symbol }));
+    sourceRows = consensusRows.concat(movers);
+  }
+
+  const scanRows = toScanRows(sourceRows, quotes);
   const built = buildBoard(boardId, scanRows, { limit: cap });
 
   // The freshness actually being served, taken from the quotes rather than from hope.
-  const freshnesses = new Set(scanRows.map((r) => r.display.freshness));
-  const freshness = freshnesses.size === 1 ? [...freshnesses][0] : 'eod';
+  //
+  // ⚠️ FROM THE SERVED ROWS, NOT EVERY ROW CONSIDERED. Moving Now now builds from a market-wide
+  // snapshot plus the evidence board, and a Consensus ticker outside the eligible universe has no
+  // snapshot price and stays 'eod'. Measured across ALL candidates that single row made the set
+  // size 2 and collapsed the whole board's label to LAST CLOSE while every row on screen was live
+  // — a disclosure that is wrong in the direction of describing live prices as stale.
+  const servedFreshness = new Set((built.rows || []).map((r) => r?.display?.freshness).filter(Boolean));
+  const freshness = servedFreshness.size === 1 ? [...servedFreshness][0] : (servedFreshness.has('realtime') ? 'near' : 'eod');
 
   return {
     board: boardId,
@@ -84,7 +157,9 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
     // ⚠️ SAID OUT LOUD. With realtime unentitled this is the last completed session's move, and a
     // board called "moving now" must not imply otherwise.
     freshness,
-    freshnessLabel: scanRows[0]?.display?.freshnessLabel ?? 'LAST CLOSE',
+    // Derived from the SAME value the disclosure above resolved to, so the badge and the field can
+    // never disagree — reading row[0] let one row's provenance speak for the whole board.
+    freshnessLabel: freshnessLabel(freshness),
     calculatedAt: built.calculatedAt ?? new Date().toISOString(),
     // ⚠️ ONE REASON PER ROW — see servedRow() in scan-rows.mjs for why the evidence line leads.
     rows: built.rows.map(servedRow),
