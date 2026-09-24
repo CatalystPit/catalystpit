@@ -48,6 +48,12 @@ export const CHART_THEMES = {
     controlBgHover: '#EEF0EB',
     controlBorder: '#CFD3CA',
     controlBorderHover: '#B4BAAE',
+    // EXTENDED-HOURS BACKGROUND. Pre-market and after-hours get a wash so the regular session is
+    // readable as a distinct block. Deliberately WEAKER than `grid` (0.05): the band sits behind
+    // gridlines, candles, indicators and drawings, and anything stronger turns the plot into two
+    // competing surfaces. It is a neutral tint, not a brand colour — the session is a fact about
+    // the clock, not an up or a down.
+    sessionExtended: 'rgba(0,0,0,0.035)',
   },
   dark: {
     background: '#0E1512',
@@ -74,6 +80,10 @@ export const CHART_THEMES = {
     controlBgHover: '#1C2721',
     controlBorder: '#4A5C51',
     controlBorderHover: '#5E7266',
+    // ⚠️ LIGHTER, NOT DARKER. On the dark canvas an ink wash is invisible, so the extended-hours
+    // band lifts instead. The alpha is a shade higher than the light theme's because a white wash
+    // at 0.035 on #0E1512 reads fainter than a black one at 0.035 on white.
+    sessionExtended: 'rgba(255,255,255,0.042)',
   },
 };
 

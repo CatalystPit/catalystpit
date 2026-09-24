@@ -7,6 +7,7 @@ import {
   sessionKeyFor,
 } from '../../lib/chart/chart-source.mjs';
 import { chartOptions, palette, indicatorColor, CHART_ATTRIBUTION, CHART_ATTRIBUTION_HREF } from '../../lib/chart/chart-theme.mjs';
+import { createSessionShading } from '../../lib/chart/session-shading.mjs';
 
 /**
  * ONE DOWNLOAD PER UNDERLYING SERIES, shared across the intervals folded from it.
@@ -233,6 +234,7 @@ export default function CPChart({
   // redraw, ticker switch, timeframe switch, chart-type change — without any of them being
   // special-cased, and makes attaching to a destroyed series structurally impossible.
   const markersApiRef = useRef(null);        // the SeriesMarkers plugin handle
+  const shadingRef = useRef(null);           // the extended-hours background primitive
   const markersSeriesRef = useRef(null);     // the series that handle belongs to
   const evidenceRef = useRef([]);            // current canonical evidence
   const markerMapRef = useRef(new Map());    // groupKey -> evidence[], for the detail card
@@ -649,6 +651,26 @@ export default function CPChart({
       priceLineVisible: true, priceLineWidth: 1, priceLineStyle: 2, lastValueVisible: true,
     });
     priceRef.current.setData(bars.map(ct.map));
+
+    // EXTENDED-HOURS SHADING. Attached here, not in an effect, because the price series is
+    // destroyed and rebuilt on every draw() — a primitive attached anywhere else would be holding
+    // a dead series and silently stop painting after the first chart-type or timeframe change.
+    //
+    // ⚠️ INTRADAY ONLY. A daily bar spans every session at once, so shading it would be a claim
+    // about a clock the bar does not have. Degrades silently on an older build without primitives,
+    // in the same spirit as the markers plugin below.
+    shadingRef.current = null;
+    if (typeof priceRef.current.attachPrimitive === 'function') {
+      try {
+        const shading = createSessionShading(() => palette(themeRef.current).sessionExtended);
+        priceRef.current.attachPrimitive(shading);
+        shading.setEnabled(isIntraday(tfRef.current));
+        // The primitive gets the RAW bars, not ct.map's output: Heikin Ashi rewrites OHLC but the
+        // timestamps are what decide the session, and they survive every chart type unchanged.
+        shading.setBars(bars);
+        shadingRef.current = shading;
+      } catch { /* no primitive support → chart renders unshaded rather than not at all */ }
+    }
     // VOLUME, on its own invisible scale pinned to the bottom so it never rescales price.
     // Volume is a toggle in the same menu as everything else; the chart owns the series because it
     // needs its own pinned scale, but the user's choice decides whether it exists.
@@ -1150,6 +1172,10 @@ export default function CPChart({
       barsRef.current = bars;
       barsSymRef.current = forSym;
       barIndexRef.current = new Map(bars.map((b, i) => [b.time, i]));
+      // ⚠️ THE INCREMENTAL PATH MUST FEED THE PRIMITIVE TOO. An append that only went to the price
+      // series would leave the shading describing the previous refresh's bars, so the band would
+      // stop short of the live edge and creep further behind on every poll.
+      shadingRef.current?.setBars(bars);
       // The at-rest readout: the last bar, and the close before it for the change.
       const lastBar = bars[bars.length - 1];
       setTail({
