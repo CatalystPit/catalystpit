@@ -214,12 +214,26 @@ export async function ingestEightK() {
 }
 
 // Read recent filings for the wire. materialOnly=true → default catalyst view.
-export async function recentEightK({ materialOnly = true, limit = 40, days = 7 } = {}) {
+/**
+ * @param ticker  ⚠️ ONE ISSUER'S FILINGS, FOR AN INSPECTOR THAT IS LOOKING AT ONE ISSUER. This is a
+ *   FILTER on the same read, not a second source: the Terminal's news inspector and the site-wide
+ *   8-K wire return the same rows, classified by the same classifyItems, differing only in which
+ *   ones come back. A per-ticker news path that fetched from somewhere else would be a second
+ *   answer to "what happened at this company" and would eventually disagree with the badge that
+ *   opened it.
+ *
+ *   A ticker also lifts materialOnly by default at the CALLER's discretion — a reader who has
+ *   deliberately asked about one company wants its routine filings too, while the wire showing
+ *   every issuer's routine 8-Ks would be noise. That choice is made in the route, not here.
+ */
+export async function recentEightK({ materialOnly = true, limit = 40, days = 7, ticker = null } = {}) {
   await ensureEightkTable();
   const since = sql`now() - make_interval(days => ${days})`;
-  const where = materialOnly
+  const sym = ticker ? String(ticker).toUpperCase().trim() : null;
+  const base = materialOnly
     ? and(eq(eightkFilings.material, true), gte(eightkFilings.filedAt, since))
     : gte(eightkFilings.filedAt, since);
+  const where = sym ? and(eq(eightkFilings.ticker, sym), base) : base;
   const rows = await db.select().from(eightkFilings).where(where).orderBy(desc(eightkFilings.filedAt)).limit(limit);
   return rows.map((r) => {
     const cls = classifyItems(r.items);

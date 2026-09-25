@@ -15,7 +15,9 @@ import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
 import { onEvidenceRequest } from '../../lib/terminalEvidenceBus';
+import { onNewsRequest, inspectNews, newsInspectorAvailable } from '../../lib/terminalNewsBus';
 import EvidencePanel from '../../components/terminal/EvidencePanel';
+import NewsPanel from '../../components/terminal/NewsPanel';
 import HeatMap from '../../components/HeatMap';
 import PitWire from '../../components/PitWire';
 
@@ -39,6 +41,9 @@ const PANELS = [
   // ⚠️ AN INSPECTOR, OPENED BY A ROW RATHER THAN CHOSEN FROM A MENU — though it is in the menu too,
   // because a panel a user cannot add deliberately is a panel they cannot get back after closing.
   { id: 'evidence',  title: 'Evidence',     tag: '◆ CANONICAL' },
+  // ⚠️ NOT 'newswire'. That panel is the market-wide wire; this one inspects ONE ticker, opened by
+  // the Watchlist badge. Two panels about news that answer different questions need two names.
+  { id: 'tickernews', title: 'Ticker News',   tag: '◆ SEC 8-K' },
   { id: 'alerts',    title: 'Alerts',       tag: 'ENGINE' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
@@ -90,6 +95,7 @@ function defaultLayout(width) {
     convergence: { x: centerX + 48, y: 432, w: centerW, h: 260, color: 'green' },
     // Opens beside the scanner that summoned it rather than on top of it.
     evidence:  { x: centerX + 84, y: 462, w: centerW, h: 300, color: 'green' },
+    tickernews: { x: centerX + 96, y: 482, w: centerW, h: 300, color: 'orange' },
     alerts:    { x: centerX + 60, y: 442, w: centerW, h: 260, color: 'blue' },
     feed:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
     heatmap:   { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
@@ -101,7 +107,7 @@ function defaultLayout(width) {
 }
 
 // Category color per panel id (used when a station preset auto-arranges panels).
-const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', evidence: 'green', alerts: 'blue', watchlist: 'blue', chat: 'green' };
+const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', evidence: 'green', tickernews: 'orange', alerts: 'blue', watchlist: 'blue', chat: 'green' };
 
 // Built-in Station presets — starting layouts only (code config, not stored per user). Panels that
 // don't exist yet are simply skipped; add more panel ids as future panels land. After loading a
@@ -974,7 +980,24 @@ function WatchlistBody({ onPick }) {
                 <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                   <TickerLogo symbol={r.ticker} size={16} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
                 </span>
-                {badgesFor(r.ticker).map((k) => { const b = WL_BADGE[k]; return <span key={k} title={`${b.label} · live`} style={{ marginLeft: 4, fontSize: 8, fontWeight: 800, color: b.fg, background: b.bg, borderRadius: 3, padding: '1px 4px', verticalAlign: 'middle' }}>{b.label}</span>; })}
+                {/* ⚠️ THE NEWS BADGE IS THE ACTION; THE ROW IS NOT. Clicking the ticker still loads
+                    it in the chart, which is what a trader expects from a ticker. Reading the news
+                    is a second, explicit intent and gets its own target — so neither gesture can be
+                    triggered by aiming at the other. HALT and PIT stay labels: there is nothing to
+                    inspect behind them. */}
+                {badgesFor(r.ticker).map((k) => {
+                  const b = WL_BADGE[k];
+                  const actionable = k === 'news';
+                  const base = { marginLeft: 4, fontSize: 8, fontWeight: 800, color: b.fg, background: b.bg, borderRadius: 3, padding: '1px 4px', verticalAlign: 'middle' };
+                  if (!actionable) return <span key={k} title={`${b.label} · live`} style={base}>{b.label}</span>;
+                  return (
+                    <span key={k} role="button" tabIndex={0}
+                      title={`Read ${r.ticker} news in the Terminal`}
+                      onClick={(e) => { e.stopPropagation(); inspectNews(r.ticker); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inspectNews(r.ticker); } }}
+                      style={{ ...base, cursor: 'pointer' }}>{b.label}</span>
+                  );
+                })}
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
               </td>
               {showPrice && <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>
@@ -1325,6 +1348,21 @@ function Workspace() {
     addPanel('evidence');          // no-op when it is already open
     bringToFront('evidence');
   }), []);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * THE NEWS INSPECTOR'S TICKER — the same shape as the evidence one, deliberately.
+   *
+   * ⚠️ TWO INSPECTORS, TWO CHANNELS, ONE PATTERN. Evidence and News answer different questions and
+   * open different panels, so they do not share a channel; but they share their behaviour exactly,
+   * because a Terminal where one inspector re-points and the other spawns duplicates is a Terminal
+   * a trader has to remember the rules of.
+   */
+  const [newsSym, setNewsSym] = useState(null);
+  useEffect(() => onNewsRequest((sym) => {
+    setNewsSym(sym);
+    addPanel('tickernews');        // no-op when it is already open
+    bringToFront('tickernews');
+  }), []);   // eslint-disable-line react-hooks/exhaustive-deps
   const removePanel = (id) => { const v = visibleRef.current.filter((x) => x !== id); setVisible(v); persistVisible(v); };
   const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); setVisible(DEFAULT_VISIBLE); persistVisible(DEFAULT_VISIBLE); };
 
@@ -1411,6 +1449,8 @@ function Workspace() {
     // ⚠️ ITS OWN SYMBOL, NOT THE WORKSPACE'S. Inspecting CDT's evidence must not move the chart off
     // whatever the trader was studying, so this panel deliberately does NOT read selectedSymbol.
     : def.id === 'evidence' ? <EvidencePanel symbol={evidenceSym} />
+    // Its own symbol too, for the same reason: reading a ticker's news must not move the chart.
+    : def.id === 'tickernews' ? <NewsPanel symbol={newsSym} />
     : null);
   // THE CHART PANEL NO LONGER LABELS ITS SYMBOL UP HERE. The symbol is the first control in the
   // chart's own toolbar now — top-left, searchable, and the thing that actually changes it — so a
