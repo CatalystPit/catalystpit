@@ -30,6 +30,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { C, Badge, TickerLogo } from '../../lib/cp-shared';
+import { inspectEvidence, evidenceInspectorAvailable } from '../../lib/terminalEvidenceBus';
 
 const BOARD_TABS = [
   // ⚠️ THE BLURB NO LONGER NAMES A CLOCK, AND THAT IS THE POINT. It used to read "on the last
@@ -96,6 +97,31 @@ export function FeedBanner({ freshness, compact = false }) {
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * THE EVIDENCE ACTION.
+ *
+ * ⚠️ IT DECIDES AT CLICK TIME, NOT AT RENDER TIME, AND THAT IS DELIBERATE. Whether an inspector is
+ * listening is a fact about the page, and the row renders before the Terminal has finished
+ * subscribing. Reading it during render would leave the first paint of a Terminal board holding
+ * plain links; reading it in the handler means the answer is whatever is true at the moment the
+ * trader clicks.
+ *
+ * It stays an anchor either way — middle-click, copy-link and open-in-new-tab keep working, and a
+ * trader who WANTS the full ticker page can still get it from this control without the panel.
+ */
+function EvidenceAction({ ticker, href }) {
+  return (
+    <a href={href}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;   // let the browser have it
+        if (!evidenceInspectorAvailable()) return;                            // /scan: navigate as before
+        e.preventDefault();
+        inspectEvidence(ticker);
+      }}
+      style={{ fontSize: 10.5, fontWeight: 700, color: C.green, textDecoration: 'none' }}>Evidence</a>
   );
 }
 
@@ -202,9 +228,14 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <a href={`/ticker/${encodeURIComponent(r.ticker)}#chart`}
           style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textDecoration: 'none' }}>Chart</a>
-        {/* Into the existing evidence experience — Scan never becomes a second evidence viewer. */}
-        <a href={r.evidenceUrl || `/ticker/${encodeURIComponent(r.ticker)}`}
-          style={{ fontSize: 10.5, fontWeight: 700, color: C.green, textDecoration: 'none' }}>Evidence</a>
+        {/* Into the existing evidence experience — Scan never becomes a second evidence viewer.
+            ⚠️ AND INSIDE THE TERMINAL IT DOES NOT NAVIGATE. Leaving the workspace to find out why a
+            row is on the board costs a trader every other panel they had arranged, which is a high
+            price for a question the scanner itself provoked. Where an inspector is listening, this
+            opens it; where there is none — the public /scan page — it stays the link it always was.
+            The row asks the bus rather than being told by each of its two callers, so a third
+            caller cannot get it wrong by omission. */}
+        <EvidenceAction ticker={r.ticker} href={r.evidenceUrl || `/ticker/${encodeURIComponent(r.ticker)}`} />
         <button type="button" onClick={() => onWatch(r.ticker)} disabled={busy === r.ticker}
           style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, background: 'none', border: 'none',
             padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>Watch</button>

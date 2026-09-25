@@ -14,6 +14,8 @@ import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
+import { onEvidenceRequest } from '../../lib/terminalEvidenceBus';
+import EvidencePanel from '../../components/terminal/EvidencePanel';
 import HeatMap from '../../components/HeatMap';
 import PitWire from '../../components/PitWire';
 
@@ -34,6 +36,9 @@ const PANELS = [
   // '◆ SMART MONEY' was the old confluence vocabulary. The panel shows public evidence lining up
   // across independent sources, which is what the tag now says.
   { id: 'convergence', title: 'Catalyst Convergence', tag: '◆ EVIDENCE' },
+  // ⚠️ AN INSPECTOR, OPENED BY A ROW RATHER THAN CHOSEN FROM A MENU — though it is in the menu too,
+  // because a panel a user cannot add deliberately is a panel they cannot get back after closing.
+  { id: 'evidence',  title: 'Evidence',     tag: '◆ CANONICAL' },
   { id: 'alerts',    title: 'Alerts',       tag: 'ENGINE' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
@@ -83,6 +88,8 @@ function defaultLayout(width) {
     movers:    { x: centerX + 12, y: 402, w: centerW, h: 260, color: 'blue' },
     why:       { x: centerX + 36, y: 422, w: centerW, h: 220, color: 'green' },
     convergence: { x: centerX + 48, y: 432, w: centerW, h: 260, color: 'green' },
+    // Opens beside the scanner that summoned it rather than on top of it.
+    evidence:  { x: centerX + 84, y: 462, w: centerW, h: 300, color: 'green' },
     alerts:    { x: centerX + 60, y: 442, w: centerW, h: 260, color: 'blue' },
     feed:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
     heatmap:   { x: centerX, y: 0, w: centerW, h: 380, color: 'blue' },
@@ -94,7 +101,7 @@ function defaultLayout(width) {
 }
 
 // Category color per panel id (used when a station preset auto-arranges panels).
-const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', alerts: 'blue', watchlist: 'blue', chat: 'green' };
+const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', evidence: 'green', alerts: 'blue', watchlist: 'blue', chat: 'green' };
 
 // Built-in Station presets — starting layouts only (code config, not stored per user). Panels that
 // don't exist yet are simply skipped; add more panel ids as future panels land. After loading a
@@ -1298,6 +1305,26 @@ function Workspace() {
   };
 
   const addPanel = (id) => { if (visibleRef.current.includes(id)) return; const v = [...visibleRef.current, id]; setVisible(v); persistVisible(v); setAddOpen(false); bringToFront(id); };
+
+  /**
+   * THE EVIDENCE INSPECTOR'S TICKER.
+   *
+   * ⚠️ ONE PANEL, RE-POINTED — NOT A NEW PANEL PER CLICK. Clicking Evidence on CDT and then on JAGX
+   * must move the same inspector, or a trader scanning twenty rows ends up with twenty panels
+   * stacked on their workspace. addPanel already no-ops when the panel is visible, so opening is
+   * idempotent by construction; this only changes which ticker it is pointed at.
+   *
+   * ⚠️ AND IT TOUCHES NOTHING ELSE. Adding an id to `visible` leaves every other panel's element
+   * and key alone, so Pit Scan is not remounted, its selected tab is not reset, and the boards it
+   * has already fetched are not re-fetched. That is the whole reason this is a panel rather than a
+   * route.
+   */
+  const [evidenceSym, setEvidenceSym] = useState(null);
+  useEffect(() => onEvidenceRequest((sym) => {
+    setEvidenceSym(sym);
+    addPanel('evidence');          // no-op when it is already open
+    bringToFront('evidence');
+  }), []);   // eslint-disable-line react-hooks/exhaustive-deps
   const removePanel = (id) => { const v = visibleRef.current.filter((x) => x !== id); setVisible(v); persistVisible(v); };
   const reset = () => { const l = defaultLayout(ref.current?.clientWidth); setLayout(l); persist(l); setVisible(DEFAULT_VISIBLE); persistVisible(DEFAULT_VISIBLE); };
 
@@ -1381,6 +1408,9 @@ function Workspace() {
     : def.id === 'why' ? <WhyMovingBody symbol={selectedSymbol} />
     : def.id === 'convergence' ? <ConvergenceBody onPick={(s) => linkSymbol('convergence', s)} />
     : def.id === 'alerts' ? <AlertsBody symbol={selectedSymbol} />
+    // ⚠️ ITS OWN SYMBOL, NOT THE WORKSPACE'S. Inspecting CDT's evidence must not move the chart off
+    // whatever the trader was studying, so this panel deliberately does NOT read selectedSymbol.
+    : def.id === 'evidence' ? <EvidencePanel symbol={evidenceSym} />
     : null);
   // THE CHART PANEL NO LONGER LABELS ITS SYMBOL UP HERE. The symbol is the first control in the
   // chart's own toolbar now — top-left, searchable, and the thing that actually changes it — so a
