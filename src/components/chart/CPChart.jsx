@@ -1250,6 +1250,36 @@ export default function CPChart({
     if (barsRef.current.length) draw();
   }, [theme, intraday, transparent, draw]);
 
+  // ── chart type: rebuild the price series in the newly chosen shape ─────────
+  //
+  // ⚠️ THE BUG THIS FIXES, AND WHY IT LOOKED LIKE A DROPDOWN PROBLEM. Selecting Line or Area set
+  // view.chartType, the menu showed the new selection, and the chart went on drawing candles.
+  // Everything downstream was already correct: chart-types.mjs carries a real series constructor
+  // and mapper for all three, draw() removes the old series and adds the registry's one, and the
+  // realtime path maps every tick through chartTypeOf(typeRef.current).map(). What was missing was
+  // the trigger. draw() is a useCallback([]) reading typeRef, so its identity never changes, and
+  // the only effects that call it depend on theme/intraday/transparent and on sym/tf/extended.
+  // chartType appeared in exactly one dependency array in the file — the PNG export callback's.
+  // So the series was built once, on mount, in whatever shape was selected then, and never again.
+  //
+  // ⚠️ AND THE VIEWPORT IS CARRIED ACROSS BY HAND, BECAUSE draw() DELIBERATELY RESETS IT. draw()
+  // ends by setting a useful opening range for the timeframe — right when a symbol or interval
+  // loads, wrong when a trader who has zoomed into last March switches to a line. So the logical
+  // range is read before the rebuild and restored after it. This is scoped to a type change only;
+  // the load path keeps its existing reset.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !barsRef.current.length) return;
+    let range = null;
+    try { range = chart.timeScale().getVisibleLogicalRange(); } catch { range = null; }
+    draw();
+    if (range) {
+      // A restore that throws must not leave the chart blank — the redraw above already happened,
+      // and losing the zoom is a far smaller failure than losing the series.
+      try { chart.timeScale().setVisibleLogicalRange(range); } catch { /* keep draw()'s range */ }
+    }
+  }, [view.chartType, draw]);
+
   /** The symbol a load is for. Trivial, but it keeps the cache branch and the fetch branch honest
    *  about answering for the SAME security — the race the comment below describes. */
   const forSymEarly = (s) => s;

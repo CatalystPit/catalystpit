@@ -720,6 +720,46 @@ section('14. chart types are a registry, and only what we draw is listed');
   const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
   ok('the chart draws from the registry', /chart\.addSeries\(lwc\[ct\.series\]/.test(cmp));
   ok('...including on incremental updates', /chartTypeOf\(typeRef\.current\)\.map\(b\)/.test(cmp));
+
+  // ── ⚠️ THE MACHINE WAS RIGHT. NOTHING TURNED IT ON. ───────────────────────
+  //
+  // Selecting Line or Area set view.chartType, the menu showed the selection, and the chart kept
+  // drawing candles. Every assertion above passed the whole time, because every one of them tests
+  // the MECHANISM: the registry carries a real series and mapper, draw() builds from it, the
+  // realtime path maps through it. What none of them tested was whether anything RE-RUNS draw()
+  // when the type changes — and nothing did. draw() is a useCallback([]) whose identity never
+  // changes, and the only effects calling it depended on theme/intraday/transparent and on
+  // sym/tf/extended. `chartType` appeared in exactly one dependency array in the file: the PNG
+  // export callback's. So the series was built once, on mount, and never rebuilt.
+  //
+  // A suite that verifies a machine but never that it is switched on will pass through this class
+  // of bug every time, so the trigger is what is asserted here.
+  ok('⚠️ a chart-type change RE-RUNS the draw that rebuilds the series',
+    /\}, \[view\.chartType, draw\]\);/.test(cmp));
+  ok('⚠️ ...and that effect actually calls draw()',
+    /useEffect\(\(\) => \{[\s\S]{0,700}?draw\(\);[\s\S]{0,400}?\}, \[view\.chartType, draw\]\);/.test(cmp));
+  // ⚠️ SWITCHING TYPE IS NOT A NEW CHART. draw() deliberately resets the visible range so a symbol
+  // or interval load opens on a useful stretch; doing that to someone who has zoomed into last
+  // March and clicked Line would lose their place.
+  ok('⚠️ ...while carrying the zoom and scroll position across the rebuild',
+    /getVisibleLogicalRange\(\)/.test(cmp) && /setVisibleLogicalRange\(range\)/.test(cmp));
+  ok('⚠️ ...and a failed restore still leaves a drawn chart',
+    /try \{ chart\.timeScale\(\)\.setVisibleLogicalRange\(range\); \} catch/.test(cmp));
+  // ⚠️ NO STACKED SERIES. draw() removes the old price series before adding the new one, which is
+  // what stops repeated switching from leaving candles under a line.
+  ok('⚠️ the old price series is removed before the new one is added',
+    /if \(priceRef\.current\) \{\s*\n\s*chart\.removeSeries\(priceRef\.current\);\s*\n\s*priceRef\.current = null;/.test(cmp));
+  // ⚠️ EVERY WRITE TO THE PRICE SERIES GOES THROUGH THE REGISTRY'S MAPPER, so a live tick reaches
+  // whichever series is active rather than assuming OHLC.
+  ok('⚠️ no write to the price series bypasses the type mapper',
+    (cmp.match(/priceRef\.current\.(update|setData)\(/g) || []).length
+      === (cmp.match(/priceRef\.current\.update\(chartTypeOf\(typeRef\.current\)\.map\(/g) || []).length
+        + (cmp.match(/priceRef\.current\.setData\(bars\.map\(ct\.map\)\)/g) || []).length);
+  // The overlays draw() rebuilds, so a type change cannot silently drop them.
+  // ⚠️ ANCHORED TO LINE START, SO A COMMENTED-OUT CALL CANNOT SATISFY IT. Without the anchor a
+  // mutation to `// drawIndicators();` still matched and the assertion passed on a broken rebuild.
+  ok('a rebuild restores indicators and evidence markers in the same frame',
+    /^\s*drawIndicators\(\);[\s\S]{0,500}^\s*applyEvidenceMarkers\(\);/m.test(cmp));
   ok('no chart type is hard-coded in the draw path', !/typeRef\.current === 'Candles'/.test(cmp));
   ok('the toolbar renders the type menu from the registry', /CHART_TYPES\.map/.test(cmp));
 
