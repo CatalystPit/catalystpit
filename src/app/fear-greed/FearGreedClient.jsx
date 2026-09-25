@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { C, Dot, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
 import ErrorState from '../../components/ErrorState';
+import FearGreedMeter from '../../components/FearGreedMeter';
 
 // CATALYST PIT FEAR & GREED — the page.
 //
@@ -19,44 +20,19 @@ const ZONE_COLOR = (label) => {
   return { fg: C.dim, bg: C.surface };
 };
 
-function Gauge({ score, zone }) {
-  const pct = Math.min(100, Math.max(0, Number(score) || 0));
-  const col = ZONE_COLOR(zone);
+function Gauge({ score, zone, asOf }) {
+  // ⚠️ A DIAL, NOT A BAR. The horizontal scale that used to live here made a reader measure a
+  // proportion; the arc is read positionally — 39 is visibly left of centre, in the fear half,
+  // before anyone reads a number. The drawing itself is FearGreedMeter.
   return (
-    <div style={{ textAlign: 'center', padding: '28px 16px 22px' }}>
+    <div style={{ textAlign: 'center', padding: '24px 16px 18px' }}>
       <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, letterSpacing: '1.6px', color: C.dim }}>
         CATALYST PIT
       </div>
-      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, letterSpacing: '2.4px', color: C.muted, marginTop: 2 }}>
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, letterSpacing: '2.4px', color: C.muted, marginTop: 2, marginBottom: 6 }}>
         FEAR &amp; GREED
       </div>
-      <div style={{ fontSize: 76, lineHeight: 1.05, fontWeight: 700, color: C.ink, marginTop: 10, fontVariantNumeric: 'tabular-nums' }}>
-        {Number.isFinite(Number(score)) ? Math.round(Number(score)) : '—'}
-      </div>
-      <div style={{
-        display: 'inline-block', marginTop: 8, padding: '5px 14px', borderRadius: 999,
-        background: col.bg, color: col.fg, fontSize: 12, fontWeight: 700, letterSpacing: '1.2px',
-      }}>{zone || 'UNAVAILABLE'}</div>
-
-      {/* The scale, with every zone boundary drawn so the number has somewhere to sit. */}
-      <div style={{ maxWidth: 460, margin: '20px auto 0' }}>
-        <div style={{ position: 'relative', height: 8, borderRadius: 999, overflow: 'hidden', display: 'flex' }}>
-          <div style={{ width: '25%', background: C.red, opacity: 0.85 }} />
-          <div style={{ width: '20%', background: C.red, opacity: 0.45 }} />
-          <div style={{ width: '11%', background: C.border2 }} />
-          <div style={{ width: '20%', background: C.greenMid, opacity: 0.5 }} />
-          <div style={{ width: '24%', background: C.greenMid, opacity: 0.9 }} />
-        </div>
-        <div style={{ position: 'relative', height: 14 }}>
-          <div style={{
-            position: 'absolute', left: `${pct}%`, transform: 'translateX(-50%)', top: -3,
-            width: 2, height: 14, background: C.ink,
-          }} />
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.6px' }}>
-          <span>0 EXTREME FEAR</span><span>50</span><span>EXTREME GREED 100</span>
-        </div>
-      </div>
+      <FearGreedMeter score={score} zone={zone} asOf={asOf} />
     </div>
   );
 }
@@ -211,7 +187,7 @@ export default function FearGreedClient() {
 
             {!loading && data?.available && (
               <>
-                <Gauge score={data.score} zone={zone} />
+                <Gauge score={data.score} zone={zone} asOf={data.asOf} />
 
                 <div style={{ display: 'flex', borderTop: `1px solid ${C.border}`, background: C.surface }}>
                   <Compare label="PREVIOUS CLOSE" point={data.comparisons?.previousClose} />
@@ -235,7 +211,7 @@ export default function FearGreedClient() {
 
                 <div style={{ borderTop: `1px solid ${C.border}`, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: C.dim, letterSpacing: '0.8px' }}>
-                    AS OF {data.asOf} · DAILY
+                    {data.componentCount}/{(data.components || []).length} COMPONENTS · {data.historySessions} SESSIONS
                   </span>
                   <button
                     type="button"

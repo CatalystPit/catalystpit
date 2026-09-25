@@ -19,6 +19,7 @@ import {
   MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR,
 } from '../src/lib/fear-greed/series.mjs';
 import { rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTION } from '../src/lib/fear-greed/compute.mjs';
+import { angleFor, pointAt, segPath, SEGMENTS, R, CX, CY } from '../src/lib/fear-greed/meter.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, d = '') => {
@@ -317,6 +318,54 @@ check('⚠️ the product never invokes CNN',
 check('the index is named Catalyst Pit Fear & Greed', METHODOLOGY.name === 'Catalyst Pit Fear & Greed');
 check('weights are declared equal and not fitted',
   /equal/i.test(METHODOLOGY.composite) && /not.*fitted|not fitted/i.test(METHODOLOGY.composite));
+
+// ── 10. THE METER'S GEOMETRY ─────────────────────────────────────────────────
+sec('⚠️ THE DIAL POINTS THE RIGHT WAY');
+{
+  // A reversed sweep is the one error a rendered gauge hides: the picture still looks like a meter,
+  // just with EXTREME GREED on the left. Nothing visual catches it, so the mapping is asserted.
+  check('0 sits at the far LEFT of the arc', angleFor(0) === 180);
+  check('100 sits at the far RIGHT', angleFor(100) === 0);
+  check('50 sits at the TOP', angleFor(50) === 90);
+  check('⚠️ the angle DECREASES as the score rises, i.e. the sweep is clockwise',
+    angleFor(0) > angleFor(25) && angleFor(25) > angleFor(50)
+    && angleFor(50) > angleFor(75) && angleFor(75) > angleFor(100));
+  check('⚠️ a fear reading points into the LEFT half', angleFor(39) > 90);
+  check('⚠️ a greed reading points into the RIGHT half', angleFor(70) < 90);
+  check('the mapping is linear', Math.abs((angleFor(25) - angleFor(75)) - 90) < 1e-9);
+  check('out-of-range input is clamped onto the arc',
+    angleFor(-20) === 180 && angleFor(500) === 0);
+  check('a non-number does not produce NaN geometry', Number.isFinite(angleFor(null)));
+
+  // Points: left end is left of centre, right end is right of centre, top is above the baseline.
+  const [x0, y0] = pointAt(angleFor(0), R);
+  const [x100, y100] = pointAt(angleFor(100), R);
+  const [x50, y50] = pointAt(angleFor(50), R);
+  check('the 0 end is drawn to the left of the hub', x0 < CX && Math.abs(y0 - CY) < 1e-6);
+  check('the 100 end is drawn to the right of the hub', x100 > CX && Math.abs(y100 - CY) < 1e-6);
+  check('the 50 point sits directly above the hub',
+    Math.abs(x50 - CX) < 1e-6 && y50 < CY);
+  check('the arc path is a real SVG arc, swept clockwise',
+    /^M [\d.]+ [\d.]+ A 150 150 0 0 1 [\d.]+ [\d.]+$/.test(segPath(0, 50)));
+}
+
+sec('THE ARC IS DRAWN ON THE INDEX\'S OWN SCALE');
+{
+  check('there are five bands, one per zone', SEGMENTS.length === ZONES.length);
+  check('they run from 0 to 100 with no gap',
+    SEGMENTS[0].from === 0 && SEGMENTS.at(-1).to === 100
+    && SEGMENTS.every((seg, i) => i === 0 || seg.from === SEGMENTS[i - 1].to));
+  check('their labels match the zone labels exactly',
+    SEGMENTS.map((x) => x.label).join('|') === ZONES.map((z) => z.label).join('|'));
+  // ⚠️ THE BAND A SCORE LANDS IN MUST BE THE ZONE IT IS CLASSIFIED AS. If the arc were drawn on
+  // round numbers instead of the index's own boundaries, a needle could sit inside a band whose
+  // name contradicts the word printed beneath it.
+  const bandFor = (v) => SEGMENTS.find((seg) => v >= seg.from && v <= seg.to);
+  for (const v of [0, 12, 24, 25, 33, 44, 45, 50, 55, 56, 68, 75, 76, 90, 100]) {
+    check(`${String(v).padStart(3)} is drawn in the band its zone names`,
+      bandFor(v).label === zoneFor(v).label, `${bandFor(v).label} vs ${zoneFor(v).label}`);
+  }
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

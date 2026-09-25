@@ -20,7 +20,13 @@
  * @param {number}   gap    flex gap between items
  * @returns {number} how many leading items to render inline; the rest go to the overflow menu
  */
-export function fitCount(widths, avail, moreW, gap = 16) {
+/**
+ * @param {boolean} [alwaysMore] the More control exists even when every link fits, because some
+ *   destinations live ONLY in the menu. Its width then has to be reserved unconditionally —
+ *   otherwise the row is measured as if the button were not there and the last link is clipped by
+ *   the container's overflow:hidden.
+ */
+export function fitCount(widths, avail, moreW, gap = 16, alwaysMore = false) {
   if (!Array.isArray(widths) || widths.length === 0) return 0;
   // Unmeasured (SSR, or before the first ResizeObserver callback): show everything rather than
   // hide it. Guessing low here would flash a "More" menu on a wide screen that never needed one.
@@ -28,7 +34,8 @@ export function fitCount(widths, avail, moreW, gap = 16) {
 
   // Everything fits, so no More control exists and none of its width is reserved. Reserving it
   // unconditionally is what makes the last item oscillate in and out at the boundary.
-  const total = widths.reduce((s, w) => s + w, 0) + gap * (widths.length - 1);
+  const total = widths.reduce((s, w) => s + w, 0) + gap * (widths.length - 1)
+    + (alwaysMore ? moreW + gap : 0);
   if (total <= avail) return widths.length;
 
   let used = moreW + gap, n = 0;

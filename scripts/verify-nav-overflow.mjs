@@ -152,6 +152,51 @@ L('\n=== THE HEADER IS ACTUALLY WIRED TO IT ===');
   ok('the search box can shrink, with a floor', /minWidth:\s*132/.test(src));
   ok('…and the control group no longer refuses to shrink entirely',
     !/gap:8, alignItems:"center", marginLeft:20, flexShrink:0/.test(src));
+
+  // ── ⚠️ THE ROW'S PADDING IS NOT AVAILABLE SPACE ──────────────────────────
+  //
+  // The nav row carries paddingLeft:24 and clientWidth INCLUDES padding, so measuring against
+  // clientWidth told the layout it had 24px more room than the links actually get. That is
+  // precisely enough for the tail item — normally "More ▾" — to sit past the edge of a container
+  // with overflow:hidden and render visibly cut in half.
+  // Plain string checks rather than regexes: these anchors are full of brackets and dots, and an
+  // escaping slip in a test reads as a passing assertion that checks nothing.
+  const has = (t) => src.includes(t);
+  ok('⚠️ the measurement subtracts the row padding from clientWidth',
+    has('parseFloat(cs.paddingLeft)') && has('parseFloat(cs.paddingRight)')
+    && has('bar.clientWidth - pad'));
+  ok('…and the fit maths is given the usable width, not the padded one',
+    has('usable,') && !has('        bar.clientWidth,'));
+
+  // ── ⚠️ MENU-ONLY DESTINATIONS ────────────────────────────────────────────
+  ok('⚠️ Fear & Greed is a menu-only destination, not a top-level link',
+    has('const MENU_ONLY = ["Fear & Greed"]')
+    && !/const links = \[[^\]]*Fear & Greed/.test(src));
+  ok('…and it is appended to whatever overflowed into the menu',
+    has('const overflowed = [...links.slice(visible), ...MENU_ONLY]'));
+  ok('…it resolves to /fear-greed', has('"Fear & Greed" ? "/fear-greed"'));
+  ok('⚠️ and the mobile menu carries it too, so it is reachable on a phone',
+    has('[...links, ...MENU_ONLY].map'));
+  ok('⚠️ the More control is told it is mandatory, so its width is always reserved',
+    has('useNavOverflow(links.length, MENU_ONLY.length > 0)'));
+}
+
+// ── ALWAYS-MORE RESERVATION ──────────────────────────────────────────────────
+L('\n=== ⚠️ A MANDATORY "MORE" MUST ALWAYS BE PAID FOR ===');
+{
+  // Everything fits with room to spare — but if More exists regardless, its width is not free.
+  const w = [100, 100, 100];
+  ok('without a mandatory More, a row that fits keeps every link',
+    fitCount(w, 400, 60, 16, false) === 3);
+  ok('⚠️ with a mandatory More, the same row must give one up',
+    fitCount(w, 400, 60, 16, true) === 2,
+    String(fitCount(w, 400, 60, 16, true)));
+  ok('…and with genuine room to spare it still keeps them all',
+    fitCount(w, 600, 60, 16, true) === 3);
+  ok('the mandatory flag defaults off, so existing callers are unchanged',
+    fitCount(w, 400, 60, 16) === 3);
+  ok('⚠️ a mandatory More never collapses the row to nothing',
+    fitCount([300], 100, 60, 16, true) === 1);
 }
 
 L(`\n${pass} passed, ${fail} failed`);

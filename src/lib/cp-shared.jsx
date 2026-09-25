@@ -832,7 +832,7 @@ export function NotificationBell() {
  * instead would be circular, since hiding an item destroys the width you need to decide whether
  * to hide it.
  */
-function useNavOverflow(count) {
+function useNavOverflow(count, alwaysMore = false) {
   const barRef = useRef(null);
   const measureRef = useRef(null);
   const [visible, setVisible] = useState(count);
@@ -844,12 +844,24 @@ function useNavOverflow(count) {
     const recompute = () => {
       const kids = Array.from(meas.children);
       if (!bar.clientWidth || kids.length === 0) return;
+      // ⚠️ clientWidth INCLUDES PADDING, AND THIS ROW HAS 24px OF IT.
+      //
+      // The links start after that padding, so the usable width is clientWidth minus the
+      // horizontal padding. Measuring against the padded number told the layout it had 24px more
+      // room than it did — just enough for the last item, usually "More ▾", to sit past the edge
+      // of a container with overflow:hidden and render visibly cut off. The extra pixel is for
+      // sub-pixel rounding, which at some zoom levels clips a glyph on its own.
+      const cs = getComputedStyle(bar);
+      const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const usable = bar.clientWidth - pad - 1;
       // Last child of the measuring row is the "More" control, measured at its real width rather
       // than guessed — a wrong reservation here is what makes the last item flicker in and out.
       setVisible(fitCount(
         kids.slice(0, count).map((k) => k.getBoundingClientRect().width),
-        bar.clientWidth,
+        usable,
         kids.length > count ? kids[count].getBoundingClientRect().width : 0,
+        16,
+        alwaysMore,
       ));
     };
 
@@ -859,7 +871,7 @@ function useNavOverflow(count) {
     // Fonts land after first paint and change every width — re-measure once they do.
     if (document.fonts?.ready) document.fonts.ready.then(recompute).catch(() => {});
     return () => ro.disconnect();
-  }, [count]);
+  }, [count, alwaysMore]);
 
   return { barRef, measureRef, visible };
 }
@@ -868,6 +880,19 @@ export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
   const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Dividends", "Insiders", "Politicians", "Institutions"];
+
+  /**
+   * ⚠️ DESTINATIONS THAT LIVE ONLY IN "MORE", NEVER IN THE TOP ROW.
+   *
+   * Fear & Greed was deliberately removed from the permanent navigation, but a page reachable only
+   * from one card on the homepage is a page nobody finds from anywhere else. These items are always
+   * in the menu regardless of how much room the bar has, which is a different thing from the
+   * OVERFLOW items below — those are top-level links that happened not to fit.
+   *
+   * Because this list is non-empty, the More control now always exists, so its width is always
+   * reserved by the overflow maths. See the alwaysMore argument to useNavOverflow.
+   */
+  const MENU_ONLY = ["Fear & Greed"];
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   // Where the fixed-position panel goes, measured from the button when it opens. Fixed coordinates
@@ -916,8 +941,9 @@ export function TopNav({ active }) {
     return () => { window.removeEventListener('scroll', close); window.removeEventListener('resize', close); };
   }, [moreOpen]);
   // Container-width driven, not viewport-width driven — see useNavOverflow.
-  const { barRef, measureRef, visible } = useNavOverflow(links.length);
-  const overflowed = links.slice(visible);
+  const { barRef, measureRef, visible } = useNavOverflow(links.length, MENU_ONLY.length > 0);
+  // What the menu shows: whatever did not fit, plus the destinations that are menu-only by design.
+  const overflowed = [...links.slice(visible), ...MENU_ONLY];
   // A dock closing widens the bar and pulls items back inline; a menu left open over nothing is
   // a stale menu, so it closes when its contents become empty.
   useEffect(() => { if (overflowed.length === 0) setMoreOpen(false); }, [overflowed.length]);
@@ -1096,7 +1122,7 @@ export function TopNav({ active }) {
           <div style={{padding:"11px 24px", borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
             <SymbolSearch mobile onNavigate={() => setMenuOpen(false)} />
           </div>
-          {links.map(l => (
+          {[...links, ...MENU_ONLY].map(l => (
             <a key={l} href={hrefFor(l)} onClick={() => setMenuOpen(false)}
               style={{fontSize:14, color:linkColor(l), fontWeight: active === l ? 600 : 400,
                 textDecoration:"none", padding:"11px 24px",
