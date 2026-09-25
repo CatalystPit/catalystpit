@@ -177,3 +177,20 @@ export const SEGMENT_LABEL_COLOR = '#FFFFFF';
 
 /** The numeric reference points kept around the arc — deliberately only three. */
 export const SCALE_MARKS = Object.freeze([0, 50, 100]);
+
+/**
+ * Where a scale number is printed.
+ *
+ * ⚠️ THE TWO ENDS CANNOT BE PUSHED FURTHER OUT. 0 and 100 sit ON the horizontal diameter, so
+ * "further out along the radius" is "further along the diameter" — straight into the band's own
+ * end cap, which is exactly where "100" was landing, printed over the dark green. Everything below
+ * the diameter is empty, so the end numbers go there and only the midpoint rides above the arc.
+ */
+export function scaleMarkPlacement(v) {
+  const a = angleFor(v);
+  if (a === 180 || a === 0) {
+    return { x: CX + (a === 0 ? R : -R), y: CY + 16, anchor: 'middle', tick: false };
+  }
+  const [x, y] = pointAt(a, SCALE_R);
+  return { x, y, anchor: 'middle', tick: true };
+}

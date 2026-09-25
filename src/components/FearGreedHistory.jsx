@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { C } from '../lib/cp-shared';
 import {
-  BANDS, Y_TICKS, availableTimeframes, defaultTimeframe, filterHistory,
+  BANDS, Y_TICKS, availableTimeframes, defaultTimeframe, filterHistory, zoneGutter, zoneFontSize,
   xTickIndexes, tickCountFor, formatTick, formatFull, nearestIndex, zoneLabel,
 } from '../lib/fear-greed/history-chart.mjs';
 
@@ -74,9 +74,11 @@ export default function FearGreedHistory({ history }) {
   const active = tf && options.some((o) => o.key === tf) ? tf : defaultTimeframe(history);
   const pts = useMemo(() => filterHistory(history, active), [history, active]);
 
-  const narrow = width > 0 && width < 420;
-  const H = narrow ? 200 : 240;
-  const padL = 32, padR = 8, padT = 10, padB = 24;
+  const H = width > 0 && width < 420 ? 200 : 240;
+  // ⚠️ THE PLOT STOPS BEFORE THE ZONE NAMES. Drawn inside the plot they were crossed out by the
+  // index line, halo and all. Reserving the gutter makes the collision impossible instead of
+  // unlikely. See zoneGutter in history-chart.mjs.
+  const padL = 32, padR = zoneGutter(width), padT = 10, padB = 24;
   const plotW = Math.max(0, width - padL - padR);
   const plotH = H - padT - padB;
   const n = pts.length;
@@ -95,12 +97,12 @@ export default function FearGreedHistory({ history }) {
   if (n < 2) return null;
 
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.score).toFixed(1)}`).join(' ');
-  const ticks = xTickIndexes(n, tickCountFor(width));
+  // ⚠️ The tick budget is the PLOT's width, not the card's — the gutter is not drawable space.
+  const ticks = xTickIndexes(n, tickCountFor(plotW));
   const last = pts[n - 1];
   const lastZone = zoneLabel(last.score);
   const hi = hover !== null && hover >= 0 && hover < n ? hover : null;
   const hp = hi === null ? null : pts[hi];
-  const zoneFontSize = narrow ? 7.5 : 8.5;
 
   return (
     <div style={{ padding: '2px 16px 14px' }}>
@@ -160,14 +162,13 @@ export default function FearGreedHistory({ history }) {
               </g>
             ))}
 
-            {/* each zone named against its own band, with a halo so the line never hides a word */}
+            {/* each zone named beside its own band, in the gutter the plot stops short of */}
             {BANDS.map((b) => (
-              <text key={`z-${b.key}`} x={padL + plotW - 6} y={(y(b.to) + y(b.from)) / 2}
-                textAnchor="end" dominantBaseline="central"
-                stroke={C.white} strokeWidth="3" paintOrder="stroke" strokeLinejoin="round"
+              <text key={`z-${b.key}`} x={padL + plotW + 7} y={(y(b.to) + y(b.from)) / 2}
+                textAnchor="start" dominantBaseline="central"
                 style={{
-                  fontFamily: "'DM Sans',sans-serif", fontSize: zoneFontSize, letterSpacing: '0.06em',
-                  fill: ZONE_FG(b.label), fillOpacity: 0.75,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: zoneFontSize(width), letterSpacing: '0.06em',
+                  fill: ZONE_FG(b.label), fillOpacity: 0.85,
                 }}>{b.label}</text>
             ))}
 

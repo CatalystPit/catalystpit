@@ -10,6 +10,7 @@
 //
 // Run: node scripts/verify-fear-greed.mjs
 
+import { readFileSync } from 'node:fs';
 import {
   zoneFor, ZONES, ZONE_BANDS, percentileRank, scoreComponent, composite, DIRECTION,
   NORM_WINDOW, MIN_WINDOW, MIN_COMPONENTS, COMPONENTS, COMPONENT_KEYS, METHODOLOGY,
@@ -22,11 +23,13 @@ import { rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTIO
 import {
   angleFor, pointAt, segPath, labelLines, labelFontSize, labelPlacement, labelRotation,
   segMid, segArcLength, textWidth, SEGMENTS, SEGMENT_COLOR, SEGMENT_LABEL_COLOR, SCALE_MARKS,
-  R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP, SCALE_R, LABEL_MIN, LABEL_MAX,
+  scaleMarkPlacement, R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP, SCALE_R,
+  LABEL_MIN, LABEL_MAX,
 } from '../src/lib/fear-greed/meter.mjs';
 import {
   BANDS, Y_TICKS, Y_MIN, Y_MAX, TIMEFRAMES, parseISO, shiftMonths, cleanHistory, cutoffFor,
   availableTimeframes, defaultTimeframe, filterHistory, tickCountFor, xTickIndexes,
+  zoneGutter, zoneFontSize,
   formatTick, formatFull, nearestIndex, zoneLabel,
 } from '../src/lib/fear-greed/history-chart.mjs';
 
@@ -631,6 +634,71 @@ sec('THE X AXIS IS READABLE AND THE TOOLTIP LANDS ON A REAL POINT');
   check('the middle selects the middle', nearestIndex(0.5, 505) === 252);
   check('⚠️ a pointer dragged off the plot cannot select a point that does not exist',
     nearestIndex(-3, 504) === 0 && nearestIndex(9, 504) === 503 && nearestIndex(NaN, 504) === 0);
+}
+
+// ── 13. WHAT THE RENDERED PAGE SHOWED ────────────────────────────────────────
+sec('⚠️ THE SCALE NUMBERS DO NOT SIT ON THE BAND');
+{
+  // ⚠️ FOUND BY LOOKING AT THE RENDERED GAUGE, NOT BY READING THE CODE. "100" was printed on top of
+  // the dark green end cap. 0 and 100 sit ON the horizontal diameter, so pushing them "further out
+  // along the radius" pushes them along that diameter and straight into the band's own end.
+  const p0 = scaleMarkPlacement(0);
+  const p50 = scaleMarkPlacement(50);
+  const p100 = scaleMarkPlacement(100);
+  check('⚠️ the 0 mark sits BELOW the diameter, where the band cannot be', p0.y > CY);
+  check('⚠️ the 100 mark sits BELOW the diameter too', p100.y > CY);
+  check('the midpoint mark still rides above the arc', p50.y < CY - R);
+  check('the end marks line up with the ends of the arc',
+    Math.abs(p0.x - (CX - R)) < 1e-9 && Math.abs(p100.x - (CX + R)) < 1e-9);
+  check('the end marks are nowhere near the score in the middle',
+    Math.abs(p0.x - CX) > 100 && Math.abs(p100.x - CX) > 100);
+  check('every mark is inside the drawing area',
+    [p0, p50, p100].every((p) => p.x > 8 && p.x < VIEW_W - 8 && p.y > 4 && p.y < VIEW_H));
+  check('only the midpoint gets a tick, the ends being the ends of the arc',
+    p50.tick === true && p0.tick === false && p100.tick === false);
+}
+
+sec('⚠️ THE INDEX LINE CANNOT CROSS A ZONE NAME');
+{
+  // ⚠️ ALSO FOUND BY LOOKING. The names were drawn INSIDE the plot, right-aligned, with a white
+  // halo to survive whatever passed underneath — and the line went straight through GREED and
+  // NEUTRAL anyway, because a 1.8px stroke crossing 8px letters wins. A halo hides a collision, it
+  // does not prevent one. The plot now stops before the gutter, which makes the separation a
+  // property rather than a hope.
+  const PAD_L = 32, GAP = 7;
+  for (const w of [1024, 780, 588, 556, 480, 420, 390, 358, 326, 280]) {
+    const gutter = zoneGutter(w);
+    const plotRight = PAD_L + Math.max(0, w - PAD_L - gutter);
+    const labelLeft = plotRight + GAP;
+    const widest = Math.max(...BANDS.map((b) => textWidth(b.label, zoneFontSize(w), 0.06)));
+    check(`at ${String(w).padStart(4)}px the plot ends before the names begin`, plotRight < labelLeft);
+    check(`at ${String(w).padStart(4)}px the longest name fits in its gutter`,
+      labelLeft + widest <= w, `${(labelLeft + widest).toFixed(1)} > ${w}`);
+    check(`at ${String(w).padStart(4)}px there is still a plot to draw in`, plotRight - PAD_L > 100);
+  }
+  check('a narrow card sets the names smaller', zoneFontSize(360) < zoneFontSize(700));
+  check('and therefore reserves less room for them', zoneGutter(360) < zoneGutter(700));
+  check('⚠️ the gutter is derived from the longest zone NAME, not from a guessed number',
+    zoneGutter(700) >= Math.max(...BANDS.map((b) => textWidth(b.label, zoneFontSize(700), 0.06))));
+}
+
+sec('THE DRAWING USES THE GEOMETRY IT WAS GIVEN');
+{
+  // ⚠️ WIRING, NOT ARITHMETIC. The pure functions can be correct and the component can still hand
+  // them the wrong number — which is exactly what the rendered page showed. Both of these were
+  // wrong in the version that shipped, and neither was visible to any assertion about the geometry.
+  const chart = readFileSync(new URL('../src/components/FearGreedHistory.jsx', import.meta.url), 'utf8');
+  const meter = readFileSync(new URL('../src/components/FearGreedMeter.jsx', import.meta.url), 'utf8');
+  check('⚠️ the date-tick budget is taken from the PLOT, not from the whole card',
+    chart.includes('tickCountFor(plotW)') && !chart.includes('tickCountFor(width)'));
+  check('⚠️ the zone names are drawn past the right edge of the plot, not inside it',
+    chart.includes('padL + plotW + 7') && !chart.includes('padL + plotW - 6'));
+  check('the right padding IS the zone gutter', chart.includes('padR = zoneGutter(width)'));
+  check('the chart no longer leans on a halo to survive the line', !chart.includes('paintOrder'));
+  check('⚠️ the gauge asks where a scale number goes rather than deciding it inline',
+    meter.includes('scaleMarkPlacement(v)') && !meter.includes("v === 100 ? 'end'"));
+  check('the zone names are set at the size the gutter was measured for',
+    chart.includes('zoneFontSize(width)'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

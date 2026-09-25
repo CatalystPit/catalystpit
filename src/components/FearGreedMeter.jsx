@@ -1,8 +1,8 @@
 'use client';
 import { C } from '../lib/cp-shared';
 import {
-  angleFor, pointAt, segPath, labelPlacement, SEGMENTS, SEGMENT_COLOR, SEGMENT_LABEL_COLOR,
-  SCALE_MARKS, R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP, SCALE_R,
+  angleFor, pointAt, segPath, labelPlacement, scaleMarkPlacement, SEGMENTS, SEGMENT_COLOR,
+  SEGMENT_LABEL_COLOR, SCALE_MARKS, R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP,
 } from '../lib/fear-greed/meter.mjs';
 
 // THE FEAR & GREED METER — a semicircular sentiment dial, drawn from scratch.
@@ -113,13 +113,12 @@ export default function FearGreedMeter({ score, zone, asOf }) {
           const a = angleFor(v);
           const [tx, ty] = pointAt(a, R + BAND / 2 + 1);
           const [ex, ey] = pointAt(a, R + BAND / 2 + 5);
-          const [nx, ny] = pointAt(a, SCALE_R);
-          const anchor = v === 0 ? 'start' : v === 100 ? 'end' : 'middle';
+          const m = scaleMarkPlacement(v);
           return (
             <g key={v}>
-              <line x1={tx} y1={ty} x2={ex} y2={ey} stroke={C.border2} strokeWidth="1.5" />
+              {m.tick && <line x1={tx} y1={ty} x2={ex} y2={ey} stroke={C.border2} strokeWidth="1.5" />}
               <text
-                x={nx} y={ny} textAnchor={anchor} dominantBaseline="central"
+                x={m.x} y={m.y} textAnchor={m.anchor} dominantBaseline="central"
                 style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fill: C.dim, letterSpacing: '0.04em' }}
               >{v}</text>
             </g>

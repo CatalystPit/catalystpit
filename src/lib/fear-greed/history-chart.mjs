@@ -17,6 +17,9 @@
 // between one page load and the next. The scale is the index's scale, always.
 
 import { ZONE_BANDS, zoneFor, finite } from './model.mjs';
+// The same crude type-metric estimate the gauge fits its band labels with. Shared rather than
+// re-derived, because both are answering the same question: will this word fit in that space.
+import { textWidth } from './meter.mjs';
 
 /** The zone bands, on the same 0-100 axis the Y scale uses. Derived from ZONES, never retyped. */
 export const BANDS = ZONE_BANDS;
@@ -123,6 +126,26 @@ export function filterHistory(points, tfKey) {
   return cutoff ? pts.filter((p) => p.date >= cutoff) : pts;
 }
 
+/** Type size for the zone names beside the plot. */
+export function zoneFontSize(width) {
+  return (Number(width) || 0) < 420 ? 7.5 : 8.5;
+}
+
+/**
+ * Width to reserve for the zone names, OUTSIDE the plot.
+ *
+ * ⚠️ THE NAMES CANNOT LIVE INSIDE THE PLOT. They were drawn there first, right-aligned against
+ * the last observation, with a halo to survive whatever passed underneath — and the index line went
+ * straight through GREED and NEUTRAL anyway, because a 1.8px line crossing 8px letters wins. A halo
+ * hides a collision; it does not prevent one. The plot now STOPS before this gutter, so the line
+ * cannot reach the words at all — which is a property that can be asserted rather than eyeballed.
+ */
+export function zoneGutter(width) {
+  const fs = zoneFontSize(width);
+  const widest = Math.max(...BANDS.map((b) => textWidth(b.label, fs, 0.06)));
+  return Math.ceil(widest + 10);
+}
+
 /**
  * How many date labels the axis can carry at a given pixel width.
  *
@@ -132,8 +155,8 @@ export function filterHistory(points, tfKey) {
  */
 export function tickCountFor(width) {
   const w = Number(width) || 0;
-  if (w < 360) return 3;
-  if (w < 560) return 4;
+  if (w < 260) return 3;
+  if (w < 420) return 4;
   return 6;
 }
 
