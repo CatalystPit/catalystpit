@@ -31,7 +31,7 @@
  * an unavailable index as the most alarming reading on the card, and scoreComponent() scored a
  * missing raw value as if it were 0. A missing number has to be missing all the way through.
  */
-const finite = (v) => {
+export const finite = (v) => {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -53,6 +53,23 @@ export function zoneFor(score) {
   const clamped = Math.min(100, Math.max(0, s));
   return ZONES.find((z) => clamped <= z.max) || ZONES[ZONES.length - 1];
 }
+
+/**
+ * The zones as continuous [from, to] bands on the 0-100 axis, for anything that DRAWS the scale.
+ *
+ * ⚠️ DERIVED FROM ZONES, NEVER RETYPED. The gauge arc and the history chart both shade this
+ * scale, and a drawn boundary that disagrees with the classifying boundary is the worst kind of
+ * wrong: the picture stays plausible while a needle sits in a band whose name contradicts the
+ * word printed next to it. ZONES holds the inclusive integer maxima; the .5 offsets put each cut
+ * exactly halfway between two integer scores, so neither band claims a value belonging to the
+ * other and the five bands still tile 0-100 without a gap.
+ */
+export const ZONE_BANDS = Object.freeze(ZONES.map((z, i) => Object.freeze({
+  key: z.key,
+  label: z.label,
+  from: i === 0 ? 0 : ZONES[i - 1].max + 0.5,
+  to: i === ZONES.length - 1 ? 100 : z.max + 0.5,
+})));
 
 // ── NORMALISATION ────────────────────────────────────────────────────────────
 //

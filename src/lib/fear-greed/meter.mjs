@@ -8,14 +8,36 @@
 //
 // Geometry is Catalyst Pit's own: a half turn, 0 at the left, drawn clockwise as the score rises.
 
+import { ZONE_BANDS } from './model.mjs';
+
 /** Arc radius, in viewBox units. */
 export const R = 150;
-/** Centre of the dial inside a 380-wide viewBox. */
+/** Centre of the dial inside the viewBox. */
 export const CX = 190;
-/** Baseline of the semicircle. */
-export const CY = 182;
+/** The pivot, on the diameter of the semicircle. */
+export const CY = 190;
 /** Thickness of the coloured band. */
 export const BAND = 30;
+
+/**
+ * The drawing area.
+ *
+ * ⚠️ THE BOX IS TALLER THAN THE SEMICIRCLE ON PURPOSE. The score used to be printed inside the arc,
+ * where the needle swings — at a greed reading the blade ran straight through the digits. The
+ * number now lives BELOW the pivot, in space the needle can never reach, which is what the extra
+ * height buys. NEEDLE_TIP stops the blade short of the band for the same reason: a needle that
+ * entered the band would cross whichever zone label it happened to be pointing at.
+ */
+export const VIEW_W = 380;
+export const VIEW_H = 292;
+/** Baseline of the big score, below the pivot. */
+export const SCORE_Y = CY + 62;
+/** Baseline of the zone word, directly beneath the score. */
+export const ZONE_Y = CY + 84;
+/** How far the needle reaches: up to the band's inner edge, with a gap, never into it. */
+export const NEEDLE_TIP = R - BAND / 2 - 4;
+/** Radius of the 0 / 50 / 100 scale markers, outside the band. */
+export const SCALE_R = R + BAND / 2 + 12;
 
 /**
  * Score to SVG angle, in degrees measured anticlockwise from east.
@@ -42,18 +64,116 @@ export function segPath(from, to, radius = R) {
 }
 
 /**
- * The five bands of the arc.
+ * The five bands of the arc — the index's own zone boundaries, derived rather than retyped.
  *
- * ⚠️ THE BOUNDARIES ARE THE INDEX'S OWN — 0-24 / 25-44 / 45-55 / 56-75 / 76-100 — not round
- * numbers chosen to look tidy. Drawing the arc on a different scale from the one the score is
- * classified on would let the needle sit in a band whose name contradicts the word printed below.
- * The .5 offsets put each cut halfway between two integer scores so neither band claims a value
- * belonging to the other.
+ * ⚠️ THE ARC IS THE LEGEND. There is no key underneath any more: each zone is named inside the
+ * band that represents it, so the widths a reader sees ARE the ranges. That only holds while these
+ * bands and `zoneFor` come from the same source, which is why they do.
  */
-export const SEGMENTS = Object.freeze([
-  { key: 'extreme-fear', from: 0, to: 24.5, label: 'EXTREME FEAR' },
-  { key: 'fear', from: 24.5, to: 44.5, label: 'FEAR' },
-  { key: 'neutral', from: 44.5, to: 55.5, label: 'NEUTRAL' },
-  { key: 'greed', from: 55.5, to: 75.5, label: 'GREED' },
-  { key: 'extreme-greed', from: 75.5, to: 100, label: 'EXTREME GREED' },
-]);
+export const SEGMENTS = ZONE_BANDS;
+
+/** Midpoint score of a band — where its name is centred. */
+export function segMid(seg) {
+  return (seg.from + seg.to) / 2;
+}
+
+/** Arc length of a band along the centre of the ring, in viewBox units. */
+export function segArcLength(seg, radius = R) {
+  return ((seg.to - seg.from) / 100) * Math.PI * radius;
+}
+
+/**
+ * Rotation that lays text along the arc at a given angle.
+ *
+ * At the top of the dial this is 0 (horizontal); at the ends it approaches ±90, so a label always
+ * sits square to its own slice of the ring rather than square to the page.
+ */
+export function labelRotation(angle) {
+  return 90 - angle;
+}
+
+/**
+ * A band's name, broken into the lines it is drawn on.
+ *
+ * ⚠️ SPLIT, NOT RETYPED. "EXTREME FEAR" needs two lines to fit inside its slice; deriving the break
+ * from the label itself means a renamed zone cannot end up with a stale label stacked in the arc.
+ */
+export function labelLines(label) {
+  return String(label).includes(' ') ? String(label).split(' ') : [String(label)];
+}
+
+/**
+ * Advance width of a line, in viewBox units — the same crude estimate the fitter uses.
+ *
+ * Uppercase DM Sans runs close to 0.62em per glyph; the extra term is the tracking. This does not
+ * need to be exact, only conservative, because it exists to prove a label cannot outgrow its band.
+ */
+export function textWidth(line, fontSize, tracking = 0.05) {
+  const n = String(line).length;
+  return n === 0 ? 0 : fontSize * (0.62 * n + tracking * (n - 1));
+}
+
+/** Smallest and largest type the arc will use. */
+export const LABEL_MIN = 7;
+export const LABEL_MAX = 10;
+
+/**
+ * Type size for a band's name, chosen so the name fits INSIDE the band.
+ *
+ * ⚠️ THIS IS WHY NEUTRAL IS SMALLER THAN THE REST. Its slice is eleven points wide against twenty
+ * for FEAR and twenty-four for EXTREME FEAR — a fixed size that fits the wide bands overflows the
+ * narrow one, and a label spilling out of its own colour is exactly the failure the fitter exists
+ * to make impossible. The bands are NOT equal widths, because the ranges are not equal.
+ */
+export function labelFontSize(seg, radius = R) {
+  const lines = labelLines(seg.label);
+  const longest = lines.reduce((a, b) => (b.length > a.length ? b : a), '');
+  const available = segArcLength(seg, radius) - 10; // 5 units of clearance at each boundary
+  const unit = textWidth(longest, 1);
+  const raw = unit > 0 ? available / unit : LABEL_MAX;
+  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, Math.floor(raw * 10) / 10));
+}
+
+/**
+ * Where each line of a band's name is drawn: [x, y, rotation], centred in the ring.
+ *
+ * Two-line names straddle the centre of the ring; one-line names sit on it. The offsets stay well
+ * inside BAND so no line touches the edge of its own colour.
+ */
+export function labelPlacement(seg, radius = R) {
+  const lines = labelLines(seg.label);
+  const angle = angleFor(segMid(seg));
+  const rotation = labelRotation(angle);
+  const fontSize = labelFontSize(seg, radius);
+  const spread = lines.length > 1 ? 5.5 : 0;
+  return lines.map((line, i) => {
+    // The first line sits FURTHER OUT than the second, so the name reads outside-in along a radius.
+    const r = radius + (lines.length > 1 ? spread - i * spread * 2 : 0);
+    const [x, y] = pointAt(angle, r);
+    return { line, x, y, rotation, fontSize };
+  });
+}
+
+/**
+ * The gauge face's colours.
+ *
+ * ⚠️ FIXED, NOT THEME TOKENS, AND THAT IS DELIBERATE. Every other surface on the site flips with
+ * the colour scheme, but these five carry white text inside them. A token that lightens in dark
+ * mode — C.red goes from #A83030 to #E06B6B — would take white lettering from readable to
+ * unreadable at the exact moment the rest of the page got easier to read. A gauge face is an
+ * instrument: it looks the same under either scheme, and every colour here clears 4.5:1 against
+ * white, which the suite checks rather than trusts.
+ */
+export const SEGMENT_COLOR = Object.freeze({
+  'extreme-fear': '#8A2626',
+  fear: '#B04E4A',
+  neutral: '#67705F',
+  greed: '#348052',
+  'extreme-greed': '#1E5C38',
+});
+
+/** Lettering inside the bands. */
+export const SEGMENT_LABEL_COLOR = '#FFFFFF';
+
+/** The numeric reference points kept around the arc — deliberately only three. */
+export const SCALE_MARKS = Object.freeze([0, 50, 100]);

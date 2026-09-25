@@ -1,6 +1,9 @@
 'use client';
 import { C } from '../lib/cp-shared';
-import { angleFor, pointAt, segPath, SEGMENTS, R, CX, CY, BAND } from '../lib/fear-greed/meter.mjs';
+import {
+  angleFor, pointAt, segPath, labelPlacement, SEGMENTS, SEGMENT_COLOR, SEGMENT_LABEL_COLOR,
+  SCALE_MARKS, R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP, SCALE_R,
+} from '../lib/fear-greed/meter.mjs';
 
 // THE FEAR & GREED METER — a semicircular sentiment dial, drawn from scratch.
 //
@@ -9,41 +12,43 @@ import { angleFor, pointAt, segPath, SEGMENTS, R, CX, CY, BAND } from '../lib/fe
 // A horizontal bar makes a reader measure: they find the marker, find the ends, and work out the
 // proportion. A dial is read positionally — 39 is visibly left of centre, in the fear half, without
 // counting anything. That is the entire reason this replaced the bar, so every decision below
-// serves legibility of POSITION: a wide sweep, thick band, high-contrast needle, and zone labels
-// sitting outside the arc where they never collide with it.
+// serves legibility of POSITION.
+//
+// ── ⚠️ THE ARC IS THE LEGEND ────────────────────────────────────────────────
+//
+// Each zone is named INSIDE the band that represents it, and there is no key underneath. That is
+// not only tidier — it is what makes the unequal widths mean something. NEUTRAL is eleven points
+// wide and EXTREME FEAR twenty-four, so a reader who sees a wide red slice and a thin grey one has
+// learned the actual ranges without reading a number. A separate legend would have let the drawn
+// widths drift from the real ones unnoticed; a label sitting in its own colour cannot.
+//
+// ── ⚠️ THE NEEDLE GETS THE INSIDE OF THE DIAL TO ITSELF ─────────────────────
+//
+// The score used to be printed inside the arc, and at a greed reading the blade ran straight
+// through the digits. Nothing inside the semicircle competes with the needle now: the number and
+// the zone sit BELOW the pivot, in space the needle cannot reach, and the blade stops short of the
+// band so it never crosses a zone label either.
 //
 // ── ⚠️ OUR OWN GEOMETRY AND OUR OWN PALETTE ─────────────────────────────────
 //
 // The familiar financial-sentiment dial is a concept, not an asset. Nothing here is lifted: the
-// sweep, radius, band thickness, tick placement, needle shape, hub, type scale and colours are all
-// Catalyst Pit's — the same forest-green / cream / clay language the rest of the site uses, with
-// the fear and greed treatments already established by the zone pills and the scan rows.
+// sweep, radius, band thickness, label fitting, needle shape, hub, type scale and colours are all
+// Catalyst Pit's.
 //
 // ── ⚠️ SCALING WITHOUT CLIPPING ─────────────────────────────────────────────
 //
-// The SVG has a fixed viewBox and `width: 100%`, so it scales with its column and never overlaps
-// the sticky header. The viewBox carries enough padding above the arc for the outer labels and the
-// stroke's round cap, which is the detail that otherwise crops the tips at small widths.
+// The SVG has a fixed viewBox and `width: 100%`, so the whole face — bands, labels, needle, score —
+// scales as one piece and the relationships that were proved in viewBox units hold at every width.
+// A label that fits its band on a desktop fits it on a phone, because it is the same drawing.
 
 /**
  * ⚠️ THE GEOMETRY LIVES IN lib/fear-greed/meter.mjs, NOT HERE.
  *
  * A reversed sweep is the one error a rendered dial hides — the picture still looks like a meter,
- * with the wrong end of the scale on the left. Pure functions can be asserted with numbers; JSX
- * cannot, so the mapping is imported rather than written inline.
+ * with the wrong end of the scale on the left. And a label overflowing its band is the one error
+ * that only shows up at a width nobody tested. Pure functions can be asserted with numbers; JSX
+ * cannot, so the mapping and the label fitting are imported rather than written inline.
  */
-const ANGLE_FOR = angleFor;
-const pt = pointAt;
-
-/** Colours for the five bands, in the site's own fear/neutral/greed treatment. */
-const SEGMENT_FILL = {
-  'extreme-fear': { fill: C.red, opacity: 0.92 },
-  fear: { fill: C.red, opacity: 0.52 },
-  neutral: { fill: C.border2, opacity: 1 },
-  greed: { fill: C.greenMid, opacity: 0.55 },
-  'extreme-greed': { fill: C.greenMid, opacity: 0.95 },
-};
-
 const ZONE_TEXT = (label) => {
   if (label === 'EXTREME FEAR' || label === 'FEAR') return C.red;
   if (label === 'GREED' || label === 'EXTREME GREED') return C.green;
@@ -53,62 +58,71 @@ const ZONE_TEXT = (label) => {
 export default function FearGreedMeter({ score, zone, asOf }) {
   const has = Number.isFinite(Number(score));
   const s = has ? Math.min(100, Math.max(0, Number(score))) : 50;
-  const angle = ANGLE_FOR(s);
+  const angle = angleFor(s);
 
-  // The needle: a slim tapered blade rather than a speedometer pointer. Built from three points so
-  // it reads as a precision marker at any size, with a hub covering the pivot.
-  const [tipX, tipY] = pt(angle, R - 6);
-  const [lx, ly] = pt(angle + 90, 7);
-  const [rx, ry] = pt(angle - 90, 7);
-
-  // Tick marks at each boundary, drawn just inside the band.
-  const ticks = [0, 25, 45, 56, 76, 100];
+  // The needle: a slim tapered blade rather than a speedometer pointer, with a hub over the pivot.
+  const [tipX, tipY] = pointAt(angle, NEEDLE_TIP);
+  const [lx, ly] = pointAt(angle + 90, 7);
+  const [rx, ry] = pointAt(angle - 90, 7);
 
   return (
     <div style={{ width: '100%', maxWidth: 460, margin: '0 auto' }}>
       <svg
-        viewBox="0 0 380 232"
+        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         // ⚠️ The score and zone are announced as text; the drawing itself is decorative to a
         // screen reader, which would otherwise read a list of path coordinates.
         role="img"
         aria-label={has ? `Fear and Greed index ${Math.round(s)}, ${zone}` : 'Fear and Greed index unavailable'}
-        style={{ width: '100%', height: 'auto', display: 'block', overflow: 'visible' }}
+        style={{ width: '100%', height: 'auto', display: 'block' }}
       >
-        {/* the band */}
-        {SEGMENTS.map((seg) => {
-          const paint = SEGMENT_FILL[seg.key];
-          return (
-            <path
-              key={seg.key}
-              d={segPath(seg.from, seg.to)}
-              fill="none"
-              stroke={paint.fill}
-              strokeOpacity={has ? paint.opacity : paint.opacity * 0.35}
-              strokeWidth={BAND}
-              strokeLinecap="butt"
-            />
-          );
-        })}
+        {/* the band: one arc per zone, its width the zone's actual range */}
+        {SEGMENTS.map((seg) => (
+          <path
+            key={seg.key}
+            d={segPath(seg.from, seg.to)}
+            fill="none"
+            stroke={SEGMENT_COLOR[seg.key]}
+            strokeOpacity={has ? 1 : 0.35}
+            strokeWidth={BAND}
+            strokeLinecap="butt"
+          />
+        ))}
 
-        {/* boundary ticks, inside the band so they never touch the labels */}
-        {ticks.map((t) => {
-          const a = ANGLE_FOR(t);
-          const [x1, y1] = pt(a, R - BAND / 2 + 2);
-          const [x2, y2] = pt(a, R + BAND / 2 - 2);
-          return (
-            <line key={t} x1={x1} y1={y1} x2={x2} y2={y2}
-              stroke={C.white} strokeOpacity={0.5} strokeWidth={t === 50 ? 0 : 1.5} />
-          );
-        })}
+        {/* each zone named inside its own colour, laid along the arc */}
+        {SEGMENTS.map((seg) => (
+          <g key={`l-${seg.key}`} opacity={has ? 1 : 0.55}>
+            {labelPlacement(seg).map((p, i) => (
+              <text
+                key={i}
+                x={p.x}
+                y={p.y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                transform={`rotate(${p.rotation.toFixed(2)} ${p.x.toFixed(2)} ${p.y.toFixed(2)})`}
+                style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: p.fontSize, fontWeight: 700,
+                  letterSpacing: '0.05em', fill: SEGMENT_LABEL_COLOR,
+                }}
+              >{p.line}</text>
+            ))}
+          </g>
+        ))}
 
-        {/* end + midpoint scale numbers, outside the arc */}
-        {[{ v: 0, anchor: 'start' }, { v: 50, anchor: 'middle' }, { v: 100, anchor: 'end' }].map(({ v, anchor }) => {
-          const [x, y] = pt(ANGLE_FOR(v), R + BAND / 2 + 14);
+        {/* 0 / 50 / 100 — kept, but secondary to the words in the bands */}
+        {SCALE_MARKS.map((v) => {
+          const a = angleFor(v);
+          const [tx, ty] = pointAt(a, R + BAND / 2 + 1);
+          const [ex, ey] = pointAt(a, R + BAND / 2 + 5);
+          const [nx, ny] = pointAt(a, SCALE_R);
+          const anchor = v === 0 ? 'start' : v === 100 ? 'end' : 'middle';
           return (
-            <text key={v} x={x} y={v === 50 ? y + 4 : y} textAnchor={anchor}
-              style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fill: C.dim, letterSpacing: '0.5px' }}>
-              {v}
-            </text>
+            <g key={v}>
+              <line x1={tx} y1={ty} x2={ex} y2={ey} stroke={C.border2} strokeWidth="1.5" />
+              <text
+                x={nx} y={ny} textAnchor={anchor} dominantBaseline="central"
+                style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fill: C.dim, letterSpacing: '0.04em' }}
+              >{v}</text>
+            </g>
           );
         })}
 
@@ -124,33 +138,22 @@ export default function FearGreedMeter({ score, zone, asOf }) {
           </>
         )}
 
-        {/* the score, centred inside the dial */}
-        <text x={CX} y={CY - 46} textAnchor="middle"
-          style={{ fontSize: 66, fontWeight: 700, fill: C.ink, fontVariantNumeric: 'tabular-nums' }}>
-          {has ? Math.round(s) : '—'}
-        </text>
-        <text x={CX} y={CY - 16} textAnchor="middle"
+        {/* the reading, below the pivot where the needle never goes */}
+        <text
+          x={CX} y={SCORE_Y} textAnchor="middle"
+          style={{ fontSize: 58, fontWeight: 700, fill: C.ink, fontVariantNumeric: 'tabular-nums' }}
+        >{has ? Math.round(s) : '—'}</text>
+        <text
+          x={CX} y={ZONE_Y} textAnchor="middle"
           style={{
-            fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700,
-            letterSpacing: '2px', fill: has ? ZONE_TEXT(zone) : C.dim,
-          }}>
-          {has ? zone : 'UNAVAILABLE'}
-        </text>
+            fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700,
+            letterSpacing: '0.16em', fill: has ? ZONE_TEXT(zone) : C.dim,
+          }}
+        >{has ? zone : 'UNAVAILABLE'}</text>
       </svg>
 
-      {/* Zone words below the dial rather than crowded around the arc, in reading order. */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 4, marginTop: 2, padding: '0 2px' }}>
-        {SEGMENTS.map((seg) => (
-          <span key={seg.key} style={{
-            flex: '1 1 0', textAlign: 'center', fontFamily: "'DM Sans',sans-serif",
-            fontSize: 8.5, letterSpacing: '0.4px', lineHeight: 1.3,
-            color: zone === seg.label ? ZONE_TEXT(seg.label) : C.dim,
-            fontWeight: zone === seg.label ? 700 : 400,
-          }}>{seg.label}</span>
-        ))}
-      </div>
       {asOf && (
-        <div style={{ textAlign: 'center', marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 9.5, color: C.dim, letterSpacing: '0.8px' }}>
+        <div style={{ textAlign: 'center', marginTop: 2, fontFamily: "'DM Sans',sans-serif", fontSize: 9.5, color: C.dim, letterSpacing: '0.8px' }}>
           AS OF {asOf} · DAILY
         </div>
       )}

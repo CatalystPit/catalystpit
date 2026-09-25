@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { C, Dot, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
 import ErrorState from '../../components/ErrorState';
 import FearGreedMeter from '../../components/FearGreedMeter';
+import FearGreedHistory from '../../components/FearGreedHistory';
 
 // CATALYST PIT FEAR & GREED — the page.
 //
@@ -46,30 +47,6 @@ function Compare({ label, point }) {
         {point ? Math.round(point.score) : '—'}
       </div>
       <div style={{ fontSize: 9, color: col.fg, letterSpacing: '0.6px' }}>{point?.zone || '—'}</div>
-    </div>
-  );
-}
-
-function Spark({ history }) {
-  const pts = (history || []).filter((p) => Number.isFinite(Number(p.score)));
-  if (pts.length < 2) return null;
-  const W = 640, H = 120;
-  const xs = (i) => (i / (pts.length - 1)) * W;
-  const ys = (v) => H - (Math.min(100, Math.max(0, v)) / 100) * H;
-  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ys(p.score).toFixed(1)}`).join(' ');
-  return (
-    <div style={{ padding: '4px 16px 16px' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 120, display: 'block' }}>
-        {/* the neutral band, so a reader can see when the market crossed it */}
-        <rect x="0" y={ys(55)} width={W} height={ys(45) - ys(55)} fill={C.surface} />
-        <line x1="0" y1={ys(50)} x2={W} y2={ys(50)} stroke={C.border2} strokeWidth="1" strokeDasharray="3 3" />
-        <path d={d} fill="none" stroke={C.green} strokeWidth="1.6" />
-      </svg>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim }}>
-        <span>{pts[0].date}</span>
-        <span>{pts.length} sessions</span>
-        <span>{pts.at(-1).date}</span>
-      </div>
     </div>
   );
 }
@@ -198,7 +175,7 @@ export default function FearGreedClient() {
                 <div style={{ borderTop: `1px solid ${C.border}`, padding: '10px 16px 0', display: 'flex', alignItems: 'center', gap: 7 }}>
                   <Dot /><span style={{ fontSize: 12, fontWeight: 600, color: C.ink }}>HISTORY</span>
                 </div>
-                <Spark history={data.history} />
+                <FearGreedHistory history={data.history} />
 
                 <div style={{ borderTop: `1px solid ${C.border}`, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 7, background: C.surface }}>
                   <Dot />

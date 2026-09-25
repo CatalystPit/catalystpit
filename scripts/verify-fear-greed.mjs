@@ -11,7 +11,7 @@
 // Run: node scripts/verify-fear-greed.mjs
 
 import {
-  zoneFor, ZONES, percentileRank, scoreComponent, composite, DIRECTION,
+  zoneFor, ZONES, ZONE_BANDS, percentileRank, scoreComponent, composite, DIRECTION,
   NORM_WINDOW, MIN_WINDOW, MIN_COMPONENTS, COMPONENTS, COMPONENT_KEYS, METHODOLOGY,
 } from '../src/lib/fear-greed/model.mjs';
 import {
@@ -19,7 +19,16 @@ import {
   MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR,
 } from '../src/lib/fear-greed/series.mjs';
 import { rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTION } from '../src/lib/fear-greed/compute.mjs';
-import { angleFor, pointAt, segPath, SEGMENTS, R, CX, CY } from '../src/lib/fear-greed/meter.mjs';
+import {
+  angleFor, pointAt, segPath, labelLines, labelFontSize, labelPlacement, labelRotation,
+  segMid, segArcLength, textWidth, SEGMENTS, SEGMENT_COLOR, SEGMENT_LABEL_COLOR, SCALE_MARKS,
+  R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP, SCALE_R, LABEL_MIN, LABEL_MAX,
+} from '../src/lib/fear-greed/meter.mjs';
+import {
+  BANDS, Y_TICKS, Y_MIN, Y_MAX, TIMEFRAMES, parseISO, shiftMonths, cleanHistory, cutoffFor,
+  availableTimeframes, defaultTimeframe, filterHistory, tickCountFor, xTickIndexes,
+  formatTick, formatFull, nearestIndex, zoneLabel,
+} from '../src/lib/fear-greed/history-chart.mjs';
 
 let pass = 0, fail = 0;
 const check = (n, c, d = '') => {
@@ -365,6 +374,263 @@ sec('THE ARC IS DRAWN ON THE INDEX\'S OWN SCALE');
     check(`${String(v).padStart(3)} is drawn in the band its zone names`,
       bandFor(v).label === zoneFor(v).label, `${bandFor(v).label} vs ${zoneFor(v).label}`);
   }
+}
+
+// ── 11. THE ARC IS THE LEGEND ────────────────────────────────────────────────
+sec('⚠️ EVERY ZONE NAME FITS INSIDE ITS OWN BAND');
+{
+  // ⚠️ THE FAILURE THIS PREVENTS. The five names are drawn INSIDE the coloured bands and there is
+  // no key underneath any more, so a name that outgrows its slice does not just look untidy — it
+  // spills into the neighbouring zone's colour and labels the wrong range. NEUTRAL is the one at
+  // risk: eleven points wide against twenty-four for EXTREME FEAR.
+  for (const seg of SEGMENTS) {
+    const fs = labelFontSize(seg);
+    const widest = Math.max(...labelLines(seg.label).map((l) => textWidth(l, fs)));
+    const arc = segArcLength(seg);
+    check(`${seg.label.padEnd(13)} fits inside its band with clearance`,
+      widest <= arc - 10, `${widest.toFixed(1)} > ${(arc - 10).toFixed(1)}`);
+    check(`${seg.label.padEnd(13)} is drawn at a legible size`,
+      fs >= LABEL_MIN && fs <= LABEL_MAX, String(fs));
+  }
+  check('⚠️ the narrowest band gets the smallest type, because it has the least room',
+    labelFontSize(SEGMENTS.find((s2) => s2.key === 'neutral'))
+    < labelFontSize(SEGMENTS.find((s2) => s2.key === 'extreme-fear')));
+
+  // ⚠️ UNEQUAL RANGES MUST BE DRAWN UNEQUAL. Five equal slices would be prettier and would lie:
+  // a reader takes the width of a coloured band as the size of the range it names.
+  const arcOf = (k) => segArcLength(SEGMENTS.find((s2) => s2.key === k));
+  check('⚠️ the bands are NOT five equal sections',
+    new Set(SEGMENTS.map((s2) => (s2.to - s2.from).toFixed(2))).size > 1);
+  check('band width is proportional to the range it names',
+    SEGMENTS.every((s2) => Math.abs(segArcLength(s2) / ((s2.to - s2.from) / 100 * Math.PI * R) - 1) < 1e-9));
+  check('EXTREME FEAR is drawn wider than NEUTRAL, as its range is wider',
+    arcOf('extreme-fear') > arcOf('neutral'));
+  check('FEAR and GREED are drawn the same width, as their ranges are equal',
+    Math.abs(arcOf('fear') - arcOf('greed')) < 1e-9);
+
+  // Two-line names exist only where a name has two words, and are derived from the label itself.
+  check('a one-word zone is drawn on one line', labelLines('NEUTRAL').length === 1);
+  check('a two-word zone is split onto two lines', labelLines('EXTREME FEAR').join('|') === 'EXTREME|FEAR');
+  check('⚠️ the line break is derived from the label, so a renamed zone cannot keep a stale one',
+    SEGMENTS.every((s2) => labelLines(s2.label).join(' ') === s2.label));
+
+  // Radially, every line stays well inside the ring.
+  for (const seg of SEGMENTS) {
+    const ok = labelPlacement(seg).every((pl) => {
+      const dist = Math.hypot(pl.x - CX, CY - pl.y);
+      return Math.abs(dist - R) + pl.fontSize / 2 < BAND / 2;
+    });
+    check(`${seg.label.padEnd(13)} sits within the thickness of the ring`, ok);
+  }
+}
+
+sec('⚠️ THE LABELS FOLLOW THE ARC RATHER THAN THE PAGE');
+{
+  check('the top band is drawn horizontally', Math.abs(labelRotation(angleFor(50))) < 1e-9);
+  check('the left band leans one way', labelRotation(angleFor(12)) < 0);
+  check('the right band leans the other', labelRotation(angleFor(88)) > 0);
+  check('⚠️ no label is ever turned past vertical, which would print it upside down',
+    SEGMENTS.every((s2) => Math.abs(labelRotation(angleFor(segMid(s2)))) < 90));
+  check('a band is named at its own midpoint',
+    Math.abs(segMid(SEGMENTS.find((s2) => s2.key === 'neutral')) - 50) < 1e-9);
+}
+
+sec('⚠️ WHITE LETTERING IS READABLE ON EVERY BAND, IN EITHER COLOUR SCHEME');
+{
+  // ⚠️ WHY THE FACE IS NOT THEMED. The bands carry white text. A theme token that lightens in dark
+  // mode — C.red goes #A83030 to #E06B6B — would take that lettering from readable to unreadable
+  // exactly when the rest of the page got easier to read. So the face is fixed, and the contrast
+  // is measured here rather than eyeballed once.
+  const lum = (hex) => {
+    const ch = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+    return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+  };
+  const ratio = (a, b) => {
+    const x = lum(a), y = lum(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  };
+  check('every band has a colour', SEGMENTS.every((s2) => /^#[0-9A-F]{6}$/i.test(SEGMENT_COLOR[s2.key] || '')));
+  for (const seg of SEGMENTS) {
+    const r = ratio(SEGMENT_COLOR[seg.key], SEGMENT_LABEL_COLOR);
+    check(`${seg.label.padEnd(13)} clears 4.5:1 against its lettering`, r >= 4.5, r.toFixed(2));
+  }
+  check('⚠️ the face does not use theme tokens, which would flip underneath the lettering',
+    !JSON.stringify(SEGMENT_COLOR).includes('var('));
+  check('the fear end is drawn in reds and the greed end in greens',
+    SEGMENT_COLOR['extreme-fear'].toLowerCase().startsWith('#8a')
+    && SEGMENT_COLOR['extreme-greed'].toLowerCase() === '#1e5c38');
+}
+
+sec('⚠️ NOTHING COMPETES WITH THE NEEDLE');
+{
+  // ⚠️ THE BUG THIS CLOSES. The score used to be printed inside the arc, and at a greed reading the
+  // blade ran straight through the digits. The number is now below the pivot, where the needle
+  // cannot reach — and the blade stops short of the band, so it cannot cross a zone label either.
+  check('⚠️ the needle stops before the band, so it never crosses a zone name',
+    NEEDLE_TIP < R - BAND / 2, `${NEEDLE_TIP} vs ${R - BAND / 2}`);
+  check('the needle is still long enough to point convincingly', NEEDLE_TIP > R * 0.7);
+
+  // The lowest the needle can ever reach is its hub-side corner, at radius 7 straight down.
+  const needleLowest = CY + 7;
+  const scoreTop = SCORE_Y - 58 * 0.78; // cap height of the 58px numeral, generously
+  check('⚠️ the score is printed BELOW everything the needle can reach',
+    scoreTop > needleLowest, `${scoreTop.toFixed(1)} vs ${needleLowest}`);
+  check('the score sits below the pivot, not inside the arc', SCORE_Y > CY);
+  check('the zone word sits directly beneath the score', ZONE_Y > SCORE_Y);
+  check('both are inside the drawing area', ZONE_Y < VIEW_H);
+
+  // Nothing may be drawn outside the box — a clipped label is the failure this catches.
+  check('the arc and its scale numbers fit inside the box',
+    CY - SCALE_R - 6 > 0 && CX + SCALE_R <= VIEW_W && CX - SCALE_R >= 0);
+  check('the scale markers sit outside the band, not on it', SCALE_R > R + BAND / 2);
+}
+
+sec('THE NUMERIC SCALE IS KEPT, AND KEPT SMALL');
+{
+  check('⚠️ only three reference numbers, not a tick label per zone',
+    SCALE_MARKS.length === 3 && SCALE_MARKS.join(',') === '0,50,100');
+  check('they are the ends and the midpoint of the index scale',
+    SCALE_MARKS[0] === 0 && SCALE_MARKS.at(-1) === 100);
+}
+
+// ── 12. THE HISTORY CHART ────────────────────────────────────────────────────
+sec('⚠️ THE HISTORY CHART READS ON A FIXED 0-100 SCALE');
+{
+  // ⚠️ AUTO-SCALING IS THE FAILURE. Fitting the axis to the observed range is what every charting
+  // library does by default, and here it would slide the absolute fear and greed zones up and down
+  // the frame between one window and the next, and redraw a quiet fortnight in the forties as a
+  // mountain range.
+  check('the axis runs 0 to 100', Y_MIN === 0 && Y_MAX === 100);
+  check('the ticks are the fixed five', Y_TICKS.join(',') === '0,25,50,75,100');
+  check('⚠️ the ticks are constants, not derived from any series',
+    Object.isFrozen(Y_TICKS) && Y_TICKS.every((v) => v >= 0 && v <= 100));
+  check('a narrow screen loses date ticks but never the Y axis',
+    tickCountFor(320) < tickCountFor(900) && Y_TICKS.length === 5);
+  check('the date-tick budget is never zero', [0, 200, 320, 480, 900, 1600].every((w) => tickCountFor(w) >= 3));
+}
+
+sec('⚠️ THE SHADED ZONES ARE THE INDEX\'S OWN ZONES');
+{
+  check('the chart shades the same bands the gauge draws', BANDS === ZONE_BANDS);
+  check('there are five, one per zone', BANDS.length === ZONES.length);
+  check('they tile 0-100 with no gap and no overlap',
+    BANDS[0].from === 0 && BANDS.at(-1).to === 100
+    && BANDS.every((b, i) => i === 0 || b.from === BANDS[i - 1].to));
+  check('their names are the zone names', BANDS.map((b) => b.label).join('|') === ZONES.map((z) => z.label).join('|'));
+  // ⚠️ ONE CLASSIFIER. If the chart decided zones for itself, the word beside 39 in a tooltip
+  // could differ from the word beside 39 in the gauge, and only one would be the product's answer.
+  for (const v of [0, 24, 25, 44, 45, 50, 55, 56, 75, 76, 100, 38.8]) {
+    check(`${String(v).padStart(4)} is named the same in the chart as in the index`,
+      zoneLabel(v) === zoneFor(v).label, `${zoneLabel(v)} vs ${zoneFor(v).label}`);
+  }
+  const bandFor = (v) => BANDS.find((b) => v >= b.from && v <= b.to);
+  for (const v of [0, 12, 24, 25, 33, 44, 45, 50, 55, 56, 68, 75, 76, 90, 100]) {
+    check(`${String(v).padStart(3)} is shaded in the band its zone names`,
+      bandFor(v).label === zoneFor(v).label, `${bandFor(v).label} vs ${zoneFor(v).label}`);
+  }
+}
+
+sec('⚠️ DATES ARE CALENDAR DAYS, NOT TIMESTAMPS');
+{
+  // ⚠️ THE OFF-BY-ONE-DAY BUG. `new Date('2026-09-24')` is UTC midnight, and getDate() then answers
+  // in the VIEWER'S timezone — which for most of this audience is the previous evening. Every axis
+  // tick and every tooltip would have read one day early, on their machines and not on ours.
+  check('an ISO date parses to its own calendar fields',
+    JSON.stringify(parseISO('2026-09-24')) === JSON.stringify({ y: 2026, m: 9, d: 24 }));
+  check('rubbish does not parse', parseISO('') === null && parseISO('yesterday') === null && parseISO(null) === null);
+  check('⚠️ a tooltip date is the stored day, whatever the reader\'s timezone',
+    formatFull('2026-09-24') === 'Sep 24, 2026');
+  check('⚠️ New Year\'s Day does not render as 31 December', formatFull('2026-01-01') === 'Jan 1, 2026');
+  check('a short window labels days', formatTick('2026-09-24', '3M') === 'Sep 24');
+  check('a long window labels months and years', formatTick('2026-09-24', '2Y') === "Sep '26");
+  check('a single-digit year pads', formatTick('2005-03-02', '1Y') === "Mar '05");
+}
+
+sec('MONTH ARITHMETIC CLAMPS RATHER THAN OVERFLOWS');
+{
+  check('⚠️ 31 March minus one month is 28 February, not 3 March',
+    shiftMonths('2026-03-31', 1) === '2026-02-28');
+  check('a leap year gets its extra day', shiftMonths('2024-03-31', 1) === '2024-02-29');
+  check('a year rolls back cleanly', shiftMonths('2026-01-15', 12) === '2025-01-15');
+  check('two years rolls back cleanly', shiftMonths('2026-09-24', 24) === '2024-09-24');
+  check('January minus one month crosses the year', shiftMonths('2026-01-15', 1) === '2025-12-15');
+}
+
+sec('⚠️ THE CHART FILTERS HISTORY AND NEVER INVENTS IT');
+{
+  // A synthetic two-year series, one observation per week, so the assertions below are about the
+  // filtering and not about whatever production happens to hold today.
+  const series = [];
+  for (let i = 0; i < 105; i++) {
+    const day = new Date(Date.UTC(2024, 8, 25) + i * 7 * 86400000);
+    series.push({ date: day.toISOString().slice(0, 10), score: 20 + (i % 61) });
+  }
+  const full = cleanHistory(series);
+  check('a clean series keeps every usable observation', full.length === series.length);
+  check('observations are oldest first', full.every((p, i) => i === 0 || p.date > full[i - 1].date));
+  // ⚠️ Number(null) IS 0, AND 0 IS EXTREME FEAR. A null score passes the obvious
+  // `Number.isFinite(Number(x))` filter and gets plotted as the deepest reading in the series.
+  check('an unusable observation is dropped, not repaired',
+    cleanHistory([...series, { date: 'nope', score: 5 }, { date: '2026-01-01', score: null }]).length === series.length);
+  check('⚠️ a null score is never plotted as a zero',
+    cleanHistory([{ date: '2026-01-01', score: null }, { date: '2026-01-02', score: 40 }])
+      .every((p) => p.score !== 0));
+  check('nor is an empty string, nor an undefined',
+    cleanHistory([{ date: '2026-01-01', score: '' }, { date: '2026-01-02', score: undefined }]).length === 0);
+  check('a numeric string is still a number', cleanHistory([{ date: '2026-01-01', score: '41.5' }])[0].score === 41.5);
+
+  for (const tf of TIMEFRAMES) {
+    const win = filterHistory(full, tf.key);
+    const key = (p) => `${p.date}|${p.score}`;
+    const known = new Set(full.map(key));
+    check(`${tf.key} returns only stored observations`, win.every((p) => known.has(key(p))));
+    check(`${tf.key} never returns more than it was given`, win.length <= full.length);
+    check(`${tf.key} keeps them in order`, win.every((p, i) => i === 0 || p.date > win[i - 1].date));
+    check(`${tf.key} ends on the newest observation`, win.at(-1).date === full.at(-1).date);
+    check(`${tf.key} starts no earlier than its own cutoff`, win[0].date >= cutoffFor(full, tf.months));
+  }
+  check('⚠️ a shorter window is a strict subset of a longer one',
+    filterHistory(full, '3M').length < filterHistory(full, '1Y').length
+    && filterHistory(full, '1Y').length < filterHistory(full, '2Y').length);
+  check('the longest window covers the whole stored series',
+    filterHistory(full, '2Y').length >= full.length - 2);
+
+  // ⚠️ NO WINDOW IS OFFERED THAT THE DATA CANNOT FILL. Offering 2Y on six months of history would
+  // draw the same six months under four labels and imply the other eighteen were flat, not absent.
+  check('two years of history offers all four windows',
+    availableTimeframes(full).map((t) => t.key).join(',') === '3M,6M,1Y,2Y');
+  check('the chart opens on the longest window the data supports', defaultTimeframe(full) === '2Y');
+  const sixMonths = filterHistory(full, '6M');
+  check('⚠️ six months of history does not offer two years',
+    !availableTimeframes(sixMonths).some((t) => t.key === '2Y'));
+  check('six months of history still offers a way to see all of it',
+    filterHistory(sixMonths, availableTimeframes(sixMonths).at(-1).key).length === sixMonths.length);
+  check('the window offered last is the one that already reaches past the data',
+    availableTimeframes(sixMonths).at(-1).key === '6M');
+  check('a month of history offers only the shortest window',
+    availableTimeframes(full.slice(-4)).map((t) => t.key).join(',') === '3M');
+  check('an empty or single-point history offers nothing to choose',
+    availableTimeframes([]).length === 0 && availableTimeframes(full.slice(-1)).length === 0);
+  check('and has no default window', defaultTimeframe([]) === null);
+}
+
+sec('THE X AXIS IS READABLE AND THE TOOLTIP LANDS ON A REAL POINT');
+{
+  check('ticks include the first and last observation',
+    xTickIndexes(504, 6)[0] === 0 && xTickIndexes(504, 6).at(-1) === 503);
+  check('ticks are in order and never repeat',
+    xTickIndexes(504, 6).every((v, i, a) => i === 0 || v > a[i - 1]));
+  check('a narrow chart gets fewer of them', xTickIndexes(504, 3).length < xTickIndexes(504, 6).length);
+  check('⚠️ a short series is not padded out with duplicate ticks',
+    xTickIndexes(2, 6).join(',') === '0,1' && xTickIndexes(1, 6).join(',') === '0');
+  check('an empty series has no ticks', xTickIndexes(0, 6).length === 0);
+
+  check('the left edge selects the first observation', nearestIndex(0, 504) === 0);
+  check('the right edge selects the last', nearestIndex(1, 504) === 503);
+  check('the middle selects the middle', nearestIndex(0.5, 505) === 252);
+  check('⚠️ a pointer dragged off the plot cannot select a point that does not exist',
+    nearestIndex(-3, 504) === 0 && nearestIndex(9, 504) === 503 && nearestIndex(NaN, 504) === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
