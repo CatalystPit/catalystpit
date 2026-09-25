@@ -51,8 +51,15 @@ export function isLeadRole(title) {
   return LEAD.test(t);
 }
 
-/** A short, honest role word for the reason line. */
-function roleWord(title) {
+/**
+ * A short, honest role word for the reason line.
+ *
+ * Exported because the chart labels a prominent insider marker with the SAME word this file uses
+ * in its reason line — so "CEO" on a marker and "The CEO purchased..." in a card cannot disagree
+ * about who filed. It returns "An officer" when the filed title names no lead role, which is the
+ * caller's signal that no title can honestly be claimed.
+ */
+export function roleWord(title) {
   const t = String(title || '');
   if (/chief\s+executive|(^|\W)ceo(\W|$)/i.test(t)) return 'CEO';
   if (/chief\s+financial|(^|\W)cfo(\W|$)/i.test(t)) return 'CFO';

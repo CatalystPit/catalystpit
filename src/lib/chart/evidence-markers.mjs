@@ -30,6 +30,11 @@
 // Monday's candle, because Monday is the first session in which anyone could trade it. Snapping
 // backwards to Friday would put the marker on a session that closed before the filing existed.
 
+// ⚠️ THE CANONICAL ATTENTION TAG, IMPORTED RATHER THAN RESTATED. Consensus already decided which
+// single disclosures are big enough to stand alone, with stated thresholds and a version string.
+// The chart asks it; it does not hold an opinion of its own about what is significant.
+import { highSignificance, roleWord } from '../consensus/high-significance.mjs';
+
 // ── family appearance ────────────────────────────────────────────────────────
 // Concrete hex, never `var(--cp-*)`: these are painted on a canvas, which cannot resolve CSS
 // variables and silently drops the marker. chart-theme.mjs documents the same trap.
@@ -149,6 +154,66 @@ export const groupKey = (time, family) => `${typeof time === 'number' ? time : S
  */
 export const MAX_MARKERS = 60;
 
+// ── hierarchy ────────────────────────────────────────────────────────────────
+//
+// ⚠️ TWO TIERS, AND THE LINE BETWEEN THEM IS NOT DRAWN HERE.
+//
+// A CEO's $10.0M open-market purchase was rendering as the same 1px arrow as a quarterly 13F
+// breadth change — present, correctly placed, and impossible to notice without already knowing
+// where to look. The fix is a hierarchy; the risk is that "important" becomes a number invented by
+// the chart, which would make the canvas a second opinion about significance.
+//
+// So the promotion is decided by highSignificance() — the EXISTING canonical attention tag, with
+// its own stated thresholds ($500K by a lead role, $1M by any insider, $1M across a cluster, a
+// congressional band floor of $500K, a catalyst the engine already calls exceptional, an
+// institutional change its own history calls unusual). This file asks that function a yes/no
+// question and draws the answer. It sets no threshold of its own.
+//
+// ⚠️ WHAT THAT MEANS FOR SELLS, STATED PLAINLY: highSignificance covers open-market PURCHASES only
+// — deliberately, per its own comments — so no insider sale is promoted, whatever its size. The
+// alternative was to invent a sell threshold here, which is precisely what must not happen. A sale
+// keeps its red down-arrow and explains itself on hover.
+
+/** Marker sizes, in Lightweight Charts' own units. Screen pixels — zoom does not shrink them. */
+export const TIER_SIZE = Object.freeze({ routine: 1, prominent: 2.6 });
+
+/**
+ * How far apart two labelled markers must sit before both may keep their text.
+ *
+ * ⚠️ A CLUTTER RULE, NOT A RANKING. When two labels would collide the lower-significance one loses
+ * its TEXT and keeps its prominent marker, so nothing is demoted or hidden — the words simply move
+ * to the hover, which is where the brief says they should go when space runs out.
+ */
+export const MIN_LABEL_GAP_BARS = 15;
+
+/** 'prominent' when the canonical attention tag fires for this group, else 'routine'. */
+export function tierFor(items) {
+  try { return highSignificance(Array.isArray(items) ? items : [items]).high ? 'prominent' : 'routine'; }
+  catch { return 'routine'; }   // an unreadable record draws as ordinary, never as loud
+}
+
+/**
+ * The compact label for a promoted marker, or '' when none can be written honestly.
+ *
+ * ⚠️ EVERY TOKEN IS CANONICAL. The role word is the same one high-significance.mjs prints, taken
+ * from the FILED title; the value is the engine's own totalValueLabel; the verb is the engine's own
+ * direction. Nothing is estimated and no title is inferred — when the filed title names no lead
+ * role, the label says INSIDER rather than guessing at one.
+ *
+ * ⚠️ AND ONLY INSIDER BUYS CARRY ONE. A label is the loudest thing on a price chart, so it is spent
+ * on the case the brief names: a major open-market purchase whose facts are already sufficient.
+ */
+export function markerLabelFor(items) {
+  const list = Array.isArray(items) ? items : [items];
+  const ins = list.find((e) => e?.family === 'insider' && /buy/i.test(String(e?.type || '')));
+  if (!ins) return '';
+  const f = ins.facts || {};
+  const value = f.totalValueLabel;
+  if (!value) return '';                    // no canonical value, no label — never a computed one
+  const role = roleWord(f.leadRoleTitle || f.title);
+  return `${role === 'An officer' ? 'INSIDER' : role.toUpperCase()} BUY ${value}`;
+}
+
 /**
  * Build the marker array and the lookup a tooltip reads.
  *
@@ -195,6 +260,31 @@ export function buildEvidenceMarkers(evidence, bars, { theme = 'light', maxMarke
 
   kept.sort((a, b) => (barEpoch(a.time) - barEpoch(b.time)) || a.key.localeCompare(b.key));
 
+  // ── tier, then labels, then collision ───────────────────────────────────────
+  //
+  // Tier first because it decides size and size is never dropped. Labels are assigned after, and
+  // are the only thing a collision can take away.
+  // `bars` may legitimately be null or empty — snapToBar already tolerates it, and every group
+  // would have been dropped above, so the index is simply empty rather than a crash.
+  const barIndex = new Map();
+  for (const [i, b] of (Array.isArray(bars) ? bars : []).entries()) {
+    barIndex.set(typeof b.time === 'number' ? b.time : String(b.time), i);
+  }
+  for (const g of kept) {
+    g.tier = tierFor(g.items);
+    g.label = g.tier === 'prominent' ? markerLabelFor(g.items) : '';
+  }
+  // ⚠️ THE LOSER KEEPS ITS MARKER AND LOSES ONLY ITS WORDS. Walking left to right, a label within
+  // MIN_LABEL_GAP_BARS of the last one printed is dropped — the marker stays prominent and the
+  // text moves to the hover, which is what the brief asks for when labels would collide.
+  let lastLabelAt = null;
+  for (const g of kept) {
+    if (!g.label) continue;
+    const i = barIndex.get(typeof g.time === 'number' ? g.time : String(g.time));
+    if (lastLabelAt != null && Number.isFinite(i) && i - lastLabelAt < MIN_LABEL_GAP_BARS) { g.label = ''; continue; }
+    if (Number.isFinite(i)) lastLabelAt = i;
+  }
+
   const byKey = new Map();
   const markers = kept.map((g) => {
     byKey.set(g.key, g.items);
@@ -208,8 +298,12 @@ export function buildEvidenceMarkers(evidence, bars, { theme = 'light', maxMarke
       position: style.position,
       shape: style.shape,
       color: style.color,
-      // Compact by design: the count only when there IS a count. A "1" on every pin is noise.
-      text: g.items.length > 1 ? String(g.items.length) : '',
+      size: TIER_SIZE[g.tier],
+      // ⚠️ THE COUNT WHEN THERE IS A COUNT, THE LABEL ONLY WHERE IT WAS EARNED AND FITS. A routine
+      // marker never carries text: a chart that annotates every dot is a chart nobody can read a
+      // price on. Shape and side say buy or sell, colour says which family, size says whether the
+      // canonical attention tag fired, and the hover says everything else.
+      text: g.label || (g.items.length > 1 ? String(g.items.length) : ''),
       // Carried through so a click can find the group without re-deriving the key.
       id: g.key,
     };

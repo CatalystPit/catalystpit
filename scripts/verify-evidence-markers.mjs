@@ -15,6 +15,7 @@
 import {
   buildEvidenceMarkers, snapToBar, barEpoch, evidenceAtBar, groupKey,
   markerStyleFor, markerPalette, MAX_MARKERS,
+  TIER_SIZE, MIN_LABEL_GAP_BARS, tierFor, markerLabelFor,
 } from '../src/lib/chart/evidence-markers.mjs';
 import fs from 'node:fs';
 import { makeEvidence, FAMILY, DIRECTION } from '../src/lib/evidence/model.mjs';
@@ -445,6 +446,182 @@ sec('THE EVIDENCE WINDOW COVERS THE DEFAULT CHART');
   const resolved = dailyDays;
   check('the fetch window is at least the daily chart span',
     resolved >= 1825, `${resolved}d vs 1825d of candles`);
+}
+
+
+// ── THE CEO PURCHASE THAT COULD NOT EXPLAIN ITSELF ──────────────────────────
+//
+// A real report: INTC's chart showed several markers, none of which communicated a CEO
+// open-market purchase of ~$10M. The evidence existed and the marker was plotted on the right
+// candle — what was missing was everything a reader needs to RECOGNISE it. Three causes:
+//
+//   1. insiderEvidence never SELECTED transaction_date or price_per_share, so every Form 4
+//      object carried eventTime: null and no share count or price. The card could say "$10.0M"
+//      and not what was bought, at what price, or on what day.
+//   2. Every marker was drawn the same size, so a 0.80-materiality officer purchase looked
+//      exactly like a 0.45 breadth change.
+//   3. The batched prefetch mirrors that query, so a column added in one and not the other
+//      would make the board and the ticker page disagree about the same filing.
+sec('\u26a0\ufe0f IMPORTANT INSIDER ACTIVITY IS RECOGNISABLE WITHOUT LABELS');
+{
+  // ⚠️ THE PROMOTION IS DECIDED BY highSignificance(), NOT BY THIS FILE. It is the existing
+  // canonical attention tag, with its own stated thresholds and its own version string. The chart
+  // asks it a yes/no question; if it held a threshold of its own the canvas would be a second
+  // opinion about significance, which is the thing the brief forbids most directly.
+  const facts = (over) => ({ totalValue: 10_000_000, totalValueLabel: '$10.0M', buyers: 1,
+    transactions: 1, officer: true, executive: 'TAN LIP BU', title: 'CEO',
+    topBuyer: 'TAN LIP BU', topBuyerValue: 10_000_000, leadRoleValue: 10_000_000,
+    leadRoleTitle: 'CEO', leadRoleExecutive: 'TAN LIP BU', ...over });
+  const bigBuy = ev({ family: FAMILY.INSIDER, type: 'insider_officer_buy', source: 'sec_form4',
+    direction: DIRECTION.POSITIVE, materiality: 0.80, publicTime: '2026-09-10T00:00:00Z',
+    summary: 'CEO open-market purchase of $10.0M', facts: facts() });
+  // Below every stated threshold: $20K by a lead role clears none of $500K / $1M / $1M.
+  const smallBuy = ev({ family: FAMILY.INSIDER, type: 'insider_buy', source: 'sec_form4',
+    direction: DIRECTION.POSITIVE, materiality: 0.65, publicTime: '2026-09-04T00:00:00Z',
+    summary: 'insider bought $20K', facts: facts({ totalValue: 20_000, totalValueLabel: '$20K',
+      topBuyerValue: 20_000, leadRoleValue: 20_000 }) });
+
+  check('\u26a0\ufe0f a canonically significant purchase is promoted', tierFor([bigBuy]) === 'prominent');
+  check('\u26a0\ufe0f \u2026and one below every stated threshold stays routine', tierFor([smallBuy]) === 'routine');
+  check('\u26a0\ufe0f the promoted marker is materially larger, not marginally',
+    TIER_SIZE.prominent >= TIER_SIZE.routine * 2);
+  check('\u2026and routine stays compact', TIER_SIZE.routine === 1);
+  // ⚠️ SIZE IS IN SCREEN UNITS, SO A LONGER TIMEFRAME CANNOT SHRINK IT. The same evidence on a
+  // 5-minute series and on a 1-year series gets the same marker size; only the bar spacing changes.
+  const INTRA = Array.from({ length: 60 }, (_, i) => ({ time: T0 + i * 300, close: 1 }));
+  const onIntraday = buildEvidenceMarkers([ev({ family: FAMILY.INSIDER, type: 'insider_officer_buy',
+    source: 'sec_form4', direction: DIRECTION.POSITIVE, materiality: 0.8, facts: facts(),
+    publicTime: new Date((T0 + 30 * 300) * 1000).toISOString(), summary: 'CEO open-market purchase of $10.0M' })],
+  INTRA, { theme: 'light' });
+  check('\u26a0\ufe0f the same purchase is the same size on an intraday series as on a daily one',
+    onIntraday.markers[0]?.size === TIER_SIZE.prominent);
+  check('\u2026and an unreadable record draws as ordinary rather than as loud',
+    tierFor([null]) === 'routine' && tierFor(undefined) === 'routine');
+
+  // ⚠️ THE LABEL IS ASSEMBLED FROM CANONICAL FIELDS ONLY.
+  check('\u26a0\ufe0f a promoted purchase is labelled with role, direction and the engine\'s own value',
+    markerLabelFor([bigBuy]) === 'CEO BUY $10.0M');
+  check('\u26a0\ufe0f \u2026and no title is invented when the filed one names no lead role',
+    markerLabelFor([ev({ family: FAMILY.INSIDER, type: 'insider_buy', source: 'sec_form4',
+      direction: DIRECTION.POSITIVE, materiality: 0.65, publicTime: '2026-09-10T00:00:00Z',
+      summary: 'x', facts: facts({ leadRoleTitle: null, title: 'EVP, Operations' }) })]) === 'INSIDER BUY $10.0M');
+  check('\u26a0\ufe0f a missing canonical value produces NO label, never a computed one',
+    markerLabelFor([ev({ family: FAMILY.INSIDER, type: 'insider_buy', source: 'sec_form4',
+      direction: DIRECTION.POSITIVE, materiality: 0.65, publicTime: '2026-09-10T00:00:00Z',
+      summary: 'x', facts: facts({ totalValueLabel: null }) })]) === '');
+  // ⚠️ SELLS ARE NOT PROMOTED, AND THAT IS THE HONEST READING. highSignificance covers
+  // open-market PURCHASES only, by its own design. Promoting a sale would need a threshold this
+  // file invented, which is exactly what must not happen \u2014 so a sale keeps its red arrow and its
+  // hover, and the gap is reported rather than papered over.
+  const bigSell = ev({ family: FAMILY.INSIDER, type: 'insider_discretionary_sell', source: 'sec_form4',
+    direction: DIRECTION.NEGATIVE, materiality: 0.55, publicTime: '2026-09-11T00:00:00Z',
+    summary: '2 insiders sold $40.0M outside a 10b5-1 plan',
+    facts: { sellers: 2, transactions: 2, totalValue: 40_000_000, totalValueLabel: '$40.0M' } });
+  check('\u26a0\ufe0f no insider SALE is promoted, because no canonical rule grades one',
+    tierFor([bigSell]) === 'routine' && markerLabelFor([bigSell]) === '');
+
+  // ⚠️ LABELS COLLIDE INTO HOVER, THEY DO NOT STACK.
+  {
+    const near = [bigBuy, ev({ family: FAMILY.INSIDER, type: 'insider_officer_buy', source: 'sec_form4',
+      sourceId: 'acc-2', direction: DIRECTION.POSITIVE, materiality: 0.8, facts: facts(),
+      publicTime: '2026-09-11T00:00:00Z', summary: 'CEO open-market purchase of $10.0M' })];
+    const b2 = buildEvidenceMarkers(near, DAILY, { theme: 'light' });
+    const labelled = b2.markers.filter((m) => /BUY/.test(m.text));
+    check('\u26a0\ufe0f two labels one bar apart do not both print', labelled.length === 1);
+    check('\u26a0\ufe0f \u2026and the one that lost its words KEPT its prominent marker',
+      b2.markers.length === 2 && b2.markers.every((m) => m.size === TIER_SIZE.prominent));
+    check('the gap rule is stated, not magic', Number.isFinite(MIN_LABEL_GAP_BARS) && MIN_LABEL_GAP_BARS > 0);
+  }
+
+  const buy = bigBuy;
+  const sell = bigSell;
+  const breadth = ev({ family: FAMILY.INSTITUTION, type: 'institution_breadth_change',
+    source: 'sec_13f', direction: DIRECTION.POSITIVE, materiality: 0.45,
+    publicTime: '2026-09-09T00:00:00Z', summary: 'holders up' });
+  const built = buildEvidenceMarkers([buy, sell, breadth], DAILY, { theme: 'light' });
+  const at = (d) => built.markers.find((m) => m.time === d);
+
+  // ⚠️ THE FOUR IDENTITIES A READER HAS TO TELL APART AT A GLANCE.
+  check('\u26a0\ufe0f an insider BUY is a green up-arrow below the bar',
+    at('2026-09-10')?.shape === 'arrowUp' && at('2026-09-10')?.position === 'belowBar');
+  check('\u26a0\ufe0f an insider SELL is a red down-arrow above it',
+    at('2026-09-11')?.shape === 'arrowDown' && at('2026-09-11')?.position === 'aboveBar');
+  check('\u2026and the two never share a colour', at('2026-09-10').color !== at('2026-09-11').color);
+  check('\u26a0\ufe0f the officer purchase is the largest marker on the chart',
+    at('2026-09-10').size > at('2026-09-11').size && at('2026-09-10').size > at('2026-09-09').size);
+  check('every family keeps a distinct shape or side',
+    new Set(['insider', 'catalyst', 'congress', 'institution'].map((f) => {
+      const st = markerStyleFor({ family: f, direction: DIRECTION.POSITIVE }, markerPalette('light'));
+      return `${st.shape}|${st.position}|${st.color}`;
+    })).size === 4);
+  // ⚠️ AND STILL NO PERMANENT LABELS. The fix must not turn the chart into an annotated mess.
+  // \u26a0\ufe0f A ROUTINE MARKER IS NEVER ANNOTATED. Only a promoted one may carry words, which is what
+  // keeps the chart readable when forty markers share a screen.
+  check('\u26a0\ufe0f a routine marker carries no text label',
+    at('2026-09-11').text === '' && at('2026-09-09').text === '');
+  check('\u2026while the promoted one says exactly what it is', at('2026-09-10').text === 'CEO BUY $10.0M');
+  check('\u2026and text is only ever a group count or an earned label',
+    built.markers.every((m) => m.text === '' || /^\d+$/.test(m.text) || /^(CEO|CFO|PRESIDENT|INSIDER) BUY /.test(m.text)));
+  // \u26a0\ufe0f THE ENGINE'S SENTENCES STAY OFF THE CANVAS. A label is three canonical tokens, not a summary.
+  check('\u2026and no engine summary sentence is painted onto the canvas',
+    built.markers.every((m) => !/purchase|open-market|insiders sold/i.test(m.text)));
+
+  // ⚠️ PLACEMENT IS UNCHANGED. Sizing must not have moved anything.
+  check('\u26a0\ufe0f the buy still sits on its PUBLIC date, not its transaction date',
+    at('2026-09-10') && !at('2026-09-08'));
+}
+
+sec('\u26a0\ufe0f A FORM 4 CARRIES ITS OWN SECOND CLOCK AND ITS OWN FIGURES');
+{
+  const resolve = fs.readFileSync(new URL('../src/lib/evidence/resolve.js', import.meta.url), 'utf8');
+  const ctxSrc = fs.readFileSync(new URL('../src/lib/consensus/build-context.mjs', import.meta.url), 'utf8');
+  const card = fs.readFileSync(new URL('../src/components/chart/EvidenceCard.jsx', import.meta.url), 'utf8');
+
+  // ⚠️ THE ROOT CAUSE, ASSERTED AS A COLUMN LIST. The rows were always in the table; the query
+  // did not ask for them, and the code said so: "transaction_date is not carried on this row set".
+  check('\u26a0\ufe0f the Form 4 query selects the transaction date and the price',
+    /transaction_date, price_per_share,/.test(resolve));
+  check('\u26a0\ufe0f \u2026and the batched prefetch selects the SAME columns, or the two paths disagree',
+    /transaction_date, price_per_share,/.test(ctxSrc));
+  check('eventTime is no longer hardcoded null on insider evidence',
+    !/eventTime: null,\s*\/\/ transaction_date is not carried/.test(resolve)
+    && /eventTime: eventClock\(sharedEventDay\(/.test(resolve));
+
+  // ⚠️ ONE DATE OR NONE \u2014 NEVER A REPRESENTATIVE ONE.
+  check('\u26a0\ufe0f a group with several transaction dates reports no single date',
+    /days.size === 1 \? \[\.\.\.days\]\[0\] : null/.test(resolve));
+  check('\u2026but its real span is reported, because both ends are filed dates',
+    /function eventDayRange/.test(resolve) && /transactionSpan: eventDayRange\(/.test(resolve));
+  // ⚠️ A PRICE CANNOT BE BLENDED. Shares add; prices do not.
+  check('\u26a0\ufe0f a price per share is reported only for a SINGLE transaction',
+    (resolve.match(/pricePerShare: \w+\.length === 1 \?/g) || []).length === 2);
+  check('\u2026while share counts, which sum exactly, are always reported',
+    (resolve.match(/shares: \w+\.reduce\(/g) || []).length === 2);
+
+  // ⚠️ THE REGRESSION THIS GUARD PREVENTS. makeEvidence QUARANTINES an object whose eventTime
+  // sits after its publicTime \u2014 so handing over a bad transaction date would DELETE a legitimate
+  // purchase from the chart in order to show a date.
+  check('\u26a0\ufe0f an eventTime after the filing is dropped, not handed over',
+    /function eventClock/.test(resolve) && /if \(e == null \|\| p == null \|\| e > p\) return null;/.test(resolve));
+  const late = makeEvidence({
+    ticker: 'TEST', family: FAMILY.INSIDER, type: 'insider_officer_buy', source: 'sec_form4',
+    sourceId: 'a', materiality: 0.8, publicTime: '2026-09-10T00:00:00Z',
+    eventTime: '2026-09-20T00:00:00Z', summary: 'x',
+  }, { now: NOW });
+  check('\u2026and the engine really would have quarantined it', late.ok === false);
+
+  // ⚠️ THE CARD SAYS WHAT HAPPENED, FROM CANONICAL FIELDS ONLY.
+  check('\u26a0\ufe0f the card names the person and their filed title', /f\.executive, f\.title/.test(card));
+  check('\u26a0\ufe0f \u2026the share count and the price per share',
+    /shares`\)/.test(card) && /@ \$\$\{f\.pricePerShare/.test(card));
+  check('\u26a0\ufe0f \u2026the transaction date, distinct from the filing date',
+    /Transacted \$\{fmtDay\(ev\.facts\.transactionDate\)\}/.test(card) && /Filed \{fmtWhen\(ev\.publicTime\)\}/.test(card));
+  check('\u2026a span when the group covers several days', /Transacted \$\{fmtDay\(s\.from\)\} \u2013 \$\{fmtDay\(s\.to\)\}/.test(card));
+  check('\u2026and the source filing', /View filing/.test(card));
+  // ⚠️ NOTHING IS ZERO-FILLED. An absent figure is an absent line, not "0 shares".
+  check('\u26a0\ufe0f a missing figure prints no line at all',
+    /Number\.isFinite\(f\.shares\) && f\.shares > 0/.test(card)
+    && /Number\.isFinite\(f\.pricePerShare\) && f\.pricePerShare > 0/.test(card));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -49,8 +49,34 @@ function Row({ ev, pal }) {
     const lag = ev.facts.disclosureLagDays;
     second = `Traded ${fmtDay(ev.facts.transactionDate)}`
       + (Number.isFinite(lag) ? ` · disclosed ${lag} day${lag === 1 ? '' : 's'} later` : '');
+  } else if (ev.family === 'insider' && !ev.facts?.transactionDate && ev.facts?.transactionSpan) {
+    // Several filings on several days. Both ends are dates a filing states; the middle is not
+    // claimed, and no single day is chosen to stand for the rest.
+    const s = ev.facts.transactionSpan;
+    second = `Transacted ${fmtDay(s.from)} – ${fmtDay(s.to)}`;
+  } else if (ev.family === 'insider' && ev.facts?.transactionDate) {
+    // ⚠️ THE FORM 4'S TWO CLOCKS, WHICH THE CARD COULD NOT SHOW BEFORE. insiderEvidence never
+    // selected transaction_date, so every Form 4 arrived with eventTime null and the card had only
+    // the filing date to print — the marker sat on the right candle but could not say what day the
+    // trade actually happened. A cluster with several transaction dates still shows nothing here,
+    // because there is no single date to show.
+    second = `Transacted ${fmtDay(ev.facts.transactionDate)}`;
   } else if (ev.eventTime && fmtDay(ev.eventTime) !== fmtDay(ev.publicTime)) {
     second = `Event dated ${fmtDay(ev.eventTime)}`;
+  }
+
+  // ⚠️ THE FIGURES A TRADER ASKS FOR NEXT, AND ONLY THE ONES THE FILING STATES. A share count sums
+  // exactly across filings; a price per share does not, so the engine omits it for a multi-fill
+  // group rather than blending one. Each line is absent when its value is, never zero-filled.
+  const insiderLines = [];
+  if (ev.family === 'insider') {
+    const f = ev.facts || {};
+    const who = [f.executive, f.title].filter(Boolean).join(' · ');
+    if (who) insiderLines.push(who);
+    const size = [];
+    if (Number.isFinite(f.shares) && f.shares > 0) size.push(`${Math.round(f.shares).toLocaleString()} shares`);
+    if (Number.isFinite(f.pricePerShare) && f.pricePerShare > 0) size.push(`@ $${f.pricePerShare.toFixed(2)}`);
+    if (size.length) insiderLines.push(size.join(' '));
   }
 
   return (
@@ -60,6 +86,15 @@ function Row({ ev, pal }) {
           fontFamily: "'DM Sans',sans-serif", fontSize: 8, letterSpacing: '0.7px',
           color, fontWeight: 700,
         }}>{FAMILY_LABEL[ev.family] || ev.family?.toUpperCase()}</span>
+        {/* ⚠️ THE DIRECTION IN A WORD, BECAUSE AN ARROW IS NOT A WORD. The marker's shape already
+            encodes buy or sell, but a reader who has just hovered should not have to decode it —
+            and `direction` is the engine's own field, not a reading of the summary text. */}
+        {ev.family === 'insider' && (ev.direction === 'positive' || ev.direction === 'negative') && (
+          <span style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 8, letterSpacing: '0.7px', fontWeight: 700,
+            color: '#fff', background: color, borderRadius: 3, padding: '1px 4px',
+          }}>{ev.direction === 'positive' ? 'BUY' : 'SELL'}</span>
+        )}
         {ev.facts?.totalValueLabel && (
           <span className="cp-num" style={{ fontSize: 11, fontWeight: 600, color: C.ink }}>
             {ev.facts.totalValueLabel}
@@ -69,6 +104,9 @@ function Row({ ev, pal }) {
       <div style={{ fontSize: 12, fontWeight: 600, color: C.ink, marginTop: 2, lineHeight: 1.35 }}>
         {ev.summary}
       </div>
+      {insiderLines.map((line, i) => (
+        <div key={i} style={{ fontSize: 11, color: C.muted, marginTop: 2, lineHeight: 1.3 }}>{line}</div>
+      ))}
       {/* Absent when the engine could not PROVE it. Never a placeholder. */}
       {ev.context?.text && (
         <div style={{ fontSize: 11, color: C.ink, marginTop: 3, lineHeight: 1.35 }}>{ev.context.text}</div>

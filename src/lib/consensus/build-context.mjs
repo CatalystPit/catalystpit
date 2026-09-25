@@ -226,6 +226,11 @@ export async function loadBuildContext(db, sql, tickers, { now = Date.now() } = 
       select * from (
         select ticker, id, action, transaction_code, total_value, shares, executive, title,
                filing_date, accession, filing_url,
+               -- ⚠️ MIRRORS insiderEvidence's OWN SELECT, AND MUST. This hands the resolver the
+               -- rows its query would have returned; a column missing here is a field the resolver
+               -- silently sees as null on the batched path only, so the Consensus board and the
+               -- alert worker would disagree with the ticker page about the same filing.
+               transaction_date, price_per_share,
                coalesce(rule_10b5_1, false) as planned,
                coalesce(is_derivative, false) as derivative,
                coalesce(superseded_by, '') as superseded,
