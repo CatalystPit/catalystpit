@@ -867,7 +867,7 @@ function useNavOverflow(count) {
 export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
-  const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Dividends", "Insiders", "Politicians", "Institutions"];
+  const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Fear & Greed", "Dividends", "Insiders", "Politicians", "Institutions"];
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   // Where the fixed-position panel goes, measured from the button when it opens. Fixed coordinates
@@ -923,7 +923,9 @@ export function TopNav({ active }) {
   useEffect(() => { if (overflowed.length === 0) setMoreOpen(false); }, [overflowed.length]);
   const linkColor = (l) => active === l ? "#FFFFFF" : "rgba(255,255,255,0.75)";
   // Most links map to /<lowercased>; multi-word names get an explicit path.
-  const hrefFor = (l) => l === "Pit Consensus" ? "/consensus" : `/${l.toLowerCase()}`;
+  const hrefFor = (l) => (l === "Pit Consensus" ? "/consensus"
+    : l === "Fear & Greed" ? "/fear-greed"
+      : `/${l.toLowerCase()}`);
   return (
     <div style={{background:C.navBg, height:50, display:"flex", alignItems:"center",
       justifyContent:"space-between", padding:"0 24px", position:"sticky", top:0, zIndex:100,

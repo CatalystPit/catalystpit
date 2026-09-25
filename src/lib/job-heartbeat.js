@@ -95,6 +95,10 @@ export const TRACKED_JOBS = Object.freeze([
   // tight enough that the checker going dark is itself visible. NOT weekdaysOnly — Friday's session
   // loads on Saturday, so the weekend is exactly when a missing ingest must still be caught.
   { name: 'heatmap-gate',   label: 'Heatmap EOD rollover',   maxAgeHours: 3 },
+  // Daily after the close, so 26h tolerates one late run without flapping. NOT weekdaysOnly: it
+  // runs every day and simply recomputes the same last completed session at a weekend, which is
+  // the cheapest way to keep the clock meaningful seven days a week.
+  { name: 'fear-greed',     label: 'Fear & Greed index',     maxAgeHours: 26 },
 ]);
 
 /**

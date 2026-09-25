@@ -143,6 +143,10 @@
     {
       "path": "/api/cron/heatmap-gate",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/fear-greed",
+      "schedule": "20 9 * * *"
     }
   ],
   "headers": [
@@ -263,6 +267,9 @@
     "src/app/api/cron/consensus-board/route.js": {
       "maxDuration": 300,
       "memory": 3009
+    },
+    "src/app/api/cron/fear-greed/route.js": {
+      "maxDuration": 120
     },
     "src/app/api/cron/consensus-refresh/route.js": {
       "maxDuration": 300,

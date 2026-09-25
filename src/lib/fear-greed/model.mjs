@@ -1,0 +1,295 @@
+// CATALYST PIT FEAR & GREED — the methodology, pure.
+//
+// No database, no vendor, no clock. Raw component values go in, a 0-100 index comes out, and every
+// rule below can be exercised with numbers. data.mjs supplies the observations; this file decides
+// what they mean.
+//
+// ── ⚠️ THIS MEASURES SENTIMENT. IT DOES NOT PREDICT RETURNS. ────────────────
+//
+// Nothing here is fitted to anything. Weights are equal because we have no defensible reason to
+// prefer one component over another, and tuning them against historical returns would quietly turn
+// a sentiment gauge into a backtested signal — a different product with a different burden of proof.
+//
+// ── ⚠️ WHAT WE DO NOT HAVE, AND DO NOT FAKE ─────────────────────────────────
+//
+// There is no implied-volatility component, because Catalyst Pit has no entitled source for the VIX
+// index: Tiingo returns 404 for it, FMP 403 (legacy endpoint), Finnhub "market data subscription
+// required for CFD indices" and Polygon NOT_AUTHORIZED. Deriving a VIX-like number from stock
+// prices and calling it volatility would be inventing data. What we CAN compute from our own
+// licensed daily bars is REALIZED volatility, which is a different statistic, and it is labelled as
+// one everywhere it appears.
+//
+// There is no put/call component, because we have no broad-market options data at all.
+//
+// See METHODOLOGY at the bottom for the full disclosure the UI renders.
+
+/**
+ * ⚠️ null IS NOT ZERO, AND JavaScript DISAGREES.
+ *
+ * `Number(null)` is 0 and `Number('')` is 0, so a plain Number()/isFinite() guard accepts BOTH as
+ * valid scores. Caught by the suite: zoneFor(null) returned EXTREME FEAR, which would have rendered
+ * an unavailable index as the most alarming reading on the card, and scoreComponent() scored a
+ * missing raw value as if it were 0. A missing number has to be missing all the way through.
+ */
+const finite = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/** The five zones, in ascending order. Boundaries are inclusive of the lower bound. */
+export const ZONES = Object.freeze([
+  { max: 24, label: 'EXTREME FEAR', key: 'extreme-fear' },
+  { max: 44, label: 'FEAR', key: 'fear' },
+  { max: 55, label: 'NEUTRAL', key: 'neutral' },
+  { max: 75, label: 'GREED', key: 'greed' },
+  { max: 100, label: 'EXTREME GREED', key: 'extreme-greed' },
+]);
+
+/** 0-24 EXTREME FEAR · 25-44 FEAR · 45-55 NEUTRAL · 56-75 GREED · 76-100 EXTREME GREED */
+export function zoneFor(score) {
+  const s = finite(score);
+  if (s === null) return null;
+  const clamped = Math.min(100, Math.max(0, s));
+  return ZONES.find((z) => clamped <= z.max) || ZONES[ZONES.length - 1];
+}
+
+// ── NORMALISATION ────────────────────────────────────────────────────────────
+//
+// ── ⚠️ PERCENTILE RANK, NOT A RAW-VALUE MAPPING ────────────────────────────
+//
+// "VIX 30 = fear" is an arbitrary constant that ages badly and means nothing across regimes. Every
+// component here is scored by where TODAY sits inside its OWN trailing distribution, so each answers
+// the same question: how unusual is this, for this measure, lately.
+//
+// ⚠️ AND RANK IS WHY ONE OUTLIER CANNOT DESTROY THE SCALE. A single crash print moves a mean or a
+// z-score for years; it moves a rank by exactly one observation. That is the robustness requirement,
+// satisfied by construction rather than by winsorising to a threshold somebody has to choose.
+//
+// The convention is mid-rank: strictly-below plus half the ties. A value equal to the median scores
+// 50 whether or not the sample has an even count, and a series of identical values scores 50 rather
+// than 0 or 100.
+
+/**
+ * Where `value` sits inside `history`, as 0-100.
+ *
+ * @param {number} value    the current observation; MUST also be present in `history`
+ * @param {number[]} history the trailing window, including the current observation
+ */
+export function percentileRank(value, history) {
+  const v = finite(value);
+  const xs = (history || []).map(finite).filter((x) => x !== null);
+  if (v === null || xs.length === 0) return null;
+  let below = 0, equal = 0;
+  for (const x of xs) {
+    if (x < v) below++;
+    else if (x === v) equal++;
+  }
+  return (100 * (below + 0.5 * equal)) / xs.length;
+}
+
+/**
+ * ⚠️ DIRECTION IS DECLARED PER COMPONENT AND APPLIED IN ONE PLACE.
+ *
+ * Every component must end up meaning the same thing: 0 is maximum fear, 100 is maximum greed. For
+ * most, a higher raw value is greedier. For volatility it is the reverse — a high realized vol is
+ * fear — and for anything spread-like a wider number is fear too. Inverting at the point of scoring
+ * means no consumer downstream has to remember which way a given measure runs.
+ */
+export const DIRECTION = Object.freeze({ HIGHER_IS_GREED: 1, HIGHER_IS_FEAR: -1 });
+
+/**
+ * The trailing window every component is normalised against: two years of sessions.
+ *
+ * ⚠️ WHY IT IS BOUNDED BY OUR DATA, NOT BY PREFERENCE. HYG and IEF carry 761 sessions in our store
+ * and the 52-week high/low lookback consumes 252 of the equity panel's history, so two years is the
+ * longest window every component can actually fill. A longer one would quietly leave the credit
+ * component ranking against a shorter history than the others.
+ */
+export const NORM_WINDOW = 504;
+
+/**
+ * Observations required before a component may be scored at all.
+ *
+ * ⚠️ EQUAL TO THE WINDOW, DELIBERATELY. An expanding window — rank against 252 early on, 756 later
+ * — makes two published points incomparable: the same percentile means something different when it
+ * is drawn from a third as many observations. Requiring the FULL window means every score the index
+ * ever prints was ranked against exactly `NORM_WINDOW` sessions. A component that cannot fill it is
+ * refused, which is the same discipline applied everywhere else here: absent, never estimated.
+ */
+export const MIN_WINDOW = NORM_WINDOW;
+
+/**
+ * Score one component 0-100.
+ *
+ * @returns {{score,raw,direction,samples}|null} null when there is not enough history to rank
+ *          against — which is a REFUSAL, never a 50. See composite().
+ */
+export function scoreComponent({ raw, history, direction = DIRECTION.HIGHER_IS_GREED } = {}) {
+  const v = finite(raw);
+  const xs = (history || []).map(finite).filter((x) => x !== null);
+  if (v === null || xs.length < MIN_WINDOW) return null;
+  const pct = percentileRank(v, xs);
+  if (pct === null) return null;
+  // ⚠️ THE INVERSION IS 100 - p, NOT -p. Reversing a percentile keeps it inside 0-100 and keeps the
+  // midpoint at 50, which is what makes "neutral" mean the same thing for every component.
+  const score = direction === DIRECTION.HIGHER_IS_FEAR ? 100 - pct : pct;
+  return {
+    score: Math.min(100, Math.max(0, Math.round(score * 10) / 10)),
+    raw: v,
+    direction,
+    samples: xs.length,
+  };
+}
+
+// ── THE COMPOSITE ────────────────────────────────────────────────────────────
+
+/**
+ * ⚠️ HOW MANY COMPONENTS THE INDEX NEEDS BEFORE IT IS WORTH PRINTING.
+ *
+ * Below this the average stops describing the market and starts describing whichever feed happened
+ * to be up. Three of five is the floor: it keeps the index alive through a single bad vendor day
+ * while refusing to publish a number built on one or two measures.
+ */
+export const MIN_COMPONENTS = 3;
+
+/**
+ * Equal-weighted mean of the components that produced a score.
+ *
+ * ⚠️ A MISSING COMPONENT IS NOT A 50. Substituting neutral for absent would silently drag the index
+ * toward the middle and present a data outage as a market reading. An absent component is dropped
+ * from both the numerator and the denominator, and if too many are absent the index refuses to
+ * publish at all.
+ */
+export function composite(components = {}) {
+  const entries = Object.entries(components).filter(([, c]) => c && Number.isFinite(c.score));
+  const missing = Object.entries(components).filter(([, c]) => !c || !Number.isFinite(c.score))
+    .map(([k]) => k);
+  if (entries.length < MIN_COMPONENTS) {
+    return {
+      available: false,
+      reason: 'insufficient-components',
+      score: null, zone: null,
+      included: entries.map(([k]) => k),
+      missing,
+      componentCount: entries.length,
+      minComponents: MIN_COMPONENTS,
+    };
+  }
+  const sum = entries.reduce((a, [, c]) => a + c.score, 0);
+  const score = Math.round((sum / entries.length) * 10) / 10;
+  return {
+    available: true,
+    reason: 'ok',
+    score,
+    zone: zoneFor(score),
+    included: entries.map(([k]) => k),
+    missing,
+    componentCount: entries.length,
+    minComponents: MIN_COMPONENTS,
+  };
+}
+
+// ── THE COMPONENT REGISTRY ───────────────────────────────────────────────────
+//
+// One place naming every component, what it reads, and which way it runs. The UI renders from this
+// so a label can never drift from the calculation behind it.
+
+export const COMPONENTS = Object.freeze([
+  {
+    key: 'momentum',
+    label: 'Market Momentum',
+    direction: DIRECTION.HIGHER_IS_GREED,
+    source: 'Our own licensed daily bars for SPY (Tiingo EOD, stored in ticker_daily_candles).',
+    calculation: 'SPY close divided by its 125-session simple moving average, minus 1.',
+    meaning: 'How far the broad market sits above or below its own medium-term trend.',
+  },
+  {
+    key: 'volatility',
+    label: 'Market Volatility',
+    direction: DIRECTION.HIGHER_IS_FEAR,
+    source: 'Our own licensed daily bars for SPY.',
+    calculation: 'Annualised standard deviation of the last 21 daily log returns of SPY '
+      + '(population standard deviation x sqrt(252)).',
+    meaning: 'REALIZED volatility, not implied. Catalyst Pit has no entitled source for the VIX '
+      + 'index, so this measures what the market actually did rather than what options imply.',
+  },
+  {
+    key: 'breadth',
+    label: 'Market Breadth',
+    direction: DIRECTION.HIGHER_IS_GREED,
+    source: 'Our own licensed daily bars for the eligible U.S. equity universe.',
+    calculation: 'Share of eligible tickers whose close is above their own 50-session simple '
+      + 'moving average, on that session.',
+    meaning: 'How broadly the advance is shared, rather than how far the index moved.',
+  },
+  {
+    key: 'strength',
+    label: 'Price Strength',
+    direction: DIRECTION.HIGHER_IS_GREED,
+    source: 'Our own licensed daily bars for the eligible U.S. equity universe.',
+    calculation: 'Tickers making a new 252-session closing high minus those making a new '
+      + '252-session closing low, divided by the eligible count.',
+    meaning: 'Net new highs. Positive when leadership is expanding, negative when it is breaking.',
+  },
+  {
+    key: 'credit',
+    label: 'Credit Appetite',
+    direction: DIRECTION.HIGHER_IS_GREED,
+    source: 'Our own licensed daily bars for HYG (high-yield corporate bonds) and IEF '
+      + '(7-10 year Treasuries).',
+    calculation: '20-session total return of HYG minus the 20-session total return of IEF.',
+    meaning: 'Whether the bond market is paying up for credit risk or hiding in government paper. '
+      + 'This is a deliberate ETF-relative-performance methodology, chosen because Catalyst Pit has '
+      + 'no entitled source for option-adjusted credit spreads.',
+  },
+]);
+
+export const COMPONENT_KEYS = COMPONENTS.map((c) => c.key);
+
+/** Full disclosure text, rendered by the methodology panel. */
+export const METHODOLOGY = Object.freeze({
+  name: 'Catalyst Pit Fear & Greed',
+  version: 'fear_greed_v1',
+  updateFrequency: 'Daily, after the U.S. equity close. Every component is derived from completed '
+    + 'daily sessions, so the index is a daily measure and is never presented as intraday.',
+  normalization: `Each component is scored as its percentile rank within its own trailing `
+    + `${NORM_WINDOW}-session distribution (two years), using the mid-rank convention: `
+    + `strictly-below plus half the ties. 0 is the most fearful reading in that window, 50 the `
+    + `median, 100 the most greedy. Rank is used rather than a z-score or a fixed threshold so a `
+    + `single extreme session cannot distort the scale for years afterwards. The window is the same `
+    + `length for every published point — a component that cannot fill all ${MIN_WINDOW} sessions is `
+    + `refused rather than ranked against a shorter history, because the same percentile drawn from `
+    + `fewer observations does not mean the same thing.`,
+  composite: `The equal-weighted mean of every component that produced a score. Weights are equal `
+    + `because we have no defensible basis for preferring one measure; they are deliberately not `
+    + `fitted to historical returns, because this is a sentiment gauge and not a prediction model. `
+    + `A missing component is dropped from the average, never replaced with 50. Fewer than `
+    + `${MIN_COMPONENTS} components and the index reports itself unavailable.`,
+  excluded: [
+    {
+      name: 'Implied volatility (VIX)',
+      why: 'No entitled source. Tiingo returns 404 for the index, FMP 403 on its legacy endpoint, '
+        + 'Finnhub reports that a CFD-indices subscription is required, and Polygon returns '
+        + 'NOT_AUTHORIZED. Rather than derive a VIX-like number from stock prices, the volatility '
+        + 'component measures realized volatility and says so.',
+    },
+    {
+      name: 'Put/call ratio',
+      why: 'Catalyst Pit holds no broad-market options data, and estimating it would be inventing it.',
+    },
+    {
+      name: 'Credit spreads (option-adjusted)',
+      why: 'These come from public macro series we have no ingestion for. The Credit Appetite '
+        + 'component uses a deliberate, disclosed ETF-relative methodology instead.',
+    },
+    {
+      name: 'Safe-haven demand (equities vs Treasuries)',
+      why: 'Measurable from our data, and excluded on measurement rather than for want of it. '
+        + 'Scored over 504 sessions, an SPY-versus-TLT component correlates 0.82 with Credit '
+        + 'Appetite — both are the same bonds-against-risk axis — so including both would weight '
+        + 'that axis twice while Momentum, Breadth and Price Strength carry one vote each. Its '
+        + 'correlation with Momentum is only 0.32, so the overlap is with credit, not with equities.',
+    },
+  ],
+});
