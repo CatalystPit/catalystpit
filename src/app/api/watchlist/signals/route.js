@@ -79,13 +79,24 @@ export async function GET(request) {
     // Latest Form 4 per ticker, and separately the latest high-conviction one.
     (async () => {
       try {
+        // ⚠️ THE FLAG IS COMPUTED ONCE, IN A SUBQUERY, AND THAT IS NOT A STYLE CHOICE.
+        //
+        // Written inline it appeared in both `distinct on` and `order by`, and drizzle binds each
+        // interpolation as its OWN parameter — so Postgres saw `any($3)` against `any($4)` and
+        // rejected the statement with "SELECT DISTINCT ON expressions must match initial ORDER BY
+        // expressions". The guard caught it and returned [], so the watchlist stayed up and simply
+        // stopped showing insider lines: a silent family outage that only production could reveal.
         const r = await db.execute(sql`
-          select distinct on (ticker, (conviction_band = any(${NOTABLE_BANDS}::text[])))
+          select distinct on (ticker, notable)
                  ticker, title, action, total_value, filing_date, filing_url, conviction_band
-            from insider_trades
-           where ticker = any(${arr}::text[])
-             and filing_date >= now() - make_interval(days => ${WINDOW_DAYS[CHANGE.INSIDER]})
-           order by ticker, (conviction_band = any(${NOTABLE_BANDS}::text[])), filing_date desc`);
+            from (
+              select ticker, title, action, total_value, filing_date, filing_url, conviction_band,
+                     (conviction_band = any(${NOTABLE_BANDS}::text[])) as notable
+                from insider_trades
+               where ticker = any(${arr}::text[])
+                 and filing_date >= now() - make_interval(days => ${WINDOW_DAYS[CHANGE.INSIDER]})
+            ) t
+           order by ticker, notable, filing_date desc`);
         return r.rows ?? r;
       } catch { return []; }
     })(),

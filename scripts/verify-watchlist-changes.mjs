@@ -269,7 +269,29 @@ L('⚠️ ONE BATCHED REQUEST, AND EXISTING INSPECTORS');
   ok('⚠️ the filing query keys on materiality, so a routine 8-K cannot hide a material one',
     /distinct on \(ticker, material\)/.test(route) && /order by ticker, material, filed_at desc/.test(route));
   ok('⚠️ …and the insider query keys on the conviction band for the same reason',
-    /distinct on \(ticker, \(conviction_band = any\(/.test(route));
+    /\(conviction_band = any\(\$\{NOTABLE_BANDS\}::text\[\]\)\) as notable/.test(route)
+    && /distinct on \(ticker, notable\)/.test(route) && /order by ticker, notable, filing_date desc/.test(route));
+
+  // ⚠️ THE TRAP THAT SHIPPED A SILENTLY DEAD FAMILY, GENERALISED.
+  //
+  // The flag was first written inline in BOTH `distinct on` and `order by`. drizzle binds each
+  // interpolation as its own parameter, so Postgres compared `any($3)` with `any($4)`, called them
+  // different expressions and rejected the statement — and the per-source guard turned that into an
+  // empty result rather than an error. The watchlist stayed up and quietly stopped showing insider
+  // lines. Nothing in a unit test can see that, so what is asserted is the shape that caused it:
+  // no expression may be interpolated twice inside one statement.
+  {
+    const dup = [];
+    for (const m of route.matchAll(/sql`([\s\S]*?)`\)/g)) {
+      const seen = new Set();
+      for (const e of m[1].matchAll(/\$\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/g)) {
+        if (seen.has(e[1])) dup.push(e[1]);
+        seen.add(e[1]);
+      }
+    }
+    ok('⚠️ no expression is interpolated twice in one statement, so drizzle cannot split it into '
+      + 'two parameters that Postgres then calls different expressions', dup.length === 0, dup.join(', '));
+  }
   ok('⚠️ …using the same bands the display promotes on',
     new RegExp(`\\{${NOTABLE_BANDS.join(',')}\\}`).test(route));
   ok('⚠️ the wire is attributed by the event\'s own tickers, never by a text search',
