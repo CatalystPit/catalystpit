@@ -16,6 +16,8 @@ import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
 import { onEvidenceRequest } from '../../lib/terminalEvidenceBus';
 import { onNewsRequest, inspectNews, newsInspectorAvailable } from '../../lib/terminalNewsBus';
+import { inspectEvidence } from '../../lib/terminalEvidenceBus';
+import { CHANGE, ago as changeAgo } from '../../lib/terminal/watchlist-changes.mjs';
 import { useTickerEvidence } from '../../lib/chart/use-ticker-evidence';
 import EvidencePanel from '../../components/terminal/EvidencePanel';
 import NewsPanel from '../../components/terminal/NewsPanel';
@@ -924,9 +926,42 @@ function NewsWireBody({ onPick }) {
 // Small live-status pills for watchlist tickers.
 const WL_BADGE = { news: { label: 'NEWS', fg: '#B45309', bg: '#FEF3C7' }, halt: { label: 'HALT', fg: '#B91C1C', bg: '#FEE2E2' }, pit: { label: 'PIT', fg: '#1E5C38', bg: '#E8F5EE' } };
 
+/**
+ * WHAT CHANGED IN THIS NAME — one line, from one canonical record.
+ *
+ * ⚠️ IT OPENS AN EXISTING INSPECTOR AND BUILDS NOTHING. A filing is news, so it opens the ticker
+ * news drawer; a Form 4 or a congressional disclosure is research, so it opens the Evidence
+ * inspector. Both already exist, both are already reached by a bus, and neither is duplicated here.
+ */
+function ChangeLine({ sym, change }) {
+  const toNews = change.kind === CHANGE.FILING;
+  const tone = change.kind === CHANGE.INSIDER ? C.green
+    : change.kind === CHANGE.CONGRESS ? C.blue
+      : change.kind === CHANGE.SCAN ? C.gold : C.muted;
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      title={`Inspect ${sym} — ${change.label}`}
+      onClick={(e) => { e.stopPropagation(); (toNews ? inspectNews : inspectEvidence)(sym); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (toNews ? inspectNews : inspectEvidence)(sym); } }}
+      style={{
+        display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 2, cursor: 'pointer',
+        fontFamily: "'DM Sans',sans-serif", fontSize: 10, lineHeight: 1.3, maxWidth: 230,
+      }}
+    >
+      <span style={{ width: 3, height: 3, borderRadius: '50%', background: tone, flexShrink: 0, transform: 'translateY(-2px)' }} />
+      <span style={{ color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {change.label}{change.detail ? ` · ${change.detail}` : ''}
+      </span>
+      <span style={{ color: C.dim, flexShrink: 0 }}>{changeAgo(change.at)}</span>
+    </div>
+  );
+}
+
 function WatchlistBody({ onPick }) {
   const [rows, setRows] = useState(null);
-  const [sig, setSig] = useState({ news: [], halt: [], pit: [] });
+  const [sig, setSig] = useState({ news: [], halt: [], pit: [], changes: {} });
   const [ref, w] = useContainerSize();
   const showPrice = w >= 220;
   useEffect(() => {
@@ -1012,6 +1047,13 @@ function WatchlistBody({ onPick }) {
                   );
                 })}
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
+                {/* ── ⚠️ A SECOND LINE ONLY WHERE THERE IS SOMETHING TO SAY ──────────────
+                    Every row two lines high would halve how many names fit and make the Watchlist
+                    a worse price list, which is its first job. Rows with no recent change are
+                    exactly the rows they were before. */}
+                {sig.changes?.[r.ticker] && (
+                  <ChangeLine sym={r.ticker} change={sig.changes[r.ticker]} />
+                )}
               </td>
               {showPrice && <td className="cp-num" style={{ padding: '7px 10px', textAlign: 'right', color: C.ink }}>
                 {priceOf(r) != null ? (priceOf(r) > 1000 ? (+priceOf(r)).toLocaleString() : fmt2(+priceOf(r))) : '—'}
