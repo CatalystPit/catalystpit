@@ -170,7 +170,23 @@ L('⚠️ OPENING NEWS DOES NOT DISTURB THE CHART');
   ok('the toolbar action is a toggle, so closing returns to the full chart', /setNewsOpen\(\(v\) => !v\)/.test(chart));
   ok('…and the drawer closes itself too', /onClose={\(\) => setNewsOpen\(false\)}/.test(chart));
   ok('the action sits with the other chart-level questions', /title="News for this ticker"/.test(chart));
-  ok('…and is dropped, not wrapped, on a narrow toolbar', /\{!overflowed && \(\s*<ToolButton theme=\{theme\} width=\{narrow \? 30 : 72\}/.test(chart));
+  ok('…and is dropped from the row, not wrapped, on a narrow toolbar', /\{!overflowed && \(\s*<ToolButton theme=\{theme\} width=\{narrow \? 30 : 72\}/.test(chart));
+
+  // ⚠️ RESIZING MAY MOVE AN ACTION; IT MAY NOT REMOVE ONE. Below the overflow threshold the News
+  // button stops rendering, which took a capability away rather than relocating it. Indicators and
+  // the evidence rows were already in the overflow menu; News now is too.
+  ok('⚠️ every toolbar action survives a narrow panel — News is in the overflow menu',
+    /<MenuItem theme=\{theme\} role="menuitemcheckbox" left="▤"[\s\S]{0,200}>News<\/MenuItem>/.test(chart));
+  ok('…as is Indicators', /right=\{active\.length \? String\(active\.length\) : undefined\}>Indicators</.test(chart));
+  ok('…and the evidence rows, which are the SAME rows the wide toolbar renders',
+    (chart.match(/evidenceMenuItems\(\{ theme, vis: evidenceVis, onChange: setEvidenceVis \}\)/g) || []).length === 2);
+  // ⚠️ THE SAME ACTION, NOT A SECOND ONE.
+  ok('⚠️ the overflow News opens the same drawer', (chart.match(/setNewsOpen\(\(v\) => !v\)/g) || []).length === 2);
+  ok('…and there is exactly one drawer to open', (chart.match(/<TickerNewsBody symbol=\{sym\} compact/g) || []).length === 1);
+  // Not shown twice at any one width: the row button renders only when NOT overflowed, the menu
+  // item only when it is.
+  ok('⚠️ no action is offered twice at the same width',
+    /\{overflowed\s*\n?[\s\S]{0,400}\? \(/.test(chart) && /\{!overflowed && \(/.test(chart));
 }
 
 L('⚠️ NEVER ONE TICKER\'S NEWS UNDER ANOTHER\'S NAME');

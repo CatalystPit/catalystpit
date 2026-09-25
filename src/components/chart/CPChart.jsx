@@ -1542,6 +1542,16 @@ export default function CPChart({
                   <MenuItem theme={theme} role="menuitem" left="ƒ"
                     active={active.length > 0} onClick={() => setBrowserOpen(true)}
                     right={active.length ? String(active.length) : undefined}>Indicators</MenuItem>
+                  {/* ⚠️ RESIZING A PANEL MAY MOVE AN ACTION. IT MAY NOT REMOVE ONE.
+                      News was dropped outright below the overflow threshold — the button simply
+                      stopped rendering — so dragging a Terminal panel narrow took a capability away
+                      rather than relocating it. Indicators and the evidence rows were already
+                      here; this is the same action, not a second one: the SAME setNewsOpen toggling
+                      the SAME drawer, which is why it also reads as active when the drawer is open. */}
+                  <MenuItem theme={theme} role="menuitemcheckbox" left="▤"
+                    active={newsOpen} closeOnPick={false}
+                    onClick={() => setNewsOpen((v) => !v)}
+                    right={newsOpen ? 'Open' : undefined}>News</MenuItem>
                   {/* The SAME rows the wide toolbar renders, so the two cannot drift apart — the
                       established pattern here for the view rows below. */}
                   {hasEvidence && evidenceMenuItems({ theme, vis: evidenceVis, onChange: setEvidenceVis })}
