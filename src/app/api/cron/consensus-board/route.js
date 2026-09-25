@@ -133,7 +133,17 @@ export async function GET(request) {
       // leaves exactly the blind spot above. A single locked pass costs one increment and is
       // forgotten by the next successful run; a persistently starved one now surfaces as rising
       // consecutive_failures instead of silence.
-      await recordJobRun('consensus-board', { ok: false, note: `not published: ${r.reason} after ${Math.round(ms / 1000)}s` });
+      // ⚠️ HOW FAR IT GOT IS THE WHOLE DIAGNOSTIC. "Ran out of time" does not distinguish a build
+      // that needed five more seconds from one that needed another two minutes, and that
+      // difference decides whether the answer is a small optimisation or a different shape of
+      // build. The progress fraction is the cheapest possible way to know and it costs one string.
+      const p = r.payload || {};
+      const reached = (p.evaluated ?? 0) + (p.failed ?? 0);
+      const progress = p.candidates ? ` at ${reached}/${p.candidates} candidates` : '';
+      await recordJobRun('consensus-board', {
+        ok: false,
+        note: `not published: ${r.reason} after ${Math.round(ms / 1000)}s${progress}`,
+      });
       return Response.json({
         ok: benign, published: false, why: r.reason, version: MATERIALIZATION_VERSION, ms,
       }, { status: benign ? 200 : 500 });
