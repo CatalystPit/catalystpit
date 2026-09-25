@@ -9,7 +9,8 @@
 import { readFileSync } from 'node:fs';
 import {
   toScanRow, toScanRows, evidenceLine, joinLine, structureTags, levelsToStructure,
-  supportingFacts, freshnessLabel, isLiveEnough, aggregateFreshness, servedRow, JOIN_LINE, EVIDENCE_LINE_MAX,
+  supportingFacts, freshnessLabel, boardStatusLabel, FRESHNESS_LABEL, isLiveEnough, aggregateFreshness,
+  servedRow, JOIN_LINE, EVIDENCE_LINE_MAX,
   SCAN_DEAD_ZONE_PCT, SELLOFF_PCT,
 } from '../src/lib/scan/scan-rows.mjs';
 import { buildBoard, THRESHOLDS } from '../src/lib/scan/boards.mjs';
@@ -77,7 +78,13 @@ L('=== FRESHNESS IS ALWAYS STATED ===');
   ok('realtime is disclosed as LIVE', freshnessLabel('realtime') === 'LIVE');
   ok('⚠️ near is LIVE, not DELAYED — it is seconds behind the tape, not a delayed feed',
     freshnessLabel('near') === 'LIVE');
-  ok('⚠️ a partly-live board is neither, and says so', freshnessLabel('mixed') === 'PARTLY LIVE');
+  // ⚠️ A ROW IS NEVER A MIXTURE. This used to assert that the ROW map turned 'mixed' into
+  // PARTLY LIVE — one map answering two questions, which is exactly what put a board-level summary
+  // word where a price's provenance belongs. A single price has one source; the mixture is a fact
+  // about the board and is labelled by the board's own map.
+  ok('⚠️ the ROW map has no entry for a mixture at all', !('mixed' in FRESHNESS_LABEL));
+  ok('⚠️ and a board that is partly live is REAL-TIME, not half-broken',
+    boardStatusLabel('mixed') === 'REAL-TIME');
   ok('an unknown freshness is treated as the weakest, not the strongest',
     mut('assumelive') ? false : freshnessLabel(undefined) === 'LAST CLOSE');
   ok('only realtime or near counts as live',
@@ -591,7 +598,7 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   // unentitled. The entitlement is on, and the missing branch inverted into the bug: there was no
   // input for which the banner could tell an entitled reader the truth. So LIVE must now exist —
   // and must be reachable ONLY from the freshness the rows actually carry.
-  ok('the banner has a LIVE state', /'LIVE'/.test(rows));
+  ok('the banner has a real-time state', /'REAL-TIME'/.test(rows));
   ok('⚠️ it is chosen by table lookup on the served freshness, never by a branch on entitlement',
     mut('livebadge') ? false : /const state = FEED_STATE\[freshness\] \|\| FEED_STATE\.eod;/.test(rows));
   ok('⚠️ an unknown or absent freshness still renders the weakest state, not the strongest',
@@ -600,8 +607,13 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   ok('the last-close copy is unchanged for the readers it still applies to',
     /Last completed session — not live quotes\./.test(rows));
   ok('…and the delayed variant is unchanged too', /Delayed quotes — not live\./.test(rows));
-  ok('⚠️ a partly-live board gets its own copy rather than borrowing either extreme',
-    /PARTLY LIVE/.test(rows) && /Every row says which/.test(rows));
+  // ⚠️ THE COPY MUST POINT AT THE ROWS, not gloss over them. REAL-TIME is the friendlier word for
+  // the service; it is only honest because the sentence beside it sends the reader to the badge
+  // that carries the per-symbol truth, and because that badge still says LAST CLOSE.
+  ok('⚠️ a partly-live board says real-time WHERE AVAILABLE and names the row status',
+    /Real-time quotes where available/.test(rows) && /Each row shows its price status/.test(rows));
+  ok('⚠️ the phrase PARTLY LIVE appears nowhere in the product',
+    !/PARTLY LIVE/.test(rows.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')));
   ok('there is ONE banner implementation, shared',
     /export function FeedBanner/.test(rows) && !/function FeedBanner/.test(page));
 
@@ -684,12 +696,12 @@ L('=== ⚠️ ONE FRESHNESS FOR A BOARD OF MANY PROVENANCES ===');
     agg(['realtime', 'realtime', 'realtime', 'eod']) !== 'eod');
   ok('it is reported as the mixture it is',
     agg(['realtime', 'realtime', 'realtime', 'eod']) === 'mixed');
-  ok('…and a mixture is labelled as one, not as either extreme',
-    freshnessLabel(agg(['realtime', 'eod'])) === 'PARTLY LIVE');
+  ok('…and a mixture still reports the market-data path as real-time',
+    boardStatusLabel(agg(['realtime', 'eod'])) === 'REAL-TIME');
 
   ok('⚠️ a live board is never labelled DELAYED, at any mixture of live flavours',
     ['realtime', 'near'].every((a) => ['realtime', 'near'].every((b) =>
-      freshnessLabel(agg([a, b])) === 'LIVE')));
+      boardStatusLabel(agg([a, b])) === 'REAL-TIME')));
   ok('realtime mixed with near is the weaker of the two live readings',
     agg(['realtime', 'near']) === 'near');
   ok('⚠️ near is never minted for a mixture — it is a provider capability, not a summary',
@@ -700,8 +712,8 @@ L('=== ⚠️ ONE FRESHNESS FOR A BOARD OF MANY PROVENANCES ===');
   ok('an empty board has no freshness to claim', agg([]) === null && agg(null) === null);
   ok('rows without a freshness are ignored rather than counted',
     agg(['realtime', null, undefined, '']) === 'realtime');
-  ok('⚠️ an absent freshness still labels as the weakest, never as live',
-    freshnessLabel(agg([])) === 'LAST CLOSE');
+  ok('⚠️ an absent freshness still labels as the weakest, never as real-time',
+    boardStatusLabel(agg([])) === 'LAST CLOSE' && freshnessLabel(agg([])) === 'LAST CLOSE');
 }
 
 L('=== ⚠️ AN ENTITLED BOARD IS NEVER LESS COMPLETE THAN A FREE ONE ===');
@@ -726,12 +738,59 @@ L('=== ⚠️ AN ENTITLED BOARD IS NEVER LESS COMPLETE THAN A FREE ONE ===');
     mut('inlineagg') ? false
       : /aggregateFreshness\(\(built\.rows \|\| \[\]\)/.test(payload)
         && !/servedFreshness\.size === 1/.test(payload));
+  // ⚠️ AND IT LABELS THAT VALUE WITH THE BOARD'S MAP, NOT THE ROW'S. The two maps answer different
+  // questions and the payload's field is the board's answer: running it through the row map would
+  // report a mixed board as LAST CLOSE — the older of the two bugs, arrived at from the other side.
+  ok('⚠️ the board status is labelled by the board map',
+    payload.includes('freshnessLabel: boardStatusLabel(freshness)'));
+  ok('⚠️ …and the row map is not used for it', !/freshnessLabel\(freshness\)/.test(payload));
   ok('⚠️ entitlement is still resolved server-side, before any price is fetched',
     /resolveUserAccess\(\)/.test(payload) && /isRealtime\(tier\) && !beta/.test(payload));
   ok('⚠️ and the snapshot is still read ONLY for an entitled viewer',
     /if \(realtime\) \{[\s\S]{0,400}movementSnapshot\(db, sql\)/.test(payload));
   ok('the entitlement itself is never put in the response',
     !/realtime:\s*realtime/.test(payload) && !/tier:/.test(payload));
+}
+
+
+L('=== ⚠️ THE BOARD DESCRIBES THE SERVICE; A ROW DESCRIBES ITS PRICE ===');
+{
+  // ── WHY THESE ARE TWO MAPS ────────────────────────────────────────────────
+  //
+  // They were one, and the one answer had to serve both questions. "Some of these prices are live
+  // and some are not" is true of a board and is the correct thing for a row NEVER to say — so the
+  // shared map produced PARTLY LIVE at the top of a working real-time product, which reads as a
+  // degraded service rather than as a market in which one ADR has not printed yet.
+  //
+  // ⚠️ AND THE SPLIT IS ONLY HONEST BECAUSE THE ROWS DID NOT MOVE. Every assertion below that says
+  // a row keeps its word is load-bearing: the friendlier board status is paid for by the badge
+  // beside each price still telling the truth about that price.
+
+  ok('a live print is LIVE on its row', freshnessLabel('realtime') === 'LIVE');
+  ok('a near-real-time print is LIVE too', freshnessLabel('near') === 'LIVE');
+  ok('⚠️ a completed-session close still says LAST CLOSE on its row', freshnessLabel('eod') === 'LAST CLOSE');
+  ok('⚠️ a genuinely old price still says LAST KNOWN', freshnessLabel('stale') === 'LAST KNOWN');
+  ok('⚠️ a row with no price carries no badge, rather than a reassuring one',
+    freshnessLabel('unpriced') === null);
+  ok('a delayed print still says DELAYED on its row', freshnessLabel('delayed') === 'DELAYED');
+
+  ok('the board calls any live-bearing path REAL-TIME',
+    ['realtime', 'near', 'mixed'].every((f) => boardStatusLabel(f) === 'REAL-TIME'));
+  ok('⚠️ FREE STAYS DELAYED — the word a free reader sees is unchanged',
+    boardStatusLabel('delayed') === 'DELAYED' && freshnessLabel('delayed') === 'DELAYED');
+  ok('⚠️ a board with no live price anywhere is NOT called real-time',
+    boardStatusLabel('eod') === 'LAST CLOSE' && boardStatusLabel(aggregateFreshness(['eod', 'stale'])) === 'LAST CLOSE');
+  ok('⚠️ nor is an unknown provenance', boardStatusLabel(undefined) === 'LAST CLOSE' && boardStatusLabel('nonsense') === 'LAST CLOSE');
+
+  // ⚠️ NOTHING PROMOTES A PRICE. The rule this whole change rests on: the board's word may soften,
+  // a row's may not, and no row may be relabelled by the board it is on.
+  ok('⚠️ no freshness renders a row MORE live than the board',
+    ['eod', 'stale', 'delayed'].every((f) => freshnessLabel(f) !== 'LIVE'));
+  ok('⚠️ and the served row still carries the freshness it was given',
+    (() => {
+      const r = servedRow(toScanRows([crow({ ticker: 'ZZZ' })], {})[0]);
+      return r.freshnessLabel === 'LAST CLOSE' && r.live === false;
+    })());
 }
 
 L(`\n${pass} passed, ${fail} failed`);

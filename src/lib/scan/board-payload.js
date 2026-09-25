@@ -1,5 +1,5 @@
 import { buildBoard, BOARDS, BOARDS_VERSION, THRESHOLDS } from './boards.mjs';
-import { toScanRows, servedRow, freshnessLabel, aggregateFreshness, JOIN_LINE, SCAN_ROWS_VERSION } from './scan-rows.mjs';
+import { toScanRows, servedRow, boardStatusLabel, aggregateFreshness, JOIN_LINE, SCAN_ROWS_VERSION } from './scan-rows.mjs';
 import { MAJOR_MOVE_PCT } from './mover-catalyst.mjs';
 import { readPublishedBoard } from '../consensus/refresh';
 import { scanReadiness, activeCapabilities } from './runtime';
@@ -230,9 +230,11 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
     // session's move and the board must not imply otherwise; entitled and live, it must not claim
     // to be stale either. The label is derived, never chosen.
     freshness,
-    // Derived from the SAME value the disclosure above resolved to, so the badge and the field can
-    // never disagree — reading row[0] let one row's provenance speak for the whole board.
-    freshnessLabel: freshnessLabel(freshness),
+    // ⚠️ THE BOARD'S MAP, NOT THE ROW'S. Derived from the same value the disclosure above resolved
+    // to, so the badge and the field can never disagree — reading row[0] let one row's provenance
+    // speak for the whole board. Which word that value becomes is a separate decision from what a
+    // row says, because the two are answering different questions: see boardStatusLabel.
+    freshnessLabel: boardStatusLabel(freshness),
     calculatedAt: built.calculatedAt ?? new Date().toISOString(),
     // ⚠️ ONE REASON PER ROW — see servedRow() in scan-rows.mjs for why the evidence line leads.
     rows: built.rows.map(servedRow),

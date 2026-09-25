@@ -63,12 +63,16 @@ const BOARD_TABS = [
  * announced. A Free reader's rows are 'eod' or 'delayed' and this renders exactly as it always did.
  */
 const FEED_STATE = {
-  realtime: { label: 'LIVE', text: 'Real-time consolidated quotes.' },
-  near: { label: 'LIVE', text: 'Real-time consolidated quotes, seconds behind the tape.' },
-  // ⚠️ NEITHER EXTREME. Some rows are live and some have no current print; claiming either one
-  // for the whole board is a false statement about prices a trader is about to act on. Each row
-  // still carries its own badge, which is where the per-symbol truth lives.
-  mixed: { label: 'PARTLY LIVE', text: 'Live where the feed has a current print — last close on the rest. Every row says which.' },
+  realtime: { label: 'REAL-TIME', text: 'Real-time consolidated quotes.' },
+  near: { label: 'REAL-TIME', text: 'Real-time consolidated quotes, seconds behind the tape.' },
+  // ⚠️ THE BANNER DESCRIBES THE SERVICE; THE ROW BADGES DESCRIBE THE PRICES.
+  //
+  // This said PARTLY LIVE, which is accurate as arithmetic over the rows and wrong as a description
+  // of the product: a working real-time feed reported as half-broken because one ADR of twenty-five
+  // had not traded yet. A board drawn from the entitled consolidated feed is real-time. That a
+  // particular symbol has no current print is a fact about that symbol, and its own badge says so —
+  // which is why the sentence here points at them rather than hiding them.
+  mixed: { label: 'REAL-TIME', text: 'Real-time quotes where available. Each row shows its price status.' },
   delayed: { label: 'DELAYED', text: 'Delayed quotes — not live.' },
   eod: { label: 'LAST CLOSE', text: 'Last completed session — not live quotes.' },
 };

@@ -31,14 +31,22 @@ export const SCAN_ROWS_VERSION = 'scan_rows_v1';
 // a row's "% change" is the last completed session's close-to-close move — yesterday's move, not
 // today's. A board called "Moving Now" printing that without saying so would be the precise failure
 // the scanner's own header refuses: telling a trader something untrue at the moment they act.
+/**
+ * ⚠️ THIS MAP IS FOR A ROW, AND ONLY FOR A ROW.
+ *
+ * A row badge answers "what is THIS price" — the provenance of one symbol's number, which is the
+ * only place a fallback can be disclosed honestly. The BOARD's status answers a different question
+ * and has its own map below; the two were one function, which is how a board of mostly-live prices
+ * came to be summarised with a word no row had said.
+ *
+ * There is no `mixed` here. A single price is never a mixture, and an entry for one would be an
+ * invitation to render a board-level summary on a row.
+ */
 export const FRESHNESS_LABEL = Object.freeze({
   realtime: 'LIVE',
   // Seconds to about a minute behind the tape. Not a delayed feed, and saying so cost a Pro reader
   // their entitlement in the only place they could see it.
   near: 'LIVE',
-  // Some rows live, some not. A board that is PARTLY live is neither live nor delayed, and calling
-  // it either is a false statement about prices a trader is about to act on.
-  mixed: 'PARTLY LIVE',
   delayed: 'DELAYED',
   eod: 'LAST CLOSE',
   // The security has not printed a close for multiple sessions. Not a claim about today.
@@ -51,6 +59,37 @@ export const FRESHNESS_LABEL = Object.freeze({
 // exact inverse of the rule this map exists to enforce. An unrecognised freshness still falls
 // through to the weakest label, because an unknown provenance is not a live one.
 export const freshnessLabel = (f) => (f in FRESHNESS_LABEL ? FRESHNESS_LABEL[f] : 'LAST CLOSE');
+
+/**
+ * The board's own status — what the MARKET-DATA PATH delivered, not what one symbol got.
+ *
+ * ── ⚠️ WHY THIS IS A SEPARATE MAP FROM THE ROW BADGE ────────────────────────
+ *
+ * They answer different questions, and running both through one map is what produced PARTLY LIVE:
+ * a summary word, correct as arithmetic over the rows, that described a working real-time service
+ * as though it were half-broken. A board drawn from the entitled consolidated feed IS real-time —
+ * that a particular ADR has not traded this morning is a fact about that symbol, not about the
+ * feed, and its own row says so in its own badge.
+ *
+ * ⚠️ THE HONESTY LIVES ON THE ROWS, WHICH IS WHY THIS MAY BE THE FRIENDLIER WORD. Nothing here
+ * promotes a price. A LAST CLOSE row still reads LAST CLOSE, a LAST KNOWN row still reads LAST
+ * KNOWN, and an unpriced row still carries no badge at all. What changes is only the sentence at
+ * the top of the board, and only for a reader whose rows contain at least one live print — a board
+ * with no live price anywhere is still LAST CLOSE, because at that point there is no real-time data
+ * on screen to be describing.
+ */
+export const BOARD_STATUS_LABEL = Object.freeze({
+  realtime: 'REAL-TIME',
+  near: 'REAL-TIME',
+  mixed: 'REAL-TIME',
+  delayed: 'DELAYED',
+  eod: 'LAST CLOSE',
+  stale: 'LAST KNOWN',
+  unpriced: 'LAST CLOSE',
+});
+
+/** ⚠️ An unknown provenance is not a real-time one — it falls to the weakest label, as before. */
+export const boardStatusLabel = (f) => (f in BOARD_STATUS_LABEL ? BOARD_STATUS_LABEL[f] : 'LAST CLOSE');
 
 /** Is this quote live enough to describe a move as happening NOW? */
 export const isLiveEnough = (f) => f === 'realtime' || f === 'near';
