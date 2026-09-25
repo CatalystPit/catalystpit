@@ -576,6 +576,32 @@ sec('\u26a0\ufe0f A FORM 4 CARRIES ITS OWN SECOND CLOCK AND ITS OWN FIGURES');
   const resolve = fs.readFileSync(new URL('../src/lib/evidence/resolve.js', import.meta.url), 'utf8');
   const ctxSrc = fs.readFileSync(new URL('../src/lib/consensus/build-context.mjs', import.meta.url), 'utf8');
   const card = fs.readFileSync(new URL('../src/components/chart/EvidenceCard.jsx', import.meta.url), 'utf8');
+  // The date and figure helpers now live in one module both resolvers import — see below for why.
+  const facts = fs.readFileSync(new URL('../src/lib/evidence/insider-facts.mjs', import.meta.url), 'utf8');
+  const timeline = fs.readFileSync(new URL('../src/lib/evidence/timeline.js', import.meta.url), 'utf8');
+
+  // ── ⚠️ TWO RESOLVERS, ONE FACTS BUILDER — THE BUG THAT HID BEHIND THE FIRST FIX ──
+  //
+  // insider evidence is produced by TWO resolvers: resolve.js for the 45-day digest, and
+  // timeline.js for the chart's historical range. Each had grown its own copy of the facts block,
+  // and the copies had drifted: resolve.js emitted leadRoleValue and topBuyerValue, timeline.js
+  // emitted neither. Those are the exact fields highSignificance() reads, so a CEO's $10.0M
+  // purchase was promoted everywhere resolve.js fed and could NOT be promoted on the ticker chart,
+  // which is fed by timeline.js. The first fix was verified against resolve.js and looked complete;
+  // the chart the report was about was still drawing a 1px arrow.
+  check('⚠️ both resolvers build insider facts from the SAME module',
+    /insiderBuyFacts\(recentBuys\)/.test(resolve) && /insiderBuyFacts\(dayBuys\)/.test(timeline)
+    && /insiderSellFacts\(discSells\)/.test(resolve) && /insiderSellFacts\(daySells\)/.test(timeline));
+  check('⚠️ …and neither keeps a private copy of the block',
+    !/leadRoleValue:/.test(resolve) && !/leadRoleValue:/.test(timeline)
+    && /leadRoleValue:/.test(facts));
+  check('⚠️ the timeline query selects the columns its facts need',
+    /transaction_date, price_per_share, shares,/.test(timeline));
+  check('⚠️ …and both resolvers stamp the second clock through the same guard',
+    (resolve.match(/eventClock\(sharedEventDay\(/g) || []).length === 2
+    && (timeline.match(/eventClock\(sharedEventDay\(/g) || []).length === 2);
+  check('⚠️ no `eventTime: null` is left hardcoded on an insider record',
+    !/eventTime: null/.test(timeline.split('async function insiderTimeline')[1]?.split('// ── catalysts')[0] || timeline));
 
   // ⚠️ THE ROOT CAUSE, ASSERTED AS A COLUMN LIST. The rows were always in the table; the query
   // did not ask for them, and the code said so: "transaction_date is not carried on this row set".
@@ -589,20 +615,20 @@ sec('\u26a0\ufe0f A FORM 4 CARRIES ITS OWN SECOND CLOCK AND ITS OWN FIGURES');
 
   // ⚠️ ONE DATE OR NONE \u2014 NEVER A REPRESENTATIVE ONE.
   check('\u26a0\ufe0f a group with several transaction dates reports no single date',
-    /days.size === 1 \? \[\.\.\.days\]\[0\] : null/.test(resolve));
+    /days.size === 1 \? \[\.\.\.days\]\[0\] : null/.test(facts));
   check('\u2026but its real span is reported, because both ends are filed dates',
-    /function eventDayRange/.test(resolve) && /transactionSpan: eventDayRange\(/.test(resolve));
+    /function eventDayRange/.test(facts) && /transactionSpan: eventDayRange\(/.test(facts));
   // ⚠️ A PRICE CANNOT BE BLENDED. Shares add; prices do not.
   check('\u26a0\ufe0f a price per share is reported only for a SINGLE transaction',
-    (resolve.match(/pricePerShare: \w+\.length === 1 \?/g) || []).length === 2);
+    (facts.match(/pricePerShare: list\.length === 1 \?/g) || []).length === 1);
   check('\u2026while share counts, which sum exactly, are always reported',
-    (resolve.match(/shares: \w+\.reduce\(/g) || []).length === 2);
+    (facts.match(/const shares = list\.reduce\(/g) || []).length === 1);
 
   // ⚠️ THE REGRESSION THIS GUARD PREVENTS. makeEvidence QUARANTINES an object whose eventTime
   // sits after its publicTime \u2014 so handing over a bad transaction date would DELETE a legitimate
   // purchase from the chart in order to show a date.
   check('\u26a0\ufe0f an eventTime after the filing is dropped, not handed over',
-    /function eventClock/.test(resolve) && /if \(e == null \|\| p == null \|\| e > p\) return null;/.test(resolve));
+    /function eventClock/.test(facts) && /e > p\) return null;/.test(facts));
   const late = makeEvidence({
     ticker: 'TEST', family: FAMILY.INSIDER, type: 'insider_officer_buy', source: 'sec_form4',
     sourceId: 'a', materiality: 0.8, publicTime: '2026-09-10T00:00:00Z',

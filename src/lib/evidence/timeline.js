@@ -23,6 +23,7 @@
 // on its transaction date.
 
 import { sql } from 'drizzle-orm';
+import { insiderBuyFacts, insiderSellFacts, sharedEventDay, eventClock } from './insider-facts.mjs';
 import { db } from '../db';
 import { FAMILY, DIRECTION, collectEvidence } from './model.mjs';
 import { firstInContext, burstContext, implausibleBreadth, breadthChangeContext } from './history.mjs';
@@ -46,6 +47,9 @@ export const MAX_RANGE_DAYS = HISTORY_WINDOW_DAYS;
 async function insiderTimeline(ticker, { from, to, coverage }) {
   const res = await db.execute(sql`
     select action, transaction_code, total_value, executive, title, filing_date, accession, filing_url,
+           -- ⚠️ THE SAME THREE COLUMNS resolve.js NEEDED, FOR THE SAME REASON. Without them a
+           -- Form 4 on the chart has no second clock, no share count and no price.
+           transaction_date, price_per_share, shares,
            coalesce(rule_10b5_1, false) as planned,
            coalesce(is_derivative, false) as derivative,
            coalesce(superseded_by, '')   as superseded,
@@ -118,7 +122,9 @@ async function insiderTimeline(ticker, { from, to, coverage }) {
         direction: DIRECTION.POSITIVE,
         materiality: cluster ? 0.85 : officer ? 0.80 : 0.65,
         quality: (officer || dayBuys[0].director) ? 0.95 : 0.85,
-        publicTime: day, eventTime: null,
+        publicTime: day,
+        // The transaction date when every purchase filed that day shares one; null when not.
+        eventTime: eventClock(sharedEventDay(dayBuys), day),
         source: 'sec_form4', sourceId: dayBuys[0].accession,
         url: dayBuys[0].filing_url || null,
         summary: cluster
@@ -126,13 +132,11 @@ async function insiderTimeline(ticker, { from, to, coverage }) {
           : officer
             ? `${officer.title || 'Officer'} open-market purchase${usdLabel(value) ? ` of ${usdLabel(value)}` : ''}`
             : `Insider open-market purchase${usdLabel(value) ? ` of ${usdLabel(value)}` : ''}`,
-        facts: {
-          buyers: buyers.length, transactions: dayBuys.length,
-          totalValue: value || null, totalValueLabel: usdLabel(value),
-          executive: officer?.executive || dayBuys[0].executive || null,
-          title: officer?.title || dayBuys[0].title || null,
-          officer: !!officer,
-        },
+        // ⚠️ THE SHARED BUILDER, NOT A SECOND COPY. This block used to omit leadRoleValue and
+        // topBuyerValue — the exact fields highSignificance() reads — so a CEO's $10.0M purchase
+        // could never be promoted on the chart this resolver feeds, while the same filing was
+        // promoted everywhere resolve.js fed. One builder, one answer.
+        facts: insiderBuyFacts(dayBuys),
         context,
       });
     }
@@ -145,11 +149,13 @@ async function insiderTimeline(ticker, { from, to, coverage }) {
       out.push({
         ticker, family: FAMILY.INSIDER, type: 'insider_discretionary_sell',
         direction: DIRECTION.NEGATIVE, materiality: 0.55, quality: 0.90,
-        publicTime: day, eventTime: null,
+        publicTime: day,
+        // The same rule as the buy branch: one shared transaction date or none at all.
+        eventTime: eventClock(sharedEventDay(daySells), day),
         source: 'sec_form4', sourceId: daySells[0].accession,
         url: daySells[0].filing_url || null,
         summary: `${sellers.length} insider${sellers.length > 1 ? 's' : ''} sold ${usdLabel(value) || 'shares'} outside a 10b5-1 plan`,
-        facts: { sellers: sellers.length, transactions: daySells.length, totalValue: value || null },
+        facts: insiderSellFacts(daySells),
         context: null,
       });
     }

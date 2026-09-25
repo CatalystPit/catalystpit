@@ -26,6 +26,7 @@
 // cannot be answered from a 30-day window and must not cost 842 queries.
 
 import { sql } from 'drizzle-orm';
+import { insiderBuyFacts, insiderSellFacts, sharedEventDay, eventClock } from './insider-facts.mjs';
 import {
   classifyCompanyEvent, extractScheduledDate, sourceQuality, stillRelevant, MAX_RELEVANCE_DAYS,
 } from './company-events.mjs';
@@ -158,60 +159,6 @@ export const BREADTH_LOOKBACK_DAYS = 900;
 
 export const OPEN_MARKET_BUY = 'P';
 
-/**
- * The transaction date shared by a set of Form 4 rows, or null when they do not share one.
- *
- * ⚠️ ONE DATE OR NONE — NEVER A REPRESENTATIVE ONE. A Form 4 evidence object can aggregate several
- * purchases, and picking the newest of five transaction dates to stand for all of them would put a
- * date on the card that four of the transactions did not happen on. Ambiguity is reported as null,
- * which the card renders as absence rather than as a guess.
- */
-function sharedEventDay(list) {
-  const days = new Set();
-  for (const x of list || []) {
-    const d = isoDay(x?.transaction_date);
-    if (!d) return null;                 // a single unparseable date makes the set unknowable
-    days.add(d);
-  }
-  return days.size === 1 ? [...days][0] : null;
-}
-
-/**
- * The span the transactions in a group actually cover, or null.
- *
- * ⚠️ A RANGE IS NOT AN ESTIMATE — IT IS TWO FILED DATES. Measured across 40 active tickers, only
- * 13% of insider evidence objects aggregate a single transaction, so reporting only the unambiguous
- * case left seven of eight cards with no transaction date at all. Both ends here are values a
- * filing states; what is refused is collapsing them into one representative day.
- */
-function eventDayRange(list) {
-  const days = [];
-  for (const x of list || []) {
-    const d = isoDay(x?.transaction_date);
-    if (!d) return null;                 // an unknown member makes the span unknowable
-    days.push(d);
-  }
-  if (!days.length) return null;
-  days.sort();
-  return { from: days[0], to: days[days.length - 1] };
-}
-
-/**
- * An eventTime that cannot break the engine's own invariant.
- *
- * ⚠️ publicTime >= eventTime IS ENFORCED BY makeEvidence, AND A VIOLATION QUARANTINES THE WHOLE
- * OBJECT. So a Form 4 whose stored transaction date somehow sits after its filing date must not be
- * handed over: doing so would delete a legitimate purchase from the chart entirely in order to show
- * a date. Returning null keeps the evidence and loses only the second clock.
- */
-function eventClock(eventDay, publicTime) {
-  if (!eventDay) return null;
-  const e = ms(`${eventDay}T00:00:00Z`);
-  const p = ms(publicTime);
-  if (e == null || p == null || e > p) return null;
-  return new Date(e).toISOString();
-}
-
 export async function insiderEvidence(ticker, { now = Date.now(), coverage = {}, ctx = null } = {}) {
   // ⚠️ DATA ACCESS ONLY. ctx holds the rows this query would have returned, fetched once for the
   // whole chunk — see consensus/build-context.mjs. null means "not preloaded"; [] means "none".
@@ -304,46 +251,9 @@ export async function insiderEvidence(ticker, { now = Date.now(), coverage = {},
       source: 'sec_form4', sourceId: newest.accession,
       url: newest.filing_url || null,
       summary: buildInsiderSummary({ recentBuys, buyers, officerBuy, totalValue, cluster }),
-      facts: {
-        buyers: buyers.length, transactions: recentBuys.length,
-        totalValue: totalValue || null, totalValueLabel: usdLabel(totalValue),
-        // ⚠️ SHARES SUM EXACTLY; A PRICE DOES NOT. Adding share counts across filings is
-        // arithmetic, so it is always reported. A price per share is only reported for a SINGLE
-        // transaction — blending several fills into one number would be a figure no filing
-        // contains, which is the estimate this layer refuses to make.
-        shares: recentBuys.reduce((s, x) => s + (num(x.shares) || 0), 0) || null,
-        pricePerShare: recentBuys.length === 1 ? num(newest.price_per_share) || null : null,
-        transactionDate: sharedEventDay(recentBuys),
-        // The span when the group covers several days. Both ends are filed dates.
-        transactionSpan: eventDayRange(recentBuys),
-        officer: !!officerBuy, executive: officerBuy?.executive || newest.executive || null,
-        title: officerBuy?.title || newest.title || null,
-        // ⚠️ STRUCTURED FIGURES FOR THE SIGNIFICANCE RULES, computed from the SAME recentBuys set
-        // the summary is built from. Without these a "$1M single purchase" rule would have to parse
-        // the summary sentence, which is prose and would break the first time the wording changed.
-        //
-        // topBuyer is the largest single insider's TOTAL across the window, not their largest
-        // ticket: three $400K purchases by one officer is a $1.2M commitment by one person, and
-        // splitting it across filings should not hide it.
-        ...(() => {
-          const byPerson = new Map();
-          for (const x of recentBuys) {
-            const k = x.executive || '(unknown)';
-            byPerson.set(k, (byPerson.get(k) || 0) + Number(x.total_value || 0));
-          }
-          let topBuyer = null, topBuyerValue = 0;
-          for (const [k, v] of byPerson) if (v > topBuyerValue) { topBuyer = k; topBuyerValue = v; }
-          // The filed title is the only role source; it is present on 100% of buys measured.
-          const lead = recentBuys.filter((x) => isLeadRole(x.title));
-          const leadValue = lead.reduce((sum, x) => sum + Number(x.total_value || 0), 0);
-          return {
-            topBuyer, topBuyerValue: topBuyerValue || null,
-            leadRoleValue: leadValue || null,
-            leadRoleTitle: lead[0]?.title || null,
-            leadRoleExecutive: lead[0]?.executive || null,
-          };
-        })(),
-      },
+      // ⚠️ THE SHARED BUILDER. This block and timeline.js's had drifted apart, and the
+      // difference decided whether a $10.0M CEO purchase could be promoted on a chart.
+      facts: insiderBuyFacts(recentBuys),
       context,
     });
   }
@@ -363,16 +273,7 @@ export async function insiderEvidence(ticker, { now = Date.now(), coverage = {},
       source: 'sec_form4', sourceId: newest.accession,
       url: newest.filing_url || null,
       summary: `${sellers.length} insider${sellers.length > 1 ? 's' : ''} sold ${usdLabel(totalValue) || 'shares'} outside a 10b5-1 plan`,
-      facts: {
-        sellers: sellers.length, transactions: discSells.length, totalValue: totalValue || null,
-        totalValueLabel: usdLabel(totalValue),
-        shares: discSells.reduce((s, x) => s + (num(x.shares) || 0), 0) || null,
-        pricePerShare: discSells.length === 1 ? num(newest.price_per_share) || null : null,
-        transactionDate: sharedEventDay(discSells),
-        // The span when the group covers several days. Both ends are filed dates.
-        transactionSpan: eventDayRange(discSells),
-        executive: newest.executive || null, title: newest.title || null,
-      },
+      facts: insiderSellFacts(discSells),
       context: null,
     });
   }
