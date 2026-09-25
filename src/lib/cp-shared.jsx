@@ -858,6 +858,14 @@ export function NotificationBell() {
                 {alerts.map((a) => (
                   <EvidenceAlertRow key={`ea-${a.id}`} a={a} onRead={readAlert} onClose={() => setOpen(false)} />
                 ))}
+                {/* ⚠️ WHAT SUBSCRIBING ACTUALLY PROMISES. The worker runs on a schedule, is bounded
+                    per run and fails closed on a resolution error — so an alert can legitimately be
+                    late, missing or absent, and nothing else in the product said so. One line, at
+                    the foot of the list where it is read once rather than shouted on every row. */}
+                <div style={{ padding: '8px 14px 10px', fontSize: 10, color: C.dim, lineHeight: 1.45,
+                  fontFamily: "'DM Sans',sans-serif", borderBottom: `1px solid ${C.surface}` }}>
+                  Alerts are informational and may be delayed, incomplete, or unavailable. Delivery is not guaranteed.
+                </div>
               </>
             )}
             <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, borderTop: alerts.length ? `1px solid ${C.border}` : 'none', fontSize: 12, fontWeight: 700, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>

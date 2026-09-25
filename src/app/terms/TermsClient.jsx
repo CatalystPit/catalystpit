@@ -23,7 +23,7 @@ export default function TermsClient() {
           Terms of Service
         </h1>
         <p style={{ fontSize: 13, color: C.muted, margin: "0 0 24px", fontWeight: 300 }}>
-          Effective date: May 17, 2026 · Last updated: May 17, 2026
+          Effective date: May 17, 2026 · Last updated: September 25, 2026
         </p>
 
         <div style={{ background: "#FFF8E8", border: "1px solid #E8D49A", borderRadius: 8, padding: "16px 18px", margin: "0 0 40px" }}>
@@ -56,16 +56,24 @@ export default function TermsClient() {
         <Section title="4. The Service">
           <p>CatalystPit provides financial intelligence content including market data, news aggregation, AI-enriched summaries, insider trading filings, congressional trading disclosures, and related information. The Service is offered in free and paid subscription tiers.</p>
           <p><strong>The Service is for informational and educational purposes only.</strong> It is not investment advice, financial advice, tax advice, or a recommendation to buy, sell, or hold any security. See our <a href="/disclaimer" style={linkStyle}>Financial Disclaimer</a> for full details.</p>
-          <p>We strive for accuracy but do not warrant that information is complete, current, or error-free. Data is sourced from third parties (Finnhub, SEC EDGAR, CoinGecko, news feeds from The Wall Street Journal, MarketWatch and Bloomberg, and others) and may be delayed, inaccurate, or incomplete. Some content is generated or enriched with AI and may contain errors.</p>
+          <p>We strive for accuracy but do not warrant that information is complete, current, or error-free. Data is sourced from third parties — including Tiingo, Polygon, Finnhub, Financial Modeling Prep, SEC EDGAR, CoinGecko, and news and press-release feeds — and may be delayed, inaccurate, or incomplete. Some content is generated or enriched with AI and may contain errors. Market-data freshness depends on your tier, the source and our licensing; each surface labels whether it is showing real-time, delayed or last-session data. See our <a href="/disclaimer" style={linkStyle}>Financial Disclaimer</a> for our data-source disclosures.</p>
         </Section>
 
         <Section title="5. Subscriptions and Payments">
-          <p>Paid subscription tiers ("Pro," "Elite," or as otherwise offered) will be billed in advance on a recurring monthly basis through our payment processor Stripe. By subscribing, you authorize us to charge your payment method on each billing cycle until you cancel.</p>
+          <p>Paid subscriptions are billed <strong>in advance</strong> through our payment processor Stripe. Pit Pro is currently offered on two plans:</p>
           <ul style={list}>
-            <li><strong>Cancellation:</strong> You may cancel anytime through your account settings. Cancellation takes effect at the end of your current billing cycle. You retain access until then.</li>
-            <li><strong>Refunds:</strong> Subscription fees are non-refundable except where required by law. We may offer refunds at our discretion.</li>
-            <li><strong>Price changes:</strong> We may change pricing with at least 30 days' notice. If you do not agree, you may cancel before the change takes effect.</li>
+            <li><strong>Monthly — $20 per month.</strong> Renews automatically every month.</li>
+            <li><strong>Annual — $199 per year.</strong> Renews automatically every year.</li>
+          </ul>
+          <p><strong>Automatic renewal.</strong> Each plan renews automatically at its applicable billing interval, at the then-current price, until you cancel. By subscribing, you authorize us to charge your payment method at the start of each billing period until you cancel.</p>
+          <ul style={list}>
+            <li><strong>Cancellation:</strong> You may cancel at any time from your account settings, which opens the Stripe customer portal. Cancellation stops future renewals; it does not end your current billing period. <strong>You keep access through the end of the billing period you have already paid for</strong> — to the end of the month on a monthly plan, or to the end of the year on an annual plan.</li>
+            <li><strong>Refunds:</strong> Payments are non-refundable except where required by law. In particular, cancelling an annual plan part-way through the year does not entitle you to a refund or a pro-rated credit for the unused portion. We may issue refunds at our discretion.</li>
+            <li><strong>Price changes:</strong> We may change pricing with at least 30 days' notice before it applies to your renewal. If you do not agree, you may cancel before the change takes effect.</li>
+            <li><strong>Discounts and promotion codes:</strong> We may offer promotional pricing or accept promotion codes at checkout. Unless the offer says otherwise, a discount applies to the billing periods stated in the offer, and the subscription renews at the standard price afterwards.</li>
+            <li><strong>Changing plans:</strong> If you move between the monthly and annual plans, the change and any proration are handled by Stripe at the time you make it.</li>
             <li><strong>Failed payments:</strong> If a payment fails, we may suspend your access until payment is resolved.</li>
+            <li><strong>Taxes:</strong> Prices are stated exclusive of any taxes that may apply in your jurisdiction; where we are required to collect tax, it is added at checkout.</li>
           </ul>
         </Section>
 
@@ -90,12 +98,29 @@ export default function TermsClient() {
           <p>Third-party data (market data, news articles, SEC filings) remains the property of its respective owners and is used under license or fair use.</p>
         </Section>
 
-        <Section title="8. User Content">
-          <p>If you submit any content to the Service (feedback, suggestions, comments), you grant us a worldwide, royalty-free, perpetual license to use, reproduce, modify, and display that content in connection with operating and improving the Service. You represent that you have the right to grant this license.</p>
+        <Section title="8. User Content and Community Conduct">
+          <p>The Service includes community features — The Pit (chat), the Feed, public profiles, and related functionality. "User Content" means anything you submit through the Service, including chat messages, posts, comments, reactions, your profile handle, display name, bio, avatar, linked social accounts, and any feedback or suggestions you send us.</p>
+
+          <p><strong>You keep ownership of your User Content.</strong> You grant CatalystPit a worldwide, non-exclusive, royalty-free, sublicensable license to host, store, reproduce, display, distribute, adapt for formatting, and otherwise use your User Content <em>for the purpose of operating, providing, promoting and improving the Service</em>. This license exists so we can show your posts to other users and run the product; it ends when you delete the content, except for copies retained in backups and for content others have already interacted with or quoted. You represent that you have the right to grant this license and that your User Content does not infringe anyone's rights.</p>
+
+          <p><strong>Public by default.</strong> Content you post in The Pit and the Feed, and the information on your public profile, is visible to other users and may be visible to the public. Do not post anything you are not willing to make public.</p>
+
+          <p><strong>Community conduct.</strong> In addition to Section 6, when using community features you agree not to:</p>
+          <ul style={list}>
+            <li>Impersonate any person, company, or CatalystPit itself, or misrepresent your identity, credentials, or affiliation</li>
+            <li>Post scams, fraudulent schemes, pump-and-dump promotions, or anything intended to deceive or manipulate other users about a security</li>
+            <li>Post spam, repetitive content, or unsolicited advertising and promotion</li>
+            <li>Harass, threaten, bully, or abuse other users, or post hateful content targeting people or groups</li>
+            <li>Post unlawful content, or content that infringes copyright, trademark, privacy, or other rights</li>
+            <li>Post malicious links, malware, phishing, or anything designed to compromise other users or the Service</li>
+            <li>Present yourself as providing personalized investment advice, or solicit or manage other people's funds through the Service</li>
+          </ul>
+
+          <p><strong>Moderation.</strong> We may — but are not obliged to — review, moderate, remove, or restrict any User Content, and we may suspend or terminate accounts, for violations of these Terms or where we reasonably believe it is necessary to protect users or the Service. You can report content to us using the reporting controls in the product. We are not responsible for User Content posted by others, and any views expressed by users are theirs, not ours.</p>
         </Section>
 
         <Section title="9. Third-Party Services">
-          <p>The Service includes links to and integrations with third-party services (Beehiiv, Clerk, Stripe, news sources, etc.). We are not responsible for the content, accuracy, or practices of third parties. Your use of those services is governed by their own terms and policies.</p>
+          <p>The Service includes links to and integrations with third-party services, including Clerk (accounts), Stripe (payments), Ably (realtime community messaging), Resend (email delivery), Beehiiv (newsletter), Vercel, Neon and Upstash (infrastructure), and market-data, filing and news providers. Our <a href="/privacy" style={linkStyle}>Privacy Policy</a> lists the providers that handle user information. We are not responsible for the content, accuracy, or practices of third parties. Your use of those services is governed by their own terms and policies.</p>
         </Section>
 
         <Section title="10. Disclaimers">

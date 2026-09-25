@@ -24,11 +24,11 @@ export default function PrivacyClient() {
           Privacy Policy
         </h1>
         <p style={{ fontSize: 13, color: C.muted, margin: "0 0 40px", fontWeight: 300 }}>
-          Effective date: May 17, 2026 · Last updated: May 17, 2026
+          Effective date: May 17, 2026 · Last updated: September 25, 2026
         </p>
 
         <Section title="1. Who We Are">
-          <p>CatalystPit ("CatalystPit," "we," "us," or "our") is a financial intelligence platform operated by Benjamin Coghill, based in Edgewater, Florida, United States. We provide real-time market data, news enrichment, and trading-related content via our website at catalystpit.com (the "Service") and our newsletter "The Catalyst Brief."</p>
+          <p>CatalystPit ("CatalystPit," "we," "us," or "our") is a financial intelligence platform operated by Benjamin Coghill, based in Edgewater, Florida, United States. We provide market data, news enrichment, and trading-related content via our website at catalystpit.com (the "Service") and our newsletter "The Catalyst Brief." The freshness of market data shown to you depends on your subscription tier, the source, and our licensing for that data — some views are real-time, others are delayed or reflect the last completed session, and each surface labels which it is showing.</p>
           <p>This Privacy Policy explains what data we collect, how we use it, who we share it with, and the rights you have over your data.</p>
         </Section>
 
@@ -37,14 +37,19 @@ export default function PrivacyClient() {
           <ul style={list}>
             <li><strong>Account information:</strong> When you sign up, we collect your name, email address, and password (managed by our authentication provider Clerk). If you sign up via Google, we receive your name, email, and profile picture from Google.</li>
             <li><strong>Newsletter signups:</strong> If you subscribe to The Catalyst Brief, we collect your email address via our newsletter provider Beehiiv.</li>
-            <li><strong>Payment information (future):</strong> When paid subscription tiers become available, payment details (card number, billing address) will be collected and processed by Stripe. CatalystPit does not store or have direct access to your full payment card information.</li>
-            <li><strong>Communications:</strong> If you contact us by email or other means, we receive whatever information you choose to share.</li>
+            <li><strong>Payment and subscription information:</strong> Paid subscriptions are processed by Stripe. Stripe collects your payment details (card number, billing address) directly — <strong>CatalystPit never receives or stores your full payment card information.</strong> What we hold is the subscription relationship: your plan status (free, Pro or Elite) and a Stripe customer identifier, stored against your account so we know what you are entitled to.</li>
+            <li><strong>Public profile:</strong> If you use The Pit (our community), you may create a public profile containing a handle, display name, bio, avatar image and optional links to your X and Instagram accounts, plus a setting controlling whether your watchlist is publicly visible. Anything you put here is visible to other users.</li>
+            <li><strong>Content you post:</strong> Messages, posts, comments, reactions, likes, follows and reports you submit in The Pit and the Feed.</li>
+            <li><strong>Watchlists and alerts:</strong> The tickers you add to watchlists (including named lists and your ordering), the tickers you have enabled Evidence Alerts on, and the alerts generated for you together with their read/unread state.</li>
+            <li><strong>Product preferences:</strong> Saved Terminal workspace layouts and similar settings stored against your account.</li>
+            <li><strong>Communications:</strong> If you contact us by email or through our contact form (hosted by Google Forms), we receive whatever information you choose to share.</li>
           </ul>
 
           <h3 style={subhead}>2.2 Information collected automatically</h3>
           <ul style={list}>
-            <li><strong>Usage data:</strong> We may collect technical information such as your IP address, browser type, device type, pages visited, and timestamps via our hosting provider (Vercel). We plan to add Vercel Analytics, which collects aggregated, anonymized usage data and does not use cookies.</li>
-            <li><strong>Cookies and similar technologies:</strong> Our authentication provider Clerk uses cookies to keep you signed in. We do not currently use advertising or third-party tracking cookies.</li>
+            <li><strong>Usage data:</strong> We may collect technical information such as your IP address, browser type, device type, pages visited, and timestamps via our hosting provider (Vercel).</li>
+            <li><strong>IP address for security:</strong> The Service reads the IP address of incoming requests to apply rate limiting and to protect against abuse of our APIs. It is used for that purpose and is not used to build an advertising or tracking profile.</li>
+            <li><strong>Cookies and browser storage:</strong> Our authentication provider Clerk uses cookies to keep you signed in. The Service also stores preferences in your browser's local storage — chart settings, indicators, drawings, Terminal layout and similar display choices. That data stays in your browser and is not a tracking mechanism. We do not use advertising or third-party tracking cookies, and we do not currently run an analytics package.</li>
           </ul>
 
           <h3 style={subhead}>2.3 Information from third parties</h3>
@@ -58,7 +63,8 @@ export default function PrivacyClient() {
             <li>Deliver the Service, including personalized features as they launch</li>
             <li>Send you transactional emails (account verification, password resets, subscription confirmations)</li>
             <li>Send you newsletters and marketing communications you have opted into (you may unsubscribe at any time)</li>
-            <li>Process payments and manage subscriptions (when paid tiers launch)</li>
+            <li>Process payments, manage subscriptions and apply your entitlements</li>
+            <li>Operate community features, including displaying your public profile and the content you post</li>
             <li>Detect, prevent, and respond to fraud, abuse, or technical issues</li>
             <li>Comply with legal obligations</li>
             <li>Improve and develop the Service</li>
@@ -69,17 +75,20 @@ export default function PrivacyClient() {
         <Section title="4. How We Share Your Information">
           <p>We share your information only as described below:</p>
           <ul style={list}>
-            <li><strong>Service providers:</strong> We use third-party providers to operate the Service. Each receives only the information needed to perform its function. These include:
+            <li><strong>Service providers:</strong> We use third-party providers to operate the Service. Each receives only the information needed to perform its function. The providers that handle user information are:
               <ul style={listInner}>
-                <li>Clerk (authentication and user management)</li>
-                <li>Beehiiv (newsletter delivery)</li>
-                <li>Vercel (website hosting and infrastructure)</li>
-                <li>Upstash (data caching)</li>
-                <li>Anthropic (AI-powered content enrichment; no personal data is sent)</li>
-                <li>Stripe (payment processing, when paid tiers launch)</li>
-                <li>Finnhub, SEC EDGAR, CoinGecko, and news feeds from The Wall Street Journal, MarketWatch and Bloomberg (market data sources; no personal data is sent)</li>
+                <li><strong>Clerk</strong> — authentication, account and user management</li>
+                <li><strong>Stripe</strong> — payment processing and subscription billing, including the customer portal you use to manage or cancel</li>
+                <li><strong>Neon</strong> — the managed PostgreSQL database that stores your watchlists, alert subscriptions and alerts, public profile, community content and saved preferences</li>
+                <li><strong>Vercel</strong> — website hosting and infrastructure, including file storage for uploaded images such as avatars</li>
+                <li><strong>Upstash</strong> — caching and short-lived operational data</li>
+                <li><strong>Ably</strong> — realtime message delivery for The Pit, so chat and presence reach other users live</li>
+                <li><strong>Resend</strong> — delivery of transactional and alert emails we send to your address</li>
+                <li><strong>Beehiiv</strong> — newsletter delivery for The Catalyst Brief</li>
+                <li><strong>Google Forms</strong> — hosts our contact form and receives what you submit through it</li>
               </ul>
             </li>
+            <li><strong>Content and market-data vendors:</strong> We obtain market data, filings and news from third parties including Tiingo, Polygon, Finnhub, Financial Modeling Prep, the U.S. Securities and Exchange Commission (SEC EDGAR), CoinGecko and various news and press-release feeds, and we use Anthropic to enrich and summarise that content. <strong>These vendors do not receive your personal information</strong> — we request data about securities and companies, not about you.</li>
             <li><strong>Legal requirements:</strong> We may disclose information if required by law, subpoena, court order, or similar legal process, or if we believe disclosure is necessary to protect our rights, your safety, or the safety of others.</li>
             <li><strong>Business transfers:</strong> If CatalystPit is acquired, merged, or sells assets, your information may be transferred as part of that transaction. We will notify you before your information becomes subject to a different privacy policy.</li>
           </ul>
@@ -88,6 +97,7 @@ export default function PrivacyClient() {
         <Section title="5. Data Retention">
           <p>We retain your account information for as long as your account is active. If you delete your account, we will delete or anonymize your personal information within 30 days, except where we are required to retain it for legal, tax, or security purposes.</p>
           <p>Newsletter subscriber emails are retained until you unsubscribe. Unsubscribe at any time using the link in any newsletter or by contacting us.</p>
+          <p>Content you posted publicly in The Pit may remain visible after you delete your account where other users' conversations depend on it; contact us if you need specific posts removed. Alerts generated for you are pruned automatically — read alerts after 30 days, unread alerts after 90.</p>
         </Section>
 
         <Section title="6. Security">

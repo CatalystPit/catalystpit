@@ -490,7 +490,7 @@ export default function InstitutionsClient() {
         </div>
 
         <div style={{ marginTop: 26, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-          "13F AUM" = long US-listed positions reported on Form 13F (excludes cash, shorts, bonds, and non-US holdings, so it is not total firm AUM). Source: SEC EDGAR. Not financial advice.
+          "13F AUM" = long US-listed positions reported on Form 13F (excludes cash, shorts, bonds, and non-US holdings, so it is not total firm AUM). Source: SEC EDGAR. Reported 13F positions are historical disclosures and may not represent a fund’s current holdings. Not financial advice.
         </div>
       </div>
 

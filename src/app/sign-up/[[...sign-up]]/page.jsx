@@ -51,6 +51,24 @@ export default function SignUpPage() {
         ← Back to homepage
       </a>
 
+      {/* ⚠️ THE TERMS SAY AGREEMENT IS FORMED BY USING THE SERVICE, AND THIS IS WHERE AN
+          ACCOUNT IS CREATED. Clerk owns the form, so the line sits under it rather than as a
+          checkbox — the existing auth architecture does not require one, and adding a blocking
+          gate to a hosted component is a conversion change, not a disclosure one. */}
+      <div style={{
+        marginTop: 18,
+        maxWidth: 380,
+        textAlign: 'center',
+        fontFamily: "'DM Sans', sans-serif",
+        fontSize: 11.5,
+        lineHeight: 1.5,
+        color: '#5A6458',
+        fontWeight: 300,
+      }}>
+        By creating an account, you agree to the <a href="/terms" style={{ color: '#1E5C38' }}>Terms of Service</a>
+        {' '}and acknowledge the <a href="/privacy" style={{ color: '#1E5C38' }}>Privacy Policy</a>
+        {' '}and <a href="/disclaimer" style={{ color: '#1E5C38' }}>Financial Disclaimer</a>.
+      </div>
       {/* Bottom tagline */}
       <div style={{
         marginTop: 40,

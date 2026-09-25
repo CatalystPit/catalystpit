@@ -296,7 +296,7 @@ export default function FundProfile({ slug }) {
             </div>
 
             <div style={{ marginTop: 14, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-              13F positions as reported to the SEC (as of {fmtQ(d.latest?.quarter)}, filed {fmtQ(d.latest?.filedDate)}). The map and Holdings table above are <b>stock positions</b>; options are listed separately. Excludes cash, direct short sales, non-US and non-13F holdings. "% Port." is relative to the positions shown. Not financial advice.
+              13F positions as reported to the SEC (as of {fmtQ(d.latest?.quarter)}, filed {fmtQ(d.latest?.filedDate)}). The map and Holdings table above are <b>stock positions</b>; options are listed separately. Excludes cash, direct short sales, non-US and non-13F holdings. "% Port." is relative to the positions shown. Reported 13F positions are historical disclosures and may not represent a fund’s current holdings. Not financial advice.
             </div>
           </>
         )}

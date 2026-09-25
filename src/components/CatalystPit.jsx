@@ -8,6 +8,7 @@ import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mj
 import { deskSelection } from "../lib/impact";
 import HeatMap from "./HeatMap";
 import FearGreedCard from "./FearGreedCard";
+import PlanTerms from "./PlanTerms";
 import CompactChart from "./chart/CompactChart";
 import {
   C, CARD_COLORS,
@@ -764,15 +765,25 @@ export default function CatalystPit() {
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
               letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO · $20/MO</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
-              {/* ⚠️ THIS LIST IS A PROMISE, AND TWO OF ITS ITEMS WERE NOT TRUE.
-                  "Options flow & dark pool" is a product we do not have and have no feed for.
-                  "Live charts · all timeframes" and "real-time"/"live" on the first two items
-                  claimed a realtime entitlement that is switched off — charts are end-of-day and
-                  every quote surface says LAST CLOSE or DELAYED. Selling a feed we are not
-                  licensed for is the one marketing mistake that is also a contract problem.
-                  Each line below is now something a paying user actually receives today. */}
+              {/* ⚠️ THIS LIST IS A PROMISE. Each line is something a paying user receives today.
+                  "Options flow & dark pool" was removed because it is a product we do not have and
+                  have no feed for — selling a feed we are not licensed for is the one marketing
+                  mistake that is also a contract problem.
+
+                  ⚠️ AND THE CHART LINE NOW MATCHES THE ENTITLEMENT AGAIN. It read "end-of-day",
+                  written when the realtime path was switched off. It is not: /api/chart-intraday
+                  serves Tiingo intraday bars under our own licence and /api/chart-daily serves
+                  Tiingo daily, so a Pro user gets intraday timeframes. Meanwhile Pit Scan prints
+                  REAL-TIME and the heatmap says "licensed real-time market data" — the upsell was
+                  the one surface still describing the old entitlement, which understated the
+                  product rather than overselling it, but was equally inaccurate.
+
+                  ⚠️ WHAT MUST NOT CHANGE: this line describes CHART COVERAGE, not a promise that
+                  every quote on every surface is real-time. Freshness is per-surface and each one
+                  labels itself (LIVE / DELAYED / LAST CLOSE). Do not generalise this to "real-time
+                  market data" across the product. */}
               {["Full market news feed","Every insider filing, minutes after it lands",
-                "Full screener · 12 filters","Charts · all timeframes, end-of-day",
+                "Full screener · 12 filters","Charts · all timeframes, intraday and daily",
                 "Evidence alerts on your watchlist",
                 "Daily 6 AM catalyst brief"].map(f => (
                 <li key={f} style={{fontSize:12, color:C.green, display:"flex", gap:7,
@@ -793,9 +804,7 @@ export default function CatalystPit() {
               fontFamily:"'DM Sans',sans-serif"}}>
               or save with $199/year →
             </button>
-            <p style={{fontSize:10, color:C.muted, textAlign:"center", marginTop:6, fontWeight:300}}>
-              Cancel anytime · No contracts
-            </p>
+            <PlanTerms interval="both" />
           </div>
 
           {/* CATALYST PIT FEAR & GREED — the compact rail read. Deliberately score + zone + scale

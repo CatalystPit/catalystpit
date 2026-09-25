@@ -11,6 +11,7 @@ import CustomScannerPanel from '../../components/scan/CustomScannerPanel';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, useRealtimeQuotes, isRealtimeQuote } from '../../lib/cp-shared';
 import AlertToggle from '../../components/AlertToggle';
+import PlanTerms from '../../components/PlanTerms';
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
@@ -1703,6 +1704,7 @@ export default function TerminalClient() {
             <div style={{ fontSize: 18, fontWeight: 700, color: C.ink, marginBottom: 8 }}>The Terminal is a Pro feature</div>
             <div style={{ fontSize: 14, color: C.muted, maxWidth: 440, margin: '0 auto 18px' }}>A movable trading workspace with a live halt scanner, chart, movers and catalysts, arranged your way.</div>
             <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '12px 26px', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Start Pro · $20/month</button>
+            <PlanTerms interval="monthly" />
           </div>
         ) : (
           <Workspace />

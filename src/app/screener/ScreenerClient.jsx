@@ -6,7 +6,7 @@ import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib
 import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
 
 // Stock Screener — composable filters over our screener_stocks universe (/api/screener). Proprietary
-// smart-money filters are live now; descriptive/fundamental filters render "coming soon" until a
+// evidence filters are live now; descriptive/fundamental filters render "coming soon" until a
 // bulk market-data feed is connected. Catalyst Pit design system; no third-party embeds.
 
 const REAL_CATS = ['Descriptive', 'Fundamental', 'Technical', 'Performance', 'Ownership', 'News', 'ETF'];
@@ -398,7 +398,12 @@ export default function ScreenerClient() {
         )}
 
         <div style={{ marginTop: 14, fontSize: 11, color: C.dim, lineHeight: 1.5 }}>
-          Live now: Catalyst Pit smart-money signals (◆) + price/volume/technicals for our covered universe (short interest, RSI, SMAs, performance). Descriptive & fundamental filters unlock when a market-data feed is connected. Not investment advice.
+          {/* ⚠️ "SMART-MONEY SIGNALS" WAS THE WRONG NAME FOR WHAT THIS COLUMN IS. ◆ marks tickers
+              carrying canonical Catalyst Pit evidence — filings, Form 4s, congressional disclosures
+              — which is a statement about what has been publicly disclosed, not a claim that
+              informed money is positioned or that the ticker will outperform. The filter and its
+              calculation are unchanged; only the label is. */}
+          Live now: Catalyst Pit evidence markers (◆) + price/volume/technicals for our covered universe (short interest, RSI, SMAs, performance). Descriptive &amp; fundamental filters unlock when a market-data feed is connected. Not investment advice.
         </div>
 
       </div>

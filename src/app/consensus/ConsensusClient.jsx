@@ -24,6 +24,7 @@
 import { useEffect, useState } from 'react';
 import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
+import PlanTerms from '../../components/PlanTerms';
 import SetupCard from './SetupCard';
 import { useTickerHover, TickerHoverPreview, PREVIEW_1Y } from '../../components/TickerHoverChart';
 import ConsensusRow, { STATE_UI } from './ConsensusRow';
@@ -39,7 +40,11 @@ void BOARD_FILTERS;
 const SORTS = [
   { key: 'default', label: 'Research priority' },
   { key: 'coverage', label: 'Most evidence' },
-  { key: 'confidence', label: 'Highest confidence' },
+  // ⚠️ RENAMED, NOT RECALCULATED. 'Highest confidence' read as confidence that the stock
+  // will do well. The number is confidence in the EVIDENCE CONCLUSION — coverage, freshness and
+  // cross-family alignment (see consensus/evidence-model.mjs) — so the label now says so. The sort
+  // key, the ordering and CONF_RANK are untouched.
+  { key: 'confidence', label: 'Strongest evidence' },
 ];
 const CONF_RANK = { High: 3, Medium: 2, Low: 1 };
 
@@ -202,6 +207,7 @@ export default function ConsensusClient() {
                     <div style={{ fontSize: 15, fontWeight: 700, color: C.ink, marginBottom: 6 }}>🔒 {locked} more {locked === 1 ? 'name' : 'names'}</div>
                     <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 14 }}>See the full evidence board with Pro.</div>
                     <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '10px 22px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Unlock Pro · $20/month</button>
+                    <PlanTerms interval="monthly" />
                   </div>
                 </div>
               </div>

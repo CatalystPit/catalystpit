@@ -1056,7 +1056,7 @@ function InstitutionsTab({ symbol }) {
             </div>
             <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
               {count > funds.length && <>Showing the top {funds.length.toLocaleString()} of {count.toLocaleString()} filers by position size. </>}
-              Every SEC 13F filer, showing each fund&apos;s latest 13F (reported up to 45 days after quarter-end). Ownership % = long common shares ÷ shares outstanding; it excludes shorts, options, and non-13F holders, so it is a reported floor, not total ownership. PUT/CALL rows are options positions (bearish/bullish), not share ownership. Source: <a href="/institutions" style={{ color: C.green, textDecoration: 'none' }}>SEC EDGAR</a>. Not financial advice.
+              Every SEC 13F filer, showing each fund&apos;s latest 13F (reported up to 45 days after quarter-end). Ownership % = long common shares ÷ shares outstanding; it excludes shorts, options, and non-13F holders, so it is a reported floor, not total ownership. PUT/CALL rows are options positions (bearish/bullish), not share ownership. Reported 13F positions are historical disclosures and may not represent a fund’s current holdings. Source: <a href="/institutions" style={{ color: C.green, textDecoration: 'none' }}>SEC EDGAR</a>. Not financial advice.
             </div>
           </>
         )}

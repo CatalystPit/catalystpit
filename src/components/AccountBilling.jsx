@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { C, startCheckout } from '../lib/cp-shared';
+import PlanTerms from './PlanTerms';
 
 // Account billing card: plan badge + Manage (Pro → Stripe portal) / Upgrade (Free → checkout).
 export default function AccountBilling() {
@@ -40,8 +41,8 @@ export default function AccountBilling() {
   }
 
   return (
-    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '18px 20px',
-      marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+    <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '18px 20px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink }}>Plan</span>
@@ -69,6 +70,10 @@ export default function AccountBilling() {
           Upgrade to Pro · $20/month
         </button>
       ))}
+      </div>
+      {/* ⚠️ ONLY ON THE BUY PATH. A subscriber reading their own billing card does not need
+          the renewal sentence again; someone about to click Upgrade does. */}
+      {tier != null && !planUnknown && !isPro && <PlanTerms interval="both" align="left" />}
     </div>
   );
 }

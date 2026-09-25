@@ -44,16 +44,24 @@ export default function AlertToggle({ symbol, variant = 'text', onNotice = null 
   };
 
   const label = on ? 'Alert On' : 'Alert';
-  const title = on
+  // ⚠️ THE CAVEAT TRAVELS WITH THE CONTROL, NOT ONLY WITH THE INBOX. The same line appears at the
+  // foot of the bell's alert list, but that list only renders once alerts exist — someone who has
+  // just switched a ticker on would otherwise never have been told what the promise is worth.
+  const caveat = 'Alerts are informational and may be delayed, incomplete, or unavailable. Delivery is not guaranteed.';
+  // ⚠️ TWO STRINGS, BECAUSE THEY HAVE TWO JOBS. `action` names the control for assistive tech and
+  // must stay short — a screen reader announcing a two-sentence disclaimer as the button's NAME is
+  // worse than not disclosing it here at all. `title` is the hover tooltip, where the caveat fits.
+  const action = on
     ? `Stop monitoring ${sym} for new public evidence`
     : `Monitor ${sym} for new public evidence`;
+  const title = `${action}\n${caveat}`;
 
   if (variant === 'icon') {
     // The watchlist row: a bell glyph, because that row has no width to spare and already carries
     // a price, badges and the What Changed line.
     return (
       <button type="button" onClick={click} disabled={busy} title={title} aria-pressed={on}
-        aria-label={title}
+        aria-label={action}
         style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer',
           lineHeight: 0, flexShrink: 0, opacity: busy ? 0.5 : 1 }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill={on ? C.gold : 'none'}

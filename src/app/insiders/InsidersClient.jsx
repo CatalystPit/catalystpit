@@ -2,6 +2,7 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
+import PlanTerms from '../../components/PlanTerms';
 import { meaningFor } from '../../lib/insider-meaning';
 import { ownershipChangePct, fmtOwnershipPct } from '../../lib/insider-format';
 import { treemap } from '../../lib/treemap';
@@ -1133,6 +1134,7 @@ export default function InsidersClient() {
                         <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Unlock the full history with Pro</div>
                       </div>
                       <button onClick={() => startCheckout()} style={{background:C.green, color:"#fff", border:"none", whiteSpace:"nowrap", padding:"10px 18px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif"}}>Unlock Pro · $20/month</button>
+                      <PlanTerms interval="monthly" />
                     </div>
                   </div>
                 </div>
