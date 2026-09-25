@@ -78,7 +78,13 @@ function ComponentRow({ c }) {
   );
 }
 
-function Methodology({ m, components, window: win, minComponents }) {
+// ⚠️ NO VERSION STAMP ON THE PUBLIC PAGE. "Index version fear_greed_v1" used to be printed at
+// the foot of this panel, alongside the window and component minimum. The identifier is an
+// implementation detail that means nothing to a reader, and the other two numbers were already
+// stated in prose above it — a line repeating them in smaller grey type reads as debug output that
+// escaped, which is a strange thing to find at the bottom of a financial product. The version still
+// travels in the API payload and the store, where it is load-bearing; it just is not printed here.
+function Methodology({ m, components }) {
   if (!m) return null;
   return (
     <div style={{ padding: '14px 16px 18px', fontSize: 12, color: C.text, lineHeight: 1.6 }}>
@@ -107,9 +113,6 @@ function Methodology({ m, components, window: win, minComponents }) {
           <div style={{ color: C.muted }}>{x.why}</div>
         </div>
       ))}
-      <div style={{ marginTop: 14, color: C.dim, fontSize: 11 }}>
-        Index version {m.version} · normalisation window {win} sessions · minimum {minComponents} components.
-      </div>
     </div>
   );
 }
@@ -204,8 +207,6 @@ export default function FearGreedClient() {
                     <Methodology
                       m={data.methodology}
                       components={data.componentMeta}
-                      window={data.normalizationWindow}
-                      minComponents={data.minComponents}
                     />
                   </div>
                 )}

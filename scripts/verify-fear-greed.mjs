@@ -701,5 +701,36 @@ sec('THE DRAWING USES THE GEOMETRY IT WAS GIVEN');
     chart.includes('zoneFontSize(width)'));
 }
 
+
+sec('⚠️ THE VERSION STAMP IS NOT PART OF THE PRODUCT');
+{
+  // ⚠️ IT IS STILL LOAD-BEARING, JUST NOT PRINTED. "Index version fear_greed_v1 · normalisation
+  // window 504 sessions · minimum 3 components." used to sit at the foot of the methodology panel.
+  // The identifier means nothing to a reader, the other two numbers were already stated in prose
+  // directly above it, and a grey line repeating them reads as debug output that escaped. But the
+  // version keys the KV payload AND is half the primary key of fear_greed_daily, so removing it
+  // from the page must not remove it from anywhere else.
+  const source = readFileSync(new URL('../src/app/fear-greed/FearGreedClient.jsx', import.meta.url), 'utf8');
+  // ⚠️ COMMENTS STRIPPED FIRST. The note explaining why the line went away necessarily quotes
+  // the line, and an assertion that cannot tell prose from rendered output would fail on its own
+  // explanation — which is a false alarm that teaches the next reader to weaken the check.
+  const page = source.replace(/^\s*\/\/.*$/gm, '');
+  const store = readFileSync(new URL('../src/lib/fear-greed/store.mjs', import.meta.url), 'utf8');
+  check('⚠️ the page does not print the version identifier',
+    !/Index version/.test(page) && !/m\.version/.test(page));
+  check('nor repeats the window and component minimum as a footer line',
+    !/normalisation window \{/.test(page) && !/minimum \{minComponents\}/.test(page));
+  check('and does not pass the props that fed it', !/window=\{data\.normalizationWindow\}/.test(page));
+  check('the methodology panel itself is untouched',
+    page.includes('WHAT WE DELIBERATELY DO NOT INCLUDE') && page.includes('<P label="Normalisation"'));
+  check('⚠️ the version still exists where it is operationally needed',
+    METHODOLOGY.version === 'fear_greed_v1');
+  check('⚠️ it still keys the stored payload and the daily rows',
+    store.includes('METHODOLOGY.version') && store.includes('PAYLOAD_KEY'));
+  check('and the API still carries it for callers that pin to it',
+    readFileSync(new URL('../src/lib/fear-greed/compute.mjs', import.meta.url), 'utf8')
+      .includes('version: METHODOLOGY.version'));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
