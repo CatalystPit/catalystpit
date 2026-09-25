@@ -942,6 +942,14 @@ function ChangeLine({ sym, change }) {
     : change.kind === CHANGE.CONGRESS ? C.blue
       : change.kind === CHANGE.SCAN ? C.gold
         : change.kind === CHANGE.WIRE ? C.blue : C.muted;
+  // ⚠️ A 60-DAY-OLD TRANSACTION MUST NOT LOOK LIKE THIS MORNING'S NEWS. Same layout, same fields,
+  // one step quieter: the dot loses its fill and keeps only an outline, and the text drops from
+  // muted to dim. Nothing is hidden and the age is the same true age — it simply stops competing
+  // for attention with a line that is actually current.
+  const old = change.historical === true;
+  const dot = old
+    ? { background: 'transparent', border: `1px solid ${C.hint}`, width: 2, height: 2 }
+    : { background: tone, width: 3, height: 3 };
   return (
     <div
       role="button"
@@ -954,11 +962,11 @@ function ChangeLine({ sym, change }) {
         fontFamily: "'DM Sans',sans-serif", fontSize: 10, lineHeight: 1.3, maxWidth: 230,
       }}
     >
-      <span style={{ width: 3, height: 3, borderRadius: '50%', background: tone, flexShrink: 0, transform: 'translateY(-2px)' }} />
-      <span style={{ color: C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ ...dot, borderRadius: '50%', flexShrink: 0, transform: 'translateY(-2px)' }} />
+      <span style={{ color: old ? C.dim : C.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {change.label}{change.detail ? ` · ${change.detail}` : ''}
       </span>
-      <span style={{ color: C.dim, flexShrink: 0 }}>{changeAgo(change.at)}</span>
+      <span style={{ color: old ? C.hint : C.dim, flexShrink: 0 }}>{changeAgo(change.at)}</span>
     </div>
   );
 }

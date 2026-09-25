@@ -134,6 +134,20 @@ export const WINDOW_DAYS = Object.freeze(Object.fromEntries(
   Object.values(CHANGE).map((k) => [k, Math.max(...PRECEDENCE.filter((p) => p.kind === k).map((p) => p.days), 0)]),
 ));
 
+/**
+ * ── ⚠️ THE FALLBACK'S OWN BOUND, AND WHY IT IS NOT A PRECEDENCE ROW ────────
+ *
+ * When nothing above qualifies, a row that has traded insiders or congressional disclosures in its
+ * history has more to say than a blank line — so the fallback names the most recent one and shows
+ * its real age. It is deliberately NOT a row in PRECEDENCE: a row in that table can beat something
+ * else, and this must never beat anything. It runs only where the table produced nothing at all.
+ *
+ * The bound is one year because the query has to be bounded and because a transaction older than a
+ * year is not a "change" under any reading — not because a year means something. It is a display
+ * bound on data we already hold, and the age shown is always the true one.
+ */
+export const HISTORY_DAYS = 365;
+
 const ms = (v) => {
   const t = Date.parse(v);
   return Number.isFinite(t) ? t : null;
@@ -299,6 +313,49 @@ export function pickChange(candidates, { now = Date.now() } = {}) {
   live.sort((a, b) => (a.rank - b.rank) || (b.c.at - a.c.at));
   const { c, rank } = live[0];
   return { ...c, why: PRECEDENCE[rank].id };
+}
+
+/** The two families that can stand in for a blank row, most-recent-first on a tie of timestamps. */
+const FALLBACK_KINDS = [CHANGE.INSIDER, CHANGE.CONGRESS];
+
+/**
+ * The most recently PUBLIC insider or congressional buy/sell, or null.
+ *
+ * ⚠️ RECENCY ONLY, AND NOTHING ELSE. There is no precedence here and there must not be: this line
+ * exists because the row would otherwise be empty, so the only question worth asking is which of
+ * the two became public most recently. No family outranks the other, nothing is promoted, and the
+ * conviction band is deliberately not consulted — a promoted line implies currency this cannot have.
+ *
+ * ⚠️ AND IT FAILS CLOSED. A candidate with no readable public timestamp is dropped rather than
+ * shown with a guessed age, exactly as an undated record is dropped from the main path. The
+ * buy/sell rule is already enforced upstream: fromInsider and fromCongress return null for anything
+ * that is not a plainly stated purchase or sale, so an OTHER-coded Form 4 can never reach here.
+ */
+export function pickFallback(candidates, { now = Date.now() } = {}) {
+  const live = (candidates || []).filter((c) => {
+    if (!c || !Number.isFinite(c.at)) return false;
+    if (!FALLBACK_KINDS.includes(c.kind)) return false;
+    if (c.at > now) return false;
+    return now - c.at <= HISTORY_DAYS * 86400000;
+  });
+  if (!live.length) return null;
+  live.sort((a, b) => (b.at - a.at) || (FALLBACK_KINDS.indexOf(a.kind) - FALLBACK_KINDS.indexOf(b.kind)));
+  const c = live[0];
+  // `historical` is what the row reads to render itself quietly. It is a provenance flag, not a
+  // grade: it says "this became public a while ago", which is a fact about the timestamp.
+  return { ...c, historical: true, why: `historical-${c.kind}` };
+}
+
+/**
+ * The one line a watchlist row shows, or null.
+ *
+ * ⚠️ THE ORDER OF THESE TWO CALLS IS THE WHOLE GUARANTEE. The fallback is only ever reached when
+ * the precedence produced nothing, so no historical transaction can displace a qualifying recent
+ * company event. Expressed as one function rather than left to each caller, because a caller that
+ * got the order wrong would silently weaken the precedence the table exists to state.
+ */
+export function pickLine({ recent, historical }, { now = Date.now() } = {}) {
+  return pickChange(recent, { now }) || pickFallback(historical, { now });
 }
 
 /** "4h", "2d" — the same shorthand the rest of the Terminal uses. */

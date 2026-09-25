@@ -3,8 +3,8 @@ import { db } from '../../../../lib/db';
 import { eightkFilings } from '../../../../lib/schema';
 import { classifyItems } from '../../../../lib/eightk';
 import {
-  fromFiling, fromWire, fromInsider, fromCongress, pickChange, WINDOW_DAYS, CHANGE,
-  WIRE_MIN_IMPORTANCE,
+  fromFiling, fromWire, fromInsider, fromCongress, pickLine, WINDOW_DAYS, CHANGE,
+  WIRE_MIN_IMPORTANCE, HISTORY_DAYS,
 } from '../../../../lib/terminal/watchlist-changes.mjs';
 
 export const runtime = 'nodejs';
@@ -34,7 +34,7 @@ export async function GET(request) {
   if (!syms.length) return Response.json(empty, { headers: NO_STORE });
   const arr = `{${syms.join(',')}}`;
 
-  // ── ⚠️ FOUR QUERIES FOR THE WHOLE WATCHLIST, NOT FOUR PER TICKER ──────────
+  // ── ⚠️ ONE STATEMENT PER SOURCE FOR THE WHOLE LIST, NOT ONE PER TICKER ────
   //
   // A "what changed" line per row is the kind of feature that quietly becomes N requests — one per
   // symbol, times four sources, on every poll. These are one statement per source over the same
@@ -45,7 +45,7 @@ export async function GET(request) {
   // routine one and a high-conviction buy above an ordinary Form 4 — so `distinct on (ticker)`
   // alone would hand it the newest row and hide the very row it would have preferred. The keys
   // carry the source's own flag, which costs at most two rows per ticker instead of one.
-  const [news, halt, filings, insiders, congress, wire] = await Promise.all([
+  const [news, halt, filings, insiders, congress, wire, histInsiders, histCongress] = await Promise.all([
     // Fresh 8-K in the last 24h → NEWS
     (async () => {
       try {
@@ -138,6 +138,43 @@ export async function GET(request) {
         return r.rows ?? r;
       } catch { return []; }
     })(),
+    // ── ⚠️ THE FALLBACK CANDIDATES — TWO MORE STATEMENTS, NOT TWO PER TICKER ──
+    //
+    // Fetched in the same batch as everything else and unconditionally, so a blank row costs no
+    // extra round trip and the poll's latency does not depend on how many rows came back empty.
+    // At most one row per ticker per family, both on existing indexes.
+    //
+    // ⚠️ AND FILTERED TO BUY/SELL IN SQL, WHICH IS NOT AN OPTIMISATION. `distinct on (ticker)`
+    // returns the newest row, and the newest row is often an OTHER-coded Form 4 — IREN's nine most
+    // recent are all OTHER, sharing a filing date with a real $434K Director sale. Filtering in the
+    // display would have handed it an OTHER row, produced null from it and left the row blank with
+    // a legitimate sale sitting one row further down.
+    (async () => {
+      try {
+        const r = await db.execute(sql`
+          select distinct on (ticker) ticker, title, action, total_value, filing_date, filing_url
+            from insider_trades
+           where ticker = any(${arr}::text[])
+             and action in ('BUY', 'SELL')
+             and filing_date >= now() - make_interval(days => ${HISTORY_DAYS})
+           order by ticker, filing_date desc`);
+        return r.rows ?? r;
+      } catch { return []; }
+    })(),
+    // Same, for disclosures. The types that are not plainly a purchase or a sale — Exchange, and
+    // the two null rows — are excluded here for the same reason.
+    (async () => {
+      try {
+        const r = await db.execute(sql`
+          select distinct on (ticker) ticker, representative, type, amount_range, disclosure_date, link
+            from congress_trades
+           where ticker = any(${arr}::text[])
+             and (type ilike '%purchase%' or type ilike '%sale%')
+             and disclosure_date >= now() - make_interval(days => ${HISTORY_DAYS})
+           order by ticker, disclosure_date desc`);
+        return r.rows ?? r;
+      } catch { return []; }
+    })(),
   ]);
 
   // ── ONE CHANGE PER TICKER, CHOSEN BY A STATED PRECEDENCE ──────────────────
@@ -157,9 +194,18 @@ export async function GET(request) {
       return m;
     };
     const f = by(filings, 'ticker'), i = by(insiders, 'ticker'),
-      c = by(congress, 'ticker'), w = by(wire, 'ticker');
+      c = by(congress, 'ticker'), w = by(wire, 'ticker'),
+      hi = by(histInsiders, 'ticker'), hc = by(histCongress, 'ticker');
+    const insiderOf = (ir) => fromInsider({
+      title: ir.title, action: ir.action, totalValue: ir.total_value,
+      filingDate: ir.filing_date, filingUrl: ir.filing_url, convictionBand: ir.conviction_band,
+    });
+    const congressOf = (cr) => fromCongress({
+      representative: cr.representative, type: cr.type,
+      amountRange: cr.amount_range, disclosureDate: cr.disclosure_date, link: cr.link,
+    });
     for (const sym of syms) {
-      const picked = pickChange([
+      const picked = pickLine({ recent: [
         ...(f.get(sym) || []).map((fr) => fromFiling({
           // The SAME classifier the 8-K wire and the news drawer use, so one filing cannot be
           // described three ways across three surfaces.
@@ -171,15 +217,15 @@ export async function GET(request) {
           headline: wr.headline, source: wr.source_name, importance: wr.importance,
           publishedAt: wr.published_at, url: wr.original_url,
         })),
-        ...(i.get(sym) || []).map((ir) => fromInsider({
-          title: ir.title, action: ir.action, totalValue: ir.total_value,
-          filingDate: ir.filing_date, filingUrl: ir.filing_url, convictionBand: ir.conviction_band,
-        })),
-        ...(c.get(sym) || []).map((cr) => fromCongress({
-          representative: cr.representative, type: cr.type,
-          amountRange: cr.amount_range, disclosureDate: cr.disclosure_date, link: cr.link,
-        })),
-      ]);
+        ...(i.get(sym) || []).map(insiderOf),
+        ...(c.get(sym) || []).map(congressOf),
+        // ⚠️ THE SAME READERS BUILD THE FALLBACK CANDIDATES. A second set of builders would be a
+        // second place for the wording rules to live, and the fallback's whole claim is that it
+        // prints the same canonical fields the main path does — just an older one.
+      ], historical: [
+        ...(hi.get(sym) || []).map(insiderOf),
+        ...(hc.get(sym) || []).map(congressOf),
+      ] });
       if (picked) changes[sym] = picked;
     }
   }

@@ -16,8 +16,8 @@
 
 import { readFileSync } from 'node:fs';
 import {
-  CHANGE, PRECEDENCE, WINDOW_DAYS, NOTABLE_BANDS, WIRE_HIGH_IMPORTANCE, WIRE_MIN_IMPORTANCE,
-  fromFiling, fromWire, fromInsider, fromCongress, fromScan, pickChange, rankOf, ago,
+  CHANGE, PRECEDENCE, WINDOW_DAYS, NOTABLE_BANDS, WIRE_HIGH_IMPORTANCE, WIRE_MIN_IMPORTANCE, HISTORY_DAYS,
+  fromFiling, fromWire, fromInsider, fromCongress, fromScan, pickChange, pickFallback, pickLine, rankOf, ago,
 } from '../src/lib/terminal/watchlist-changes.mjs';
 import { HIGH_IMPORTANCE, IMMEDIATE_MIN_IMPORTANCE } from '../src/lib/enrich-policy.mjs';
 
@@ -186,6 +186,72 @@ L('⚠️ SELECTION IS A STATED PRECEDENCE — NOT RECENCY ALONE, AND NOT A SCOR
     && PRECEDENCE.findIndex((p) => p.id === 'major-news') < PRECEDENCE.findIndex((p) => p.id === 'congress'));
 }
 
+L('⚠️ THE HISTORICAL FALLBACK — ONLY WHERE THE ROW WOULD OTHERWISE BE BLANK');
+{
+  const recentFiling = fromFiling({ primaryLabel: 'M&A completed', material: true, filedAt: hoursAgo(5) });
+  const recentSale = fromInsider({ title: 'CFO', action: 'sell', totalValue: 90000, filingDate: daysAgo(2) });
+  const oldBuy = fromInsider({ title: 'Director', action: 'buy', totalValue: 425000, filingDate: daysAgo(47) });
+  const oldSale = fromInsider({ title: 'CEO', action: 'sell', totalValue: 1200000, filingDate: daysAgo(63) });
+  const oldDisclosure = fromCongress({ representative: 'Ro Khanna', type: 'purchase', amountRange: '$1,001 - $15,000', disclosureDate: daysAgo(73) });
+  const line = (recent, historical) => pickLine({ recent, historical }, { now: NOW });
+
+  // ⚠️ THE ONE GUARANTEE THE WHOLE FEATURE RESTS ON. A fallback that can outrank a qualifying event
+  // is not a fallback, it is a new precedence row — and it would silently undo the table above.
+  ok('⚠️ a qualifying recent company event is never displaced by an older transaction',
+    line([recentFiling], [oldBuy, oldDisclosure]).why === 'material-filing');
+  ok('⚠️ …nor is a qualifying recent transaction', line([recentSale], [oldBuy]).why === 'insider');
+  ok('…and the fallback fills a row that would otherwise be blank',
+    line([], [oldBuy]).why === 'historical-insider' && line([], [oldBuy]).label === 'Director bought $425K');
+  ok('⚠️ nothing at all still means no line', line([], []) === null && line(null, null) === null);
+
+  // ⚠️ RECENCY ON THE PUBLIC TIMESTAMP, AND NOTHING ELSE DECIDES IT.
+  ok('⚠️ between the two families the one that became public most recently wins',
+    pickFallback([oldSale, oldDisclosure], { now: NOW }).kind === CHANGE.INSIDER
+    && pickFallback([oldDisclosure, fromInsider({ title: 'CEO', action: 'sell', totalValue: 1, filingDate: daysAgo(90) })], { now: NOW }).kind === CHANGE.CONGRESS);
+  ok('⚠️ …and a congressional fallback is dated from DISCLOSURE, not the trade',
+    pickFallback([fromCongress({ representative: 'X', type: 'purchase', disclosureDate: daysAgo(73), transactionDate: daysAgo(110) })], { now: NOW }).at === Date.parse(daysAgo(73)));
+  ok('…an insider fallback from the Form 4 filing date', pickFallback([oldBuy], { now: NOW }).at === Date.parse(daysAgo(47)));
+  // ⚠️ THE CONVICTION BAND IS DELIBERATELY NOT CONSULTED HERE. Promoting an old buy over a newer
+  // old sale would imply a currency this line cannot have, and would be the score we do not have.
+  ok('⚠️ a high-conviction old buy does NOT outrank a newer old sale',
+    pickFallback([fromInsider({ title: 'CEO', action: 'buy', totalValue: 9e6, filingDate: daysAgo(80), convictionBand: 'EXTREME' }), oldSale], { now: NOW }).at === Date.parse(daysAgo(63)));
+
+  // ⚠️ ONLY WHAT A SOURCE PLAINLY CALLS A BUY OR A SELL.
+  ok('⚠️ an OTHER-coded Form 4 can never become a fallback line',
+    fromInsider({ title: 'Director', action: 'OTHER', totalValue: 0, filingDate: daysAgo(50) }) === null
+    && pickFallback([fromInsider({ title: 'Director', action: 'OTHER', totalValue: 0, filingDate: daysAgo(50) })], { now: NOW }) === null);
+  ok('…and neither can an Exchange disclosure',
+    pickFallback([fromCongress({ representative: 'X', type: 'Exchange', disclosureDate: daysAgo(50) })], { now: NOW }) === null);
+  ok('⚠️ a congressional amount is still the published BAND, never an estimate',
+    pickFallback([oldDisclosure], { now: NOW }).detail === '$1,001 - $15,000');
+  ok('…and an insider value is still the filing\'s own total', pickFallback([oldSale], { now: NOW }).label === 'CEO sold $1.2M');
+
+  // ⚠️ FAIL CLOSED, AND BOUNDED.
+  ok('⚠️ a candidate with no readable public timestamp is dropped, not shown with a guessed age',
+    pickFallback([{ kind: CHANGE.INSIDER, at: NaN, label: 'x' }, { kind: CHANGE.CONGRESS, at: null, label: 'y' }], { now: NOW }) === null);
+  ok('⚠️ nothing dated in the future can become a fallback either',
+    pickFallback([{ kind: CHANGE.INSIDER, at: NOW + 3600000, label: 'x' }], { now: NOW }) === null);
+  ok('the fallback is bounded, so the query cannot be unbounded either',
+    Number.isFinite(HISTORY_DAYS) && HISTORY_DAYS > 0
+    && pickFallback([fromInsider({ title: 'D', action: 'buy', totalValue: 1, filingDate: daysAgo(HISTORY_DAYS + 1) })], { now: NOW }) === null
+    && pickFallback([fromInsider({ title: 'D', action: 'buy', totalValue: 1, filingDate: daysAgo(HISTORY_DAYS - 1) })], { now: NOW }) !== null);
+  ok('…and it reaches back further than any precedence row, or it would add nothing',
+    HISTORY_DAYS > Math.max(...PRECEDENCE.map((p) => p.days)));
+
+  // ⚠️ ONLY THE TWO TRANSACTION FAMILIES. A filing or a wire story reaching the fallback would mean
+  // an old headline printed as if it were a change.
+  ok('⚠️ a stale filing is not a fallback candidate',
+    pickFallback([fromFiling({ primaryLabel: 'Merger', material: true, filedAt: daysAgo(40) })], { now: NOW }) === null);
+  ok('…nor is a stale wire story',
+    pickFallback([fromWire({ headline: 'h', importance: 3, publishedAt: daysAgo(40) })], { now: NOW }) === null);
+
+  // ⚠️ THE FLAG THE ROW RENDERS QUIETLY FROM IS SET ON THE FALLBACK AND ONLY THERE.
+  ok('⚠️ a fallback line is marked historical', pickFallback([oldBuy], { now: NOW }).historical === true);
+  ok('…and a qualifying line never is', line([recentSale], [oldBuy]).historical === undefined);
+  ok('the reason names the family it came from',
+    pickFallback([oldDisclosure], { now: NOW }).why === 'historical-congress');
+}
+
 L('⚠️ SOURCE-APPROPRIATE WINDOWS, AND A FUTURE DATE IS BAD DATA');
 {
   ok('a material filing older than its window is not a change',
@@ -242,13 +308,14 @@ L('⚠️ ONE BATCHED REQUEST, AND EXISTING INSPECTORS');
   // ⚠️ THE FAILURE THIS AVOIDS: one request per symbol per source, on every poll. Adding the wire
   // added a FAMILY, not a request — it is one lateral inside one statement.
   ok('⚠️ the changes ride on the request the Watchlist already makes', /changes \}/.test(route));
+  // One statement per source: filings, insiders, congress, wire, and the two fallback reads.
   ok('…and each source is ONE statement for the whole list',
-    (route.match(/distinct on \(ticker/g) || []).length === 3
+    (route.match(/distinct on \(ticker/g) || []).length === 5
     && (route.match(/cross join lateral/g) || []).length === 1);
   ok('⚠️ …with no per-symbol loop around a query',
     !/for \(const sym of syms\)[\s\S]{0,400}(db\.execute|await db)/.test(route));
   ok('…bounded by the same symbol list the flags use',
-    (route.match(/ticker = any\(\$\{arr\}::text\[\]\)/g) || []).length === 3
+    (route.match(/ticker = any\(\$\{arr\}::text\[\]\)/g) || []).length === 5
     && /unnest\(\$\{arr\}::text\[\]\)/.test(route));
   ok('⚠️ …and by the same windows the display honours',
     /make_interval\(days => \$\{WINDOW_DAYS\[CHANGE\.FILING\]\}\)/.test(route)
@@ -262,8 +329,10 @@ L('⚠️ ONE BATCHED REQUEST, AND EXISTING INSPECTORS');
     (route.match(/catch \{ return \[\]; \}/g) || []).length === (route.match(/async \(\) => \{/g) || []).length);
   ok('the 8-K label comes from the shared classifier, not a second one',
     /classifyItems\(fr\.items\)/.test(route));
+  // ⚠️ AND THE ROUTE CALLS THE COMPOSED ENTRY POINT, NOT THE TWO HALVES. Calling pickFallback
+  // itself is how a caller would accidentally let a 60-day-old sale beat this morning's 8-K.
   ok('the selection itself is not done in the route',
-    /pickChange\(\[/.test(route) && !/PRECEDENCE|rankOf/.test(route));
+    /pickLine\(\{ recent: \[/.test(route) && !/PRECEDENCE|rankOf|pickFallback/.test(route));
 
   // ⚠️ BOTH TIERS OF A FAMILY ARE FETCHED, OR THE PRECEDENCE CANNOT SEE WHAT IT PREFERS.
   ok('⚠️ the filing query keys on materiality, so a routine 8-K cannot hide a material one',
@@ -294,10 +363,45 @@ L('⚠️ ONE BATCHED REQUEST, AND EXISTING INSPECTORS');
   }
   ok('⚠️ …using the same bands the display promotes on',
     new RegExp(`\\{${NOTABLE_BANDS.join(',')}\\}`).test(route));
+  // ⚠️ SCOPED TO THE WIRE STATEMENT. A blanket ban on `ilike` broke once the congress fallback
+  // needed one to match 'Sale (Partial)' — a filter on the disclosure's own type field, which is
+  // nothing like resolving a company from headline text. What must never happen is the WIRE being
+  // matched that way, so that is what is asserted.
+  const wireStmt = (route.match(/from canonical_events ce[\s\S]*?limit 1/) || [''])[0];
   ok('⚠️ the wire is attributed by the event\'s own tickers, never by a text search',
-    /ce\.tickers @> array\[s\.ticker\]/.test(route) && !/ilike|to_tsquery|headline ~/.test(route));
+    /ce\.tickers @> array\[s\.ticker\]/.test(wireStmt)
+    && !/ilike|to_tsquery|headline ~|similar to/i.test(wireStmt));
   ok('…and reads the canonical event view, not a second news store',
     /from canonical_events ce/.test(route));
+
+  // ── ⚠️ THE FALLBACK IS BATCHED AND FILTERS IN SQL ─────────────────────────
+  //
+  // ⚠️ THE FILTER HAS TO BE IN SQL, AND THIS IS NOT AN OPTIMISATION. `distinct on (ticker)` returns
+  // the newest row; for IREN the nine newest Form 4s are all OTHER-coded and share a filing date
+  // with a real $434K Director sale. Filtering in the display would have received an OTHER row,
+  // produced null from it and left the row blank with a legitimate sale one row further down.
+  ok('⚠️ the insider fallback filters to plain buys and sells in SQL, not after the fact',
+    /and action in \('BUY', 'SELL'\)/.test(route));
+  ok('⚠️ …and the congress fallback excludes types that are not plainly a purchase or a sale',
+    /and \(type ilike '%purchase%' or type ilike '%sale%'\)/.test(route));
+  ok('…both bounded by the same history bound the display honours',
+    (route.match(/make_interval\(days => \$\{HISTORY_DAYS\}\)/g) || []).length === 2);
+  // ⚠️ IN THE SAME BATCH, SO A BLANK ROW COSTS NO EXTRA ROUND TRIP. Fetching them only for the
+  // symbols that came back empty would be a second serial hop on every poll with an empty row.
+  ok('⚠️ the fallback reads ride the same Promise.all, not a second round trip',
+    /const \[news, halt, filings, insiders, congress, wire, histInsiders, histCongress\] = await Promise\.all\(\[/.test(route)
+    && !/await Promise\.all\(\[[\s\S]*await Promise\.all\(\[/.test(route));
+  ok('…and the same readers build them, so the wording rules live in one place',
+    (route.match(/fromInsider\(\{/g) || []).length === 1 && (route.match(/fromCongress\(\{/g) || []).length === 1);
+  ok('⚠️ quote polling is untouched', !/getQuotes|market-data|realtime/.test(route));
+
+  // ── ⚠️ A HISTORICAL LINE IS VISUALLY QUIETER, IN THE SAME LAYOUT ───────────
+  ok('⚠️ the row reads the fallback flag rather than re-deriving age',
+    /const old = change\.historical === true;/.test(changeLine));
+  ok('⚠️ …and a 60-day-old transaction is dimmer than a current one',
+    /color: old \? C\.dim : C\.muted/.test(changeLine) && /color: old \? C\.hint : C\.dim/.test(changeLine));
+  ok('…its marker loses its fill rather than its place', /background: 'transparent', border: `1px solid \$\{C\.hint\}`/.test(changeLine));
+  ok('⚠️ the age shown is still the true age, not softened', /changeAgo\(change\.at\)/.test(changeLine));
 
   // ⚠️ EXISTING INSPECTORS, NOT NEW ONES.
   ok('⚠️ a company-event line opens the existing news inspector',
