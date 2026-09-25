@@ -867,7 +867,7 @@ function useNavOverflow(count) {
 export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
-  const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Fear & Greed", "Dividends", "Insiders", "Politicians", "Institutions"];
+  const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Dividends", "Insiders", "Politicians", "Institutions"];
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   // Where the fixed-position panel goes, measured from the button when it opens. Fixed coordinates

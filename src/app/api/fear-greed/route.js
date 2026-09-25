@@ -29,8 +29,21 @@ export async function GET() {
         zones: ZONES,
       }, { status: 200, headers: { 'cache-control': 'public, s-maxage=60' } });
     }
+    // ⚠️ LABELS COME FROM THE LIVE REGISTRY, NOT FROM THE CACHED PAYLOAD.
+    //
+    // buildPayload bakes each component's label and description in at build time, so a rename would
+    // keep serving the old wording until the next daily cron — up to 24 hours of the UI calling
+    // Realized Volatility "Market Volatility". The scores stay exactly as computed; only the words
+    // are re-read from COMPONENTS, which is the single place they are defined.
+    const meta = new Map(COMPONENTS.map((m) => [m.key, m]));
+    const components = (payload.components || []).map((c) => {
+      const m = meta.get(c.key);
+      return m ? { ...c, label: m.label, meaning: m.meaning } : c;
+    });
+
     return Response.json({
       ...payload,
+      components,
       source,
       minComponents: MIN_COMPONENTS,
       normalizationWindow: NORM_WINDOW,

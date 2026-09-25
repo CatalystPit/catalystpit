@@ -7,6 +7,7 @@ import ConsensusTeaser from "./ConsensusTeaser";
 import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mjs";
 import { deskSelection } from "../lib/impact";
 import HeatMap from "./HeatMap";
+import FearGreedCard from "./FearGreedCard";
 import CompactChart from "./chart/CompactChart";
 import {
   C, CARD_COLORS,
@@ -796,6 +797,11 @@ export default function CatalystPit() {
               Cancel anytime · No contracts
             </p>
           </div>
+
+          {/* CATALYST PIT FEAR & GREED — the compact rail read. Deliberately score + zone + scale
+              + the three comparison points only; the five-component breakdown and the history chart
+              need room to be readable and live on /fear-greed, which the whole card links to. */}
+          <FearGreedCard/>
 
           {/* MARKET HEAT MAP — full-market treemap. Replaces the old compact insider/politician
               rails (which duplicated the main tables on the homepage). */}

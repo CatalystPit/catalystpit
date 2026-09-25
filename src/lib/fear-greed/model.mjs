@@ -206,7 +206,10 @@ export const COMPONENTS = Object.freeze([
   },
   {
     key: 'volatility',
-    label: 'Market Volatility',
+    // ⚠️ THE LABEL SAYS REALIZED BECAUSE THE NUMBER IS REALIZED. 'Market Volatility' beside a
+    // sentiment gauge invites a reader to assume VIX; this is computed from SPY's own returns and
+    // must never be read as implied volatility.
+    label: 'Realized Volatility',
     direction: DIRECTION.HIGHER_IS_FEAR,
     source: 'Our own licensed daily bars for SPY.',
     calculation: 'Annualised standard deviation of the last 21 daily log returns of SPY '
@@ -234,14 +237,18 @@ export const COMPONENTS = Object.freeze([
   },
   {
     key: 'credit',
-    label: 'Credit Appetite',
+    label: 'Credit Risk Appetite',
     direction: DIRECTION.HIGHER_IS_GREED,
     source: 'Our own licensed daily bars for HYG (high-yield corporate bonds) and IEF '
       + '(7-10 year Treasuries).',
     calculation: '20-session total return of HYG minus the 20-session total return of IEF.',
+    // ⚠️ WHAT THIS IS NOT. A component sitting next to the words "credit" and "high-yield" will be
+    // read as a spread unless it says otherwise. It is the RELATIVE PRICE PERFORMANCE of two bond
+    // ETFs — it moves with risk appetite, and it is not a yield measurement of any kind.
     meaning: 'Whether the bond market is paying up for credit risk or hiding in government paper. '
-      + 'This is a deliberate ETF-relative-performance methodology, chosen because Catalyst Pit has '
-      + 'no entitled source for option-adjusted credit spreads.',
+      + 'This measures the 20-session RELATIVE PRICE PERFORMANCE of HYG against IEF. It is a '
+      + 'market-price risk-appetite measure and is NOT a direct measurement of high-yield credit '
+      + 'spreads, an option-adjusted spread, or a junk-bond yield spread.',
   },
 ]);
 
@@ -280,8 +287,10 @@ export const METHODOLOGY = Object.freeze({
     },
     {
       name: 'Credit spreads (option-adjusted)',
-      why: 'These come from public macro series we have no ingestion for. The Credit Appetite '
-        + 'component uses a deliberate, disclosed ETF-relative methodology instead.',
+      why: 'These come from public macro series we have no ingestion for. Credit Risk Appetite is '
+        + 'NOT a substitute for them: it reads the relative PRICE performance of two bond ETFs, '
+        + 'which moves with risk appetite but is not a yield-spread measurement and is never '
+        + 'presented as one.',
     },
     {
       name: 'Safe-haven demand (equities vs Treasuries)',

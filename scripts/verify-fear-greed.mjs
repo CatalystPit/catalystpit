@@ -278,10 +278,40 @@ check('⚠️ excluded components are disclosed with reasons',
   METHODOLOGY.excluded.length >= 3 && METHODOLOGY.excluded.every((x) => x.why.length > 40));
 check('⚠️ the volatility component is labelled realized, never implied',
   /realized/i.test(COMPONENTS.find((x) => x.key === 'volatility').meaning));
+
+// ── USER-FACING NAMES ────────────────────────────────────────────────────────
+//
+// The labels are what a reader actually sees, and both of these carry a claim. "Market Volatility"
+// invites the assumption that it is VIX; "Credit Appetite" invites the assumption that it is a
+// spread. Neither is true, so both names are pinned here rather than left to drift.
+{
+  const vol = COMPONENTS.find((x) => x.key === 'volatility');
+  const cred = COMPONENTS.find((x) => x.key === 'credit');
+  check('⚠️ the volatility component is NAMED Realized Volatility', vol.label === 'Realized Volatility');
+  check('...and its label never says VIX or implied', !/vix|implied/i.test(vol.label));
+  check('⚠️ the credit component is NAMED Credit Risk Appetite', cred.label === 'Credit Risk Appetite');
+  check('⚠️ and it states outright that it is NOT a credit-spread measurement',
+    /not a direct measurement/i.test(cred.meaning) && /spread/i.test(cred.meaning));
+  check('...naming the two instruments and the window it compares them over',
+    /HYG/.test(cred.meaning) && /IEF/.test(cred.meaning) && /20-session/.test(cred.meaning));
+  check('...and describing it as relative PRICE performance',
+    /relative price performance/i.test(cred.meaning));
+  check('⚠️ no component label claims to be an option-adjusted spread',
+    COMPONENTS.every((x) => !/option-adjusted|yield spread/i.test(x.label)));
+  check('the excluded note keeps credit spreads separate from this component',
+    METHODOLOGY.excluded.some((x) => /credit spreads/i.test(x.name) && /not a substitute/i.test(x.why)));
+}
 check('⚠️ the absence of a VIX source is stated outright',
   METHODOLOGY.excluded.some((x) => /vix/i.test(x.name) && /entitled|404|authoriz/i.test(x.why)));
-check('⚠️ the ETF methodology for credit is disclosed as a deliberate choice',
-  /deliberate/i.test(COMPONENTS.find((x) => x.key === 'credit').meaning));
+// ⚠️ THE POINT IS THAT THE ETF BASIS IS VISIBLE, not that any particular adjective appears. This
+// used to grep the credit description for "deliberate"; the wording was rewritten to say plainly
+// what the component is and is not, which is a stronger disclosure and dropped that word. Assert
+// the disclosure itself: a reader is told which two instruments produce the number.
+check('⚠️ the ETF basis for credit is disclosed, in both the source and the calculation',
+  ['HYG', 'IEF'].every((s) => {
+    const c = COMPONENTS.find((x) => x.key === 'credit');
+    return c.source.includes(s) && c.calculation.includes(s);
+  }));
 check('⚠️ the product never invokes CNN',
   !/cnn/i.test(JSON.stringify(METHODOLOGY) + JSON.stringify(COMPONENTS)));
 check('the index is named Catalyst Pit Fear & Greed', METHODOLOGY.name === 'Catalyst Pit Fear & Greed');
