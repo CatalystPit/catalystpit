@@ -29,6 +29,7 @@
 // that actually shipped — current prices disclaimed as delayed.
 
 import { useCallback, useEffect, useState } from 'react';
+import AlertToggle from '../AlertToggle';
 import { C, Badge, TickerLogo } from '../../lib/cp-shared';
 import { inspectEvidence, evidenceInspectorAvailable } from '../../lib/terminalEvidenceBus';
 
@@ -239,9 +240,10 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
         <button type="button" onClick={() => onWatch(r.ticker)} disabled={busy === r.ticker}
           style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, background: 'none', border: 'none',
             padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>Watch</button>
-        <button type="button" onClick={() => onAlert(r.ticker)} disabled={busy === r.ticker}
-          style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, background: 'none', border: 'none',
-            padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>Alert</button>
+        {/* ⚠️ THE ACTION NOW MEANS "MONITOR THIS TICKER", NOT "ALERT ME ABOUT THIS ROW". A scan row
+            is a moment; the subscription outlives it. Same text, same weight, same row height —
+            enabled state is a colour and one extra word. */}
+        <AlertToggle symbol={r.ticker} onNotice={onAlert} />
       </div>
     </div>
   );
@@ -356,17 +358,10 @@ export function ScanBoard({ board, data, loading = false, errorText = null, onRe
     } catch { setToast('Could not add'); } finally { setBusy(null); setTimeout(() => setToast(null), 2500); }
   };
 
-  const alert = async (ticker) => {
-    setBusy(ticker);
-    try {
-      // `news` needs no threshold and is event-driven, which is the honest default from a scan row:
-      // an RVOL alert would be meaningless here because there is no live volume to trigger it.
-      const r = await fetch('/api/alerts', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: ticker, type: 'news' }) });
-      setToast(r.ok ? `Alert set on ${ticker}` : 'Could not set alert');
-    } catch { setToast('Could not set alert'); } finally { setBusy(null); setTimeout(() => setToast(null), 2500); }
-  };
+  // ⚠️ THE ROW OWNS THE SUBSCRIPTION NOW; THIS ONLY SHOWS WHAT HAPPENED. AlertToggle talks to
+  // /api/evidence-alerts through the shared subscription set, so a hundred rows cost one request
+  // instead of a hundred. All that is left here is the board's existing toast.
+  const notice = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
   const rows = state?.rows || [];
 
@@ -428,7 +423,7 @@ export function ScanBoard({ board, data, loading = false, errorText = null, onRe
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {rows.map((r) => (
-            <Row key={r.ticker} r={r} onWatch={watch} onAlert={alert} busy={busy} onPick={onPick} />
+            <Row key={r.ticker} r={r} onWatch={watch} onAlert={notice} busy={busy} onPick={onPick} />
           ))}
         </div>
       )}

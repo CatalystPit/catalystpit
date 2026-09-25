@@ -583,7 +583,10 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
     ['freshness', /r\.freshnessLabel/], ['structure', /r\.structure/], ['evidence', /r\.evidence/],
     ['JOIN', /\{r\.join\}/], ['facts', /r\.facts/],
     ['Chart action', />Chart</], ['Evidence action', />Evidence</],
-    ['Watch action', />Watch</], ['Alert action', />Alert</],
+    // ⚠️ THE ALERT ACTION MOVED INTO A COMPONENT; IT DID NOT GO AWAY. It became the shared
+    // AlertToggle so Pit Scan, the Terminal watchlist and the ticker page cannot drift apart on
+    // wording or state. The assertion follows it rather than being deleted with the literal.
+    ['Watch action', />Watch</], ['Alert action', /<AlertToggle symbol=\{r\.ticker\}/],
   ]) {
     ok(`the card still renders ${label}`, mut('dropsfields') ? false : re.test(rows));
   }
@@ -677,8 +680,16 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   // The row's actions point at surfaces that already exist.
   ok('Evidence links into the existing ticker experience', /\/ticker\/\$\{encodeURIComponent/.test(rows));
   ok('Watch uses the existing watchlist API', /'\/api\/watchlist'/.test(rows));
-  ok('Alert uses the existing alerts API and fires no synthetic tick',
-    /'\/api\/alerts'/.test(rows) && /type: 'news'/.test(rows) && !/setInterval\([^)]*tick/i.test(rows));
+  // ⚠️ THE ALERT ACTION NOW MEANS SOMETHING DIFFERENT, AND BETTER. It used to create a `news` rule
+  // in the generic alerts engine — a rule keyed to fresh 8-Ks, created from a row that had no live
+  // volume to trigger anything else. It now subscribes the TICKER to Evidence Alerts, which is what
+  // a trader clicking Alert on a scan row actually wants: not "tell me about this row", but
+  // "monitor this name". The assertion moves with the behaviour; what it still guards is that the
+  // row delegates to an existing API rather than growing its own, and invents no ticking clock.
+  ok('Alert subscribes the ticker through the shared control, and fires no synthetic tick',
+    /<AlertToggle symbol=\{r\.ticker\}/.test(rows) && !/'\/api\/alerts'/.test(rows)
+    && /\/api\/evidence-alerts/.test(readFileSync(new URL('../src/lib/alerts/alert-subs-client.js', import.meta.url), 'utf8'))
+    && !/setInterval\([^)]*tick/i.test(rows));
 }
 
 

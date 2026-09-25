@@ -277,6 +277,9 @@
     },
     "src/app/api/institutions/route.js": {
       "maxDuration": 60
+    },
+    "src/app/api/cron/evidence-alerts/route.js": {
+      "maxDuration": 60
     }
   }
 }

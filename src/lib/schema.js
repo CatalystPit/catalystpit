@@ -865,3 +865,44 @@ export const securitySnapshotRun = pgTable('security_snapshot_run', {
   written:    integer('written').notNull().default(0),
   source:     text('source').notNull().default('screener_rebuild'),
 });
+
+// ── EVIDENCE ALERTS ──────────────────────────────────────────────────────────
+// "Tell me when something meaningful becomes publicly knowable about this ticker."
+//
+// The two unique indexes below are the product guarantees, held in Postgres rather than in the
+// worker: one subscription per person per ticker, and one alert per person per real-world event.
+// See lib/alerts/evidence-alert-store.js, which also creates these idempotently at runtime
+// (the pattern lib/alerts.js and lib/notifications.js already use).
+export const evidenceAlertSubs = pgTable('evidence_alert_subs', {
+  id:        serial('id').primaryKey(),
+  userId:    text('user_id').notNull(),
+  ticker:    text('ticker').notNull(),
+  enabled:   boolean('enabled').notNull().default(true),
+  // ⚠️ THE POINT-IN-TIME WATERMARK, AND IT IS NOT createdAt. Re-enabling starts the clock again so
+  // a person who turns alerts back on today is not handed months of backlog.
+  enabledAt: timestamp('enabled_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uqSub:     uniqueIndex('uq_evidence_alert_sub').on(t.userId, t.ticker),
+  idxTicker: index('idx_evidence_alert_subs_ticker').on(t.ticker),
+}));
+
+export const evidenceAlerts = pgTable('evidence_alerts', {
+  id:         serial('id').primaryKey(),
+  userId:     text('user_id').notNull(),
+  ticker:     text('ticker').notNull(),
+  // The Evidence Engine's own canonical identity for the event. This column is what makes one
+  // press release that also becomes a wire item and an SEC filing exactly one alert.
+  evidenceId: text('evidence_id').notNull(),
+  family:     text('family').notNull(),        // catalyst | insider | institution | congress
+  title:      text('title').notNull(),         // the family's display name
+  detail:     text('detail').notNull(),        // the engine's own factual summary, unedited
+  url:        text('url'),
+  // ⚠️ WHEN THE MARKET COULD HAVE KNOWN — never the transaction, trade or quarter-end date.
+  publicTime: timestamp('public_time', { withTimezone: true }).notNull(),
+  read:       boolean('read').notNull().default(false),
+  createdAt:  timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uqAlert:  uniqueIndex('uq_evidence_alert').on(t.userId, t.evidenceId),
+  idxUser:  index('idx_evidence_alerts_user').on(t.userId, t.createdAt),
+}));

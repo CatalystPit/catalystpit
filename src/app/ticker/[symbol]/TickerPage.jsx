@@ -13,6 +13,7 @@ import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
+import AlertToggle from '../../../components/AlertToggle';
 import ConsensusPanel from '../../../components/ConsensusPanel';
 import WhatChanged from '../../../components/WhatChanged';
 import MarketStructure from '../../../components/MarketStructure';
@@ -192,7 +193,7 @@ function Hero({ data, earnings }) {
             <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
           </span>
           <span style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{data.name}</span>
-          <span style={{ marginLeft: 'auto', alignSelf: 'center' }}><WatchlistStar symbol={data.symbol} /></span>
+          <span style={{ marginLeft: 'auto', alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 10 }}><AlertToggle symbol={data.symbol} variant="button" /><WatchlistStar symbol={data.symbol} /></span>
         </div>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: '0.5px' }}>
           {data.exchange || '—'}{data.industry ? ` · ${data.industry}` : ''}

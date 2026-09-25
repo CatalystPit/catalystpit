@@ -1,200 +1,317 @@
-// EVIDENCE ALERTS — notifying watchers about public evidence on names they watch.
+// EVIDENCE ALERTS V1 — the behaviour, not the plumbing.
 //
-// ── WHAT THESE ASSERTIONS PROTECT ───────────────────────────────────────────
+// An alerting feature has exactly two ways to destroy its own credibility, and both are silent:
 //
-// An alert interrupts a person. The two ways that goes wrong are firing twice for one event, and
-// firing for something that is not an event. Both are covered here with fixtures, driven through
-// injected seams so nothing touches a database.
+//   1. IT TELLS YOU ABOUT SOMETHING THAT WAS ALREADY PUBLIC. You subscribe at noon and immediately
+//      receive a 13F "alert" about a quarter that ended in June. Every backtest built on that
+//      product is unreproducible, and the trader cannot tell by looking.
+//   2. IT TELLS YOU THE SAME THING FOUR TIMES. One press release reaches us as a press release, a
+//      wire item, an SEC filing and a Consensus input. Four bells for one event trains the reader
+//      to ignore the bell.
 //
-// Run: node scripts/verify-evidence-alerts.mjs [--mutate=<mode>]
+// Everything below exists to hold those two shut, plus the entitlement boundary and the promise
+// that no surface asks the server one question per ticker.
+//
+// Run: node scripts/verify-evidence-alerts.mjs
 
-process.env.DATABASE_URL ||= 'postgres://verify:verify@127.0.0.1:1/verify';
+import { readFileSync } from 'node:fs';
+import {
+  ALERTABLE_FAMILIES, FAMILY_LABEL, LOOKBACK_DAYS, RETENTION_DAYS, UNREAD_RETENTION_DAYS,
+  toAlert, alertsFor,
+} from '../src/lib/alerts/evidence-alerts.mjs';
+import { FAMILY, makeEvidence, FUTURE_TOLERANCE_MS } from '../src/lib/evidence/model.mjs';
 
-import fs from 'node:fs';
-const lib = await import('../src/lib/evidence-alert-rules.mjs');
-const { alertKey, insiderAccessionKey, alertBody, ALERTABLE_FAMILIES, LOOKBACK_HOURS } = lib;
-
-const L = (s = '') => console.log(s);
-const MUT = (process.argv.find((a) => a.startsWith('--mutate')) || '').split('=')[1]
-  || (process.argv.includes('--mutate') ? 'all' : '');
-const mut = (m) => MUT === m || MUT === 'all';
 let pass = 0, fail = 0;
-const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail++; L(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
-const read = (p) => fs.readFileSync(new URL(p, new URL('..', import.meta.url)), 'utf8');
+const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
+const L = (s) => console.log(`\n=== ${s} ===`);
+const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+const code = (src) => src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
 
-const ACC = '0001104659-26-108935';
-const eightK = {
-  ticker: 'TELA', family: 'catalyst', type: 'sec_8k_delisting',
-  summary: 'Delisting / listing-standard notice', publicTime: '2026-09-18T20:05:35.000Z',
-  source: 'sec_8k', sourceId: ACC, evidenceId: `TELA|CATALYST|SEC_8K_DELISTING|${ACC}`,
-  url: 'https://sec.gov/x', context: { text: 'First listing notice in four years' },
-};
-const congress = {
-  ticker: 'ALK', family: 'congress', type: 'congress_disclosure',
-  summary: 'Julie Johnson disclosed a sell',
-  // The real ALK shape: traded 2025-10-21, DISCLOSED 2026-08-06 — a 289-day lag.
-  eventTime: '2025-10-21T00:00:00.000Z', publicTime: '2026-08-06T00:00:00.000Z',
-  source: 'congress', sourceId: 'cong-99', evidenceId: 'ALK|CONGRESS|DISCLOSURE|cong-99',
-  facts: { transactionDate: '2025-10-21', disclosureDate: '2026-08-06' },
-};
-const insider = {
-  ticker: 'TELA', family: 'insider', type: 'insider_officer_buy',
-  summary: 'Chief Executive Officer open-market purchase of $186K',
-  publicTime: '2026-09-18T00:00:00.000Z',
-  source: 'sec_form4', sourceId: '0001456817-26-000015',
-  evidenceId: 'TELA|INSIDER|INSIDER_OFFICER_BUY|0001456817-26-000015',
-};
-const thirteenF = {
-  ticker: 'ALK', family: 'institution', type: 'institution_breadth_change',
-  summary: 'Institutions holding this stock increased from 434 to 478',
-  publicTime: '2026-08-06T00:00:00.000Z', referencePeriod: 'Q2 2026',
-  source: 'sec_13f', sourceId: '13f|ALK|2026-06-30',
+const NOW = Date.parse('2026-09-25T16:00:00Z');
+const hoursAgo = (h) => new Date(NOW - h * 3600000).toISOString();
+const daysAgo = (d) => new Date(NOW - d * 86400000).toISOString();
+
+/** A real evidence object, built through the engine's own constructor so it is valid by its rules. */
+const ev = (over = {}) => {
+  const r = makeEvidence({
+    ticker: 'MSTR', family: FAMILY.CATALYST, type: 'sec_8k_other', source: 'sec_8k', sourceId: '0001-26-000001',
+    publicTime: hoursAgo(1), summary: 'Other material event', url: 'https://sec.gov/x',
+    ...over,
+  }, { now: NOW });
+  return r.ok ? r.evidence : null;
 };
 
-// A fake claim table: the primary key, modelled.
-function fakeStore() {
-  const seen = new Set();
-  return {
-    seen,
-    claim: async (userId, key) => {
-      const k = `${userId}|${key}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    },
-  };
-}
-
-L('=== ONE EVENT, ONE ALERT ===');
+L('⚠️ WHAT MAY BECOME AN ALERT — THE ENGINE DECIDES, NOT THIS LAYER');
 {
-  const store = fakeStore();
-  const first = await store.claim('u1', alertKey(eightK));
-  const second = await store.claim('u1', alertKey(eightK));
-  ok('the first claim on an 8-K succeeds', first === true);
-  ok('the same 8-K cannot alert twice',
-    mut('doublefire') ? false : second === false);
-  // A second pass over the same window is the normal case, not an edge case.
-  const third = await store.claim('u1', alertKey({ ...eightK, summary: 'reworded by the engine' }));
-  ok('…not even when the summary text changes',
-    mut('doublefire') ? false : third === false);
-  // Two users watching the same name each get it once.
-  ok('a different watcher still gets their own alert',
-    (await store.claim('u2', alertKey(eightK))) === true);
-  ok('…and only once', (await store.claim('u2', alertKey(eightK))) === false);
+  ok('the four evidence families are alertable',
+    [FAMILY.CATALYST, FAMILY.INSIDER, FAMILY.INSTITUTION, FAMILY.CONGRESS].every((f) => ALERTABLE_FAMILIES.includes(f)));
+  // ⚠️ MARKET IS THE ONE EXCLUSION, AND THE ENGINE ALREADY SAYS WHY: it is CONTEXT, it "never
+  // creates evidence". Alerting on it would be a price alert in an evidence costume.
+  ok('⚠️ the market family is NOT alertable — a price move is not a public disclosure',
+    !ALERTABLE_FAMILIES.includes(FAMILY.MARKET)
+    && toAlert({ ...ev(), family: FAMILY.MARKET }) === null);
+  ok('…and it is the only exclusion, so no family is quietly dropped',
+    ALERTABLE_FAMILIES.length === Object.values(FAMILY).length - 1);
+
+  // ⚠️ NO SECOND MATERIALITY RULE. If this file filtered on materiality or direction it would be a
+  // second evidence methodology, which is the thing the brief forbids most explicitly.
+  const src = code(read('../src/lib/alerts/evidence-alerts.mjs'));
+  ok('⚠️ nothing here scores, ranks or re-judges materiality',
+    !/materiality|score|rank|weight|threshold|bullish|bearish|conviction/i.test(src));
+  ok('⚠️ …and the point-in-time filter is the engine\'s own changedSince, not a reimplementation',
+    /changedSince\(/.test(src) && !/publicTime\s*>\s*(?!=)/.test(src.replace(/changedSince[\s\S]{0,80}/g, '')));
+
+  ok('every word shown comes from the engine',
+    toAlert(ev()).detail === 'Other material event' && toAlert(ev()).title === FAMILY_LABEL[FAMILY.CATALYST]);
+  ok('…and the family name characterises nothing',
+    !/good|bad|strong|weak|bullish|bearish|buy|sell signal/i.test(Object.values(FAMILY_LABEL).join(' ')));
 }
 
-L('\n=== THE FORM 4 EMAIL AND THE BELL SHARE ONE KEY ===');
+L('⚠️ POINT-IN-TIME: NEVER AN ALERT FOR SOMETHING ALREADY PUBLIC');
 {
-  // The mailer knows accessions; the engine knows evidence objects. They must collide.
-  const store = fakeStore();
-  const emailed = await store.claim('u1', insiderAccessionKey(insider.sourceId));
-  ok('the mailer claims the accession it sent', emailed === true);
-  const bell = await store.claim('u1', alertKey(insider));
-  ok('the bell then skips the same filing',
-    mut('overlap') ? false : bell === false,
-    `${insiderAccessionKey(insider.sourceId)} vs ${alertKey(insider)}`);
-  ok('the two keys are literally the same string',
-    mut('overlap') ? false : insiderAccessionKey(insider.sourceId) === alertKey(insider));
+  const subscribedAt = hoursAgo(2);
+  const older = ev({ publicTime: hoursAgo(5), summary: 'Already public' });
+  const newer = ev({ publicTime: hoursAgo(1), summary: 'Became public after' });
 
-  // And the reverse order: whichever runs first owns the event.
-  const s2 = fakeStore();
-  ok('the bell can win the race instead', (await s2.claim('u1', alertKey(insider))) === true);
-  ok('…and then the mailer skips it',
-    (await s2.claim('u1', insiderAccessionKey(insider.sourceId))) === false);
+  // ⚠️ REQUIREMENT 4. This is the whole feature: subscribing must not hand you the past.
+  ok('⚠️ evidence public BEFORE the subscription generates nothing',
+    alertsFor([older], subscribedAt, { now: NOW }).length === 0);
+  // ⚠️ REQUIREMENT 5.
+  ok('⚠️ evidence public AFTER the subscription generates exactly one alert',
+    alertsFor([newer], subscribedAt, { now: NOW }).length === 1);
+  ok('…and a mixed batch yields only the new one',
+    alertsFor([older, newer], subscribedAt, { now: NOW }).map((a) => a.detail).join() === 'Became public after');
+  ok('evidence exactly AT the watermark is not new', alertsFor([ev({ publicTime: subscribedAt })], subscribedAt, { now: NOW }).length === 0);
 
-  // The mailer only claims what it actually sent.
-  const route = read('src/app/api/cron/insider-alerts/route.js');
-  ok('the mailer claims only on a successful send',
-    mut('claimsonfail') ? false : /const ok = await sendEmail\(/.test(route) && /if \(ok\) \{/.test(route));
-  ok('…and selects the accession it needs to claim with',
-    /accession: insiderTrades\.accession/.test(route));
-  ok('…and its bookkeeping cannot fail a send that already happened',
-    /catch \{ \/\* bookkeeping must never fail a send/.test(route));
+  // ⚠️ REQUIREMENT 8 — Form 4 on filing availability, not the transaction.
+  const form4 = ev({ family: FAMILY.INSIDER, type: 'insider_cluster_buy', summary: 'SVP sold $816K',
+    eventTime: daysAgo(30), publicTime: hoursAgo(1) });
+  ok('⚠️ a Form 4 alerts on its FILING time even when the trade was a month earlier',
+    alertsFor([form4], subscribedAt, { now: NOW }).length === 1);
+  ok('…and NOT on the transaction date, which would have been outside the window',
+    alertsFor([ev({ family: FAMILY.INSIDER, type: 'insider_cluster_buy', summary: 's', eventTime: hoursAgo(1), publicTime: daysAgo(30) })],
+      subscribedAt, { now: NOW }).length === 0);
+
+  // ⚠️ REQUIREMENT 7 — Congress on disclosure, not trade date.
+  const congress = ev({ family: FAMILY.CONGRESS, type: 'congress_purchase',
+    summary: 'Representative bought $1,001 - $15,000', eventTime: daysAgo(44), publicTime: hoursAgo(1) });
+  ok('⚠️ a congressional disclosure alerts on the DISCLOSURE date, 44 days after the trade',
+    alertsFor([congress], subscribedAt, { now: NOW }).length === 1
+    && alertsFor([congress], subscribedAt, { now: NOW })[0].publicTime === new Date(Date.parse(hoursAgo(1))).toISOString());
+
+  // ⚠️ 13F — the quarter end is not the alert timestamp.
+  const f13 = ev({ family: FAMILY.INSTITUTION, type: 'institution_breadth_change', summary: '12 new holders',
+    eventTime: daysAgo(87), publicTime: hoursAgo(1), referencePeriod: '2026Q2' });
+  ok('⚠️ a 13F alerts on the filing, not the quarter end three months earlier',
+    alertsFor([f13], subscribedAt, { now: NOW }).length === 1);
+
+  // ⚠️ REQUIREMENT 9 — fail closed.
+  ok('⚠️ an unreadable watermark generates NOTHING rather than everything',
+    alertsFor([newer], 'not-a-date', { now: NOW }).length === 0
+    && alertsFor([newer], null, { now: NOW }).length === 0
+    && alertsFor([newer], undefined, { now: NOW }).length === 0);
+  ok('⚠️ a future publicTime beyond the engine\'s tolerance is refused',
+    alertsFor([{ ...ev(), publicTime: new Date(NOW + FUTURE_TOLERANCE_MS + 60000).toISOString() }], subscribedAt, { now: NOW }).length === 0);
+  ok('…and a malformed publicTime is refused by the row builder too',
+    toAlert({ ...ev(), publicTime: 'yesterday' }) === null && toAlert({ ...ev(), publicTime: null }) === null);
+  ok('⚠️ evidence with no canonical id cannot alert, because it cannot be deduped',
+    toAlert({ ...ev(), evidenceId: '' }) === null && toAlert({ ...ev(), evidenceId: null }) === null);
+  ok('⚠️ an ambiguous ticker cannot alert', toAlert({ ...ev(), ticker: '' }) === null
+    && toAlert({ ...ev(), ticker: 'not a ticker' }) === null);
+  ok('…and evidence with nothing to say is not padded with an invented sentence',
+    toAlert({ ...ev(), summary: null, type: null }) === null);
 }
 
-L('\n=== CONGRESS USES THE DISCLOSURE DATE ===');
+L('⚠️ DEDUPLICATION: ONE REAL-WORLD EVENT, ONE ALERT');
 {
-  const body = alertBody('ALK', congress);
-  ok('the alert reports the disclosure date',
-    mut('txdate') ? false : body.includes('2026-08-06'), body);
-  ok('…and never the transaction date',
-    mut('txdate') ? false : !body.includes('2025-10-21'), body);
-  // The engine supplies publicTime; the rules must not reach past it for a different clock.
-  // Against the CODE — the file explains the 289-day lag in prose, which is the rule being
-  // stated, not a second clock being read.
-  const rulesCode = read('src/lib/evidence-alert-rules.mjs')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ok('the alert body reads publicTime and nothing else',
-    mut('txdate') ? false
-      : /ev\.publicTime/.test(rulesCode) && !/transactionDate|eventTime/.test(rulesCode));
+  // ⚠️ REQUIREMENT 6. The engine's evidenceId is the identity; this layer must not add a second one.
+  const one = ev({ summary: 'Material agreement', type: 'sec_8k_material_agreement' });
+  ok('⚠️ the same evidence twice in one batch yields one alert',
+    alertsFor([one, { ...one }], hoursAgo(3), { now: NOW }).length === 1);
+  ok('…and identity is the ENGINE\'s canonical id, not one minted here',
+    toAlert(one).evidenceId === one.evidenceId && /\|/.test(one.evidenceId));
+
+  // ⚠️ AND THE DURABLE HALF IS A UNIQUE INDEX, NOT AN APPLICATION CHECK. A "have I sent this?"
+  // read-then-write races with itself across two overlapping cron runs; a unique index cannot.
+  const store = read('../src/lib/alerts/evidence-alert-store.js');
+  ok('⚠️ one alert per person per event is enforced in Postgres',
+    /CREATE UNIQUE INDEX IF NOT EXISTS uq_evidence_alert[\s\S]{0,80}\(user_id, evidence_id\)/.test(store));
+  ok('⚠️ …and re-processing is a no-op rather than an error',
+    /on conflict \(user_id, evidence_id\) do nothing/.test(store));
+  ok('⚠️ one subscription per person per ticker is enforced the same way',
+    /CREATE UNIQUE INDEX IF NOT EXISTS uq_evidence_alert_sub[\s\S]{0,80}\(user_id, ticker\)/.test(store)
+    && /on conflict \(user_id, ticker\) do update/.test(store));
+  ok('…and the worker keeps no cursor that a partial failure could advance past',
+    !/last_run|cursor|watermark_table|lastProcessed/i.test(code(read('../src/lib/alerts/evidence-alert-worker.mjs'))));
 }
 
-L('\n=== WHAT IS WORTH INTERRUPTING SOMEONE FOR ===');
+L('⚠️ RE-ENABLING STARTS THE CLOCK AGAIN');
 {
-  ok('8-K catalysts alert', ALERTABLE_FAMILIES.includes('catalyst'));
-  ok('insider filings alert', ALERTABLE_FAMILIES.includes('insider'));
-  ok('congress disclosures alert', ALERTABLE_FAMILIES.includes('congress'));
-  // ⚠️ 13F IS NOT AN ALERT. A quarterly snapshot disclosed up to 45 days late is context, not an
-  // interruption — and it is already on the timeline and in What Changed.
-  ok('13F does NOT alert',
-    mut('alerts13f') ? false : !ALERTABLE_FAMILIES.includes('institution'));
-  ok('…so a 13F event is filtered out before any claim',
-    !ALERTABLE_FAMILIES.includes(thirteenF.family));
-
-  // ⚠️ NO PRICE, NO VOLUME, NO RVOL — the alert types removed from the picker stay removed.
-  const src = read('src/lib/evidence-alerts.js').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const banned of ['rvol', 'relative volume', 'changePct', 'getQuotes']) {
-    ok(`alerts never reach for ${banned}`,
-      mut('addsprice') ? false : !new RegExp(banned, 'i').test(src));
-  }
+  const store = read('../src/lib/alerts/evidence-alert-store.js');
+  // ⚠️ THE BACKLOG BUG THIS PREVENTS: a subscription created in March, disabled, and re-enabled
+  // today would — if the watermark were created_at — deliver six months of evidence at once.
+  ok('⚠️ the watermark is enabled_at, not created_at', /enabled_at TIMESTAMPTZ NOT NULL/.test(store)
+    && /select user_id, ticker, enabled_at from evidence_alert_subs/.test(store));
+  ok('⚠️ …and it moves only on an off→on transition, so a stray re-save cannot skip pending evidence',
+    /when excluded\.enabled and not evidence_alert_subs\.enabled\s*\n?\s*then now\(\) else evidence_alert_subs\.enabled_at end/.test(store));
 }
 
-L('\n=== WATCHED TICKERS ONLY, AND ONLY REAL ONES ===');
+L('⚠️ ENTITLEMENT IS SERVER-SIDE');
 {
-  const src = read('src/lib/evidence-alerts.js');
-  ok('every pass starts from the watchlist',
-    mut('universewide') ? false : /from\(watchlist\)/.test(src));
-  ok('…and there is no market-wide path', !/screenerStocks|from\(screener/.test(src));
-  // ⚠️ INVALID TICKERS NEVER REACH THE ENGINE.
-  ok('rows are gated by isIngestableTicker',
-    mut('invalidtickers') ? false : /if \(!isIngestableTicker\(r\.ticker\)\) continue;/.test(src));
-
-  // Proven by behaviour, not only by reading: the gate is the shared one.
-  const { isIngestableTicker } = await import('../src/lib/security-identity.mjs');
-  for (const bad of ['NONE', 'N/A', '', '(CALX)', 'NYSE: VTEX']) {
-    ok(`"${bad}" is not a watchable ticker`,
-      mut('invalidtickers') ? false : !isIngestableTicker(bad));
-  }
-  ok('a real symbol still passes', isIngestableTicker('TELA'));
+  // ⚠️ REQUIREMENT 3. Hiding a button is layout, not access control.
+  const route = code(read('../src/app/api/evidence-alerts/route.js'));
+  ok('⚠️ creating a subscription requires Pro, resolved on the server',
+    /async function requirePro\(\)/.test(route) && /export async function POST/.test(route)
+    && /const gate = await requirePro\(\);/.test(route));
+  ok('…using the project\'s existing entitlement resolver, not a new one',
+    /resolveUserAccess/.test(route) && !/publicMetadata|stripe/i.test(route));
+  // ⚠️ EVERY lookup, not one of them. The route resolves entitlement twice — once to gate POST and
+  // once to tell GET whether to show the controls — and a count floor let one of the two be
+  // flipped to grant Pro on a Clerk outage while the other still read 'free'.
+  ok('⚠️ an entitlement lookup FAILURE denies rather than grants, at every call site',
+    (route.match(/catch \{ tier = 'free'; \}/g) || []).length === (route.match(/resolveUserAccess\(\)/g) || []).length
+    && (route.match(/resolveUserAccess\(\)/g) || []).length === 2
+    && !/tier = '(pro|elite)'/.test(route));
+  // ⚠️ AND READING THE SUBSCRIPTION LIST IS NOT GATED. A free user's page needs `pro:false` to
+  // render the control as an upsell; refusing the read would break the signed-in free experience.
+  ok('⚠️ the subscription list is readable without Pro, so a free page can render honestly',
+    /export async function GET\(\) \{[\s\S]{0,200}if \(!userId\) return Response\.json\(\{ pro: false, tickers: \[\] \}/.test(route)
+    && !/export async function GET\(\) \{[\s\S]{0,120}requirePro/.test(route));
+  // ⚠️ AND THE `pro` FLAG IT REPORTS IS DERIVED FROM THE TIER, FULL STOP. Widening it does not
+  // breach the POST gate, but it would show a Pro control to a free user and let them discover the
+  // feature by being refused — which is a worse first experience than not seeing it.
+  ok('⚠️ the pro flag is the tier and nothing else',
+    /const pro = PRO_TIERS\.has\(tier\);/.test(route) && !/pro = [^;]*\|\|/.test(route));
+  ok('a signed-out caller is refused', /if \(!userId\) return \{ error: 'unauthorized', status: 401 \}/.test(route));
+  ok('⚠️ …and reading your own existing alerts is not gated, so a lapse never looks like data loss',
+    !/requirePro/.test(code(read('../src/app/api/evidence-alerts/inbox/route.js'))));
+  ok('subscriptions are bounded per user', /MAX_SUBS_PER_USER/.test(read('../src/lib/alerts/evidence-alert-store.js')));
 }
 
-L('\n=== THE ALERT SAYS SOMETHING USEFUL ===');
+L('⚠️ GENERATION IS BATCHED — NO PER-TICKER RESOLUTION');
 {
-  const body = alertBody('TELA', eightK);
-  ok('it names the ticker', body.startsWith('TELA:'));
-  ok('it says what happened', body.includes('Delisting / listing-standard notice'));
-  ok('it says why that is notable', body.includes('First listing notice in four years'));
-  ok('it says when it became public', /public 2026-09-18 20:05 UTC/.test(body), body);
-  // An event with no context line still reads as a sentence.
-  ok('a plain event still reads cleanly', alertBody('ALK', congress).includes('ALK: Julie Johnson disclosed a sell'));
+  // ⚠️ REQUIREMENT 15. tickerEvidence() is ~16 round trips; running it per subscribed ticker
+  // directly is precisely the N+1 the brief forbids.
+  const w = code(read('../src/lib/alerts/evidence-alert-worker.mjs'));
+  ok('⚠️ the worker prefetches every family once for a whole chunk of tickers',
+    /loadBuildContext\(db, sql, group, \{ now \}\)/.test(w));
+  ok('⚠️ …and every resolve reads that context rather than the database',
+    /tickerEvidence\(ticker, \{ now, ctx \}\)/.test(w) && !/tickerEvidence\([^)]*\)\s*;?\s*$/m.test(w.replace(/tickerEvidence\(ticker, \{ now, ctx \}\)/g, '')));
+  ok('⚠️ …and a prefetch failure SKIPS the chunk rather than falling back to per-ticker queries',
+    /catch \{[\s\S]{0,320}failed \+= group\.length;[\s\S]{0,40}continue;/.test(w));
+  ok('it is chunked, so one run cannot hold every ticker in memory', /chunkTickers\(tickers, CHUNK\)/.test(w));
+  ok('…and bounded in both tickers and wall time',
+    /MAX_TICKERS_PER_RUN/.test(w) && /Date\.now\(\) - startedAt > budgetMs/.test(w));
+  ok('subscriptions are read in ONE statement for the whole system',
+    /select user_id, ticker, enabled_at from evidence_alert_subs/.test(read('../src/lib/alerts/evidence-alert-store.js')));
+  ok('…and delivery is one statement per batch', /insert into evidence_alerts[\s\S]{0,400}values \$\{sql\.join/.test(read('../src/lib/alerts/evidence-alert-store.js')));
+
+  // ⚠️ FAIL CLOSED IN THE WORKER TOO.
+  ok('⚠️ a resolution failure creates no alert', /catch \{[\s\S]{0,400}failed\+\+;[\s\S]{0,40}continue;/.test(w));
+  ok('⚠️ an unreadable subscriber watermark delivers nothing',
+    /if \(!Number\.isFinite\(subSince\)\) continue;/.test(w));
+  ok('⚠️ the lookback can only ever NARROW what a subscriber receives',
+    /Math\.max\(subSince, Date\.parse\(floor\)\)/.test(w));
+  ok('generation is server-side and scheduled, never the browser\'s job',
+    /export const maxDuration/.test(read('../src/app/api/cron/evidence-alerts/route.js'))
+    && JSON.parse(read('../vercel.json')).crons.some((c) => c.path === '/api/cron/evidence-alerts'));
+  ok('the cron follows the existing auth convention',
+    /x-vercel-cron|CRON_SECRET/.test(read('../src/app/api/cron/evidence-alerts/route.js')));
 }
 
-L('\n=== NO FIREHOSE ===');
+L('⚠️ THE INBOX READS ROWS, NOT THE EVIDENCE ENGINE');
 {
-  const src = read('src/lib/evidence-alerts.js');
-  ok('a single pass is capped', mut('uncapped') ? false : /MAX_ALERTS_PER_RUN/.test(src) && /fired >= limit/.test(src));
-  ok('the ticker fan-out is bounded', /MAX_TICKERS/.test(src) && /slice\(0, MAX_TICKERS\)/.test(src));
-  ok('resolver concurrency is small', lib.CONCURRENCY <= 6 && lib.CONCURRENCY > 0);
-  ok('the look-back is generous, because the key makes overlap free',
-    LOOKBACK_HOURS >= 24, `${LOOKBACK_HOURS}h`);
-  // The claim IS the dedupe — a primary key, not application logic.
-  ok('dedupe is a database primary key',
-    mut('softdedupe') ? false : /PRIMARY KEY \(user_id, alert_key\)/.test(src));
-  ok('…and the claim is an insert that returns at most once',
-    /on conflict \(user_id, alert_key\) do nothing\s*\n?\s*returning alert_key/.test(src));
-  ok('nothing is notified unless the claim succeeded',
-    mut('notifyfirst') ? false : /if \(!\(await claim\(/.test(src));
+  const inbox = code(read('../src/app/api/evidence-alerts/inbox/route.js'));
+  // ⚠️ REQUIREMENT 14 (performance). The bell polls every 60s on every signed-in page; resolving
+  // evidence there would put a multi-family build behind every one of those.
+  ok('⚠️ the inbox never touches the Evidence Engine',
+    !/tickerEvidence|resolve\.js|loadBuildContext|evidence\/resolve/.test(inbox));
+  ok('…it reads persisted alert rows', /listAlerts\(userId\)/.test(inbox));
+  // ⚠️ REQUIREMENT 10 + 6.
+  ok('⚠️ read state is persisted server-side, not in the browser',
+    /markRead\(userId/.test(inbox) && /update evidence_alerts set read = true/.test(read('../src/lib/alerts/evidence-alert-store.js')));
+  ok('⚠️ …and marking read is scoped to the owner in the statement',
+    /update evidence_alerts set read = true where user_id = \$\{userId\} and id = \$\{n\}/.test(read('../src/lib/alerts/evidence-alert-store.js')));
+  ok('both an individual mark and mark-all exist', /all: b\?\.all === true/.test(inbox));
+
+  // ⚠️ REQUIREMENT 13. Bounded history, but never at the cost of something unseen.
+  const store = read('../src/lib/alerts/evidence-alert-store.js');
+  ok('⚠️ unread alerts are kept longer than read ones', UNREAD_RETENTION_DAYS > RETENTION_DAYS);
+  ok('…and the prune says so in one statement',
+    /\(read and created_at <[\s\S]{0,80}RETENTION_DAYS[\s\S]{0,120}not read and created_at <[\s\S]{0,80}UNREAD_RETENTION_DAYS/.test(store));
+  ok('the inbox is bounded', /INBOX_LIMIT/.test(store) && /Math\.min\(200/.test(store));
+  ok('the catch-up lookback is a margin, not a window a subscriber can see past',
+    Number.isFinite(LOOKBACK_DAYS) && LOOKBACK_DAYS > 0);
 }
 
-L(`\n${pass} passed, ${fail} failed`);
+L('⚠️ THE SURFACES: ONE REQUEST, NOT ONE PER TICKER');
+{
+  const client = code(read('../src/lib/alerts/alert-subs-client.js'));
+  const toggle = code(read('../src/components/AlertToggle.jsx'));
+  // ⚠️ REQUIREMENT 15 again, on the read side: a hundred Pit Scan rows must not be a hundred GETs.
+  ok('⚠️ the subscribed set is fetched once and shared by every control on the page',
+    /let cache = null;/.test(client) && /if \(!cache\) cache = fetchSubs\(\);/.test(client));
+  ok('⚠️ …and no control asks the server about its own ticker',
+    !/fetch\(/.test(toggle) && /loadAlertSubs\(\)/.test(toggle));
+  // ⚠️ STATED AS AN INVARIANT OVER THE WHOLE FILE, NOT AS A SHAPE NEAR A `catch`. The first
+  // version matched `catch {` within 300 characters of a closed return, and an unrelated catch in
+  // emit() satisfied it — so a mutation that made the failure path claim `pro: true` survived.
+  // What actually matters is that this module never invents entitlement or membership at all.
+  ok('⚠️ a failed load can never claim Pro, or claim a ticker is subscribed',
+    !/pro: true/.test(client) && !/tickers: new Set\(\[/.test(client)
+    && (client.match(/return \{ pro: false, tickers: new Set\(\) \};/g) || []).length === 2);
+  ok('⚠️ a refused toggle does not leave the control claiming a subscription',
+    /const next = await toggleAlert\(sym\);\s*\n\s*setOn\(next\);/.test(toggle) && /catch \(err\)/.test(toggle));
+  ok('the server\'s answer is what lands in the set, not an optimistic guess',
+    /cache = Promise\.resolve\(next\);/.test(client) && /new Set\(j\.tickers \|\| \[\]\)/.test(client));
+
+  // ⚠️ REQUIREMENTS 12 + 13 (UI state).
+  ok('⚠️ the wording is Alert / Alert On', /const label = on \? 'Alert On' : 'Alert';/.test(toggle));
+  const scan = read('../src/components/scan/ScanBoardRows.jsx');
+  ok('⚠️ the Pit Scan Alert action is now the real control',
+    /<AlertToggle symbol=\{r\.ticker\} onNotice=\{onAlert\} \/>/.test(scan));
+  ok('…and it no longer posts the old news-rule alert', !/type: 'news'/.test(scan));
+  ok('⚠️ …and it means "monitor this ticker", not "alert me about this row"',
+    !/scanRow|rowId|boardName/.test(code(read('../src/components/AlertToggle.jsx'))));
+  ok('the ticker page carries the control beside the watchlist star',
+    /<AlertToggle symbol=\{data\.symbol\} variant="button" \/><WatchlistStar/.test(read('../src/app/ticker/[symbol]/TickerPage.jsx')));
+  const term = read('../src/app/terminal/TerminalClient.jsx');
+  ok('the watchlist row carries a compact one', /<AlertToggle symbol=\{r\.ticker\} variant="icon" \/>/.test(term));
+  // ⚠️ REQUIREMENT 14. Watchlist and Alerts are separate intents.
+  ok('⚠️ watching a ticker does not subscribe it', !/toggleAlert|setSubscription/.test(term));
+  ok('⚠️ …and the What Changed line is untouched',
+    /\{sig\.changes\?\.\[r\.ticker\] && \(/.test(term) && /const old = change\.historical === true;/.test(term));
+}
+
+L('⚠️ THE BELL: EXISTING ICON, BOTH SOURCES, HONEST COUNT');
+{
+  const shared = read('../src/lib/cp-shared.jsx');
+  // ⚠️ REQUIREMENT 11.
+  ok('⚠️ the existing bell is reused rather than a second destination invented',
+    (shared.match(/export function NotificationBell/g) || []).length === 1
+    && /\/api\/evidence-alerts\/inbox/.test(shared));
+  ok('⚠️ the badge counts both sources', /\(unread \+ alertUnread\) > 0/.test(shared));
+  // ⚠️ REQUIREMENT 6. Opening must not silently discard what the trader asked to be told.
+  ok('⚠️ opening the bell does NOT mark evidence alerts read',
+    /if \(next && unread > 0\) \{ setUnread\(0\);/.test(shared) && !/setAlertUnread\(0\)[\s\S]{0,60}setOpen\(next\)/.test(shared));
+  ok('…an alert is marked read when it is opened', /onClick=\{open\}/.test(shared) && /onRead\(a\.id\);/.test(shared));
+  ok('…and Mark all read exists', /Mark all read/.test(shared) && /readAllAlerts/.test(shared));
+  ok('the social notifications path is unchanged',
+    /const r = await fetch\('\/api\/notifications', \{ cache: 'no-store' \}\);/.test(shared)
+    && /fetch\('\/api\/notifications', \{ method: 'POST' \}\)/.test(shared));
+  ok('the empty state accounts for both', /list\.length === 0 && alerts\.length === 0/.test(shared));
+
+  // ⚠️ REUSE THE TERMINAL'S INSPECTOR RATHER THAN NAVIGATING OUT OF THE WORKSPACE.
+  ok('⚠️ inside the Terminal an alert opens the existing Evidence inspector',
+    /inspectEvidence\(a\.ticker\);/.test(shared) && /evidenceInspectorAvailable\(\)/.test(shared));
+  ok('⚠️ …and it asks the bus rather than sniffing the URL',
+    !/pathname[\s\S]{0,40}terminal/.test(shared.split('function EvidenceAlertRow')[1]?.split('\n}')[0] || ''));
+  ok('…while off the Terminal it is an ordinary ticker link',
+    /href=\{`\/ticker\/\$\{encodeURIComponent\(a\.ticker\)\}`\}/.test(shared));
+  ok('the row shows ticker, family, the engine\'s sentence and the age',
+    /\{a\.ticker\}/.test(shared) && /\{a\.title\}/.test(shared) && /\{a\.detail\}/.test(shared)
+    && /timeAgo\(minsSince\(a\.publicTime\)\)/.test(shared));
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

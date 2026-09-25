@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { inspectEvidence, evidenceInspectorAvailable } from './terminalEvidenceBus';
 import { useRouter } from 'next/navigation';
 import { SignedIn, SignedOut, useAuth } from '@clerk/nextjs';
 import AccountMenu from '../components/AccountMenu';
@@ -738,11 +739,53 @@ export function EntitySearch({ endpoint, placeholder = 'Search…', hrefFor, onS
 }
 
 // ─── TOP NAV (sticky) ───────────────────────────────────────────────────────
+/**
+ * ONE EVIDENCE ALERT IN THE BELL.
+ *
+ * ⚠️ EVERY WORD IS THE EVIDENCE ENGINE'S. The ticker, the family's name and the factual summary
+ * were written when the alert was persisted; nothing is composed here and nothing is characterised
+ * as good or bad news. The row says what became public and when, and links to where it is verified.
+ *
+ * ⚠️ AND INSIDE THE TERMINAL IT DOES NOT NAVIGATE. The Terminal already has an Evidence
+ * inspector on a bus; sending a trader to a ticker page from inside their workspace would close
+ * the workspace to show them one row. Off the Terminal there is no bus, so the link is the answer.
+ */
+function EvidenceAlertRow({ a, onRead, onClose }) {
+  const open = (e) => {
+    onRead(a.id);
+    // ⚠️ ASK THE BUS, DO NOT SNIFF THE URL. evidenceInspectorAvailable() is the same question the
+    // Pit Scan row already asks — "is a workspace listening?" — and it stays right when an
+    // inspector exists somewhere the path does not say, or does not exist on /terminal because
+    // the panel was closed. A pathname check would get both of those wrong.
+    if (!evidenceInspectorAvailable()) return;   // no workspace: let the anchor navigate
+    e.preventDefault();
+    inspectEvidence(a.ticker);
+    onClose?.();
+  };
+  return (
+    <a href={`/ticker/${encodeURIComponent(a.ticker)}`} onClick={open}
+      style={{ display: 'block', padding: '10px 14px', borderBottom: `1px solid ${C.surface}`, textDecoration: 'none',
+        background: a.read ? C.white : C.greenLight, fontFamily: "'DM Sans',sans-serif" }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span className="cp-tkr" style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>{a.ticker}</span>
+        <span style={{ fontSize: 11, color: C.muted }}>{a.title}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: C.dim, flexShrink: 0 }}>{timeAgo(minsSince(a.publicTime))}</span>
+      </div>
+      <div style={{ fontSize: 11, color: C.text, marginTop: 2, lineHeight: 1.35 }}>{a.detail}</div>
+    </a>
+  );
+}
 // Notification bell for the nav (signed-in). Polls unread count; opening marks all read.
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [list, setList] = useState([]);
   const [unread, setUnread] = useState(0);
+  // ⚠️ EVIDENCE ALERTS ARE A SEPARATE SOURCE IN THE SAME BELL. They are not social records and
+  // do not fit pit_notifications, which requires an actor; merging them into that table would
+  // mean inventing a fake actor for every 8-K. Two reads, one dropdown, one badge — and the
+  // social half is untouched.
+  const [alerts, setAlerts] = useState([]);
+  const [alertUnread, setAlertUnread] = useState(0);
 
   const load = async () => {
     try {
@@ -750,13 +793,32 @@ export function NotificationBell() {
       const j = r.ok ? await r.json() : null;
       if (j) { setList(j.notifications || []); setUnread(j.unread || 0); }
     } catch { /* ignore */ }
+    try {
+      const r = await fetch('/api/evidence-alerts/inbox', { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      if (j) { setAlerts(j.alerts || []); setAlertUnread(j.unread || 0); }
+    } catch { /* a failed alert read shows no alerts, never a wrong count */ }
   };
   useEffect(() => { load(); const id = setInterval(load, 60000); return () => clearInterval(id); }, []);
 
   const toggle = async () => {
     const next = !open;
     setOpen(next);
+    // ⚠️ OPENING CLEARS THE SOCIAL HALF ONLY, WHICH IS THE BEHAVIOUR THAT WAS ALREADY HERE.
+    // An evidence alert is marked read when it is actually opened, or by Mark all read — a
+    // glance at the bell should not silently discard the thing the trader asked to be told.
     if (next && unread > 0) { setUnread(0); try { await fetch('/api/notifications', { method: 'POST' }); } catch { /* ignore */ } }
+  };
+
+  const readAlert = async (id) => {
+    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, read: true } : a)));
+    setAlertUnread((n) => Math.max(0, n - 1));
+    try { await fetch('/api/evidence-alerts/inbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }); } catch { /* ignore */ }
+  };
+  const readAllAlerts = async () => {
+    setAlerts((prev) => prev.map((a) => ({ ...a, read: true })));
+    setAlertUnread(0);
+    try { await fetch('/api/evidence-alerts/inbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) }); } catch { /* ignore */ }
   };
 
   const verb = (n) => n.type === 'follow' ? 'followed you'
@@ -773,10 +835,10 @@ export function NotificationBell() {
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
           <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
-        {unread > 0 && (
+        {(unread + alertUnread) > 0 && (
           <span className="cp-num" style={{ position: 'absolute', top: -3, right: -3, background: '#E5484D', color: '#fff',
             borderRadius: 10, fontSize: 9, minWidth: 15, height: 15, padding: '0 3px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {unread > 9 ? '9+' : unread}
+            {(unread + alertUnread) > 9 ? '9+' : (unread + alertUnread)}
           </span>
         )}
       </button>
@@ -785,10 +847,23 @@ export function NotificationBell() {
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 200 }} />
           <div style={{ position: 'absolute', top: '135%', right: 0, width: 320, maxHeight: 420, overflowY: 'auto',
             background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', zIndex: 201 }}>
-            <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
+            {alerts.length > 0 && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', padding: '10px 14px', borderBottom: `1px solid ${C.border}`, fontFamily: "'DM Sans',sans-serif" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.ink }}>Evidence Alerts</span>
+                  {alertUnread > 0 && (
+                    <button onClick={readAllAlerts} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 10.5, fontWeight: 700, color: C.muted, fontFamily: 'inherit', padding: 0 }}>Mark all read</button>
+                  )}
+                </div>
+                {alerts.map((a) => (
+                  <EvidenceAlertRow key={`ea-${a.id}`} a={a} onRead={readAlert} onClose={() => setOpen(false)} />
+                ))}
+              </>
+            )}
+            <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, borderTop: alerts.length ? `1px solid ${C.border}` : 'none', fontSize: 12, fontWeight: 700, color: C.ink, fontFamily: "'DM Sans',sans-serif" }}>
               Notifications
             </div>
-            {list.length === 0 ? (
+            {list.length === 0 && alerts.length === 0 ? (
               <div style={{ padding: '24px 14px', textAlign: 'center', color: C.dim, fontSize: 12, fontFamily: "'DM Sans',sans-serif" }}>Nothing yet.</div>
             ) : list.map((n) => (
               <a key={n.id} href={href(n)}

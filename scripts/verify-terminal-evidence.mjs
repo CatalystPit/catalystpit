@@ -77,8 +77,12 @@ L('⚠️ THE PUBLIC PAGE STILL NAVIGATES');
     /if \(e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.button !== 0\) return;/.test(rows));
   ok('⚠️ the default is only prevented when the inspector will actually handle it',
     /e\.preventDefault\(\);\s*\n\s*inspectEvidence\(ticker\)/.test(rows));
+  // ⚠️ ALERT BECAME A COMPONENT AND IS STILL THERE. It is now the shared AlertToggle, which
+  // subscribes the ticker to Evidence Alerts instead of creating a news rule; Chart and Watch are
+  // unchanged. The point of this assertion — that wiring Evidence into the inspector did not
+  // disturb the row's other actions — is unchanged, so it follows the control rather than failing.
   ok('the other three row actions are untouched',
-    /Chart<\/a>/.test(rows) && />Watch<\/button>/.test(rows) && />Alert<\/button>/.test(rows));
+    /Chart<\/a>/.test(rows) && />Watch<\/button>/.test(rows) && /<AlertToggle symbol=\{r\.ticker\}/.test(rows));
 }
 
 L('⚠️ ANOTHER CONSUMER OF THE CANONICAL ENGINE, NOT ANOTHER ENGINE');

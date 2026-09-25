@@ -10,6 +10,7 @@ import CustomScannerPanel from '../../components/scan/CustomScannerPanel';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, useRealtimeQuotes, isRealtimeQuote } from '../../lib/cp-shared';
+import AlertToggle from '../../components/AlertToggle';
 import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
@@ -1059,6 +1060,10 @@ function WatchlistBody({ onPick }) {
                   );
                 })}
                 <a href={`/ticker/${encodeURIComponent(r.ticker)}`} title="Open ticker page" style={{ marginLeft: 6, color: C.dim, textDecoration: 'none', fontSize: 11 }}>↗</a>
+                {/* ⚠️ A GLYPH, BECAUSE THIS ROW HAS NO WIDTH TO SPARE. Watchlist and Alerts are
+                    separate intents — nothing here subscribes a ticker because it is watched — so the
+                    row offers the toggle and decides nothing on the trader's behalf. */}
+                <AlertToggle symbol={r.ticker} variant="icon" />
                 {/* ── ⚠️ A SECOND LINE ONLY WHERE THERE IS SOMETHING TO SAY ──────────────
                     Every row two lines high would halve how many names fit and make the Watchlist
                     a worse price list, which is its first job. Rows with no recent change are
