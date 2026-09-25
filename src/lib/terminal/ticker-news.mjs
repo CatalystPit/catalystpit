@@ -26,6 +26,8 @@ export const SOURCE = Object.freeze({
   PRESS: 'press-release',
   EVIDENCE: 'evidence',
   FILING: 'sec-8k',
+  /** Pit Wire, filtered to items whose STATED tickers include this one. */
+  WIRE: 'wire',
 });
 
 /**
@@ -35,7 +37,7 @@ export const SOURCE = Object.freeze({
  * more than one path; it never decides whether a disclosure appears at all, and it never reorders
  * the list. The order is time, always.
  */
-const RICHNESS = { [SOURCE.PRESS]: 3, [SOURCE.EVIDENCE]: 2, [SOURCE.FILING]: 1 };
+const RICHNESS = { [SOURCE.PRESS]: 4, [SOURCE.WIRE]: 3, [SOURCE.EVIDENCE]: 2, [SOURCE.FILING]: 1 };
 
 /** An SEC accession, anywhere it hides. */
 const ACCESSION_RE = /\d{10}-?\d{2}-?\d{6}/;
@@ -128,6 +130,71 @@ export function fromPressReleases(list, ticker, company) {
 }
 
 /**
+ * Pit Wire events for one ticker.
+ *
+ * ── ⚠️ THIS IS WHAT MAKES THE CONTROL "NEWS" RATHER THAN "FILINGS" ──────────
+ *
+ * The first three sources are all SEC-derived: an 8-K row knows which item was filed under, an
+ * evidence event knows the same thing in the engine's vocabulary, and a press release has the
+ * issuer's own words. None of them is a story ABOUT the company written by anyone else. The wire is
+ * — "Apple's new HomePod mini 2 to come in new variants: report" is news and no filing will ever
+ * carry it — and a control labelled News that could not show it was mislabelled.
+ *
+ * ── ⚠️ AND THE ATTRIBUTION IS THE SOURCE'S, NOT OURS ────────────────────────
+ *
+ * Wire items carry `tickers` resolved by the canonical grammar in news-normalize, which extracts
+ * only symbols a source EXPLICITLY states and refuses the rest — that is the module that exists to
+ * stop $MACRO becoming a ticker. So this filters on a stated ticker and infers nothing. A story
+ * that merely mentions a company in passing without naming its symbol does not appear here, which
+ * is the correct outcome: the alternative is deciding for ourselves what a story is about, which is
+ * how a broad ETF ends up "attributed" every generic market headline of the day.
+ */
+export function fromWire(events, ticker) {
+  const sym = String(ticker || '').toUpperCase();
+  return (events || [])
+    .filter((e) => e && Array.isArray(e.tickers) && e.tickers.map((x) => String(x).toUpperCase()).includes(sym))
+    .map((e) => ({
+      // ⚠️ THE ACCESSION FIRST, seq ONLY AS A FALLBACK. Keying every wire item by its own seq
+      // opted the wire out of the one join that actually works: a wire item carrying a filing URL
+      // is the SAME event as the filing, and keying it separately guaranteed both were shown. Most
+      // wire stories have no accession, which is what seq is for.
+      key: accessionOf(e) || `wire:${e.seq ?? `${e.headline}:${e.published_at}`}`,
+      accession: accessionOf(e),
+      source: SOURCE.WIRE,
+      sourceLabel: 'Pit Wire',
+      ticker: sym,
+      company: null,
+      headline: e.headline || '',
+      // ⚠️ THE CATEGORY IS THE WIRE'S OWN LABEL, not a re-reading of the headline.
+      detail: e.wireCategory && e.wireCategory !== 'MARKETS' ? titleish(e.wireCategory) : null,
+      at: time(e.published_at),
+      url: e.url || null,
+      // The wire scores its own importance; anything it did not mark up is ordinary news, not noise.
+      material: Number(e.importance) >= 2,
+      // ⚠️ A STORY CARRIED BY SEVERAL OUTLETS IS ONE STORY. The wire has already collapsed those and
+      // says how many, which is a fact worth keeping rather than a number to re-derive.
+      sources: Number(e.source_count) > 1 ? Number(e.source_count) : null,
+    }))
+    .filter((x) => x.at !== null && x.headline);
+}
+
+const titleish = (v) => String(v || '').toLowerCase().replace(/(^|s)w/g, (m) => m.toUpperCase());
+
+/**
+ * A headline, reduced to what makes it the same story.
+ *
+ * ⚠️ USED ONLY WITHIN ONE DAY, AND ONLY WHEN NO ACCESSION JOINS THE TWO. The accession is the
+ * reliable join and is preferred everywhere it exists; this catches the case it cannot — a press
+ * release and the wire item echoing its headline, which have no filing id in common. Two genuinely
+ * different stories about one company on one day do not share sixty characters of headline.
+ */
+export function headlineKey(headline, at) {
+  const day = Number.isFinite(at) ? new Date(at).toISOString().slice(0, 10) : 'x';
+  const norm = String(headline || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60);
+  return norm.length >= 20 ? `h:${day}:${norm}` : null;
+}
+
+/**
  * One list, newest first, one row per disclosure.
  *
  * ⚠️ TIME DECIDES THE ORDER; RICHNESS ONLY DECIDES THE WORDS. A merge that sorted by how good a
@@ -138,9 +205,10 @@ export function fromPressReleases(list, ticker, company) {
  * on date or headline text would silently fold two genuinely different filings by one issuer on the
  * same day into a single row — the exact mistake the accession exists to prevent.
  */
-export function mergeTickerNews({ eightk = [], evidence = [], pressReleases = [], ticker = null, company = null } = {}) {
+export function mergeTickerNews({ eightk = [], evidence = [], pressReleases = [], wire = [], ticker = null, company = null } = {}) {
   const all = [
     ...fromPressReleases(pressReleases, ticker, company),
+    ...fromWire(wire, ticker),
     ...fromEvidence(evidence),
     ...fromEightK(eightk),
   ];
@@ -165,7 +233,31 @@ export function mergeTickerNews({ eightk = [], evidence = [], pressReleases = []
         .filter((s) => s !== winner.source),
     });
   }
-  return [...byKey.values()].sort((a, b) => b.at - a.at);
+  // ── SECOND PASS: THE SAME STORY WITH NO FILING ID IN COMMON ───────────────
+  //
+  // ⚠️ ONLY WHERE THE ACCESSION COULD NOT JOIN THEM. A press release and the wire item echoing its
+  // headline are one event to a reader and two records to us, with no id in common. Matching on a
+  // normalised headline WITHIN ONE DAY catches that; it cannot merge two different filings, which
+  // is why the accession pass runs first and wins.
+  const byStory = new Map();
+  for (const item of [...byKey.values()]) {
+    const hk = headlineKey(item.headline, item.at);
+    if (!hk) { byStory.set(item.key, item); continue; }
+    const prev = byStory.get(hk);
+    if (!prev) { byStory.set(hk, item); continue; }
+    const winner = RICHNESS[item.source] > RICHNESS[prev.source] ? item : prev;
+    const other = winner === item ? prev : item;
+    byStory.set(hk, {
+      ...winner,
+      at: Math.min(winner.at, other.at),
+      url: winner.url || other.url,
+      company: winner.company || other.company,
+      detail: winner.detail || other.detail,
+      alsoFrom: [...new Set([...(winner.alsoFrom || []), ...(other.alsoFrom || []), other.source])]
+        .filter((x) => x !== winner.source),
+    });
+  }
+  return [...byStory.values()].sort((a, b) => b.at - a.at);
 }
 
 /** Exactly what the Watchlist badge counts as fresh, so NEW here and NEWS there agree. */

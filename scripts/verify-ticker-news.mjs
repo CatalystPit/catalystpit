@@ -13,7 +13,8 @@
 
 import { readFileSync } from 'node:fs';
 import {
-  mergeTickerNews, fromEightK, fromEvidence, fromPressReleases, accessionOf, isFresh, FRESH_MS, SOURCE,
+  mergeTickerNews, fromEightK, fromEvidence, fromPressReleases, fromWire, headlineKey,
+  accessionOf, isFresh, FRESH_MS, SOURCE,
 } from '../src/lib/terminal/ticker-news.mjs';
 
 let pass = 0, fail = 0;
@@ -147,9 +148,17 @@ L('⚠️ THREE SURFACES, ONE IMPLEMENTATION');
   // filed under, never what the filing said.
   ok('⚠️ all three canonical per-ticker paths are read',
     /api\/eightk\?ticker=/.test(shared) && /api\/evidence\?ticker=/.test(shared) && /api\/press-releases\?ticker=/.test(shared));
+  // ⚠️ AND THE FOURTH, WHICH IS THE ONE THAT MAKES IT NEWS. The other three are all SEC-derived;
+  // the wire carries stories ABOUT the company, and a control labelled News that could not show one
+  // was mislabelled.
+  ok('⚠️ …and the wire, which carries the actual stories',
+    /\/api\/wire\?ticker=/.test(shared));
+  ok('a failure of any ONE path still renders the rest',
+    /if \(!ek && !evi && !pr && !wr\)/.test(shared));
+
   ok('…in parallel', /await Promise\.all\(\[/.test(shared));
   ok('⚠️ and one path failing does not blank the panel',
-    /if \(!ek && !evi && !pr\)/.test(shared));
+    /if \(!ek && !evi && !pr && !wr\)/.test(shared));
 }
 
 L('⚠️ OPENING NEWS DOES NOT DISTURB THE CHART');
@@ -202,7 +211,144 @@ L('⚠️ NEVER ONE TICKER\'S NEWS UNDER ANOTHER\'S NAME');
   ok('the cache is bounded', /while \(cache\.size > MAX_CACHED\)/.test(shared));
   ok('…and expiring', /now - hit\.at > TTL_MS/.test(shared));
   ok('a read counts as a use', /cache\.delete\(sym\); cache\.set\(sym, hit\);/.test(shared));
-  ok('an empty result does not claim nothing happened', /not filed/.test(shared));
+  // ⚠️ THE EMPTY STATE HAD TO WIDEN WITH THE SOURCES. It used to say "no filings or press
+  // releases", which was honest when those were the only two paths and became too narrow the
+  // moment the wire was added — a reader would not know a wire story had also been looked for.
+  ok('an empty result does not claim nothing happened',
+    /Nothing attributed to {sym} in the recent window/.test(shared)
+    && /no filing, press release or wire story naming it/.test(shared));
+}
+
+
+L('⚠️ THE WIRE IS WHAT MAKES THIS NEWS, AND ITS ATTRIBUTION IS THE SOURCE\'S');
+{
+  const WIRE = [
+    { seq: '1', headline: 'Apple HomePod mini 2 to come in new variants: report', published_at: '2026-09-25T15:26:14Z', tickers: ['AAPL'], importance: 0, wireCategory: 'MARKETS' },
+    { seq: '2', headline: 'Broad market drifts lower into the close', published_at: '2026-09-25T20:00:00Z', tickers: [], importance: 1 },
+    { seq: '3', headline: 'QCOM and AAPL settle', published_at: '2026-09-25T12:00:00Z', tickers: ['QCOM', 'AAPL'], importance: 3, source_count: 6 },
+  ];
+  const got = fromWire(WIRE, 'AAPL');
+  ok('⚠️ only items whose STATED tickers include this one', got.length === 2);
+  ok('⚠️ a story naming no ticker is never attributed to one',
+    !got.some((x) => /Broad market/.test(x.headline)));
+  ok('a story naming several tickers counts for each of them',
+    got.some((x) => /QCOM and AAPL/.test(x.headline)));
+  ok('the wire\'s own importance decides material, not a re-reading of the headline',
+    got.find((x) => x.seq !== undefined || true) && got.some((x) => x.material === true) && got.some((x) => x.material === false));
+  ok('⚠️ a story carried by several outlets says so rather than appearing several times',
+    got.find((x) => /QCOM/.test(x.headline)).sources === 6);
+  ok('an undated wire item is dropped rather than shown with no time',
+    fromWire([{ seq: '9', headline: 'x', tickers: ['AAPL'], published_at: 'nope' }], 'AAPL').length === 0);
+  ok('nothing here infers a ticker', !/includes\(sym\) \|\| /.test(readFileSync(new URL('../src/lib/terminal/ticker-news.mjs', import.meta.url), 'utf8')));
+}
+
+L('⚠️ ONE EVENT IS ONE ROW, EVEN WITHOUT A FILING ID');
+{
+  // A press release and the wire item echoing its headline have no accession in common.
+  const merged = mergeTickerNews({
+    pressReleases: [{ filingDate: '2026-09-25', headline: 'Apple Announces Record Quarter', url: null }],
+    wire: [{ seq: '1', headline: 'Apple announces record quarter', published_at: '2026-09-25T13:00:00Z', tickers: ['AAPL'], importance: 2 }],
+    ticker: 'AAPL',
+  });
+  ok('⚠️ the echoed headline collapses into one row', merged.length === 1);
+  ok('…keeping the richer record', merged[0].source === SOURCE.PRESS);
+  ok('…and naming the other path it came from', (merged[0].alsoFrom || []).includes(SOURCE.WIRE));
+
+  // ⚠️ A WIRE HEADLINE BEATS A FILING LABEL. "Company reports record quarterly revenue" and
+  // "Results of operations" are the same event; the first is the one a trader can read, and a
+  // ranking that preferred the filing would put the drawer back where it started.
+  //
+  // ⚠️ THEY MUST ACTUALLY MERGE FOR THIS TO TEST ANYTHING. A first version gave the two records
+  // nothing in common — no shared accession, no shared headline — so they correctly stayed two rows
+  // and the assertion passed whichever won. They share the accession here, which is the join that
+  // makes the precedence question arise at all.
+  const ACC2 = '0001193125-26-400777';
+  const vsFiling = mergeTickerNews({
+    eightk: [{ accession: ACC2, ticker: 'AAA', primaryLabel: 'Results of operations', filedAt: '2026-09-25T13:00:00Z' }],
+    wire: [{ seq: '1', headline: 'Company reports record quarterly revenue on strong demand',
+      published_at: '2026-09-25T13:00:00Z', tickers: ['AAA'], url: `https://sec.gov/Archives/${ACC2}.htm` }],
+    ticker: 'AAA',
+  });
+  ok('the two records of one event are joined by the accession', vsFiling.length === 1, `got ${vsFiling.length}`);
+  ok('⚠️ a readable wire headline outranks a filing label for the same event',
+    vsFiling[0].source === SOURCE.WIRE && /record quarterly revenue/.test(vsFiling[0].headline));
+  ok('…and the filing is still named as a path it came from',
+    (vsFiling[0].alsoFrom || []).includes(SOURCE.FILING));
+
+  // The same question against the evidence engine's label.
+  const vsEvidence = mergeTickerNews({
+    evidence: [{ evidenceId: `AAA|CATALYST|SEC_8K_OTHER|${ACC2}`, ticker: 'AAA', family: 'catalyst',
+      type: 'sec_8k_other', publicTime: '2026-09-25T13:00:00Z' }],
+    wire: [{ seq: '1', headline: 'Company reports record quarterly revenue on strong demand',
+      published_at: '2026-09-25T13:00:00Z', tickers: ['AAA'], url: `https://sec.gov/Archives/${ACC2}.htm` }],
+    ticker: 'AAA',
+  });
+  ok('⚠️ …and outranks the evidence label too',
+    vsEvidence.length === 1 && vsEvidence[0].source === SOURCE.WIRE);
+  // But a press release — the issuer's own words — still beats the wire's paraphrase of them.
+  const vsPress = mergeTickerNews({
+    pressReleases: [{ filingDate: '2026-09-25', headline: 'Issuer Announces Record Quarter', url: `https://sec.gov/Archives/${ACC2}.htm` }],
+    wire: [{ seq: '1', headline: 'Company reports record quarterly revenue on strong demand',
+      published_at: '2026-09-25T13:00:00Z', tickers: ['AAA'], url: `https://sec.gov/Archives/${ACC2}.htm` }],
+    ticker: 'AAA',
+  });
+  ok('the issuer own words still outrank a report of them',
+    vsPress.length === 1 && vsPress[0].source === SOURCE.PRESS);
+
+  // ⚠️ AND IT CANNOT MERGE TWO DIFFERENT STORIES ON ONE DAY.
+  const two = mergeTickerNews({
+    wire: [
+      { seq: '1', headline: 'Apple announces record quarter for services revenue', published_at: '2026-09-25T13:00:00Z', tickers: ['AAPL'] },
+      { seq: '2', headline: 'Apple names a new chief financial officer effective January', published_at: '2026-09-25T18:00:00Z', tickers: ['AAPL'] },
+    ],
+    ticker: 'AAPL',
+  });
+  ok('⚠️ two different stories on one day stay two rows', two.length === 2);
+  ok('…newest first', /chief financial officer/.test(two[0].headline));
+
+  // A short headline is not a reliable key, so it is never used as one.
+  ok('⚠️ a very short headline is not treated as a story key', headlineKey('Halted', Date.now()) === null);
+  ok('a real headline produces a day-scoped key', /^h:\d{4}-\d{2}-\d{2}:/.test(headlineKey('Apple announces record quarter for services', Date.parse('2026-09-25T13:00:00Z'))));
+  // ⚠️ THE ACCESSION STILL WINS. Two filings on one day have different accessions and different
+  // headlines; the id pass runs first so a headline coincidence cannot override it.
+  ok('the accession pass runs before the headline pass',
+    readFileSync(new URL('../src/lib/terminal/ticker-news.mjs', import.meta.url), 'utf8')
+      .indexOf('const byKey = new Map();') < readFileSync(new URL('../src/lib/terminal/ticker-news.mjs', import.meta.url), 'utf8').indexOf('const byStory = new Map();'));
+}
+
+L('⚠️ THE NEWS DRAWER TAKES ROOM FROM THE CHART, IT DOES NOT COVER IT');
+{
+  const chart = readFileSync(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  // ⚠️ THE DEFECT: as an overlay it sat on the right-hand side, which is where the newest candles
+  // and the current price label are — so opening News hid the one thing it is opened to react to.
+  ok('⚠️ the chart box gives up its right edge while the drawer is open',
+    /right: newsOpen \? NEWS_DRAWER_W : 0/.test(chart));
+  ok('…by the same width the drawer occupies', /width: NEWS_DRAWER_W,/.test(chart)
+    && (chart.match(/const NEWS_DRAWER_W = \d+;/g) || []).length === 1);
+  ok('⚠️ the drawing canvas shrinks with it, so drawings stay in register',
+    /right: newsOpen \? NEWS_DRAWER_W : 0[\s\S]{0,400}<div ref={hostRef}[\s\S]{0,1200}<DrawingLayer/.test(chart));
+  ok('⚠️ and opening it still cannot refetch candles',
+    /\}, \[sym, tf, extended, draw, onSymbolResolved\]\);/.test(chart));
+  ok('the chart is never conditionally unmounted by the drawer',
+    !/newsOpen \? null : <div ref={hostRef}/.test(chart));
+}
+
+L('⚠️ AN EVIDENCE MARKER EXPLAINS ITSELF');
+{
+  const chart = readFileSync(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  // ⚠️ THE CARD ALWAYS EXISTED AND WAS CLICK-ONLY. A marker you have to guess is clickable is a
+  // marker that explains nothing to the reader who hovered it and got silence.
+  ok('⚠️ hovering a bar that carries evidence shows the card',
+    /setMarkerHover\(hits\.length \? \{ items: hits/.test(chart));
+  ok('⚠️ …and only where there is evidence, so it cannot flicker over a dense chart',
+    /const hits = evidenceAtBar\(markerMapRef\.current, param\.time\);/.test(chart));
+  ok('⚠️ a click pins it, so the pointer can reach a source link',
+    /if \(pinnedRef\.current\)/.test(chart) && /setMarkerHover\(null\);\s*\n\s*setMarkerDetail\(\{ items/.test(chart));
+  ok('the card renders either one', /detail={markerDetail \|\| markerHover}/.test(chart));
+  ok('dismissing clears both', /onClose={\(\) => \{ setMarkerDetail\(null\); setMarkerHover\(null\); \}}/.test(chart));
+  // ⚠️ NO SECOND INTERPRETATION. The card is the existing one, printing the canonical object.
+  ok('⚠️ it is the existing EvidenceCard, not a new tooltip', /<EvidenceCard/.test(chart));
+  ok('…fed from the same canonical marker map', /evidenceAtBar\(markerMapRef\.current/.test(chart));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

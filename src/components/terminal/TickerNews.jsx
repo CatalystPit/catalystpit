@@ -55,7 +55,7 @@ function ago(at, now = Date.now()) {
   return d < 30 ? `${d}d ago` : new Date(at).toISOString().slice(0, 10);
 }
 
-const SOURCE_TONE = { [SOURCE.PRESS]: C.green, [SOURCE.EVIDENCE]: C.blue, [SOURCE.FILING]: C.muted };
+const SOURCE_TONE = { [SOURCE.PRESS]: C.green, [SOURCE.WIRE]: C.blue, [SOURCE.EVIDENCE]: C.blue, [SOURCE.FILING]: C.muted };
 
 /**
  * THE SHARED FETCH.
@@ -85,21 +85,26 @@ export function useTickerNews(symbol) {
     const timer = setTimeout(() => ctl.abort(), 20_000);
     (async () => {
       const q = encodeURIComponent(sym);
-      const [ek, evi, pr] = await Promise.all([
+      const [ek, evi, pr, wr] = await Promise.all([
         json(`/api/eightk?ticker=${q}&limit=25`, ctl.signal),
         json(`/api/evidence?ticker=${q}`, ctl.signal),
         json(`/api/press-releases?ticker=${q}`, ctl.signal),
+        // ⚠️ THE ONE THAT MAKES THIS NEWS. The other three are SEC-derived; the wire carries stories
+        // ABOUT the company, attributed by the canonical grammar to tickers a source explicitly
+        // stated. It is also the only path a broad ETF can legitimately have news on.
+        json(`/api/wire?ticker=${q}&limit=40`, ctl.signal),
       ]);
       clearTimeout(timer);
       // ⚠️ A NEWER SELECTION WINS. MSTR then NVDA two seconds apart leaves all six requests in
       // flight and they resolve in whatever order the network decides.
       if (!alive || gen !== reqRef.current) return;
-      if (!ek && !evi && !pr) { if (!cached) setState('error'); return; }
+      if (!ek && !evi && !pr && !wr) { if (!cached) setState('error'); return; }
       const company = pr?.companyName || null;
       const items = mergeTickerNews({
         eightk: ek?.list || [],
         evidence: evi?.evidence || [],
         pressReleases: pr?.pressReleases || [],
+        wire: wr?.events || [],
         ticker: sym,
         company,
       });
@@ -140,6 +145,7 @@ function Item({ n, compact }) {
           {n.sourceLabel}
           {/* ⚠️ SAID, NOT IMPLIED. One disclosure can appear on two of our paths; the row names both
               rather than picking one and looking like the only place it exists. */}
+          {n.sources ? ` · ${n.sources} outlets` : ''}
           {n.alsoFrom?.length ? ` · also ${n.alsoFrom.join(' · ')}` : ''}
         </span>
         <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9.5, color: C.dim }}>{ago(n.at)}</span>
@@ -203,7 +209,7 @@ export default function TickerNewsBody({ symbol, compact = false, onClose = null
         // ⚠️ "NOTHING ON OUR PATHS" IS NOT "NOTHING HAPPENED". These are SEC-derived disclosures; a
         // company can move on something that was never filed, and this must not read otherwise.
         <div style={{ fontSize: 12, color: C.muted, padding: '12px 0', lineHeight: 1.5 }}>
-          No filings or press releases for {sym} in the recent window. Other news may exist that was not filed.
+          Nothing attributed to {sym} in the recent window — no filing, press release or wire story naming it.
         </div>
       )}
       {items.map((n) => <Item key={n.key} n={n} compact={compact} />)}

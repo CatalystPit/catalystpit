@@ -96,6 +96,15 @@ const fmtTime = (time, intraday) => {
   return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
 };
 
+/**
+ * How much room the News drawer takes from the chart.
+ *
+ * ⚠️ ONE NUMBER, USED TWICE. The drawer's width and the chart's right inset must be the same value,
+ * or the chart is resized to a width the drawer does not actually occupy — leaving either a gap or,
+ * worse, candles still hidden underneath it.
+ */
+const NEWS_DRAWER_W = 320;
+
 export default function CPChart({
   symbol,
   initialTimeframe = DEFAULT_TIMEFRAME,
@@ -201,6 +210,11 @@ export default function CPChart({
   const [chartReady, setChartReady] = useState(0);   // bumps when the chart instance exists
   // The evidence card: { items, x, y } for the marker the user clicked, or null.
   const [markerDetail, setMarkerDetail] = useState(null);
+  /** The transient one, shown while the pointer is over a bar that carries evidence. */
+  const [markerHover, setMarkerHover] = useState(null);
+  // Read inside the chart's own subscription, which is created once and must not close over stale state.
+  const pinnedRef = useRef(false);
+  pinnedRef.current = !!markerDetail;
   /**
    * RESPONSIVE ON THE CHART'S OWN WIDTH, not the viewport.
    *
@@ -966,18 +980,34 @@ export default function CPChart({
       // It is gone: the time and price are already on the crosshair's own axis labels, and every
       // other number is in the top-left legend, so the box was a third copy that covered candles and
       // sat where no charting platform puts one.
-      // EVIDENCE DETAIL. Click rather than hover: the crosshair already owns hover for the legend,
-      // and a card that appears on every mouse move over a dense chart is unusable. Clicking a bar
-      // that carries evidence opens it; clicking anywhere else closes it.
+      // ── EVIDENCE DETAIL: HOVER TO READ, CLICK TO PIN ────────────────────────
+      //
+      // This was click-only, and the reasoning was sound as far as it went: the crosshair already
+      // owns hover for the legend, and a card appearing on EVERY mouse move over a dense chart is
+      // unusable. But that argument only holds for every bar. A bar carrying evidence is rare — a
+      // handful on a five-year chart — so a card that appears only on those cannot flicker, and a
+      // marker you have to guess is clickable is a marker that explains nothing, which is what a
+      // reader hovering one and getting silence actually experienced.
+      //
+      // ⚠️ A PIN BEATS A HOVER. Once clicked the card stays until dismissed, so a reader can move
+      // the pointer into it to follow a source link without it evaporating on the way.
       chart.subscribeClick((param) => {
         if (!param?.time || !param.point) { setMarkerDetail(null); return; }
         const items = evidenceAtBar(markerMapRef.current, param.time);
         if (!items.length) { setMarkerDetail(null); return; }
+        setMarkerHover(null);
         setMarkerDetail({ items, x: param.point.x, y: param.point.y });
       });
 
       chart.subscribeCrosshairMove((param) => {
         const off = !param.point || param.point.x < 0 || param.point.y < 0 || !param.time;
+        // ⚠️ ONLY WHERE THERE IS SOMETHING TO SAY, and never over a pinned card.
+        if (pinnedRef.current) { /* a click wins until it is dismissed */ }
+        else if (off) setMarkerHover(null);
+        else {
+          const hits = evidenceAtBar(markerMapRef.current, param.time);
+          setMarkerHover(hits.length ? { items: hits, x: param.point.x, y: param.point.y, hover: true } : null);
+        }
         // OFF THE CHART IS NOT "NO DATA". The legend falls back to the last bar, so the chart always
         // carries its numbers instead of going blank the moment the pointer leaves.
         if (off) { setCursor(null); return; }
@@ -1627,7 +1657,17 @@ export default function CPChart({
             if (onScale) setScaleMenuAt({ x: e.clientX, y: e.clientY });
             else setMenuAt({ x: e.clientX, y: e.clientY });
           }}>
-        <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
+        {/* ⚠️ THE DRAWER TAKES ROOM FROM THE CHART; IT DOES NOT COVER IT.
+            As an overlay it sat on top of the right-hand side — which is exactly where the newest
+            candles and the current price label are, so opening News hid the one thing a trader has
+            News open to react to. Shrinking this box instead makes the chart's own autoSize observer
+            resize the series: the newest bar stays at the right edge of what is left, the price
+            label comes with it, and closing restores the full width. No remount, no refetch, and
+            the indicators, drawings and evidence markers are all redrawn from state they never lost.
+            The drawing canvas lives in the same box so it can never drift out of register. */}
+        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: newsOpen ? NEWS_DRAWER_W : 0,
+          transition: 'right 120ms ease' }}>
+          <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
 
         {/* Drawings live on a canvas over the chart, sharing its scales. Mounted once the chart
             instance exists — chartReady is what says so. */}
@@ -1645,6 +1685,7 @@ export default function CPChart({
             onSelectionBox={setSelBox}
           />
         )}
+        </div>
 
         {/* ⚠️ THE FLOATING TOOLBAR FOR THE SELECTED DRAWING — a sibling of the canvas inside the
             same relative box, so its coordinates ARE the canvas's coordinates and no offset
@@ -1671,7 +1712,7 @@ export default function CPChart({
         {newsOpen && (
           <div style={{
             position: 'absolute', right: 0, top: 0, bottom: 0, zIndex: 7,
-            width: 'min(340px, 78%)',
+            width: NEWS_DRAWER_W,
             display: 'flex', flexDirection: 'column',
             background: palette(theme).background,
             borderLeft: `1px solid ${palette(theme).border}`,
@@ -1689,9 +1730,9 @@ export default function CPChart({
 
         {/* The evidence detail, anchored to the marker that was clicked. */}
         <EvidenceCard
-          detail={markerDetail}
+          detail={markerDetail || markerHover}
           theme={theme}
-          onClose={() => setMarkerDetail(null)}
+          onClose={() => { setMarkerDetail(null); setMarkerHover(null); }}
           hostWidth={hostRef.current?.clientWidth || 0}
           hostHeight={hostRef.current?.clientHeight || 0}
         />

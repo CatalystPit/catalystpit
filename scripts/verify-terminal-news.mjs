@@ -70,8 +70,12 @@ L('⚠️ THE BADGE STILL MEANS WHAT IT MEANT');
   ok('⚠️ the panel marks which items are fresh by the badge\'s own rule',
     /isFresh\(n\.at\)/.test(panel) && />NEW</.test(panel)
     && /export const FRESH_MS = 24 \* 60 \* 60 \* 1000;/.test(read('../src/lib/terminal/ticker-news.mjs')));
+  // ⚠️ THE EMPTY STATE WIDENED WITH THE SOURCES. It said "no filings or press releases", which was
+  // honest when those were the only paths and became too narrow once the wire was added — a reader
+  // would not know a wire story naming the ticker had also been looked for and not found.
   ok('⚠️ an empty panel does not claim nothing happened',
-    /not filed/.test(panel));
+    /Nothing attributed to \{sym\} in the recent window/.test(panel)
+    && /no filing, press release or wire story naming it/.test(panel));
   ok('…and a failure does not claim it either', /not a statement that there is none/.test(panel));
   ok('nothing here invents a badge', !/setSig|sig\.news\.push/.test(panel));
 }
