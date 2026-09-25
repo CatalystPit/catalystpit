@@ -62,6 +62,7 @@ import DrawingSettings from './DrawingSettings';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingToolbar from './DrawingToolbar';
+import { barsKey, getBars, putBars } from '../../lib/chart/chart-bar-cache.mjs';
 import EvidenceCard from './EvidenceCard';
 import { buildEvidenceMarkers, evidenceAtBar } from '../../lib/chart/evidence-markers.mjs';
 import {
@@ -1185,12 +1186,44 @@ export default function CPChart({
     if (barsRef.current.length) draw();
   }, [theme, intraday, transparent, draw]);
 
+  /** The symbol a load is for. Trivial, but it keeps the cache branch and the fetch branch honest
+   *  about answering for the SAME security — the race the comment below describes. */
+  const forSymEarly = (s) => s;
+
   // ── load bars for the current symbol + timeframe ──
   const load = useCallback(async ({ incremental = false } = {}) => {
     if (!isValidSymbol(sym)) { setStatus('error'); return; }
     const url = barsUrl(sym, tf, { session: extended ? 'extended' : 'regular' });
     if (!url) { setStatus('error'); return; }
-    if (!incremental) setStatus('loading');
+    const cacheKey = barsKey(sym, tf, extended ? 'extended' : 'regular');
+
+    // ── ⚠️ A SERIES THIS TAB ALREADY HAS DOES NOT NEED A ROUND TRIP ──────────
+    //
+    // QQQ -> AAPL -> NVDA -> QQQ is the most common movement in a Terminal, and the fourth step
+    // re-fetched a series this tab had held complete seconds earlier. The request is not slow, but
+    // it is a network round trip standing between a click and a chart, every time.
+    //
+    // ⚠️ AND IT IS NEVER SERVED STALE. chart-bar-cache refuses an entry older than the bar it
+    // describes — twenty seconds intraday — so this can only short-circuit a series that is still
+    // current. Anything older falls through to the fetch below exactly as before. A refresh is
+    // still issued either way; what the cache removes is the BLANK, not the update.
+    const cached = !incremental ? getBars(cacheKey) : null;
+    if (cached) {
+      setMeta(cached.meta);
+      kindRef.current = cached.meta.kind;
+      barsRef.current = cached.bars;
+      barsSymRef.current = forSymEarly(sym);
+      barIndexRef.current = new Map(cached.bars.map((b, i) => [b.time, i]));
+      shadingRef.current?.setBars(cached.bars);
+      const lb = cached.bars[cached.bars.length - 1];
+      setTail({
+        bar: { o: lb.open, h: lb.high, l: lb.low, c: lb.close, v: lb.volume },
+        prevClose: cached.bars.length > 1 ? cached.bars[cached.bars.length - 2].close : null,
+      });
+      chartRef.current?.applyOptions({ timeScale: { timeVisible: cached.meta.kind === 'intraday' } });
+      draw();
+      setStatus('ready');
+    } else if (!incremental) setStatus('loading');
     // ⚠️ WHICH SYMBOL THIS REQUEST IS FOR, CAPTURED BEFORE THE AWAIT. Switching quickly —
     // SPY → AAPL → NVDA — leaves several requests in flight, and they resolve in whatever order
     // the network decides. Without this, a slow SPY response landing after NVDA has been selected
@@ -1219,6 +1252,9 @@ export default function CPChart({
       barsRef.current = bars;
       barsSymRef.current = forSym;
       barIndexRef.current = new Map(bars.map((b, i) => [b.time, i]));
+      // Bounded and short-lived — see chart-bar-cache for why both of those matter in a tab that
+      // stays open all day.
+      putBars(cacheKey, bars, m);
       // ⚠️ THE INCREMENTAL PATH MUST FEED THE PRIMITIVE TOO. An append that only went to the price
       // series would leave the shading describing the previous refresh's bars, so the band would
       // stop short of the live edge and creep further behind on every poll.
