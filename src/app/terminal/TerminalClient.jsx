@@ -934,10 +934,14 @@ const WL_BADGE = { news: { label: 'NEWS', fg: '#B45309', bg: '#FEF3C7' }, halt: 
  * inspector. Both already exist, both are already reached by a bus, and neither is duplicated here.
  */
 function ChangeLine({ sym, change }) {
-  const toNews = change.kind === CHANGE.FILING;
+  // The News inspector already merges filings, press releases and the wire, so BOTH company-event
+  // families land in the surface that can actually show them. The transaction families open
+  // Evidence, which is where their canonical record lives.
+  const toNews = change.kind === CHANGE.FILING || change.kind === CHANGE.WIRE;
   const tone = change.kind === CHANGE.INSIDER ? C.green
     : change.kind === CHANGE.CONGRESS ? C.blue
-      : change.kind === CHANGE.SCAN ? C.gold : C.muted;
+      : change.kind === CHANGE.SCAN ? C.gold
+        : change.kind === CHANGE.WIRE ? C.blue : C.muted;
   return (
     <div
       role="button"

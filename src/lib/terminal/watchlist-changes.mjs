@@ -4,45 +4,135 @@
 //
 // Every word this produces is a field that already exists on a canonical record: the 8-K's own item
 // classification, the Form 4's own title/action/value, the congressional disclosure's own member and
-// amount band, the scan board's own membership. There is no new event type, no derived signal and
-// no wording that a source did not state.
+// amount band, the wire event's own headline. There is no new event type, no derived signal and no
+// wording that a source did not state.
 //
 // ── ⚠️ AND IT DOES NOT SCORE. ───────────────────────────────────────────────
 //
 // A watchlist row has space for ONE change, so one has to be chosen, and the obvious move is to
 // invent an importance number. That would be a new methodology hiding in a prototype — and a bad
-// one, because it would be tuned against nothing. The rule here is RECENCY: the most recent
-// qualifying event wins, and ties break by a fixed source order that is stated rather than scored.
-// A reader can predict it, which is the property that matters for something sitting beside a price.
+// one, because it would be tuned against nothing.
+//
+// The rule here is a STATED PRECEDENCE: one ordered table of event families, read top to bottom,
+// first match wins. Nothing is multiplied, weighted or added; a reader can point at the row of the
+// table that decided their line. See PRECEDENCE below — it is the whole of the ordering logic.
+//
+// ── ⚠️ WHY PRECEDENCE AND NOT PURE RECENCY ──────────────────────────────────
+//
+// The first version of this chose the most recent qualifying event, full stop. That is predictable
+// but it is wrong for the question the line answers, because the families arrive at wildly
+// different rates: Form 4s and congressional disclosures land continuously, a material 8-K lands
+// rarely. Under pure recency the high-frequency families win almost every row almost every day, and
+// the watchlist reads as an insider-trading feed rather than "what changed in my names".
+//
+// Recency has not been abandoned — it still decides WITHIN a family (newest of two 8-Ks), and it is
+// what the per-row windows below measure. What changed is that a routine transaction no longer
+// outranks a material company event merely by being six hours newer.
 
 /** The kinds a row can show. Each maps to an existing canonical source and an existing inspector. */
 export const CHANGE = Object.freeze({
   FILING: 'filing',
+  WIRE: 'wire',
   INSIDER: 'insider',
   CONGRESS: 'congress',
   SCAN: 'scan',
 });
 
 /**
- * Tie-break order when two events share a timestamp, lowest first.
+ * ⚠️ HIGH IMPORTANCE ON THE WIRE, DUPLICATED ON PURPOSE.
  *
- * ⚠️ NOT AN IMPORTANCE RANKING. It decides nothing except which of two events stamped at the same
- * moment is printed; it never promotes an older event over a newer one. Filings outrank the scan
- * board here only because a board membership has no moment of its own — it is a standing state,
- * dated from the board's build.
+ * The canonical definition is HIGH_IMPORTANCE in lib/enrich-policy.mjs (3 CRITICAL · 2 HIGH ·
+ * 1 MEDIUM · 0 LOW, per lib/news-normalize.mjs). That module reaches the trusted-source and
+ * Facebook lexicons, and this one is imported by the Terminal client, so importing it would drag
+ * all of that into the browser bundle to read one integer. The value is restated here and the
+ * verify suite imports BOTH and asserts they are equal, so the two cannot drift apart unnoticed.
  */
-const TIE_ORDER = [CHANGE.SCAN, CHANGE.CONGRESS, CHANGE.INSIDER, CHANGE.FILING];
+export const WIRE_HIGH_IMPORTANCE = 2;
 
-/** How recent something has to be to count as a change worth a line. */
-export const WINDOW_DAYS = Object.freeze({
-  [CHANGE.FILING]: 7,
-  [CHANGE.INSIDER]: 14,
+/**
+ * ⚠️ AND THE FLOOR BELOW WHICH A WIRE EVENT IS NOT A CHANGE AT ALL.
+ *
+ * The canonical definition is IMMEDIATE_MIN_IMPORTANCE in lib/enrich-policy.mjs — the line the
+ * pipeline ALREADY draws between an item worth handling in real time and one it defers. Restated
+ * here for the same bundle reason, and pinned by the same assertion.
+ *
+ * This is not a quality filter invented for the watchlist. It matters because LOW is where ticker
+ * RESOLUTION noise collects: measured on production, both LOW items attributed to ICLR were an
+ * "Icon" in the headline, and neither was about the company. Applying the pipeline's own floor
+ * keeps those off a row without this file forming an opinion about any individual headline.
+ */
+export const WIRE_MIN_IMPORTANCE = 1;
+
+/**
+ * ⚠️ THE CONVICTION BANDS THAT MAKE A FORM 4 MORE THAN ROUTINE.
+ *
+ * Not a threshold invented here: conviction is an existing Catalyst Pit model on insider_trades
+ * (conviction 0–100, band LOW | MODERATE | HIGH | VERY HIGH | EXTREME), and it is null for anything
+ * that is not an eligible open-market purchase. So this promotes exactly what that model already
+ * calls high-conviction buying, and never promotes a sale — which is the honest reading, because
+ * the model does not claim to grade sales at all.
+ */
+export const NOTABLE_BANDS = Object.freeze(['HIGH', 'VERY HIGH', 'EXTREME']);
+const NOTABLE_BAND_SET = new Set(NOTABLE_BANDS);
+
+/** True when the SOURCE's own flag says this record is not a routine one of its kind. */
+const NOTABLE = (c) => c.notable === true;
+/** Any record of the family, routine or not. */
+const ANY = () => true;
+
+/**
+ * ── ⚠️ THE ORDERING. ALL OF IT. ────────────────────────────────────────────
+ *
+ * Read top to bottom; the first row whose family matches, whose test passes AND whose window still
+ * covers the event decides the line. Ties within a row break by recency.
+ *
+ * Two properties worth naming, because they are what make this a precedence and not a score:
+ *
+ *   1. `notable` IS ALWAYS THE SOURCE'S OWN FLAG. Material is the 8-K item classification's;
+ *      high importance is the wire's; the conviction band is the Form 4 model's. Nothing in this
+ *      file decides that an event is important — it only reads what the source already said.
+ *   2. A PROMOTION DECAYS. Where a family appears twice, the promoted row carries the SHORTER
+ *      window, so a high-conviction buy outranks an 8-K only while it is fresh and then falls back
+ *      to the ordinary insider row. That is how recency survives inside a precedence.
+ *
+ * ⚠️ SCAN IS IN THE TABLE AND IS DELIBERATELY NOT POPULATED. Board membership is a standing state:
+ * we hold "this ticker is on the board now", not "this ticker joined the board at T". Dating it
+ * from the board's build time would invent an event time for the ticker, and it would be true again
+ * every time the board rebuilt — volume, not information. The row stays so that the day membership
+ * carries a real joined-at, the place it belongs is already decided.
+ */
+export const PRECEDENCE = Object.freeze([
+  // A material company event. The 8-K's own classification, which is also where earnings live
+  // (item 2.02 → "Earnings"), so earnings needs no family of its own.
+  { id: 'material-filing', kind: CHANGE.FILING, when: NOTABLE, days: 7 },
+  // A HIGH or CRITICAL wire story that NAMES the ticker. Attribution is the event's own tickers
+  // array; generic market news is not attributed to anything and never reaches here.
+  { id: 'major-news', kind: CHANGE.WIRE, when: NOTABLE, days: 3 },
+  // High-conviction open-market buying, while it is fresh.
+  { id: 'notable-insider', kind: CHANGE.INSIDER, when: NOTABLE, days: 7 },
+  { id: 'scan', kind: CHANGE.SCAN, when: ANY, days: 2 },
+  // An ordinary ticker-attributed story.
+  { id: 'news', kind: CHANGE.WIRE, when: ANY, days: 2 },
+  // ⚠️ THE TRANSACTION FAMILIES SIT BELOW THE COMPANY-EVENT FAMILIES, AND THAT IS THE FIX. They are
+  // not hidden and not downgraded in what they say — they win the row whenever nothing above them
+  // has anything to report, which on a quiet name is most days.
+  { id: 'insider', kind: CHANGE.INSIDER, when: ANY, days: 14 },
   // ⚠️ LONGER, BECAUSE THE LAW ALLOWS IT. A congressional trade may be disclosed up to 45 days
   // after it happens, so a 7-day window would hide most of them the week they became public. The
   // window is on the DISCLOSURE date — when it became knowable — not the trade date.
-  [CHANGE.CONGRESS]: 30,
-  [CHANGE.SCAN]: 2,
-});
+  { id: 'congress', kind: CHANGE.CONGRESS, when: ANY, days: 30 },
+  // ⚠️ LAST, AND SHORT-LIVED. "Exhibits" and "Other event" are filings a company must make, not
+  // developments; one of them is worth a line only when it is today's news and nothing else is.
+  { id: 'routine-filing', kind: CHANGE.FILING, when: ANY, days: 3 },
+]);
+
+/**
+ * The widest window any row of the table gives a family — the bound a query needs so that every
+ * candidate the precedence could still accept is fetched, and no more.
+ */
+export const WINDOW_DAYS = Object.freeze(Object.fromEntries(
+  Object.values(CHANGE).map((k) => [k, Math.max(...PRECEDENCE.filter((p) => p.kind === k).map((p) => p.days), 0)]),
+));
 
 const ms = (v) => {
   const t = Date.parse(v);
@@ -72,7 +162,34 @@ export function fromFiling(row) {
     at,
     label: row.primaryLabel || (Array.isArray(row.items) ? row.items[0] : null) || 'New SEC filing',
     // Material is the filing's own flag; a routine 8-K says so rather than being hidden or promoted.
+    notable: row.material === true,
     detail: row.material === false ? 'routine' : null,
+    url: row.url || null,
+  };
+}
+
+/**
+ * A ticker-attributed Pit Wire event, as a change.
+ *
+ * ⚠️ ATTRIBUTION IS THE EVENT'S OWN, NOT A SEARCH. A canonical event carries the tickers it was
+ * resolved to; a story that names no ticker is never pinned to one here. That is the difference
+ * between company news and "the market fell today" printed under a company's name.
+ */
+export function fromWire(row) {
+  const at = ms(row?.publishedAt);
+  if (at === null) return null;
+  const headline = String(row.headline || '').trim();
+  if (!headline) return null;
+  // Below the pipeline's own real-time floor this is not a change, the way a Form 4 whose verb we
+  // cannot read plainly is not a change.
+  if ((Number(row.importance) || 0) < WIRE_MIN_IMPORTANCE) return null;
+  return {
+    kind: CHANGE.WIRE,
+    at,
+    label: headline,
+    // The wire's own importance, not a re-judgement of the headline.
+    notable: (Number(row.importance) || 0) >= WIRE_HIGH_IMPORTANCE,
+    detail: String(row.source || '').trim() || null,
     url: row.url || null,
   };
 }
@@ -98,6 +215,7 @@ export function fromInsider(row) {
     kind: CHANGE.INSIDER,
     at,
     label: `${who} ${verb}${amount ? ` ${amount}` : ''}`,
+    notable: NOTABLE_BAND_SET.has(String(row.convictionBand || '').trim().toUpperCase()),
     detail: null,
     url: row.filingUrl || null,
   };
@@ -109,6 +227,10 @@ export function fromInsider(row) {
  * ⚠️ DATED FROM DISCLOSURE, NOT FROM THE TRADE. The trade may be weeks old; what changed for a
  * reader is that it became public. The trade date is not hidden — it is simply not what the
  * recency window is measured on.
+ *
+ * ⚠️ NEVER "NOTABLE". There is no existing Catalyst Pit flag that grades a disclosure, and the
+ * amount band is far too coarse to become one here without inventing a threshold. So this family
+ * has exactly one row in the table.
  */
 export function fromCongress(row) {
   const at = ms(row?.disclosureDate);
@@ -123,6 +245,7 @@ export function fromCongress(row) {
     kind: CHANGE.CONGRESS,
     at,
     label: `${who} ${verb}`,
+    notable: false,
     // The band is what the law requires them to publish; a point estimate would be invented.
     detail: row.amountRange || null,
     url: row.link || null,
@@ -132,14 +255,29 @@ export function fromCongress(row) {
 /**
  * Membership of a Pit Scan board, as a change.
  *
- * ⚠️ A STANDING STATE, DATED FROM THE BOARD'S BUILD. Unlike the other three this has no moment of
- * its own — the ticker is on the board now. It is dated from when the board was built so it can be
- * ordered with the rest, and it is the first thing dropped on a tie for exactly that reason.
+ * ⚠️ NOT WIRED, AND THE COMMENT ON PRECEDENCE SAYS WHY: the board tells us a ticker is on it now,
+ * not when it joined, so `builtAt` is the board's moment and not the ticker's. Kept because the
+ * shape is right for the day a joined-at exists.
  */
 export function fromScan(boardName, builtAt) {
   const at = ms(builtAt);
   if (at === null || !boardName) return null;
-  return { kind: CHANGE.SCAN, at, label: `On ${boardName}`, detail: null, url: null };
+  return { kind: CHANGE.SCAN, at, label: `On ${boardName}`, notable: false, detail: null, url: null };
+}
+
+/**
+ * The row of PRECEDENCE that decides a candidate, or -1 when none does.
+ *
+ * ⚠️ THE WINDOW IS PART OF THE MATCH, NOT A FILTER APPLIED AFTER IT. That is what lets a promotion
+ * decay: a high-conviction buy eight days old fails the `notable-insider` row on its window and
+ * falls through to the ordinary `insider` row, which still covers it.
+ */
+export function rankOf(change, now = Date.now()) {
+  if (!change || !Number.isFinite(change.at)) return -1;
+  // ⚠️ A FUTURE TIMESTAMP IS BAD DATA, NOT BREAKING NEWS. Nothing may be dated ahead of now.
+  if (change.at > now) return -1;
+  const age = now - change.at;
+  return PRECEDENCE.findIndex((p) => p.kind === change.kind && p.when(change) && age <= p.days * 86400000);
 }
 
 /**
@@ -147,18 +285,20 @@ export function fromScan(boardName, builtAt) {
  *
  * @param candidates the outputs of the from* readers, in any order; nulls are ignored.
  * @param now        injected so the window rule is assertable without waiting for a clock.
+ * @returns the chosen change with `why` set to the id of the PRECEDENCE row that chose it, so the
+ *          reason a line beat the others is readable off the payload rather than reconstructed.
  */
 export function pickChange(candidates, { now = Date.now() } = {}) {
-  const live = (candidates || []).filter((c) => {
-    if (!c || !Number.isFinite(c.at)) return false;
-    const days = WINDOW_DAYS[c.kind];
-    if (!days) return false;
-    // ⚠️ A FUTURE TIMESTAMP IS BAD DATA, NOT BREAKING NEWS. Nothing may be dated ahead of now.
-    return c.at <= now && now - c.at <= days * 86400000;
-  });
+  const live = [];
+  for (const c of candidates || []) {
+    const rank = rankOf(c, now);
+    if (rank >= 0) live.push({ c, rank });
+  }
   if (!live.length) return null;
-  live.sort((a, b) => (b.at - a.at) || (TIE_ORDER.indexOf(b.kind) - TIE_ORDER.indexOf(a.kind)));
-  return live[0];
+  // Family precedence first; recency only within a row of the table.
+  live.sort((a, b) => (a.rank - b.rank) || (b.c.at - a.c.at));
+  const { c, rank } = live[0];
+  return { ...c, why: PRECEDENCE[rank].id };
 }
 
 /** "4h", "2d" — the same shorthand the rest of the Terminal uses. */
