@@ -28,7 +28,7 @@
 // something untrue at the moment they act: stale prices passed off as current, or — the failure
 // that actually shipped — current prices disclaimed as delayed.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { C, Badge, TickerLogo } from '../../lib/cp-shared';
 
 const BOARD_TABS = [
@@ -216,36 +216,104 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
   );
 }
 
+
 /**
- * ONE BOARD. Used on its own by /scan (three stacked) and behind tabs in the Terminal panel.
- * There is exactly one Row design and one fetch path; the two surfaces differ only in arrangement.
+ * ⚠️ HOW LONG A PIT SCAN REQUEST MAY TAKE BEFORE THE CLIENT STOPS WAITING.
+ *
+ * NOT a way to hide a slow server — the server-side causes are fixed separately, and this is longer
+ * than the route's own ceiling so it can only fire when something has genuinely gone wrong upstream
+ * of it. Its whole job is to guarantee that "Loading Pit Scan…" ends.
  */
-export function ScanBoard({ board, title, onState, onPick }) {
-  const [state, setState] = useState(null);
-  const [error, setError] = useState(false);
-  const [busy, setBusy] = useState(null);
-  const [toast, setToast] = useState(null);
+const REQUEST_TIMEOUT_MS = 25_000;
+/** Evidence moves on filing cadence, not tick cadence. */
+const POLL_MS = 120_000;
+
+/**
+ * ALL THREE BOARDS, FETCHED ONCE.
+ *
+ * ── ⚠️ THE THREE FAILURES THIS HOOK EXISTS TO END ───────────────────────────
+ *
+ * 1. A TAB CLICK COST A ROUND TRIP. Each board was its own request, and the request repeated the
+ *    entitlement, the published-board read and a hundred vendor quotes to produce another view of
+ *    the same hundred tickers. Switching tabs is now a local state change.
+ *
+ * 2. "LOADING PIT SCAN…" COULD NEVER END. The old effect did `r.ok ? await r.json() : null` and
+ *    then set state to that — so a 503 or a timed-out function set state back to NULL, and null IS
+ *    the loading state. The panel sat on "Loading Pit Scan…" forever while its own header, reading
+ *    the same null through `state?.freshnessLabel || 'LAST CLOSE'`, looked perfectly resolved.
+ *    That is the exact screenshot that was reported. Every request now ends in data, an empty
+ *    board, or an explicit retryable error — never back in loading.
+ *
+ * 3. A BACKGROUND REFRESH BLANKED A WORKING BOARD. A failed poll replaced good data with the
+ *    loading screen. Data is only ever replaced by NEWER DATA; a failed refresh leaves what is on
+ *    screen alone and says so quietly.
+ */
+export function useScanBoards() {
+  const [boards, setBoards] = useState(null);
+  const [error, setError] = useState(null);
+  const [stale, setStale] = useState(false);
+  const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    // ⚠️ ONE GENERATION PER MOUNT. A response from a superseded effect must not land on the state of
+    // the one that replaced it — the race that shows a board the user has already navigated away
+    // from, and the one that can resurrect a loading state after a good load.
+    const load = async (isRefresh) => {
       try {
-        const r = await fetch(`/api/scan-board?board=${board}`, { cache: 'no-store' });
-        const j = await r.json();
+        const r = await fetch('/api/scan-board?board=all', {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        // ⚠️ A NON-JSON BODY IS A FAILURE, NOT A CRASH. A timed-out serverless function answers with
+        // an HTML error page, and .json() throws on it — which is how this path used to end up in
+        // the catch with no state at all.
+        const j = await r.json().catch(() => null);
         if (!alive) return;
-        setError(!r.ok || j.degraded === true);
-        setState(j);
-        // The page-level banner needs the feed state, and it must come from the response rather
-        // than from an assumption made in the page.
-        if (onState) onState(j);
-      } catch { if (alive) setError(true); }
+        if (!r.ok || !j || !j.boards) {
+          // Keep whatever is already on screen; only say so.
+          setStale(true);
+          if (!isRefresh) setError(j?.message || 'Pit Scan is unavailable right now.');
+          return;
+        }
+        setBoards(j.boards);
+        setError(null);
+        setStale(false);
+      } catch (e) {
+        if (!alive) return;
+        setStale(true);
+        // ⚠️ AND AN ERROR WITH NO DATA BEHIND IT MUST BE AN ERROR, NOT A SPINNER.
+        if (!isRefresh) setError(e?.name === 'TimeoutError' ? 'Pit Scan took too long to respond.' : 'Pit Scan is unavailable right now.');
+      }
     };
-    load();
-    // Evidence moves on filing cadence, not tick cadence. A two-minute poll keeps the price column
-    // current without pretending the board is a live tape.
-    const id = setInterval(load, 120_000);
+    load(false);
+    const id = setInterval(() => load(true), POLL_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [board]);
+  }, [nonce]);
+
+  const retry = useCallback(() => { setError(null); setNonce((n) => n + 1); }, []);
+  // Loading is the ONLY state with neither data nor an error, and it can only be reached before the
+  // first response. Nothing sets boards back to null.
+  return { boards, error, stale, loading: boards === null && error === null, retry };
+}
+
+/**
+ * ONE BOARD. Used on its own by /scan (three stacked) and behind tabs in the Terminal panel.
+ * There is exactly one Row design and one fetch path; the two surfaces differ only in arrangement.
+ *
+ * ⚠️ IT NO LONGER FETCHES. The data arrives as a prop from useScanBoards, which is what makes a tab
+ * switch local. A component that fetched per board could not be shown three-up on /scan or behind
+ * tabs in the Terminal without paying for the same dataset once per view.
+ */
+export function ScanBoard({ board, data, loading = false, errorText = null, onRetry, title, onState, onPick }) {
+  const [busy, setBusy] = useState(null);
+  const [toast, setToast] = useState(null);
+  const state = data || null;
+  const error = errorText || (state?.degraded === true ? (state.message || true) : null);
+
+  // The page-level banner needs the feed state, and it must come from the response rather than from
+  // an assumption made in the page.
+  useEffect(() => { if (state && onState) onState(state); }, [state, onState]);
 
   const watch = async (ticker) => {
     setBusy(ticker);
@@ -286,14 +354,36 @@ export function ScanBoard({ board, title, onState, onPick }) {
         </div>
       )}
 
-      {error ? (
+      {/* ⚠️ THREE TERMINAL STATES, AND LOADING IS NOT ONE OF THEM ONCE DATA HAS ARRIVED.
+          Data, a legitimately empty board, or an explicit retryable error. The old version had a
+          fourth path that was none of these: a failed response set state to null, and null rendered
+          as "Loading Pit Scan…" — forever, and through every subsequent poll. */}
+      {error && !state ? (
         // An unavailable board is not a quiet market and must never render as one.
         <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
           padding: '20px 16px', fontSize: 12.5, color: C.muted }}>
-          {state?.message || 'Pit Scan is unavailable right now. This is not a statement that nothing is happening.'}
+          {typeof error === 'string' ? error : 'Pit Scan is unavailable right now. This is not a statement that nothing is happening.'}
+          {onRetry && (
+            <button type="button" onClick={onRetry}
+              style={{ display: 'block', marginTop: 10, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                padding: '4px 12px', borderRadius: 999, fontFamily: 'inherit',
+                border: `1px solid ${C.border2}`, background: C.white, color: C.text }}>Try again</button>
+          )}
         </div>
-      ) : !state ? (
+      ) : loading && !state ? (
         <div style={{ fontSize: 12, color: C.muted, padding: 16 }}>Loading Pit Scan…</div>
+      ) : !state ? (
+        // ⚠️ NEITHER DATA, NOR LOADING, NOR AN ERROR IS NOT A STATE TO SIT IN SILENTLY.
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+          padding: '20px 16px', fontSize: 12.5, color: C.muted }}>
+          Pit Scan is unavailable right now.
+          {onRetry && (
+            <button type="button" onClick={onRetry}
+              style={{ display: 'block', marginTop: 10, fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                padding: '4px 12px', borderRadius: 999, fontFamily: 'inherit',
+                border: `1px solid ${C.border2}`, background: C.white, color: C.text }}>Try again</button>
+          )}
+        </div>
       ) : rows.length === 0 ? (
         <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
           padding: '20px 16px', fontSize: 12.5, color: C.muted }}>
@@ -323,14 +413,29 @@ export function ScanBoard({ board, title, onState, onPick }) {
  * THE TERMINAL ARRANGEMENT — the same boards behind tabs, because a panel has one board's worth of
  * height. /scan stacks all three instead. Same component, same API, same row.
  */
-export default function ScanBoardRows({ onPick } = {}) {
+export default function ScanBoardRows({ onPick, onFeed } = {}) {
   const [board, setBoard] = useState('catalysts-now');
-  const [feed, setFeed] = useState(null);
+  // ⚠️ ALL THREE ARRIVE TOGETHER, SO A TAB IS A LOCAL STATE CHANGE. It used to be a fetch, and the
+  // fetch repeated every expensive thing the first one had already done.
+  const { boards, error, stale, loading, retry } = useScanBoards();
+  const current = boards?.[board] || null;
+  // The banner reads the freshness of the board being shown, from the response that carried it.
+  const feed = current?.freshness ?? null;
+  // ⚠️ AND THE PANEL ABOVE READS IT FROM HERE. One request knows the answer; the header should not
+  // make a second one to find out, which is what let the two disagree.
+  useEffect(() => { if (onFeed) onFeed(current?.freshnessLabel ?? null); }, [current, onFeed]);
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif" }}>
       {/* Stated at the top of the panel, and again on every row. */}
       <FeedBanner freshness={feed} compact />
+      {/* ⚠️ A FAILED REFRESH DOES NOT BLANK A WORKING BOARD — it says so, over the data it could not
+          replace. Replacing good rows with a spinner is how a working product looks broken. */}
+      {stale && boards && (
+        <div style={{ fontSize: 10.5, color: C.dim, marginBottom: 6 }}>
+          Showing the last successful load — the latest refresh did not complete.
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
         {BOARD_TABS.map((t) => (
@@ -348,7 +453,7 @@ export default function ScanBoardRows({ onPick } = {}) {
         {BOARD_TABS.find((t) => t.key === board)?.blurb}
       </div>
 
-      <ScanBoard board={board} onState={(j) => setFeed(j?.freshness || null)} onPick={onPick} />
+      <ScanBoard board={board} data={current} loading={loading} errorText={error} onRetry={retry} onPick={onPick} />
     </div>
   );
 }

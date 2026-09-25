@@ -33,6 +33,22 @@ export async function GET(request) {
     const board = sp.get('board') || DEFAULT_BOARD;
 
     const state = scanState({ preset });
+
+    // ── ⚠️ THE PANEL WAS BUYING A BOARD IT NEVER RENDERED ────────────────────
+    //
+    // The Terminal panel mounts, calls this route, and renders ScanBoardRows inside itself — which
+    // fetches its own boards. So the rows this route worked to build were thrown away on arrival:
+    // the panel only reads them through a filter for SIGNAL rows, which board rows are not and
+    // never can be. Every Pit Scan panel mount therefore paid for a full board build — an
+    // entitlement resolution, a published-board read and a hundred vendor quotes — to produce an
+    // array that was immediately discarded, IN SERIES with the fetch that got the real one.
+    //
+    // scanState() is pure: it describes which signals can run on the active feed and needs no
+    // database, no vendor and no clock. Answering with it alone is the difference between a panel
+    // header that appears immediately and one that waits for the market.
+    if (sp.get('describe') === '1') {
+      return Response.json({ ...state, describeOnly: true }, { headers: NO_STORE });
+    }
     // A failed board read must not silently become "no rows" — it keeps its own degraded flag and
     // message, so the panel can say which of the two it is.
     const boardPayload = await buildScanBoardPayload({ board }).catch((e) => {

@@ -508,7 +508,11 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   // ⚠️ ONE ROW DESIGN. Two surfaces rendering the same boards must not drift into two answers.
   ok('the page wrapper reuses the shared components, it does not fork them',
     mut('forkedrow') ? false
-      : /import \{ ScanBoard, FeedBanner, BOARD_TABS \}/.test(page));
+      : /import \{ ScanBoard, FeedBanner, BOARD_TABS, useScanBoards \}/.test(page));
+  // ⚠️ AND IT SHARES THE FETCH, NOT JUST THE COMPONENTS. Stacking three boards used to mean three
+  // requests, each re-resolving the entitlement, re-reading the published board and re-fetching the
+  // same hundred quotes for three views of the same tickers.
+  ok('…including the one request that feeds all three', /useScanBoards\(\)/.test(page));
   ok('…and the Terminal panel uses the same module', /ScanBoardRows/.test(panel));
   ok('the page defines no Row of its own', !/function Row\s*\(/.test(page));
   ok('…and no second board list', !/const BOARDS = \[/.test(page));
@@ -547,8 +551,12 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
     /const linkSymbol = \(sourceId, sym\) => selectSymbol\(sym\)/.test(terminal));
   ok('the panel threads onPick into the boards',
     mut('nosync') ? false : /<ScanBoardRows onPick=\{onPick\}/.test(panel));
-  ok('…the wrapper accepts it', /export default function ScanBoardRows\(\{ onPick \} = \{\}\)/.test(rows));
-  ok('…the board accepts it', /export function ScanBoard\(\{ board, title, onState, onPick \}\)/.test(rows));
+  ok('…the wrapper accepts it', /export default function ScanBoardRows\(\{ onPick, onFeed \} = \{\}\)/.test(rows));
+  // ⚠️ THE BOARD TAKES ITS DATA AS A PROP AND FETCHES NOTHING. That is what makes a tab switch a
+  // local state change rather than another round trip for a dataset the client already has.
+  ok('…the board accepts it', /export function ScanBoard\(\{ board, data, loading = false, errorText = null, onRetry, title, onState, onPick \}\)/.test(rows));
+  ok('⚠️ …and the board no longer fetches for itself',
+    !/fetch\(`\/api\/scan-board\?board=\$\{board\}`/.test(rows));
   ok('…and the row receives it', /<Row [^>]*onPick=\{onPick\}/.test(rows));
 
   // ⚠️ THE SYMBOL STAYS A REAL LINK. /scan has nowhere to sync to, and middle-click, open-in-new-tab
@@ -791,6 +799,63 @@ L('=== ⚠️ THE BOARD DESCRIBES THE SERVICE; A ROW DESCRIBES ITS PRICE ===');
       const r = servedRow(toScanRows([crow({ ticker: 'ZZZ' })], {})[0]);
       return r.freshnessLabel === 'LAST CLOSE' && r.live === false;
     })());
+}
+
+
+L('=== ⚠️ THREE VIEWS OF ONE DATASET, LOADED ONCE ===');
+{
+  const payload = readFileSync(new URL('../src/lib/scan/board-payload.js', import.meta.url), 'utf8');
+  const route = readFileSync(new URL('../src/app/api/scan-board/route.js', import.meta.url), 'utf8');
+
+  // ⚠️ THE REFACTOR'S WHOLE SAFETY ARGUMENT. All three boards must be built by the SAME function
+  // from the SAME context — not by a faster parallel implementation that could rank differently.
+  ok('the shared half is loaded by one function', /export async function loadScanContext\(\)/.test(payload));
+  ok('a single board is that context plus one build',
+    /export async function buildScanBoardPayload[\s\S]{0,260}await loadScanContext\(\)[\s\S]{0,80}buildOneBoard\(ctx/.test(payload));
+  ok('⚠️ all three are the SAME build on the SAME context',
+    /export async function buildAllScanBoards[\s\S]{0,420}await loadScanContext\(\)[\s\S]{0,200}BOARDS\.map\(\(b\) => buildOneBoard\(ctx, b, limit\)\)/.test(payload));
+  ok('⚠️ there is exactly one board builder, not a fast path and a slow one',
+    (payload.match(/export async function buildOneBoard/g) || []).length === 1);
+  ok('the entitlement is resolved once, in the shared half',
+    (payload.match(/resolveUserAccess\(\)/g) || []).length === 1);
+  // ⚠️ THE CALL, NOT THE IMPORT. Counting every mention found two and reported a second read that
+  // does not exist — a false alarm is how an assertion gets loosened until it stops meaning anything.
+  ok('the published board is read once, in the shared half',
+    (payload.match(/await readPublishedBoard\(\)/g) || []).length === 1);
+  ok('…and the quote fetch lives there too, not per board',
+    payload.indexOf('getQuotes(symbols') > payload.indexOf('export async function loadScanContext')
+    && payload.indexOf('getQuotes(symbols') < payload.indexOf('export async function buildOneBoard'));
+
+  ok('the route can serve all three in one request', /board === 'all'/.test(route) && /buildAllScanBoards/.test(route));
+  ok('…and its failure keeps the shape the caller asked for', /boards: Object\.fromEntries/.test(route));
+  ok('⚠️ the single-board form still exists for the page that stacks them',
+    /buildScanBoardPayload\(\{ board, limit \}\)/.test(route));
+  ok('timing ships with the answer rather than being added when something is slow',
+    /Server-Timing/.test(route));
+}
+
+L('=== ⚠️ A REQUEST THAT NEVER ENDS IS A BUG, NOT A SLOW REQUEST ===');
+{
+  const rows = readFileSync(new URL('../src/components/scan/ScanBoardRows.jsx', import.meta.url), 'utf8');
+
+  // ⚠️ THE STUCK-LOADING BUG, IN ONE LINE. `r.ok ? await r.json() : null` then setState(j): a 503
+  // or a function killed at its own maxDuration set state back to NULL, and null IS the loading
+  // state. "Loading Pit Scan…" then survived every subsequent poll.
+  ok('⚠️ a failed response never sets the data back to null',
+    !/setBoards\(null\)/.test(rows));
+  ok('⚠️ a non-JSON body is a failure, not a crash — a killed function answers with HTML',
+    /r\.json\(\)\.catch\(\(\) => null\)/.test(rows));
+  ok('⚠️ every request is on a clock, so loading always ends',
+    /AbortSignal\.timeout\(REQUEST_TIMEOUT_MS\)/.test(rows));
+  ok('…and a timeout is reported as one rather than as a blank board', /TimeoutError/.test(rows));
+  ok('⚠️ loading is the ONLY state with neither data nor an error',
+    /loading: boards === null && error === null/.test(rows));
+  ok('⚠️ a failed REFRESH keeps the data that is already on screen',
+    /if \(!isRefresh\) setError/.test(rows) && /setStale\(true\)/.test(rows));
+  ok('…and says so rather than pretending the data is current',
+    /Showing the last successful load/.test(rows));
+  ok('an error with no data behind it is retryable', /onRetry/.test(rows) && /Try again/.test(rows));
+  ok('⚠️ a superseded response cannot land on the state that replaced it', /if \(!alive\) return;/.test(rows));
 }
 
 L(`\n${pass} passed, ${fail} failed`);

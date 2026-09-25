@@ -38,6 +38,11 @@ const SHOW_UNBUILT_ENGINE = false;
 
 export default function PitScanPanel({ onPick }) {
   const [state, setState] = useState(null);
+  const [failed, setFailed] = useState(false);
+  // The status shown in the header is the freshness of the board the user is actually looking at,
+  // reported by the component that fetched it. It used to come from this panel's own request, which
+  // is how a header could read LAST CLOSE over a body that had loaded nothing at all.
+  const [feedLabel, setFeedLabel] = useState(null);
   const [tab, setTab] = useState('scan');
   const [preset, setPreset] = useState(null);
   const [showDark, setShowDark] = useState(false);
@@ -46,10 +51,22 @@ export default function PitScanPanel({ onPick }) {
     let alive = true;
     const load = async () => {
       try {
-        const r = await fetch(`/api/pitscan${preset ? `?preset=${preset}` : ''}`, { cache: 'no-store' });
-        const j = r.ok ? await r.json() : null;
-        if (alive) setState(j);
-      } catch { if (alive) setState({ error: true, rows: [], readiness: { live: false } }); }
+        // ⚠️ describe=1 — THE SELF-DESCRIPTION ONLY. The boards this panel shows are fetched by
+        // ScanBoardRows below; asking this route for them too meant building them twice per mount.
+        const q = new URLSearchParams({ describe: '1' });
+        if (preset) q.set('preset', preset);
+        const r = await fetch(`/api/pitscan?${q}`, { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+        const j = r.ok ? await r.json().catch(() => null) : null;
+        // ⚠️ A FAILED RESPONSE MUST NOT SET STATE BACK TO NULL, AND THIS IS THE BUG THAT SHIPPED.
+        //
+        // It did exactly that — `r.ok ? await r.json() : null` and then setState(j) — so a 503, or
+        // a serverless function killed at its own maxDuration, put state back to null. And null IS
+        // the loading state below. The panel sat on "Loading Pit Scan…" indefinitely while its
+        // header, reading the same null through `state?.freshnessLabel || 'LAST CLOSE'`, looked
+        // perfectly resolved. That pairing is the exact symptom that was reported.
+        if (!alive) return;
+        if (j) { setState(j); setFailed(false); } else { setFailed(true); }
+      } catch { if (alive) setFailed(true); }
     };
     load();
     // Slow on purpose while there is nothing to poll for. The cadence becomes a push subscription
@@ -122,11 +139,14 @@ export default function PitScanPanel({ onPick }) {
               wrong in the other direction — it described the unfed SIGNAL engine while the
               evidence boards were full — and read as a broken product. What is printed is the
               freshness the rows actually carry. */}
-          <Badge dot>{state?.freshnessLabel || 'LAST CLOSE'}</Badge>
+          <Badge dot>{feedLabel || 'LAST CLOSE'}</Badge>
         </span>
       </div>
 
-      {!state ? (
+      {/* ⚠️ THE PANEL'S OWN DESCRIPTION IS NOT WORTH BLOCKING THE BOARDS FOR. If it failed, the
+          boards below still render — they are a separate request and the product is in them. The
+          panel only waits while its first request is genuinely still in flight. */}
+      {!state && !failed ? (
         <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading Pit Scan…</div>
       ) : !hasSignalRows ? (
         <div style={{ overflow: 'auto', flex: 1, padding: '16px 14px' }}>
@@ -149,7 +169,7 @@ export default function PitScanPanel({ onPick }) {
               page renders. On /scan no onPick is passed and the symbol stays a plain link. */}
           <div style={{ overflowX: 'auto' }}>
             <div style={{ minWidth: 300 }}>
-              <ScanBoardRows onPick={onPick} />
+              <ScanBoardRows onPick={onPick} onFeed={setFeedLabel} />
             </div>
           </div>
 

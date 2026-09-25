@@ -269,6 +269,9 @@ export const tiingoCapabilities = () =>
 const budget = { day: null, dayCount: 0, hour: null, hourCount: 0 };
 export const TIINGO_BUDGET = Object.freeze({ PER_DAY: 400_000, PER_HOUR: 30_000 });
 
+/** The whole-market snapshot is a bigger answer than a quote, so it gets a bigger budget. */
+export const SNAPSHOT_TIMEOUT_MS = Number(process.env.TIINGO_SNAPSHOT_TIMEOUT_MS || 10000);
+
 function countCall() {
   const now = new Date();
   const day = now.toISOString().slice(0, 10);
@@ -293,7 +296,23 @@ export const tiingoBudget = () => ({
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 // The token goes in the Authorization header, never the query string, so it cannot leak through a
 // logged URL, a referrer or an error message that echoes the request.
-async function tiingo(path, { searchParams = {} } = {}) {
+/**
+ * ⚠️ EVERY CALL IS ON A CLOCK, AND IT WAS NOT.
+ *
+ * There was no timeout here at all, so a vendor request that stalled held its caller until the
+ * SERVERLESS FUNCTION was killed. Measured in production: /api/scan-board returned Vercel's HTML
+ * error page after exactly 20.1s — the route's own maxDuration — on roughly one request in three,
+ * while the same URL answered in 600ms either side of it. From the browser that is a Pit Scan that
+ * never loads; the client got HTML where it expected JSON.
+ *
+ * A budget converts that into an answer. Six seconds is far longer than this API's measured p99
+ * (~800ms for the whole-market snapshot, ~1s for a hundred quotes) and far shorter than any
+ * function's ceiling, so a stall becomes a degraded board with honest labels instead of a dead
+ * request — and the caller keeps the rest of its budget to finish with.
+ */
+export const TIINGO_TIMEOUT_MS = Number(process.env.TIINGO_TIMEOUT_MS || 6000);
+
+async function tiingo(path, { searchParams = {}, timeoutMs = TIINGO_TIMEOUT_MS } = {}) {
   if (!tiingoConfigured()) return { ok: false, status: 0, reason: 'not-configured', data: null };
   countCall();
   const url = new URL(`${BASE}${path}`);
@@ -302,6 +321,10 @@ async function tiingo(path, { searchParams = {} } = {}) {
     const r = await fetch(url, {
       headers: { 'Content-Type': 'application/json', Authorization: `Token ${TOKEN}` },
       cache: 'no-store',
+      // ⚠️ A TIMEOUT IS A REASON, NOT AN EXCEPTION. AbortSignal.timeout rejects with a TimeoutError
+      // the catch below turns into reason:'timeout', so a caller can tell "the vendor was slow"
+      // from "the vendor said no" — which are different products decisions.
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!r.ok) {
       // 403 is an entitlement answer and is worth distinguishing from a broken symbol, because one
@@ -309,8 +332,10 @@ async function tiingo(path, { searchParams = {} } = {}) {
       return { ok: false, status: r.status, reason: r.status === 403 ? 'entitlement' : r.status === 404 ? 'not-found' : 'http', data: null };
     }
     return { ok: true, status: r.status, reason: null, data: await r.json() };
-  } catch {
-    return { ok: false, status: 0, reason: 'network', data: null };
+  } catch (e) {
+    const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+    if (timedOut) console.log(`[tiingo] timeout after ${timeoutMs}ms ${path}`);
+    return { ok: false, status: 0, reason: timedOut ? 'timeout' : 'network', data: null };
   }
 }
 
@@ -531,7 +556,9 @@ export async function getAllTickersSnapshot({ consolidated = false } = {}) {
   // around /iex; silently repointing them would change two products this change was not asked to
   // touch. `consolidated: true` selects the entitled consolidated tape — one request for roughly
   // 19,600 symbols, measured ~800ms — and everything below is shape-identical.
-  const res = await tiingo(consolidated ? '/tiingo/equity/intraday' : '/iex');
+  // ⚠️ A LONGER BUDGET THAN A QUOTE, BECAUSE IT IS A BIGGER ANSWER — roughly 19,600 rows, measured
+  // ~800ms. Still bounded: an unbounded wait here is what killed the board request.
+  const res = await tiingo(consolidated ? '/tiingo/equity/intraday' : '/iex', { timeoutMs: SNAPSHOT_TIMEOUT_MS });
   if (!res.ok || !Array.isArray(res.data)) return { ok: false, reason: res.reason, rows: [], asOf: null };
   const rows = [];
   for (const q of res.data) {

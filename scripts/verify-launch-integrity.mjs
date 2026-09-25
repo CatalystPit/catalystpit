@@ -125,7 +125,20 @@ L('\n=== THE PANEL STATES THE FRESHNESS IT HAS ===');
     mut('claimslive') ? false : !/'LIVE'|>LIVE</.test(panel));
   ok('…nor still says it is awaiting a feed it now has',
     mut('awaitingfeed') ? false : !/AWAITING FEED/.test(panel));
-  ok('…it prints the freshness the rows carry', /freshnessLabel/.test(panel));
+  // ⚠️ AND IT GETS THAT FRESHNESS FROM THE BOARD, NOT FROM A REQUEST OF ITS OWN. The panel used to
+  // fetch an entire board just to read one label off it — in series with the fetch that got the
+  // board it actually renders — and when that request failed the label fell back to LAST CLOSE over
+  // a body that had loaded nothing at all. The component that HAS the data reports it upward.
+  ok('…it prints the freshness the rows carry',
+    /feedLabel/.test(panel) && /onFeed=\{setFeedLabel\}/.test(panel));
+  ok('…and no longer buys a board to find it out', /describe: '1'/.test(panel));
+  // ⚠️ NEVER PERMANENT LOADING. A failed response used to set state back to null, and null is the
+  // loading state — so a 503 or a killed function left "Loading Pit Scan…" on screen forever.
+  ok('⚠️ a failed request does not reset the panel into loading',
+    !/const j = r\.ok \? await r\.json\(\) : null;\s*\n\s*if \(alive\) setState\(j\);/.test(panel)
+    && /setFailed\(true\)/.test(panel));
+  ok('…and the loading state is only shown while a first request is genuinely in flight',
+    /\{!state && !failed \?/.test(panel));
 }
 
 // ── 4. ALERTS WE CANNOT FIRE ────────────────────────────────────────────────

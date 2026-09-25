@@ -43,10 +43,26 @@ export const DEFAULT_LIMIT = 25;
 export const MOVER_POOL = 200;
 
 /** The board payload, or `{ degraded: true }` when the evidence board cannot be read. */
-export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEFAULT_LIMIT } = {}) {
-  const boardId = BOARDS.includes(board) ? board : DEFAULT_BOARD;
-  const cap = Math.min(Number(limit) || DEFAULT_LIMIT, 50);
-
+/**
+ * THE WORK EVERY BOARD NEEDS, DONE ONCE.
+ *
+ * ── ⚠️ THE THREE TABS WERE EACH PAYING FOR ALL OF THIS ──────────────────────
+ *
+ * Moving Now, Evidence Now and Divergence are three views of one dataset, and every one of them was
+ * a separate request that resolved the entitlement, read the published Consensus board, and fetched
+ * a hundred quotes from the vendor before it could rank anything. Opening the panel and touching
+ * each tab once therefore cost three entitlement resolutions, three board reads and three quote
+ * batches to produce three views of the SAME hundred tickers — and a tab click cost a full round
+ * trip to the vendor, which is why switching tabs felt like loading the product again.
+ *
+ * Nothing about the boards changed to fix that. The shared half is lifted out verbatim and run
+ * once; the per-board half is the same buildBoard on the same rows. Two callers use it: one board
+ * for the existing route, and all three for the panel that shows all three.
+ *
+ * @returns {{payload: object|null, status: string, realtime: boolean, consensusRows: object[],
+ *            symbols: string[], quotes: object, snapshot: object|null}}
+ */
+export async function loadScanContext() {
   // 1. ENTITLEMENT FIRST. `realtime` narrows what may be served and can never widen it.
   //
   //    ⚠️ THIS NOW DECIDES SOMETHING REAL. It used to be near-decorative: the account had no
@@ -62,15 +78,7 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
 
   // 2. THE PUBLISHED CONSENSUS BOARD — read, never rebuilt.
   const { payload, status } = await readPublishedBoard();
-  if (!payload) {
-    // An unavailable evidence board is not a quiet market and must never render as one.
-    return {
-      board: boardId, version: BOARDS_VERSION, rowsVersion: SCAN_ROWS_VERSION,
-      readiness: scanReadiness(activeCapabilities()),
-      rows: [], rejected: [], degraded: true,
-      message: 'The evidence board is unavailable. This is not a statement that nothing is happening.',
-    };
-  }
+  if (!payload) return { payload: null, status };
 
   const consensusRows = payload.rows || [];
   const symbols = consensusRows.map((r) => r.ticker).filter(Boolean).slice(0, 100);
@@ -131,6 +139,32 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
       quotes = {};
     }
   }
+
+  return { payload, status, realtime, consensusRows, symbols, quotes, snapshot };
+}
+
+/** What a caller gets when the evidence board itself cannot be read. */
+function degradedBoard(boardId) {
+  return {
+    board: boardId, version: BOARDS_VERSION, rowsVersion: SCAN_ROWS_VERSION,
+    readiness: scanReadiness(activeCapabilities()),
+    rows: [], rejected: [], degraded: true,
+    message: 'The evidence board is unavailable. This is not a statement that nothing is happening.',
+  };
+}
+
+/**
+ * One board, from an already-loaded context.
+ *
+ * ⚠️ IDENTICAL TO WHAT buildScanBoardPayload ALWAYS DID from step 4 onward — same qualification,
+ * same ranking, same catalyst resolution, same freshness. The only thing that moved is WHERE the
+ * quotes and the Consensus rows came from, and they come from the same functions as before.
+ */
+export async function buildOneBoard(ctx, board = DEFAULT_BOARD, limit = DEFAULT_LIMIT) {
+  const boardId = BOARDS.includes(board) ? board : DEFAULT_BOARD;
+  const cap = Math.min(Number(limit) || DEFAULT_LIMIT, 50);
+  if (!ctx?.payload) return degradedBoard(boardId);
+  const { payload, status, consensusRows, quotes, snapshot } = ctx;
 
   // 4. MOVING NOW RANKS THE MARKET, NOT THE EVIDENCE BOARD.
   //
@@ -242,4 +276,26 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
     rejected: built.rejected,
     degraded: false,
   };
+}
+
+/** The board payload, or `{ degraded: true }` when the evidence board cannot be read. */
+export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEFAULT_LIMIT } = {}) {
+  const ctx = await loadScanContext();
+  return buildOneBoard(ctx, board, limit);
+}
+
+/**
+ * All three boards, from ONE load.
+ *
+ * ⚠️ THIS IS THE WHOLE PERFORMANCE FIX, AND IT CHANGES NO METHODOLOGY. The three are built from the
+ * same context object — the same entitlement, the same published board, the same quotes — so they
+ * cannot disagree with each other about a price or a freshness the way three independent requests
+ * seconds apart could. They are built in parallel because only one of them does any further IO.
+ */
+export async function buildAllScanBoards({ limit = DEFAULT_LIMIT } = {}) {
+  const ctx = await loadScanContext();
+  const built = await Promise.all(BOARDS.map((b) => buildOneBoard(ctx, b, limit)));
+  const boards = {};
+  BOARDS.forEach((b, i) => { boards[b] = built[i]; });
+  return { boards, degraded: !ctx?.payload };
 }
