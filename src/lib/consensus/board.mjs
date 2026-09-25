@@ -48,8 +48,34 @@ export const BOARD_FAMILIES = SYNTHESIS_FAMILIES;
 export const AGGREGATE_FAMILIES = FAMILIES;
 
 export const BOARD_LIMIT = 60;
-/** Resolved at a time. Above this the driver serialises and wall-clock gets worse, not better. */
-export const CONCURRENCY = 4;
+
+/**
+ * Tickers resolved at a time.
+ *
+ * ── ⚠️ 4 WAS RIGHT ONCE AND IS NOW THE REASON THE BOARD STOPPED REFRESHING ──
+ *
+ * The old value carried the note "above this the driver serialises and wall-clock gets worse, not
+ * better", and that was a real measurement — of a CPU-bound build. The workload has since changed
+ * shape: a V3.5 setup build runs two evidence engines plus a reaction attach per ticker, which is
+ * about a dozen Neon round trips, and a CPU profile of a 150-ticker build is 85% IDLE. The process
+ * spends its time waiting, and four waiters cannot fill a pipe that deep.
+ *
+ * Measured on the real 3,309-candidate pool, projected full-pass wall clock:
+ *
+ *    c=4   499s      c=12  399s      c=24  261s      c=48  216s
+ *    c=8   407s      c=16  368s      c=32  217s      c=64  263s
+ *
+ * maxDuration is 300s and cannot be raised — it is the plan ceiling. At 4 the build could not
+ * finish, so it was killed mid-flight every time; see the route for what that did to the heartbeat.
+ *
+ * ⚠️ AND IT CHANGES THE CLOCK, NOT THE OUTPUT. Verified explicitly: with `now` pinned, the built
+ * setups at c=4, 32, 48 and 64 are byte-identical on ticker, active, current, label, confidence,
+ * alignment and join. Concurrency is a schedule, not a methodology — see verify-consensus-board.mjs.
+ *
+ * 32 rather than 48: the two are within noise of each other, 64 is measurably worse, and the lower
+ * number leaves Neon headroom for the rest of the application while the build runs.
+ */
+export const CONCURRENCY = 32;
 
 const rows = (res) => res?.rows ?? res ?? [];
 

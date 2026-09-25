@@ -199,7 +199,19 @@ L('\n=== ORDERING IS DETERMINISTIC AND NOT A LEADERBOARD ===');
   // tiebreaker on an evidence ranking, which is the circularity the layer exists to prevent.
   ok('market confirmation does not enter the ordering',
     !/confirmation|market/i.test(orderBoard.toString()));
-  ok('the board is bounded', BOARD_LIMIT <= 100 && CONCURRENCY <= 8);
+  // ⚠️ TWO UNRELATED BOUNDS, AND ONLY ONE OF THEM IS ABOUT THE BOARD.
+  //
+  // BOARD_LIMIT is a PRODUCT bound: how many rows a reader is ever shown. It has not moved.
+  //
+  // CONCURRENCY is a SCHEDULING bound: how many tickers resolve at once. It was pinned at <= 8
+  // here when the build was CPU-bound and extra fan-out genuinely made the wall clock worse. That
+  // stopped being true — a profile of the current build is 85% idle — and at 4 the build outgrew
+  // maxDuration and was killed mid-flight every time, which is what froze the board for six hours.
+  // The ceiling is now 64 because that is where measured throughput turns back down; the floor is
+  // asserted in verify-consensus-board-deadline.mjs, which also proves the output does not change
+  // with the schedule. Raising this did not relax a product guarantee.
+  ok('the board is bounded', BOARD_LIMIT <= 100);
+  ok('the resolve fan-out is bounded', CONCURRENCY >= 16 && CONCURRENCY <= 64);
 }
 
 L('\n=== PIT SCAN CONTRACT ===');

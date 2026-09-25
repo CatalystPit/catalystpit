@@ -87,6 +87,7 @@ export async function readTicker(ticker, { maxAgeMs = TICKER_REUSE_MAX_AGE_MS, n
  */
 export async function rebuildBoard(db, sql, {
   limit = EVALUATE_LIMIT, now = Date.now(), reuseTickers = false, force = [], reason = 'manual',
+  deadlineAt,
   // Test seam. Production leaves this undefined and the real evidence engine is imported lazily,
   // which keeps this module loadable without a database.
   resolve, resolveConsensus,
@@ -103,7 +104,14 @@ export async function rebuildBoard(db, sql, {
   const { buildSetupBoard } = await import('./setup-board.js');
   let reused = 0;
 
-  const board = await buildSetupBoard(db, sql, { limit, now, resolve, resolveConsensus });
+  const board = await buildSetupBoard(db, sql, { limit, now, resolve, resolveConsensus, deadlineAt });
+
+  // ⚠️ A TRUNCATED BUILD IS NOT A BOARD. It is a complete board with an arbitrary subset of the
+  // market silently missing, which is a worse lie than being behind. Refusing here keeps the
+  // existing guarantee intact: a failed rebuild leaves the previous board exactly where it was.
+  if (board.aborted) {
+    return { published: false, reason: 'deadline', payload: { ...board, materializationVersion: MATERIALIZATION_VERSION, reason } };
+  }
   const payload = {
     ...board,
     materializationVersion: MATERIALIZATION_VERSION,

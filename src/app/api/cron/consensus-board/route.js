@@ -1,27 +1,37 @@
 import { db } from '../../../../lib/db';
 import { sql } from 'drizzle-orm';
-import { EVALUATE_LIMIT } from '../../../../lib/consensus/setup-board.js';
+import { EVALUATE_LIMIT, BUILD_DEADLINE_MS } from '../../../../lib/consensus/setup-board.js';
 import { rebuildBoardExclusive } from '../../../../lib/consensus/refresh';
 import { MATERIALIZATION_VERSION } from '../../../../lib/consensus/materialization.mjs';
 import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
-// ⚠️ THE MEMORY SETTING IN vercel.json IS WHAT MAKES THIS FIT, AND IT IS NOT ABOUT MEMORY.
+// ⚠️ 300s IS THE PLAN CEILING. A BUILD THAT OVERRUNS IS KILLED, NOT REJECTED.
 //
-// 300s is the plan ceiling, so a build that overruns cannot be given more time. It had to get
-// faster instead, and the build is CPU-BOUND: raising the resolve fan-out from 4 to 16 parallel
-// changed the wall clock by under 3% (173.1s -> 168.8s measured), which is the signature of work
-// that is computing rather than waiting. Node runs it on one thread, so more concurrency buys
-// nothing.
+// This route has now run out of time twice, and the second time the diagnosis from the first was
+// what made it hard to see.
 //
-// Vercel allocates CPU in proportion to configured memory, so the function is pinned to 3009MB —
-// roughly 3x the default allocation's CPU. That is the whole fix: same code, same queries, same
-// output, more clock cycles per second to do it with.
+// ── WHAT THE FIRST FIX SAID, AND WHY IT IS NO LONGER TRUE ───────────────────
 //
-// Measured before the change: a drain claimed the board lock at 13:24, held it for the full 300s
-// TTL, published nothing, and was killed — leaking the lock until 13:29:51. A laptop ran the same
-// build in 170s, which is why this looked like it fit and did not.
+// It concluded the build was CPU-BOUND, on the evidence that raising the resolve fan-out from 4 to
+// 16 moved the wall clock under 3% (173.1s -> 168.8s). Vercel allocates CPU in proportion to
+// configured memory, so the function was pinned to 3009MB in vercel.json for roughly 3x the CPU.
+// That was a correct reading of the build AS IT THEN WAS.
+//
+// The build has since changed shape. A V3.5 setup runs TWO evidence engines per ticker —
+// consensusRow against consensus/evidence.js and tickerEvidence against evidence/resolve.js — plus
+// a reaction attach, which is about a dozen Neon round trips per candidate over a 3,309-candidate
+// pool. A CPU profile of a 150-ticker build is 85% IDLE. It is not computing; it is waiting, and
+// four waiters cannot fill a pipe that deep. The memory pin stays — it is not harmful and the CPU
+// it buys still helps the 15% — but it is no longer the thing that makes this fit.
+//
+// ── WHAT ACTUALLY FIXED IT ──────────────────────────────────────────────────
+//
+// CONCURRENCY 4 -> 32 in board.mjs, which is measured there. Full-pass wall clock 499s -> 217s on
+// the same candidate pool, with byte-identical output. Plus BUILD_DEADLINE_MS below, so that when
+// this route runs out of time again — and a growing candidate pool means it eventually will — it
+// stops itself and SAYS SO instead of being killed in silence.
 
 // RECONCILIATION — the safety net, no longer the only mechanism.
 //
@@ -51,10 +61,15 @@ export const maxDuration = 300;
 //
 // ── WHY STILL 30 MINUTES ────────────────────────────────────────────────────
 //
-// A full pass is ~60 tickers at ~1.6s each with concurrency 4 — roughly 90 seconds of Neon time.
-// Targeted invalidation now carries freshness, so running this more often would buy no correctness
-// and spend real database capacity; running it much less often would let a lost mark or an
-// aged-out activation window persist. It is a repair interval, not a freshness interval.
+// Targeted invalidation carries freshness, so running this more often would buy no correctness and
+// spend real database capacity; running it much less often would let a lost mark or an aged-out
+// activation window persist. It is a repair interval, not a freshness interval.
+//
+// ⚠️ AND IT IS NOT CHEAP ANY MORE. The note here used to read "~60 tickers at ~1.6s each — roughly
+// 90 seconds of Neon time", from when the pool was sixty names. It is now a full pass over ~3,300
+// candidates costing ~220s at CONCURRENCY 32. Thirty minutes is still the right interval, but the
+// margin under maxDuration is thin and shrinks as the evidence windows admit more candidates.
+// BUILD_DEADLINE_MS is what keeps that from becoming another silent outage.
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -65,9 +80,34 @@ export async function GET(request) {
   }
 
   const t0 = Date.now();
+
+  // ⚠️ THE CLOCK MOVES BEFORE THE WORK, NOT ONLY AFTER IT.
+  //
+  // This is the failure this route just had, and it is the same one the SEC cron had: the function
+  // was killed at maxDuration, so recordJobRun below never ran. last_polled_at stayed frozen at the
+  // last SUCCESS and consecutive_failures stayed at 0, which made a six-hour outage look identical
+  // to a cron that had never been scheduled. There was no durable state anywhere saying "it
+  // started".
+  //
+  // Writing a failure row FIRST fixes that with the infrastructure that already exists:
+  //
+  //   started, still running   last_polled_at moves, last_success_at does not, failures += 1
+  //   completed                the success write below resets failures to 0
+  //   started and disappeared  the 'started' row is what remains — and it is the only evidence
+  //                            a kill leaves behind, because a kill runs no code of ours
+  //
+  // The cost is one row write per invocation and a failure count that is transiently 1 during a
+  // normal run. That is a good trade for being able to tell "dead" from "never asked".
+  await recordJobRun('consensus-board', { ok: false, note: 'started' });
+
   try {
     // reuseTickers defaults to false — see above. Every candidate is recomputed from the database.
-    const r = await rebuildBoardExclusive(db, sql, { limit: EVALUATE_LIMIT, reason: 'reconcile' });
+    const r = await rebuildBoardExclusive(db, sql, {
+      limit: EVALUATE_LIMIT, reason: 'reconcile',
+      // ⚠️ MEASURED FROM WHEN THE INVOCATION STARTED, not from when the build does. Everything
+      // before the build — auth, the candidate query, module loading — spends the same budget.
+      deadlineAt: t0 + BUILD_DEADLINE_MS,
+    });
     const rows = r.payload?.rows?.length ?? 0;
     const ms = Date.now() - t0;
 
@@ -75,6 +115,9 @@ export async function GET(request) {
     // board is being kept current by the mechanism this pass exists to back up.
     if (!r.published) {
       const benign = r.reason === 'locked';
+      // 'deadline' means the build stopped itself rather than being killed. The previous board is
+      // untouched, the lock was released normally, and the heartbeat below records what happened —
+      // which is the whole difference between this and the outage that prompted the change.
       console.warn(`[consensus-board] not published (${r.reason}) after ${ms}ms`);
       // ⚠️ THIS PATH USED TO RECORD NOTHING AT ALL, AND THAT IS HOW A TOTAL OUTAGE STAYED INVISIBLE.
       //
@@ -90,7 +133,7 @@ export async function GET(request) {
       // leaves exactly the blind spot above. A single locked pass costs one increment and is
       // forgotten by the next successful run; a persistently starved one now surfaces as rising
       // consecutive_failures instead of silence.
-      await recordJobRun('consensus-board', { ok: false, note: `not published: ${r.reason}` });
+      await recordJobRun('consensus-board', { ok: false, note: `not published: ${r.reason} after ${Math.round(ms / 1000)}s` });
       return Response.json({
         ok: benign, published: false, why: r.reason, version: MATERIALIZATION_VERSION, ms,
       }, { status: benign ? 200 : 500 });
@@ -100,7 +143,7 @@ export async function GET(request) {
       + ` ${r.payload.failed} failed, ${ms}ms`);
     // A 'locked' pass above is deliberately NOT a heartbeat: the drain that holds the lock is the
     // thing doing the work, and recording a tick here would credit this pass for it.
-    await recordJobRun('consensus-board', { ok: true, seen: rows, note: `${rows} rows / ${r.payload.candidates} candidates` });
+    await recordJobRun('consensus-board', { ok: true, seen: rows, note: `${rows} rows / ${r.payload.candidates} candidates in ${Math.round(ms / 1000)}s` });
     return Response.json({
       ok: true, published: true, rows, candidates: r.payload.candidates,
       failed: r.payload.failed, version: MATERIALIZATION_VERSION, ms,

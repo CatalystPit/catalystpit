@@ -441,7 +441,23 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
 }
 
 /** Assemble the board: evaluate candidates, keep only what qualifies, order by research relevance. */
-export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALUATE_LIMIT, resolve, resolveConsensus } = {}) {
+/**
+ * ⚠️ HOW LONG THE BUILD MAY RUN BEFORE IT STOPS TAKING NEW WORK.
+ *
+ * maxDuration is 300s and is the plan ceiling. A build that reaches it is KILLED — not rejected,
+ * killed — which means no heartbeat, no log line, no lock release, and a board that simply stops
+ * moving. That is precisely how this failed: every invocation for six hours started, ran 300s and
+ * vanished, leaving a frozen clock as the only symptom.
+ *
+ * Stopping ourselves first turns an invisible kill into a recorded outcome. 240s leaves room for
+ * the candidate query, the universe count, validation and the heartbeat write.
+ */
+export const BUILD_DEADLINE_MS = 240_000;
+
+export async function buildSetupBoard(db, sql, {
+  now = Date.now(), limit = EVALUATE_LIMIT, resolve, resolveConsensus,
+  deadlineAt = Date.now() + BUILD_DEADLINE_MS,
+} = {}) {
   const candidates = await selectSetupCandidates(db, sql, { limit });
   // ⚠️ THE SCOPE LINE NEEDS A DENOMINATOR, AND IT MUST BE THE CANONICAL ONE. Reusing the screener's
   // own asset-type taxonomy rather than inventing a second definition of "a US stock" — a reader
@@ -460,9 +476,13 @@ export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALU
   }
 
   const built = [];
-  let i = 0, failed = 0;
+  let i = 0, failed = 0, aborted = false;
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, async () => {
     while (i < candidates.length) {
+      // ⚠️ CHECKED BEFORE TAKING WORK, NOT AFTER DOING IT. A worker that has started a ticker
+      // finishes it; no new one is picked up past the deadline. The partial result is NOT
+      // published — rebuildBoard refuses it — so last-known-good survives untouched.
+      if (Date.now() >= deadlineAt) { aborted = true; break; }
       const t = candidates[i++];
       try {
         const s = await buildSetup(t, { now, resolve, resolveConsensus });
@@ -488,6 +508,10 @@ export async function buildSetupBoard(db, sql, { now = Date.now(), limit = EVALU
   const active = qualified.filter((s) => s.setup.current);
 
   return {
+    // ⚠️ THE CALLER MUST BE ABLE TO TELL A COMPLETE BUILD FROM A TRUNCATED ONE. Without this the
+    // abort would publish a board missing however many candidates it never reached, which reads
+    // to every consumer as "those companies have no evidence".
+    aborted,
     rows: orderSetups(active),
     candidates: candidates.length,
     evaluated: built.length,
