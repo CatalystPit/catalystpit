@@ -2,7 +2,7 @@
 import { C } from '../lib/cp-shared';
 import {
   angleFor, pointAt, segPath, labelPlacement, scaleMarkPlacement, SEGMENTS, SEGMENT_COLOR,
-  SEGMENT_LABEL_COLOR, SCALE_MARKS, R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP,
+  SEGMENT_LABEL_COLOR, SCALE_MARKS, LAYOUT, R, CX, CY, BAND, VIEW_W, NEEDLE_TIP,
 } from '../lib/fear-greed/meter.mjs';
 
 // THE FEAR & GREED METER — a semicircular sentiment dial, drawn from scratch.
@@ -55,7 +55,11 @@ const ZONE_TEXT = (label) => {
   return C.muted;
 };
 
-export default function FearGreedMeter({ score, zone, asOf }) {
+export default function FearGreedMeter({ score, zone, asOf, compact = false, maxWidth = 460 }) {
+  // ⚠️ ONE DIAL, TWO SIZES. The rail card passes compact; nothing else about the drawing forks.
+  // The arc, the bands, the classification and the needle's angle come from the same constants the
+  // full page uses, so the two can never disagree about where a score points. See LAYOUT.
+  const L = compact ? LAYOUT.compact : LAYOUT.full;
   const has = Number.isFinite(Number(score));
   const s = has ? Math.min(100, Math.max(0, Number(score))) : 50;
   const angle = angleFor(s);
@@ -66,9 +70,9 @@ export default function FearGreedMeter({ score, zone, asOf }) {
   const [rx, ry] = pointAt(angle - 90, 7);
 
   return (
-    <div style={{ width: '100%', maxWidth: 460, margin: '0 auto' }}>
+    <div style={{ width: '100%', maxWidth, margin: '0 auto' }}>
       <svg
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        viewBox={`0 ${L.viewY} ${VIEW_W} ${L.viewH}`}
         // ⚠️ The score and zone are announced as text; the drawing itself is decorative to a
         // screen reader, which would otherwise read a list of path coordinates.
         role="img"
@@ -108,8 +112,9 @@ export default function FearGreedMeter({ score, zone, asOf }) {
           </g>
         ))}
 
-        {/* 0 / 50 / 100 — kept, but secondary to the words in the bands */}
-        {SCALE_MARKS.map((v) => {
+        {/* 0 / 50 / 100 — kept, but secondary to the words in the bands. At rail size they are
+            dropped entirely: 7px numerals are noise, and the named bands are the legend. */}
+        {L.showScale && SCALE_MARKS.map((v) => {
           const a = angleFor(v);
           const [tx, ty] = pointAt(a, R + BAND / 2 + 1);
           const [ex, ey] = pointAt(a, R + BAND / 2 + 5);
@@ -119,7 +124,7 @@ export default function FearGreedMeter({ score, zone, asOf }) {
               {m.tick && <line x1={tx} y1={ty} x2={ex} y2={ey} stroke={C.border2} strokeWidth="1.5" />}
               <text
                 x={m.x} y={m.y} textAnchor={m.anchor} dominantBaseline="central"
-                style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 10, fill: C.dim, letterSpacing: '0.04em' }}
+                style={{ fontFamily: "'DM Sans',sans-serif", fontSize: L.scaleSize, fill: C.dim, letterSpacing: '0.04em' }}
               >{v}</text>
             </g>
           );
@@ -139,13 +144,13 @@ export default function FearGreedMeter({ score, zone, asOf }) {
 
         {/* the reading, below the pivot where the needle never goes */}
         <text
-          x={CX} y={SCORE_Y} textAnchor="middle"
-          style={{ fontSize: 58, fontWeight: 700, fill: C.ink, fontVariantNumeric: 'tabular-nums' }}
+          x={CX} y={L.scoreY} textAnchor="middle"
+          style={{ fontSize: L.scoreSize, fontWeight: 700, fill: C.ink, fontVariantNumeric: 'tabular-nums' }}
         >{has ? Math.round(s) : '—'}</text>
         <text
-          x={CX} y={ZONE_Y} textAnchor="middle"
+          x={CX} y={L.zoneY} textAnchor="middle"
           style={{
-            fontFamily: "'DM Sans',sans-serif", fontSize: 14, fontWeight: 700,
+            fontFamily: "'DM Sans',sans-serif", fontSize: L.zoneSize, fontWeight: 700,
             letterSpacing: '0.16em', fill: has ? ZONE_TEXT(zone) : C.dim,
           }}
         >{has ? zone : 'UNAVAILABLE'}</text>

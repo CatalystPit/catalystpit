@@ -23,7 +23,7 @@ import { rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTIO
 import {
   angleFor, pointAt, segPath, labelLines, labelFontSize, labelPlacement, labelRotation,
   segMid, segArcLength, textWidth, SEGMENTS, SEGMENT_COLOR, SEGMENT_LABEL_COLOR, SCALE_MARKS,
-  scaleMarkPlacement, R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP, SCALE_R,
+  scaleMarkPlacement, LAYOUT, R, CX, CY, BAND, VIEW_W, VIEW_H, SCORE_Y, ZONE_Y, NEEDLE_TIP, SCALE_R,
   LABEL_MIN, LABEL_MAX,
 } from '../src/lib/fear-greed/meter.mjs';
 import {
@@ -730,6 +730,70 @@ sec('⚠️ THE VERSION STAMP IS NOT PART OF THE PRODUCT');
   check('and the API still carries it for callers that pin to it',
     readFileSync(new URL('../src/lib/fear-greed/compute.mjs', import.meta.url), 'utf8')
       .includes('version: METHODOLOGY.version'));
+}
+
+
+sec('⚠️ THE RAIL CARD AND THE HERO ARE THE SAME DIAL');
+{
+  // ⚠️ THE FAILURE THIS CLOSES. The rail used to draw its own 0-100 strip: five divs at
+  // 25/20/11/20/24 percent with a marker positioned by hand. It agreed with the index by
+  // coincidence and would have kept agreeing right up until someone moved a zone boundary in one
+  // file and not the other — at which point the homepage and the page it links to would have
+  // classified the same number differently, with nothing failing.
+  const card = readFileSync(new URL('../src/components/FearGreedCard.jsx', import.meta.url), 'utf8');
+  const meter = readFileSync(new URL('../src/components/FearGreedMeter.jsx', import.meta.url), 'utf8');
+
+  check('the card renders the shared meter', card.includes("import FearGreedMeter from './FearGreedMeter'")
+    && card.includes('<FearGreedMeter compact'));
+  check('⚠️ the card no longer draws a scale of its own',
+    !/width: '25%'/.test(card) && !/width: '20%'/.test(card) && !/width: '11%'/.test(card));
+  check('⚠️ nor positions a marker of its own', !/left: `\$\{pct\}%`/.test(card) && !/const pct =/.test(card));
+  // The card still maps a zone NAME to a text colour for the three comparison figures, as the full
+  // page does. What it must not do is decide where a zone begins or what a band is painted.
+  check('it does not classify or lay out zones itself',
+    !card.includes('ZONES') && !card.includes('SEGMENTS') && !card.includes('zoneFor'));
+  check('and carries none of the gauge face\'s colours',
+    !Object.values(SEGMENT_COLOR).some((hex) => card.includes(hex)) && !card.includes('greenMid'));
+  check('the score and zone it passes are the live payload, not constants',
+    card.includes('score={d.score}') && card.includes('zone={zone}'));
+  check('the comparisons still come from the payload',
+    ['previousClose', 'weekAgo', 'monthAgo'].every((k) => card.includes(`d.comparisons?.${k}`)));
+  check('and each one shows the payload\'s own zone rather than re-deriving it',
+    card.includes('point.zone'));
+  check('the card still links to the full index',
+    card.includes("href=\"/fear-greed\"") && card.includes('View full index'));
+
+  // ⚠️ SIZE MAY DIFFER. GEOMETRY MAY NOT.
+  check('there are exactly two sizes', Object.keys(LAYOUT).join(',') === 'full,compact');
+  check('⚠️ neither size carries geometry — no radius, centre or band thickness',
+    Object.values(LAYOUT).every((L) => ['r', 'cx', 'cy', 'band', 'R', 'CX', 'CY', 'BAND']
+      .every((k) => !(k in L))));
+  check('⚠️ the needle angle is not a layout choice', !JSON.stringify(LAYOUT).includes('angle'));
+  check('the meter takes its size from LAYOUT, not from a literal',
+    meter.includes('compact ? LAYOUT.compact : LAYOUT.full') && !meter.includes('fontSize: 58'));
+  check('the compact dial is shorter than the full one', LAYOUT.compact.viewH < LAYOUT.full.viewH);
+  check('and sets its lettering larger to survive being drawn smaller',
+    LAYOUT.compact.scoreSize > LAYOUT.full.scoreSize && LAYOUT.compact.zoneSize > LAYOUT.full.zoneSize);
+  check('the numeric scale is dropped at rail size, not the zone names',
+    LAYOUT.full.showScale === true && LAYOUT.compact.showScale === false);
+
+  for (const [name, L] of Object.entries(LAYOUT)) {
+    // ⚠️ The crop must not eat the arc. Its outer edge is R + BAND/2 above the pivot.
+    check(`${name}: the top crop leaves the whole arc visible`, L.viewY < CY - (R + BAND / 2));
+    check(`${name}: the score still clears everything the needle can reach`,
+      L.scoreY - L.scoreSize * 0.78 > CY + 7, `${(L.scoreY - L.scoreSize * 0.78).toFixed(1)} vs ${CY + 7}`);
+    check(`${name}: the zone word sits under the score`, L.zoneY > L.scoreY);
+    check(`${name}: nothing is drawn below the bottom of the box`, L.zoneY + 6 <= L.viewY + L.viewH);
+  }
+
+  // The rendered sizes the rail actually gets, at the width the card gives the meter.
+  const scale = 320 / VIEW_W;
+  check('⚠️ at rail width the score is still the strongest thing in the card',
+    LAYOUT.compact.scoreSize * scale > 40, (LAYOUT.compact.scoreSize * scale).toFixed(1) + 'px');
+  check('the zone word under it stays legible', LAYOUT.compact.zoneSize * scale >= 11);
+  check('the band names stay legible', LABEL_MAX * scale >= 7);
+  check('⚠️ the card does not grow into a second hero',
+    LAYOUT.compact.viewH * scale < 240, (LAYOUT.compact.viewH * scale).toFixed(0) + 'px');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

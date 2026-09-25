@@ -29,11 +29,37 @@ export const BAND = 30;
  * entered the band would cross whichever zone label it happened to be pointing at.
  */
 export const VIEW_W = 380;
-export const VIEW_H = 292;
+
+/**
+ * The two sizes this dial is drawn at.
+ *
+ * ⚠️ ONLY TYPE AND CROP CHANGE. CX, CY, R and BAND are NOT in here, and must never be: the arc,
+ * the band boundaries and the needle's angle are the same numbers in the rail card as on the full
+ * page, which is what makes the two drawings the same instrument rather than two interpretations of
+ * one. A second set of radii would be a second gauge, free to disagree about where 39 points.
+ *
+ * What does differ is that the compact one is rendered about 300px wide instead of 460, so its
+ * lettering is set LARGER in viewBox units to survive the smaller scale, the empty band above the
+ * arc is cropped off the top, and the numeric scale is dropped — at that size 0/50/100 are noise,
+ * and the five named bands are the legend that matters.
+ */
+export const LAYOUT = Object.freeze({
+  full: Object.freeze({
+    viewY: 0, viewH: 292, scoreY: CY + 62, zoneY: CY + 84,
+    scoreSize: 58, zoneSize: 14, scaleSize: 10, showScale: true,
+  }),
+  compact: Object.freeze({
+    viewY: 16, viewH: 262, scoreY: CY + 58, zoneY: CY + 78,
+    scoreSize: 62, zoneSize: 15, scaleSize: 10, showScale: false,
+  }),
+});
+
+/** The full-size layout's numbers, which the rest of the page still refers to by name. */
+export const VIEW_H = LAYOUT.full.viewH;
 /** Baseline of the big score, below the pivot. */
-export const SCORE_Y = CY + 62;
+export const SCORE_Y = LAYOUT.full.scoreY;
 /** Baseline of the zone word, directly beneath the score. */
-export const ZONE_Y = CY + 84;
+export const ZONE_Y = LAYOUT.full.zoneY;
 /** How far the needle reaches: up to the band's inner edge, with a gap, never into it. */
 export const NEEDLE_TIP = R - BAND / 2 - 4;
 /** Radius of the 0 / 50 / 100 scale markers, outside the band. */

@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { C } from '../lib/cp-shared';
+import FearGreedMeter from './FearGreedMeter';
 
 // THE HOMEPAGE FEAR & GREED RAIL CARD.
 //
@@ -13,6 +14,14 @@ import { C } from '../lib/cp-shared';
 //
 // Reads the same materialised /api/fear-greed the full page reads. No calculation happens here and
 // none can: the endpoint serves a stored payload.
+//
+// ── ⚠️ THE SAME DIAL, NOT A SMALL COPY OF IT ────────────────────────────────
+//
+// The rail used to draw its own 0-100 strip: five divs at 25/20/11/20/24 percent with a marker
+// positioned by hand. It agreed with the index by coincidence, and only until someone moved a zone
+// boundary in one file and not the other. It renders FearGreedMeter now, in compact form, so the
+// arc, the five bands, their colours, their names, the classification and the needle's angle are
+// literally the same code as the hero on /fear-greed. The only thing the card chooses is the size.
 
 const ZONE_COLOR = (label) => {
   if (label === 'EXTREME FEAR' || label === 'FEAR') return { fg: C.red, bg: C.redLight };
@@ -22,14 +31,20 @@ const ZONE_COLOR = (label) => {
 };
 
 function Point({ label, point }) {
+  const ok = point && Number.isFinite(Number(point.score));
   return (
     <div style={{ flex: '1 1 0', textAlign: 'center', minWidth: 0 }}>
       <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 8.5, color: C.dim, letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
         {label}
       </div>
       <div className="cp-num" style={{ fontSize: 15, fontWeight: 700, color: C.ink, marginTop: 1 }}>
-        {point && Number.isFinite(Number(point.score)) ? Math.round(point.score) : '—'}
+        {ok ? Math.round(point.score) : '—'}
       </div>
+      {/* ⚠️ The zone comes from the payload, not from re-classifying the rounded number here. */}
+      <div style={{
+        fontFamily: "'DM Sans',sans-serif", fontSize: 7.5, fontWeight: 700, letterSpacing: '0.5px',
+        color: ZONE_COLOR(point?.zone).fg, whiteSpace: 'nowrap', marginTop: 1,
+      }}>{ok && point.zone ? point.zone : '—'}</div>
     </div>
   );
 }
@@ -52,8 +67,6 @@ export default function FearGreedCard() {
   if (state === 'error') return null;
 
   const zone = d?.zone?.label ?? d?.zone ?? null;
-  const col = ZONE_COLOR(zone);
-  const pct = Math.min(100, Math.max(0, Number(d?.score) || 0));
 
   return (
     <a
@@ -90,34 +103,8 @@ export default function FearGreedCard() {
 
       {state === 'ok' && (
         <>
-          <div style={{ padding: '14px 14px 10px', textAlign: 'center' }}>
-            <div className="cp-num" style={{ fontSize: 44, lineHeight: 1.05, fontWeight: 700, color: C.ink }}>
-              {Math.round(Number(d.score))}
-            </div>
-            <div style={{
-              display: 'inline-block', marginTop: 5, padding: '3px 11px', borderRadius: 999,
-              background: col.bg, color: col.fg, fontSize: 10.5, fontWeight: 700, letterSpacing: '1px',
-            }}>{zone}</div>
-
-            {/* The 0-100 scale, with the same zone widths the full page draws. */}
-            <div style={{ marginTop: 12 }}>
-              <div style={{ height: 6, borderRadius: 999, overflow: 'hidden', display: 'flex' }}>
-                <div style={{ width: '25%', background: C.red, opacity: 0.85 }} />
-                <div style={{ width: '20%', background: C.red, opacity: 0.45 }} />
-                <div style={{ width: '11%', background: C.border2 }} />
-                <div style={{ width: '20%', background: C.greenMid, opacity: 0.5 }} />
-                <div style={{ width: '24%', background: C.greenMid, opacity: 0.9 }} />
-              </div>
-              <div style={{ position: 'relative', height: 11 }}>
-                <div style={{
-                  position: 'absolute', left: `${pct}%`, transform: 'translateX(-50%)', top: -2,
-                  width: 2, height: 11, background: C.ink,
-                }} />
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: "'DM Sans',sans-serif", fontSize: 8.5, color: C.dim, letterSpacing: '0.4px' }}>
-                <span>FEAR</span><span>GREED</span>
-              </div>
-            </div>
+          <div style={{ padding: '10px 6px 8px' }}>
+            <FearGreedMeter compact score={d.score} zone={zone} maxWidth={320} />
           </div>
 
           <div style={{ display: 'flex', gap: 4, padding: '9px 10px', borderTop: `1px solid ${C.border}`, background: C.surface }}>
