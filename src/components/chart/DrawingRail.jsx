@@ -1,5 +1,5 @@
 'use client';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import {
   TOOLS, tool, activeCategories, categoryOfTool, LINE_WIDTHS, LINE_DASHES,
 } from '../../lib/chart/chart-drawings.mjs';
@@ -53,9 +53,12 @@ function DrawingRailBase({
   const closeStyle = useCallback(() => setStylePanel(false), []);
   const closeMenu = useCallback(() => setMenu(false), []);
 
-  // CONTEXTUAL SETTINGS: selecting a drawing or arming a tool is exactly when colour, width and
-  // style are wanted, so the panel appears then instead of occupying a permanent row.
-  useEffect(() => { if (selected) setStylePanel(true); }, [selected]);
+  // ⚠️ SELECTING A DRAWING NO LONGER OPENS THIS PANEL. It used to, on the reasoning that selection
+  // is exactly when colour and width are wanted — which is true, and is why those controls now
+  // appear BESIDE the drawing instead of on the far side of the chart from it. See DrawingToolbar.
+  // This panel kept one job: the style the NEXT drawing will be made with. One control meaning two
+  // different things depending on whether something happened to be selected was the confusion that
+  // made the old behaviour worth removing rather than moving.
 
   const cats = activeCategories();
 
@@ -150,7 +153,7 @@ function DrawingRailBase({
   const stylePopover = (
     <Popover anchorRef={styleAnchor} open={stylePanel} onClose={closeStyle} theme={theme}
       placement="right-start" gap={6} width={186} label="Drawing style">
-      <MenuLabel theme={theme}>{selected ? 'Selected drawing' : 'New drawings'}</MenuLabel>
+      <MenuLabel theme={theme}>New drawings</MenuLabel>
       <div style={{ padding: '2px 6px 6px' }}>
         <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
           {swatches.map((c, i) => (
@@ -179,12 +182,6 @@ function DrawingRailBase({
             {LINE_DASHES.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
         </label>
-        {selected && (
-          <button type="button" onClick={onDelete}
-            style={{ marginTop: 8, width: '100%', background: 'transparent', border: `1px solid ${p.border}`,
-              borderRadius: 4, cursor: 'pointer', padding: '3px 0', color: p.down,
-              fontFamily: "'DM Sans',sans-serif", fontSize: 11 }}>Delete drawing</button>
-        )}
       </div>
     </Popover>
   );

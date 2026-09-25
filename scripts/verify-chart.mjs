@@ -849,8 +849,19 @@ section('16. drawing tools are grouped into categories on a left rail');
 
   // CONTEXTUAL, NOT A PERMANENT ROW.
   ok('style settings are a popover', /const \[stylePanel, setStylePanel\] = useState/.test(rail));
-  ok('...that opens when a drawing is selected',
-    /useEffect\(\(\) => \{ if \(selected\) setStylePanel\(true\); \}/.test(rail));
+  // ⚠️ THIS PANEL NO LONGER OPENS ON SELECTION, AND THAT IS THE CHANGE, NOT A REGRESSION.
+  //
+  // It used to, on the reasoning that selecting a drawing is exactly when colour and width are
+  // wanted. That reasoning was right and the placement was wrong: the panel opened on the far side
+  // of the chart from the drawing it was editing, showed the whole palette permanently, and was
+  // the same control that sets the style for the NEXT drawing — so one panel meant two different
+  // things depending on whether something happened to be selected. Those controls now appear
+  // beside the drawing, in DrawingToolbar, and this panel kept the one job it can do unambiguously.
+  ok('...and it is now only about the NEXT drawing',
+    !/useEffect\(\(\) => \{ if \(selected\) setStylePanel\(true\); \}/.test(rail)
+    && /New drawings/.test(rail));
+  ok('...with the selected-drawing controls moved to the floating toolbar',
+    !/Selected drawing/.test(rail.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')));
   ok('colour, width and style are all there',
     /Colour|colour/i.test(rail) && /Width/.test(rail) && /Style/.test(rail));
 

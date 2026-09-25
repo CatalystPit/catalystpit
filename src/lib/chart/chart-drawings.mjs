@@ -30,9 +30,23 @@ export const LINE_DASHES = ['solid', 'dashed', 'dotted'];
  * extend to the edge of the chart without storing a second anchor that would move when the user
  * scrolls. `levels` marks a tool that also draws horizontal price levels (Fibonacci).
  */
+/**
+ * ⚠️ AN ATTACHED LABEL IS A FIELD ON THE DRAWING, NOT A SECOND DRAWING.
+ *
+ * "Resistance", "PM High", "Entry" are names for a line, and the obvious cheap implementation — drop
+ * a text note next to it — produces two objects that a user has to select, move, restyle and delete
+ * separately, and that drift apart the first time the line is dragged. The label therefore lives on
+ * the line: one anchor, one selection, one undo step, and it cannot be left behind because there is
+ * nothing to leave behind.
+ *
+ * A tool declares `labelable` when its geometry gives a label somewhere sensible to sit. The text
+ * note does not: its own string IS the drawing, and a second string on it would be two captions on
+ * one object.
+ */
 export const TOOLS = {
   trend: {
-    id: 'trend', label: 'Trend line', icon: '╱', points: 2,
+    id: 'trend',
+    labelable: true, label: 'Trend line', icon: '╱', points: 2,
     shapes: [['line', { x1: 2.5, y1: 13, x2: 13.5, y2: 3 }]],
     // EXTENSION IS PER DRAWING, not per tool. One trend line can run to the right edge while the
     // next stops at its anchors, which is how a trader actually uses them — so the flags live on the
@@ -45,7 +59,8 @@ export const TOOLS = {
     extendable: true,
   },
   ray: {
-    id: 'ray', label: 'Ray', icon: '→', points: 2,
+    id: 'ray',
+    labelable: true, label: 'Ray', icon: '→', points: 2,
     shapes: [['line', { x1: 2.5, y1: 12, x2: 13.5, y2: 5 }], ['polyline', { points: '10.5,3.5 13.8,4.8 11.6,7.4' }]],
     // Extends past the second anchor to the right edge of the visible range. Recomputed from the
     // view on every paint, so it stays "infinite" however far the user scrolls.
@@ -59,7 +74,8 @@ export const TOOLS = {
     extendable: true,
   },
   horizontal: {
-    id: 'horizontal', label: 'Horizontal line', icon: '─', points: 1,
+    id: 'horizontal',
+    labelable: true, label: 'Horizontal line', icon: '─', points: 1,
     // A PRICE LEVEL, NOT A TWO-ENDED LINE. One anchor, so there is no second endpoint to tilt, and
     // lockTime so dragging it moves the price and nothing else — the line cannot creep sideways or
     // come out diagonal however it is dragged. It spans the visible window, future space included.
@@ -73,14 +89,16 @@ export const TOOLS = {
     priceLabel: (p) => p[0].price,
   },
   vertical: {
-    id: 'vertical', label: 'Vertical line', icon: '│', points: 1,
+    id: 'vertical',
+    labelable: true, label: 'Vertical line', icon: '│', points: 1,
     // The mirror of the horizontal line: a moment, with no price of its own to drag.
     lockPrice: true,
     shapes: [['line', { x1: 8, y1: 2, x2: 8, y2: 14 }], ['rect', { x: 6.5, y: 6.5, width: 3, height: 3, fill: true }]],
     segments: (p) => [[atEdgeY(p[0].time, EDGE_TOP), atEdgeY(p[0].time, EDGE_BOTTOM)]],
   },
   rectangle: {
-    id: 'rectangle', label: 'Rectangle', icon: '▭', points: 2,
+    id: 'rectangle',
+    labelable: true, label: 'Rectangle', icon: '▭', points: 2,
     shapes: [['rect', { x: 2.5, y: 4, width: 11, height: 8, faint: true, fill: true }], ['rect', { x: 2.5, y: 4, width: 11, height: 8 }]],
     segments: (p) => {
       const [a, b] = p;
@@ -123,7 +141,8 @@ export const TOOLS = {
     transient: true,
   },
   fib: {
-    id: 'fib', label: 'Fibonacci retracement', icon: '≡', points: 2,
+    id: 'fib',
+    labelable: true, label: 'Fibonacci retracement', icon: '≡', points: 2,
     shapes: [
       ['line', { x1: 2, y1: 3.5, x2: 14, y2: 3.5 }],
       ['line', { x1: 2, y1: 7, x2: 14, y2: 7 }],
@@ -146,6 +165,15 @@ export const TOOLS = {
     editableLevels: true,
   },
 };
+
+/**
+ * How long an attached label may be.
+ *
+ * ⚠️ IT IS A TAG, NOT A NOTE. A label is painted beside a line on a chart that may be 300px wide in
+ * a Terminal panel; something paragraph-length would cover the price action it is naming. The text
+ * NOTE tool exists for anything longer, and is uncapped.
+ */
+export const LABEL_MAX = 24;
 
 export const TOOL_IDS = Object.keys(TOOLS);
 export const tool = (id) => TOOLS[id] || null;
@@ -458,6 +486,9 @@ export function createDrawing(type, points, style = {}, existing = [], extra = {
     // Only a tool that declares text carries any: an arbitrary payload on every drawing would
     // round-trip through storage and become a place for junk to accumulate.
     ...(def.hasText ? { text: typeof extra.text === 'string' ? extra.text : '' } : {}),
+    // The attached tag, on the tools whose geometry gives it somewhere to sit. Empty until asked
+    // for, so a drawing made before labels existed and one made now are the same shape.
+    ...(def.labelable ? { label: typeof extra.label === 'string' ? extra.label.slice(0, LABEL_MAX) : '' } : {}),
     // Only a tool that CAN extend carries the flags, and only one with editable levels carries them;
     // an extendLeft on a rectangle would be a field nothing reads and everything has to preserve.
     ...(def.extendable ? { extendLeft: extra.extendLeft === true, extendRight: extra.extendRight === true } : {}),
@@ -556,6 +587,10 @@ export function coerceDrawing(raw, existing = []) {
     // Absent means unlocked: a stored drawing from before locks existed must stay movable.
     locked: raw?.locked === true,
     ...(def.hasText ? { text: typeof raw?.text === 'string' ? raw.text : '' } : {}),
+    // ⚠️ AN ABSENT LABEL IS AN EMPTY ONE, NOT A MISSING FIELD. Every drawing stored before labels
+    // existed comes back through here, and a label of undefined would reach the renderer and the
+    // toolbar input as undefined rather than as "no label yet".
+    ...(def.labelable ? { label: typeof raw?.label === 'string' ? raw.label.slice(0, LABEL_MAX) : '' } : {}),
     ...(def.extendable ? { extendLeft: raw?.extendLeft === true, extendRight: raw?.extendRight === true } : {}),
     ...(def.editableLevels ? { levels: sanitizeFibLevels(raw?.levels), fill: raw?.fill === true } : {}),
   };

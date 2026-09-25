@@ -11,6 +11,7 @@ import {
   logicalOfTime, timeOfLogical, timeDeltaSeconds,
 } from '../../lib/chart/chart-coords.mjs';
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
+import { selectionBox } from '../../lib/chart/drawing-toolbar.mjs';
 import {
   idleTool, armTool, clickTool, hoverTool, cancelDraft, clearSuppression, draftPreview, hasDraft,
 } from '../../lib/chart/chart-tool-lifecycle.mjs';
@@ -35,8 +36,11 @@ function DrawingLayerBase({
   drawings, onChange, activeTool, onToolUsed,
   selectedIds = [], onSelect, visible = true, style = DEFAULT_STYLE, magnet = false,
   onRequestText, onOpenSettings, clearSignal = 0, toolDefaults = null,
+  onSelectionBox,
 }) {
   const canvasRef = useRef(null);
+  const onSelectionBoxRef = useRef(null);
+  onSelectionBoxRef.current = onSelectionBox || null;
   const stateRef = useRef({});
   const s = stateRef.current;
   s.drawings = drawings; s.activeTool = activeTool;
@@ -196,7 +200,11 @@ function DrawingLayerBase({
     if (!stateRef.current.visible) return;
 
     const p = palette(stateRef.current.theme);
-    for (const d of project()) {
+    // ⚠️ PROJECTED ONCE, USED TWICE. The paint loop and the toolbar's position need the same pixels,
+    // and projecting twice per frame would let them disagree by a frame — the toolbar lagging the
+    // drawing it is attached to during a drag is exactly how one looks broken.
+    const projected = project();
+    for (const d of projected) {
       if (d.visible === false) continue;
       const colour = indicatorColor(stateRef.current.theme, d.style.color);
       const isSel = stateRef.current.selected.has(d.id);
@@ -292,6 +300,35 @@ function DrawingLayerBase({
         }
       }
 
+      // AN ATTACHED LABEL. Painted from the drawing's own first segment, so it travels with the
+      // line rather than sitting at a remembered position the line has since been dragged away from.
+      const tag = typeof d.source.label === 'string' ? d.source.label.trim() : '';
+      if (tag) {
+        const start = d.segments[0]?.[0] || d.handles[0];
+        if (start && Number.isFinite(start.x) && Number.isFinite(start.y)) {
+          ctx.save();
+          ctx.font = "600 10px 'DM Sans', sans-serif";
+          ctx.textBaseline = 'bottom';
+          const tw = ctx.measureText(tag).width;
+          // Clamped to the plot: a tag on a line that runs to the right edge would otherwise be
+          // drawn out over the price scale, where it reads as a rendering fault.
+          const bx = Math.min(Math.max(2, start.x + 4), Math.max(2, plotSize().plotWidth - tw - 10));
+          const by = Math.max(12, start.y - 4);
+          ctx.fillStyle = p.tooltipBg;
+          ctx.strokeStyle = colour;
+          ctx.lineWidth = 1;
+          if (ctx.roundRect) {
+            ctx.beginPath();
+            ctx.roundRect(bx, by - 13, tw + 8, 14, 3);
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.fillStyle = colour;
+          ctx.fillText(tag, bx + 4, by - 2);
+          ctx.restore();
+        }
+      }
+
       if (isSel) {
         ctx.save();
         ctx.fillStyle = p.background;
@@ -301,6 +338,33 @@ function DrawingLayerBase({
           ctx.beginPath(); ctx.arc(hnd.x, hnd.y, HANDLE_RADIUS, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         }
         ctx.restore();
+      }
+    }
+
+    // ── WHERE THE SELECTION IS, IN PIXELS ─────────────────────────────────────
+    //
+    // ⚠️ REPORTED FROM THE PAINT PASS, NOT COMPUTED BY THE TOOLBAR. The toolbar has no access to the
+    // chart's scales and must never grow one: a second projection would be a second opinion about
+    // where a drawing is, and the two would diverge on exactly the frames that matter — during a
+    // drag, during a zoom, during a resize. This is the same `projected` the strokes came from, so
+    // the toolbar is attached to the pixels a user can actually see.
+    //
+    // ⚠️ AND IT IS ONLY EMITTED WHEN IT CHANGES. paint() runs on every crosshair move; calling
+    // setState from it unconditionally would re-render the chart on every pointer event.
+    if (onSelectionBoxRef.current) {
+      const sel = projected.filter((d) => stateRef.current.selected.has(d.id) && d.visible !== false);
+      const box = sel.length ? selectionBox(sel) : null;
+      // ⚠️ THE PLOT TRAVELS WITH THE BOX. Clamping the toolbar needs the drawable area, which is the
+      // canvas MINUS the price scale and the time axis — a number only this component can ask the
+      // chart for. Sending the container's size instead would let the toolbar settle over the price
+      // scale, which is the one part of a chart a trader is always reading.
+      const { plotWidth, plotHeight } = plotSize();
+      const key = box
+        ? `${box.x.toFixed(1)},${box.y.toFixed(1)},${box.w.toFixed(1)},${box.h.toFixed(1)},${plotWidth},${plotHeight}`
+        : '';
+      if (key !== stateRef.current.boxKey) {
+        stateRef.current.boxKey = key;
+        onSelectionBoxRef.current(box ? { box, plot: { w: plotWidth, h: plotHeight } } : null);
       }
     }
 

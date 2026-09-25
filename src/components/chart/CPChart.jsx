@@ -61,6 +61,7 @@ import DrawingManager from './DrawingManager';
 import DrawingSettings from './DrawingSettings';
 import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
+import DrawingToolbar from './DrawingToolbar';
 import EvidenceCard from './EvidenceCard';
 import { buildEvidenceMarkers, evidenceAtBar } from '../../lib/chart/evidence-markers.mjs';
 import {
@@ -609,6 +610,27 @@ export default function CPChart({
 
   // EVERY path that changes drawings goes through updateDrawings, or it is not in the history.
   // These two used to call setDrawings directly, which meant a delete could not be undone at all.
+  /**
+   * WHERE THE SELECTION IS ON SCREEN, reported by the drawing layer after each paint.
+   *
+   * ⚠️ THE CHART DOES NOT COMPUTE THIS. Only the layer holds the projection, and a second one here
+   * would be a second opinion about where a drawing is — wrong on exactly the frames that matter,
+   * during a drag or a zoom. Null whenever nothing is selected, which is also what hides the bar.
+   */
+  const [selBox, setSelBox] = useState(null);
+
+  /**
+   * A patch to the single selected drawing, through the history like every other change.
+   *
+   * ⚠️ NOT setDrawings. A lock, a label or a hide made outside updateDrawings would not be undoable,
+   * which is the defect that once made delete permanent.
+   */
+  const patchSelected = useCallback((patch) => {
+    const ids = new Set(selectedIdsRef.current);
+    if (!ids.size) return;
+    updateDrawings((ds) => ds.map((d) => (ids.has(d.id) ? { ...d, ...patch } : d)));
+  }, [updateDrawings]);
+
   const deleteSelected = useCallback(() => {
     if (!selectedIds.length) return;
     const ids = new Set(selectedIds);
@@ -1529,6 +1551,25 @@ export default function CPChart({
             visible={view.showDrawings} style={drawStyle} magnet={view.magnet === true}
             clearSignal={clearSignal} toolDefaults={toolDefaults}
             onRequestText={requestNote}
+            onSelectionBox={setSelBox}
+          />
+        )}
+
+        {/* ⚠️ THE FLOATING TOOLBAR FOR THE SELECTED DRAWING — a sibling of the canvas inside the
+            same relative box, so its coordinates ARE the canvas's coordinates and no offset
+            arithmetic stands between the two. It replaces the rail's "Selected drawing" panel
+            entirely; there is no second path to those controls. Shown for one selection: the
+            controls are drawing-type aware, and a mixed selection has no single type to be aware
+            of — restyling several at once still works from the rail, and the count is stated here
+            so a user can see the toolbar is speaking for one of them. */}
+        {selBox && selectedIds.length > 0 && (
+          <DrawingToolbar
+            theme={theme}
+            drawing={drawings.find((d) => d.id === selectedIds[0]) || null}
+            extraCount={selectedIds.length - 1}
+            box={selBox.box} plot={selBox.plot}
+            onStyle={applyStyle} onPatch={patchSelected}
+            onDelete={deleteSelected} onOpenSettings={openSettingsFor}
           />
         )}
 
