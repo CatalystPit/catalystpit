@@ -16,6 +16,7 @@ import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
 import { onEvidenceRequest } from '../../lib/terminalEvidenceBus';
 import { onNewsRequest, inspectNews, newsInspectorAvailable } from '../../lib/terminalNewsBus';
+import { useTickerEvidence } from '../../lib/chart/use-ticker-evidence';
 import EvidencePanel from '../../components/terminal/EvidencePanel';
 import NewsPanel from '../../components/terminal/NewsPanel';
 import HeatMap from '../../components/HeatMap';
@@ -151,6 +152,18 @@ const fmtHalt = (t) => (t ? `${String(t).slice(0, 5)} ET` : '—');
 // CPChart runs with autoSize and fills the flex column. Symbol comes from the Terminal symbol bus
 // exactly as before, so link groups and click-to-load are unchanged.
 function ChartBody({ symbol }) {
+  // ⚠️ THE TERMINAL IS AN EVIDENCE HOST NOW, AND THE REASON IT WAS NOT IS WORTH KEEPING.
+  //
+  // CPChart does not fetch — the host owns the query, which is what keeps the chart a renderer and
+  // lets the timeline and What Changed be two consumers of one API. The ticker page always passed
+  // evidence; this panel never did, so its Evidence control had nothing to control and was gated
+  // off at EVERY width. That read as a responsive bug and was a wiring gap.
+  //
+  // ⚠️ IT DOES NOT BLOCK THE CANDLES. This is its own hook, in its own effect, resolving on its own
+  // schedule; the bars load from their own request and render the moment they arrive whether or not
+  // evidence ever does. Evidence arriving is a prop change the chart applies to its markers — it
+  // does not remount anything.
+  const evidence = useTickerEvidence(symbol);
   return (
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '4px 6px 2px' }}>
       {/* ⚠️ 5m IS THE TERMINAL'S DEFAULT, NOT THE PRODUCT'S. DEFAULT_TIMEFRAME stays '1D' because
@@ -158,7 +171,7 @@ function ChartBody({ symbol }) {
           not the last few hours. A Terminal panel is the opposite: it sits beside the tape and the
           scanner, so it opens on the intraday resolution those are describing. The two defaults are
           different questions and are set in the two places that ask them. */}
-      <CPChart symbol={symbol} initialTimeframe="5m" transparent />
+      <CPChart symbol={symbol} initialTimeframe="5m" transparent evidence={evidence} />
     </div>
   );
 }

@@ -339,5 +339,95 @@ L('⚠️ THE TOOLBAR MEASURES WHAT IT WILL RENDER');
 }
 
 
+
+L('⚠️ THE TERMINAL IS AN EVIDENCE HOST, AND ITS CHART IS STILL A RENDERER');
+{
+  const term = readFileSync(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8');
+  const page = readFileSync(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8');
+  const hook = readFileSync(new URL('../src/lib/chart/use-ticker-evidence.js', import.meta.url), 'utf8');
+  const chart = readFileSync(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+
+  // ⚠️ THE WIRING GAP THIS CLOSES. The Terminal renders the same CPChart the ticker page does, but
+  // passed it no evidence — so hasEvidence was false and the Evidence control was gated off at
+  // EVERY width, which read as a responsive bug.
+  ok('⚠️ the Terminal chart is given evidence', /<CPChart symbol={symbol} initialTimeframe="5m" transparent evidence={evidence} \/>/.test(term));
+  ok('…from the shared hook', /const evidence = useTickerEvidence\(symbol\);/.test(term));
+  ok('⚠️ and the ticker page uses the SAME hook, not a second copy',
+    /const evidence = useTickerEvidence\(symbol\);/.test(page));
+  ok('…having given up its own fetch', !/fetch\(`\/api\/evidence/.test(page));
+  ok('there is one evidence fetch for charts', (hook.match(/fetch\(`\/api\/evidence/g) || []).length === 1);
+  // ⚠️ THE CHART STILL DOES NOT FETCH. That is what keeps it a renderer and keeps the timeline and
+  // What Changed two consumers of one API rather than two askers.
+  ok('⚠️ the chart itself still fetches no evidence', !/api\/evidence/.test(chart));
+  ok('…and takes it as a prop', /evidence = null,/.test(chart));
+
+  // ⚠️ AAPL's FILINGS MUST NEVER RENDER ON MSTR.
+  // ⚠️ ORDER, NOT PROXIMITY. The first version allowed 200 characters between the two and failed on
+  // the explanatory comments that sit between them — a false alarm about correct code. What matters
+  // is only that the clear happens first.
+  ok('⚠️ evidence is cleared before the request goes out, not when it lands',
+    hook.indexOf('setEvidence(cached || null);') > 0
+    && hook.indexOf('setEvidence(cached || null);') < hook.indexOf('fetch(`/api/evidence'));
+  ok('⚠️ a superseded response is discarded', /if \(ctrl\.signal\.aborted \|\| id !== reqRef\.current\) return;/.test(hook));
+  ok('…and the previous request is aborted', /return \(\) => ctrl\.abort\(\);/.test(hook));
+  ok('a cache hit is that symbol\'s own evidence, so it may show at once', /const cached = cacheGet\(sym\);/.test(hook));
+
+  // ⚠️ CANDLES MUST NOT WAIT FOR EVIDENCE.
+  ok('⚠️ a failure resolves to "no evidence", never to an error',
+    /\.catch\(\(\) => \{ if \(id === reqRef\.current && !ctrl\.signal\.aborted\) setEvidence\(cached \|\| \[\]\); \}\);/.test(hook));
+  ok('⚠️ evidence never appears in the bar-loading dependencies',
+    /\}, \[sym, tf, extended, draw, onSymbolResolved\]\);/.test(chart));
+  ok('…and arriving evidence only updates markers', /\}, \[evidence, chartReady\]\);/.test(chart));
+
+  // Bounded, for a tab left open all day.
+  ok('the cache is bounded', /while \(cache\.size > MAX_CACHED\)/.test(hook));
+  ok('…and expires', /now - hit\.at > TTL_MS/.test(hook));
+  ok('a read counts as a use', /cache\.delete\(sym\); cache\.set\(sym, hit\);/.test(hook));
+
+  // With evidence supplied, the Terminal's toolbar now reserves room for the control it will render.
+  ok('⚠️ the Evidence control is still gated on there being evidence to control',
+    /\{!overflowed && hasEvidence && \(/.test(chart));
+  ok('…and the width rule counts it only when it will be rendered',
+    /\(hasEvidence \? ACTION_W\.evidence : 0\)/.test(chart));
+}
+
+L('⚠️ IF A FIBONACCI IS ON SCREEN, A FIBONACCI IS IN STATE');
+{
+  // ── THE INVARIANT THAT SETTLES "ORPHAN OR PERSISTED DRAWING" ──────────────
+  //
+  // Rendered levels can only come from the drawing list, so visible Fibonacci levels are PROOF that
+  // a fib drawing exists for the active symbol — not proof of a leaked renderer. The chain, each
+  // link asserted below: the layer paints only what project() returns; project() reads only
+  // stateRef.current.drawings; that is assigned only from the `drawings` prop; the chart sets that
+  // only from loadDrawings(sym) or through updateDrawings. There is no fourth way for a level to
+  // reach the canvas.
+  const layer = readFileSync(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const chart = readFileSync(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const store = readFileSync(new URL('../src/lib/chart/chart-drawing-store.mjs', import.meta.url), 'utf8');
+
+  ok('the paint loop draws only what was projected', /for \(const d of projected\)/.test(layer));
+  ok('⚠️ and projection reads only the current drawing list',
+    /projectDrawings\(stateRef\.current\.drawings, view, sc, tool\)/.test(layer));
+  ok('⚠️ which is assigned only from the prop', /s\.drawings = drawings;/.test(layer));
+  ok('…and nothing else writes it', (layer.match(/s\.drawings = |stateRef\.current\.drawings = /g) || []).length === 1);
+  // ⚠️ EVERY CALL SITE, NOT ANY ONE OF THEM. The lines and the percentage labels are computed
+  // separately, and asserting that SOME call reads the drawing left the other free to read
+  // anything — a mutant that broke only the line colours passed. Both must come from d.source, or
+  // the labels could describe levels the lines do not draw.
+  const fibCalls = layer.match(/fibLevels\([^)]*\)/g) || [];
+  ok('⚠️ the fib levels come from that drawing\'s own anchors and levels',
+    fibCalls.length >= 2 && fibCalls.every((c) => c === 'fibLevels(d.source.points, d.source.levels)'),
+    fibCalls.join(' | '));
+  ok('…so a level cannot outlive the drawing that produced it',
+    !/createPriceLine/.test(layer) && !/attachPrimitive/.test(layer) && !/addSeries/.test(layer));
+
+  // The persisted side: a delete must reach storage, or a reload brings it back.
+  ok('⚠️ every change to the list is persisted', /saveDrawings/.test(chart));
+  ok('…keyed by symbol', /export function loadDrawings\(symbol\)/.test(store) || /loadDrawings = \(symbol\)/.test(store));
+  ok('⚠️ a symbol change reloads from storage rather than merging',
+    /setDrawings\(loadDrawings\(sym\)\);/.test(chart));
+  ok('…and a delete goes through the same path that persists', /updateDrawings\(\(ds\) => ds\.filter/.test(chart));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
