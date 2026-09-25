@@ -12,6 +12,7 @@ import {
   SCAN_DEAD_ZONE_PCT, SELLOFF_PCT,
 } from '../src/lib/scan/scan-rows.mjs';
 import { buildBoard, THRESHOLDS } from '../src/lib/scan/boards.mjs';
+import { lastCompletedSession } from '../src/lib/market/market-session.mjs';
 
 const L = (s = '') => console.log(s);
 const MUT = (process.argv.find((a) => a.startsWith('--mutate')) || '').split('=')[1]
@@ -22,6 +23,22 @@ const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail+
 
 const NOW = Date.parse('2026-09-20T12:00:00Z');
 const ago = (h) => new Date(NOW - h * 3_600_000).toISOString();
+
+/**
+ * ⚠️ THE PRICE DATE IS RELATIVE TO THE REAL CLOCK, DELIBERATELY, AND NOT TO `NOW`.
+ *
+ * NOW above pins EVIDENCE ages, which the adapter takes as a parameter. Price staleness does not
+ * work that way: sessionsSince() reads the actual calendar, so a hard-coded asOf ages against it.
+ *
+ * This fixture used to say '2026-09-19'. Written on the 20th that was the last completed session,
+ * so the row came back `eod` / LAST CLOSE and the assertion below meant what its name says. By the
+ * 25th the same literal was four sessions old, the row correctly came back `stale` / LAST KNOWN,
+ * and the assertion had quietly turned into a staleness test that then failed. Deriving the date
+ * keeps it testing the fallback it is named for, forever.
+ */
+const LAST_SESSION = lastCompletedSession();
+/** A price old enough to be stale on any day the suite is run. See STALE_SESSIONS. */
+const LONG_AGO = '2020-01-06';
 
 // A materialized Consensus row, shaped exactly as the board stores it.
 const crow = (o = {}) => ({
@@ -45,7 +62,8 @@ const crow = (o = {}) => ({
   },
   market: { levels: o.levels !== undefined ? o.levels : {
     close: 1.25, prevClose: 1.29, changePct: -3.1, abovePrevClose: false, sessions: 264,
-    at20dHigh: false, at20dLow: false, at52wHigh: false, at52wLow: false, asOf: '2026-09-19' } },
+    at20dHigh: false, at20dLow: false, at52wHigh: false, at52wLow: false,
+    asOf: o.asOf || LAST_SESSION } },
 });
 
 L('=== FRESHNESS IS ALWAYS STATED ===');
@@ -68,6 +86,19 @@ L('=== FRESHNESS IS ALWAYS STATED ===');
   const live = toScanRow(crow(), { price: 10, changePct: 4, freshness: 'realtime' });
   ok('an entitled realtime quote is carried through', live.display.live === true);
   ok('…and the row shows that quote, not the stored close', live.display.last === 10);
+
+  // ⚠️ A PRICE THAT MISSED SESSIONS IS NOT "LAST CLOSE", and until now nothing asserted it.
+  // 9463c3db introduced `stale` freshness and changed this file's subject without changing this
+  // file. LAST CLOSE claims the number is the most recent completed session; when it is not, the
+  // row has to say the other thing.
+  const old = toScanRow(crow({ asOf: LONG_AGO }), null);
+  ok('a price that missed sessions is labelled LAST KNOWN, not LAST CLOSE',
+    old.display.freshnessLabel === 'LAST KNOWN', old.display.freshnessLabel);
+  ok('…it still shows the price rather than hiding it', old.display.last === 1.25);
+  ok('…it is not described as live', old.display.live === false);
+  // A stale price cannot support a reaction claim, including "no reaction".
+  ok('…and no reaction verdict is drawn from it',
+    old.display.join === JOIN_LINE.REACTION_UNAVAILABLE, old.display.join);
 }
 
 L('\n=== THE ROW NEVER SAYS WHAT IT MUST NOT SAY ===');
@@ -148,8 +179,27 @@ L('\n=== THE JOIN DESCRIBES THE MOVE THE ROW SHOWS ===');
   ok('a MIXED reading is never confirmed either',
     joinLine({ setup: 'CROSS_SOURCE_ALIGNMENT', direction: 'MIXED', changePct: 8 })
       !== JOIN_LINE.CONFIRMING);
-  ok('no move and no reaction is a dash, not a verdict',
-    joinLine({ setup: 'EVIDENCE_BUILDING', direction: 'POSITIVE' }) === JOIN_LINE.NONE);
+  // ⚠️ WHAT THE DASH ACTUALLY MEANS. This assertion used to pass no price at all and expect a dash,
+  // which was right until 9463c3db: a missing price now reads REACTION UNAVAILABLE, because "we
+  // cannot measure what the market did" is a different statement from "price and evidence have no
+  // relationship". The dash belongs to the second case — evidence on file, a real move, and no
+  // directional lean for that move to agree or disagree with — so that is what is asserted now.
+  ok('a real move against evidence with no directional lean is a dash, not a verdict',
+    joinLine({ setup: 'EVIDENCE_BUILDING', direction: 'UNKNOWN', changePct: 8 })
+      === JOIN_LINE.NONE);
+  ok('…and the dash is not reached when the evidence DOES lean',
+    joinLine({ setup: 'EVIDENCE_BUILDING', direction: 'POSITIVE', changePct: 8 })
+      !== JOIN_LINE.NONE);
+  // The case the dash used to cover, now stated in its own words.
+  ok('⚠️ no price at all is REACTION UNAVAILABLE — we cannot measure, so we do not claim',
+    joinLine({ setup: 'EVIDENCE_BUILDING', direction: 'POSITIVE' })
+      === JOIN_LINE.REACTION_UNAVAILABLE);
+  ok('…and so is a stale price, for the same reason',
+    joinLine({ setup: 'EVIDENCE_BUILDING', direction: 'POSITIVE', changePct: 8, stale: true })
+      === JOIN_LINE.REACTION_UNAVAILABLE);
+  ok('⚠️ but no EVIDENCE outranks both — that answer is about the filing, not the price',
+    joinLine({ setup: 'EVIDENCE_BUILDING', direction: 'POSITIVE', hasEvidence: false })
+      === JOIN_LINE.NO_EVIDENCE);
 }
 
 L('\n=== STRUCTURE IS DAILY-ONLY, AND HONEST ABOUT IT ===');
