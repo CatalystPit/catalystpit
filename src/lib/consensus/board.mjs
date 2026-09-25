@@ -208,9 +208,9 @@ export function orderBoard(list) {
  * pad the board with absence. A ticker with ONE active family is KEPT: single-source is a real and
  * honestly-labelled state, not a failure.
  */
-export async function consensusRow(ticker, { now = Date.now(), resolve } = {}) {
+export async function consensusRow(ticker, { now = Date.now(), resolve, ctx = null } = {}) {
   const resolveEvidence = resolve || (await import('./evidence.js')).resolveEvidence;
-  const families = await resolveEvidence(ticker, { now });
+  const families = await resolveEvidence(ticker, { now, ctx });
   // Structure is resolved for the ticker page; the board is an account of DISCLOSED evidence.
   // The aggregate excludes structure (see AGGREGATE_FAMILIES); the FAMILY ROWS include it, so
   // the board shows the same five families the ticker page does.

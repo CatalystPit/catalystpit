@@ -144,8 +144,11 @@ L('\n=== ⚠️ REACTION AND STRUCTURE ARE DIFFERENT QUESTIONS ===');
   ok('…the event reaction is retained unchanged',
     /in the session after it became public/.test(mf) && /vs SPY/.test(mf));
   ok('…including the meaningful-response threshold', /threshold for a meaningful response/.test(mf));
+  // loadBars now takes an optional preloaded context (the board bulk-loads candles once per chunk
+  // instead of once per ticker). The property asserted is unchanged and is if anything stronger:
+  // ONE bar load, and structure computed from it rather than from a second query.
   ok('⚠️ structure is computed from the SAME bar load — no extra query',
-    /const bars = await loadBars\(ticker\);[\s\S]{0,200}structureFacts\(bars\)/.test(mf));
+    /const bars = await loadBars\(ticker(?:, ctx)?\);[\s\S]{0,200}structureFacts\(bars\)/.test(mf));
   ok('⚠️ no vendor call is introduced', !/tiingo|polygon|api\.|fetch\(/i.test(mf));
   ok('reaction thresholds were not touched',
     !/REACTION_FLOOR_PCT\s*=|floorPct\s*=/.test(mf));

@@ -86,7 +86,7 @@ export function __setBenchmark(map, fromISO = '1900-01-01') {
  * data is missing, unusable or the query fails, the evidence itself is still correct and still
  * shown. A ticker page must never lose its filings because a price series is unavailable.
  */
-export async function attachReactions(ticker, evidence, { now = Date.now() } = {}) {
+export async function attachReactions(ticker, evidence, { now = Date.now(), ctx = null } = {}) {
   const list = Array.isArray(evidence) ? evidence : [];
   if (!list.length) return list;
 
@@ -99,8 +99,16 @@ export async function attachReactions(ticker, evidence, { now = Date.now() } = {
     .toISOString().slice(0, 10);
 
   try {
+    // ⚠️ THE CONTEXT HOLDS TWELVE YEARS; THIS WINDOW IS A SUBSET OF IT. Evidence is at most
+    // HISTORY_WINDOW_DAYS old and the anchor pad is 12 days, so [fromISO, toISO] always falls
+    // inside the preloaded range. Filtering in memory reproduces this query's rows exactly.
+    const preCandles = ctx?.rows('price.candles', ticker);
+    const preQuality = ctx?.rows('price.quality', ticker);
+    const preBreaks = ctx?.rows('price.breaks', ticker);
     const [candleRes, qualityRes, bench] = await Promise.all([
-      db.execute(sql`
+      preCandles
+        ? preCandles.filter((r) => String(r.date) >= fromISO && String(r.date) <= toISO)
+        : db.execute(sql`
         select date::text as date, close
           from ticker_daily_candles
          where ticker = ${ticker}
@@ -108,7 +116,10 @@ export async function attachReactions(ticker, evidence, { now = Date.now() } = {
            and date <= ${toISO}
          order by date asc`),
       // Quality verdict and break dates in one round trip. Both are tiny.
-      db.execute(sql`
+      preQuality
+        ? [{ usable: preQuality[0] ? preQuality[0].usable !== false : true,
+             breaks: (preBreaks || []).map((b) => String(b.break_date)) }]
+        : db.execute(sql`
         select
           (select coalesce(usable, true) from ticker_price_quality where ticker = ${ticker}) as usable,
           (select coalesce(array_agg(break_date::text), '{}')

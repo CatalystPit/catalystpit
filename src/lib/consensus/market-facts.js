@@ -50,7 +50,16 @@ const pct = (from, to) => (Number.isFinite(from) && Number.isFinite(to) && from 
   ? ((to - from) / from) * 100 : null);
 
 /** Daily closes/highs/lows for one ticker, oldest first. */
-async function loadBars(ticker) {
+async function loadBars(ticker, ctx = null) {
+  // ⚠️ SERVED FROM THE SAME PRELOADED CANDLES AS STRUCTURE. BAR_DAYS is 400 and the context holds
+  // 4,380, so the in-memory filter reproduces this query's rows exactly — one load, three readers.
+  const pre = ctx?.rows('price.candles', ticker);
+  if (pre) {
+    const cutoff = new Date(Date.now() - BAR_DAYS * 86400000).toISOString().slice(0, 10);
+    return pre.filter((r) => String(r.date) >= cutoff && Number.isFinite(Number(r.close)))
+      .map((r) => ({ date: String(r.date), close: Number(r.close), high: Number(r.high),
+        low: Number(r.low), open: Number(r.open) }));
+  }
   const [{ db }, { sql }] = await Promise.all([import('../db'), import('drizzle-orm')]);
   const res = await db.execute(sql`
     select date::text as date, close::float8 as close, high::float8 as high, low::float8 as low,
@@ -162,7 +171,7 @@ export function marketNarrative({ reaction, levels, verdict, join, driverLabel =
   };
 }
 
-export async function marketFactsFor(ticker, { driver = null, reaction = null, join = null, verdict = 'UNAVAILABLE', driverLabel } = {}) {
+export async function marketFactsFor(ticker, { driver = null, reaction = null, join = null, verdict = 'UNAVAILABLE', driverLabel, ctx = null } = {}) {
   let levels = null;
   let structure = null;
   let structureLines = [];
@@ -174,7 +183,7 @@ export async function marketFactsFor(ticker, { driver = null, reaction = null, j
     // ⚠️ ONE BAR LOAD FOR BOTH. Structure and levels read the same completed-session candles, so
     // adding structure costs no extra query — which is what keeps this out of the React card and
     // free of an N+1.
-    const bars = await loadBars(ticker);
+    const bars = await loadBars(ticker, ctx);
     sessions = bars.length;
     levels = levelFacts(bars);
     structure = structureFacts(bars);

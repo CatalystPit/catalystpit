@@ -158,8 +158,11 @@ export const BREADTH_LOOKBACK_DAYS = 900;
 
 export const OPEN_MARKET_BUY = 'P';
 
-export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
-  const res = await db.execute(sql`
+export async function insiderEvidence(ticker, { now = Date.now(), coverage = {}, ctx = null } = {}) {
+  // ⚠️ DATA ACCESS ONLY. ctx holds the rows this query would have returned, fetched once for the
+  // whole chunk — see consensus/build-context.mjs. null means "not preloaded"; [] means "none".
+  const pre = ctx?.rows('resolve.insider', ticker);
+  const res = pre ?? await db.execute(sql`
     select action, transaction_code, total_value, shares, executive, title, filing_date, accession,
            filing_url,
            coalesce(rule_10b5_1, false) as planned,
@@ -170,7 +173,7 @@ export async function insiderEvidence(ticker, { now = Date.now(), coverage = {} 
      where ticker = ${ticker}
        and filing_date >= (current_date - make_interval(days => ${HISTORY_WINDOW_DAYS}))
        and total_value > 0
-     order by filing_date desc
+     order by filing_date desc, accession desc, id desc
      limit 2000`);
   const r = rows(res).filter((x) => !x.superseded);   // a 4/A replaced this row; it is not evidence
   if (!r.length) return [];
@@ -370,8 +373,9 @@ export const ITEM_TO_TYPE = Object.freeze({
   '25': { type: 'sec_25_withdrawal', label: 'Notice to withdraw security from listing', materiality: 0.80, direction: DIRECTION.NEGATIVE },
 });
 
-export async function catalystEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
-  const res = await db.execute(sql`
+export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}, ctx = null } = {}) {
+  const pre = ctx?.rows('resolve.catalyst', ticker);
+  const res = pre ?? await db.execute(sql`
     select items, coalesce(material, false) as material, filed_at, accession, report_date,
            filing_url, primary_doc_url
       from eightk_filings
@@ -387,7 +391,7 @@ export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}
   // Measured: LLY's FDA approval and ANIP's both resolved inside pressReleaseEvidence and were then
   // discarded here, while QNRX worked only because it happened to have an 8-K as well.
   if (!r.length) {
-    try { return await pressReleaseEvidence(ticker, { now }); } catch { return []; }
+    try { return await pressReleaseEvidence(ticker, { now, ctx }); } catch { return []; }
   }
 
   const cutoff = now - DISPLAY_WINDOW_DAYS * DAY;
@@ -442,7 +446,7 @@ export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}
   // See pressReleaseEvidence: small biotechs announce INDs, topline data and designations by wire
   // and often file no 8-K at all, so the whole class was invisible to every consumer.
   try {
-    out.push(...await pressReleaseEvidence(ticker, { now }));
+    out.push(...await pressReleaseEvidence(ticker, { now, ctx }));
   } catch { /* the filing evidence above stands on its own */ }
   return out;
 }
@@ -469,16 +473,17 @@ export async function catalystEvidence(ticker, { now = Date.now(), coverage = {}
  * roundups and marketing before it looks for anything else, so event VOCABULARY alone produces
  * nothing. An unclassified release stays what it always was: a wire item, not evidence.
  */
-export async function pressReleaseEvidence(ticker, { now = Date.now() } = {}) {
+export async function pressReleaseEvidence(ticker, { now = Date.now(), ctx = null } = {}) {
   // The longest event-type window bounds the query; each row is then held to its OWN window below.
   const maxDays = MAX_RELEVANCE_DAYS;
-  const res = await db.execute(sql`
+  const pre = ctx?.rows('resolve.press', ticker);
+  const res = pre ?? await db.execute(sql`
     select seq, source, coalesce(source_headline, headline) as headline, summary,
            published_at, canonical_url, original_url, content_hash
       from primary_events
      where ${ticker} = any(tickers)
        and published_at >= (now() - make_interval(days => ${maxDays}))
-     order by published_at desc
+     order by published_at desc, seq desc
      limit 60`);
 
   const seen = new Set();
@@ -560,8 +565,9 @@ export const FORM144_MIN_VALUE = 5_000_000;
 /** Or, for a smaller company, this share of the class outstanding. */
 export const FORM144_MIN_PCT = 0.005;
 
-export async function form144Evidence(ticker, { now = Date.now() } = {}) {
-  const res = await db.execute(sql`
+export async function form144Evidence(ticker, { now = Date.now(), ctx = null } = {}) {
+  const pre = ctx?.rows('resolve.form144', ticker);
+  const res = pre ?? await db.execute(sql`
     select accession, seller, relationship, shares, aggregate_value, shares_outstanding,
            approx_sale_date, filed_at, primary_doc_url, filing_url
       from form144_filings
@@ -633,8 +639,9 @@ export async function form144Evidence(ticker, { now = Date.now() } = {}) {
 // changed something, against the previous filing BY THE SAME FILER that we actually hold. When we
 // hold none, it produces nothing rather than inventing a baseline.
 
-export async function schedule13dEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
-  const res = await db.execute(sql`
+export async function schedule13dEvidence(ticker, { now = Date.now(), coverage = {}, ctx = null } = {}) {
+  const pre = ctx?.rows('resolve.sched13d', ticker);
+  const res = pre ?? await db.execute(sql`
     select accession, issuer_name, security_class, form_type, is_amendment, filer_name, filer_type,
            pct_of_class, shares, item4_codes, date_of_event, group_key, filed_at,
            primary_doc_url, filing_url
@@ -719,14 +726,15 @@ function fmtPct(n) {
 // both, but nothing is ever measured from it — a purchase made in June and disclosed in September
 // became knowable in September.
 
-export async function congressEvidence(ticker, { now = Date.now(), coverage = {} } = {}) {
-  const res = await db.execute(sql`
+export async function congressEvidence(ticker, { now = Date.now(), coverage = {}, ctx = null } = {}) {
+  const pre = ctx?.rows('resolve.congress', ticker);
+  const res = pre ?? await db.execute(sql`
     select action, amount_mid, amount_min, amount_range, member_slug, representative, party, chamber, state,
            disclosure_date, transaction_date, link
       from congress_trades
      where ticker = ${ticker}
        and disclosure_date >= (current_date - make_interval(days => ${HISTORY_WINDOW_DAYS}))
-     order by disclosure_date desc
+     order by disclosure_date desc, id desc
      limit 1000`);
   const r = rows(res);
   if (!r.length) return [];
@@ -799,7 +807,7 @@ export async function congressEvidence(ticker, { now = Date.now(), coverage = {}
 // Breadth is compared against THIS TICKER'S OWN history — "116 funds added" is meaningless until you
 // know this ticker's quarters normally move by eight.
 
-export async function institutionEvidence(ticker, { now = Date.now() } = {}) {
+export async function institutionEvidence(ticker, { now = Date.now(), ctx = null } = {}) {
   // fund_holdings is ~3M rows, so the shape of this query matters. It rides the existing partial
   // covering index idx_fund_holdings_qoq (quarter, ticker) INCLUDE (cik, shares)
   // WHERE put_call = '' AND ticker IS NOT NULL — hence the literal `put_call = ''` rather than a
@@ -811,8 +819,9 @@ export async function institutionEvidence(ticker, { now = Date.now() } = {}) {
   // from quarterDisclosureDates() instead, which is a property of the quarter anyway.
   //
   // The quarter bound is what lets the index skip: unbounded, MSFT measured 1,981ms; bounded, 491ms.
+  const pre = ctx?.rows('resolve.breadth', ticker);
   const [res, disclosure] = await Promise.all([
-    db.execute(sql`
+    pre ?? db.execute(sql`
       select quarter, count(distinct cik) as breadth
         from fund_holdings
        where ticker = ${ticker}
@@ -899,7 +908,7 @@ export function isoDay(v) {
  * blank a ticker page. Which families failed is REPORTED, because a silently shorter list is how a
  * regression hides — the same reason collectEvidence returns its quarantine.
  */
-export async function tickerEvidence(ticker, { now = Date.now(), since = null } = {}) {
+export async function tickerEvidence(ticker, { now = Date.now(), since = null, ctx = null } = {}) {
   const symbol = String(ticker || '').toUpperCase();
   const coverage = await coverageBoundaries({ now });
 
@@ -912,7 +921,7 @@ export async function tickerEvidence(ticker, { now = Date.now(), since = null } 
     ['institution', institutionEvidence],
   ];
   const settled = await Promise.allSettled(
-    families.map(([, fn]) => fn(symbol, { now, coverage })),
+    families.map(([, fn]) => fn(symbol, { now, coverage, ctx })),
   );
 
   const raw = [];

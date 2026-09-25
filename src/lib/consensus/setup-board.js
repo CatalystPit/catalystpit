@@ -11,6 +11,7 @@
 // board, ticker page, and later Watchlist and Alerts — renders from.
 
 import { consensusRow, BOARD_FAMILIES, CONCURRENCY } from './board.mjs';
+import { loadBuildContext, chunkTickers, CHUNK } from './build-context.mjs';
 import { qualifies, labelFor, marketState, MARKET_STATE_LABEL, setupDirection, leanDirection, isActive, orderSetups, SETUP, SETUP_LABEL, SETUP_VERSION, freshCatalysts } from './setup.mjs';
 import {
   significantByFamily, evidenceSynthesis, normalizeReaction, joinEvidenceMarket,
@@ -210,14 +211,17 @@ export function whyThisIsHere({ setup, synthesis, significantFamilies = [], cons
  * Reusable by the board, the ticker page, and later Watchlist and Alerts — which is why it carries
  * evidence IDs, publicTimes and a methodology version rather than being shaped for one card.
  */
-export async function buildSetup(ticker, { now = Date.now(), resolve, resolveConsensus } = {}) {
+export async function buildSetup(ticker, { now = Date.now(), resolve, resolveConsensus, ctx = null } = {}) {
   const sym = String(ticker).toUpperCase();
 
+  // ⚠️ ctx IS PASSED, NEVER CONSULTED HERE. It travels to the query sites inside the two engines and
+  // the reaction attach, each of which reads the rows its own query would have produced. Nothing on
+  // this path changes what is computed — see consensus/build-context.mjs.
   const [row, resolved] = await Promise.all([
-    consensusRow(sym, { now, resolve: resolveConsensus }),
+    consensusRow(sym, { now, resolve: resolveConsensus, ctx }),
     (async () => {
       const tickerEvidence = resolve || (await import('../evidence/resolve.js')).tickerEvidence;
-      return tickerEvidence(sym, { now });
+      return tickerEvidence(sym, { now, ctx });
     })(),
   ]);
 
@@ -230,7 +234,7 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
   // Reactions anchored to publicTime. One candle fetch per ticker; SPY amortised process-wide.
   try {
     const { attachReactions } = await import('../evidence/reaction-data.js');
-    evidence = await attachReactions(sym, evidence, { now });
+    evidence = await attachReactions(sym, evidence, { now, ctx });
   } catch { /* reaction is enrichment; its absence must not remove the evidence */ }
 
   // ── THE V3.5 PIPELINE, in order ──────────────────────────────────────
@@ -274,7 +278,7 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
   });
 
   const market = await marketFactsFor(sym, {
-    driver, reaction, join,
+    driver, reaction, join, ctx,
     verdict: canonical?.market?.confirmation || 'UNAVAILABLE',
     driverLabel: catalystDriven && driver?.family === FAMILY.CATALYST
       ? 'the filing' : 'the disclosure evidence',
@@ -484,29 +488,58 @@ export async function buildSetupBoard(db, sql, {
     return { rows: [], candidates: 0, evaluated: 0, failed: 0, universe, builtAt: new Date(now).toISOString() };
   }
 
+  // ── ⚠️ BULK LOAD PER CHUNK, THEN BUILD FROM MEMORY ────────────────────────
+  //
+  // This loop used to issue 16 database round trips PER CANDIDATE — 52,944 for a full pass, which
+  // is why the build could not finish inside the platform's 300s ceiling. Each chunk now loads the
+  // same rows for ~400 tickers in one wave of queries and every setup in that chunk is computed
+  // without touching the database again.
+  //
+  // The chunk is also the memory bound: twelve years of candles for the whole candidate universe is
+  // ~2.2M bars, which does not belong in one map inside a 3009MB function.
   const built = [];
-  let i = 0, failed = 0, aborted = false;
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, async () => {
-    while (i < candidates.length) {
-      // ⚠️ CHECKED BEFORE TAKING WORK, NOT AFTER DOING IT. A worker that has started a ticker
-      // finishes it; no new one is picked up past the deadline. The partial result is NOT
-      // published — rebuildBoard refuses it — so last-known-good survives untouched.
-      if (Date.now() >= deadlineAt) { aborted = true; break; }
-      const t = candidates[i++];
-      try {
-        const s = await buildSetup(t, { now, resolve, resolveConsensus });
-        s.why = whyThisIsHere({
-          setup: s.setup, synthesis: s.evidence_layer,
-          significantFamilies: s._significant, consensusFamilies: s._consensusFamilies,
-          sheet: s.families,
-          market: s.market, reaction: s.reaction_layer, join: s.join_layer,
-        });
-        built.push(s);
-      } catch {
-        failed++;
-      }
+  let failed = 0, aborted = false;
+  const chunks = chunkTickers(candidates, CHUNK);
+  const loadMs = [];
+  outer:
+  for (const chunk of chunks) {
+    if (Date.now() >= deadlineAt) { aborted = true; break; }
+    let ctx = null;
+    const loadStart = Date.now();
+    try {
+      ctx = await loadBuildContext(db, sql, chunk, { now });
+    } catch (e) {
+      // ⚠️ A FAILED BULK LOAD MUST NOT SKIP THE CHUNK. ctx stays null and every resolver falls back
+      // to its own query, exactly as before this existed — slower, and correct.
+      console.warn(`[setup-board] bulk load failed for a chunk of ${chunk.length}: ${e.message}`);
+      ctx = null;
     }
-  }));
+    loadMs.push(Date.now() - loadStart);
+
+    let i = 0;
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, chunk.length) }, async () => {
+      while (i < chunk.length) {
+        // ⚠️ CHECKED BEFORE TAKING WORK, NOT AFTER DOING IT. A worker that has started a ticker
+        // finishes it; no new one is picked up past the deadline. The partial result is NOT
+        // published — rebuildBoard refuses it — so last-known-good survives untouched.
+        if (Date.now() >= deadlineAt) { aborted = true; break; }
+        const t = chunk[i++];
+        try {
+          const s = await buildSetup(t, { now, resolve, resolveConsensus, ctx });
+          s.why = whyThisIsHere({
+            setup: s.setup, synthesis: s.evidence_layer,
+            significantFamilies: s._significant, consensusFamilies: s._consensusFamilies,
+            sheet: s.families,
+            market: s.market, reaction: s.reaction_layer, join: s.join_layer,
+          });
+          built.push(s);
+        } catch {
+          failed++;
+        }
+      }
+    }));
+    if (aborted) break outer;
+  }
 
   // ⚠️ QUALIFICATION, NOT A QUOTA. Everything without an active setup is dropped, however much data
   // it has. A board of 9 is a correct answer when only 9 companies have something worth looking at.
@@ -521,6 +554,9 @@ export async function buildSetupBoard(db, sql, {
     // abort would publish a board missing however many candidates it never reached, which reads
     // to every consumer as "those companies have no evidence".
     aborted,
+    // Bulk-load cost, so the split between fetching and computing stays visible in production.
+    bulkLoadMs: loadMs.reduce((a, b) => a + b, 0),
+    chunks: chunks.length,
     rows: orderSetups(active),
     candidates: candidates.length,
     evaluated: built.length,

@@ -96,9 +96,12 @@ export function directionReadable({ buyValue = 0, discSellValue = 0, routineValu
 }
 
 
-export async function insiderEvidence(ticker, now) {
+export async function insiderEvidence(ticker, now, ctx = null) {
   const windowDays = CONSTANTS.activationWindowDays.insiders;
-  const res = await db.execute(sql`
+  // ⚠️ SAME ROWS, FETCHED ONCE FOR THE WHOLE CHUNK. See consensus/build-context.mjs. A null means
+  // "not preloaded" and falls through to the query below; an empty array means "preloaded, none".
+  const pre = ctx?.rows('consensus.insider', ticker);
+  const res = pre ?? await db.execute(sql`
     select action, transaction_code, total_value, executive, filing_date, accession,
            coalesce(rule_10b5_1, false) as planned,
            coalesce(is_officer, false) as officer, coalesce(is_director, false) as director
@@ -106,7 +109,7 @@ export async function insiderEvidence(ticker, now) {
      where ticker = ${ticker}
        and filing_date >= (current_date - make_interval(days => ${windowDays}))
        and total_value > 0
-     order by filing_date desc
+     order by filing_date desc, accession desc, id desc
      limit 400`);
   const r = rows(res);
   if (!r.length) return familyValue({ family: 'insiders', evidenceCount: 0 });
@@ -226,8 +229,9 @@ function insiderTrend(r, now) {
  * Counting managers rather than dollars also keeps a single index fund's mechanical rebalance from
  * dominating the family.
  */
-export async function institutionEvidence(ticker, now) {
-  const res = await db.execute(sql`
+export async function institutionEvidence(ticker, now, ctx = null) {
+  const pre = ctx?.rows('consensus.institution', ticker);
+  const res = pre ?? await db.execute(sql`
     with q as (
       select max(quarter) as cur from fund_holdings where ticker = ${ticker}
     ),
@@ -306,14 +310,15 @@ export async function institutionEvidence(ticker, now) {
 }
 
 // ── 3. CONGRESS ──────────────────────────────────────────────────────────────
-export async function congressEvidence(ticker, now) {
+export async function congressEvidence(ticker, now, ctx = null) {
   const windowDays = CONSTANTS.activationWindowDays.congress;
-  const res = await db.execute(sql`
+  const pre = ctx?.rows('consensus.congress', ticker);
+  const res = pre ?? await db.execute(sql`
     select action, amount_mid, member_slug, disclosure_date, transaction_date
       from congress_trades
      where ticker = ${ticker}
        and disclosure_date >= (current_date - make_interval(days => ${windowDays}))
-     order by disclosure_date desc
+     order by disclosure_date desc, id desc
      limit 200`);
   const r = rows(res);
   if (!r.length) return familyValue({ family: 'congress', evidenceCount: 0 });
@@ -393,9 +398,10 @@ const ITEM_DIRECTION = Object.freeze({
   '8.01': 0,      // other events — deliberately neutral, it is a catch-all
 });
 
-export async function catalystEvidence(ticker, now) {
+export async function catalystEvidence(ticker, now, ctx = null) {
   const windowDays = CONSTANTS.activationWindowDays.catalysts;
-  const res = await db.execute(sql`
+  const pre = ctx?.rows('consensus.catalyst', ticker);
+  const res = pre ?? await db.execute(sql`
     select items, material, filed_at, accession, report_date
       from eightk_filings
      where ticker = ${ticker}
@@ -456,9 +462,9 @@ export async function catalystEvidence(ticker, now) {
  * timeframes of the same price series are not two independent families and counting them twice
  * would be the weighting error this redesign exists to remove.
  */
-export async function structureEvidence(ticker, now) {
+export async function structureEvidence(ticker, now, ctx = null) {
   const { tickerStructure } = await import('../structure/structure-data.js');
-  const s = await tickerStructure(ticker).catch(() => null);
+  const s = await tickerStructure(ticker, { ctx }).catch(() => null);
   if (!s || !s.available || !s.daily?.available) {
     return familyValue({ family: 'structure', evidenceCount: 0 });
   }
@@ -499,12 +505,15 @@ export async function structureEvidence(ticker, now) {
 }
 
 /** All families for one ticker, resolved independently and in parallel. */
-export async function resolveEvidence(ticker, { now = Date.now() } = {}) {
+export async function resolveEvidence(ticker, { now = Date.now(), ctx = null } = {}) {
   const t = String(ticker || '').toUpperCase().trim();
   if (!t) return [];
+  // ⚠️ ctx IS DATA ACCESS ONLY. Each family below receives the same rows it would have queried for
+  // itself; every calculation, window and threshold is untouched. See consensus/build-context.mjs.
   const settled = await Promise.allSettled([
-    insiderEvidence(t, now), institutionEvidence(t, now), congressEvidence(t, now), catalystEvidence(t, now),
-    structureEvidence(t, now),
+    insiderEvidence(t, now, ctx), institutionEvidence(t, now, ctx), congressEvidence(t, now, ctx),
+    catalystEvidence(t, now, ctx),
+    structureEvidence(t, now, ctx),
   ]);
   // Must stay aligned with the Promise.allSettled order above — a mismatch would label a failed
   // family as the wrong one, which is worse than reporting nothing.
