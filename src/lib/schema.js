@@ -331,6 +331,11 @@ export const fundHoldings = pgTable('fund_holdings', {
   uq:        uniqueIndex('uq_fund_holding').on(t.cik, t.quarter, t.cusip, t.cls, t.putCall),
   idxFundQ:  index('idx_fund_holdings_cik_quarter').on(t.cik, t.quarter),
   idxTicker: index('idx_fund_holdings_ticker').on(t.ticker),
+  // ⚠️ THE QUARTER COLUMN IS PART OF THE KEY, NOT A PAYLOAD. Both evidence engines start their
+  // institution read with `max(quarter) where ticker = $1`, which (ticker) alone cannot answer from
+  // the index — it becomes a heap scan of every row for that ticker on a 17.9M-row table. See
+  // drizzle/0032_fund_holdings_ticker_quarter.sql.
+  idxTickerQuarter: index('idx_fund_holdings_ticker_quarter').on(t.ticker, t.quarter),
   idxCusip:  index('idx_fund_holdings_cusip').on(t.cusip),
 }));
 

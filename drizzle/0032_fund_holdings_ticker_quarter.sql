@@ -1,0 +1,28 @@
+-- ⚠️ THE INDEX THAT WAS MISSING, AND THE REASON THE CONSENSUS BOARD STOPPED REFRESHING.
+--
+-- Both evidence engines resolve institutions per ticker, and both begin the same way:
+--
+--   select max(quarter) from fund_holdings where ticker = $1
+--
+-- The only index that predicate could use was idx_fund_holdings_ticker, on (ticker) ALONE. An index
+-- on the filter column but not the aggregated column cannot answer a max() from the index, so
+-- Postgres found the row pointers and then visited every heap page to read `quarter`. Measured on
+-- AMT against 17,975,586 rows:
+--
+--   Bitmap Heap Scan ... Heap Blocks: exact=14827   rows=14998   20ms warm
+--
+-- Fourteen thousand eight hundred and twenty-seven block reads to produce one number. Each engine's
+-- query runs that probe twice (the `cur` and `prev` CTEs), and both engines run per ticker, so a
+-- full board pass over 3,309 candidates was doing roughly 200 million heap block touches for
+-- nothing. fund_holdings accounted for 50% of all query latency in the build — 1,856ms per call
+-- under load, to return 9 rows.
+--
+-- (quarter, ticker) already exists as idx_fund_holdings_qoq, but the column order is wrong for this
+-- predicate: a ticker equality with no quarter bound cannot seek into a quarter-leading index.
+--
+-- ⚠️ THIS CHANGES NO RESULT. Same rows, same aggregates, same board. It changes how they are found.
+--
+-- CONCURRENTLY because the 13F ingest writes to this table continuously. No transaction wrapper:
+-- Postgres refuses CREATE INDEX CONCURRENTLY inside one.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_fund_holdings_ticker_quarter
+  ON fund_holdings (ticker, quarter);

@@ -219,6 +219,13 @@ async function ensureTables() {
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_fund_holding ON fund_holdings (cik, quarter, cusip, class, put_call)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fund_holdings_cik_quarter ON fund_holdings (cik, quarter)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fund_holdings_ticker ON fund_holdings (ticker)`);
+  // ⚠️ (ticker) ALONE CANNOT ANSWER max(quarter) WHERE ticker = $1, and both evidence engines open
+  // their institution query with exactly that. The planner found the row pointers from the index
+  // above and then read every heap page to see the quarter — 14,827 blocks to produce one number,
+  // on a 17.9M-row table, twice per query, twice per ticker. It was 50% of all query latency in a
+  // consensus board build and it is why the board stopped refreshing. See
+  // drizzle/0032_fund_holdings_ticker_quarter.sql; measured 117.8ms -> 15.5ms on AMT.
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fund_holdings_ticker_quarter ON fund_holdings (ticker, quarter)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_fund_holdings_cusip ON fund_holdings (cusip)`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS fund_filings (
     cik text NOT NULL, quarter date NOT NULL, filed_date date, accession text,

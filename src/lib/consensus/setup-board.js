@@ -449,10 +449,19 @@ export async function buildSetup(ticker, { now = Date.now(), resolve, resolveCon
  * moving. That is precisely how this failed: every invocation for six hours started, ran 300s and
  * vanished, leaving a frozen clock as the only symptom.
  *
- * Stopping ourselves first turns an invisible kill into a recorded outcome. 240s leaves room for
- * the candidate query, the universe count, validation and the heartbeat write.
+ * Stopping ourselves first turns an invisible kill into a recorded outcome.
+ *
+ * ⚠️ SET AS CLOSE TO THE CEILING AS IS SAFE, so it fires only when something is genuinely wrong.
+ * This is not the fix for a slow build — the fix was the missing (ticker, quarter) index on
+ * fund_holdings and CONCURRENCY — it is the thing that makes the next slow build visible instead of
+ * silent. Everything after the build is validation, one KV write and one heartbeat, measured at
+ * 1-3s, so 30s of headroom under the 300s platform ceiling is generous.
+ *
+ * The first value here was 240s, chosen before the build had been measured end to end. Production
+ * then reported `deadline after 243s at 2477/3309 candidates` — the deadline working exactly as
+ * intended, and the number that showed 240 was below what the build needed rather than above it.
  */
-export const BUILD_DEADLINE_MS = 240_000;
+export const BUILD_DEADLINE_MS = 270_000;
 
 export async function buildSetupBoard(db, sql, {
   now = Date.now(), limit = EVALUATE_LIMIT, resolve, resolveConsensus,
