@@ -1,5 +1,5 @@
 import { buildBoard, BOARDS, BOARDS_VERSION, THRESHOLDS } from './boards.mjs';
-import { toScanRows, servedRow, freshnessLabel, JOIN_LINE, SCAN_ROWS_VERSION } from './scan-rows.mjs';
+import { toScanRows, servedRow, freshnessLabel, aggregateFreshness, JOIN_LINE, SCAN_ROWS_VERSION } from './scan-rows.mjs';
 import { MAJOR_MOVE_PCT } from './mover-catalyst.mjs';
 import { readPublishedBoard } from '../consensus/refresh';
 import { scanReadiness, activeCapabilities } from './runtime';
@@ -102,6 +102,26 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
     for (const r of snapshot.rows) {
       quotes[r.symbol] = { price: r.last, changePct: r.changePct, freshness: 'realtime' };
     }
+    // ⚠️ AN ENTITLED BOARD MUST NOT BE LESS COMPLETE THAN A FREE ONE, AND IT WAS.
+    //
+    // The snapshot is the eligible universe filtered to symbols with a CURRENT print, so a
+    // Consensus ticker that is an ADR, a fund, or simply has not traded yet this morning is absent
+    // from it. Serving only the snapshot meant those rows reached a Pro reader with no price at
+    // all, while a signed-out reader got the completed-session close for the same ticker through
+    // getQuotes. Entitlement narrowing what a reader sees is the inverse of what it is for.
+    //
+    // So the gap is filled from the ordinary quote path, and each of those rows carries its own
+    // freshness — 'eod' for a symbol with no current print. That is the honest per-symbol degrade:
+    // one ticker without a live quote says so on its own row instead of dragging the whole board's
+    // disclosure down with it.
+    const missing = symbols.filter((s) => !quotes[s]);
+    if (missing.length) {
+      try {
+        const { getQuotes } = await import('../market-data');
+        const rest = (await getQuotes(missing, { realtime })) || {};
+        for (const [sym, q] of Object.entries(rest)) if (!quotes[sym]) quotes[sym] = q;
+      } catch { /* a gap stays a gap; it never empties the board */ }
+    }
   } else {
     try {
       const { getQuotes } = await import('../market-data');
@@ -193,8 +213,11 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
   // snapshot price and stays 'eod'. Measured across ALL candidates that single row made the set
   // size 2 and collapsed the whole board's label to LAST CLOSE while every row on screen was live
   // — a disclosure that is wrong in the direction of describing live prices as stale.
-  const servedFreshness = new Set((built.rows || []).map((r) => r?.display?.freshness).filter(Boolean));
-  const freshness = servedFreshness.size === 1 ? [...servedFreshness][0] : (servedFreshness.has('realtime') ? 'near' : 'eod');
+  // ⚠️ AND MIXED IS ITS OWN ANSWER — see aggregateFreshness. Collapsing "some live, some not" onto
+  // either extreme has now been wrong twice: first to LAST CLOSE, then to 'near', which the label
+  // map renders as DELAYED. An entitled reader watching live consolidated prices was told
+  // "Delayed quotes — not live" because one row of twenty-five had no current print.
+  const freshness = aggregateFreshness((built.rows || []).map((r) => r?.display?.freshness));
 
   return {
     board: boardId,
@@ -203,8 +226,9 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
     consensusStatus: status,
     consensusBuiltAt: payload.builtAt ?? null,
     readiness: scanReadiness(activeCapabilities()),
-    // ⚠️ SAID OUT LOUD. With realtime unentitled this is the last completed session's move, and a
-    // board called "moving now" must not imply otherwise.
+    // ⚠️ SAID OUT LOUD, IN WHICHEVER DIRECTION IS TRUE. Unentitled this is the last completed
+    // session's move and the board must not imply otherwise; entitled and live, it must not claim
+    // to be stale either. The label is derived, never chosen.
     freshness,
     // Derived from the SAME value the disclosure above resolved to, so the badge and the field can
     // never disagree — reading row[0] let one row's provenance speak for the whole board.

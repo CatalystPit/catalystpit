@@ -22,20 +22,23 @@
 // here: there is no consolidated volume on this feed, and a ratio against a different methodology
 // would be a fabrication rather than a missing number.
 //
-// ⚠️ AND THE FRESHNESS IS ALWAYS VISIBLE. Realtime is not entitled, so the move shown is the last
-// completed session's. A board called "Moving Now" that hid that would be telling a trader
-// something untrue at the moment they act.
+// ⚠️ AND THE FRESHNESS IS ALWAYS VISIBLE — IN WHICHEVER DIRECTION IS TRUE. Realtime is entitled
+// now, so a row's price may be a live consolidated print or the last completed session's close,
+// and the row says which. A board called "Moving Now" that hid either would be telling a trader
+// something untrue at the moment they act: stale prices passed off as current, or — the failure
+// that actually shipped — current prices disclaimed as delayed.
 
 import { useEffect, useState } from 'react';
 import { C, Badge, TickerLogo } from '../../lib/cp-shared';
 
 const BOARD_TABS = [
-  // ⚠️ "MOVING NOW" MUST NOT IMPLY 9:31. Realtime is not entitled, so the move shown is the last
-  // completed session's. The board keeps its name; the subtitle does the honest work, because a
-  // trader reading "moving now" at 09:31 and getting yesterday's close is the precise failure this
-  // scanner exists to refuse.
+  // ⚠️ THE BLURB NO LONGER NAMES A CLOCK, AND THAT IS THE POINT. It used to read "on the last
+  // completed session", which was true while realtime was unentitled and became a false claim the
+  // day it was not — printed directly beneath a banner saying LIVE. A static subtitle cannot know
+  // what the feed delivered; the banner and the per-row badges can, and they do. So the subtitle
+  // says what the board SELECTS and leaves what it is PRICED FROM to the two places that measure it.
   { key: 'moving-now', label: 'Moving Now',
-    blurb: 'A meaningful move on the last completed session, with the evidence that explains it.' },
+    blurb: 'A meaningful move, with the evidence that explains it.' },
   { key: 'catalysts-now', label: 'Evidence Now',
     blurb: 'Fresh material filings and unusual activity. Price may be flat — timing comes from the filing.' },
   { key: 'divergence', label: 'Divergence',
@@ -45,15 +48,35 @@ const BOARD_TABS = [
 /**
  * THE FEED BANNER — one component, used by the Terminal panel and any page wrapper.
  *
- * ⚠️ THERE IS NO "LIVE" BRANCH, DELIBERATELY. Tiingo commercial realtime is not entitled in
- * production, so a LIVE state here could only ever be wrong — and a dead branch that renders
- * "LIVE" is one refactor away from rendering it for real. When live is genuinely proven, this is
- * the single place that changes.
+ * ── ⚠️ IT HAD NO LIVE STATE, AND THAT BECAME THE BUG ────────────────────────
+ *
+ * This was two states — DELAYED or LAST CLOSE — written when Tiingo commercial realtime was not
+ * entitled, on the reasoning that a LIVE branch could only ever be wrong. The entitlement is on
+ * now, and the missing branch inverted: there was no input for which this banner could tell the
+ * truth to an entitled reader. A fully live board fell through to "Last completed session — not
+ * live quotes", and a board with one unpriced row among twenty-five reported 'near', which read
+ * as "Delayed quotes — not live" over a screen of live consolidated prices.
+ *
+ * ⚠️ THE STATE COMES FROM THE SERVED ROWS, NOT FROM THE ENTITLEMENT. aggregateFreshness reads the
+ * freshness the rows actually carry, so LIVE appears only when live prices were delivered. Being
+ * entitled to realtime and receiving it are different facts, and only the second one may be
+ * announced. A Free reader's rows are 'eod' or 'delayed' and this renders exactly as it always did.
  */
+const FEED_STATE = {
+  realtime: { label: 'LIVE', text: 'Real-time consolidated quotes.' },
+  near: { label: 'LIVE', text: 'Real-time consolidated quotes, seconds behind the tape.' },
+  // ⚠️ NEITHER EXTREME. Some rows are live and some have no current print; claiming either one
+  // for the whole board is a false statement about prices a trader is about to act on. Each row
+  // still carries its own badge, which is where the per-symbol truth lives.
+  mixed: { label: 'PARTLY LIVE', text: 'Live where the feed has a current print — last close on the rest. Every row says which.' },
+  delayed: { label: 'DELAYED', text: 'Delayed quotes — not live.' },
+  eod: { label: 'LAST CLOSE', text: 'Last completed session — not live quotes.' },
+};
+
 export function FeedBanner({ freshness, compact = false }) {
-  const delayed = freshness === 'delayed' || freshness === 'near';
-  const label = delayed ? 'DELAYED' : 'LAST CLOSE';
-  const text = delayed ? 'Delayed quotes — not live.' : 'Last completed session — not live quotes.';
+  // An unknown or absent freshness is not a live one.
+  const state = FEED_STATE[freshness] || FEED_STATE.eod;
+  const { label, text } = state;
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',

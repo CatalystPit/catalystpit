@@ -32,8 +32,13 @@ export const SCAN_ROWS_VERSION = 'scan_rows_v1';
 // today's. A board called "Moving Now" printing that without saying so would be the precise failure
 // the scanner's own header refuses: telling a trader something untrue at the moment they act.
 export const FRESHNESS_LABEL = Object.freeze({
-  realtime: null,          // nothing to disclose
-  near: 'DELAYED',
+  realtime: 'LIVE',
+  // Seconds to about a minute behind the tape. Not a delayed feed, and saying so cost a Pro reader
+  // their entitlement in the only place they could see it.
+  near: 'LIVE',
+  // Some rows live, some not. A board that is PARTLY live is neither live nor delayed, and calling
+  // it either is a false statement about prices a trader is about to act on.
+  mixed: 'PARTLY LIVE',
   delayed: 'DELAYED',
   eod: 'LAST CLOSE',
   // The security has not printed a close for multiple sessions. Not a claim about today.
@@ -49,6 +54,40 @@ export const freshnessLabel = (f) => (f in FRESHNESS_LABEL ? FRESHNESS_LABEL[f] 
 
 /** Is this quote live enough to describe a move as happening NOW? */
 export const isLiveEnough = (f) => f === 'realtime' || f === 'near';
+
+/**
+ * One freshness for a whole board, from the freshness of the rows actually served.
+ *
+ * ── ⚠️ THE BUG THIS REPLACES, AND THE ONE BEFORE IT ─────────────────────────
+ *
+ * A board is a set of prices with a set of provenances, and collapsing that to one word has now
+ * been got wrong twice in opposite directions. First it read row[0], so a single unpriceable
+ * Consensus ticker collapsed a live board to LAST CLOSE. The repair made any mixed set 'near' —
+ * and 'near' is labelled DELAYED, so an entitled Pro reader watching live consolidated prices was
+ * told "Delayed quotes — not live" because ONE row among twenty-five had no current print.
+ *
+ * Both readings were pessimistic about data that was actually live. The honest answer to "some of
+ * these are live and some are not" is neither of the two extremes: it is "mixed", which is a fourth
+ * state the banner renders as PARTLY LIVE. Every row still carries and prints its own freshness,
+ * so the board-level word is a summary and never the only disclosure.
+ *
+ * ⚠️ NEAR IS A PROVIDER CAPABILITY, NOT A SUMMARY. It means "seconds behind the tape" — see
+ * market-capabilities.mjs — and reusing it to mean "a mixture" is what let a mixture inherit the
+ * DELAYED label. It is passed through when the rows really are near-real-time and never minted.
+ */
+export function aggregateFreshness(values) {
+  const seen = new Set((values || []).filter(Boolean));
+  if (!seen.size) return null;
+  if (seen.size === 1) return [...seen][0];
+  const live = [...seen].filter(isLiveEnough);
+  const notLive = [...seen].filter((f) => !isLiveEnough(f));
+  // Live and not-live together is a mixture, whichever flavours of each.
+  if (live.length && notLive.length) return 'mixed';
+  // Only live values: realtime + near is near, the weaker of the two.
+  if (live.length) return live.includes('near') ? 'near' : 'realtime';
+  // Nothing live. A delayed print is a stronger claim than a completed session, so it wins.
+  return seen.has('delayed') ? 'delayed' : 'eod';
+}
 
 // ── STRUCTURE TAGS, FROM DAILY BARS ONLY ────────────────────────────────────
 //

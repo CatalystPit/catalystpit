@@ -6,9 +6,10 @@
 //
 // Run: node scripts/verify-scan-rows.mjs [--mutate=<mode>]
 
+import { readFileSync } from 'node:fs';
 import {
   toScanRow, toScanRows, evidenceLine, joinLine, structureTags, levelsToStructure,
-  supportingFacts, freshnessLabel, isLiveEnough, servedRow, JOIN_LINE, EVIDENCE_LINE_MAX,
+  supportingFacts, freshnessLabel, isLiveEnough, aggregateFreshness, servedRow, JOIN_LINE, EVIDENCE_LINE_MAX,
   SCAN_DEAD_ZONE_PCT, SELLOFF_PCT,
 } from '../src/lib/scan/scan-rows.mjs';
 import { buildBoard, THRESHOLDS } from '../src/lib/scan/boards.mjs';
@@ -70,7 +71,13 @@ L('=== FRESHNESS IS ALWAYS STATED ===');
 {
   ok('end-of-day is labelled LAST CLOSE', freshnessLabel('eod') === 'LAST CLOSE');
   ok('delayed is labelled DELAYED', freshnessLabel('delayed') === 'DELAYED');
-  ok('realtime needs no disclosure', freshnessLabel('realtime') === null);
+  // ⚠️ REALTIME USED TO MAP TO null — "nothing to disclose" — which was right only while a live
+  // price could not reach a reader. Now that one can, silence about it reads as LAST CLOSE to
+  // anyone who falls through, and did: an entitled board rendered the stale copy.
+  ok('realtime is disclosed as LIVE', freshnessLabel('realtime') === 'LIVE');
+  ok('⚠️ near is LIVE, not DELAYED — it is seconds behind the tape, not a delayed feed',
+    freshnessLabel('near') === 'LIVE');
+  ok('⚠️ a partly-live board is neither, and says so', freshnessLabel('mixed') === 'PARTLY LIVE');
   ok('an unknown freshness is treated as the weakest, not the strongest',
     mut('assumelive') ? false : freshnessLabel(undefined) === 'LAST CLOSE');
   ok('only realtime or near counts as live',
@@ -579,21 +586,35 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
     mut('clientgate') ? false : !/resolveUserAccess|isRealtime|tier ===/.test(panel));
   ok('…nor does the shared row module', !/resolveUserAccess|isRealtime/.test(rows));
 
-  // ⚠️ NEVER "LIVE". Realtime is not entitled, so a LIVE branch could only ever be wrong — and a
-  // dead branch that renders "LIVE" is one refactor away from rendering it for real.
-  ok('the banner has no LIVE state at all',
-    mut('livebadge') ? false : !/'LIVE'|>LIVE</.test(rows));
-  ok('…nor does the page wrapper', !/'LIVE'|>LIVE</.test(page));
-  ok('the banner says exactly what the ticket requires',
+  // ⚠️ THE RULE IS UNCHANGED; ITS IMPLEMENTATION IS NOT. This used to assert that no LIVE branch
+  // existed anywhere, which was the correct way to guarantee "never claim live" while realtime was
+  // unentitled. The entitlement is on, and the missing branch inverted into the bug: there was no
+  // input for which the banner could tell an entitled reader the truth. So LIVE must now exist —
+  // and must be reachable ONLY from the freshness the rows actually carry.
+  ok('the banner has a LIVE state', /'LIVE'/.test(rows));
+  ok('⚠️ it is chosen by table lookup on the served freshness, never by a branch on entitlement',
+    mut('livebadge') ? false : /const state = FEED_STATE\[freshness\] \|\| FEED_STATE\.eod;/.test(rows));
+  ok('⚠️ an unknown or absent freshness still renders the weakest state, not the strongest',
+    /FEED_STATE\[freshness\] \|\| FEED_STATE\.eod/.test(rows));
+  ok('…and the page wrapper still invents no state of its own', !/'LIVE'|>LIVE</.test(page));
+  ok('the last-close copy is unchanged for the readers it still applies to',
     /Last completed session — not live quotes\./.test(rows));
-  ok('…and has a delayed variant', /Delayed quotes — not live\./.test(rows));
+  ok('…and the delayed variant is unchanged too', /Delayed quotes — not live\./.test(rows));
+  ok('⚠️ a partly-live board gets its own copy rather than borrowing either extreme',
+    /PARTLY LIVE/.test(rows) && /Every row says which/.test(rows));
   ok('there is ONE banner implementation, shared',
     /export function FeedBanner/.test(rows) && !/function FeedBanner/.test(page));
 
   // ⚠️ "MOVING NOW" MUST NOT IMPLY 9:31.
   const movingBlurb = (rows.match(/label: 'Moving Now',[\s\S]{0,160}/) || [''])[0];
-  ok('the Moving Now subtitle does not overpromise a live tape',
-    mut('overpromise') ? false : /last completed session/i.test(movingBlurb), movingBlurb.slice(0, 110));
+  // ⚠️ IT MUST NAME NO CLOCK AT ALL. The subtitle used to say "on the last completed session",
+  // which was the honest wording while realtime was unentitled and became a false claim the day it
+  // was not — printed directly under a banner reading LIVE. A static string cannot know what the
+  // feed delivered. The banner and the per-row badges can, so the subtitle says what the board
+  // SELECTS and leaves what it is PRICED FROM to the two places that measure it.
+  ok('the Moving Now subtitle promises no clock in either direction',
+    mut('overpromise') ? false
+      : !/last completed session|live|real[- ]time|right now/i.test(movingBlurb), movingBlurb.slice(0, 110));
   ok('…while the board keeps its name', /label: 'Moving Now'/.test(rows));
 
   ok('the banner reads freshness from the API response',
@@ -638,6 +659,79 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   ok('Watch uses the existing watchlist API', /'\/api\/watchlist'/.test(rows));
   ok('Alert uses the existing alerts API and fires no synthetic tick',
     /'\/api\/alerts'/.test(rows) && /type: 'news'/.test(rows) && !/setInterval\([^)]*tick/i.test(rows));
+}
+
+
+L('=== ⚠️ ONE FRESHNESS FOR A BOARD OF MANY PROVENANCES ===');
+{
+  // ── THE BUG, TWICE, IN OPPOSITE DIRECTIONS ────────────────────────────────
+  //
+  // A board is a set of prices with a set of provenances, and collapsing that to one word has been
+  // wrong twice. First it read row[0], so a single unpriceable Consensus ticker reported the whole
+  // live board as LAST CLOSE. The repair mapped any mixture to 'near' — and 'near' was labelled
+  // DELAYED, so an entitled reader watching live consolidated prices was told "Delayed quotes —
+  // not live" because ONE row of twenty-five had no current print. Both readings were pessimistic
+  // about data that was genuinely live, and the second is the one a Pro subscriber reported.
+  const agg = aggregateFreshness;
+
+  ok('a wholly live board is live', agg(['realtime', 'realtime', 'realtime']) === 'realtime');
+  ok('a wholly end-of-day board is end-of-day', agg(['eod', 'eod']) === 'eod');
+  ok('a wholly delayed board is delayed', agg(['delayed', 'delayed']) === 'delayed');
+
+  ok('⚠️ one unpriced row does NOT make a live board delayed',
+    agg(['realtime', 'realtime', 'realtime', 'eod']) !== 'delayed');
+  ok('⚠️ nor does it make it stale, which was the bug before that',
+    agg(['realtime', 'realtime', 'realtime', 'eod']) !== 'eod');
+  ok('it is reported as the mixture it is',
+    agg(['realtime', 'realtime', 'realtime', 'eod']) === 'mixed');
+  ok('…and a mixture is labelled as one, not as either extreme',
+    freshnessLabel(agg(['realtime', 'eod'])) === 'PARTLY LIVE');
+
+  ok('⚠️ a live board is never labelled DELAYED, at any mixture of live flavours',
+    ['realtime', 'near'].every((a) => ['realtime', 'near'].every((b) =>
+      freshnessLabel(agg([a, b])) === 'LIVE')));
+  ok('realtime mixed with near is the weaker of the two live readings',
+    agg(['realtime', 'near']) === 'near');
+  ok('⚠️ near is never minted for a mixture — it is a provider capability, not a summary',
+    agg(['realtime', 'eod']) !== 'near' && agg(['eod', 'stale']) !== 'near');
+
+  ok('nothing live, and one row delayed, is delayed', agg(['delayed', 'eod']) === 'delayed');
+  ok('nothing live and nothing delayed is end-of-day', agg(['eod', 'stale']) === 'eod');
+  ok('an empty board has no freshness to claim', agg([]) === null && agg(null) === null);
+  ok('rows without a freshness are ignored rather than counted',
+    agg(['realtime', null, undefined, '']) === 'realtime');
+  ok('⚠️ an absent freshness still labels as the weakest, never as live',
+    freshnessLabel(agg([])) === 'LAST CLOSE');
+}
+
+L('=== ⚠️ AN ENTITLED BOARD IS NEVER LESS COMPLETE THAN A FREE ONE ===');
+{
+  // ⚠️ THE SECOND HALF OF THE SAME BUG. The realtime path built its quote map from the market-wide
+  // snapshot alone, and the snapshot is the eligible universe filtered to symbols with a CURRENT
+  // print. A Consensus ticker that is an ADR, a fund, or simply has not traded yet this morning is
+  // absent from it — so it reached a Pro reader with NO price, while a signed-out reader got the
+  // completed-session close for the same ticker. Entitlement narrowing what a reader sees is the
+  // inverse of what an entitlement is for, and it is also what produced the mixture above.
+  const payload = readFileSync(new URL('../src/lib/scan/board-payload.js', import.meta.url), 'utf8');
+
+  ok('⚠️ symbols the snapshot does not cover are filled from the ordinary quote path',
+    mut('nogapfill') ? false
+      : /const missing = symbols\.filter\(\(s\) => !quotes\[s\]\);/.test(payload)
+        && /getQuotes\(missing, \{ realtime \}\)/.test(payload));
+  ok('…and the fill never overwrites a live snapshot price',
+    /if \(!quotes\[sym\]\) quotes\[sym\] = q;/.test(payload));
+  ok('a failed fill leaves a gap rather than emptying the board',
+    /catch \{ \/\* a gap stays a gap/.test(payload));
+  ok('the board asks the shared aggregate rather than counting a Set itself',
+    mut('inlineagg') ? false
+      : /aggregateFreshness\(\(built\.rows \|\| \[\]\)/.test(payload)
+        && !/servedFreshness\.size === 1/.test(payload));
+  ok('⚠️ entitlement is still resolved server-side, before any price is fetched',
+    /resolveUserAccess\(\)/.test(payload) && /isRealtime\(tier\) && !beta/.test(payload));
+  ok('⚠️ and the snapshot is still read ONLY for an entitled viewer',
+    /if \(realtime\) \{[\s\S]{0,400}movementSnapshot\(db, sql\)/.test(payload));
+  ok('the entitlement itself is never put in the response',
+    !/realtime:\s*realtime/.test(payload) && !/tier:/.test(payload));
 }
 
 L(`\n${pass} passed, ${fail} failed`);
