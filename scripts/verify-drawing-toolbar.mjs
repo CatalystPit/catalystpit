@@ -268,5 +268,76 @@ L('⚠️ ONE SYSTEM, NOT TWO');
     !bar.includes('priceToCoordinate') && !bar.includes('timeScale'));
 }
 
+
+L('⚠️ A DELETED DRAWING LEAVES NOTHING BEHIND');
+{
+  // ⚠️ THE ORPHAN-ARTIFACT CLASS, ASSERTED AS AN INVARIANT RATHER THAN PER TOOL.
+  //
+  // A Fibonacci is the tool where an orphan would be most visible — seven levels, seven price
+  // labels, seven percentage labels — but nothing about the cleanup is fib-specific, and a fix that
+  // was would leave the next tool exposed. What actually makes an orphan impossible is that EVERY
+  // visual is painted from the drawing list into one canvas that is fully cleared each frame, so a
+  // drawing that is not in the list cannot paint. There is no per-drawing renderer to leak, no
+  // price line, no series and no primitive.
+  const layer = readFileSync(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const chart = readFileSync(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+
+  ok('⚠️ every frame starts by clearing the whole canvas', /ctx\.clearRect\(0, 0, w, h\);/.test(layer));
+  ok('…before anything is drawn', layer.indexOf('ctx.clearRect(0, 0, w, h);') < layer.indexOf('for (const d of projected)'));
+  ok('⚠️ and a repaint follows any change to the drawing list',
+    /useEffect\(\(\) => \{ paint\(\); \}, \[drawings, selectedIds/.test(layer));
+  // ⚠️ NO DRAWING OWNS A CHART OBJECT. A price line or a series created per level would survive the
+  // list it came from, which is exactly how an orphaned Fibonacci would happen.
+  ok('⚠️ no drawing creates a price line', !/createPriceLine/.test(layer));
+  ok('⚠️ nor a series of its own', !/addLineSeries|addSeries/.test(layer));
+  ok('⚠️ nor a chart primitive', !/attachPrimitive/.test(layer));
+  ok('the fib levels are painted from the drawing, not from remembered state',
+    /fibLevels\(d\.source\.points, d\.source\.levels\)/.test(layer));
+
+  // Deletion is one path, through the history, and it drops the selection with it.
+  ok('⚠️ there is one delete, and it goes through the shared update',
+    /const deleteSelected = useCallback\(\(\) => \{[\s\S]{0,260}updateDrawings\(\(ds\) => ds\.filter/.test(chart));
+  ok('…and the selection goes with it, so no handle outlives its drawing',
+    /updateDrawings\(\(ds\) => ds\.filter\(\(d\) => !ids\.has\(d\.id\)\)\);\s*\n\s*setSelectedIds\(\[\]\);/.test(chart));
+  // ⚠️ TWO ENTRY POINTS, BOTH CORRECT. The toolbar/Delete-key path and the bulk action both delete,
+  // and both go through updateDrawings. Demanding a single filter expression asserted a coincidence
+  // of implementation rather than the rule, and failed on a second CORRECT caller. The rule is that
+  // no delete writes the list directly — a write that bypassed updateDrawings would skip the
+  // history AND, being outside the state the layer paints from, could leave a drawing on screen.
+  ok('⚠️ no delete writes the drawing list directly, so none can skip the repaint',
+    !/setDrawings\(\(ds\) => ds\.filter/.test(chart)
+    && (chart.match(/updateDrawings\(\(ds\)/g) || []).length >= 2);
+
+  // ⚠️ AND A SYMBOL CHANGE REPLACES THE LIST RATHER THAN MERGING INTO IT — the other way a drawing
+  // could appear on a chart it does not belong to.
+  ok('⚠️ a symbol change reloads the list for that symbol',
+    /setDrawings\(loadDrawings\(sym\)\);/.test(chart));
+  ok('…and drops the selection, which referred to another chart\'s drawing',
+    /setDrawings\(loadDrawings\(sym\)\);\s*\n\s*setSelectedIds\(\[\]\);/.test(chart));
+  ok('…and the undo stack, so undo cannot paste another symbol\'s drawings back',
+    /historyRef\.current = emptyHistory\(\);/.test(chart));
+}
+
+L('⚠️ THE TOOLBAR MEASURES WHAT IT WILL RENDER');
+{
+  // ⚠️ A FLAT THRESHOLD MEASURED THE WRONG THING. 460px was chosen when the toolbar carried
+  // Indicators and Evidence; News was added and Evidence is only rendered when the host supplies
+  // evidence — which the Terminal's chart does not. So the toolbar was being measured against 86px
+  // it would never spend, and collapsed its word labels to bare glyphs at widths where all three
+  // would have fitted.
+  const chart = readFileSync(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  ok('⚠️ the threshold is derived from the controls that will exist',
+    /const narrow = toolbarWidth < labelledCost;/.test(chart));
+  ok('…and a control that is not rendered reserves no room',
+    /\(hasEvidence \? ACTION_W\.evidence : 0\)/.test(chart));
+  ok('…News is counted, having been added after the constant was chosen', /ACTION_W\.news/.test(chart));
+  ok('⚠️ the flat 460 is gone', !/toolbarWidth < 460/.test(chart));
+  ok('it is still measured on the chart, not the window', /toolbarWidth/.test(chart) && !/window\.innerWidth < /.test(chart));
+  ok('the overflow threshold is unchanged, and still the last resort', /const overflowed = toolbarWidth < 330;/.test(chart));
+  ok('⚠️ Evidence is still gated on there being evidence to control',
+    /\{!overflowed && hasEvidence && \(/.test(chart));
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

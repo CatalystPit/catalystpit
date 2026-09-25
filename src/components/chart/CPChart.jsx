@@ -212,7 +212,26 @@ export default function CPChart({
   // Two thresholds, both measured against the CHART's width rather than the window's. `narrow`
   // shrinks the wordy controls and collapses the drawing rail; `overflowed` is where even those no
   // longer fit, and the lower-priority controls move into the ⋯ menu.
-  const narrow = toolbarWidth < 460;
+  /**
+   * ⚠️ THE THRESHOLD IS THE COST OF WHAT IS ACTUALLY RENDERED, NOT A CONSTANT.
+   *
+   * It was a flat 460px, chosen when the toolbar carried Indicators and Evidence. Two things made
+   * that wrong. News was added, so the real cost went up — and Evidence is only rendered when the
+   * host SUPPLIES evidence, which the Terminal's chart does not, so on the surface where the
+   * complaint came from the toolbar was being measured against 86px it was never going to spend.
+   * The result was word labels collapsing to bare glyphs at widths where all three would have fit
+   * comfortably: "Indicators 4" beside an unreadable ▤.
+   *
+   * So the cost is added up from the controls that will exist. A control that is not rendered does
+   * not reserve room, which is the whole difference between measuring the toolbar and guessing it.
+   */
+  const ACTION_W = { indicators: 92, evidence: 86, news: 72 };
+  /** Symbol, timeframe, chart type and the right-hand group — present at every width. */
+  const TOOLBAR_FIXED_W = 238;
+  const hasEvidence = Array.isArray(evidence) && evidence.length > 0;
+  const labelledCost = TOOLBAR_FIXED_W + ACTION_W.indicators + ACTION_W.news
+    + (hasEvidence ? ACTION_W.evidence : 0);
+  const narrow = toolbarWidth < labelledCost;
   const overflowed = toolbarWidth < 330;
   const [browserOpen, setBrowserOpen] = useState(false);
 
@@ -1385,7 +1404,6 @@ export default function CPChart({
   const canExtend = supportsExtendedHours(tf);
   // The control appears only where evidence is actually supplied — a Terminal chart with no host
   // query must not grow a menu that governs nothing.
-  const hasEvidence = Array.isArray(evidence) && evidence.length > 0;
   const btn = (label, active, onClick, key) => (
     <button key={key ?? label} onClick={onClick} type="button"
       style={{

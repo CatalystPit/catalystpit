@@ -1276,9 +1276,20 @@ section('20. the chart header: symbol first, one compact row, overflow before wr
   // ── OVERFLOW, BY PRIORITY ───────────────────────────────────────────────────────────────────
   ok('there are two width thresholds, not one', /const narrow = toolbarWidth </.test(cmp)
     && /const overflowed = toolbarWidth </.test(cmp));
-  ok('overflow kicks in before narrow does',
-    Number(cmp.match(/const overflowed = toolbarWidth < (\d+)/)[1])
-      < Number(cmp.match(/const narrow = toolbarWidth < (\d+)/)[1]));
+  // ⚠️ THE NARROW THRESHOLD IS NO LONGER A LITERAL, AND THAT IS THE POINT. It used to be a flat
+  // 460px and this read the number straight out of the source — which crashed the moment the
+  // threshold became derived from the controls that will actually be rendered. The RULE is
+  // unchanged and is what gets asserted: overflow is the last resort, so it must sit below the
+  // width at which the toolbar gives up its word labels, whatever that width works out to be.
+  const overflowAt = Number(cmp.match(/const overflowed = toolbarWidth < (\d+)/)[1]);
+  const fixedW = Number(cmp.match(/const TOOLBAR_FIXED_W = (\d+)/)[1]);
+  const actionW = Object.fromEntries([...cmp.matchAll(/(indicators|evidence|news): (\d+)/g)].map((m) => [m[1], Number(m[2])]));
+  // The smallest the labelled cost can be: no evidence supplied, which is the Terminal's chart.
+  const narrowestLabelled = fixedW + actionW.indicators + actionW.news;
+  ok('overflow kicks in before narrow does', overflowAt < narrowestLabelled,
+    `${overflowAt} vs ${narrowestLabelled}`);
+  ok('⚠️ and the narrow threshold is derived, not a constant that ignores what is rendered',
+    /const narrow = toolbarWidth < labelledCost;/.test(cmp));
   ok('width is measured on the chart, never the window',
     /new ResizeObserver/.test(cmp) && !/window\.matchMedia/.test(cmp));
   ok('indicators is the control that gives way', /\{!overflowed && \(/.test(bar));
