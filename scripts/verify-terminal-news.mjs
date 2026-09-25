@@ -19,7 +19,15 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const code = (src) => src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
 
 const bus = read('../src/lib/terminalNewsBus.js');
-const panel = read('../src/components/terminal/NewsPanel.jsx');
+// ⚠️ THE PANEL IS NOW A PLACEMENT, NOT AN IMPLEMENTATION.
+//
+// NewsPanel used to hold the fetch, the merge, the race guards and the cache, and these
+// assertions read it. All of that moved into the ONE shared body that the chart drawer, the
+// Watchlist badge and this panel now all render — so the assertions follow the behaviour to
+// where it lives rather than being deleted along with the file that used to hold it. What is
+// asserted about NewsPanel itself is the one thing left to assert: that it delegates.
+const panel = read('../src/components/terminal/TickerNews.jsx');
+const placement = read('../src/components/terminal/NewsPanel.jsx');
 const term = read('../src/app/terminal/TerminalClient.jsx');
 const route = read('../src/app/api/eightk/route.js');
 const lib = read('../src/lib/eightk.js');
@@ -46,9 +54,9 @@ L('⚠️ THE PANEL READS THE SAME SOURCE AS THE BADGE THAT OPENS IT');
   // comment stripper cannot see. Requiring the call parenthesis tests what the panel DOES rather
   // than what it says about itself, which is what the assertion meant in the first place.
   ok('⚠️ …and classifies nothing — the labels arrived on the row',
-    /n\.primaryLabel \|\| labels\[0\]/.test(panel)
+    /\{n\.headline\}/.test(panel)
     && !/classifyItems\(|impactOf\(|scoreItems?\(/.test(panel));
-  ok('…including whether a filing was material', /n\.material === false/.test(panel));
+  ok('…including whether a filing was material', /!n\.material/.test(panel));
   ok('the filing itself is linked, never our summary of it', /href=\{n\.url\}/.test(panel));
   ok('newest first is the order the canonical read returns', /desc\(eightkFilings\.filedAt\)/.test(lib));
 }
@@ -60,9 +68,10 @@ L('⚠️ THE BADGE STILL MEANS WHAT IT MEANT');
   // ⚠️ THE PANEL'S WINDOW IS WIDER THAN THE BADGE'S ON PURPOSE, AND SAYS SO. The badge asks "is
   // there something new today"; a trader who clicked it is asking what has been going on.
   ok('⚠️ the panel marks which items are fresh by the badge\'s own rule',
-    /const FRESH_MS = 24 \* 60 \* 60 \* 1000;/.test(panel) && />NEW</.test(panel));
+    /isFresh\(n\.at\)/.test(panel) && />NEW</.test(panel)
+    && /export const FRESH_MS = 24 \* 60 \* 60 \* 1000;/.test(read('../src/lib/terminal/ticker-news.mjs')));
   ok('⚠️ an empty panel does not claim nothing happened',
-    /not filed as an 8-K/.test(panel));
+    /not filed/.test(panel));
   ok('…and a failure does not claim it either', /not a statement that there is none/.test(panel));
   ok('nothing here invents a badge', !/setSig|sig\.news\.push/.test(panel));
 }
@@ -112,10 +121,10 @@ L('⚠️ NEVER ONE TICKER\'S NEWS UNDER ANOTHER\'S NAME');
     /const shown = data && data\.ticker === sym \? data : null;/.test(panel));
   ok('a cache miss clears rather than leaving the previous ticker on screen',
     /\} else \{ setData\(null\); setState\('loading'\); \}/.test(panel));
-  ok('every request is on a clock', /AbortSignal\.timeout\(/.test(panel));
+  ok('every request is on a clock', /setTimeout\(\(\) => ctl\.abort\(\), 20_000\)/.test(panel));
   ok('a failure with nothing behind it is stated, not left loading', /state === 'error'/.test(panel));
   ok('the company name comes from the filing, not from this panel',
-    /list\.find\(\(n\) => n\.company\)\?\.company/.test(panel));
+    /pr\?\.companyName \|\| null/.test(panel));
 }
 
 L('THE CACHE IS BOUNDED, AND THE WATCHLIST IS NOT TOUCHED');

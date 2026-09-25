@@ -1455,7 +1455,16 @@ section('22. context menu, magnet, drawing manager, panes');
     /onContextMenu=\{\(e\) => \{\s*\n\s*e\.preventDefault\(\);/.test(cmp)
       && /setMenuAt\(\{ x: e\.clientX, y: e\.clientY \}\)/.test(cmp));
   // Only over the chart: "copy" and "inspect" are sometimes genuinely wanted on the toolbar.
-  ok('...only over the chart surface', (cmp.match(/onContextMenu=/g) || []).length === 1);
+  //
+  // ⚠️ COUNT THE HANDLERS THAT OPEN IT, NOT EVERY HANDLER. This counted every onContextMenu and
+  // required exactly one, which held until an overlay needed to STOP the chart's menu firing
+  // underneath it. Stopping propagation is the opposite of opening a menu; a check that cannot
+  // tell them apart fails on a change that strengthens the rule it is protecting.
+  ok('...only over the chart surface',
+    (cmp.match(/onContextMenu=\{\(e\) => \{\s*\n\s*e\.preventDefault\(\);/g) || []).length === 1);
+  ok('...and an overlay over the chart suppresses it rather than opening a second one',
+    (cmp.match(/onContextMenu=\{\(e\) => e\.stopPropagation\(\)\}/g) || []).length >= 1
+    && (cmp.match(/setMenuAt\(\{ x: e\.clientX/g) || []).length === 1);
   ok('it opens AT the cursor', /<Popover theme=\{theme\} open=\{!!menuAt\} point=\{menuAt\}/.test(cmp));
   ok('...through the shared portalled popover, so the panel cannot clip it',
     /point = null,/.test(ui));

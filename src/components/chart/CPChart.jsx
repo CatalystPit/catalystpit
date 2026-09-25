@@ -63,6 +63,7 @@ import { CHART_TYPES, chartTypeOf } from '../../lib/chart/chart-types.mjs';
 import DrawingLayer from './DrawingLayer';
 import DrawingToolbar from './DrawingToolbar';
 import { barsKey, getBars, putBars } from '../../lib/chart/chart-bar-cache.mjs';
+import TickerNewsBody from '../terminal/TickerNews';
 import EvidenceCard from './EvidenceCard';
 import { buildEvidenceMarkers, evidenceAtBar } from '../../lib/chart/evidence-markers.mjs';
 import {
@@ -618,6 +619,20 @@ export default function CPChart({
    * would be a second opinion about where a drawing is — wrong on exactly the frames that matter,
    * during a drag or a zoom. Null whenever nothing is selected, which is also what hides the bar.
    */
+  /**
+   * THE CHART'S OWN NEWS DRAWER.
+   *
+   * ⚠️ A SIBLING OVERLAY, NOT A REPLACEMENT. The chart host stays mounted underneath the whole time
+   * — opening and closing this never unmounts the Lightweight Charts instance, so the candles, the
+   * indicators, the drawings, the interval and the zoom are all exactly where they were. A drawer
+   * that swapped out the chart would have to rebuild every one of those on close.
+   */
+  const [newsOpen, setNewsOpen] = useState(false);
+  // ⚠️ CLOSED WHEN THE SYMBOL CHANGES ON ITS OWN. A drawer left open across a symbol switch is
+  // fine — it re-points, which is what a trader wants — but it must never be left open showing a
+  // ticker the chart is no longer on, which the body's own render guard also refuses.
+  useEffect(() => { if (!sym) setNewsOpen(false); }, [sym]);
+
   const [selBox, setSelBox] = useState(null);
 
   /**
@@ -1503,6 +1518,18 @@ export default function CPChart({
             </Dropdown>
           )}
 
+          {/* NEWS — the fast inspection of the ticker being analysed, next to the two other
+              things a reader asks of a chart they are looking at. It opens a drawer over the chart
+              rather than a panel beside it, because the question is about THIS chart's symbol and
+              the answer is wanted for a moment. The persistent panel still exists in + Add panel
+              for anyone who wants one open all day. */}
+          {!overflowed && (
+            <ToolButton theme={theme} width={narrow ? 30 : 72} title="News for this ticker"
+              active={newsOpen} onClick={() => setNewsOpen((v) => !v)}>
+              {narrow ? '▤' : (<><span>▤</span><span>News</span></>)}
+            </ToolButton>
+          )}
+
           {/* Everything from here is pushed to the right-hand end of the same toolbar. */}
           <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
             {overflowed
@@ -1607,6 +1634,29 @@ export default function CPChart({
             onStyle={applyStyle} onPatch={patchSelected}
             onDelete={deleteSelected} onOpenSettings={openSettingsFor}
           />
+        )}
+
+        {/* ⚠️ THE NEWS DRAWER — ABSOLUTE, OVER THE CHART, AND THE CHART IS STILL THERE.
+            It shares the relative box with the canvas rather than replacing it, so closing it
+            reveals the same chart instance with the same zoom, the same drawings and the same
+            indicators. Nothing about the chart is torn down or rebuilt by this. */}
+        {newsOpen && (
+          <div style={{
+            position: 'absolute', right: 0, top: 0, bottom: 0, zIndex: 7,
+            width: 'min(340px, 78%)',
+            display: 'flex', flexDirection: 'column',
+            background: palette(theme).background,
+            borderLeft: `1px solid ${palette(theme).border}`,
+            boxShadow: '-6px 0 18px rgba(0,0,0,0.18)',
+          }}
+            // The chart canvas below reads pointer events for drawing and panning; a click in the
+            // drawer is not a click on the chart.
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.stopPropagation()}
+          >
+            <TickerNewsBody symbol={sym} compact onClose={() => setNewsOpen(false)} />
+          </div>
         )}
 
         {/* The evidence detail, anchored to the marker that was clicked. */}
