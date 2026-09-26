@@ -124,6 +124,33 @@ function parseForm4(xml, filing) {
   // thrown away 391 legitimate AXIA3 rows along with BRK.A and NYT.A.
   if (!isIngestableTicker(ticker)) return [];
 
+  // ── ⚠️ THE TWO IDENTIFIERS THIS PARSER WAS SILENTLY DROPPING ───────────────
+  //
+  // lib/form4.mjs extracts both and always has. THIS parser — the one the per-minute cron
+  // actually runs — never did, so every row the live path wrote carried NULL for both. It stayed
+  // invisible while the manual backfill scripts were still running over history and filling them
+  // in behind it; the moment those stopped, CIK coverage on new filings went to 0% and took the
+  // conviction context pipeline down with it, because build-insider-context requires
+  // owner_cik IS NOT NULL.
+  //
+  // ⚠️ TAKEN FROM THE FILING, NEVER INFERRED. These are the SEC's own identifiers for the issuer
+  // and the reporting person; deriving them from a ticker or a name would be a guess wearing an
+  // identifier's clothes. Absent in the XML means null here.
+  //
+  // The leading-zero strip matches lib/form4.mjs exactly, so the two parsers cannot write the
+  // same company's CIK in two different shapes.
+  const issuerCik = extractFormText(xml, 'issuerCik')?.replace(/^0+/, '') || null;
+
+  // ⚠️ ONE ROW HOLDS ONE OWNER, BUT A FORM 4 MAY REPORT SEVERAL. A joint filing carries repeated
+  // <rptOwnerCik> blocks, and taking the first would staple owner A's identifier to owner B's
+  // transactions. Only an unambiguous filing — exactly one reporting owner — yields an owner_cik
+  // here. Anything else stays null, which is the same answer the row had before and is honest,
+  // rather than an identity we cannot stand behind.
+  const ownerCiks = [...xml.matchAll(/<rptOwnerCik>([\s\S]*?)<\/rptOwnerCik>/g)]
+    .map((m) => m[1].trim().replace(/^0+/, ''))
+    .filter(Boolean);
+  const ownerCik = new Set(ownerCiks).size === 1 ? ownerCiks[0] : null;
+
   const executive = decodeEntities(extractFormText(xml, 'rptOwnerName') || '');
   const isDirector   = ['true','1'].includes(extractFormText(xml, 'isDirector'));
   const isOfficer    = ['true','1'].includes(extractFormText(xml, 'isOfficer'));
@@ -170,6 +197,9 @@ function parseForm4(xml, filing) {
 
     return {
       ticker, company, executive, title,
+      // The SEC's own identifiers, carried through so the context and conviction pipelines
+      // downstream have the keys they partition on.
+      issuerCik, ownerCik,
       transactionCode, action,
       shares, pricePerShare,
       totalValue: shares * pricePerShare,
