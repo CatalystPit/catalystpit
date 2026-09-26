@@ -48,9 +48,19 @@ const tag = (xml, name) => {
   return m ? strip(m[1]) : null;
 };
 
+/**
+ * ⚠️ A STRING WITH NO DIGITS IN IT IS NOT ZERO.
+ *
+ * The old body stripped every non-digit and handed the remainder to Number, so "N/A", "none" and
+ * "-" all became Number("") === 0 and passed the finite check. A cover page reading "N/A" for a
+ * power would have been stored as a holder with zero voting rights, which is a claim the filing
+ * does not make. Absence has to stay absent.
+ */
 const numOf = (v) => {
   if (v == null || v === '') return null;
-  const n = Number(String(v).replace(/[^0-9.]/g, ''));
+  const t = String(v);
+  if (!/[0-9]/.test(t)) return null;
+  const n = Number(t.replace(/[^0-9.]/g, ''));
   return Number.isFinite(n) ? n : null;
 };
 
@@ -87,19 +97,58 @@ export function parseSchedule13D(xml) {
     const name = tag(b, 'reportingPersonName');
     if (!name) continue;
     const pct = numOf(tag(b, 'percentOfClass'));
+    // ⚠️ THE FOUR COVER-PAGE POWERS ARE THE POINT OF THE COVER PAGE.
+    //
+    // Aggregate shares say how much is held; the powers say what the holder can DO with it, and
+    // that is the difference between an activist and a custodian. A block held with sole voting
+    // and sole dispositive power is a position someone can act on alone. The same block reported
+    // as entirely SHARED usually means a manager voting on behalf of underlying owners.
+    //
+    // ⚠️ A MISSING POWER IS null, NEVER 0. Zero voting power is a real and meaningful disclosure —
+    // it is what a passive custodian reports — so it cannot be the value we invent when a field is
+    // absent or unparseable. See numOf.
+    const power = (t) => numOf(tag(b, t));
+    const soleVoting = power('soleVotingPower');
+    const sharedVoting = power('sharedVotingPower');
+    const soleDispositive = power('soleDispositivePower');
+    const sharedDispositive = power('sharedDispositivePower');
+    const aggregate = numOf(tag(b, 'aggregateAmountOwned'));
     persons.push({
       name,
       cik: tag(b, 'reportingPersonCIK') ? String(Number(tag(b, 'reportingPersonCIK'))) : null,
       // ⚠️ AN IMPLAUSIBLE PERCENTAGE BECOMES NULL, NOT A CLAIM. See MAX_PLAUSIBLE_PCT.
       pctOfClass: pct != null && pct >= 0 && pct <= MAX_PLAUSIBLE_PCT ? pct : null,
-      shares: numOf(tag(b, 'aggregateAmountOwned')),
+      shares: aggregate,
       personType: tag(b, 'typeOfReportingPerson'),
+      soleVoting,
+      sharedVoting,
+      soleDispositive,
+      sharedDispositive,
+      // ⚠️ DERIVED, AND ONLY WHEN BOTH PARTS ARE PRESENT. Summing a number with an absent one
+      // would report a smaller total as if it were complete.
+      votingTotal: soleVoting != null && sharedVoting != null ? soleVoting + sharedVoting : null,
+      dispositiveTotal: soleDispositive != null && sharedDispositive != null
+        ? soleDispositive + sharedDispositive : null,
+      // Item 2(d)/(e): whether the person discloses a conviction or securities-law judgment.
+      legalProceedings: /^y(es)?$/i.test(tag(b, 'legalProceedings') || '') ? true
+        : /^n(o)?$/i.test(tag(b, 'legalProceedings') || '') ? false : null,
+      citizenship: tag(b, 'citizenshipOrOrganization'),
+      fundType: tag(b, 'fundType'),
     });
   }
   // ⚠️ item4 IS ROUTINELY EMPTY ON AMENDMENTS. Measured: Vail Resorts and Funko both filed 13D/A
   // with a zero-length item4, because the substance was carried in an exhibit. Absence of Item 4
   // text means we say nothing about purpose — it never means "no purpose".
   const item4 = tag(s, 'item4') || null;
+  // ⚠️ ITEM 5(c) IS THE RECENT-TRANSACTION DISCLOSURE, and it is the only place a filing says what
+  // the holder actually DID in the last sixty days rather than what they now hold. An amendment
+  // that raises a stake from 5.1% to 9.8% and one that discloses a single opportunistic purchase
+  // look identical on the cover page and completely different here.
+  const item5 = tag(s, 'item5') || null;
+  const transactionDesc = tag(s, 'transactionDesc') || null;
+  // ⚠️ THE LINK BACK TO THE PREVIOUS FILING. This is what makes an amendment comparable with what
+  // it amends: without it, "9.8%" is a level and nobody can say whether it is an increase.
+  const previousAccession = tag(s, 'previousAccessionNumber') || null;
   return {
     formType,
     isAmendment: /\/A\b/.test(formType),
@@ -109,8 +158,18 @@ export function parseSchedule13D(xml) {
     securityClass: tag(s, 'securitiesClassTitle'),
     dateOfEvent: parseEventDate(tag(s, 'dateOfEvent')),
     previouslyFiled: /^true$/i.test(tag(s, 'previouslyFiledFlag') || ''),
+    previousAccession,
+    // ⚠️ 13G ONLY: which rule the filing is made under. 13d-1(b) is a qualified institution,
+    // 13d-1(c) a passive investor under 20%, 13d-1(d) an exempt holder. They are different
+    // statements about intent and must not be flattened into "a 13G was filed".
+    ruleDesignation: tag(s, 'designateRulePursuantThisScheduleFiled') || null,
     persons,
     item4: item4 && item4.length ? item4 : null,
+    item5: item5 && item5.length ? item5 : null,
+    transactionDesc: transactionDesc && transactionDesc.length ? transactionDesc : null,
+    item5Shares: numOf(tag(s, 'numberOfShares')),
+    item5Pct: (() => { const v = numOf(tag(s, 'percentageOfClassSecurities'));
+      return v != null && v >= 0 && v <= MAX_PLAUSIBLE_PCT ? v : null; })(),
   };
 }
 

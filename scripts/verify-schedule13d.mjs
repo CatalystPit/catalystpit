@@ -307,5 +307,73 @@ check('⚠️ an initial and its amendment are different types',
 check('...and the amendment does not restate the initial percentage',
   amendSig(7.4, 6.2).context.pct === 7.4);
 
+
+sec('COVER-PAGE POWERS, ITEM 5(c) AND THE AMENDMENT LINK');
+{
+  // ⚠️ THE POWERS ARE WHAT SEPARATE AN ACTIVIST FROM A CUSTODIAN. The same block of shares held
+  // with SOLE voting and dispositive power is a position one party can act on; reported entirely
+  // as SHARED it usually means a manager voting for underlying owners. Measured in our own record:
+  // CTNT reports 1,846,000 sole and 0 shared; ETRA reports 0 sole and 6,885,170 shared.
+  const doc = (inner, extra = '') => `<submissionType>SCHEDULE 13D</submissionType>${extra}`
+    + `<reportingPersons><reportingPersonInfo>${inner}</reportingPersonInfo></reportingPersons>`;
+  const sole = parseSchedule13D(doc(
+    '<reportingPersonName>Sole Holder</reportingPersonName>'
+    + '<soleVotingPower>1846000</soleVotingPower><sharedVotingPower>0</sharedVotingPower>'
+    + '<soleDispositivePower>1846000</soleDispositivePower><sharedDispositivePower>0</sharedDispositivePower>'
+    + '<aggregateAmountOwned>1846000</aggregateAmountOwned><percentOfClass>9.9</percentOfClass>')).persons[0];
+  check('⚠️ all four cover-page powers are captured',
+    sole.soleVoting === 1846000 && sole.sharedVoting === 0
+    && sole.soleDispositive === 1846000 && sole.sharedDispositive === 0);
+  check('...and the totals are derived from them',
+    sole.votingTotal === 1846000 && sole.dispositiveTotal === 1846000);
+
+  // ⚠️ ZERO IS A REAL DISCLOSURE AND MUST SURVIVE. A custodian reporting no sole voting power is
+  // saying something; if zero were treated as missing the distinction would vanish.
+  const shared = parseSchedule13D(doc(
+    '<reportingPersonName>Manager</reportingPersonName>'
+    + '<soleVotingPower>0</soleVotingPower><sharedVotingPower>6885170</sharedVotingPower>'
+    + '<soleDispositivePower>0</soleDispositivePower><sharedDispositivePower>6885170</sharedDispositivePower>'
+    + '<aggregateAmountOwned>6885170</aggregateAmountOwned>')).persons[0];
+  check('⚠️ a reported ZERO power stays zero, it does not become missing',
+    shared.soleVoting === 0 && shared.soleDispositive === 0);
+  check('...and the shared side is carried',
+    shared.sharedVoting === 6885170 && shared.votingTotal === 6885170);
+
+  // ⚠️ AND A MISSING POWER STAYS MISSING. numOf used to strip every non-digit and hand the
+  // remainder to Number, so "N/A" became Number("") === 0 — a cover page that declined to state a
+  // power would have been stored as a holder with none. That is a claim the filing does not make.
+  const absent = parseSchedule13D(doc(
+    '<reportingPersonName>Unstated</reportingPersonName>'
+    + '<soleVotingPower>N/A</soleVotingPower><sharedVotingPower>none</sharedVotingPower>'
+    + '<aggregateAmountOwned>-</aggregateAmountOwned>')).persons[0];
+  check('⚠️ a non-numeric power is null, NEVER zero',
+    absent.soleVoting === null && absent.sharedVoting === null);
+  check('...and so is a non-numeric share count',  absent.shares === null);
+  check('⚠️ a total is not computed from a missing part',
+    absent.votingTotal === null && absent.dispositiveTotal === null);
+  check('...and a half-present pair still refuses to total', (() => {
+    const half = parseSchedule13D(doc(
+      '<reportingPersonName>Half</reportingPersonName>'
+      + '<soleVotingPower>100</soleVotingPower>')).persons[0];
+    return half.soleVoting === 100 && half.sharedVoting === null && half.votingTotal === null;
+  })());
+
+  // ⚠️ ITEM 5(c) IS THE ONLY PLACE A FILING SAYS WHAT THE HOLDER DID, as opposed to what it now
+  // holds. An accumulation and a single opportunistic purchase look identical on the cover page.
+  const withTx = parseSchedule13D(doc(
+    '<reportingPersonName>X</reportingPersonName>',
+    '<previousAccessionNumber>0002107788-26-000008</previousAccessionNumber>'
+    + '<transactionDesc>The Reporting Person purchased 250,000 shares in open market transactions.</transactionDesc>'));
+  check('⚠️ Item 5(c) transaction text is captured',
+    /purchased 250,000 shares/.test(withTx.transactionDesc || ''));
+  check('⚠️ the amendment link back to the prior filing is captured',
+    withTx.previousAccession === '0002107788-26-000008');
+  check('an absent Item 5(c) is null rather than an empty string',
+    parseSchedule13D(doc("<reportingPersonName>X</reportingPersonName>")).transactionDesc === null);
+  check('...and so is an absent amendment link',
+    parseSchedule13D(doc("<reportingPersonName>X</reportingPersonName>")).previousAccession === null);
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -183,6 +183,19 @@ export async function ingestSchedule13D({ days = RECONCILE_DAYS } = {}) {
       filerType: lead?.personType || null,
       pctOfClass: lead?.pctOfClass ?? null,
       shares: lead?.shares ?? null,
+      // ⚠️ THE POWERS COME FROM THE SAME PERSON AS THE SHARES, NEVER FROM DIFFERENT ONES.
+      // `lead` is the largest reported holder; quoting its share count beside another person's
+      // voting power would be a false statement about both. Absent stays absent — a missing power
+      // is null, and null is not zero. Zero voting power is a real disclosure a custodian makes.
+      soleVoting: lead?.soleVoting ?? null,
+      sharedVoting: lead?.sharedVoting ?? null,
+      soleDispositive: lead?.soleDispositive ?? null,
+      sharedDispositive: lead?.sharedDispositive ?? null,
+      // The link back to what this amends, and the 13G rule it was filed under.
+      previousAccession: parsed.previousAccession ?? null,
+      ruleDesignation: parsed.ruleDesignation ?? null,
+      // Item 5(c): what the holder actually did in the last sixty days.
+      transactionDesc: parsed.transactionDesc ?? null,
       persons: JSON.stringify(parsed.persons || []),
       item4Codes: classifyItem4(parsed.item4).map((d) => d.code),
       dateOfEvent: eventOk ? evt : null,
@@ -200,12 +213,16 @@ export async function ingestSchedule13D({ days = RECONCILE_DAYS } = {}) {
         insert into schedule13d_filings
           (accession, ticker, issuer_cik, issuer_name, cusip, security_class, form_type,
            is_amendment, filer_name, filer_cik, filer_type, pct_of_class, shares, persons,
-           item4_codes, date_of_event, group_key, filing_url, primary_doc_url, filed_at)
+           item4_codes, date_of_event, group_key, filing_url, primary_doc_url, filed_at,
+           sole_voting, shared_voting, sole_dispositive, shared_dispositive,
+           previous_accession, rule_designation, transaction_desc)
         values (${r.accession}, ${r.ticker}, ${r.issuerCik}, ${r.issuerName}, ${r.cusip},
                 ${r.securityClass}, ${r.formType}, ${r.isAmendment}, ${r.filerName}, ${r.filerCik},
                 ${r.filerType}, ${r.pctOfClass}, ${r.shares}, ${r.persons}::jsonb,
                 ${`{${r.item4Codes.join(',')}}`}::text[], ${r.dateOfEvent}, ${r.groupKey},
-                ${r.filingUrl}, ${r.primaryDocUrl}, ${r.filedAt})
+                ${r.filingUrl}, ${r.primaryDocUrl}, ${r.filedAt},
+                ${r.soleVoting}, ${r.sharedVoting}, ${r.soleDispositive}, ${r.sharedDispositive},
+                ${r.previousAccession}, ${r.ruleDesignation}, ${r.transactionDesc})
         on conflict (accession) do nothing
         returning id`);
       if ((res?.rows ?? res ?? []).length) inserted++;
