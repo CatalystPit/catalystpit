@@ -145,7 +145,7 @@ export default function FearGreedClient() {
   return (
     <>
       <BrandStyles />
-      <TopNav />
+      <TopNav active="Fear & Greed" />
       <main style={{ maxWidth: 780, margin: '0 auto', padding: '20px 16px 60px' }}>
         {failed && <ErrorState onRetry={load} />}
 
