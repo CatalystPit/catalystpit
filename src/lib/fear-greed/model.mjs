@@ -27,7 +27,10 @@
 //
 // Neither replaces the other and neither is a VIX proxy. V2 added the second; see COMPONENTS.
 //
-// There is no put/call component, because we have no broad-market options data at all.
+// There IS a put/call component as of V3 — Options Sentiment — and it reads official cleared
+// equity-options VOLUME from the clearing house, not an estimate and not open interest. What we
+// still do not have is a customer-only breakdown: see occ.mjs for why that endpoint cannot serve
+// one. The component is all-account cleared volume and says so where it matters.
 //
 // See METHODOLOGY at the bottom for the full disclosure the UI renders.
 
@@ -297,6 +300,37 @@ export const COMPONENTS = Object.freeze([
     meaning: 'Net new highs. Positive when leadership is expanding, negative when it is breaking.',
   },
   {
+    key: 'options',
+    label: 'Options Sentiment',
+    // ⚠️ HIGHER PUT ACTIVITY IS FEAR, and the inversion is declared here and applied once, in
+    // scoreComponent — the same mechanism the two volatility components use.
+    direction: DIRECTION.HIGHER_IS_FEAR,
+    // ── ⚠️ CONCEPTUAL, LIKE MARKET VOLATILITY AND CREDIT. THE RECIPE IS NOT PUBLISHED ────
+    //
+    // These three strings are served by /api/fear-greed and rendered verbatim by the methodology
+    // panel. The endpoint, the account scope, the product class, the ratio and the normalisation
+    // window are absent from them by design — they live in occ.mjs and series.mjs, which nothing
+    // public reads. Attribution to the clearing source is given because it is a credit to the
+    // source rather than a description of the method.
+    source: 'Official cleared equity-class options volume from the U.S. options clearing house, '
+      + 'stored per market session exactly as published.',
+    calculation: 'Proprietary. The balance of defensive against speculative equity-options activity '
+      + 'for the session, ranked in the same trailing distribution every other component is ranked '
+      + 'in. It reads cleared VOLUME only — never open interest, never a single symbol.',
+    // ⚠️ IT DOES NOT SAY "SINGLE-NAME", BECAUSE IT IS NOT. An earlier draft of this string claimed
+    // the component covered individual stocks rather than broad-market hedging. The clearing
+    // house's equity class is 91% of all options volume — single names AND exchange-traded
+    // products together — so that claim was false and the hedging flow it promised to exclude is
+    // in there. The wording describes the universe we actually read.
+    meaning: 'Measures whether equity-options activity is leaning more defensive or speculative '
+      + 'relative to its recent history. It covers the whole equity class — options on individual '
+      + 'stocks and on exchange-traded products — and excludes index options. Because exchange-'
+      + 'traded product options carry hedging as well as directional positioning, this is a '
+      + 'measure of overall options posture rather than of speculation alone. Clearing data is '
+      + 'published on a short delay, so the most recent sessions may not carry this component yet — '
+      + 'it is reported as unavailable rather than estimated.',
+  },
+  {
     key: 'credit',
     label: 'Credit Risk Appetite',
     direction: DIRECTION.HIGHER_IS_GREED,
@@ -330,11 +364,12 @@ export const METHODOLOGY = Object.freeze({
   //
   //   v1  five components.
   //   v2  added Market Volatility — volatility-market stress against its own recent trend.
-  //   v3  Credit Risk Appetite's control leg moved from long- to short-duration government paper.
+  //   v3  Credit Risk Appetite's control leg moved from long- to short-duration government paper,
   //       The component was 44% driven by the Treasury leg and 2% by the credit leg, and printed
   //       GREED on 62% of the sessions where BOTH bond legs fell. It is now 89% credit-driven and
   //       does that on none of them. Same component, same orientation, same weight — a corrected
-  //       construction, not a new measure, and a version because the numbers move.
+  //       construction, not a new measure. V3 also adds Options Sentiment, a seventh component
+  //       reading official cleared equity-options volume. A version because the numbers move.
   version: 'fear_greed_v3',
   updateFrequency: 'Daily, after the U.S. equity close. Every component is derived from completed '
     + 'daily sessions, so the index is a daily measure and is never presented as intraday.',

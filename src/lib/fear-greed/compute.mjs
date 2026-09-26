@@ -10,6 +10,7 @@ import {
 } from './model.mjs';
 import {
   momentumSeries, volatilitySeries, volMarketSeries, relativeReturnSeries, byDate, trailingWindow,
+  optionsPcrSeries,
 } from './series.mjs';
 
 /** Which way each component runs. Declared once; model.mjs applies it. */
@@ -18,6 +19,8 @@ export const COMPONENT_DIRECTION = Object.freeze({
   volatility: DIRECTION.HIGHER_IS_FEAR,
   // Above its own trend = protection being bid = fear. Same inversion, different measurement.
   marketvol: DIRECTION.HIGHER_IS_FEAR,
+  // More puts against calls is more defensive positioning, which is fear.
+  options: DIRECTION.HIGHER_IS_FEAR,
   breadth: DIRECTION.HIGHER_IS_GREED,
   strength: DIRECTION.HIGHER_IS_GREED,
   credit: DIRECTION.HIGHER_IS_GREED,
@@ -76,12 +79,12 @@ export function validPanelSessions(panel = []) {
 }
 
 /**
- * Build the six raw series from the loaded inputs.
+ * Build the seven raw series from the loaded inputs.
  *
- * @param {object} input { panel, spy, volMarket, credit: { risk, safe } }
+ * @param {object} input { panel, spy, volMarket, options, credit: { risk, safe } }
  * @returns {Record<string, Array<{date,value}>>}
  */
-export function rawSeries({ panel = [], spy = [], volMarket = [], credit = {} } = {}) {
+export function rawSeries({ panel = [], spy = [], volMarket = [], options = [], credit = {} } = {}) {
   const valid = validPanelSessions(panel);
   // ⚠️ REJECTED SESSIONS LEAVE EVERY SERIES, NOT JUST THE TWO THE PANEL FEEDS. A day the market
   // did not open is not a data point for volatility or credit either, and leaving it in their
@@ -104,6 +107,10 @@ export function rawSeries({ panel = [], spy = [], volMarket = [], credit = {} } 
     breadth: valid.map((p) => ({ date: p.date, value: p.breadth })),
     strength: valid.map((p) => ({ date: p.date, value: p.strength })),
     credit: drop(relativeReturnSeries(credit.risk || [], credit.safe || [])),
+    // ⚠️ OCC PUBLISHES ON A LAG, so this series legitimately ends before the others do. A session
+    // with no stored observation simply has no point and the component is absent for it — which is
+    // the existing missing-component rule, not a special case.
+    options: drop(optionsPcrSeries(options)),
   };
 }
 

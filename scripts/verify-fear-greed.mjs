@@ -19,7 +19,9 @@ import {
   momentumSeries, volatilitySeries, volMarketSeries, smaDistanceSeries, relativeReturnSeries,
   trailingWindow, byDate,
   MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR, VOL_MARKET_MA,
+  optionsPcrSeries,
 } from '../src/lib/fear-greed/series.mjs';
+import { parseEquityVolume, OCC_TYPICAL_LAG_SESSIONS } from '../src/lib/fear-greed/occ.mjs';
 import {
   rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTION,
   validPanelSessions, MIN_PANEL_FRACTION, PANEL_REFERENCE_SESSIONS,
@@ -118,10 +120,10 @@ sec('⚠️ DIRECTION');
   // ⚠️ EXACTLY TWO COMPONENTS ARE INVERTED, AND THEY ARE THE TWO VOLATILITY MEASURES. Asserted as
   // a set rather than a list so adding a component cannot pass by landing in the right position,
   // and pinned by name so a future component cannot quietly join the inverted side.
-  check('⚠️ the inverted components are exactly the two volatility measures',
+  check('⚠️ the inverted components are exactly the two volatility measures and options',
     Object.entries(COMPONENT_DIRECTION)
       .filter(([, d]) => d === DIRECTION.HIGHER_IS_FEAR)
-      .map(([k]) => k).sort().join(',') === 'marketvol,volatility');
+      .map(([k]) => k).sort().join(',') === 'marketvol,options,volatility');
   for (const k of ['momentum', 'breadth', 'strength', 'credit']) {
     check(`${k}: higher is greed`, COMPONENT_DIRECTION[k] === DIRECTION.HIGHER_IS_GREED);
   }
@@ -367,6 +369,113 @@ sec('⚠️ A DAY THE MARKET WAS SHUT IS NOT A SESSION');
   }
 }
 
+sec('⚠️ OPTIONS SENTIMENT ACCEPTS ONLY WHAT OCC ACTUALLY PUBLISHED');
+{
+  const ok = (calls, puts, parts, ratio) => ({
+    entity: {
+      equity_volume: [
+        ...parts,
+        { exchange: 'Total', calls, puts, volume: calls + puts, ratio: ratio ?? Math.round((puts / calls) * 100) / 100 },
+      ],
+    },
+  });
+  const two = (c1, p1, c2, p2) => [
+    { exchange: 'AMEX ', calls: c1, puts: p1, volume: c1 + p1 },
+    { exchange: 'CBOE ', calls: c2, puts: p2, volume: c2 + p2 },
+  ];
+  const good = ok(300, 240, two(100, 90, 200, 150));
+  check('a complete payload parses to its actual volumes',
+    (() => { const r = parseEquityVolume(good); return r && r.calls === 300 && r.puts === 240 && r.exchanges === 2; })());
+  check('…and the ratio is puts ÷ calls, computed not copied',
+    approx(parseEquityVolume(good).ratio, 240 / 300, 1e-12));
+
+  // ⚠️ THE FAILURE THIS GUARDS AGAINST IS A TRUNCATED RESPONSE PASSING AS A SMALLER MARKET.
+  check('⚠️ a Total that does not equal the sum of its exchanges is MISSING',
+    parseEquityVolume(ok(999, 240, two(100, 90, 200, 150))) === null);
+  check('⚠️ …and so is one whose calls+puts contradict its own volume',
+    parseEquityVolume({ entity: { equity_volume: [
+      ...two(100, 90, 200, 150),
+      { exchange: 'Total', calls: 300, puts: 240, volume: 1, ratio: 0.8 }] } }) === null);
+  check('⚠️ …and one whose published ratio disagrees with puts ÷ calls',
+    parseEquityVolume(ok(300, 240, two(100, 90, 200, 150), 4.2)) === null);
+  check('⚠️ a weekend or holiday — no equity rows — is MISSING, not zero',
+    parseEquityVolume({ entity: { equity_volume: [] } }) === null
+    && parseEquityVolume({ entity: {} }) === null && parseEquityVolume(null) === null);
+  check('⚠️ zero calls is MISSING rather than a division by zero',
+    parseEquityVolume(ok(0, 240, two(0, 90, 0, 150))) === null);
+  check('a single-row payload is refused — a real session clears on many exchanges',
+    parseEquityVolume({ entity: { equity_volume: [
+      { exchange: 'Total', calls: 300, puts: 240, volume: 540, ratio: 0.8 }] } }) === null);
+
+  // ⚠️ IT READS STOCK OPTIONS. Handing it the index block must not silently work.
+  check('⚠️ index volume is not read as equity volume',
+    parseEquityVolume({ entity: { index_volume: [
+      ...two(100, 90, 200, 150),
+      { exchange: 'Total', calls: 300, puts: 240, volume: 540, ratio: 0.8 }] } }) === null);
+
+  // The series: derived from actuals, and a missing session is simply absent.
+  const obs = [{ date: 'd1', calls: 100, puts: 80 }, { date: 'd2', calls: 200, puts: 300 }];
+  const s = optionsPcrSeries(obs);
+  check('the series is puts ÷ calls per session', s.length === 2 && approx(s[0].value, 0.8) && approx(s[1].value, 1.5));
+  check('⚠️ a malformed observation is dropped, never defaulted',
+    optionsPcrSeries([{ date: 'd1', calls: 0, puts: 5 }, { date: 'd2', calls: null, puts: 5 },
+      { date: 'd3', calls: 10, puts: null }]).length === 0);
+  check('⚠️ and a gap is a gap — nothing is carried forward into it',
+    optionsPcrSeries([{ date: 'd1', calls: 100, puts: 80 }, { date: 'd3', calls: 100, puts: 120 }])
+      .map((p) => p.date).join(',') === 'd1,d3');
+
+  // Direction, end to end: more puts is more fear.
+  {
+    const hist = Array.from({ length: NORM_WINDOW }, (_, i) => 0.5 + i / 1000);
+    const heavy = scoreComponent({ raw: 1.4, history: hist, direction: COMPONENT_DIRECTION.options });
+    const light = scoreComponent({ raw: 0.4, history: hist, direction: COMPONENT_DIRECTION.options });
+    check('⚠️ a put-heavy session scores as FEAR', zoneFor(heavy.score).label.includes('FEAR'), String(heavy.score));
+    check('⚠️ a call-heavy session scores as GREED', zoneFor(light.score).label.includes('GREED'), String(light.score));
+  }
+
+  // ⚠️ THE LAG IS HANDLED BY ABSENCE, NOT BY SUBSTITUTION. The newest sessions have no options
+  // point until OCC publishes them, and the composite must simply run one component lighter.
+  {
+    const day = (d, e = 1000) => ({ date: d, eligible: e, breadth: 0.6, strength: 0.02 });
+    const bars = (n) => Array.from({ length: n }, (_, i) => ({ date: `d${String(i).padStart(3, '0')}`, close: 100 + (i % 5) }));
+    const panel = Array.from({ length: 200 }, (_, i) => day(`d${String(i).padStart(3, '0')}`));
+    const options = Array.from({ length: 198 }, (_, i) => ({ date: `d${String(i).padStart(3, '0')}`, calls: 100, puts: 80 + (i % 9) }));
+    const series = rawSeries({ panel, spy: bars(200), volMarket: bars(200), options, credit: { risk: bars(200), safe: bars(200) } });
+    check('the options series stops where OCC stopped', series.options.at(-1).date === 'd197');
+    check('…while every other series runs to the last session', series.breadth.at(-1).date === 'd199');
+  }
+  check('the publication lag is stated as a constant, not assumed silently',
+    Number.isFinite(OCC_TYPICAL_LAG_SESSIONS) && OCC_TYPICAL_LAG_SESSIONS >= 1);
+
+  // ── ⚠️ THE COMPONENT MUST NOT CLAIM A UNIVERSE IT DOES NOT HAVE ──────────
+  //
+  // The clearing house's equity class is 90.7% of all cleared options — single names AND
+  // exchange-traded products. An earlier draft of the public text promised "individual stocks
+  // rather than broad-market hedging", which was false and would have described away the exact
+  // contamination the reader needs to know about.
+  {
+    const opt = COMPONENTS.find((c) => c.key === 'options');
+    const publicText = [opt.label, opt.source, opt.calculation, opt.meaning].join(' ');
+    check('⚠️ the public text never claims single-name coverage', !/single-name/i.test(publicText), publicText.slice(0, 100));
+    check('⚠️ …and says outright that exchange-traded products are included',
+      /exchange-\s*traded product/i.test(opt.meaning));
+    check('⚠️ …and that this makes it posture rather than speculation alone',
+      /hedging/i.test(opt.meaning) && /rather than .*speculation alone/i.test(opt.meaning));
+    check('…while still excluding index options', /exclude[s]? index options/i.test(opt.meaning));
+    check('…and stating that late sessions are unavailable, not estimated',
+      /unavailable rather than estimated/i.test(opt.meaning));
+    check('⚠️ the source, endpoint and account scope are not published',
+      !/OCC|theocc|marketdata|accountType|productKind|OSTK|volume-query/i.test(publicText));
+    check('⚠️ nor the ratio or the window', !/put\/call|504|percentile/i.test(publicText));
+    check('it is named Options Sentiment', opt.label === 'Options Sentiment');
+    check('⚠️ and it states it reads volume, never open interest',
+      /VOLUME only/.test(opt.calculation) && /never open interest/i.test(opt.calculation));
+    const served = JSON.stringify({ methodology: METHODOLOGY, componentMeta: COMPONENTS });
+    check('⚠️ no options endpoint or vendor name appears in what the API serves',
+      !/theocc|marketdata\.|cboe/i.test(served));
+  }
+}
+
 sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
 {
   // THE DEFECT V3 CORRECTS: against a 7-10 year Treasury leg the component was 44% driven by the
@@ -408,13 +517,13 @@ sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
 sec('VERSIONING AND THE COMPONENT COUNT');
 {
   check('⚠️ the methodology version is v3', METHODOLOGY.version === 'fear_greed_v3');
-  check('the registry holds six components', COMPONENT_KEYS.length === 6);
+  check('the registry holds seven components', COMPONENT_KEYS.length === 7);
   check('every key is unique', new Set(COMPONENT_KEYS).size === COMPONENT_KEYS.length);
   // ⚠️ THE FLOOR IS DELIBERATELY UNCHANGED. Three of six is half rather than a majority, and the
   // reasoning for that choice is written where the constant lives.
   check('⚠️ the minimum component count is still three', MIN_COMPONENTS === 3);
   check('...so every session V1 could publish, V2 can publish too',
-    MIN_COMPONENTS <= 3 && COMPONENT_KEYS.length > 5);
+    MIN_COMPONENTS <= 3 && COMPONENT_KEYS.length > 6);
   check('the composite rule still states the floor', METHODOLOGY.composite.includes(String(MIN_COMPONENTS)));
 }
 
@@ -435,6 +544,7 @@ sec('⚠️ NO FUTURE DATA LEAKS INTO A HISTORICAL READING');
     momentum: mk(700, (i) => Math.sin(i / 7)),
     volatility: mk(700, (i) => Math.cos(i / 11) + 2),
     marketvol: mk(700, (i) => Math.sin(i / 17) / 10),
+    options: mk(700, (i) => 0.8 + Math.cos(i / 23) / 5),
     breadth: mk(700, (i) => (i % 97) / 97),
     strength: mk(700, (i) => Math.sin(i / 13) / 2),
     credit: mk(700, (i) => Math.cos(i / 5) / 100),
@@ -459,6 +569,7 @@ sec('THE INDEX AND ITS PAYLOAD');
     momentum: mk(700, (i) => Math.sin(i / 7)),
     volatility: mk(700, (i) => Math.cos(i / 11) + 2),
     marketvol: mk(700, (i) => Math.sin(i / 17) / 10),
+    options: mk(700, (i) => 0.8 + Math.cos(i / 23) / 5),
     breadth: mk(700, (i) => (i % 97) / 97),
     strength: mk(700, (i) => Math.sin(i / 13) / 2),
     credit: mk(700, (i) => Math.cos(i / 5) / 100),
@@ -473,7 +584,7 @@ sec('THE INDEX AND ITS PAYLOAD');
   const p = buildPayload(series);
   check('the payload reports the latest session', p.asOf === hist.at(-1).date);
   check('the score matches the latest computed index', p.score === hist.at(-1).score);
-  check('the payload carries all six components with labels', p.components.length === 6
+  check('the payload carries all seven components with labels', p.components.length === 7
     && p.components.length === COMPONENT_KEYS.length
     && p.components.every((x) => x.label && x.key));
   check('each component carries its own zone word',

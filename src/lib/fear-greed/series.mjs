@@ -33,6 +33,20 @@ const num = (v) => {
 };
 
 /**
+ * A volume count: finite and non-negative, where ZERO IS A LEGITIMATE VALUE but absence is not.
+ *
+ * ⚠️ `num` above refuses zero, which is right for a price and wrong for a contract count — a
+ * session with no puts is conceivable and would be real data. What must never pass is a MISSING
+ * count, because Number(null) and Number('') are both 0 and would arrive as "no puts traded", the
+ * most greedy reading the options component can produce, manufactured from an absent number.
+ */
+const count = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
+/**
  * Close / SMA(length) - 1, per session. The shared shape behind Momentum and Market Volatility.
  *
  * ⚠️ ONE IMPLEMENTATION, TWO COMPONENTS, BECAUSE TWO WOULD DRIFT. Both measure the same thing —
@@ -162,4 +176,31 @@ export function trailingWindow(series = [], date, size) {
   if (idx < 0) return [];
   const start = Math.max(0, idx - size + 1);
   return series.slice(start, idx + 1).map((p) => p.value);
+}
+
+/**
+ * The equity-options put/call ratio, per session, from stored OCC volumes.
+ *
+ * ⚠️ DERIVED FROM TWO ACTUAL NUMBERS, NEVER STORED AS ONE. Each point is puts ÷ calls for a
+ * session OCC actually published; a session we do not hold simply has no point, which is what makes
+ * the component absent rather than wrong on a day the data is late. No interpolation, no carrying
+ * a previous session's ratio forward, no default.
+ *
+ * ⚠️ AND IT IS TRAILING BY CONSTRUCTION in the only sense that applies: the value at a session is
+ * that session's own cleared volume and nothing else's. There is no window here to leak through.
+ *
+ * @param {Array<{date,calls,puts}>} observations oldest first
+ * @returns {Array<{date,value}>}
+ */
+export function optionsPcrSeries(observations = []) {
+  const out = [];
+  for (const o of observations) {
+    // ⚠️ null IS NOT ZERO HERE EITHER. Number(null) is 0 and Number('') is 0, so a plain isFinite
+    // guard accepts a missing put count as "no puts traded" — a ratio of 0.00, the most greedy
+    // reading the component can produce, manufactured out of an absent number. Caught by the suite.
+    const calls = count(o?.calls), puts = count(o?.puts);
+    if (calls === null || puts === null || calls <= 0 || puts < 0) continue;
+    out.push({ date: String(o.date), value: puts / calls });
+  }
+  return out;
 }
