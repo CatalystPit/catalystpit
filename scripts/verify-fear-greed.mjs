@@ -621,6 +621,32 @@ check('⚠️ no public text claims the components are independent of one anothe
     METHODOLOGY.excluded.map((x) => x.why).join(' ')));
 check('…and it says outright that they are correlated',
   /not independent of one another/i.test(METHODOLOGY.excluded.map((x) => x.why).join(' ')));
+
+// ── AGGREGATION DISCLOSURE ───────────────────────────────────────────────────
+//
+// ⚠️ THE COMPOSITE TEXT CARRIES A CLAIM ABOUT WHY THE WEIGHTS ARE EQUAL, and the claim has to
+// match what was measured. It used to say there was "no defensible basis for preferring one
+// measure", which is weaker than the truth: grouping and correlation-derived weighting were both
+// tested and both rejected on stability and concentration. These assertions pin the honest
+// version so a future edit cannot quietly restore the shrug.
+check('⚠️ the composite text admits the components are correlated',
+  /correlated with one another/i.test(METHODOLOGY.composite)
+  && /fewer independent dimensions than it has components/i.test(METHODOLOGY.composite));
+check('⚠️ …and refuses to imply seven measures are seven independent pieces of information',
+  /seven independent pieces of information/i.test(METHODOLOGY.composite));
+check('⚠️ …and states that alternatives were tested and not adopted',
+  /tested against equal weighting and were not adopted/i.test(METHODOLOGY.composite));
+check('⚠️ …giving the measured reason, not a shrug',
+  /move substantially as that correlation moves/i.test(METHODOLOGY.composite)
+  && !/no defensible basis/i.test(METHODOLOGY.composite));
+// ⚠️ AND THE DISCLOSURE MUST NOT BECOME A RECIPE. Naming the dependence is honest; printing the
+// matrix, the effective-vote arithmetic or which specific components overlap is construction
+// detail and stays in the source comments.
+check('⚠️ the aggregation disclosure leaks no correlation numbers',
+  !/[0-9]\.[0-9]{2,}/.test(METHODOLOGY.composite)
+  && !/eigenvalue|participation ratio|w'Rw|effective independent/i.test(METHODOLOGY.composite));
+check('…and names no component pair as the overlapping one',
+  !/breadth/i.test(METHODOLOGY.composite) && !/price strength/i.test(METHODOLOGY.composite));
 check('…and the safe-haven exclusion still states its measured overlap',
   /0.82/.test(METHODOLOGY.excluded.find((x) => /safe-haven/i.test(x.name)).why));
 check('⚠️ excluded components are disclosed with reasons',

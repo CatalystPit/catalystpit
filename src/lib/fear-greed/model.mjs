@@ -422,12 +422,41 @@ export const METHODOLOGY = Object.freeze({
     + 'published point is ranked against a history of the same length — a component that cannot '
     + 'fill it is refused rather than ranked against a shorter one, because the same percentile '
     + 'drawn from fewer observations does not mean the same thing.',
-  composite: 'The equal-weighted mean of every component that produced a score. Weights are equal '
-    + 'because we have no defensible basis for preferring one measure; they are deliberately not '
-    + 'fitted to historical returns, because this is a sentiment gauge and not a prediction model. '
-    + 'A missing component is dropped from the average, never replaced with 50, and if too few '
-    + 'components are available the index reports itself unavailable rather than publishing a '
-    + 'number built on one or two measures.',
+  // ⚠️ EQUAL WEIGHTING IS A TESTED CHOICE, NOT AN ABSENCE OF ONE, AND THE PROSE NOW SAYS SO.
+  //
+  // This text used to read "weights are equal because we have no defensible basis for preferring
+  // one measure". That was too weak and, after measurement, wrong: there is a defensible basis for
+  // refusing to fit weights, and it is worth stating because a reader who notices that several
+  // components move together will otherwise assume nobody checked.
+  //
+  // Measured over the stored history: the seven components deliver about 2.2 effective independent
+  // votes (1/(w'Rw)) and the set spans about 4.0 effective independent dimensions (participation
+  // ratio of the correlation eigenvalues, 2.87/1.32/1.04/0.82/0.57/0.22/0.15). So the redundancy is
+  // real. What the audit also found is that nothing available fixes it:
+  //
+  //   * equal weighting already captures 79-85% of the maximum effective independence any
+  //     non-negative weight vector can reach, so the entire prize is 0.37-0.70 of a vote;
+  //   * that unconstrained optimum sets two components to exactly zero, i.e. it deletes them, and
+  //     refit on rolling windows its weights swing 18-30 percentage points;
+  //   * every transparent grouping raises the largest share a single component can control (14.3%
+  //     to 16.7-25.0% with all seven present) and the candidate pairs are not stable dimensions -
+  //     the most correlated pair in the index swings 0.43-0.85 across rolling windows and the
+  //     next one visits 0.23.
+  //
+  // Hence: fixed equal weights, disclosed as a choice, with the correlation admitted.
+  composite: 'The equal-weighted mean of every component that produced a score. Equal weighting is '
+    + 'a deliberate choice that has been measured rather than assumed. The components are '
+    + 'correlated with one another to differing degrees, so the index carries meaningfully fewer '
+    + 'independent dimensions than it has components, and we say so rather than implying that '
+    + 'seven measures are seven independent pieces of information. Alternatives that group '
+    + 'components into dimensions, or weight them by how much each one duplicates the others, have '
+    + 'been tested against equal weighting and were not adopted: weights derived from measured '
+    + 'correlation move substantially as that correlation moves, and grouping concentrates the '
+    + 'index on whichever components are left, including ones that are sometimes unavailable. '
+    + 'Weights are also deliberately not fitted to historical returns, because this is a sentiment '
+    + 'gauge and not a prediction model. A missing component is dropped from the average, never '
+    + 'replaced with 50, and if too few components are available the index reports itself '
+    + 'unavailable rather than publishing a number built on one or two measures.',
   excluded: [
     {
       name: 'Implied volatility (VIX)',
