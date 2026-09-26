@@ -113,7 +113,13 @@ const fetchInsiders = async () => {
 // to fetchInsiders. Not the grouped per-member list view.
 const fetchPoliticians = async () => {
   try {
-    const r = await fetch('/api/politicians?view=feed&limit=10');
+    // ⚠️ THE FETCH IS WIDER THAN THE TABLE BECAUSE THE TABLE FILTERS. A congressional disclosure
+    // may name a bond, a fund or an option with no renderable ticker, and isRenderableTicker drops
+    // those before a row is drawn. On a recent sample the ten most recent disclosures carried four
+    // renderable tickers; twenty-four carried thirteen. Asking for exactly what is displayed is
+    // what left the section short. Order, filter and date semantics are untouched — this is the
+    // size of the window, not the way it is sorted.
+    const r = await fetch('/api/politicians?view=feed&limit=24');
     if (!r.ok) return null;
     return await r.json();            // { view:'feed', count, trades:[...] }
   } catch { return null; }
@@ -688,9 +694,11 @@ export default function CatalystPit() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? Array(3).fill(0).map((_, i) => (
+                {/* Six rows, and the skeleton is six too — a three-row placeholder that becomes a
+                    six-row table makes the whole right-hand column jump on load. */}
+                {loading ? Array(6).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
-                )) : politicians.filter((p) => isRenderableTicker(p?.sym)).slice(0, 3).map((p, i, arr) => (
+                )) : politicians.filter((p) => isRenderableTicker(p?.sym)).slice(0, 6).map((p, i, arr) => (
                   <tr key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
                     style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
@@ -818,7 +826,10 @@ export default function CatalystPit() {
             <div style={{padding:"10px 14px", borderBottom:`1px solid ${C.border}`,
               background:C.surface, display:"flex", justifyContent:"space-between", alignItems:"center"}}>
               <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET HEAT MAP</span>
-              <a href="/terminal" style={{fontSize:11, color:C.green, cursor:"pointer", fontWeight:400, textDecoration:"none"}}>Terminal →</a>
+              {/* The card used to send you to the Terminal because that was the only other place a
+                  heat map existed. /heatmap is the dedicated page now, so the CTA names what it
+                  opens instead of naming a room that happens to contain one. */}
+              <a href="/heatmap" style={{fontSize:11, color:C.green, cursor:"pointer", fontWeight:400, textDecoration:"none", whiteSpace:"nowrap"}}>View heat map →</a>
             </div>
             <div style={{height:340}}><HeatMap limit={120} shared/></div>
           </div>
