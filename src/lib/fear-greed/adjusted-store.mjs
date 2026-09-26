@@ -123,6 +123,40 @@ export async function saveAdjustedCloses(dbc = defaultDb, symbol, observations =
   return written;
 }
 
+/**
+ * Bring the adjusted store up to date. Called by the nightly build.
+ *
+ * ⚠️ THIS EXISTS BECAUSE THE COMPONENT DIES WITHOUT IT. The backfill is a one-off; without a
+ * nightly refresh the newest adjusted close stays frozen at whatever the backfill wrote, the
+ * safe-haven series stops producing observations for new sessions, and the component quietly
+ * reports itself absent from the day after the backfill onward.
+ *
+ * ⚠️ BOUNDED, NOT A RE-BACKFILL. It asks for a short recent window rather than the whole history:
+ * the provider revises adjusted closes when a distribution occurs, so the recent tail is the part
+ * that legitimately changes, and re-fetching twenty-four years nightly would be pointless traffic.
+ * Rows are upserted, so a revision inside the window lands and nothing outside it is touched.
+ *
+ * ⚠️ AND A FAILURE HERE IS NOT AN INDEX FAILURE. A symbol that cannot be fetched is left exactly
+ * as it was — no partial write, no placeholder, no carrying yesterday forward. The series then
+ * lacks the newest sessions and the component reports itself absent, which is the existing
+ * missing-component rule and is honest about what we hold.
+ *
+ * @returns {Promise<{asked:number, stored:number, failed:number, symbols:object}>}
+ */
+export async function refreshAdjusted(dbc = defaultDb, { days = 90, symbols = ADJUSTED_SYMBOLS } = {}) {
+  const since = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const out = { asked: 0, stored: 0, failed: 0, symbols: {} };
+  for (const sym of symbols) {
+    out.asked++;
+    const { rows: got, error } = await fetchAdjustedCloses(sym, { startDate: since });
+    if (error || !got.length) { out.failed++; out.symbols[sym] = `failed: ${error || "empty"}`; continue; }
+    const n = await saveAdjustedCloses(dbc, sym, got);
+    out.stored += n;
+    out.symbols[sym] = `${n} rows through ${got.at(-1).date}`;
+  }
+  return out;
+}
+
 /** What we hold, for logging and for the integrity checks. */
 export async function adjustedCoverage(dbc = defaultDb) {
   const res = await dbc.execute(sql`

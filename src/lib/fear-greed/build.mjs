@@ -11,7 +11,7 @@ import {
 } from './data.mjs';
 import { rawSeries, buildPayload, indexHistory } from './compute.mjs';
 import { loadOptionsVolume, ingestSessions } from './occ-store.mjs';
-import { loadAdjustedCloses } from './adjusted-store.mjs';
+import { loadAdjustedCloses, refreshAdjusted, ensureAdjustedTable } from './adjusted-store.mjs';
 import { saveHistory, savePayload } from './store.mjs';
 
 /**
@@ -51,6 +51,17 @@ export async function buildFearGreed({ dbc = db, sqlc = sql } = {}) {
   // closes, and the candle table is split-adjusted only. If the adjusted store is empty the arrays
   // are empty, the component is absent, and the existing missing-component rule carries the index
   // on the others — no substitution, no fallback to price-only bars.
+  // ⚠️ REFRESH BEFORE READING, or the component freezes at whatever the backfill left behind.
+  // Same shape as the OCC ingest above: bounded, upserting, and a failure degrades to the
+  // component being absent rather than to a stale number presented as current.
+  let adjusted = { asked: 0, stored: 0, failed: 0, symbols: {} };
+  try {
+    await ensureAdjustedTable(dbc);
+    adjusted = await refreshAdjusted(dbc);
+  } catch (e) {
+    console.warn(`[fear-greed] adjusted refresh skipped: ${e.message}`);
+  }
+
   const [shEquity, ...shDefensive] = await Promise.all([
     loadAdjustedCloses(dbc, SAFE_HAVEN_EQUITY_SYMBOL),
     ...SAFE_HAVEN_DEFENSIVE_SYMBOLS.map((sym) => loadAdjustedCloses(dbc, sym)),
@@ -101,6 +112,7 @@ export async function buildFearGreed({ dbc = db, sqlc = sql } = {}) {
     volMarketSessions: volMarket.length,
     optionsSessions: options.length,
     occ,
+    adjusted,
     eligible: panel.at(-1)?.eligible ?? null,
   };
 }
