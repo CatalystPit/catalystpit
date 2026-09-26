@@ -211,6 +211,14 @@ export function BrandStyles() {
       .card-hov:hover{box-shadow:0 4px 20px rgba(0,0,0,0.1)!important;transform:translateY(-2px)!important;}
       .hov:hover{background:${C.surface}!important;cursor:pointer}
       .sym-lnk:hover{color:${C.green}!important;cursor:pointer}
+      /* ⚠️ THE GLOBAL HEADER'S TYPOGRAPHY, PINNED AGAINST THE PAGE UNDERNEATH IT.
+         The inline font-family on .cp-topnav fixes inheritance; these fix the other half — a
+         page-level rule aimed at elements INSIDE the bar (a bare "a" or "button" selector) would
+         otherwise beat an inherited value. "inherit" here resolves to the bar's own font.
+         Inline declarations still win, which is what keeps the Logo's Cormorant Garamond and
+         the !important .cp-num / .cp-tkr families exactly as they are. */
+      .cp-topnav{font-family:'DM Sans',sans-serif}
+      .cp-topnav a,.cp-topnav button,.cp-topnav span,.cp-topnav div,.cp-topnav input{font-family:inherit}
       .nbtn:hover{color:#FFFFFF!important}
       .chip-hov:hover{background:${C.surface2}!important;cursor:pointer}
       input:focus{outline:none;border-color:${C.green}!important;box-shadow:0 0 0 3px ${C.greenLight}!important}
@@ -1052,8 +1060,26 @@ export function TopNav({ active }) {
     : l === "Fear & Greed" ? "/fear-greed"
       : `/${l.toLowerCase()}`);
   return (
-    <div style={{background:C.navBg, height:50, display:"flex", alignItems:"center",
+    /* ── ⚠️ THE HEADER OWNS ITS OWN TYPOGRAPHY. IT USED TO BORROW THE PAGE'S. ──────────
+     *
+     * Not one element in this component declared a font-family, so the whole bar inherited
+     * whatever sat above it. On the homepage, /dividends and /heatmap that is a page wrapper
+     * carrying `fontFamily: "'DM Sans',sans-serif"`, so the nav looked right by luck. /fear-greed
+     * returns a bare fragment with no wrapper — and nothing in this app sets a document font at
+     * all — so its nav inherited the BROWSER DEFAULT and rendered in Times New Roman.
+     *
+     * So the bug was never serif leaking IN; it was the sans never arriving. A page that forgets a
+     * wrapper must not be able to restyle the global header, which means the header has to state
+     * its own font rather than depend on its surroundings. Inline here, plus the `.cp-topnav`
+     * rules in BrandStyles, which also beat a page-level selector aimed at elements INSIDE the bar.
+     *
+     * ⚠️ THE LOGO IS DELIBERATELY UNAFFECTED. Its two spans set Cormorant Garamond inline, and an
+     * inline declaration beats both of these — which is exactly why the wordmark keeps its serif
+     * while everything around it does not. Same for .cp-num / .cp-tkr, which carry !important.
+     */
+    <div className="cp-topnav" style={{background:C.navBg, height:50, display:"flex", alignItems:"center",
       justifyContent:"space-between", padding:"0 24px", position:"sticky", top:0, zIndex:100,
+      fontFamily:"'DM Sans',sans-serif",
       borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
       <a href="/" style={{textDecoration:"none"}}><Logo dark/></a>
 

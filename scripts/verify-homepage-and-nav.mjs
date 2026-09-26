@@ -110,6 +110,29 @@ L('\n=== ⚠️ TASK 2: "More" OPENS — THE PANEL WAS BEING CLIPPED ===');
   ok('⚠️ no React hook is used without being imported', missing.length === 0, missing.join(', '));
 }
 
+L('\n=== ⚠️ THE HEADER STATES ITS OWN TYPOGRAPHY ===');
+{
+  // ⚠️ THE BUG: not one element in TopNav declared a font-family, so the bar inherited whatever
+  // the page above it happened to set. Three pages wrap their content in a DM Sans div and looked
+  // right by luck; /fear-greed returns a bare fragment, nothing in this app sets a document font,
+  // and its navigation rendered in the browser default — Times New Roman. The header must not
+  // depend on its surroundings for something as global as its own font.
+  const src = await readFile(new URL('../src/lib/cp-shared.jsx', import.meta.url), 'utf8');
+  const nav = src.slice(src.indexOf('export function TopNav'), src.indexOf('export function TickerTape'));
+  ok('⚠️ the nav root declares a font-family rather than inheriting one',
+    /className="cp-topnav"/.test(nav) && /fontFamily:"'DM Sans',sans-serif"/.test(nav));
+  ok('…and a page-level selector aimed inside the bar is overridden',
+    /\.cp-topnav a,\.cp-topnav button,\.cp-topnav span,\.cp-topnav div,\.cp-topnav input\{font-family:inherit\}/.test(src));
+  // ⚠️ AND THE WORDMARK IS UNTOUCHED. Its inline family beats both rules; if it ever stops being
+  // inline, the logo silently becomes DM Sans and the brand mark changes on every page.
+  const logo = src.slice(src.indexOf('export const Logo'), src.indexOf('export const TagBadge'));
+  ok('⚠️ the logo still sets Cormorant Garamond inline, so it outranks the nav rule',
+    (logo.match(/fontFamily:"'Cormorant Garamond',serif"/g) || []).length === 2);
+  ok('…and the numeric/ticker families still carry !important',
+    /\.cp-num \{[\s\S]*?font-family: 'Inter', sans-serif !important/.test(
+      (await readFile(new URL('../src/app/layout.jsx', import.meta.url), 'utf8'))));
+}
+
 L('\n=== DESTINATIONS AND THE OVERFLOW ALGORITHM ARE UNTOUCHED ===');
 {
   const src = await readFile(new URL('../src/lib/cp-shared.jsx', import.meta.url), 'utf8');
