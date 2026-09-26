@@ -120,10 +120,10 @@ sec('⚠️ DIRECTION');
   // ⚠️ EXACTLY TWO COMPONENTS ARE INVERTED, AND THEY ARE THE TWO VOLATILITY MEASURES. Asserted as
   // a set rather than a list so adding a component cannot pass by landing in the right position,
   // and pinned by name so a future component cannot quietly join the inverted side.
-  check('⚠️ the inverted components are exactly the two volatility measures and options',
+  check('⚠️ the inverted components are exactly the two volatility measures',
     Object.entries(COMPONENT_DIRECTION)
       .filter(([, d]) => d === DIRECTION.HIGHER_IS_FEAR)
-      .map(([k]) => k).sort().join(',') === 'marketvol,options,volatility');
+      .map(([k]) => k).sort().join(',') === 'marketvol,volatility');
   for (const k of ['momentum', 'breadth', 'strength', 'credit']) {
     check(`${k}: higher is greed`, COMPONENT_DIRECTION[k] === DIRECTION.HIGHER_IS_GREED);
   }
@@ -289,7 +289,8 @@ sec('⚠️ THE SIXTH COMPONENT\'S RECIPE IS NOT PUBLISHED');
   check('⚠️ nor is it ever called the VIX',
     !/\bis the VIX\b|measures the VIX|VIX index level/i.test(publicText));
   check('⚠️ and it says plainly that it is NOT the VIX', /NOT the VIX/i.test(meta.meaning));
-  check('it carries the conceptual description', /relative to its recent trend/i.test(meta.meaning));
+  check('it carries the conceptual description',
+    /relative to its own historical conditions/i.test(meta.meaning));
   check('⚠️ no price level is presented as a volatility reading',
     /no absolute price level/i.test(meta.calculation));
   // The whole served surface, not just this entry.
@@ -424,56 +425,20 @@ sec('⚠️ OPTIONS SENTIMENT ACCEPTS ONLY WHAT OCC ACTUALLY PUBLISHED');
     optionsPcrSeries([{ date: 'd1', calls: 100, puts: 80 }, { date: 'd3', calls: 100, puts: 120 }])
       .map((p) => p.date).join(',') === 'd1,d3');
 
-  // Direction, end to end: more puts is more fear.
-  {
-    const hist = Array.from({ length: NORM_WINDOW }, (_, i) => 0.5 + i / 1000);
-    const heavy = scoreComponent({ raw: 1.4, history: hist, direction: COMPONENT_DIRECTION.options });
-    const light = scoreComponent({ raw: 0.4, history: hist, direction: COMPONENT_DIRECTION.options });
-    check('⚠️ a put-heavy session scores as FEAR', zoneFor(heavy.score).label.includes('FEAR'), String(heavy.score));
-    check('⚠️ a call-heavy session scores as GREED', zoneFor(light.score).label.includes('GREED'), String(light.score));
-  }
-
-  // ⚠️ THE LAG IS HANDLED BY ABSENCE, NOT BY SUBSTITUTION. The newest sessions have no options
-  // point until OCC publishes them, and the composite must simply run one component lighter.
-  {
-    const day = (d, e = 1000) => ({ date: d, eligible: e, breadth: 0.6, strength: 0.02 });
-    const bars = (n) => Array.from({ length: n }, (_, i) => ({ date: `d${String(i).padStart(3, '0')}`, close: 100 + (i % 5) }));
-    const panel = Array.from({ length: 200 }, (_, i) => day(`d${String(i).padStart(3, '0')}`));
-    const options = Array.from({ length: 198 }, (_, i) => ({ date: `d${String(i).padStart(3, '0')}`, calls: 100, puts: 80 + (i % 9) }));
-    const series = rawSeries({ panel, spy: bars(200), volMarket: bars(200), options, credit: { risk: bars(200), safe: bars(200) } });
-    check('the options series stops where OCC stopped', series.options.at(-1).date === 'd197');
-    check('…while every other series runs to the last session', series.breadth.at(-1).date === 'd199');
-  }
-  check('the publication lag is stated as a constant, not assumed silently',
-    Number.isFinite(OCC_TYPICAL_LAG_SESSIONS) && OCC_TYPICAL_LAG_SESSIONS >= 1);
-
-  // ── ⚠️ THE COMPONENT MUST NOT CLAIM A UNIVERSE IT DOES NOT HAVE ──────────
-  //
-  // The clearing house's equity class is 90.7% of all cleared options — single names AND
-  // exchange-traded products. An earlier draft of the public text promised "individual stocks
-  // rather than broad-market hedging", which was false and would have described away the exact
-  // contamination the reader needs to know about.
-  {
-    const opt = COMPONENTS.find((c) => c.key === 'options');
-    const publicText = [opt.label, opt.source, opt.calculation, opt.meaning].join(' ');
-    check('⚠️ the public text never claims single-name coverage', !/single-name/i.test(publicText), publicText.slice(0, 100));
-    check('⚠️ …and says outright that exchange-traded products are included',
-      /exchange-\s*traded product/i.test(opt.meaning));
-    check('⚠️ …and that this makes it posture rather than speculation alone',
-      /hedging/i.test(opt.meaning) && /rather than .*speculation alone/i.test(opt.meaning));
-    check('…while still excluding index options', /exclude[s]? index options/i.test(opt.meaning));
-    check('…and stating that late sessions are unavailable, not estimated',
-      /unavailable rather than estimated/i.test(opt.meaning));
-    check('⚠️ the source, endpoint and account scope are not published',
-      !/OCC|theocc|marketdata|accountType|productKind|OSTK|volume-query/i.test(publicText));
-    check('⚠️ nor the ratio or the window', !/put\/call|504|percentile/i.test(publicText));
-    check('it is named Options Sentiment', opt.label === 'Options Sentiment');
-    check('⚠️ and it states it reads volume, never open interest',
-      /VOLUME only/.test(opt.calculation) && /never open interest/i.test(opt.calculation));
-    const served = JSON.stringify({ methodology: METHODOLOGY, componentMeta: COMPONENTS });
-    check('⚠️ no options endpoint or vendor name appears in what the API serves',
-      !/theocc|marketdata\.|cboe/i.test(served));
-  }
+  // ⚠️ THE COMPONENT IS GONE; THE INGESTION IS NOT. V4 removed Options Sentiment from the index
+  // because its yearly mean slid 82 → 66 → 38 while every other component swung 16-24 — a rolling
+  // percentile chasing a multi-year shift in the options market's product mix and reporting it as
+  // sentiment. The data is real and still accrues, so everything above stays tested; what must not
+  // come back by accident is the component itself.
+  check('⚠️ Options Sentiment is NOT a component of the index',
+    !COMPONENT_KEYS.includes('options') && !COMPONENTS.some((c) => c.key === 'options'));
+  check('…and nothing declares a direction for it', COMPONENT_DIRECTION.options === undefined);
+  check('…and rawSeries does not build it',
+    rawSeries({ panel: [], spy: [], volMarket: [], credit: {} }).options === undefined);
+  check('⚠️ …while the official ingestion is still in the build path',
+    /ingestSessions/.test(readFileSync(new URL('../src/lib/fear-greed/build.mjs', import.meta.url), 'utf8')));
+  check('…and the removal is explained where the methodology lives',
+    /Options Sentiment REMOVED/.test(readFileSync(new URL('../src/lib/fear-greed/model.mjs', import.meta.url), 'utf8')));
 }
 
 sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
@@ -516,15 +481,18 @@ sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
 
 sec('VERSIONING AND THE COMPONENT COUNT');
 {
-  check('⚠️ the methodology version is v3', METHODOLOGY.version === 'fear_greed_v3');
-  check('the registry holds seven components', COMPONENT_KEYS.length === 7);
+  check('⚠️ the methodology version is v4', METHODOLOGY.version === 'fear_greed_v4');
+  check('the registry holds six components', COMPONENT_KEYS.length === 6);
   check('every key is unique', new Set(COMPONENT_KEYS).size === COMPONENT_KEYS.length);
   // ⚠️ THE FLOOR IS DELIBERATELY UNCHANGED. Three of six is half rather than a majority, and the
   // reasoning for that choice is written where the constant lives.
   check('⚠️ the minimum component count is still three', MIN_COMPONENTS === 3);
   check('...so every session V1 could publish, V2 can publish too',
-    MIN_COMPONENTS <= 3 && COMPONENT_KEYS.length > 6);
-  check('the composite rule still states the floor', METHODOLOGY.composite.includes(String(MIN_COMPONENTS)));
+    MIN_COMPONENTS <= 3 && COMPONENT_KEYS.length > 5);
+  // ⚠️ THE FLOOR IS NO LONGER PUBLISHED AS A NUMBER — see the public-cleanup section. What the
+  // prose must still do is state the RULE.
+  check('the composite rule still states the refusal rule without the number',
+    /too few components/i.test(METHODOLOGY.composite) && !new RegExp('\b' + MIN_COMPONENTS + '\b').test(METHODOLOGY.composite));
 }
 
 // ── 7. POINT-IN-TIME ─────────────────────────────────────────────────────────
@@ -584,7 +552,7 @@ sec('THE INDEX AND ITS PAYLOAD');
   const p = buildPayload(series);
   check('the payload reports the latest session', p.asOf === hist.at(-1).date);
   check('the score matches the latest computed index', p.score === hist.at(-1).score);
-  check('the payload carries all seven components with labels', p.components.length === 7
+  check('the payload carries all six components with labels', p.components.length === 6
     && p.components.length === COMPONENT_KEYS.length
     && p.components.every((x) => x.label && x.key));
   check('each component carries its own zone word',
@@ -619,9 +587,15 @@ check('every component explains what it means', COMPONENTS.every((x) => x.meanin
 check('the update frequency is stated', METHODOLOGY.updateFrequency.length > 20);
 check('⚠️ and it says daily, not realtime',
   /daily/i.test(METHODOLOGY.updateFrequency) && !/real[- ]?time|live/i.test(METHODOLOGY.updateFrequency));
-check('the normalization period is documented',
-  METHODOLOGY.normalization.includes(String(NORM_WINDOW)));
-check('the composite rule is documented', METHODOLOGY.composite.includes(String(MIN_COMPONENTS)));
+// ⚠️ THESE TWO ASSERTIONS USED TO REQUIRE THE WINDOW LENGTH AND THE COMPONENT FLOOR IN THE PUBLIC
+// PROSE. That is most of the recipe stated as integers. They now require the opposite: the
+// PRINCIPLE is explained and the constants are not handed over.
+check('⚠️ the normalisation principle is explained without publishing the window',
+  /own recent distribution/i.test(METHODOLOGY.normalization)
+  && !new RegExp('\b' + NORM_WINDOW + '\b').test(METHODOLOGY.normalization));
+check('⚠️ the composite rule is explained without publishing the floor',
+  /equal-weighted/i.test(METHODOLOGY.composite) && /never replaced with 50/i.test(METHODOLOGY.composite)
+  && !new RegExp('\b' + MIN_COMPONENTS + '\b').test(METHODOLOGY.composite));
 check('⚠️ excluded components are disclosed with reasons',
   METHODOLOGY.excluded.length >= 3 && METHODOLOGY.excluded.every((x) => x.why.length > 40));
 check('⚠️ the volatility component is labelled realized, never implied',
@@ -1073,7 +1047,7 @@ sec('⚠️ THE VERSION STAMP IS NOT PART OF THE PRODUCT');
   check('the methodology panel itself is untouched',
     page.includes('WHAT WE DELIBERATELY DO NOT INCLUDE') && page.includes('<P label="Normalisation"'));
   check('⚠️ the version still exists where it is operationally needed',
-    METHODOLOGY.version === 'fear_greed_v3');
+    METHODOLOGY.version === 'fear_greed_v4');
   check('⚠️ it still keys the stored payload and the daily rows',
     store.includes('METHODOLOGY.version') && store.includes('PAYLOAD_KEY'));
   check('and the API still carries it for callers that pin to it',
@@ -1144,6 +1118,60 @@ sec('⚠️ THE RAIL CARD AND THE HERO ARE THE SAME DIAL');
   check('⚠️ the card does not grow into a second hero',
     LAYOUT.compact.viewH * scale < 240, (LAYOUT.compact.viewH * scale).toFixed(0) + 'px');
 }
+
+sec('⚠️ THE PUBLIC SURFACE DOES NOT CARRY THE RECIPE');
+{
+  // Everything the API serves as methodology: the prose, every component's three strings, and the
+  // excluded-measures notes. A reader should understand WHAT each component measures and be unable
+  // to reproduce HOW from anything here.
+  const served = [
+    METHODOLOGY.updateFrequency, METHODOLOGY.normalization, METHODOLOGY.composite,
+    ...METHODOLOGY.excluded.map((x) => `${x.name} ${x.why}`),
+    ...COMPONENTS.flatMap((c) => [c.label, c.source, c.calculation, c.meaning]),
+  ].join(' ');
+
+  // ⚠️ NO INSTRUMENT IS NAMED. Every one of these was in the public text before this cleanup.
+  for (const t of ['SPY', 'HYG', 'IEF', 'SHY', 'IEI', 'UVXY', 'VIXY', 'Tiingo', 'ticker_daily_candles']) {
+    check(`⚠️ "${t}" does not appear in anything the API serves`,
+      // ⚠️ `\b` INSIDE A TEMPLATE LITERAL IS A BACKSPACE, NOT A WORD BOUNDARY. Written that way
+      // this regex was `\u0008SPY\u0008`, matched nothing, and passed while "SPY (Tiingo EOD)" sat
+      // in the public text — caught by mutating an instrument name back in. Double the backslash.
+      !new RegExp(`\\b${t}\\b`).test(served), t);
+  }
+  // ⚠️ NO LOOKBACK, WINDOW OR THRESHOLD IS PUBLISHED AS A NUMBER.
+  // ⚠️ 50 IS DELIBERATELY NOT ON THIS LIST. "a missing component is never replaced with 50" is the
+  // single most important promise the composite makes, and the 50 in it is the neutral midpoint of
+  // the published scale — not a lookback. Suppressing it to satisfy a blanket rule would delete a
+  // disclosure to protect a number the reader already sees on the gauge.
+  for (const n of [NORM_WINDOW, MIN_WINDOW, MIN_COMPONENTS, 125, 21, 252, 20]) {
+    check(`⚠️ the constant ${n} is not published`, !new RegExp(`\\b${n}\\b`).test(served), String(n));
+  }
+  check('⚠️ nor the methodology version identifier', !/fear_greed_v\d/.test(served));
+  check('⚠️ nor the words that give the formula away',
+    !/simple moving average|standard deviation|percentile rank|mid-rank|log returns|divided by its/i.test(served),
+    (served.match(/simple moving average|standard deviation|percentile rank|mid-rank|log returns|divided by its/i) || [''])[0]);
+
+  // ⚠️ AND THE CONCEPT SURVIVES THE CLEANUP. Stripping the recipe must not strip the meaning.
+  for (const c of COMPONENTS) {
+    check(`${c.label} still says what it measures`, /^Measures /.test(c.meaning), c.meaning.slice(0, 50));
+  }
+  check('every component still declares a direction',
+    COMPONENTS.every((c) => c.direction === 1 || c.direction === -1));
+  check('the honest caveats survive',
+    /NOT the VIX/i.test(served) && /not a direct measurement/i.test(served)
+    && /REALIZED volatility/i.test(served));
+
+  // The route itself must not add the fields back.
+  const route = readFileSync(new URL('../src/app/api/fear-greed/route.js', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  check('⚠️ the API route does not publish normalizationWindow or minComponents',
+    !/normalizationWindow:/.test(route) && !/minComponents:/.test(route));
+  check('…and strips the version from the payload it serves',
+    /const \{ version, normalizationWindow, \.\.\.publicPayload \}/.test(route));
+  check('…and refuses to serve a component the registry no longer has',
+    /filter\(\(c\) => meta\.has\(c\.key\)\)/.test(route));
+}
+
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

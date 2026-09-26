@@ -27,10 +27,23 @@
 //
 // Neither replaces the other and neither is a VIX proxy. V2 added the second; see COMPONENTS.
 //
-// There IS a put/call component as of V3 — Options Sentiment — and it reads official cleared
-// equity-options VOLUME from the clearing house, not an estimate and not open interest. What we
-// still do not have is a customer-only breakdown: see occ.mjs for why that endpoint cannot serve
-// one. The component is all-account cleared volume and says so where it matters.
+// ── ⚠️ AND THERE IS NO PUT/CALL COMPONENT, THOUGH WE BUILT ONE AND MEASURED IT ──
+//
+// V3 briefly shipped Options Sentiment from official cleared equity-options volume. The data is
+// real, auditable and still ingested daily — see occ.mjs — but it failed the test that matters for
+// a percentile component: ITS YEARLY MEAN SLID 82 → 66 → 38 across 2024-2026. A rolling percentile
+// should average near 50 every year. Every other component swings 16-24 points between years and
+// the composite itself swings 16; that one swung 44. And the slide is NOT in the raw ratio, whose
+// yearly medians go 0.73 → 0.68 → 0.76 — so the window was chasing a multi-year change in the
+// options market's product mix and reporting it as sentiment.
+//
+// The universe is why. The clearing house's equity class is 90.7% of all cleared options — single
+// names AND exchange-traded products — and ETP hedging is what moves it. Cboe publishes a
+// single-name-only equity ratio that drifts 22 points, in line with everything else, but Cboe
+// stopped publishing volumes in 2019, its ratio cannot be audited to a contract count, and it is
+// available only as rendered HTML. So the better measure cannot be sourced and the sourceable
+// measure is not good enough. V4 removes the component rather than publish one that pushes the
+// index the same way for a year at a time.
 //
 // See METHODOLOGY at the bottom for the full disclosure the UI renders.
 
@@ -242,9 +255,10 @@ export const COMPONENTS = Object.freeze([
     key: 'momentum',
     label: 'Market Momentum',
     direction: DIRECTION.HIGHER_IS_GREED,
-    source: 'Our own licensed daily bars for SPY (Tiingo EOD, stored in ticker_daily_candles).',
-    calculation: 'SPY close divided by its 125-session simple moving average, minus 1.',
-    meaning: 'How far the broad market sits above or below its own medium-term trend.',
+    source: 'Our own licensed daily bars for the broad U.S. equity market.',
+    calculation: 'Proprietary. The broad market measured against its own medium-term trend, then '
+      + 'ranked in the same trailing distribution every other component is ranked in.',
+    meaning: 'Measures the strength of the broad market relative to its recent trend.',
   },
   {
     key: 'volatility',
@@ -253,11 +267,12 @@ export const COMPONENTS = Object.freeze([
     // must never be read as implied volatility.
     label: 'Realized Volatility',
     direction: DIRECTION.HIGHER_IS_FEAR,
-    source: 'Our own licensed daily bars for SPY.',
-    calculation: 'Annualised standard deviation of the last 21 daily log returns of SPY '
-      + '(population standard deviation x sqrt(252)).',
-    meaning: 'REALIZED volatility, not implied. Catalyst Pit has no entitled source for the VIX '
-      + 'index, so this measures what the market actually did rather than what options imply.',
+    source: 'Our own licensed daily bars for the broad U.S. equity market.',
+    calculation: 'Proprietary. The dispersion of the market\'s own recent returns, annualised, '
+      + 'then ranked in the same trailing distribution every other component is ranked in.',
+    meaning: 'Measures how turbulent recent market price movement has been relative to its own '
+      + 'history. This is REALIZED volatility — what the market actually did — not implied '
+      + 'volatility and not the VIX, for which Catalyst Pit has no entitled source.',
   },
   {
     key: 'marketvol',
@@ -276,59 +291,32 @@ export const COMPONENTS = Object.freeze([
     calculation: 'Proprietary. The volatility market measured against its own recent trend, then '
       + 'ranked in the same trailing distribution every other component is ranked in. It is a '
       + 'relative measure by construction: no absolute price level is used as a volatility reading.',
-    meaning: 'Measures whether volatility stress is elevated or subdued relative to its recent '
-      + 'trend. This is NOT the VIX and is not implied volatility — Catalyst Pit has no entitled '
-      + 'source for the VIX index — and it is a different measurement from Realized Volatility, '
-      + 'which is what the equity market actually did.',
+    meaning: 'Measures current market stress relative to its own historical conditions. This is '
+      + 'NOT the VIX and is not implied volatility — Catalyst Pit has no entitled source for the '
+      + 'VIX index — and it is a different measurement from Realized Volatility, which is what '
+      + 'the equity market actually did.',
   },
   {
     key: 'breadth',
     label: 'Market Breadth',
     direction: DIRECTION.HIGHER_IS_GREED,
     source: 'Our own licensed daily bars for the eligible U.S. equity universe.',
-    calculation: 'Share of eligible tickers whose close is above their own 50-session simple '
-      + 'moving average, on that session.',
-    meaning: 'How broadly the advance is shared, rather than how far the index moved.',
+    calculation: 'Proprietary. The share of a stable panel of U.S. stocks trading above their own '
+      + 'recent trend, then ranked in the same trailing distribution every other component is '
+      + 'ranked in.',
+    meaning: 'Measures how broadly strength or weakness is distributed across U.S. stocks, rather '
+      + 'than how far the index itself moved.',
   },
   {
     key: 'strength',
     label: 'Price Strength',
     direction: DIRECTION.HIGHER_IS_GREED,
     source: 'Our own licensed daily bars for the eligible U.S. equity universe.',
-    calculation: 'Tickers making a new 252-session closing high minus those making a new '
-      + '252-session closing low, divided by the eligible count.',
-    meaning: 'Net new highs. Positive when leadership is expanding, negative when it is breaking.',
-  },
-  {
-    key: 'options',
-    label: 'Options Sentiment',
-    // ⚠️ HIGHER PUT ACTIVITY IS FEAR, and the inversion is declared here and applied once, in
-    // scoreComponent — the same mechanism the two volatility components use.
-    direction: DIRECTION.HIGHER_IS_FEAR,
-    // ── ⚠️ CONCEPTUAL, LIKE MARKET VOLATILITY AND CREDIT. THE RECIPE IS NOT PUBLISHED ────
-    //
-    // These three strings are served by /api/fear-greed and rendered verbatim by the methodology
-    // panel. The endpoint, the account scope, the product class, the ratio and the normalisation
-    // window are absent from them by design — they live in occ.mjs and series.mjs, which nothing
-    // public reads. Attribution to the clearing source is given because it is a credit to the
-    // source rather than a description of the method.
-    source: 'Official cleared equity-class options volume from the U.S. options clearing house, '
-      + 'stored per market session exactly as published.',
-    calculation: 'Proprietary. The balance of defensive against speculative equity-options activity '
-      + 'for the session, ranked in the same trailing distribution every other component is ranked '
-      + 'in. It reads cleared VOLUME only — never open interest, never a single symbol.',
-    // ⚠️ IT DOES NOT SAY "SINGLE-NAME", BECAUSE IT IS NOT. An earlier draft of this string claimed
-    // the component covered individual stocks rather than broad-market hedging. The clearing
-    // house's equity class is 91% of all options volume — single names AND exchange-traded
-    // products together — so that claim was false and the hedging flow it promised to exclude is
-    // in there. The wording describes the universe we actually read.
-    meaning: 'Measures whether equity-options activity is leaning more defensive or speculative '
-      + 'relative to its recent history. It covers the whole equity class — options on individual '
-      + 'stocks and on exchange-traded products — and excludes index options. Because exchange-'
-      + 'traded product options carry hedging as well as directional positioning, this is a '
-      + 'measure of overall options posture rather than of speculation alone. Clearing data is '
-      + 'published on a short delay, so the most recent sessions may not carry this component yet — '
-      + 'it is reported as unavailable rather than estimated.',
+    calculation: 'Proprietary. The net balance of stocks reaching new long-term highs against '
+      + 'those reaching new lows, then ranked in the same trailing distribution every other '
+      + 'component is ranked in.',
+    meaning: 'Measures the balance of stocks reaching strong versus weak price territory. '
+      + 'Positive when leadership is expanding, negative when it is breaking.',
   },
   {
     key: 'credit',
@@ -347,9 +335,10 @@ export const COMPONENTS = Object.freeze([
       + 'over a fixed recent window, ranked in the same trailing distribution every other '
       + 'component is ranked in. The government leg is deliberately short-duration so the measure '
       + 'reflects credit behaviour rather than interest-rate duration.',
-    meaning: 'Whether the bond market is paying up for credit risk or hiding in government paper. '
-      + 'This is a market-price risk-appetite measure and is NOT a direct measurement of '
-      + 'high-yield credit spreads, an option-adjusted spread, or a junk-bond yield spread.',
+    meaning: 'Measures whether credit markets are showing greater risk appetite or risk aversion — '
+      + 'whether the bond market is paying up for credit risk or hiding in government paper. This '
+      + 'is a market-price risk-appetite measure and is NOT a direct measurement of high-yield '
+      + 'credit spreads, an option-adjusted spread, or a junk-bond yield spread.',
   },
 ]);
 
@@ -368,38 +357,57 @@ export const METHODOLOGY = Object.freeze({
   //       The component was 44% driven by the Treasury leg and 2% by the credit leg, and printed
   //       GREED on 62% of the sessions where BOTH bond legs fell. It is now 89% credit-driven and
   //       does that on none of them. Same component, same orientation, same weight — a corrected
-  //       construction, not a new measure. V3 also adds Options Sentiment, a seventh component
-  //       reading official cleared equity-options volume. A version because the numbers move.
-  version: 'fear_greed_v3',
+  //       construction, not a new measure. V3 also added Options Sentiment, a seventh component
+  //       reading official cleared equity-options volume.
+  //   v4  Options Sentiment REMOVED. It measured real, auditable data but drifted 44 points of
+  //       yearly mean against 16-24 for every other component, so it was reporting a multi-year
+  //       shift in the options market's product mix as sentiment. Back to six. The raw
+  //       observations keep accruing in occ_options_volume; nothing about the other six changed.
+  version: 'fear_greed_v4',
   updateFrequency: 'Daily, after the U.S. equity close. Every component is derived from completed '
     + 'daily sessions, so the index is a daily measure and is never presented as intraday.',
-  normalization: `Each component is scored as its percentile rank within its own trailing `
-    + `${NORM_WINDOW}-session distribution (two years), using the mid-rank convention: `
-    + `strictly-below plus half the ties. 0 is the most fearful reading in that window, 50 the `
-    + `median, 100 the most greedy. Rank is used rather than a z-score or a fixed threshold so a `
-    + `single extreme session cannot distort the scale for years afterwards. The window is the same `
-    + `length for every published point — a component that cannot fill all ${MIN_WINDOW} sessions is `
-    + `refused rather than ranked against a shorter history, because the same percentile drawn from `
-    + `fewer observations does not mean the same thing.`,
-  composite: `The equal-weighted mean of every component that produced a score. Weights are equal `
-    + `because we have no defensible basis for preferring one measure; they are deliberately not `
-    + `fitted to historical returns, because this is a sentiment gauge and not a prediction model. `
-    + `A missing component is dropped from the average, never replaced with 50. Fewer than `
-    + `${MIN_COMPONENTS} components and the index reports itself unavailable.`,
+  // ⚠️ CONCEPTUAL, NOT REPRODUCIBLE. These two paragraphs are served by the API and rendered by
+  // the methodology panel. They used to interpolate NORM_WINDOW, MIN_WINDOW and MIN_COMPONENTS,
+  // which handed a reader the exact window length and the exact refusal threshold — most of the
+  // recipe, in prose. What a reader needs is the PRINCIPLE: each measure is judged against its own
+  // recent history, weights are equal and unfitted, and a missing measure is dropped rather than
+  // guessed. The constants stay in the code, where they are load-bearing and unpublished.
+  normalization: 'Each component is scored by where today sits inside that component\'s own recent '
+    + 'distribution, rather than against any fixed threshold. 0 is the most fearful reading in that '
+    + 'history, 50 the median, 100 the most greedy. Rank is used rather than an average or a fixed '
+    + 'cut-off so a single extreme session cannot distort the scale for years afterwards, and every '
+    + 'published point is ranked against a history of the same length — a component that cannot '
+    + 'fill it is refused rather than ranked against a shorter one, because the same percentile '
+    + 'drawn from fewer observations does not mean the same thing.',
+  composite: 'The equal-weighted mean of every component that produced a score. Weights are equal '
+    + 'because we have no defensible basis for preferring one measure; they are deliberately not '
+    + 'fitted to historical returns, because this is a sentiment gauge and not a prediction model. '
+    + 'A missing component is dropped from the average, never replaced with 50, and if too few '
+    + 'components are available the index reports itself unavailable rather than publishing a '
+    + 'number built on one or two measures.',
   excluded: [
     {
       name: 'Implied volatility (VIX)',
-      why: 'No entitled source. Tiingo returns 404 for the index, FMP 403 on its legacy endpoint, '
-        + 'Finnhub reports that a CFD-indices subscription is required, and Polygon returns '
-        + 'NOT_AUTHORIZED. Neither volatility component is a substitute for it and neither is '
+      why: 'No entitled source. Every market-data provider we hold a licence with either does not '
+        + 'carry the index or requires a separate subscription for it. Neither volatility '
+        + 'component is a substitute for it and neither is '
         + 'presented as one: Realized Volatility measures what the equity market actually did, and '
         + 'Market Volatility reads a traded volatility instrument against its own recent trend. '
         + 'Both are named for what they measure, and no VIX level is quoted, estimated or implied '
         + 'anywhere in this index.',
     },
     {
-      name: 'Put/call ratio',
-      why: 'Catalyst Pit holds no broad-market options data, and estimating it would be inventing it.',
+      // ⚠️ THE HONEST VERSION OF A COMPONENT WE BUILT AND THEN WITHDREW. The old text said we held
+      // no options data; we now hold official cleared volume and ingest it daily. What it fails is
+      // the measurement test, and saying so is a stronger disclosure than pretending it is absent.
+      name: 'Put/call ratio (options sentiment)',
+      why: 'Built, measured against several years of official cleared options volume, and withdrawn '
+        + 'rather than published. As a component it averaged far from neutral for a year at a time '
+        + 'because the options market\'s product mix has changed structurally faster than any '
+        + 'sensible recent-history comparison can absorb — so it reported that structural change as '
+        + 'sentiment. The measure that would avoid this covers a narrower slice of the options '
+        + 'market and is not published in a form we can verify to the contract, so it is not '
+        + 'sourceable for a daily index. The underlying observations continue to be collected.',
     },
     {
       name: 'Credit spreads (option-adjusted)',
@@ -411,10 +419,11 @@ export const METHODOLOGY = Object.freeze({
     {
       name: 'Safe-haven demand (equities vs Treasuries)',
       why: 'Measurable from our data, and excluded on measurement rather than for want of it. '
-        + 'Scored over 504 sessions, an SPY-versus-TLT component correlates 0.82 with Credit '
-        + 'Appetite — both are the same bonds-against-risk axis — so including both would weight '
-        + 'that axis twice while Momentum, Breadth and Price Strength carry one vote each. Its '
-        + 'correlation with Momentum is only 0.32, so the overlap is with credit, not with equities.',
+        + 'Scored over the same history, an equities-against-long-Treasuries component correlates '
+        + '0.82 with Credit Risk Appetite — both are the same bonds-against-risk axis — so '
+        + 'including both would weight that axis twice while Momentum, Breadth and Price Strength '
+        + 'carry one vote each. Its correlation with Momentum is far lower, so the overlap is with '
+        + 'credit, not with equities.',
     },
   ],
 });

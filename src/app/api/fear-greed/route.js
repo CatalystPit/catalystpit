@@ -36,17 +36,26 @@ export async function GET() {
     // Realized Volatility "Market Volatility". The scores stay exactly as computed; only the words
     // are re-read from COMPONENTS, which is the single place they are defined.
     const meta = new Map(COMPONENTS.map((m) => [m.key, m]));
-    const components = (payload.components || []).map((c) => {
-      const m = meta.get(c.key);
-      return m ? { ...c, label: m.label, meaning: m.meaning } : c;
-    });
+    // ⚠️ A COMPONENT THE CURRENT METHODOLOGY NO LONGER HAS MUST NOT BE SERVED. A stored payload
+    // from an older version can carry one; the registry is the definition of what the index is.
+    const components = (payload.components || [])
+      .filter((c) => meta.has(c.key))
+      .map((c) => ({ ...c, label: meta.get(c.key).label, meaning: meta.get(c.key).meaning }));
+
+    // ── ⚠️ WHAT THIS ROUTE DELIBERATELY DOES NOT PUBLISH ──────────────────────
+    //
+    // `normalizationWindow`, `minComponents` and the methodology version used to travel here. The
+    // window length and the refusal threshold are most of the recipe stated as integers, and the
+    // version identifier means nothing to a reader while telling anyone reproducing us exactly
+    // which revision they are looking at. All three remain in the code and in the store, where
+    // they are load-bearing; none of them is a fact a reader of the index needs.
+    const { version, normalizationWindow, ...publicPayload } = payload;
+    void version; void normalizationWindow; void MIN_COMPONENTS; void NORM_WINDOW;
 
     return Response.json({
-      ...payload,
+      ...publicPayload,
       components,
       source,
-      minComponents: MIN_COMPONENTS,
-      normalizationWindow: NORM_WINDOW,
       zones: ZONES,
       methodology: METHODOLOGY,
       componentMeta: COMPONENTS,

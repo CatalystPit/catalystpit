@@ -159,7 +159,10 @@ export default function FearGreedClient() {
                 {/* ⚠️ NOT A 50. An unavailable index says so; it does not render neutral. */}
                 <div style={{ fontSize: 12, color: C.muted, marginTop: 6, maxWidth: 420, margin: '6px auto 0' }}>
                   {data.reason === 'insufficient-components'
-                    ? `Fewer than ${data.minComponents} components could be calculated, so no score is published.`
+                    /* ⚠️ THE THRESHOLD ITSELF IS NOT PUBLISHED. It used to interpolate
+                       data.minComponents, which states the refusal rule as an integer. The reader
+                       needs to know the index refused and why, not the number it refused at. */
+                    ? 'Too few components could be calculated, so no score is published.'
                     : 'The index has not been calculated yet.'}
                 </div>
               </div>
