@@ -20,7 +20,10 @@ import {
   trailingWindow, byDate,
   MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR, VOL_MARKET_MA,
 } from '../src/lib/fear-greed/series.mjs';
-import { rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTION } from '../src/lib/fear-greed/compute.mjs';
+import {
+  rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTION,
+  validPanelSessions, MIN_PANEL_FRACTION, PANEL_REFERENCE_SESSIONS,
+} from '../src/lib/fear-greed/compute.mjs';
 import {
   angleFor, pointAt, segPath, labelLines, labelFontSize, labelPlacement, labelRotation,
   segMid, segArcLength, textWidth, SEGMENTS, SEGMENT_COLOR, SEGMENT_LABEL_COLOR, SCALE_MARKS,
@@ -295,6 +298,73 @@ sec('⚠️ THE SIXTH COMPONENT\'S RECIPE IS NOT PUBLISHED');
   check('⚠️ the two volatility components are distinct entries',
     COMPONENTS.filter((c) => /volatil/i.test(c.label)).length === 2
     && COMPONENT_KEYS.includes('volatility') && COMPONENT_KEYS.includes('marketvol'));
+}
+
+sec('⚠️ A DAY THE MARKET WAS SHUT IS NOT A SESSION');
+{
+  // THE DEFECT: 2026-02-16 was Presidents' Day. One bar exists for it in the candle store — CBL —
+  // and that was enough for the panel query to emit a "session" whose breadth, computed from a
+  // single ticker, came out at 0.0%: the most fearful value the measure can produce. It never
+  // published (two components is below the floor of three), but it sat in the trailing window
+  // every later session ranks against.
+  const day = (d, eligible, breadth = 0.6) => ({ date: d, eligible, breadth, strength: 0.02 });
+  const run = (n, eligible) => Array.from({ length: n }, (_, i) => day(`d${String(i).padStart(3, '0')}`, eligible));
+
+  const normal = run(40, 1000);
+  check('a steady panel is left entirely alone', validPanelSessions(normal).length === 40);
+
+  const withHoliday = [...run(20, 1000), day('d020', 1, 0), ...run(10, 1000).map((p, i) => day(`d${String(21 + i).padStart(3, '0')}`, 1000))];
+  const kept = validPanelSessions(withHoliday);
+  check('⚠️ one ticker against a thousand is not a session',
+    !kept.some((p) => p.date === 'd020'), kept.filter((p) => p.eligible < 10).map((p) => p.date).join(','));
+  check('…and every real session around it survives', kept.length === withHoliday.length - 1);
+
+  // ⚠️ A FRACTION, NOT A FLOOR. The panel legitimately held 191 names for months before a backfill
+  // took it to ~1,090; a hard minimum would have deleted that entire era.
+  const small = run(40, 191);
+  check('⚠️ a genuinely small but consistent panel is valid', validPanelSessions(small).length === 40);
+  const grew = [...run(20, 191), ...run(20, 1090).map((p, i) => day(`d${String(20 + i).padStart(3, '0')}`, 1090))];
+  check('…and a panel that grows is not punished for it', validPanelSessions(grew).length === 40);
+
+  // Reporting lag is not a broken tape.
+  const lag = [...run(20, 1096), day('d020', 1050)];
+  check('a 4% reporting shortfall is still a session',
+    validPanelSessions(lag).some((p) => p.date === 'd020'));
+  const half = [...run(20, 1000), day('d020', 499), day('d021', 501)];
+  const halfKept = validPanelSessions(half).map((p) => p.date);
+  check(`⚠️ the cut is ${MIN_PANEL_FRACTION} of the trailing median`,
+    !halfKept.includes('d020') && halfKept.includes('d021'), halfKept.slice(-3).join(','));
+
+  // ⚠️ TRAILING ONLY, AND REJECTS NEVER JOIN THE REFERENCE.
+  const collapse = [...run(20, 1000), ...run(15, 4).map((p, i) => day(`d${String(20 + i).padStart(3, '0')}`, 4))];
+  check('⚠️ a run of broken days cannot lower the bar until it qualifies',
+    validPanelSessions(collapse).length === 20, String(validPanelSessions(collapse).length));
+  const early = [day('d000', 900), day('d001', 3), day('d002', 900)];
+  check('with too little history to judge, a session is accepted rather than guessed at',
+    validPanelSessions(early).length === 3);
+  check('the reference window is trailing and bounded', PANEL_REFERENCE_SESSIONS === 21);
+
+  // The whole point: a rejected session leaves EVERY series, so it cannot pollute any window.
+  {
+    // ⚠️ THE FIXTURE HAS TO BE LONG ENOUGH FOR EVERY SERIES TO REACH THE BAD DATE. A first attempt
+    // used 30 bars: momentum needs 125 behind it, so its series was EMPTY and "the invalid session
+    // is absent from momentum" passed on a technicality. Removing the drop from momentum did not
+    // fail the suite — which is the whole failure mode this file exists to prevent. 200 sessions,
+    // with the broken day at index 150, puts the date inside every component's range.
+    const bars = (n) => Array.from({ length: n }, (_, i) => ({ date: `d${String(i).padStart(3, '0')}`, close: 100 + (i % 7) + i / 50 }));
+    const BAD = 'd150';
+    const panel = Array.from({ length: 200 }, (_, i) => day(`d${String(i).padStart(3, '0')}`, i === 150 ? 1 : 1000, i === 150 ? 0 : 0.6));
+    const s = rawSeries({ panel, spy: bars(200), volMarket: bars(200), credit: { risk: bars(200), safe: bars(200) } });
+    for (const k of ['breadth', 'strength', 'momentum', 'volatility', 'marketvol', 'credit']) {
+      // Each series must actually REACH the date, or the assertion proves nothing.
+      check(`${k} reaches the broken date, so the next assertion means something`,
+        s[k].some((p) => p.date === 'd151') || s[k].some((p) => p.date === 'd149'),
+        `${s[k].length} points, ${s[k][0]?.date}…${s[k].at(-1)?.date}`);
+      check(`⚠️ the invalid session is absent from ${k}`, !s[k].some((p) => p.date === BAD));
+    }
+    check('…and valid dates the panel never covered are untouched',
+      rawSeries({ panel: [], spy: bars(200), volMarket: bars(200), credit: {} }).momentum.length > 0);
+  }
 }
 
 sec('V2 VERSIONING AND THE COMPONENT COUNT');
