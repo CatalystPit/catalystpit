@@ -172,7 +172,13 @@ L('\n=== MARKET FACTS: MEASURED, NEVER FABRICATED ===');
   });
   ok('the move since the filing is stated with a number',
     nar.lines.some((l) => /-3\.1% in the session after it became public/.test(l)), nar.lines.join(' | '));
-  ok('…and the benchmark-relative move too', nar.lines.some((l) => /vs SPY/.test(l)));
+  // ⚠️ THE BENCHMARK-RELATIVE MOVE IS SUPPLIED AND MUST NOT BE PRINTED. `rel: -2.4` is in the
+  // reaction above, so a card that shows "vs SPY" would show it here. The section answers what THIS
+  // stock did; one market-wide benchmark appended to every ticker answers something else. The field
+  // itself is untouched — see the engine assertion below, which requires it to still gate
+  // `meaningful`.
+  ok('⚠️ …and the benchmark-relative move is NOT printed beside it',
+    !nar.lines.some((l) => /vs SPY|benchmark/i.test(l)), nar.lines.join(' | '));
   ok('"diverging" now explains itself',
     nar.explain === 'Price is moving against the filing', nar.explain);
   // ⚠️ AND A MOVE INSIDE THE DEAD ZONE SAYS SO, rather than being narrated as a verdict.

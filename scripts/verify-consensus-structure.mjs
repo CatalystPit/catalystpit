@@ -142,7 +142,22 @@ L('\n=== ⚠️ REACTION AND STRUCTURE ARE DIFFERENT QUESTIONS ===');
     !/last session/.test(mf) && !/5D \$\{/.test(mf) && !/pctFrom20dHigh\.toFixed/.test(mf),
     '"+1.4% last session", "5D +0.7%" and "-39.7% below the 20-day high" were structure in name only');
   ok('…the event reaction is retained unchanged',
-    /in the session after it became public/.test(mf) && /vs SPY/.test(mf));
+    /in the session after it became public/.test(mf) && /over 5 sessions since/.test(mf));
+  // ⚠️ THE BENCHMARK COMPARISON LEFT THE CARD, NOT THE ENGINE, AND THIS PAIR IS WHAT KEEPS THOSE
+  // TWO FACTS APART. `mf` here has already had its comments stripped, so the explanation sitting
+  // above the line in market-facts.js cannot satisfy the first assertion — a mistake this session
+  // has made four times, each time passing a test against prose rather than code.
+  ok('⚠️ no benchmark comparison is printed in the reaction readout',
+    !/vs SPY|vs \$\{[^}]*benchmark/i.test(mf), 'the section states what THIS stock did');
+  {
+    const em = (await read('../src/lib/consensus/evidence-model.mjs'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    ok('⚠️ …but the relative leg still gates `meaningful` in the engine',
+      /clearsRel\s*=\s*rel === null \? false : Math\.abs\(rel\) >= floorPct/.test(em)
+      && /meaningful\s*=\s*clearsAbs && clearsRel/.test(em));
+    ok('…and it is still what R is scaled on', /const basis = rel === null \? abs : rel/.test(em));
+    ok('…and it is still carried on the reaction object', /rel: null/.test(em) && /\brel\b/.test(em));
+  }
   ok('…including the meaningful-response threshold', /threshold for a meaningful response/.test(mf));
   // loadBars now takes an optional preloaded context (the board bulk-loads candles once per chunk
   // instead of once per ticker). The property asserted is unchanged and is if anything stronger:

@@ -136,8 +136,19 @@ export function marketNarrative({ reaction, levels, verdict, join, driverLabel =
   const measured = Boolean(reaction && Number.isFinite(reaction.abs));
   if (measured) {
     const sign = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
-    lines.push(`${sign(reaction.abs)} in the session after it became public`
-      + (Number.isFinite(reaction.rel) ? ` · ${sign(reaction.rel)} vs SPY` : ''));
+    // ⚠️ THE SPY-RELATIVE LEG IS COMPUTED, STILL BINDING, AND NO LONGER SHOWN.
+    //
+    // `reaction.rel` is untouched: evidence-model.mjs still requires a move to clear the floor on
+    // BOTH the absolute and the relative leg before it is called meaningful, and the field remains
+    // on the reaction object for research and for a benchmark choice made later. What changed is
+    // that the card no longer prints it beside the stock's own move.
+    //
+    // The question this section answers is "how did THIS stock react once the evidence was
+    // public". A single market-wide benchmark appended to every ticker's primary readout answers a
+    // different question, and answers it badly for the ones SPY does not represent. Removing the
+    // text changes no number, no threshold and no classification — the relative move goes on
+    // deciding `meaningful`, it just stops being presented as part of the reaction itself.
+    lines.push(`${sign(reaction.abs)} in the session after it became public`);
     if (Number.isFinite(reaction.five)) lines.push(`${sign(reaction.five)} over 5 sessions since`);
     if (!reaction.meaningful) {
       lines.push(`Below the ${reaction.floorPct.toFixed(1)}% threshold for a meaningful response`);
