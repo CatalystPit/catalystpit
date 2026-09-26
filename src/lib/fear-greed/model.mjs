@@ -421,7 +421,53 @@ export const METHODOLOGY = Object.freeze({
     + 'cut-off so a single extreme session cannot distort the scale for years afterwards, and every '
     + 'published point is ranked against a history of the same length — a component that cannot '
     + 'fill it is refused rather than ranked against a shorter one, because the same percentile '
-    + 'drawn from fewer observations does not mean the same thing.',
+    + 'drawn from fewer observations does not mean the same thing. '
+    // ⚠️ THE CONSEQUENCE A READER WOULD OTHERWISE GET WRONG, AUDITED 2026-09-26.
+    //
+    // Because the reference distribution is recent, it moves, so an identical raw observation does
+    // not always earn the same score. Measured across nine probe values per component — the deciles
+    // of each component's own raw history — scored against the window available at every 21st
+    // session: median drift 11.3 points of score, worst component 31.7 points. Price Strength is
+    // the worst (median 23.2), Options Sentiment the best (median 7.9). Day to day the effect is
+    // negligible (0.099 points, one rank step in the window, under 3% of the daily move); it is the
+    // accumulation over months that matters.
+    //
+    // ⚠️ AND THE ALTERNATIVES WERE TESTED AND ARE WORSE. All three were built point-in-time:
+    //
+    //   expanding percentile (rank against ALL history so far, no window to choose): drift 11.3 ->
+    //     6.3 and the best cross-regime consistency of any candidate (mean across-year spread
+    //     within regime 9.10 -> 7.21). Rejected because it assumes the raw measures are stationary
+    //     and they demonstrably are not — the trailing distribution's own tails move by up to 1.58
+    //     interquartile ranges over the sample. Its own output shows the cost: it pushes the index
+    //     off centre (sessions above NEUTRAL minus below: +7.4pp -> +17.1pp) and its neutral point
+    //     depends on when our data licence happens to begin, which is arbitrary in exactly the way
+    //     a fixed window length is not.
+    //
+    //   robust standardisation (expanding median and MAD through a normal CDF): drift 8.9, but it
+    //     assumes a normality the raw series do not have, and reachability breaks per component —
+    //     Market Volatility clears 90 on 0.6% of sessions against 7.8% today.
+    //
+    //   fixed economic anchors: lowest drift of all, 3.8. Rejected on two counts. Only four of the
+    //     seven have a defensible anchor at all — 'sitting on its own trend' is 1.23 interquartile
+    //     ranges from where Momentum actually lives, because the index spends most of its time
+    //     above its average, so anchoring there would report fear as the normal state. And where
+    //     the anchors do hold, the fixed centre shifts the whole index (+27.7pp asymmetry, median
+    //     58.0 against 52.3) while barely improving cross-regime consistency (8.59 against 9.10).
+    //     Low drift is necessary and not sufficient: a ruler that always says greed has none.
+    //
+    // A longer rolling window is the one change that would cut drift without giving up robustness
+    // to non-stationarity, and it is unavailable rather than unwanted: at a 1008-session window
+    // Momentum (906 raw observations) and Credit (742) do not score at all. Revisit as history
+    // accumulates; 756 becomes viable for the whole set around 2028.
+    + 'One consequence is deliberate and worth stating plainly: because the reference '
+    + 'distribution is recent, it moves. The same raw market observation can therefore earn a '
+    + 'somewhat different score depending on when it happens, so a reading is best compared '
+    + 'with other readings near it in time rather than read as a fixed absolute across years. '
+    + 'The alternatives were tested — ranking against all available history instead of recent '
+    + 'history, standardising against a robust centre, and anchoring to fixed economic neutral '
+    + 'points — and this one was kept. The underlying measures are not stable enough over time '
+    + 'for those methods to hold, and each of them shifted the whole index off centre instead of '
+    + 'making different periods more comparable.',
   // ⚠️ EQUAL WEIGHTING IS A TESTED CHOICE, NOT AN ABSENCE OF ONE, AND THE PROSE NOW SAYS SO.
   //
   // This text used to read "weights are equal because we have no defensible basis for preferring

@@ -647,6 +647,31 @@ check('⚠️ the aggregation disclosure leaks no correlation numbers',
   && !/eigenvalue|participation ratio|w'Rw|effective independent/i.test(METHODOLOGY.composite));
 check('…and names no component pair as the overlapping one',
   !/breadth/i.test(METHODOLOGY.composite) && !/price strength/i.test(METHODOLOGY.composite));
+
+// ── NORMALISATION DISCLOSURE ─────────────────────────────────────────────────
+//
+// ⚠️ THE ONE CONSEQUENCE A READER WOULD OTHERWISE GET WRONG. The reference distribution is recent,
+// so it moves, and an identical raw observation earns a different score depending on when it
+// happens — measured at 11.3 points of median drift and 31.7 at worst. A reader comparing a 2024
+// reading with a 2026 one needs to be told that, and the text used to stop short of saying it.
+check('⚠️ the normalisation text says the reference distribution moves',
+  /reference\s+distribution is recent, it moves/i.test(METHODOLOGY.normalization));
+check('⚠️ …and that an identical observation can therefore score differently',
+  /same raw market observation can therefore earn a/i.test(METHODOLOGY.normalization)
+  && /depending on when it happens/i.test(METHODOLOGY.normalization));
+check('⚠️ …and tells the reader how to read a score because of it',
+  /compared with other readings near it in time/i.test(METHODOLOGY.normalization));
+check('⚠️ …and states the alternatives were tested rather than overlooked',
+  /alternatives were tested/i.test(METHODOLOGY.normalization)
+  && /not stable enough over time/i.test(METHODOLOGY.normalization));
+// ⚠️ AND IT STAYS A DISCLOSURE, NOT A RECIPE. The drift measurements, the window length and the
+// per-component figures belong in the source comments. 0, 50 and 100 are the published scale and
+// are the only numbers allowed through.
+check('⚠️ the normalisation text leaks no measurement or window length',
+  !/[0-9]/.test(METHODOLOGY.normalization.replace(/\b(0|50|100)\b/g, ''))
+  && !/interquartile|stationar|percentile rank|MAD|normal CDF/i.test(METHODOLOGY.normalization));
+check('…nor names a component while discussing the ruler',
+  !/momentum|price strength|breadth|credit risk|realized volatility/i.test(METHODOLOGY.normalization));
 check('…and the safe-haven exclusion still states its measured overlap',
   /0.82/.test(METHODOLOGY.excluded.find((x) => /safe-haven/i.test(x.name)).why));
 check('⚠️ excluded components are disclosed with reasons',
