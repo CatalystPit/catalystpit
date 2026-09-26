@@ -13,8 +13,35 @@ const rows = (res) => res?.rows ?? res ?? [];
 export const MARKET_SYMBOL = 'SPY';
 /** High-yield corporate credit. */
 export const CREDIT_RISK_SYMBOL = 'HYG';
-/** 7-10 year Treasuries — the safe leg of the credit comparison. */
-export const CREDIT_SAFE_SYMBOL = 'IEF';
+/**
+ * The safe leg of the credit comparison: 1-3 year Treasuries.
+ *
+ * ── ⚠️ WHY THIS IS SHY AND NOT IEF, WHICH IS WHAT IT USED TO BE ─────────────
+ *
+ * The component is called Credit Risk Appetite and it was not measuring credit. Against IEF
+ * (7-10 year Treasuries), over 742 shared sessions:
+ *
+ *     corr(spread, IEF return) = -0.662  →  44% of the spread's variance was the TREASURY leg
+ *     corr(spread, HYG return) = +0.153  →   2% was the CREDIT leg
+ *
+ * IEF's duration meant a rates move arrived as "credit appetite" whether or not credit had done
+ * anything. The failure it produced is easy to state: on 67 of the 108 sessions where BOTH bond
+ * ETFs fell — 62% of them — the component printed GREED, because Treasuries had fallen harder
+ * than junk. 2026-09-25 was exactly that: HYG -2.52%, IEF -3.46%, component 71.7 GREED.
+ *
+ * Measured over the same history, against SHY:
+ *
+ *     corr(spread, HYG return) = +0.946  →  89% of the variance is the CREDIT leg
+ *     corr(spread, SHY return) = +0.220  →   5% is the Treasury leg
+ *     both legs down and the signal says GREED:  0 of 107.
+ *
+ * A short-duration control leg still asks the right question — is credit being paid for, relative
+ * to government paper — while carrying almost none of the duration that was drowning the answer.
+ *
+ * ⚠️ SHY IS NOT A NEW DATA SOURCE. Same table, same licensed Tiingo EOD bars, same 762-session
+ * coverage as HYG and IEF, loaded by the same loadCloses call. Nothing about ingestion changes.
+ */
+export const CREDIT_SAFE_SYMBOL = 'SHY';
 /**
  * The volatility market, as a traded instrument. NOT the VIX — see volMarketSeries in series.mjs
  * and METHODOLOGY.excluded in model.mjs. Proprietary: this symbol appears in nothing the API

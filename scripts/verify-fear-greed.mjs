@@ -367,9 +367,47 @@ sec('⚠️ A DAY THE MARKET WAS SHUT IS NOT A SESSION');
   }
 }
 
-sec('V2 VERSIONING AND THE COMPONENT COUNT');
+sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
 {
-  check('⚠️ the methodology version is v2', METHODOLOGY.version === 'fear_greed_v2');
+  // THE DEFECT V3 CORRECTS: against a 7-10 year Treasury leg the component was 44% driven by the
+  // TREASURY return and 2% by the credit return, and printed GREED on 62% of the sessions where
+  // both bond legs fell — because government paper had fallen harder than junk. The concept is
+  // unchanged; the control leg is.
+  // ⚠️ READ AS TEXT, NOT IMPORTED. data.mjs pulls in the database client, and this suite is
+  // deliberately runnable without one — importing it for two constants would make every assertion
+  // in this file depend on a connection.
+  const dataSrc = readFileSync(new URL('../src/lib/fear-greed/data.mjs', import.meta.url), 'utf8');
+  const constOf = (n) => (dataSrc.match(new RegExp(`export const ${n} = '([A-Z]+)'`)) || [])[1];
+  check('⚠️ the safe leg is short-duration government paper',
+    constOf('CREDIT_SAFE_SYMBOL') === 'SHY', String(constOf('CREDIT_SAFE_SYMBOL')));
+  check('...and the risk leg is unchanged', constOf('CREDIT_RISK_SYMBOL') === 'HYG');
+  check('...loaded through the same licensed daily bars as everything else',
+    /loadCloses\(dbc, sqlc, CREDIT_SAFE_SYMBOL/.test(
+      readFileSync(new URL('../src/lib/fear-greed/build.mjs', import.meta.url), 'utf8'))
+    && /from ticker_daily_candles/.test(dataSrc));
+  check('the direction is unchanged — higher is greed',
+    COMPONENT_DIRECTION.credit === DIRECTION.HIGHER_IS_GREED);
+  check('the lookback is unchanged', CREDIT_LOOKBACK === 20);
+  // ⚠️ THE ARITHMETIC IS THE SAME FUNCTION. Only which series is passed as the safe leg changed.
+  {
+    const bars = (n, f) => Array.from({ length: n }, (_, i) => ({ date: `d${i}`, close: f(i) }));
+    const risk = bars(CREDIT_LOOKBACK + 2, (i) => 100 + i);
+    const flat = bars(CREDIT_LOOKBACK + 2, () => 100);
+    check('credit rises when the risk leg outperforms the control leg',
+      relativeReturnSeries(risk, flat).at(-1).value > 0);
+    // The failure mode by name: both legs down, control down harder, and the answer must NOT be
+    // the risk leg looking good — with a short-duration leg the control simply cannot fall that far.
+    const bothDown = relativeReturnSeries(
+      bars(CREDIT_LOOKBACK + 2, (i) => 100 - i * 0.1),
+      bars(CREDIT_LOOKBACK + 2, (i) => 100 - i * 0.5)).at(-1).value;
+    check('the construction still reports the RELATIVE outcome, whatever the levels did',
+      bothDown > 0);
+  }
+}
+
+sec('VERSIONING AND THE COMPONENT COUNT');
+{
+  check('⚠️ the methodology version is v3', METHODOLOGY.version === 'fear_greed_v3');
   check('the registry holds six components', COMPONENT_KEYS.length === 6);
   check('every key is unique', new Set(COMPONENT_KEYS).size === COMPONENT_KEYS.length);
   // ⚠️ THE FLOOR IS DELIBERATELY UNCHANGED. Three of six is half rather than a majority, and the
@@ -491,10 +529,22 @@ check('⚠️ the volatility component is labelled realized, never implied',
   check('⚠️ the credit component is NAMED Credit Risk Appetite', cred.label === 'Credit Risk Appetite');
   check('⚠️ and it states outright that it is NOT a credit-spread measurement',
     /not a direct measurement/i.test(cred.meaning) && /spread/i.test(cred.meaning));
-  check('...naming the two instruments and the window it compares them over',
-    /HYG/.test(cred.meaning) && /IEF/.test(cred.meaning) && /20-session/.test(cred.meaning));
-  check('...and describing it as relative PRICE performance',
-    /relative price performance/i.test(cred.meaning));
+  // ⚠️ THE INSTRUMENTS ARE NO LONGER NAMED PUBLICLY. This assertion used to REQUIRE "HYG" and
+  // "IEF" in the public text. V3 makes the credit disclosure conceptual, like Market Volatility's,
+  // so the requirement inverts: the recipe must be absent while the honest caveat stays.
+  {
+    const publicText = [cred.label, cred.source, cred.calculation, cred.meaning].join(' ');
+    check('⚠️ the credit instruments are never named in public text',
+      !/\bHYG\b|\bIEF\b|\bSHY\b|\bIEI\b|\bJNK\b|\bLQD\b/.test(publicText), publicText.slice(0, 120));
+    check('...nor the lookback', !/20-session|20 session/.test(publicText));
+    check('...and describing it as relative PRICE performance',
+      /relative price performance/i.test(cred.calculation) || /price/i.test(cred.meaning));
+    check('⚠️ …while still saying the control leg is short-duration, which is the whole fix',
+      /short-duration/i.test(cred.calculation));
+    const served = JSON.stringify({ methodology: METHODOLOGY, componentMeta: COMPONENTS });
+    check('⚠️ no credit instrument appears anywhere in what the API serves',
+      !/\bHYG\b|\bIEF\b|\bSHY\b/.test(served));
+  }
   check('⚠️ no component label claims to be an option-adjusted spread',
     COMPONENTS.every((x) => !/option-adjusted|yield spread/i.test(x.label)));
   check('the excluded note keeps credit spreads separate from this component',
@@ -502,15 +552,17 @@ check('⚠️ the volatility component is labelled realized, never implied',
 }
 check('⚠️ the absence of a VIX source is stated outright',
   METHODOLOGY.excluded.some((x) => /vix/i.test(x.name) && /entitled|404|authoriz/i.test(x.why)));
-// ⚠️ THE POINT IS THAT THE ETF BASIS IS VISIBLE, not that any particular adjective appears. This
-// used to grep the credit description for "deliberate"; the wording was rewritten to say plainly
-// what the component is and is not, which is a stronger disclosure and dropped that word. Assert
-// the disclosure itself: a reader is told which two instruments produce the number.
-check('⚠️ the ETF basis for credit is disclosed, in both the source and the calculation',
-  ['HYG', 'IEF'].every((s) => {
+// ⚠️ THIS ASSERTION USED TO REQUIRE "HYG" AND "IEF" IN THE PUBLIC TEXT, and V3 reverses it: the
+// credit disclosure is now conceptual, like Market Volatility's. What must survive is the part a
+// reader could otherwise get wrong — that the number comes from traded prices and is not a yield
+// spread. The instruments themselves are tested for ABSENCE in the naming section above.
+check('⚠️ the credit disclosure still says what kind of measure it is',
+  (() => {
     const c = COMPONENTS.find((x) => x.key === 'credit');
-    return c.source.includes(s) && c.calculation.includes(s);
-  }));
+    return /credit/i.test(c.source) && /government/i.test(c.source)
+      && /price performance/i.test(c.calculation)
+      && /not a direct measurement/i.test(c.meaning);
+  })());
 check('⚠️ the product never invokes CNN',
   !/cnn/i.test(JSON.stringify(METHODOLOGY) + JSON.stringify(COMPONENTS)));
 check('the index is named Catalyst Pit Fear & Greed', METHODOLOGY.name === 'Catalyst Pit Fear & Greed');
@@ -910,7 +962,7 @@ sec('⚠️ THE VERSION STAMP IS NOT PART OF THE PRODUCT');
   check('the methodology panel itself is untouched',
     page.includes('WHAT WE DELIBERATELY DO NOT INCLUDE') && page.includes('<P label="Normalisation"'));
   check('⚠️ the version still exists where it is operationally needed',
-    METHODOLOGY.version === 'fear_greed_v2');
+    METHODOLOGY.version === 'fear_greed_v3');
   check('⚠️ it still keys the stored payload and the daily rows',
     store.includes('METHODOLOGY.version') && store.includes('PAYLOAD_KEY'));
   check('and the API still carries it for callers that pin to it',

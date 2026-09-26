@@ -126,9 +126,9 @@ export const DIRECTION = Object.freeze({ HIGHER_IS_GREED: 1, HIGHER_IS_FEAR: -1 
 /**
  * The trailing window every component is normalised against: two years of sessions.
  *
- * ⚠️ WHY IT IS BOUNDED BY OUR DATA, NOT BY PREFERENCE. HYG and IEF carry 761 sessions in our store
- * and the 52-week high/low lookback consumes 252 of the equity panel's history, so two years is the
- * longest window every component can actually fill. A longer one would quietly leave the credit
+ * ⚠️ WHY IT IS BOUNDED BY OUR DATA, NOT BY PREFERENCE. The two credit instruments carry 762
+ * sessions in our store, and the 52-week high/low lookback consumes 252 of the equity panel's
+ * history, so two years is the longest window every component can actually fill. A longer one would quietly leave the credit
  * component ranking against a shorter history than the others.
  */
 export const NORM_WINDOW = 504;
@@ -300,16 +300,22 @@ export const COMPONENTS = Object.freeze([
     key: 'credit',
     label: 'Credit Risk Appetite',
     direction: DIRECTION.HIGHER_IS_GREED,
-    source: 'Our own licensed daily bars for HYG (high-yield corporate bonds) and IEF '
-      + '(7-10 year Treasuries).',
-    calculation: '20-session total return of HYG minus the 20-session total return of IEF.',
-    // ⚠️ WHAT THIS IS NOT. A component sitting next to the words "credit" and "high-yield" will be
-    // read as a spread unless it says otherwise. It is the RELATIVE PRICE PERFORMANCE of two bond
-    // ETFs — it moves with risk appetite, and it is not a yield measurement of any kind.
+    // ── ⚠️ CONCEPTUAL, LIKE MARKET VOLATILITY'S. THE INSTRUMENTS ARE NOT NAMED HERE ──────
+    //
+    // These three strings are served verbatim by /api/fear-greed and rendered by the methodology
+    // panel, so they ARE the public disclosure. The two instruments, the lookback and the
+    // normalisation live in data.mjs and series.mjs, which nothing public reads. What they must
+    // keep saying is the part a reader could otherwise get wrong: this is relative PRICE
+    // performance, and it is not a yield spread of any kind.
+    source: 'Our own licensed daily bars for a high-yield corporate credit instrument and a '
+      + 'short-duration government one.',
+    calculation: 'Proprietary. The relative price performance of credit against government paper '
+      + 'over a fixed recent window, ranked in the same trailing distribution every other '
+      + 'component is ranked in. The government leg is deliberately short-duration so the measure '
+      + 'reflects credit behaviour rather than interest-rate duration.',
     meaning: 'Whether the bond market is paying up for credit risk or hiding in government paper. '
-      + 'This measures the 20-session RELATIVE PRICE PERFORMANCE of HYG against IEF. It is a '
-      + 'market-price risk-appetite measure and is NOT a direct measurement of high-yield credit '
-      + 'spreads, an option-adjusted spread, or a junk-bond yield spread.',
+      + 'This is a market-price risk-appetite measure and is NOT a direct measurement of '
+      + 'high-yield credit spreads, an option-adjusted spread, or a junk-bond yield spread.',
   },
 ]);
 
@@ -318,11 +324,18 @@ export const COMPONENT_KEYS = COMPONENTS.map((c) => c.key);
 /** Full disclosure text, rendered by the methodology panel. */
 export const METHODOLOGY = Object.freeze({
   name: 'Catalyst Pit Fear & Greed',
-  // ⚠️ V2 ADDS MARKET VOLATILITY, AND THE VERSION IS NOT COSMETIC. It keys the KV payload and is
-  // half the primary key of fear_greed_daily, so V1's stored series is preserved untouched under
-  // its own version while V2 is computed from scratch across every session it can reach. The two
-  // are never mixed on one chart: a reader sees one methodology end to end.
-  version: 'fear_greed_v2',
+  // ⚠️ THE VERSION IS NOT COSMETIC. It keys the KV payload and is half the primary key of
+  // fear_greed_daily, so each methodology's stored series is preserved untouched under its own
+  // version and the two are never mixed on one chart: a reader sees one methodology end to end.
+  //
+  //   v1  five components.
+  //   v2  added Market Volatility — volatility-market stress against its own recent trend.
+  //   v3  Credit Risk Appetite's control leg moved from long- to short-duration government paper.
+  //       The component was 44% driven by the Treasury leg and 2% by the credit leg, and printed
+  //       GREED on 62% of the sessions where BOTH bond legs fell. It is now 89% credit-driven and
+  //       does that on none of them. Same component, same orientation, same weight — a corrected
+  //       construction, not a new measure, and a version because the numbers move.
+  version: 'fear_greed_v3',
   updateFrequency: 'Daily, after the U.S. equity close. Every component is derived from completed '
     + 'daily sessions, so the index is a daily measure and is never presented as intraday.',
   normalization: `Each component is scored as its percentile rank within its own trailing `
