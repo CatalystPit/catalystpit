@@ -88,7 +88,12 @@ async function buildCongress() {
       and (${congressTrades.transactionDate} is null
            or ${congressTrades.transactionDate} <= ${congressTrades.disclosureDate})`)
     .orderBy(sql`${congressTrades.disclosureDate} desc nulls last`, desc(congressTrades.id))
-    .limit(3);
+    // ⚠️ THIS LIMIT IS THE HOMEPAGE'S ROW COUNT, NOT THE FETCH IN CatalystPit.jsx. When a snapshot
+    // exists the component reads snap.congress and never calls /api/politicians at all, so the
+    // table showed three rows no matter what the client asked for. Eight, for six displayed rows
+    // plus margin: isRenderableTicker still runs on the way to the table and can drop a symbol
+    // this query's `ticker is not null` accepted. Order and date semantics above are unchanged.
+    .limit(8);
 }
 
 // NEVER WHITE: if there's no enriched news, synthesize headlines from real filings.
