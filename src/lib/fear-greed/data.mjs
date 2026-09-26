@@ -151,3 +151,25 @@ export async function loadCloses(dbc = db, sqlc = sql, symbol, { sinceDays = 150
 
 /** How many sessions of price history each component needs behind its first reported value. */
 export const WARMUP_DAYS = 1500;
+
+/**
+ * ⚠️ THE MARKET SERIES WAS SELF-LIMITED, AND FOR NO REASON.
+ *
+ * Momentum and Realized Volatility both read SPY. The table holds 8,472 SPY sessions back to
+ * 1993-01-29, but the default reach above fetched only 1,030 of them, so Momentum scored 403
+ * sessions and Realized Volatility 506 — out of a possible 7,845 and 7,948. That was a query
+ * limit masquerading as a data limit.
+ *
+ * ⚠️ IT CHANGES NO CURRENT SCORE, AND THAT IS THE POINT. Every session still ranks against the
+ * 504 observations ENDING at it, so a longer reach cannot touch a reading that already had a
+ * full window. What it changes is coverage at the FRONT of the record: sessions where these two
+ * components were reported absent purely because the fetch had not reached far enough back now
+ * carry them, and the composite for those sessions is built from more components.
+ *
+ * ⚠️ AND IT DOES NOT TOUCH THE BREADTH PANEL, deliberately. See PANEL_MIN_SESSIONS: the eligible
+ * universe is 1-8 names before 2019 and 191 as recently as 2024-09-11, so reaching further back
+ * there would rank a thousand-name breadth reading against a handful of large caps and call the
+ * difference sentiment. SPY is one instrument with one continuous history and has no such
+ * problem.
+ */
+export const MARKET_WARMUP_DAYS = 12500;
