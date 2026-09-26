@@ -25,7 +25,10 @@ export async function GET() {
       return Response.json({
         available: false,
         reason: 'not-yet-computed',
-        methodology: METHODOLOGY,
+        // ⚠️ THE SAME STRIPPED METHODOLOGY AS THE SUCCESS PATH. The unavailable branch served
+        // the raw object, version and all, so the identifier leaked from the one response a
+        // reader sees when something is wrong.
+        methodology: (({ version, ...rest }) => rest)(METHODOLOGY),
         zones: ZONES,
       }, { status: 200, headers: { 'cache-control': 'public, s-maxage=60' } });
     }
@@ -38,26 +41,40 @@ export async function GET() {
     const meta = new Map(COMPONENTS.map((m) => [m.key, m]));
     // ⚠️ A COMPONENT THE CURRENT METHODOLOGY NO LONGER HAS MUST NOT BE SERVED. A stored payload
     // from an older version can carry one; the registry is the definition of what the index is.
+    //
+    // ⚠️ AND `samples` IS THE WINDOW LENGTH WEARING A DIFFERENT NAME. Every component carried
+    // `samples: 504` — the normalisation window, published per component, which is exactly what
+    // stripping `normalizationWindow` was meant to prevent. The count of observations behind a
+    // score is not a fact a reader acts on; it is the recipe.
     const components = (payload.components || [])
       .filter((c) => meta.has(c.key))
-      .map((c) => ({ ...c, label: meta.get(c.key).label, meaning: meta.get(c.key).meaning }));
+      .map(({ samples, ...c }) => {
+        void samples;
+        return { ...c, label: meta.get(c.key).label, meaning: meta.get(c.key).meaning };
+      });
 
     // ── ⚠️ WHAT THIS ROUTE DELIBERATELY DOES NOT PUBLISH ──────────────────────
     //
-    // `normalizationWindow`, `minComponents` and the methodology version used to travel here. The
-    // window length and the refusal threshold are most of the recipe stated as integers, and the
-    // version identifier means nothing to a reader while telling anyone reproducing us exactly
-    // which revision they are looking at. All three remain in the code and in the store, where
-    // they are load-bearing; none of them is a fact a reader of the index needs.
-    const { version, normalizationWindow, ...publicPayload } = payload;
-    void version; void normalizationWindow; void MIN_COMPONENTS; void NORM_WINDOW;
+    // The window length and the refusal threshold are most of the recipe stated as integers, and
+    // the version identifier means nothing to a reader while telling anyone reproducing us exactly
+    // which revision they are looking at. They remain in the code and in the store, where they are
+    // load-bearing; none of them is a fact a reader of the index needs.
+    //
+    // ⚠️ INCLUDING THE ONE INSIDE METHODOLOGY. The version travels as a FIELD on the methodology
+    // object as well as on the payload, so removing it from one and serving the other put it
+    // straight back. Caught against the live response, not the source.
+    const { version, normalizationWindow, minComponents, ...publicPayload } = payload;
+    void version; void normalizationWindow; void minComponents;
+    void MIN_COMPONENTS; void NORM_WINDOW;
+    const { version: methodologyVersion, ...publicMethodology } = METHODOLOGY;
+    void methodologyVersion;
 
     return Response.json({
       ...publicPayload,
       components,
       source,
       zones: ZONES,
-      methodology: METHODOLOGY,
+      methodology: publicMethodology,
       componentMeta: COMPONENTS,
     }, {
       // Daily data. A five-minute edge cache is generous and keeps the origin idle.

@@ -1166,8 +1166,21 @@ sec('⚠️ THE PUBLIC SURFACE DOES NOT CARRY THE RECIPE');
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   check('⚠️ the API route does not publish normalizationWindow or minComponents',
     !/normalizationWindow:/.test(route) && !/minComponents:/.test(route));
-  check('…and strips the version from the payload it serves',
-    /const \{ version, normalizationWindow, \.\.\.publicPayload \}/.test(route));
+  // ── ⚠️ THREE LEAKS HID IN PAYLOAD FIELDS, NOT IN PROSE ──────────────────
+  //
+  // The section above greps the methodology TEXT and passed while the live response still carried
+  // all three: every component had `samples: 504` — the normalisation window under another name —
+  // the payload had `minComponents`, and the version travelled as a FIELD ON METHODOLOGY as well
+  // as on the payload, so stripping it from one served it from the other. Only a check against the
+  // real response found them. These pin the SHAPE the route builds, which is where they lived.
+  check('…and strips the version and the floor from the payload it serves',
+    /const \{ version, normalizationWindow, minComponents, \.\.\.publicPayload \}/.test(route));
+  check('⚠️ …and the version inside METHODOLOGY itself, not just the payload',
+    /version: methodologyVersion, \.\.\.publicMethodology \} = METHODOLOGY/.test(route));
+  check('⚠️ …on the unavailable branch too, which is a response readers do see',
+    /methodology: \(\(\{ version, \.\.\.rest \}\) => rest\)\(METHODOLOGY\)/.test(route));
+  check('⚠️ …and per-component sample counts, which are the window under another name',
+    /\.map\(\(\{ samples, \.\.\.c \}\)/.test(route));
   check('…and refuses to serve a component the registry no longer has',
     /filter\(\(c\) => meta\.has\(c\.key\)\)/.test(route));
 }
