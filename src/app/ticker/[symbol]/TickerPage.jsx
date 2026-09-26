@@ -230,7 +230,7 @@ function Hero({ data, earnings }) {
         </div>
       </div>
 
-      {/* Price chart — Lightweight Charts on our own licensed data (Tiingo daily, Polygon intraday).
+      {/* Price chart — Lightweight Charts on our own licensed data (Tiingo daily and intraday).
           The futures blocks further down still use the TradingView widget on purpose: they address
           TradingView symbols and our data covers neither futures nor their symbology. */}
       <TickerPriceChart symbol={data.symbol} />

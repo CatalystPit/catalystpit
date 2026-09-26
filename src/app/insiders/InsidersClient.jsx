@@ -609,7 +609,15 @@ function NotableActivity({ data, window, onWindow, onPick }) {
     { l: 'MOST INSIDERS BUYING', x: data.mostInsidersBuying, sub: (x) => `${x.insiders} insiders · ${x.ticker}`, val: (x) => `${x.insiders}` },
     { l: 'LARGEST CLUSTER BUY', x: data.largestCluster, sub: (x) => `${x.insiders} insiders · ${x.ticker}` },
     // Score + band come straight from the server; the tile never derives either.
-    { l: 'HIGHEST CONVICTION BUY', x: data.highestConviction, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => `${x.conviction} · ${x.band}` },
+    //
+    // ⚠️ WITHHELD WHEN GRADING IS BEHIND, RATHER THAN SHOWN AS CURRENT. "Highest conviction buy"
+    // is a claim about the whole window, and it is false the moment part of that window has not
+    // been scored — for fourteen days it named a two-week-old purchase as the best of a period
+    // whose newest filings had never reached the engine. A NULL band could not be told apart from
+    // an ungraded one, so the tile could not know. Now it can, and it stands down instead.
+    ...(data.conviction && data.conviction.current === false ? [] : [
+      { l: 'HIGHEST CONVICTION BUY', x: data.highestConviction, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => `${x.conviction} · ${x.band}` },
+    ]),
     { l: 'LARGEST OWNERSHIP INCREASE', x: data.largestOwnershipIncrease, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => (x.pct != null ? fmtOwnershipPct(x.pct) : fmtBig(x.value)) },
   ].filter((i) => i.x) : [];
   return (
@@ -627,6 +635,16 @@ function NotableActivity({ data, window, onWindow, onPick }) {
           </button>
         ))}
       </div>
+      {/* ⚠️ ONE LINE, AND ONLY WHEN IT IS TRUE. Silence when grading is current; a dated
+          statement when it is not. Never a neutral placeholder score. */}
+      {data?.conviction && data.conviction.current === false && data.conviction.gradedThrough && (
+        <div style={{ marginTop: 8, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.45 }}>
+          Conviction scoring is currently behind — graded through {new Date(data.conviction.gradedThrough).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.
+          {typeof data.conviction.pendingEligible === 'number' && data.conviction.pendingEligible > 0
+            ? ` ${data.conviction.pendingEligible.toLocaleString()} newer purchase${data.conviction.pendingEligible === 1 ? '' : 's'} not yet scored.`
+            : ''}
+        </div>
+      )}
     </div>
   );
 }

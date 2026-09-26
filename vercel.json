@@ -147,6 +147,10 @@
     {
       "path": "/api/cron/fear-greed",
       "schedule": "20 9 * * *"
+    },
+    {
+      "path": "/api/cron/score-conviction",
+      "schedule": "30 2 * * *"
     }
   ],
   "headers": [
@@ -280,6 +284,9 @@
     },
     "src/app/api/cron/evidence-alerts/route.js": {
       "maxDuration": 60
+    },
+    "src/app/api/cron/score-conviction/route.js": {
+      "maxDuration": 300
     }
   }
 }

@@ -9,7 +9,7 @@ import { useTickerEvidence } from '../../lib/chart/use-ticker-evidence';
 //
 // Replaces the licensed TradingView Advanced Chart widget for US EQUITIES ONLY. The futures blocks
 // further down that page still use the widget, deliberately: they address TradingView symbols
-// ("CME_MINI:ES1!") and our licensed data is Tiingo daily plus Polygon equity aggregates, which
+// ("CME_MINI:ES1!") and our licensed data is Tiingo for both daily and intraday bars, which
 // covers neither futures continuations nor their symbology. Swapping those would produce an empty
 // chart, so they are left alone until a futures source exists.
 //

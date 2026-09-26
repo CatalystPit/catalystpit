@@ -1,4 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
+import { neon } from '@neondatabase/serverless';
+import { convictionCoverage } from '../../../lib/insider/conviction-pipeline.mjs';
 import { db } from '../../../lib/db';
 import { insiderTrades } from '../../../lib/schema';
 import { and, or, eq, gt, gte, ilike, inArray, desc, sql } from 'drizzle-orm';
@@ -255,6 +257,25 @@ async function notableView(window) {
   return out;
 }
 
+/**
+ * Conviction coverage, cached briefly.
+ *
+ * ⚠️ A FRESHNESS READ MUST NOT COST A QUERY PER REQUEST. It is four cheap aggregates, but the
+ * notable view is polled, so it is memoised for a minute. A failed read reports current:false —
+ * unknown is never treated as fresh.
+ */
+let _cov = null, _covAt = 0;
+async function cachedCoverage() {
+  if (_cov && Date.now() - _covAt < 60_000) return _cov;
+  try {
+    const q = neon(process.env.DATABASE_URL);
+    _cov = await convictionCoverage((text, params = []) => q.query(text, params));
+  } catch {
+    _cov = { gradedThrough: null, newestEligible: null, pendingEligible: null, lastWrite: null, lagDays: null, current: false };
+  }
+  _covAt = Date.now();
+  return _cov;
+}
 // Add the intelligence layer to a page of rows (bounded to the page — cheap, scales fine).
 // firstOpenMarketBuy / monthsSincePriorBuy are computed from OUR history only — the UI must word
 // them honestly ("in our available history") and never claim multi-year firsts until the backfill.
@@ -337,7 +358,14 @@ export async function GET(request) {
     const window = WINDOW_DAYS[searchParams.get('window')] ? searchParams.get('window') : '30d';
     if (view === 'pulse')   return Response.json({ ...(await pulseView(window)),   loggedIn }, { headers: NO_STORE });
     if (view === 'heatmap') return Response.json({ ...(await heatmapView(window, searchParams.get('mode'))), loggedIn }, { headers: NO_STORE });
-    if (view === 'notable') return Response.json({ ...(await notableView(window)), loggedIn }, { headers: NO_STORE });
+    if (view === 'notable') {
+      // ⚠️ COVERAGE TRAVELS WITH THE CONVICTION FIGURES IT QUALIFIES. highestConviction is the one
+      // summary card built from a score, and for fourteen days it kept rendering a two-week-old
+      // purchase as the current best because a NULL band could not be told apart from an ungraded
+      // one. The card can now say which date grading actually reaches.
+      const payload = await notableView(window);
+      return Response.json({ ...payload, conviction: await cachedCoverage(), loggedIn }, { headers: NO_STORE });
+    }
     if (view === 'cluster_buys') {
       const payload = await clusterBuys();
       console.log(`[insiders_api] view=cluster_buys clusters=${payload.clusters.length} loggedIn=${loggedIn}`);
