@@ -672,8 +672,27 @@ check('⚠️ the normalisation text leaks no measurement or window length',
   && !/interquartile|stationar|percentile rank|MAD|normal CDF/i.test(METHODOLOGY.normalization));
 check('…nor names a component while discussing the ruler',
   !/momentum|price strength|breadth|credit risk|realized volatility/i.test(METHODOLOGY.normalization));
-check('…and the safe-haven exclusion still states its measured overlap',
-  /0.82/.test(METHODOLOGY.excluded.find((x) => /safe-haven/i.test(x.name)).why));
+// ⚠️ THIS ASSERTION USED TO REQUIRE THE STRING "0.82" IN THE SAFE-HAVEN EXCLUSION, and the number it
+// pinned turned out to be measured on price-only bars — which cannot measure a stocks-versus-bonds
+// spread at all, because the bond leg pays income the bars do not carry. Re-run on total-return
+// series the overlap with Credit is 0.450 for the Treasury-only version and 0.217 with gold added.
+// So the assertion now pins the CORRECTED reasoning and forbids the discredited figure, rather than
+// demanding it. A test can be wrong; this one was.
+{
+  const sh = METHODOLOGY.excluded.find((x) => /safe-haven/i.test(x.name)).why;
+  check("⚠️ the safe-haven exclusion no longer cites the discredited price-only overlap",
+    !/0.82/.test(sh));
+  check("⚠️ …and says it is held on data provenance, not on information",
+    /held back on data provenance rather than on information/i.test(sh)
+    && /total-return price history we do not yet carry/i.test(sh));
+  check("…naming the reason price-only data cannot answer it",
+    // NO CHARACTER CLASS ON PURPOSE: a backslash-s that passes through sed or a JS string literal
+    // arrives as a bare letter, and the pattern then demands a character the text never has. The
+    // phrase is contiguous, so it is matched literally.
+    /measures coupons rather than conviction/i.test(sh));
+  check("⚠️ …and the exclusion text still leaks no instrument or measurement",
+    !/[0-9]/.test(sh) && !/bTLTb|bIEFb|bGLDb|bSPYb/.test(sh));
+}
 check('⚠️ excluded components are disclosed with reasons',
   METHODOLOGY.excluded.length >= 3 && METHODOLOGY.excluded.every((x) => x.why.length > 40));
 check('⚠️ the volatility component is labelled realized, never implied',

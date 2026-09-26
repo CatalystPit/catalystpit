@@ -542,12 +542,56 @@ export const METHODOLOGY = Object.freeze({
       // 0.82 against Credit is higher still — but the index should not claim an independence it
       // does not have. Measured across the full seven-component history, the effective number of
       // independent measures is about 4 of 7.
-      why: 'Measurable from our data, and excluded on measurement rather than for want of it. '
-        + 'Scored over the same history, an equities-against-long-Treasuries component correlates '
-        + '0.82 with Credit Risk Appetite — both are the same bonds-against-risk axis — which is '
-        + 'the highest overlap of any pair considered for this index, and higher than any pair '
-        + 'currently in it. Components here are not independent of one another and are not '
-        + 'presented as such; this one was simply too close to a measure already included.',
+      // ⚠️ THE EARLIER REASON GIVEN HERE WAS MEASURED ON THE WRONG DATA. RE-TESTED 2026-09-26.
+      //
+      // This note used to say the candidate correlates 0.82 with Credit Risk Appetite. That figure
+      // came from PRICE-ONLY bars over three years, and price-only bars cannot measure a
+      // stocks-versus-bonds spread at all: our candle table is split-adjusted only, and TLT's
+      // price-only return since 2002 is -4% against a +121% total return. The whole observation was
+      // partly reading coupon payments.
+      //
+      // Re-run on dividend-and-split-adjusted series over 5,497 shared sessions from 2004, the
+      // overlap with Credit is 0.450 for the long-Treasury version and 0.217 once gold is included.
+      // Nothing like 0.82. The old reason does not survive; the exclusion now rests on different
+      // ground, stated below.
+      //
+      // ⚠️ WHAT THE PROPER TEST FOUND. Best construction: equity total return against an equally
+      // weighted intermediate-Treasury-and-gold leg over one month. 4,974 scored sessions from 2006,
+      // R² 38.3% against the existing seven — lower than five of them — and it lifts the index's
+      // effective independent component count from 4.03 of 7 to 4.57 of 8. Directionally coherent in
+      // every regime: 61.6 in quiet bull markets, 21.6 in gradual corrections, 7.7 in sharp selloffs.
+      //
+      // ⚠️ AND WHY TREASURIES ALONE CANNOT BE THE DEFENSIVE LEG. On the 175 sessions where long
+      // Treasuries sat in their worst decile AND equities were falling — 63 of them in 2022 — the
+      // Treasury-only version reads 50.2, calling a bond-and-equity rout neutral, because the
+      // defensive leg fell further than equities did. Adding gold fixes that: 24.8 on the same days.
+      //
+      // ⚠️ SO IT IS HELD BACK ON DATA PROVENANCE, NOT ON INFORMATION. The series it needs is
+      // dividend-adjusted, and nothing in production stores that: ticker_daily_candles is
+      // deliberately split-adjusted only and its own notes say mixing bases in one column would
+      // make the column meaningless. Shipping this means a separate adjusted-price path, a
+      // twenty-four-year backfill, a daily ingest and a history rebuild. That is a deliberate piece
+      // of work, not a line in a component file.
+      //
+      // ⚠️ ONE HONEST CAVEAT FOR WHOEVER PICKS THIS UP. Where it disagrees with the equity internals
+      // it is not always right. On 16% of the sessions where Market Breadth is below 20 it reads
+      // above 70, because a spread goes up when the defensive leg falls for its own reasons as well
+      // as when money moves into risk. 2026-09-25 is such a session — gold -6.9%, long Treasuries
+      // -4.2%, small caps -5.7%, large caps +0.3% — and the candidate reads 85.4, the 85th
+      // percentile of its own twenty-year record, on a day almost nothing was being bought. Resolve
+      // that before trusting it, and do not let the fact that adding it would raise today's
+      // composite by about eight points stand in for having resolved it.
+      why: 'Measurable, re-tested on total-return data, and held back on data provenance rather '
+        + 'than on information. Built properly — equities against a defensive basket rather than '
+        + 'against government bonds alone — it does carry information the rest of the index lacks, '
+        + 'and it behaves sensibly in the regime that breaks the naive version, where rising rates '
+        + 'push bonds and equities down together. What it needs is a total-return price history we '
+        + 'do not yet carry in the pipeline that builds this index, because comparing an '
+        + 'income-paying bond fund with an equity index on price alone measures coupons rather than '
+        + 'conviction. Components here are not independent of one another and are not presented as '
+        + 'such, so the bar for a new one is that it add something the others do not already say; '
+        + 'this one may clear that bar, and it is not in the index until the data behind it is '
+        + 'built to the same standard as everything else here.',
     },
   ],
 });
