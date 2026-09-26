@@ -35,8 +35,18 @@ const arg = (k, d = null) => {
   return hit ? hit.slice(k.length + 3) : d;
 };
 const SINCE = arg('since', '2026-09-11');
+const UNTIL = arg('until', null);
 const LIMIT = Number(arg('limit', '100000'));
 const DRY = process.argv.includes('--dry');
+/**
+ * Wall-clock budget for one invocation.
+ *
+ * ⚠️ RESUMABILITY IS THE PREDICATE, NOT A SAVED CURSOR. The work queue is "filings that still have
+ * a null CIK", so stopping at the budget and starting again simply re-selects what is left. There
+ * is nothing to checkpoint and nothing a partial run can corrupt — which is what makes it safe to
+ * run a 55,000-filing repair in bounded pieces rather than one three-hour process.
+ */
+const MAX_MINUTES = Number(arg('max-minutes', '0')) || 0;
 
 // SEC fair access: a declared User-Agent and well under 10 requests a second.
 const UA = process.env.SEC_USER_AGENT || 'CatalystPit data-integrity repair (bcoghill88@gmail.com)';
@@ -94,6 +104,7 @@ function parseCiks(xml) {
            count(*) FILTER (WHERE issuer_cik IS NULL)::int AS need_issuer
       FROM insider_trades
      WHERE filing_date >= ${SINCE}::date
+       AND (${UNTIL}::date IS NULL OR filing_date < ${UNTIL}::date)
        AND (owner_cik IS NULL OR issuer_cik IS NULL)
      GROUP BY accession
      ORDER BY accession
@@ -105,7 +116,10 @@ function parseCiks(xml) {
     issuerSet: 0, ownerSet: 0, ownerAmbiguous: 0, ownerMissing: 0, issuerMissing: 0,
   };
 
+  const startedAt = Date.now();
+  let stoppedEarly = false;
   for (let i = 0; i < filings.length; i += CONCURRENCY) {
+    if (MAX_MINUTES && Date.now() - startedAt > MAX_MINUTES * 60_000) { stoppedEarly = true; break; }
     const batch = filings.slice(i, i + CONCURRENCY);
     await Promise.all(batch.map(async (f) => {
       const url = submissionUrl(f.filing_url);

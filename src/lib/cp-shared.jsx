@@ -962,7 +962,22 @@ function useNavOverflow(count, alwaysMore = false) {
 export function TopNav({ active }) {
   // Nav lists only dense rooms (A5). Screener restored in C3; Crypto/Charts still out.
   // Logo is the home link. Watchlist (signed-in), Log In/Start Free render separately below.
-  const links = ["Terminal", "Pit Consensus", "Scan", "Feed", "News", "Screener", "Heatmap", "Dividends", "Insiders", "Politicians", "Institutions"];
+  // ── ⚠️ THE ORDER HERE IS THE PRIORITY ORDER, AND OVERFLOW READS IT ────────
+  //
+  // useNavOverflow keeps the leading items and pushes the tail into More as the bar narrows, so
+  // this list is not just what appears — it is what survives first. The evidence products the
+  // product is built on lead it; the rest fall back into the menu on a narrow screen, which is the
+  // existing responsive behaviour and is deliberately unchanged.
+  //
+  // ⚠️ FEED IS HIDDEN, NOT REMOVED. /feed, its components and its APIs are all untouched and the
+  // route still serves — it is out of this array only, because the feature is being reworked and a
+  // nav slot is a promise about what is finished. Do not delete anything behind it.
+  //
+  // ⚠️ INSTITUTIONS IS ALSO OUT OF THE NAV. It was previously reachable only by overflowing into
+  // More, and the specified More contents are Dividends / Fear & Greed / Heatmap, so there is no
+  // slot left for it. Its route and page are untouched; this is a visibility decision that should
+  // be confirmed, not a removal.
+  const links = ["Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "News", "Screener"];
 
   /**
    * ⚠️ DESTINATIONS THAT LIVE ONLY IN "MORE", NEVER IN THE TOP ROW.
@@ -975,7 +990,7 @@ export function TopNav({ active }) {
    * Because this list is non-empty, the More control now always exists, so its width is always
    * reserved by the overflow maths. See the alwaysMore argument to useNavOverflow.
    */
-  const MENU_ONLY = ["Fear & Greed"];
+  const MENU_ONLY = ["Dividends", "Fear & Greed", "Heatmap"];
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   // Where the fixed-position panel goes, measured from the button when it opens. Fixed coordinates

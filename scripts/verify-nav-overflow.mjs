@@ -13,6 +13,7 @@
 //
 //   node scripts/verify-nav-overflow.mjs [--mutate=<mode>]
 
+import { existsSync } from 'node:fs';
 import { fitCount } from '../src/lib/nav-overflow.mjs';
 
 const L = (s = '') => console.log(s);
@@ -25,9 +26,12 @@ const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail+
 // The real nav, in source order. Widths are the rendered widths at fontSize 15 with the product's
 // font stack — measured to the nearest pixel is unnecessary; what matters is that they are
 // proportional to the labels and sum to something that genuinely overflows a docked header.
-const LINKS = ['Terminal', 'Pit Consensus', 'Scan', 'Feed', 'News', 'Screener', 'Heatmap',
-  'Dividends', 'Insiders', 'Politicians', 'Institutions'];
-const W = [62, 103, 36, 35, 40, 66, 66, 70, 57, 76, 82];
+// ⚠️ THE REAL TOP ROW, so the simulation is about the product rather than a stale fixture. The
+// list was the pre-refresh eleven long after the nav became seven; every count below then
+// described an arrangement the header no longer had. Widths are the rendered widths at fontSize
+// 15 in the product's font stack.
+const LINKS = ['Terminal', 'Pit Consensus', 'Scan', 'Insiders', 'Politicians', 'News', 'Screener'];
+const W = [62, 103, 36, 57, 76, 40, 66];
 const MORE_W = 52;
 const GAP = 16;
 
@@ -53,30 +57,36 @@ for (const [name, docks] of STATES) {
   const overflow = LINKS.slice(n);
   // THE ACTUAL REQUIREMENT: nothing is lost. Reachable = rendered inline OR in the More menu.
   const reachable = new Set([...inline, ...overflow]);
-  ok(`${name.padEnd(20)} navWidth=${String(avail).padStart(4)}  inline=${String(n).padStart(2)}  more=${overflow.length}  — all 11 reachable`,
+  ok(`${name.padEnd(20)} navWidth=${String(avail).padStart(4)}  inline=${String(n).padStart(2)}  more=${overflow.length}  — all reachable`,
     LINKS.every((l) => reachable.has(l)) && reachable.size === LINKS.length);
 }
 
-L('\n=== THE TWO THAT WERE ACTUALLY DISAPPEARING ===');
+L('\n=== THE TAIL OF THE NAV IS NEVER CLIPPED ===');
 {
-  // Politicians and Institutions are last in source order, so they were the first to be clipped.
+  // The last items in source order are the first to be squeezed, so they are where clipping
+  // shows up first. This used to name Politicians and Institutions directly — and then failed
+  // when Institutions legitimately left the nav, reporting a deliberate change as a regression.
   //
-  // ⚠️ WRITTEN AS `new Set(LINKS).has('Politicians')` THIS ASSERTION WAS TRIVIALLY TRUE — it
-  // rebuilt the full list and then asked whether the full list contained the item, which is the
-  // same hollow shape as the three false greens earlier in this session. It now derives the two
-  // groups from the computed count and names WHERE each item ended up, so it can actually fail.
-  for (const [name, docks] of STATES) {
-    const n = fitCount(W, navWidth(1920, docks), MORE_W, GAP);
+  // ⚠️ IT NOW FOLLOWS THE LIST INSTEAD OF NAMING ITS MEMBERS. The property under test was never
+  // about those two labels; it is that whatever sits at the tail lands in the More menu rather
+  // than vanishing. Deriving the tail from LINKS keeps that true through the next reshuffle.
+  const tail = LINKS.slice(-2);
+  // ⚠️ NARROWER VIEWPORTS, BECAUSE THE SEVEN-ITEM ROW FITS AT 1920 EVEN WITH TWO DOCKS OPEN.
+  // Run only at 1920 this section stopped exercising overflow at all — the clipping mutation
+  // passed, which is the false green this file exists to prevent. These widths are where the
+  // overflow path actually engages.
+  const VIEWPORTS = [1920, 1440, 1280];
+  for (const vp of VIEWPORTS) for (const [name, docks] of STATES) {
+    const n = fitCount(W, navWidth(vp, docks), MORE_W, GAP);
     const inline = LINKS.slice(0, n), overflow = LINKS.slice(n);
     const where = (l) => inline.includes(l) ? 'inline' : overflow.includes(l) ? 'More menu' : 'LOST';
     // Under the old behaviour the tail was clipped: present in the DOM, outside the clip rect,
     // unclickable. `mut('clips')` reproduces exactly that — the tail simply ceases to exist.
     const clipped = mut('clips') ? LINKS.slice(0, n) : [...inline, ...overflow];
-    ok(`${name.padEnd(20)} Politicians → ${where('Politicians').padEnd(9)}  Institutions → ${where('Institutions')}`,
-      clipped.includes('Politicians') && clipped.includes('Institutions'));
+    ok(`${String(vp)} ${name.padEnd(20)} ${tail[0]} → ${where(tail[0]).padEnd(9)}  ${tail[1]} → ${where(tail[1])}`,
+      tail.every((l) => clipped.includes(l)));
   }
 }
-
 L('\n=== NOTHING IS EVER SILENTLY DROPPED ===');
 {
   // The property that distinguishes an overflow menu from clipping: for EVERY width, the two
@@ -109,11 +119,11 @@ L('\n=== THE RESPONSE IS MONOTONIC (no oscillation at the boundary) ===');
 L('\n=== WIDE HEADERS ARE UNTOUCHED ===');
 {
   const full = W.reduce((s, w) => s + w, 0) + GAP * (W.length - 1);
-  ok(`all 11 render inline when they fit (needs ${full}px)`,
+  ok(`every top-row link renders inline when it fits (needs ${full}px)`,
     fitCount(W, full, MORE_W, GAP) === LINKS.length);
   ok('…and no width is reserved for a More button that is not needed',
     fitCount(W, full, MORE_W, GAP) === LINKS.length && fitCount(W, full - 1, MORE_W, GAP) < LINKS.length);
-  ok('an undocked 1920 header still shows the full nav',
+  ok('an undocked 1920 header still shows the full top row',
     mut('alwaysoverflow') ? false : fitCount(W, navWidth(1920, 0), MORE_W, GAP) === LINKS.length,
     `navWidth=${navWidth(1920, 0)} needs ${full}`);
   // Closing the docks must restore it — the same call with the wider number.
@@ -169,9 +179,36 @@ L('\n=== THE HEADER IS ACTUALLY WIRED TO IT ===');
     has('usable,') && !has('        bar.clientWidth,'));
 
   // ── ⚠️ MENU-ONLY DESTINATIONS ────────────────────────────────────────────
+  // ⚠️ ASSERTED AS MEMBERSHIP, NOT AS A LITERAL. This read `MENU_ONLY === ["Fear & Greed"]`, so it
+  // failed the moment the menu legitimately gained Dividends and Heatmap — reporting a deliberate
+  // navigation change as a regression. What matters is that these destinations live in the menu
+  // and NOT in the top row, which is what it now checks.
+  const menuOnly = /const MENU_ONLY = \[([^\]]*)\]/.exec(src)?.[1] || '';
+  const topRow = /const links = \[([^\]]*)\]/.exec(src)?.[1] || '';
   ok('⚠️ Fear & Greed is a menu-only destination, not a top-level link',
-    has('const MENU_ONLY = ["Fear & Greed"]')
-    && !/const links = \[[^\]]*Fear & Greed/.test(src));
+    /"Fear & Greed"/.test(menuOnly) && !/Fear & Greed/.test(topRow));
+
+  // ── ⚠️ THE NAVIGATION THE PRODUCT ACTUALLY OFFERS ────────────────────────
+  //
+  // The top row leads with the evidence products; Dividends, Fear & Greed and Heatmap are menu
+  // destinations. Feed is deliberately absent from BOTH — the feature is being reworked, and a nav
+  // slot is a promise about something finished. Its route and code are untouched.
+  ok('⚠️ the top row is the seven primary destinations, in priority order',
+    topRow.replace(/\s+/g, ' ').trim()
+      === '"Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "News", "Screener"');
+  ok('⚠️ the menu holds exactly Dividends, Fear & Greed and Heatmap',
+    menuOnly.replace(/\s+/g, ' ').trim() === '"Dividends", "Fear & Greed", "Heatmap"');
+  ok('⚠️ Feed appears in neither list', !/Feed/.test(topRow) && !/Feed/.test(menuOnly));
+  ok('⚠️ …but the Feed route is untouched',
+    existsSync(new URL('../src/app/feed/page.jsx', import.meta.url))
+    && existsSync(new URL('../src/app/feed/FeedClient.jsx', import.meta.url)));
+  // ⚠️ NO DESTINATION APPEARS TWICE. The menu renders overflow PLUS MENU_ONLY, so a name in both
+  // lists would render twice on a narrow screen.
+  ok('⚠️ no destination is in both the row and the menu',
+    !topRow.split(',').map((s) => s.trim()).filter(Boolean).some((l) => menuOnly.includes(l)));
+  ok('Insiders and Politicians are promoted to the top row',
+    /"Insiders"/.test(topRow) && /"Politicians"/.test(topRow)
+    && !/Insiders|Politicians/.test(menuOnly));
   ok('…and it is appended to whatever overflowed into the menu',
     has('const overflowed = [...links.slice(visible), ...MENU_ONLY]'));
   ok('…it resolves to /fear-greed', has('"Fear & Greed" ? "/fear-greed"'));
