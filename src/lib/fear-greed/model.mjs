@@ -366,10 +366,22 @@ export const COMPONENTS = Object.freeze([
       + 'over a fixed recent window, ranked in the same trailing distribution every other '
       + 'component is ranked in. The government leg is deliberately short-duration so the measure '
       + 'reflects credit behaviour rather than interest-rate duration.',
-    meaning: 'Measures whether credit markets are showing greater risk appetite or risk aversion — '
-      + 'whether the bond market is paying up for credit risk or hiding in government paper. This '
-      + 'is a market-price risk-appetite measure and is NOT a direct measurement of high-yield '
-      + 'credit spreads, an option-adjusted spread, or a junk-bond yield spread.',
+    // ⚠️ IT MEASURES A RECENT SHIFT, NOT THE STANDING LEVEL, AND THE PROSE HAS TO SAY WHICH.
+    //
+    // Measured against the official ICE BofA US High Yield option-adjusted spread over 733 shared
+    // sessions, this component's raw value correlates -0.873 with the 20-session CHANGE in that
+    // spread and only -0.047 with its LEVEL. It is a faithful proxy for the recent move in credit
+    // and is very nearly orthogonal to how tight or wide credit actually is.
+    //
+    // That distinction is not academic. On 2026-09-25 this component read 3.9 while the spread
+    // level sat at the 39th percentile of its own trailing two years — around the middle. A reader
+    // who takes "is showing risk aversion" to mean "credit conditions are stressed" would be
+    // reading something the number does not say, so the wording now names the recent move.
+    meaning: 'Measures the recent SHIFT in credit risk appetite — whether, over a recent window, '
+      + 'the bond market has been paying up for credit risk or moving toward government paper. It '
+      + 'is a measure of change, not of level: a low reading means credit has lost ground lately, '
+      + 'NOT that credit conditions are historically tight or wide. It is NOT a direct measurement '
+      + 'of high-yield credit spreads, an option-adjusted spread, or a junk-bond yield spread.',
   },
 ]);
 

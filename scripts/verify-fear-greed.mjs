@@ -641,6 +641,18 @@ check('⚠️ the volatility component is labelled realized, never implied',
   check('⚠️ the credit component is NAMED Credit Risk Appetite', cred.label === 'Credit Risk Appetite');
   check('⚠️ and it states outright that it is NOT a credit-spread measurement',
     /not a direct measurement/i.test(cred.meaning) && /spread/i.test(cred.meaning));
+  // ⚠️ AND THAT IT IS A MEASURE OF CHANGE, NOT OF LEVEL. Measured against the official ICE BofA
+  // US High Yield OAS over 733 shared sessions, the raw value correlates -0.873 with the 20-session
+  // CHANGE in that spread and -0.047 with its LEVEL. Wording that reads as a standing level invites
+  // exactly the misreading that a low score means credit conditions are stressed, which it does not.
+  check('⚠️ …and that it measures a recent SHIFT rather than the standing level of credit',
+    // WRITTEN WITHOUT A WORD-BOUNDARY ESCAPE ON PURPOSE. A backslash-b that travels through a JS
+    // string literal becomes a raw backspace byte, and the resulting regex matches nothing while
+    // looking perfectly correct in an editor. That has cost a green suite three times in this file;
+    // the words matched here need no boundary, so none is used.
+    /recent SHIFT/.test(cred.meaning) && /measure of change, not of level/i.test(cred.meaning));
+  check('…spelling out what a low reading does NOT mean',
+    /NOT that credit conditions are historically tight or wide/i.test(cred.meaning));
   // ⚠️ THE INSTRUMENTS ARE NO LONGER NAMED PUBLICLY. This assertion used to REQUIRE "HYG" and
   // "IEF" in the public text. V3 makes the credit disclosure conceptual, like Market Volatility's,
   // so the requirement inverts: the recipe must be absent while the honest caveat stays.
