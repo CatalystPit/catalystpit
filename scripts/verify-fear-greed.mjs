@@ -16,7 +16,7 @@ import {
   NORM_WINDOW, MIN_WINDOW, MIN_COMPONENTS, COMPONENTS, COMPONENT_KEYS, METHODOLOGY,
 } from '../src/lib/fear-greed/model.mjs';
 import {
-  momentumSeries, volatilitySeries, volMarketSeries, smaDistanceSeries, relativeReturnSeries,
+  momentumSeries, volatilitySeries, volMarketSeries, safeHavenSeries, smaDistanceSeries, relativeReturnSeries,
   trailingWindow, byDate,
   MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR, VOL_MARKET_MA,
   optionsPcrSeries, optionsPcrChangeSeries, OPTIONS_CHANGE_LOOKBACK,
@@ -494,8 +494,11 @@ sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
 
 sec('VERSIONING AND THE COMPONENT COUNT');
 {
-  check('⚠️ the methodology version is v5', METHODOLOGY.version === 'fear_greed_v5');
-  check('the registry holds seven components', COMPONENT_KEYS.length === 7);
+    // ⚠️ V6 ADDS SAFE-HAVEN DEMAND. The version moves whenever the component set does, because a
+  // stored row keyed to a version must always mean the same recipe.
+  check('⚠️ the methodology version is v6', METHODOLOGY.version === 'fear_greed_v6');
+  check('the registry holds eight components', COMPONENT_KEYS.length === 8);
+  check('⚠️ and safe-haven demand is one of them', COMPONENT_KEYS.includes('safehaven'));
   check('every key is unique', new Set(COMPONENT_KEYS).size === COMPONENT_KEYS.length);
   // ⚠️ THE FLOOR IS DELIBERATELY UNCHANGED. Three of six is half rather than a majority, and the
   // reasoning for that choice is written where the constant lives.
@@ -529,6 +532,9 @@ sec('⚠️ NO FUTURE DATA LEAKS INTO A HISTORICAL READING');
     breadth: mk(700, (i) => (i % 97) / 97),
     strength: mk(700, (i) => Math.sin(i / 13) / 2),
     credit: mk(700, (i) => Math.cos(i / 5) / 100),
+    // ⚠️ THE EIGHTH SERIES. Its own shape, not a copy of another one — a fixture that duplicates a
+    // neighbour would let a mis-wired component pass by coincidence.
+    safehaven: mk(700, (i) => Math.sin(i / 29) / 20 - Math.cos(i / 41) / 25),
   };
   const cut = Object.fromEntries(Object.entries(full)
     .map(([k, v]) => [k, v.filter((p) => p.date <= 'd0600')]));
@@ -554,6 +560,8 @@ sec('THE INDEX AND ITS PAYLOAD');
     breadth: mk(700, (i) => (i % 97) / 97),
     strength: mk(700, (i) => Math.sin(i / 13) / 2),
     credit: mk(700, (i) => Math.cos(i / 5) / 100),
+    // ⚠️ THE EIGHTH SERIES, its own shape so a mis-wired component cannot pass by coincidence.
+    safehaven: mk(700, (i) => Math.sin(i / 29) / 20 - Math.cos(i / 41) / 25),
   };
   const hist = indexHistory(series);
   check('history starts only once the window can be filled', hist.length === 700 - NORM_WINDOW + 1);
@@ -565,7 +573,7 @@ sec('THE INDEX AND ITS PAYLOAD');
   const p = buildPayload(series);
   check('the payload reports the latest session', p.asOf === hist.at(-1).date);
   check('the score matches the latest computed index', p.score === hist.at(-1).score);
-  check('the payload carries all seven components with labels', p.components.length === 7
+  check('the payload carries all eight components with labels', p.components.length === 8
     && p.components.length === COMPONENT_KEYS.length
     && p.components.every((x) => x.label && x.key));
   check('each component carries its own zone word',
@@ -709,6 +717,62 @@ check('⚠️ the volatility component is labelled realized, never implied',
   check('⚠️ the volatility component is NAMED Realized Volatility', vol.label === 'Realized Volatility');
   check('...and its label never says VIX or implied', !/vix|implied/i.test(vol.label));
   check('⚠️ the credit component is NAMED Credit Risk Appetite', cred.label === 'Credit Risk Appetite');
+
+  // ── SAFE-HAVEN DEMAND ──────────────────────────────────────────────────────
+  //
+  // ⚠️ THE TWO CLAIMS THIS COMPONENT MUST KEEP MAKING. First, that both sides are TOTAL RETURN:
+  // the whole component is invalid on price-only data, because an income-paying bond leg compared
+  // on price alone is measured as if its distributions never happened (TLT's price-only return
+  // since 2002 is -4% against a +121% total return). Second, that the defensive side is NOT
+  // government bonds alone — a Treasuries-only leg reads 50.2 on the sessions where rising rates
+  // drove bonds and equities down together, calling a rout neutral.
+  {
+    const sh = COMPONENTS.find((x) => x.key === 'safehaven');
+    check('⚠️ the safe-haven component is NAMED Safe-Haven Demand', sh.label === 'Safe-Haven Demand');
+    check('⚠️ it says outright that both sides are total return',
+      /total return/i.test(sh.calculation) && /total-return/i.test(sh.source));
+    check('⚠️ …and why price alone would be wrong',
+      /as if its distributions never happened/i.test(sh.calculation));
+    check('⚠️ …and that the defensive side is more than government bonds',
+      /more than government bonds/i.test(sh.meaning));
+    check('⚠️ …naming the regime that breaks a bonds-only version',
+      /rising interest rates/i.test(sh.meaning) && /stop behaving as a haven/i.test(sh.meaning));
+    check('⚠️ …and refusing to be mistaken for flow or survey data',
+      /NOT fund-flow data/i.test(sh.meaning) && /NOT a survey/i.test(sh.meaning));
+    // ⚠️ AND THE RECIPE STAYS OUT OF IT, exactly as for Market Volatility and Credit.
+    {
+      const pub = [sh.label, sh.source, sh.calculation, sh.meaning].join(' ');
+      check('⚠️ the safe-haven instruments are never named in public text',
+        !/\bSPY\b|\bIEF\b|\bGLD\b|\bTLT\b|\bSHY\b|gold|Treasur(y|ies) ETF/i.test(pub), pub.slice(0, 90));
+      check('…nor the horizon or the basket weights',
+        !/[0-9]/.test(pub) && !/equal(ly)? weight/i.test(pub));
+    }
+    check('⚠️ higher is greed — equities beating the basket is risk appetite',
+      COMPONENT_DIRECTION.safehaven === DIRECTION.HIGHER_IS_GREED);
+  }
+
+  // ⚠️ THE SERIES REFUSES A MISSING LEG RATHER THAN SCORING ON ONE SIDE. A basket with a leg
+  // absent is not a smaller basket, it is a different measurement.
+  {
+    const mkb = (n, f) => Array.from({ length: n }, (_, i) => ({ date: `s${String(i).padStart(4, '0')}`, close: f(i) }));
+    const eq = mkb(60, (i) => 100 * (1 + i / 1000));
+    const flat = mkb(60, () => 100);
+    check('⚠️ safeHavenSeries returns nothing when a defensive leg is missing',
+      safeHavenSeries(eq, [], 20).length === 0 && safeHavenSeries(eq, [flat, []], 20).length === 0);
+    check('…and nothing when the equity leg is missing',
+      safeHavenSeries([], [flat, flat], 20).length === 0);
+    check('⚠️ all legs flat scores exactly zero, not a small residue',
+      safeHavenSeries(flat, [flat, flat], 20).every((x) => x.value === 0));
+    check('equities rising against flat defensives is positive',
+      safeHavenSeries(eq, [flat, flat], 20).every((x) => x.value > 0));
+    check('⚠️ a defensive leg rising against flat equities is negative',
+      safeHavenSeries(flat, [eq, flat], 20).every((x) => x.value < 0));
+    // ⚠️ AND ONLY SHARED SESSIONS COUNT. A date the defensive leg does not have is not an
+    // observation; it must not be filled from a neighbour.
+    const gappy = flat.filter((b) => b.date !== 's0030');
+    check('⚠️ a session missing from one leg is dropped, not interpolated',
+      !safeHavenSeries(eq, [gappy, flat], 20).some((x) => x.date === 's0030'));
+  }
   check('⚠️ and it states outright that it is NOT a credit-spread measurement',
     /not a direct measurement/i.test(cred.meaning) && /spread/i.test(cred.meaning));
   // ⚠️ AND THAT IT IS A MEASURE OF CHANGE, NOT OF LEVEL. Measured against the official ICE BofA
@@ -1156,7 +1220,7 @@ sec('⚠️ THE VERSION STAMP IS NOT PART OF THE PRODUCT');
   check('the methodology panel itself is untouched',
     page.includes('WHAT WE DELIBERATELY DO NOT INCLUDE') && page.includes('<P label="Normalisation"'));
   check('⚠️ the version still exists where it is operationally needed',
-    METHODOLOGY.version === 'fear_greed_v5');
+    METHODOLOGY.version === 'fear_greed_v6');
   check('⚠️ it still keys the stored payload and the daily rows',
     store.includes('METHODOLOGY.version') && store.includes('PAYLOAD_KEY'));
   check('and the API still carries it for callers that pin to it',

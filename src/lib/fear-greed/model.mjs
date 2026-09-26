@@ -350,6 +350,32 @@ export const COMPONENTS = Object.freeze([
       + 'it is reported as unavailable rather than estimated.',
   },
   {
+    key: 'safehaven',
+    label: 'Safe-Haven Demand',
+    direction: DIRECTION.HIGHER_IS_GREED,
+    // ── ⚠️ CONCEPTUAL DISCLOSURE, LIKE MARKET VOLATILITY AND CREDIT ─────────────────────
+    //
+    // These three strings are served by /api/fear-greed and rendered verbatim, so they ARE the
+    // public disclosure. The instruments, the basket weights and the horizon live in data.mjs and
+    // series.mjs, which nothing public reads. What they must keep saying is the part a reader could
+    // otherwise get wrong: the defensive side is not government bonds alone, and this is a
+    // relative-performance measure rather than a flow or a survey.
+    //
+    // ⚠️ WHY IT EXISTS, MEASURED. R-squared 38.3% against the other seven — lower than five of
+    // them — and it lifts the effective independent component count from 4.03 of 7 to 4.57 of 8.
+    // 4,974 scoreable sessions from 2006, which is more history than any other component has.
+    //
+    // ⚠️ AND ITS KNOWN WEAKNESS, RECORDED RATHER THAN BURIED. A spread rises when the defensive
+    // leg falls for its OWN reasons as well as when money moves toward risk. On 16% of sessions
+    // where Market Breadth is below 20 this reads above 70. 2026-09-25 is such a session — the
+    // defensive legs and small caps all fell while large caps held — and it reads high on a day
+    // when little was being bought. The basket makes that rarer than a Treasuries-only leg would;
+    // it does not abolish it.
+    source: 'Our own licensed daily total-return history for a broad US equity index and for two defensive assets of different kinds.',
+    calculation: 'Proprietary. The equity market\'s total return over a fixed recent window, measured against the average total return of a defensive basket over the same window, then ranked in the same trailing distribution every other component is ranked in. Total return rather than price on both sides, because an income-paying asset compared on price alone would be measured as if its distributions never happened.',
+    meaning: 'Measures whether capital has recently favoured risk assets or defensive ones. A high reading means equities outpaced the defensive side of the market over the window; a low one means the defensive side was preferred. The defensive basket deliberately holds more than government bonds, because when rising interest rates are themselves driving a selloff, bonds fall alongside equities and stop behaving as a haven at all. This is relative market performance, NOT fund-flow data and NOT a survey of investor intentions.',
+  },
+  {
     key: 'credit',
     label: 'Credit Risk Appetite',
     direction: DIRECTION.HIGHER_IS_GREED,
@@ -406,7 +432,7 @@ export const METHODOLOGY = Object.freeze({
   //       yearly mean against 16-24 for every other component, so it was reporting a multi-year
   //       shift in the options market's product mix as sentiment. Back to six. The raw
   //       observations keep accruing in occ_options_volume; nothing about the other six changed.
-  version: 'fear_greed_v5',
+  version: 'fear_greed_v6',
   updateFrequency: 'Daily, after the U.S. equity close. Every component is derived from completed '
     + 'daily sessions, so the index is a daily measure and is never presented as intraday.',
   // ⚠️ CONCEPTUAL, NOT REPRODUCIBLE. These two paragraphs are served by the API and rendered by

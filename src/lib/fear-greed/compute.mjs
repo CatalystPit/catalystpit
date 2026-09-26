@@ -9,7 +9,7 @@ import {
   zoneFor,
 } from './model.mjs';
 import {
-  momentumSeries, volatilitySeries, volMarketSeries, relativeReturnSeries, byDate, trailingWindow,
+  momentumSeries, volatilitySeries, volMarketSeries, relativeReturnSeries, safeHavenSeries, byDate, trailingWindow,
   optionsPcrChangeSeries,
 } from './series.mjs';
 import { OPTIONS_SENTIMENT_ENABLED } from './occ.mjs';
@@ -25,6 +25,8 @@ export const COMPONENT_DIRECTION = Object.freeze({
   breadth: DIRECTION.HIGHER_IS_GREED,
   strength: DIRECTION.HIGHER_IS_GREED,
   credit: DIRECTION.HIGHER_IS_GREED,
+  // Equities beating the defensive basket = capital choosing risk = greed.
+  safehaven: DIRECTION.HIGHER_IS_GREED,
 });
 
 /**
@@ -85,7 +87,8 @@ export function validPanelSessions(panel = []) {
  * @param {object} input { panel, spy, volMarket, options, credit: { risk, safe } }
  * @returns {Record<string, Array<{date,value}>>}
  */
-export function rawSeries({ panel = [], spy = [], volMarket = [], options = [], credit = {} } = {}) {
+export function rawSeries({ panel = [], spy = [], volMarket = [], options = [], credit = {},
+  safeHaven = {} } = {}) {
   const valid = validPanelSessions(panel);
   // ⚠️ REJECTED SESSIONS LEAVE EVERY SERIES, NOT JUST THE TWO THE PANEL FEEDS. A day the market
   // did not open is not a data point for volatility or credit either, and leaving it in their
@@ -108,6 +111,12 @@ export function rawSeries({ panel = [], spy = [], volMarket = [], options = [], 
     breadth: valid.map((p) => ({ date: p.date, value: p.breadth })),
     strength: valid.map((p) => ({ date: p.date, value: p.strength })),
     credit: drop(relativeReturnSeries(credit.risk || [], credit.safe || [])),
+    // ⚠️ A DIFFERENT BASIS FROM EVERY OTHER SERIES HERE, AND THAT IS DELIBERATE. These legs are
+    // TOTAL-RETURN closes from the adjusted store; the rest of this function reads split-adjusted
+    // bars. Passing the candle-table series in here would silently turn the component into a
+    // yield-differential indicator — see safeHavenSeries. Empty inputs mean the component is
+    // absent, which the existing missing-component rule already handles.
+    safehaven: drop(safeHavenSeries(safeHaven.equity || [], safeHaven.defensive || [])),
     // ⚠️ THE CLEARING SOURCE PUBLISHES ON A LAG, so this series legitimately ends before the
     // others do. A session with no stored observation has no point and the component is absent
     // for it — the existing missing-component rule, not a special case.

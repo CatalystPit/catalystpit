@@ -19,6 +19,16 @@ export const TRADING_YEAR = 252;
 /** Sessions in the credit-appetite relative-return comparison. */
 export const CREDIT_LOOKBACK = 20;
 /**
+ * Sessions in the safe-haven comparison.
+ *
+ * ⚠️ ONE MONTH, THE SAME HORIZON CREDIT USES, and picked before the alternatives were scored rather
+ * than after. Ten and sixty-three sessions were both measured: the ten-session version is less
+ * redundant but noisier, the sixty-three-session version collapses into Momentum (correlation 0.75).
+ * One month is the standard horizon for a positioning read and it is not the one that flatters any
+ * particular reading.
+ */
+export const SAFE_HAVEN_LOOKBACK = 20;
+/**
  * Sessions in the volatility-market moving average.
  *
  * ⚠️ PROPRIETARY. This length, the instrument it is applied to and the inversion are the recipe for
@@ -200,6 +210,57 @@ export function relativeReturnSeries(riskBars = [], safeBars = [], lookback = CR
   for (let i = lookback; i < paired.length; i++) {
     const now = paired[i], then = paired[i - lookback];
     out.push({ date: now.date, value: (now.r / then.r - 1) - (now.s / then.s - 1) });
+  }
+  return out;
+}
+
+/**
+ * Equity total return MINUS the average total return of a defensive basket, over `lookback`.
+ *
+ * ⚠️ TOTAL RETURN ON BOTH SIDES, AND IT MUST STAY THAT WAY. The legs are read from the adjusted
+ * store, not from the split-adjusted bars every other component uses. Comparing an income-paying
+ * bond fund with an equity index on price alone measures coupons rather than conviction: TLT's
+ * price-only return since 2002 is -4% against a +121% total return. If a caller ever passes
+ * price-only bars here the component becomes a yield-differential indicator wearing a
+ * risk-appetite label.
+ *
+ * ⚠️ THE DEFENSIVE LEG IS A BASKET FOR A MEASURED REASON, NOT FOR ELEGANCE. Treasuries alone fail
+ * exactly when it matters: across the 175 sessions where long Treasuries sat in their worst decile
+ * AND equities were falling — 63 of them in 2022 — a Treasuries-only construction scores 50.2,
+ * calling a bond-and-equity rout neutral, because the defensive leg fell further than equities did.
+ * Averaging an intermediate-Treasury leg with gold scores 24.8 on the same sessions. Gold earns its
+ * place by not being a rates instrument, so a rate shock cannot flip the whole measure.
+ *
+ * ⚠️ HIGHER IS GREED. Equities beating the defensive basket means capital is choosing risk. The
+ * inversion is declared once, in the component registry, and applied by scoreComponent.
+ *
+ * ⚠️ SHARED SESSIONS ONLY. A date missing from any leg is not an observation for the spread; it is
+ * dropped. Nothing is interpolated, carried forward, or filled from a neighbouring session.
+ *
+ * @param {Array<{date,close}>} equityBars total-return closes for the equity leg
+ * @param {Array<Array<{date,close}>>} defensiveBars one total-return series per defensive leg
+ */
+export function safeHavenSeries(equityBars = [], defensiveBars = [], lookback = SAFE_HAVEN_LOOKBACK) {
+  if (!equityBars.length || !defensiveBars.length || defensiveBars.some((d) => !d?.length)) return [];
+  const legs = defensiveBars.map((d) => new Map(d.map((b) => [String(b.date), num(b.close)])));
+  const paired = [];
+  for (const b of equityBars) {
+    const e = num(b.close);
+    if (e === null) continue;
+    const vals = legs.map((m) => m.get(String(b.date)));
+    if (vals.some((v) => v == null)) continue;
+    paired.push({ date: b.date, e, d: vals });
+  }
+  const out = [];
+  for (let i = lookback; i < paired.length; i++) {
+    const now = paired[i], then = paired[i - lookback];
+    const eq = now.e / then.e - 1;
+    // ⚠️ EQUAL WEIGHTS INSIDE THE BASKET, chosen so there is no fitted parameter here. The average
+    // of each leg's own return, not the return of a rebalanced portfolio — simpler and it cannot
+    // drift as one leg compounds away from the other.
+    const defs = now.d.map((v, k) => v / then.d[k] - 1);
+    const df = defs.reduce((a, x) => a + x, 0) / defs.length;
+    out.push({ date: now.date, value: eq - df });
   }
   return out;
 }

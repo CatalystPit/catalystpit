@@ -173,3 +173,19 @@ export const WARMUP_DAYS = 1500;
  * problem.
  */
 export const MARKET_WARMUP_DAYS = 12500;
+
+/**
+ * ⚠️ SAFE-HAVEN DEMAND READS THE ADJUSTED STORE, NOT THE CANDLE TABLE.
+ *
+ * The equity leg and the defensive legs must be on the SAME basis, and that basis has to be total
+ * return: our candle table is split-adjusted only, so a bond leg read from it is missing its
+ * coupons. TLT's price-only return since 2002 is -4% against a +121% total return — a price-only
+ * stocks-versus-bonds spread is largely a yield-differential artifact. See adjusted-store.mjs.
+ *
+ * ⚠️ THE DEFENSIVE LEG IS INTERMEDIATE TREASURIES AND GOLD, in equal parts, because Treasuries
+ * alone invert during a rate shock — measured at 50.2 against 24.8 on the 175 sessions where long
+ * Treasuries were in their worst decile while equities fell. Gold is in the basket for being a
+ * non-rates defensive asset, not for improving any particular reading.
+ */
+export const SAFE_HAVEN_EQUITY_SYMBOL = 'SPY';
+export const SAFE_HAVEN_DEFENSIVE_SYMBOLS = ['IEF', 'GLD'];

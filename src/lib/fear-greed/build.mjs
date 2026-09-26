@@ -7,9 +7,11 @@ import { db } from '../db';
 import {
   loadPanelSeries, loadCloses, MARKET_SYMBOL, CREDIT_RISK_SYMBOL, CREDIT_SAFE_SYMBOL,
   VOL_MARKET_SYMBOL, VOL_MARKET_WARMUP_DAYS, MARKET_WARMUP_DAYS,
+  SAFE_HAVEN_EQUITY_SYMBOL, SAFE_HAVEN_DEFENSIVE_SYMBOLS,
 } from './data.mjs';
 import { rawSeries, buildPayload, indexHistory } from './compute.mjs';
 import { loadOptionsVolume, ingestSessions } from './occ-store.mjs';
+import { loadAdjustedCloses } from './adjusted-store.mjs';
 import { saveHistory, savePayload } from './store.mjs';
 
 /**
@@ -43,6 +45,17 @@ export async function buildFearGreed({ dbc = db, sqlc = sql } = {}) {
     loadCloses(dbc, sqlc, CREDIT_SAFE_SYMBOL, {}),
   ]);
 
+  // ── ⚠️ TOTAL-RETURN LEGS FOR SAFE-HAVEN DEMAND, FROM THEIR OWN STORE ──────
+  //
+  // Separate from everything above because the basis is different: these are dividend-adjusted
+  // closes, and the candle table is split-adjusted only. If the adjusted store is empty the arrays
+  // are empty, the component is absent, and the existing missing-component rule carries the index
+  // on the others — no substitution, no fallback to price-only bars.
+  const [shEquity, ...shDefensive] = await Promise.all([
+    loadAdjustedCloses(dbc, SAFE_HAVEN_EQUITY_SYMBOL),
+    ...SAFE_HAVEN_DEFENSIVE_SYMBOLS.map((sym) => loadAdjustedCloses(dbc, sym)),
+  ]);
+
   // ── ⚠️ ASK OCC ONLY FOR SESSIONS WE DO NOT ALREADY HOLD ───────────────────
   //
   // Cleared volume for a published session never changes, so the durable record is the cache: a
@@ -63,7 +76,8 @@ export async function buildFearGreed({ dbc = db, sqlc = sql } = {}) {
   const loadMs = Date.now() - t0;
 
   const t1 = Date.now();
-  const series = rawSeries({ panel, spy, volMarket, options, credit: { risk, safe } });
+  const series = rawSeries({ panel, spy, volMarket, options, credit: { risk, safe },
+    safeHaven: { equity: shEquity, defensive: shDefensive } });
   const payload = buildPayload(series);
   const history = indexHistory(series);
   const computeMs = Date.now() - t1;
