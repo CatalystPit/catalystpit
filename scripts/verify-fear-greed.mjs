@@ -609,6 +609,20 @@ check('⚠️ the normalisation principle is explained without publishing the wi
 check('⚠️ the composite rule is explained without publishing the floor',
   /equal-weighted/i.test(METHODOLOGY.composite) && /never replaced with 50/i.test(METHODOLOGY.composite)
   && !new RegExp('\b' + MIN_COMPONENTS + '\b').test(METHODOLOGY.composite));
+// ⚠️ THE INDEX MUST NOT CLAIM AN INDEPENDENCE IT DOES NOT HAVE. An earlier version of the
+// safe-haven note asserted that Momentum, Breadth and Price Strength each carry one vote, which
+// measurement contradicts: Breadth and Price Strength correlate 0.753 over the shared history.
+// The components are correlated, the index says so, and nothing public claims otherwise.
+// ⚠️ AND THE PATTERN MATCHES A CLAIM, NOT A DENIAL. The first version of this assertion fired
+// on the replacement text itself, because "components here are NOT independent of one another"
+// contains the phrase it was banning. It now looks for the affirmative claim only.
+check('⚠️ no public text claims the components are independent of one another',
+  !/carry one vote each|(?<!not )(?<!are not )independently measure|each carry(?:ing)? one vote/i.test(
+    METHODOLOGY.excluded.map((x) => x.why).join(' ')));
+check('…and it says outright that they are correlated',
+  /not independent of one another/i.test(METHODOLOGY.excluded.map((x) => x.why).join(' ')));
+check('…and the safe-haven exclusion still states its measured overlap',
+  /0.82/.test(METHODOLOGY.excluded.find((x) => /safe-haven/i.test(x.name)).why));
 check('⚠️ excluded components are disclosed with reasons',
   METHODOLOGY.excluded.length >= 3 && METHODOLOGY.excluded.every((x) => x.why.length > 40));
 check('⚠️ the volatility component is labelled realized, never implied',

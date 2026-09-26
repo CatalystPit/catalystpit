@@ -449,12 +449,18 @@ export const METHODOLOGY = Object.freeze({
     },
     {
       name: 'Safe-haven demand (equities vs Treasuries)',
+      // ⚠️ THIS NOTE USED TO CLAIM "Momentum, Breadth and Price Strength carry one vote each",
+      // which measurement does not support: Breadth and Price Strength correlate 0.753 and sit on
+      // the same side of neutral 76% of the time. The exclusion still holds on its own merits —
+      // 0.82 against Credit is higher still — but the index should not claim an independence it
+      // does not have. Measured across the full seven-component history, the effective number of
+      // independent measures is about 4 of 7.
       why: 'Measurable from our data, and excluded on measurement rather than for want of it. '
         + 'Scored over the same history, an equities-against-long-Treasuries component correlates '
-        + '0.82 with Credit Risk Appetite — both are the same bonds-against-risk axis — so '
-        + 'including both would weight that axis twice while Momentum, Breadth and Price Strength '
-        + 'carry one vote each. Its correlation with Momentum is far lower, so the overlap is with '
-        + 'credit, not with equities.',
+        + '0.82 with Credit Risk Appetite — both are the same bonds-against-risk axis — which is '
+        + 'the highest overlap of any pair considered for this index, and higher than any pair '
+        + 'currently in it. Components here are not independent of one another and are not '
+        + 'presented as such; this one was simply too close to a measure already included.',
     },
   ],
 });
