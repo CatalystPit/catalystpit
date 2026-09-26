@@ -16,8 +16,9 @@ import {
   NORM_WINDOW, MIN_WINDOW, MIN_COMPONENTS, COMPONENTS, COMPONENT_KEYS, METHODOLOGY,
 } from '../src/lib/fear-greed/model.mjs';
 import {
-  momentumSeries, volatilitySeries, relativeReturnSeries, trailingWindow, byDate,
-  MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR,
+  momentumSeries, volatilitySeries, volMarketSeries, smaDistanceSeries, relativeReturnSeries,
+  trailingWindow, byDate,
+  MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR, VOL_MARKET_MA,
 } from '../src/lib/fear-greed/series.mjs';
 import { rawSeries, indexForDate, indexHistory, buildPayload, COMPONENT_DIRECTION } from '../src/lib/fear-greed/compute.mjs';
 import {
@@ -111,10 +112,13 @@ sec('⚠️ DIRECTION');
 
   // Every component's declared direction, pinned. A sign flip here is the failure this suite exists
   // for, and it is invisible downstream because the output is still a plausible number.
-  check('⚠️ volatility is the only inverted component',
+  // ⚠️ EXACTLY TWO COMPONENTS ARE INVERTED, AND THEY ARE THE TWO VOLATILITY MEASURES. Asserted as
+  // a set rather than a list so adding a component cannot pass by landing in the right position,
+  // and pinned by name so a future component cannot quietly join the inverted side.
+  check('⚠️ the inverted components are exactly the two volatility measures',
     Object.entries(COMPONENT_DIRECTION)
       .filter(([, d]) => d === DIRECTION.HIGHER_IS_FEAR)
-      .map(([k]) => k).join(',') === 'volatility');
+      .map(([k]) => k).sort().join(',') === 'marketvol,volatility');
   for (const k of ['momentum', 'breadth', 'strength', 'credit']) {
     check(`${k}: higher is greed`, COMPONENT_DIRECTION[k] === DIRECTION.HIGHER_IS_GREED);
   }
@@ -198,6 +202,114 @@ sec('RAW SERIES ARE TRAILING-ONLY');
     relativeReturnSeries(risk, safe.slice(0, 5)).length === 0);
 }
 
+// ── 6b. THE SIXTH COMPONENT (V2) ─────────────────────────────────────────────
+sec('⚠️ MARKET VOLATILITY IS A SECOND, DIFFERENT VOLATILITY MEASURE');
+{
+  const bars = (n, f) => Array.from({ length: n }, (_, i) => ({ date: `d${String(i).padStart(4, '0')}`, close: f(i) }));
+
+  // The shared SMA-distance primitive, against arithmetic done by hand.
+  const ramp = bars(VOL_MARKET_MA + 1, (i) => 100 + i);
+  const last = ramp.at(-1).close;
+  const sma = ramp.slice(-VOL_MARKET_MA).reduce((a, b) => a + b.close, 0) / VOL_MARKET_MA;
+  check('sma distance is close/SMA - 1, exactly',
+    approx(smaDistanceSeries(ramp, VOL_MARKET_MA).at(-1).value, last / sma - 1, 1e-12));
+  check('a flat series sits exactly on its own average',
+    smaDistanceSeries(bars(VOL_MARKET_MA + 5, () => 100), VOL_MARKET_MA).every((p) => approx(p.value, 0)));
+  check('the series starts only once the average is full',
+    smaDistanceSeries(bars(VOL_MARKET_MA + 5, () => 100), VOL_MARKET_MA).length === 6);
+
+  // ⚠️ THE REFACTOR MUST NOT HAVE MOVED MOMENTUM. momentumSeries now delegates to the shared
+  // primitive; V1's numbers have to survive that byte for byte, or the V2 chart would differ from
+  // V1 for a reason that has nothing to do with the new component.
+  const spyish = bars(MOMENTUM_MA + 40, (i) => 100 + 10 * Math.sin(i / 9) + i / 20);
+  const byHand = [];
+  for (let i = MOMENTUM_MA - 1; i < spyish.length; i++) {
+    const w = spyish.slice(i - MOMENTUM_MA + 1, i + 1);
+    byHand.push(spyish[i].close / (w.reduce((a, b) => a + b.close, 0) / MOMENTUM_MA) - 1);
+  }
+  check('⚠️ momentum is unchanged by the shared implementation',
+    momentumSeries(spyish).every((p, i) => approx(p.value, byHand[i], 1e-12)));
+
+  // Direction, end to end: above its own trend must read as fear once scored.
+  const above = bars(VOL_MARKET_MA + 1, (i) => (i === VOL_MARKET_MA ? 200 : 100));
+  const below = bars(VOL_MARKET_MA + 1, (i) => (i === VOL_MARKET_MA ? 50 : 100));
+  check('above its own trend is a positive raw value', volMarketSeries(above).at(-1).value > 0);
+  check('below its own trend is a negative raw value', volMarketSeries(below).at(-1).value < 0);
+  {
+    const hist = Array.from({ length: NORM_WINDOW }, (_, i) => (i - 252) / 2520);   // -0.1 .. +0.1
+    const stressed = scoreComponent({ raw: 0.09, history: hist, direction: COMPONENT_DIRECTION.marketvol });
+    const calm = scoreComponent({ raw: -0.09, history: hist, direction: COMPONENT_DIRECTION.marketvol });
+    check('⚠️ elevated volatility stress scores as FEAR',
+      zoneFor(stressed.score).label.includes('FEAR'), `${stressed.score} ${zoneFor(stressed.score).label}`);
+    check('⚠️ subdued volatility stress scores as GREED',
+      zoneFor(calm.score).label.includes('GREED'), `${calm.score} ${zoneFor(calm.score).label}`);
+    check('...and the two are mirrored about the middle',
+      approx(stressed.score + calm.score, 100, 0.3), `${stressed.score} + ${calm.score}`);
+  }
+
+  // ⚠️ IT READS A DIFFERENT INSTRUMENT. Wiring `spy` into both volatility slots would produce a
+  // plausible index that weights one axis twice; this pins the wiring rather than the plausibility.
+  {
+    const spy = bars(300, (i) => 400 + i);
+    const vol = bars(300, (i) => 30 - i / 20);
+    const s = rawSeries({ panel: [], spy, volMarket: vol, credit: {} });
+    check('marketvol comes from the volatility instrument, not from SPY',
+      s.marketvol.length > 0 && s.marketvol.at(-1).value < 0 && s.momentum.at(-1).value > 0);
+    check('...and passing no volatility bars yields no marketvol series',
+      rawSeries({ panel: [], spy, credit: {} }).marketvol.length === 0);
+  }
+
+  // Point-in-time, on the raw series itself: truncating the input cannot change an earlier value.
+  {
+    const noisy = bars(400, (i) => 20 + 5 * Math.sin(i / 6) + (i % 7));
+    const fullS = volMarketSeries(noisy);
+    const cutS = volMarketSeries(noisy.filter((b) => b.date <= 'd0300'));
+    const at = (s, d) => s.find((p) => p.date === d)?.value ?? null;
+    check('⚠️ a past session\'s raw value is identical with and without the future present',
+      approx(at(fullS, 'd0300'), at(cutS, 'd0300'), 1e-12));
+    check('...and the truncated series really is shorter', cutS.length < fullS.length);
+  }
+}
+
+sec('⚠️ THE SIXTH COMPONENT\'S RECIPE IS NOT PUBLISHED');
+{
+  // `source`, `calculation` and `meaning` are served verbatim by /api/fear-greed and rendered by
+  // the methodology panel. The instrument, the window length and the inversion must not be in them.
+  const meta = COMPONENTS.find((c) => c.key === 'marketvol');
+  const publicText = [meta.label, meta.source, meta.calculation, meta.meaning].join(' ');
+  check('the component is registered and labelled Market Volatility',
+    meta && meta.label === 'Market Volatility');
+  check('⚠️ the instrument is never named in public text', !/UVXY|VIXY|VXX|SVXY/i.test(publicText));
+  check('⚠️ nor the moving-average length', !/\b50[- ]?(day|session)|moving average/i.test(publicText));
+  check('⚠️ nor is it ever called the VIX',
+    !/\bis the VIX\b|measures the VIX|VIX index level/i.test(publicText));
+  check('⚠️ and it says plainly that it is NOT the VIX', /NOT the VIX/i.test(meta.meaning));
+  check('it carries the conceptual description', /relative to its recent trend/i.test(meta.meaning));
+  check('⚠️ no price level is presented as a volatility reading',
+    /no absolute price level/i.test(meta.calculation));
+  // The whole served surface, not just this entry.
+  const served = JSON.stringify({ methodology: METHODOLOGY, componentMeta: COMPONENTS });
+  check('⚠️ the instrument appears nowhere in anything the API serves', !/UVXY/i.test(served));
+  check('...and Realized Volatility is still described as realized',
+    COMPONENTS.find((c) => c.key === 'volatility').label === 'Realized Volatility');
+  check('⚠️ the two volatility components are distinct entries',
+    COMPONENTS.filter((c) => /volatil/i.test(c.label)).length === 2
+    && COMPONENT_KEYS.includes('volatility') && COMPONENT_KEYS.includes('marketvol'));
+}
+
+sec('V2 VERSIONING AND THE COMPONENT COUNT');
+{
+  check('⚠️ the methodology version is v2', METHODOLOGY.version === 'fear_greed_v2');
+  check('the registry holds six components', COMPONENT_KEYS.length === 6);
+  check('every key is unique', new Set(COMPONENT_KEYS).size === COMPONENT_KEYS.length);
+  // ⚠️ THE FLOOR IS DELIBERATELY UNCHANGED. Three of six is half rather than a majority, and the
+  // reasoning for that choice is written where the constant lives.
+  check('⚠️ the minimum component count is still three', MIN_COMPONENTS === 3);
+  check('...so every session V1 could publish, V2 can publish too',
+    MIN_COMPONENTS <= 3 && COMPONENT_KEYS.length > 5);
+  check('the composite rule still states the floor', METHODOLOGY.composite.includes(String(MIN_COMPONENTS)));
+}
+
 // ── 7. POINT-IN-TIME ─────────────────────────────────────────────────────────
 sec('⚠️ NO FUTURE DATA LEAKS INTO A HISTORICAL READING');
 {
@@ -214,6 +326,7 @@ sec('⚠️ NO FUTURE DATA LEAKS INTO A HISTORICAL READING');
   const full = {
     momentum: mk(700, (i) => Math.sin(i / 7)),
     volatility: mk(700, (i) => Math.cos(i / 11) + 2),
+    marketvol: mk(700, (i) => Math.sin(i / 17) / 10),
     breadth: mk(700, (i) => (i % 97) / 97),
     strength: mk(700, (i) => Math.sin(i / 13) / 2),
     credit: mk(700, (i) => Math.cos(i / 5) / 100),
@@ -237,6 +350,7 @@ sec('THE INDEX AND ITS PAYLOAD');
   const series = {
     momentum: mk(700, (i) => Math.sin(i / 7)),
     volatility: mk(700, (i) => Math.cos(i / 11) + 2),
+    marketvol: mk(700, (i) => Math.sin(i / 17) / 10),
     breadth: mk(700, (i) => (i % 97) / 97),
     strength: mk(700, (i) => Math.sin(i / 13) / 2),
     credit: mk(700, (i) => Math.cos(i / 5) / 100),
@@ -244,14 +358,15 @@ sec('THE INDEX AND ITS PAYLOAD');
   const hist = indexHistory(series);
   check('history starts only once the window can be filled', hist.length === 700 - NORM_WINDOW + 1);
   check('every published point has the full component set',
-    hist.every((h) => h.componentCount === 5));
+    hist.every((h) => h.componentCount === COMPONENT_KEYS.length));
   check('every published score is in range', hist.every((h) => h.score >= 0 && h.score <= 100));
   check('history is oldest-first', hist[0].date < hist.at(-1).date);
 
   const p = buildPayload(series);
   check('the payload reports the latest session', p.asOf === hist.at(-1).date);
   check('the score matches the latest computed index', p.score === hist.at(-1).score);
-  check('the payload carries all five components with labels', p.components.length === 5
+  check('the payload carries all six components with labels', p.components.length === 6
+    && p.components.length === COMPONENT_KEYS.length
     && p.components.every((x) => x.label && x.key));
   check('each component carries its own zone word',
     p.components.every((x) => !x.available || typeof x.zone === 'string'));
@@ -265,7 +380,8 @@ sec('THE INDEX AND ITS PAYLOAD');
   // A component going dark mid-history must shrink the average, never be filled in.
   const degraded = { ...series, credit: [] };
   const dp = buildPayload(degraded);
-  check('a dead component leaves the index available on four', dp.componentCount === 4);
+  check('a dead component leaves the index available on the rest',
+    dp.componentCount === COMPONENT_KEYS.length - 1, String(dp.componentCount));
   check('...and is reported as missing', dp.missing.includes('credit'));
   check('...and its score is null rather than 50',
     dp.components.find((x) => x.key === 'credit').score === null);
@@ -724,7 +840,7 @@ sec('⚠️ THE VERSION STAMP IS NOT PART OF THE PRODUCT');
   check('the methodology panel itself is untouched',
     page.includes('WHAT WE DELIBERATELY DO NOT INCLUDE') && page.includes('<P label="Normalisation"'));
   check('⚠️ the version still exists where it is operationally needed',
-    METHODOLOGY.version === 'fear_greed_v1');
+    METHODOLOGY.version === 'fear_greed_v2');
   check('⚠️ it still keys the stored payload and the daily rows',
     store.includes('METHODOLOGY.version') && store.includes('PAYLOAD_KEY'));
   check('and the API still carries it for callers that pin to it',

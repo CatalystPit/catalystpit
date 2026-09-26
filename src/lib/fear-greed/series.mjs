@@ -18,11 +18,50 @@ export const VOL_LOOKBACK = 21;
 export const TRADING_YEAR = 252;
 /** Sessions in the credit-appetite relative-return comparison. */
 export const CREDIT_LOOKBACK = 20;
+/**
+ * Sessions in the volatility-market moving average.
+ *
+ * ⚠️ PROPRIETARY. This length, the instrument it is applied to and the inversion are the recipe for
+ * the Market Volatility component, and none of them appear in anything the API serves or the page
+ * renders — see the registry entry in model.mjs, which is deliberately conceptual.
+ */
+export const VOL_MARKET_MA = 50;
 
 const num = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
 };
+
+/**
+ * Close / SMA(length) - 1, per session. The shared shape behind Momentum and Market Volatility.
+ *
+ * ⚠️ ONE IMPLEMENTATION, TWO COMPONENTS, BECAUSE TWO WOULD DRIFT. Both measure the same thing —
+ * how far a close sits from its own trailing average — over different lengths and on different
+ * instruments, and both depend on the window ending AT the session. A second copy is a second
+ * chance to write `i + 1` somewhere and leak a future bar into a historical value.
+ *
+ * The rolling sum only ever holds bars at or before the current one, so the value at index i is
+ * computed from bars i-length+1 .. i and nothing later.
+ *
+ * @param {Array<{date,close}>} bars oldest first
+ * @param {number} length sessions in the moving average
+ * @returns {Array<{date,value}>} only sessions with a full moving average behind them
+ */
+export function smaDistanceSeries(bars = [], length) {
+  const out = [];
+  let sum = 0;
+  const win = [];
+  for (const b of bars) {
+    const c = num(b.close);
+    if (c === null) continue;
+    win.push(c); sum += c;
+    if (win.length > length) sum -= win.shift();
+    if (win.length < length) continue;
+    const sma = sum / length;
+    if (sma > 0) out.push({ date: b.date, value: c / sma - 1 });
+  }
+  return out;
+}
 
 /**
  * Close / SMA(MOMENTUM_MA) - 1, per session.
@@ -31,19 +70,28 @@ const num = (v) => {
  * @returns {Array<{date,value}>} only sessions with a full moving average behind them
  */
 export function momentumSeries(bars = []) {
-  const out = [];
-  let sum = 0;
-  const win = [];
-  for (const b of bars) {
-    const c = num(b.close);
-    if (c === null) continue;
-    win.push(c); sum += c;
-    if (win.length > MOMENTUM_MA) sum -= win.shift();
-    if (win.length < MOMENTUM_MA) continue;
-    const sma = sum / MOMENTUM_MA;
-    if (sma > 0) out.push({ date: b.date, value: c / sma - 1 });
-  }
-  return out;
+  return smaDistanceSeries(bars, MOMENTUM_MA);
+}
+
+/**
+ * The volatility market's own trend distance: close / SMA(VOL_MARKET_MA) - 1, per session.
+ *
+ * ⚠️ IT IS NOT THE VIX AND IT IS NOT A LEVEL. Catalyst Pit has no entitled source for the VIX index
+ * (see METHODOLOGY.excluded), so this reads a market-traded short-term volatility instrument from
+ * our own licensed daily bars. Two rules follow, and both are structural rather than editorial:
+ *
+ *   1. THE ABSOLUTE PRICE IS NEVER THE SIGNAL. These instruments decay by construction — a
+ *      persistent downward drift from roll and compounding — so their level says more about how
+ *      long they have existed than about today's stress. Measuring the close against its OWN
+ *      trailing average subtracts that drift: the question becomes "is this unusual for this
+ *      instrument lately", which is the same question every other component answers.
+ *   2. HIGHER IS FEAR. Above its own trend means the volatility market is bidding up protection.
+ *      The inversion is declared once, in COMPONENT_DIRECTION, and applied by scoreComponent.
+ *
+ * Trailing-only by the same construction as every other series here.
+ */
+export function volMarketSeries(bars = []) {
+  return smaDistanceSeries(bars, VOL_MARKET_MA);
 }
 
 /**

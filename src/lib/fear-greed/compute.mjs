@@ -8,27 +8,35 @@ import {
   scoreComponent, composite, DIRECTION, NORM_WINDOW, COMPONENTS, COMPONENT_KEYS, METHODOLOGY,
   zoneFor,
 } from './model.mjs';
-import { momentumSeries, volatilitySeries, relativeReturnSeries, byDate, trailingWindow } from './series.mjs';
+import {
+  momentumSeries, volatilitySeries, volMarketSeries, relativeReturnSeries, byDate, trailingWindow,
+} from './series.mjs';
 
 /** Which way each component runs. Declared once; model.mjs applies it. */
 export const COMPONENT_DIRECTION = Object.freeze({
   momentum: DIRECTION.HIGHER_IS_GREED,
   volatility: DIRECTION.HIGHER_IS_FEAR,
+  // Above its own trend = protection being bid = fear. Same inversion, different measurement.
+  marketvol: DIRECTION.HIGHER_IS_FEAR,
   breadth: DIRECTION.HIGHER_IS_GREED,
   strength: DIRECTION.HIGHER_IS_GREED,
   credit: DIRECTION.HIGHER_IS_GREED,
 });
 
 /**
- * Build the five raw series from the loaded inputs.
+ * Build the six raw series from the loaded inputs.
  *
- * @param {object} input { panel, spy, credit: { risk, safe } }
+ * @param {object} input { panel, spy, volMarket, credit: { risk, safe } }
  * @returns {Record<string, Array<{date,value}>>}
  */
-export function rawSeries({ panel = [], spy = [], credit = {} } = {}) {
+export function rawSeries({ panel = [], spy = [], volMarket = [], credit = {} } = {}) {
   return {
     momentum: momentumSeries(spy),
     volatility: volatilitySeries(spy),
+    // ⚠️ A DIFFERENT INSTRUMENT, NOT A SECOND VIEW OF SPY. `volatility` reads SPY's own returns;
+    // `marketvol` reads the volatility market. Passing `spy` here by mistake would produce a
+    // perfectly plausible series that measures the same axis twice and lets it vote twice.
+    marketvol: volMarketSeries(volMarket),
     breadth: panel.map((p) => ({ date: p.date, value: p.breadth })),
     strength: panel.map((p) => ({ date: p.date, value: p.strength })),
     credit: relativeReturnSeries(credit.risk || [], credit.safe || []),

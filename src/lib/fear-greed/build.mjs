@@ -6,6 +6,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
   loadPanelSeries, loadCloses, MARKET_SYMBOL, CREDIT_RISK_SYMBOL, CREDIT_SAFE_SYMBOL,
+  VOL_MARKET_SYMBOL, VOL_MARKET_WARMUP_DAYS,
 } from './data.mjs';
 import { rawSeries, buildPayload, indexHistory } from './compute.mjs';
 import { saveHistory, savePayload } from './store.mjs';
@@ -19,16 +20,19 @@ import { saveHistory, savePayload } from './store.mjs';
  */
 export async function buildFearGreed({ dbc = db, sqlc = sql } = {}) {
   const t0 = Date.now();
-  const [panel, spy, risk, safe] = await Promise.all([
+  const [panel, spy, volMarket, risk, safe] = await Promise.all([
     loadPanelSeries(dbc, sqlc, {}),
     loadCloses(dbc, sqlc, MARKET_SYMBOL, {}),
+    // Deeper than the rest, and only because this instrument's stored history starts later — see
+    // VOL_MARKET_WARMUP_DAYS. It changes the reach of the query, not any calculation.
+    loadCloses(dbc, sqlc, VOL_MARKET_SYMBOL, { sinceDays: VOL_MARKET_WARMUP_DAYS }),
     loadCloses(dbc, sqlc, CREDIT_RISK_SYMBOL, {}),
     loadCloses(dbc, sqlc, CREDIT_SAFE_SYMBOL, {}),
   ]);
   const loadMs = Date.now() - t0;
 
   const t1 = Date.now();
-  const series = rawSeries({ panel, spy, credit: { risk, safe } });
+  const series = rawSeries({ panel, spy, volMarket, credit: { risk, safe } });
   const payload = buildPayload(series);
   const history = indexHistory(series);
   const computeMs = Date.now() - t1;
@@ -49,6 +53,7 @@ export async function buildFearGreed({ dbc = db, sqlc = sql } = {}) {
     componentCount: payload.componentCount,
     sessions: history.length, written: saved.written, skipped: saved.skipped, cached,
     panelSessions: panel.length,
+    volMarketSessions: volMarket.length,
     eligible: panel.at(-1)?.eligible ?? null,
   };
 }

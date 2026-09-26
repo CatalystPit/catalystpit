@@ -15,9 +15,17 @@
 // There is no implied-volatility component, because Catalyst Pit has no entitled source for the VIX
 // index: Tiingo returns 404 for it, FMP 403 (legacy endpoint), Finnhub "market data subscription
 // required for CFD indices" and Polygon NOT_AUTHORIZED. Deriving a VIX-like number from stock
-// prices and calling it volatility would be inventing data. What we CAN compute from our own
-// licensed daily bars is REALIZED volatility, which is a different statistic, and it is labelled as
-// one everywhere it appears.
+// prices and calling it volatility would be inventing data.
+//
+// What we CAN compute from our own licensed daily bars is two DIFFERENT volatility statistics, and
+// each is labelled as what it is everywhere it appears:
+//
+//   Realized Volatility  what the equity market actually did — the dispersion of SPY's own returns.
+//   Market Volatility    whether the volatility market is stressed relative to its own recent
+//                        trend, read from a traded instrument. Not the VIX, not implied volatility,
+//                        and never a price level presented as a volatility reading.
+//
+// Neither replaces the other and neither is a VIX proxy. V2 added the second; see COMPONENTS.
 //
 // There is no put/call component, because we have no broad-market options data at all.
 //
@@ -168,6 +176,20 @@ export function scoreComponent({ raw, history, direction = DIRECTION.HIGHER_IS_G
  * to be up. Three of five is the floor: it keeps the index alive through a single bad vendor day
  * while refusing to publish a number built on one or two measures.
  */
+/**
+ * ⚠️ STILL THREE AFTER THE INDEX GREW TO SIX COMPONENTS, AND THAT IS A DECISION.
+ *
+ * Three of five was a majority; three of six is half. The temptation is to scale it to four so the
+ * ratio is preserved — and that would be a stricter index than the one this floor was chosen for.
+ * The floor answers "how few measures can still describe a market rather than a vendor outage",
+ * which is a question about the absolute number of independent measures, not about the fraction of
+ * a registry whose size is our editorial choice. Raising it to four would also retire readings the
+ * V1 index published: 103 of its 507 sessions ran on exactly three components while the credit and
+ * momentum series were still filling their windows, and they were honest readings.
+ *
+ * So the count is unchanged, which is also what keeps V1 and V2 comparable where they overlap:
+ * every session V1 could publish, V2 can publish.
+ */
 export const MIN_COMPONENTS = 3;
 
 /**
@@ -235,6 +257,28 @@ export const COMPONENTS = Object.freeze([
       + 'index, so this measures what the market actually did rather than what options imply.',
   },
   {
+    key: 'marketvol',
+    label: 'Market Volatility',
+    // ⚠️ HIGHER IS FEAR, AND THE INVERSION LIVES IN scoreComponent. A volatility market bid above
+    // its own trend is protection being paid for.
+    direction: DIRECTION.HIGHER_IS_FEAR,
+    // ── ⚠️ THE ONLY COMPONENT WHOSE RECIPE IS NOT PUBLISHED ──────────────────
+    //
+    // `source`, `calculation` and `meaning` are served by /api/fear-greed and rendered verbatim by
+    // the methodology panel, so these three strings ARE the public disclosure. The instrument, the
+    // moving-average length and the inversion are deliberately absent from them — they live in
+    // series.mjs and data.mjs, which nothing public reads. Two things they must never say, whatever
+    // gets edited here later: this is not the VIX, and it is not a price level.
+    source: 'Our own licensed daily bars for a market-traded short-term volatility instrument.',
+    calculation: 'Proprietary. The volatility market measured against its own recent trend, then '
+      + 'ranked in the same trailing distribution every other component is ranked in. It is a '
+      + 'relative measure by construction: no absolute price level is used as a volatility reading.',
+    meaning: 'Measures whether volatility stress is elevated or subdued relative to its recent '
+      + 'trend. This is NOT the VIX and is not implied volatility — Catalyst Pit has no entitled '
+      + 'source for the VIX index — and it is a different measurement from Realized Volatility, '
+      + 'which is what the equity market actually did.',
+  },
+  {
     key: 'breadth',
     label: 'Market Breadth',
     direction: DIRECTION.HIGHER_IS_GREED,
@@ -274,7 +318,11 @@ export const COMPONENT_KEYS = COMPONENTS.map((c) => c.key);
 /** Full disclosure text, rendered by the methodology panel. */
 export const METHODOLOGY = Object.freeze({
   name: 'Catalyst Pit Fear & Greed',
-  version: 'fear_greed_v1',
+  // ⚠️ V2 ADDS MARKET VOLATILITY, AND THE VERSION IS NOT COSMETIC. It keys the KV payload and is
+  // half the primary key of fear_greed_daily, so V1's stored series is preserved untouched under
+  // its own version while V2 is computed from scratch across every session it can reach. The two
+  // are never mixed on one chart: a reader sees one methodology end to end.
+  version: 'fear_greed_v2',
   updateFrequency: 'Daily, after the U.S. equity close. Every component is derived from completed '
     + 'daily sessions, so the index is a daily measure and is never presented as intraday.',
   normalization: `Each component is scored as its percentile rank within its own trailing `
@@ -295,8 +343,11 @@ export const METHODOLOGY = Object.freeze({
       name: 'Implied volatility (VIX)',
       why: 'No entitled source. Tiingo returns 404 for the index, FMP 403 on its legacy endpoint, '
         + 'Finnhub reports that a CFD-indices subscription is required, and Polygon returns '
-        + 'NOT_AUTHORIZED. Rather than derive a VIX-like number from stock prices, the volatility '
-        + 'component measures realized volatility and says so.',
+        + 'NOT_AUTHORIZED. Neither volatility component is a substitute for it and neither is '
+        + 'presented as one: Realized Volatility measures what the equity market actually did, and '
+        + 'Market Volatility reads a traded volatility instrument against its own recent trend. '
+        + 'Both are named for what they measure, and no VIX level is quoted, estimated or implied '
+        + 'anywhere in this index.',
     },
     {
       name: 'Put/call ratio',

@@ -15,6 +15,31 @@ export const MARKET_SYMBOL = 'SPY';
 export const CREDIT_RISK_SYMBOL = 'HYG';
 /** 7-10 year Treasuries — the safe leg of the credit comparison. */
 export const CREDIT_SAFE_SYMBOL = 'IEF';
+/**
+ * The volatility market, as a traded instrument. NOT the VIX — see volMarketSeries in series.mjs
+ * and METHODOLOGY.excluded in model.mjs. Proprietary: this symbol appears in nothing the API
+ * serves.
+ */
+export const VOL_MARKET_SYMBOL = 'UVXY';
+
+/**
+ * ⚠️ A LONGER LOAD FOR THE VOLATILITY MARKET, AND ONLY FOR IT.
+ *
+ * Every published score is ranked against a FULL 504-session window — MIN_WINDOW equals
+ * NORM_WINDOW precisely so no point is ranked against a shorter history than any other. A component
+ * therefore needs its moving-average warmup PLUS the whole window behind the first session it can
+ * score, and this instrument's stored history begins later than SPY's.
+ *
+ * Measured against the store: loaded over the standard 1,500 days the first scoreable session is
+ * 2024-10-29, which is 28 sessions AFTER the reporting calendar starts, so the component would be
+ * absent from the opening month of the chart for no reason other than how much was fetched. Loaded
+ * over its full stored history the first scoreable session is 2023-11-29 — comfortably before the
+ * calendar — and every published session has it.
+ *
+ * This changes no arithmetic. It is how far back the query reaches, not how anything is computed:
+ * the window a given session ranks against is still the 504 sessions ENDING at that session.
+ */
+export const VOL_MARKET_WARMUP_DAYS = 2600;
 
 /**
  * ⚠️ THE BREADTH PANEL IS FIXED COVERAGE, NOT "EVERY TICKER WE HOLD".

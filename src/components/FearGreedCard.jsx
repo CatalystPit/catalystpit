@@ -7,8 +7,8 @@ import FearGreedMeter from './FearGreedMeter';
 //
 // ── ⚠️ COMPACT ON PURPOSE. THE BREAKDOWN LIVES ON /fear-greed. ──────────────
 //
-// The five-component table is the reason the full page exists — it is what turns a 0-100 number
-// into something a reader can argue with. In a 300px rail it would be five lines of 10px text that
+// The component table is the reason the full page exists — it is what turns a 0-100 number
+// into something a reader can argue with. In a 300px rail it would be six lines of 10px text that
 // nobody reads, so the rail carries the score, the zone, the scale and the three comparisons, and
 // sends anyone who wants the why to the page that has room for it.
 //
