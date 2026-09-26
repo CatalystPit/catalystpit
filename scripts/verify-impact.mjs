@@ -409,12 +409,42 @@ L('\n=== THE CONSENSUS TEASER READS THE CANONICAL ROW ===');
   const teaserCode = teaser.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   ok('the teaser no longer reads the dropped V2.1 field',
     mut('staleschema') ? false : !/r\.normalised/.test(teaserCode));
-  ok('…it reads activeCount from the canonical row',
-    /evidence_layer\?\.activeCount/.test(teaser));
   ok('…and names the setup the board itself named', /r\?\.setup\?\.label/.test(teaser));
+
+  // ⚠️ "FAMILY" IS OUR WORD AND IT DOES NOT REACH THE HOMEPAGE. The row said "2 of 3 families
+  // aligned" beside a large green "3 / FAMILIES" — internal vocabulary, and the least useful thing
+  // in the widest part of the row. The MODEL is unchanged and still called families everywhere it
+  // is computed, so this checks the rendered strings, not the field names the code reads.
+  {
+    const literals = [
+      ...teaserCode.matchAll(/'([^'\\]*)'|"([^"\\]*)"/g),                         // quoted strings
+      ...teaserCode.matchAll(/>\s*([A-Za-z][^<>{}]*?)\s*</g),                     // bare JSX text
+    ].map((m) => m[1] ?? m[2] ?? '').filter(Boolean);
+    const leaked = literals.filter((s) => /famil/i.test(s));
+    ok('⚠️ no rendered string on the teaser says "families"',
+      mut('familyleak') ? false : leaked.length === 0, leaked.join(' | '));
+    ok('…and the big FAMILIES number is gone from the right of the row',
+      !/FAMILIES/.test(teaserCode) && !/familyCount/.test(teaserCode));
+    ok('…and the EVIDENCE ALIGNMENT badge is gone from the header',
+      !/EVIDENCE ALIGNMENT/.test(teaserCode));
+  }
+
+  // ⚠️ THE REASON IS QUOTED FROM THE ROW, NEVER COMPOSED HERE. Four canonical sources in descending
+  // specificity, each returning a sentence the engine wrote.
+  ok('the reason comes from canonical fields, in precedence order',
+    /highSignificance/.test(teaserCode) && /setup\?\.reasons/.test(teaserCode)
+    && /_significant/.test(teaserCode) && /driver\?\.headline/.test(teaserCode));
+  // ⚠️ AND NOTHING IS CALLED ALIGNED THAT THE ROW DOES NOT SAY IS ALIGNED.
+  ok('alignment is measured against the setup\'s own direction',
+    mut('assumealigned') ? false
+      : /pairs\.filter\(\(\[, d\]\) => d === dir\)/.test(teaserCode)
+        && /agreeing\.length >= 3/.test(teaserCode));
+  ok('…and a non-directional setup lists its sources without claiming agreement',
+    /const active = name\(pairs\)/.test(teaserCode) && /dir === 'positive' \|\| dir === 'negative'/.test(teaserCode));
   // ⚠️ NO SUMMARY IS BETTER THAN A FALSE ONE.
-  ok('an unreadable row shows an em dash, never a confident 0',
-    mut('confidentzero') ? false : /familyCount\(r\) \?\? '—'/.test(teaser));
+  ok('a row carrying no canonical sentence shows no sentence',
+    mut('confidentzero') ? false
+      : /reasonFor/.test(teaserCode) && /return typeof headline === 'string' && headline\.trim\(\) \? headline\.trim\(\) : null/.test(teaserCode));
   ok('…and points at the board instead of inventing a count',
     /See the full board for this setup/.test(teaser));
   ok('the teaser still reads ONE board, not a second Consensus',
