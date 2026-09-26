@@ -30,8 +30,8 @@ const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail+
 // list was the pre-refresh eleven long after the nav became seven; every count below then
 // described an arrangement the header no longer had. Widths are the rendered widths at fontSize
 // 15 in the product's font stack.
-const LINKS = ['Terminal', 'Pit Consensus', 'Scan', 'Insiders', 'Politicians', 'News', 'Screener'];
-const W = [62, 103, 36, 57, 76, 40, 66];
+const LINKS = ['Terminal', 'Pit Consensus', 'Scan', 'Insiders', 'Politicians', 'Institutions', 'News', 'Screener'];
+const W = [62, 103, 36, 57, 76, 81, 40, 66];   // Institutions measured at 81px
 const MORE_W = 52;
 const GAP = 16;
 
@@ -193,9 +193,9 @@ L('\n=== THE HEADER IS ACTUALLY WIRED TO IT ===');
   // The top row leads with the evidence products; Dividends, Fear & Greed and Heatmap are menu
   // destinations. Feed is deliberately absent from BOTH — the feature is being reworked, and a nav
   // slot is a promise about something finished. Its route and code are untouched.
-  ok('⚠️ the top row is the seven primary destinations, in priority order',
+  ok('⚠️ the top row is the eight primary destinations, in priority order',
     topRow.replace(/\s+/g, ' ').trim()
-      === '"Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "News", "Screener"');
+      === '"Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "Institutions", "News", "Screener"');
   ok('⚠️ the menu holds exactly Dividends, Fear & Greed and Heatmap',
     menuOnly.replace(/\s+/g, ' ').trim() === '"Dividends", "Fear & Greed", "Heatmap"');
   ok('⚠️ Feed appears in neither list', !/Feed/.test(topRow) && !/Feed/.test(menuOnly));
@@ -206,9 +206,9 @@ L('\n=== THE HEADER IS ACTUALLY WIRED TO IT ===');
   // lists would render twice on a narrow screen.
   ok('⚠️ no destination is in both the row and the menu',
     !topRow.split(',').map((s) => s.trim()).filter(Boolean).some((l) => menuOnly.includes(l)));
-  ok('Insiders and Politicians are promoted to the top row',
-    /"Insiders"/.test(topRow) && /"Politicians"/.test(topRow)
-    && !/Insiders|Politicians/.test(menuOnly));
+  ok('the ownership trio is in the top row, in order, and not in the menu',
+    /"Insiders", "Politicians", "Institutions"/.test(topRow.replace(/\s+/g, ' '))
+    && !/Insiders|Politicians|Institutions/.test(menuOnly));
   ok('…and it is appended to whatever overflowed into the menu',
     has('const overflowed = [...links.slice(visible), ...MENU_ONLY]'));
   ok('…it resolves to /fear-greed', has('"Fear & Greed" ? "/fear-greed"'));

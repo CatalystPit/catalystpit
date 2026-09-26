@@ -973,11 +973,12 @@ export function TopNav({ active }) {
   // route still serves — it is out of this array only, because the feature is being reworked and a
   // nav slot is a promise about what is finished. Do not delete anything behind it.
   //
-  // ⚠️ INSTITUTIONS IS ALSO OUT OF THE NAV. It was previously reachable only by overflowing into
-  // More, and the specified More contents are Dividends / Fear & Greed / Heatmap, so there is no
-  // slot left for it. Its route and page are untouched; this is a visibility decision that should
-  // be confirmed, not a removal.
-  const links = ["Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "News", "Screener"];
+  // ⚠️ INSTITUTIONS SITS BETWEEN POLITICIANS AND NEWS, AND THAT POSITION IS THE SPECIFICATION.
+  // It briefly left the nav when More's contents were given exhaustively; it is back as a top-level
+  // link, not a menu item, so it is the ownership trio — Insiders, Politicians, Institutions —
+  // reading together before the general-interest rooms. Moving it changes which link survives first
+  // as the bar narrows, so do not reorder it casually.
+  const links = ["Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "Institutions", "News", "Screener"];
 
   /**
    * ⚠️ DESTINATIONS THAT LIVE ONLY IN "MORE", NEVER IN THE TOP ROW.
