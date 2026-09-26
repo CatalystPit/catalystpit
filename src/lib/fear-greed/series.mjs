@@ -104,6 +104,54 @@ export function momentumSeries(bars = []) {
  *
  * Trailing-only by the same construction as every other series here.
  */
+/**
+ * ⚠️ AUDITED 2026-09-26. THIS IS THE MOST DUPLICATED COMPONENT IN THE INDEX AND IT STAYS ANYWAY.
+ *
+ * Regressed on the other six components it scores R² 69.6%, the highest of the seven. The
+ * redundancy decomposes by how much R² is lost when each predictor is dropped:
+ *
+ *   momentum 20.1pp   credit 15.3pp   realized volatility 14.9pp
+ *   breadth 0.2pp     price strength 0.0pp
+ *
+ * So it overlaps the index-direction components, not the cross-sectional ones. The cause is the
+ * instrument, not the arithmetic: its daily log returns correlate -0.762 with SPY with a beta of
+ * -4.53, so 58% of its daily variance IS the equity index going the other way. Anything built on
+ * it that is responsive enough to notice a volatility shock also notices the selloff that caused
+ * the shock, and three other components already report that selloff.
+ *
+ * ⚠️ FIVE ALTERNATIVES WERE BUILT AND SCORED THROUGH THIS SAME NORMALISATION. All were rejected,
+ * and the reason is always the same shape: R² can be lowered, but only by giving up the ability to
+ * tell a volatility shock from a calm tape. Stress response below is the mean score in quiet bull
+ * markets minus the mean across sharp selloffs and volatility shocks; this construction scores 56.9.
+ *
+ *   20-session return of the instrument   R² 69.3%  response 48.3  — no R² gain; moves the overlap
+ *                                                                   onto credit (0.704)
+ *   acceleration of the trend distance    R² 68.3%  response 33.2  — 1.3pp for a third of the
+ *                                                                   response
+ *   same shape against a 25-session mean  R² 63.9%  response 36.2  — 5.7pp for a third
+ *   same shape against a 10-session mean  R² 39.5%  response  8.8  — reads 53.8 in a volatility
+ *                                                                   shock and 32.7 in a sharp
+ *                                                                   selloff. That is noise.
+ *   instrument elevation MINUS realized-  R² 77.3%  response -32.4 — the interesting failure.
+ *   volatility elevation                                            Built to separate priced
+ *     forward stress from realized turbulence, and its divergence statistics looked ideal (on the
+ *     same side of 50 as Realized Volatility only 24.7% of sessions). But subtracting the realized
+ *     leg over-corrected into -0.537 correlation WITH Realized Volatility, so the regression
+ *     reproduces it easily and R² went UP. It reads 87.9 — extreme greed — during volatility
+ *     shocks. A divergence table alone would have shipped this; the R² and regime tests caught it.
+ *
+ * ⚠️ THE BINDING CONSTRAINT IS DATA, NOT CONSTRUCTION. Genuinely forward-looking stress needs
+ * option prices or a volatility index, and we hold neither with settled rights: no entitled VIX
+ * source (see METHODOLOGY.excluded), and the clearing-house feed carries contract counts with no
+ * prices and no implied volatility. The unleveraged volatility ETFs are in the candle table but
+ * have 269 sessions against the 504 this normalisation requires before it may score at all, so
+ * they cannot produce a point-in-time value until roughly 2027. Worth revisiting then.
+ *
+ * Drift, for the record: full-year means 37.5 / 49.4 / 55.5 for 2024-2026, a swing of 18.0 within
+ * the 16-24 that live components occupy — but rising monotonically, which is worth watching on a
+ * decaying instrument. The 2023 partial year holds 22 sessions and must not be read as a fourth
+ * point; including it reports a swing of 52 and means nothing.
+ */
 export function volMarketSeries(bars = []) {
   return smaDistanceSeries(bars, VOL_MARKET_MA);
 }
