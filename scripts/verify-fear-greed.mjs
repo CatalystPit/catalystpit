@@ -19,7 +19,7 @@ import {
   momentumSeries, volatilitySeries, volMarketSeries, smaDistanceSeries, relativeReturnSeries,
   trailingWindow, byDate,
   MOMENTUM_MA, VOL_LOOKBACK, CREDIT_LOOKBACK, TRADING_YEAR, VOL_MARKET_MA,
-  optionsPcrSeries,
+  optionsPcrSeries, optionsPcrChangeSeries, OPTIONS_CHANGE_LOOKBACK,
 } from '../src/lib/fear-greed/series.mjs';
 import { parseEquityVolume, OCC_TYPICAL_LAG_SESSIONS } from '../src/lib/fear-greed/occ.mjs';
 import {
@@ -120,10 +120,10 @@ sec('⚠️ DIRECTION');
   // ⚠️ EXACTLY TWO COMPONENTS ARE INVERTED, AND THEY ARE THE TWO VOLATILITY MEASURES. Asserted as
   // a set rather than a list so adding a component cannot pass by landing in the right position,
   // and pinned by name so a future component cannot quietly join the inverted side.
-  check('⚠️ the inverted components are exactly the two volatility measures',
+  check('⚠️ the inverted components are exactly the two volatility measures and options',
     Object.entries(COMPONENT_DIRECTION)
       .filter(([, d]) => d === DIRECTION.HIGHER_IS_FEAR)
-      .map(([k]) => k).sort().join(',') === 'marketvol,volatility');
+      .map(([k]) => k).sort().join(',') === 'marketvol,options,volatility');
   for (const k of ['momentum', 'breadth', 'strength', 'credit']) {
     check(`${k}: higher is greed`, COMPONENT_DIRECTION[k] === DIRECTION.HIGHER_IS_GREED);
   }
@@ -425,20 +425,33 @@ sec('⚠️ OPTIONS SENTIMENT ACCEPTS ONLY WHAT OCC ACTUALLY PUBLISHED');
     optionsPcrSeries([{ date: 'd1', calls: 100, puts: 80 }, { date: 'd3', calls: 100, puts: 120 }])
       .map((p) => p.date).join(',') === 'd1,d3');
 
-  // ⚠️ THE COMPONENT IS GONE; THE INGESTION IS NOT. V4 removed Options Sentiment from the index
-  // because its yearly mean slid 82 → 66 → 38 while every other component swung 16-24 — a rolling
-  // percentile chasing a multi-year shift in the options market's product mix and reporting it as
-  // sentiment. The data is real and still accrues, so everything above stays tested; what must not
-  // come back by accident is the component itself.
-  check('⚠️ Options Sentiment is NOT a component of the index',
-    !COMPONENT_KEYS.includes('options') && !COMPONENTS.some((c) => c.key === 'options'));
-  check('…and nothing declares a direction for it', COMPONENT_DIRECTION.options === undefined);
-  check('…and rawSeries does not build it',
-    rawSeries({ panel: [], spy: [], volMarket: [], credit: {} }).options === undefined);
-  check('⚠️ …while the official ingestion is still in the build path',
-    /ingestSessions/.test(readFileSync(new URL('../src/lib/fear-greed/build.mjs', import.meta.url), 'utf8')));
-  check('…and the removal is explained where the methodology lives',
-    /Options Sentiment REMOVED/.test(readFileSync(new URL('../src/lib/fear-greed/model.mjs', import.meta.url), 'utf8')));
+  // ⚠️ THE COMPONENT IS BACK, AS A CHANGE RATHER THAN A LEVEL. V4 pulled the level build because
+  // its yearly mean slid 82 → 66 → 38 while every other component swung 16-24. Differencing the
+  // ratio removes that structural shift — 8.1 points of yearly swing — and these pin the shape of
+  // the construction so a future edit cannot quietly return it to a level.
+  check('⚠️ Options Sentiment is a component again', COMPONENT_KEYS.includes('options'));
+  check('⚠️ …built from the CHANGE in the ratio, not its level',
+    /optionsPcrChangeSeries\(options\)/.test(readFileSync(new URL('../src/lib/fear-greed/compute.mjs', import.meta.url), 'utf8')));
+  check('…and a rising put/call reads as fear', COMPONENT_DIRECTION.options === DIRECTION.HIGHER_IS_FEAR);
+  {
+    const obs = Array.from({ length: 60 }, (_, i) => ({ date: `d${String(i).padStart(3, '0')}`, calls: 100, puts: 50 + i }));
+    const s = optionsPcrChangeSeries(obs);
+    check('the change series starts only once a full lookback sits behind it', s.length === 60 - 20);
+    check('⚠️ a steadily rising put/call produces a positive change', s.every((p) => p.value > 0));
+    check('⚠️ …and a flat ratio produces exactly zero, not a missing value',
+      optionsPcrChangeSeries(Array.from({ length: 30 }, (_, i) => ({ date: 'd' + i, calls: 100, puts: 80 })))
+        .every((p) => p.value === 0));
+    check('⚠️ a gap in the observations is never bridged',
+      optionsPcrChangeSeries([{ date: 'd1', calls: 100, puts: 80 }, { date: 'd3', calls: 100, puts: 90 }]).length === 0);
+  }
+  // ⚠️ PERMISSION IS PENDING, AND THE SWITCH THAT TURNS THIS OFF MUST KEEP EXISTING.
+  check('⚠️ the pending-permission position is stated in code, not just in a commit message',
+    /OCC_PERMISSION_PENDING = true/.test(readFileSync(new URL('../src/lib/fear-greed/occ.mjs', import.meta.url), 'utf8')));
+  check('⚠️ …and a single switch removes the component',
+    /OPTIONS_SENTIMENT_ENABLED \? drop\(optionsPcrChangeSeries\(options\)\) : \[\]/.test(
+      readFileSync(new URL('../src/lib/fear-greed/compute.mjs', import.meta.url), 'utf8')));
+  check('…honouring an environment override too',
+    /FG_OPTIONS_DISABLED/.test(readFileSync(new URL('../src/lib/fear-greed/occ.mjs', import.meta.url), 'utf8')));
 }
 
 sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
@@ -481,14 +494,14 @@ sec('⚠️ THE CREDIT CONTROL LEG IS SHORT-DURATION');
 
 sec('VERSIONING AND THE COMPONENT COUNT');
 {
-  check('⚠️ the methodology version is v4', METHODOLOGY.version === 'fear_greed_v4');
-  check('the registry holds six components', COMPONENT_KEYS.length === 6);
+  check('⚠️ the methodology version is v5', METHODOLOGY.version === 'fear_greed_v5');
+  check('the registry holds seven components', COMPONENT_KEYS.length === 7);
   check('every key is unique', new Set(COMPONENT_KEYS).size === COMPONENT_KEYS.length);
   // ⚠️ THE FLOOR IS DELIBERATELY UNCHANGED. Three of six is half rather than a majority, and the
   // reasoning for that choice is written where the constant lives.
   check('⚠️ the minimum component count is still three', MIN_COMPONENTS === 3);
   check('...so every session V1 could publish, V2 can publish too',
-    MIN_COMPONENTS <= 3 && COMPONENT_KEYS.length > 5);
+    MIN_COMPONENTS <= 3 && COMPONENT_KEYS.length > 6);
   // ⚠️ THE FLOOR IS NO LONGER PUBLISHED AS A NUMBER — see the public-cleanup section. What the
   // prose must still do is state the RULE.
   check('the composite rule still states the refusal rule without the number',
@@ -552,7 +565,7 @@ sec('THE INDEX AND ITS PAYLOAD');
   const p = buildPayload(series);
   check('the payload reports the latest session', p.asOf === hist.at(-1).date);
   check('the score matches the latest computed index', p.score === hist.at(-1).score);
-  check('the payload carries all six components with labels', p.components.length === 6
+  check('the payload carries all seven components with labels', p.components.length === 7
     && p.components.length === COMPONENT_KEYS.length
     && p.components.every((x) => x.label && x.key));
   check('each component carries its own zone word',
@@ -1047,7 +1060,7 @@ sec('⚠️ THE VERSION STAMP IS NOT PART OF THE PRODUCT');
   check('the methodology panel itself is untouched',
     page.includes('WHAT WE DELIBERATELY DO NOT INCLUDE') && page.includes('<P label="Normalisation"'));
   check('⚠️ the version still exists where it is operationally needed',
-    METHODOLOGY.version === 'fear_greed_v4');
+    METHODOLOGY.version === 'fear_greed_v5');
   check('⚠️ it still keys the stored payload and the daily rows',
     store.includes('METHODOLOGY.version') && store.includes('PAYLOAD_KEY'));
   check('and the API still carries it for callers that pin to it',

@@ -204,3 +204,40 @@ export function optionsPcrSeries(observations = []) {
   }
   return out;
 }
+
+/** Sessions over which the options put/call ratio's CHANGE is measured. */
+export const OPTIONS_CHANGE_LOOKBACK = 20;
+
+/**
+ * The CHANGE in the equity-options put/call ratio over OPTIONS_CHANGE_LOOKBACK sessions.
+ *
+ * ── ⚠️ A CHANGE, NOT A LEVEL, AND THAT IS THE WHOLE REASON THIS COMPONENT WORKS ────
+ *
+ * The level construction shipped once and was withdrawn. Measured over 2024-2026 its yearly mean
+ * slid 82 → 66 → 38 — a 44-point drift against 16-24 for every other component — because the
+ * options market's product mix has shifted structurally on roughly the same horizon as the
+ * normalisation window, and a rolling percentile cannot tell that apart from sentiment. The raw
+ * ratio's own yearly medians went 0.73 → 0.68 → 0.76, non-monotonic, while the score fell
+ * monotonically: the slide was manufactured by the window, not present in the market.
+ *
+ * Differencing removes it. Measured on the same data: the 20-session change drifts 8.1 points,
+ * better than any component currently in the index. "Positioning is becoming more defensive" is
+ * also the more honest sentiment question than "positioning is historically defensive", because
+ * the second one requires the historical baseline to still mean what it meant.
+ *
+ * ⚠️ AND IT IS A DIFFERENCE, NOT A RATIO OF RATIOS. Dividing today's ratio by its own trailing
+ * average scores almost as well on drift but correlates 0.550 with the rest of the index against
+ * this construction's 0.421 — it is the same shape as Market Volatility (a level against its own
+ * trailing mean) and inherits that component's information.
+ *
+ * @param {Array<{date,calls,puts}>} observations oldest first
+ * @returns {Array<{date,value}>} one point per session that has a session lookback behind it
+ */
+export function optionsPcrChangeSeries(observations = [], lookback = OPTIONS_CHANGE_LOOKBACK) {
+  const pcr = optionsPcrSeries(observations);
+  const out = [];
+  for (let i = lookback; i < pcr.length; i++) {
+    out.push({ date: pcr[i].date, value: pcr[i].value - pcr[i - lookback].value });
+  }
+  return out;
+}

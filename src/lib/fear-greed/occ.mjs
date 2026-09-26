@@ -35,6 +35,30 @@
 // There is no interpolation, no forward-fill, no substitution from another source, and no neutral
 // default anywhere in this file.
 
+// ══════════════════════════════════════════════════════════════════════════════════════════
+// ⚠️⚠️  SOURCE PERMISSION IS PENDING. THIS COMPONENT IS PRE-LAUNCH, NOT CLEARED FOR COMMERCIAL USE.
+// ══════════════════════════════════════════════════════════════════════════════════════════
+//
+// Permission to use these observations has been requested and NOT answered. Nothing in this file
+// should be read as a determination that commercial rights are cleared — they are not. Development
+// and pre-launch testing only.
+//
+// ⚠️ TO DISABLE THE COMPONENT IMMEDIATELY: set FG_OPTIONS_DISABLED=1 in the environment, or flip
+// OPTIONS_SENTIMENT_ENABLED to false below. Either removes Options Sentiment from the index on the
+// next build with no other change — the remaining six carry the composite under the existing
+// missing-component rule, exactly as they do when a session is unpublished. Stored observations are
+// untouched by the switch, so re-enabling costs nothing and loses nothing.
+//
+// ⚠️ WHAT IS AND IS NOT PUBLISHED. The raw volumes, this endpoint, the ratio and the lookback are
+// internal. The only thing that reaches a reader is Catalyst Pit's derived 0-100 score and its
+// classification — asserted by the suite against the whole served payload.
+
+/** The single switch. Set FG_OPTIONS_DISABLED=1, or flip this, to drop the component. */
+export const OPTIONS_SENTIMENT_ENABLED = process.env.FG_OPTIONS_DISABLED !== '1';
+
+/** Stated so nobody has to reconstruct the licensing position from commit history. */
+export const OCC_PERMISSION_PENDING = true;
+
 const ENDPOINT = 'https://marketdata.theocc.com/mdapi/daily-volume-totals';
 export const OCC_SOURCE = 'occ:daily-volume-totals';
 /** Declared so OCC can see who is asking. */

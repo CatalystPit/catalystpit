@@ -10,7 +10,9 @@ import {
 } from './model.mjs';
 import {
   momentumSeries, volatilitySeries, volMarketSeries, relativeReturnSeries, byDate, trailingWindow,
+  optionsPcrChangeSeries,
 } from './series.mjs';
+import { OPTIONS_SENTIMENT_ENABLED } from './occ.mjs';
 
 /** Which way each component runs. Declared once; model.mjs applies it. */
 export const COMPONENT_DIRECTION = Object.freeze({
@@ -18,6 +20,8 @@ export const COMPONENT_DIRECTION = Object.freeze({
   volatility: DIRECTION.HIGHER_IS_FEAR,
   // Above its own trend = protection being bid = fear. Same inversion, different measurement.
   marketvol: DIRECTION.HIGHER_IS_FEAR,
+  // Positioning becoming MORE defensive is fear. The inversion is declared here and applied once.
+  options: DIRECTION.HIGHER_IS_FEAR,
   breadth: DIRECTION.HIGHER_IS_GREED,
   strength: DIRECTION.HIGHER_IS_GREED,
   credit: DIRECTION.HIGHER_IS_GREED,
@@ -76,12 +80,12 @@ export function validPanelSessions(panel = []) {
 }
 
 /**
- * Build the six raw series from the loaded inputs.
+ * Build the seven raw series from the loaded inputs.
  *
- * @param {object} input { panel, spy, volMarket, credit: { risk, safe } }
+ * @param {object} input { panel, spy, volMarket, options, credit: { risk, safe } }
  * @returns {Record<string, Array<{date,value}>>}
  */
-export function rawSeries({ panel = [], spy = [], volMarket = [], credit = {} } = {}) {
+export function rawSeries({ panel = [], spy = [], volMarket = [], options = [], credit = {} } = {}) {
   const valid = validPanelSessions(panel);
   // ⚠️ REJECTED SESSIONS LEAVE EVERY SERIES, NOT JUST THE TWO THE PANEL FEEDS. A day the market
   // did not open is not a data point for volatility or credit either, and leaving it in their
@@ -104,6 +108,12 @@ export function rawSeries({ panel = [], spy = [], volMarket = [], credit = {} } 
     breadth: valid.map((p) => ({ date: p.date, value: p.breadth })),
     strength: valid.map((p) => ({ date: p.date, value: p.strength })),
     credit: drop(relativeReturnSeries(credit.risk || [], credit.safe || [])),
+    // ⚠️ THE CLEARING SOURCE PUBLISHES ON A LAG, so this series legitimately ends before the
+    // others do. A session with no stored observation has no point and the component is absent
+    // for it — the existing missing-component rule, not a special case.
+    // ⚠️ THE KILL SWITCH LANDS HERE. Disabled means the series is EMPTY, which the existing
+    // missing-component rule already handles — not a zero, not a neutral 50, just absent.
+    options: OPTIONS_SENTIMENT_ENABLED ? drop(optionsPcrChangeSeries(options)) : [],
   };
 }
 

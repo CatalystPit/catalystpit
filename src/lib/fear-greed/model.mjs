@@ -27,23 +27,27 @@
 //
 // Neither replaces the other and neither is a VIX proxy. V2 added the second; see COMPONENTS.
 //
-// ── ⚠️ AND THERE IS NO PUT/CALL COMPONENT, THOUGH WE BUILT ONE AND MEASURED IT ──
+// ── ⚠️ THE PUT/CALL COMPONENT IS A CHANGE, NOT A LEVEL, AND THAT DISTINCTION IS THE WHOLE STORY ──
 //
-// V3 briefly shipped Options Sentiment from official cleared equity-options volume. The data is
-// real, auditable and still ingested daily — see occ.mjs — but it failed the test that matters for
-// a percentile component: ITS YEARLY MEAN SLID 82 → 66 → 38 across 2024-2026. A rolling percentile
-// should average near 50 every year. Every other component swings 16-24 points between years and
-// the composite itself swings 16; that one swung 44. And the slide is NOT in the raw ratio, whose
-// yearly medians go 0.73 → 0.68 → 0.76 — so the window was chasing a multi-year change in the
-// options market's product mix and reporting it as sentiment.
+// V3 shipped Options Sentiment as the LEVEL of the cleared equity-options put/call ratio. It was
+// withdrawn in V4 because its yearly mean slid 82 → 66 → 38 across 2024-2026 — a 44-point drift
+// against 16-24 for every other component. The slide was not in the market: the raw ratio's yearly
+// medians went 0.73 → 0.68 → 0.76, non-monotonic. The options market's product mix has shifted
+// structurally on roughly the same horizon as the normalisation window, and a rolling percentile
+// cannot tell that apart from sentiment.
 //
-// The universe is why. The clearing house's equity class is 90.7% of all cleared options — single
-// names AND exchange-traded products — and ETP hedging is what moves it. Cboe publishes a
-// single-name-only equity ratio that drifts 22 points, in line with everything else, but Cboe
-// stopped publishing volumes in 2019, its ratio cannot be audited to a contract count, and it is
-// available only as rendered HTML. So the better measure cannot be sourced and the sourceable
-// measure is not good enough. V4 removes the component rather than publish one that pushes the
-// index the same way for a year at a time.
+// V5 restores the component as the CHANGE in that ratio over a recent horizon. Differencing removes
+// the structural shift: measured on the same data, 8.1 points of yearly swing — better than any
+// other component in the index. A ratio-to-its-own-average construction scores about as well on
+// drift but correlates 0.550 with the rest of the index against this one's 0.421, because it is the
+// same shape as Market Volatility and inherits its information.
+//
+// ⚠️ THE UNIVERSE IS STILL NOT SINGLE-NAME. The clearing house's equity class is 90.7% of all
+// cleared options — single names AND exchange-traded products — so ETP hedging is in there, and the
+// public wording says so. Cboe publishes a single-name-only equity ratio, and its dated pages DO
+// expose auditable call and put volumes (an earlier note here claimed otherwise; that was wrong).
+// It is not used because Cboe's website terms expressly prohibit creating an index from their
+// Materials without written permission.
 //
 // See METHODOLOGY at the bottom for the full disclosure the UI renders.
 
@@ -319,6 +323,33 @@ export const COMPONENTS = Object.freeze([
       + 'Positive when leadership is expanding, negative when it is breaking.',
   },
   {
+    key: 'options',
+    label: 'Options Sentiment',
+    // ⚠️ A RISING PUT/CALL RATIO IS POSITIONING TURNING DEFENSIVE, WHICH IS FEAR. Declared here,
+    // applied once, in scoreComponent.
+    direction: DIRECTION.HIGHER_IS_FEAR,
+    // ── ⚠️ CONCEPTUAL, LIKE EVERY OTHER ENTRY. THESE THREE STRINGS ARE THE PUBLIC DISCLOSURE ──
+    //
+    // Served verbatim by /api/fear-greed and rendered by the methodology panel. The source, the
+    // endpoint, the ratio, the lookback and the normalisation are absent by design — they live in
+    // occ.mjs and series.mjs, which nothing public reads. What this must keep saying is the part a
+    // reader could get wrong: the universe is not single-name only, and a late session is
+    // unavailable rather than estimated.
+    source: 'Official cleared equity-class options volume from the U.S. options clearing house, '
+      + 'stored per market session exactly as published.',
+    calculation: 'Proprietary. The recent shift in the balance of defensive against speculative '
+      + 'equity-options activity, ranked in the same trailing distribution every other component '
+      + 'is ranked in. It reads cleared VOLUME only — never open interest, never a single symbol — '
+      + 'and it measures the CHANGE in that balance rather than its level.',
+    meaning: 'Measures whether equity-options activity is turning more defensive or more '
+      + 'speculative relative to its recent history. It covers the whole equity class — options on '
+      + 'individual stocks and on exchange-traded products — and excludes index options. Because '
+      + 'exchange-traded product options carry hedging as well as directional positioning, this is '
+      + 'a measure of overall options posture rather than of speculation alone. Clearing data is '
+      + 'published on a short delay, so the most recent sessions may not carry this component yet — '
+      + 'it is reported as unavailable rather than estimated.',
+  },
+  {
     key: 'credit',
     label: 'Credit Risk Appetite',
     direction: DIRECTION.HIGHER_IS_GREED,
@@ -363,7 +394,7 @@ export const METHODOLOGY = Object.freeze({
   //       yearly mean against 16-24 for every other component, so it was reporting a multi-year
   //       shift in the options market's product mix as sentiment. Back to six. The raw
   //       observations keep accruing in occ_options_volume; nothing about the other six changed.
-  version: 'fear_greed_v4',
+  version: 'fear_greed_v5',
   updateFrequency: 'Daily, after the U.S. equity close. Every component is derived from completed '
     + 'daily sessions, so the index is a daily measure and is never presented as intraday.',
   // ⚠️ CONCEPTUAL, NOT REPRODUCIBLE. These two paragraphs are served by the API and rendered by
