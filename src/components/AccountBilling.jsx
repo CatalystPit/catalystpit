@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { C, startCheckout } from '../lib/cp-shared';
-import PlanTerms from './PlanTerms';
+import { C } from '../lib/cp-shared';
+import PlanChoice from './PlanChoice';
 
 // Account billing card: plan badge + Manage (Pro → Stripe portal) / Upgrade (Free → checkout).
 export default function AccountBilling() {
@@ -63,17 +63,13 @@ export default function AccountBilling() {
             fontSize: 13, fontWeight: 600, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, fontFamily: "'DM Sans',sans-serif" }}>
           {busy ? 'Opening…' : 'Manage subscription'}
         </button>
-      ) : (
-        <button onClick={() => startCheckout()}
-          style={{ background: C.green, border: 'none', color: '#fff', borderRadius: 6, padding: '9px 16px',
-            fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-          Upgrade to Pro · $20/month
-        </button>
-      ))}
+      ) : null)}
       </div>
-      {/* ⚠️ ONLY ON THE BUY PATH. A subscriber reading their own billing card does not need
-          the renewal sentence again; someone about to click Upgrade does. */}
-      {tier != null && !planUnknown && !isPro && <PlanTerms interval="both" align="left" />}
+      {/* ⚠️ THE CHOICE LIVES HERE, NOT A SINGLE MONTHLY BUTTON. This card printed the
+          both-plan renewal terms — "$199/year renews annually" — under a button that could only
+          buy the monthly plan. Someone reading that had no way to act on it. PlanChoice carries
+          its own terms block, which now matches whichever plan is selected. */}
+      {tier != null && !planUnknown && !isPro && <PlanChoice align="left" cta="Upgrade to Pro" />}
     </div>
   );
 }

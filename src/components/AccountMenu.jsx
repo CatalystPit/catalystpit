@@ -2,7 +2,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useUser, useClerk } from '@clerk/nextjs';
 import { C } from '../lib/cp-tokens.mjs';
-import { startCheckout } from '../lib/cp-shared';
 
 // THE CATALYST PIT ACCOUNT MENU.
 //
@@ -129,7 +128,11 @@ export default function AccountMenu() {
           <Item href="/settings">Settings</Item>
           {tier !== null && (isPro
             ? <Item onClick={portal}>Billing</Item>
-            : <Item onClick={() => { close(); startCheckout(); }}>Upgrade to Pit Pro</Item>)}
+            /* ⚠️ THE ONLY CTA WHOSE LABEL NAMES NO PRICE, so it must not pick one. Every other
+               contextual button says "$20/month" and buys exactly that; this one said "Upgrade to
+               Pit Pro" and silently chose monthly. It now opens the billing card, where both plans
+               are offered. */
+            : <Item href="/account">Upgrade to Pit Pro</Item>)}
 
           <div style={{ borderTop: `1px solid ${C.surface}`, marginTop: 4, paddingTop: 4 }}>
             <Item onClick={() => { close(); signOut({ redirectUrl: '/' }); }}>Sign out</Item>

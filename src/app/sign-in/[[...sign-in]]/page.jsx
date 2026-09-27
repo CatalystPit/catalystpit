@@ -5,7 +5,16 @@ export const metadata = {
   title: 'Sign In · CatalystPit',
 };
 
-export default function SignInPage() {
+// ⚠️ redirect_url IS READ EXPLICITLY RATHER THAN LEFT TO CONVENTION. The middleware sends a
+// signed-out visitor here with the page they wanted — including /account?upgraded=1 straight off
+// a Stripe success_url. Clerk does honour redirect_url implicitly, but a post-payment landing is
+// not something to leave resting on an undocumented default, so it is passed through by hand.
+// Only same-origin PATHS are accepted; an absolute URL from the query is ignored, so this cannot
+// be used to bounce someone to another site after they authenticate.
+export default async function SignInPage({ searchParams }) {
+  const sp = (await searchParams) || {};
+  const raw = typeof sp.redirect_url === 'string' ? sp.redirect_url : null;
+  const back = raw && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/';
   return (
     <div style={{
       minHeight: '100vh',
@@ -37,7 +46,7 @@ export default function SignInPage() {
       </div>
 
       {/* Clerk's sign-in form */}
-      <SignIn />
+      <SignIn fallbackRedirectUrl={back} signUpFallbackRedirectUrl={back} />
 
       {/* Footer link */}
       <a href="/" style={{

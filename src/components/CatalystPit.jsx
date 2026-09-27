@@ -8,7 +8,7 @@ import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mj
 import { deskSelection } from "../lib/impact";
 import HeatMap from "./HeatMap";
 import FearGreedCard from "./FearGreedCard";
-import PlanTerms from "./PlanTerms";
+import PlanChoice from "./PlanChoice";
 import CompactChart from "./chart/CompactChart";
 import {
   C, CARD_COLORS,
@@ -800,19 +800,11 @@ export default function CatalystPit() {
                 </li>
               ))}
             </ul>
-            <button onClick={() => startCheckout()} style={{width:"100%", background:C.green, border:"none", color:"#fff",
-              padding:"11px", borderRadius:6, fontSize:13, fontWeight:600, cursor:"pointer",
-              fontFamily:"'DM Sans',sans-serif"}}
-              onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-              onMouseLeave={e => e.currentTarget.style.background = C.green}>
-              Start Pro · $20/month
-            </button>
-            <button onClick={() => startCheckout('annual')} style={{width:"100%", background:"transparent",
-              border:"none", color:C.green, marginTop:8, cursor:"pointer", fontSize:12, fontWeight:600,
-              fontFamily:"'DM Sans',sans-serif"}}>
-              or save with $199/year →
-            </button>
-            <PlanTerms interval="both" />
+            {/* ⚠️ WAS A MONTHLY BUTTON PLUS A SMALL "or save with $199/year" LINK. That link was the
+                only route to the annual price anywhere in the product, and it read as an afterthought
+                next to a full-width primary button. Both plans are published in the Terms, so both get
+                equal standing at the point of decision. */}
+            <PlanChoice align="center" cta="Start Pro" />
           </div>
 
           {/* CATALYST PIT FEAR & GREED — the compact rail read. Deliberately score + zone + scale
