@@ -5,16 +5,29 @@ import {
   PALETTE_GRID, PALETTE_COLUMNS, PALETTE_ROWS, COMMON_COLORS, normalizeHex, isValidHex,
 } from '../../lib/chart/color-palette.mjs';
 
-// THE COLOUR CONTROL — one component, used by every indicator series.
+// THE COLOUR CONTROL — one palette, in one of two boxes.
+//
+// This module exports two things, and the split matters:
+//
+//   ColorPalettePanel  the ninety swatches, the themed six and the custom controls. Content only: no
+//                      border, no background, no position. Whoever mounts it supplies the box.
+//   ColorPicker        a self-contained trigger-plus-popover around that panel, for the places that
+//                      want a swatch button they can drop into a row of settings.
 //
 // ⚠️ ONE CONTROL, NOT ONE PER INDICATOR. SMA, EMA, VWAP, RSI, ATR, each Bollinger band and each MACD
 // series all render this. That is the point: a palette implemented per indicator is a palette that
 // drifts, and the old six-swatch row was already duplicated in three other places in the chart UI.
 //
+// ⚠️ AND THE DRAWING TOOLBAR MOUNTS THE PANEL DIRECTLY, not a ColorPicker. It used to put a COMPACT
+// ColorPicker inside a Popover, which meant a popover whose only content was another popover's
+// trigger: one tap gave you a small box with a single blue square in it, and the palette needed a
+// second tap on a caret a few pixels wide. See the note on ColorPalettePanel for why the toolbar
+// cannot simply render ColorPicker's own panel instead.
+//
 // THE COLLAPSED STATE IS A ROW OF COMMON COLOURS plus the current swatch. Clicking the swatch opens
-// the full grid — roughly ninety shades across ten families and a grayscale ramp — with a hex field at
-// the bottom for anything the grid does not carry. The common row means the ordinary case never needs
-// the popover, and the popover means the palette is not limited to what fits on one line.
+// the full grid — ninety shades across eight families and a grayscale ramp — with a hex field at the
+// bottom for anything the grid does not carry. The common row means the ordinary case never needs the
+// popover, and the popover means the palette is not limited to what fits on one line.
 //
 // ⚠️ A STORED VALUE MAY BE AN INDEX OR A HEX, and this control never has to care which: it compares
 // against the RESOLVED colour, so a legacy index-2 instance shows the same swatch selected as one
@@ -23,23 +36,32 @@ import {
 const SWATCH = 15;
 const GAP = 3;
 const PANEL_PAD = 8;
-/** Grid swatches are slightly larger than the inline row: ten of them set the popover's width. */
+/** Grid swatches are slightly larger than the inline row: nine of them set the popover's width. */
 const GRID_SWATCH = 32;
 const GRID_GAP = 4;
 
 /**
  * The panel's size, derived from the palette rather than guessed or measured.
  *
- * ⚠️ IT IS ALSO THE PROOF THE PANEL NEEDS NO SCROLLBAR. The whole grid is 9 rows of 10 at a known
+ * ⚠️ IT IS ALSO THE PROOF THE PANEL NEEDS NO SCROLLBAR. The whole grid is 10 rows of 9 at a known
  * swatch size, so its height is arithmetic rather than something the browser discovers — which is what
  * lets the placement decision happen before the first paint (see the placement effect) AND lets a test
  * assert the popover is tall enough to show all ninety without one.
+ *
+ * ⚠️ THE SWATCHES ARE BORDER-BOX, so 32 means 32. They were content-box with a 1px border, which made
+ * every swatch 34px wide and each row 18px wider than the width computed from GRID_SWATCH — nine
+ * columns overflowing a panel sized for nine columns. The arithmetic here is only worth anything if the
+ * boxes it describes are the boxes the browser lays out.
  */
-const PANEL_WIDTH = PALETTE_COLUMNS * GRID_SWATCH + (PALETTE_COLUMNS - 1) * GRID_GAP + PANEL_PAD * 2;
+export const COLOR_GRID_WIDTH = PALETTE_COLUMNS * GRID_SWATCH + (PALETTE_COLUMNS - 1) * GRID_GAP;
 const GRID_HEIGHT = PALETTE_ROWS * GRID_SWATCH + (PALETTE_ROWS - 1) * GRID_GAP;
 // The theme-aware row, the custom-colour row, and the two separators and gaps around them.
 const EXTRAS_HEIGHT = 34 + 36 + 26;
-const PANEL_HEIGHT_ESTIMATE = GRID_HEIGHT + EXTRAS_HEIGHT + PANEL_PAD * 2;
+/** What the palette needs INSIDE a host's padding — the number a portalled host places against. */
+export const COLOR_PANEL_CONTENT_HEIGHT = GRID_HEIGHT + EXTRAS_HEIGHT;
+/** The self-hosted panel's own box, border-box: the grid, its padding, and its 1px border each side. */
+const PANEL_WIDTH = COLOR_GRID_WIDTH + PANEL_PAD * 2 + 2;
+const PANEL_HEIGHT_ESTIMATE = COLOR_PANEL_CONTENT_HEIGHT + PANEL_PAD * 2 + 2;
 const PANEL_WIDTH_ESTIMATE = PANEL_WIDTH;
 
 /** One swatch. Selection is a ring rather than a border, so it cannot change the colour it describes. */
@@ -51,6 +73,7 @@ function Swatch({ color, selected, onPick, title, size = SWATCH, p }) {
       onClick={() => onPick(color)}
       style={{
         width: size, height: size, padding: 0, borderRadius: 3, cursor: 'pointer',
+        boxSizing: 'border-box',
         background: color,
         // A hairline in the panel's own border colour keeps a white or near-black swatch visible
         // against the panel, without reading as a selection state.
@@ -60,6 +83,134 @@ function Swatch({ color, selected, onPick, title, size = SWATCH, p }) {
         flexShrink: 0,
       }}
     />
+  );
+}
+
+/**
+ * THE PALETTE ITSELF — the ninety swatches, the themed six, and the custom controls.
+ *
+ * ⚠️ WHY THIS IS A COMPONENT OF ITS OWN, AND WHY IT OWNS NO CHROME. It renders no border, no
+ * background, no shadow and no position: it is content, and whoever mounts it supplies the box.
+ *
+ * That split is the fix for a real bug. The drawing toolbar's colour button opened a Popover whose
+ * only content was a COMPACT ColorPicker — which is itself a trigger plus a popover. So the first tap
+ * produced a small panel containing one blue square and a caret, and the palette needed a SECOND tap.
+ * On a phone, where that caret is a few pixels wide, the palette was effectively unreachable.
+ *
+ * The obvious repair — render ColorPicker's own panel in the toolbar instead — does not work: that
+ * panel is `position: absolute` inside the toolbar, and the toolbar lives inside the chart's
+ * `overflow: hidden` box, so a 460px palette hung off a floating toolbar is clipped by the chart. The
+ * panel has to be portalled out, which is what Popover already does for every other chart menu.
+ *
+ * Hence: the palette is content that either host can mount. ColorPicker wraps it in its own absolute
+ * popover; the drawing toolbar hands it straight to Popover, whose portal is viewport-placed. One
+ * implementation of the palette, two boxes to put it in — as opposed to two palettes, which is the
+ * thing this whole component exists to prevent.
+ *
+ * @param {object} props
+ * @param {string} props.theme  'light' | 'dark'
+ * @param {number|string|null} props.value  the STORED value: a palette index, a hex, or null
+ * @param {(v: string|number) => void} props.onPick    a deliberate choice; the host should dismiss
+ * @param {(v: string|number) => void} props.onChange  a live edit; the host should stay open
+ */
+export function ColorPalettePanel({ theme, value, onPick, onChange }) {
+  const p = palette(theme);
+  const resolved = indicatorColor(theme, value);
+  const [hex, setHex] = useState(resolved);
+
+  // The field follows the value, so a colour changed from elsewhere never leaves a stale entry here.
+  useEffect(() => { setHex(resolved); }, [resolved]);
+
+  const pick = (c) => {
+    const n = normalizeHex(c);
+    if (n) onPick(n);
+  };
+
+  const commitHex = () => {
+    const n = normalizeHex(hex);
+    // An invalid entry reverts rather than being stored: a half-typed '#4A8' must not become a colour.
+    if (n) onChange(n); else setHex(resolved);
+  };
+
+  return (
+    <div
+      data-cp-palette=""
+      style={{
+        display: 'flex', flexDirection: 'column', gap: 6,
+        // ⚠️ THE GRID'S OWN WIDTH, AND NOTHING TO SCROLL. The grid used to sit in a maxHeight with
+        // overflowY:auto, which put ninety colours behind a scrollbar — choosing one then meant
+        // hunting for it. The 9x10 shape exists so the entire palette is on screen at once, so there
+        // is nothing here to cap and nothing to scroll.
+        width: COLOR_GRID_WIDTH,
+        boxSizing: 'border-box',
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: GRID_GAP }}>
+        {PALETTE_GRID.map((row, i) => (
+          // eslint-disable-next-line react/no-array-index-key
+          <div key={i} style={{ display: 'flex', gap: GRID_GAP }}>
+            {row.map((c) => (
+              <Swatch key={c} p={p} color={c} title={c} size={GRID_SWATCH}
+                selected={normalizeHex(c) === normalizeHex(resolved)} onPick={pick} />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* ⚠️ THE THEMED SIX ARE STILL OFFERED. An instance storing a legacy index keeps swapping
+          between the light and dark ramps, which an explicit hex cannot do — so the option to
+          choose that behaviour has to remain reachable, not just survive in old saved state. */}
+      <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: 6 }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, letterSpacing: '0.6px',
+          color: p.text, marginBottom: 4 }}>THEME-AWARE</div>
+        <div style={{ display: 'flex', gap: GAP }}>
+          {indicatorColors(theme).map((c, i) => (
+            <button
+              key={c} type="button" title={`Theme color ${i + 1} (follows light and dark)`}
+              aria-label={`Theme color ${i + 1}`}
+              onClick={() => onPick(i)}
+              style={{
+                width: SWATCH, height: SWATCH, padding: 0, borderRadius: 3, cursor: 'pointer',
+                boxSizing: 'border-box',
+                background: c, border: `1px solid ${p.border}`,
+                outline: value === i ? `2px solid ${p.textStrong}` : 'none', outlineOffset: 1,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Custom colour. The native input means nobody has to know hex to reach one. */}
+      <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: 6,
+        display: 'flex', alignItems: 'center', gap: 6 }}>
+        <input
+          type="color" aria-label="Custom color"
+          value={resolved}
+          onChange={(e) => onChange(normalizeHex(e.target.value) || resolved)}
+          style={{ width: 26, height: 22, padding: 0, border: `1px solid ${p.border}`,
+            borderRadius: 3, background: 'transparent', cursor: 'pointer' }}
+        />
+        <input
+          type="text" aria-label="Hex color" spellCheck={false} maxLength={7}
+          value={hex}
+          onChange={(e) => setHex(e.target.value)}
+          onBlur={commitHex}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); commitHex(); }
+            // Typing in the field must not reach the chart's own key handlers.
+            e.stopPropagation();
+          }}
+          placeholder="#RRGGBB"
+          style={{
+            width: 78, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+            padding: '3px 5px', borderRadius: 3, background: p.background,
+            // An invalid entry is shown as invalid rather than silently ignored.
+            border: `1px solid ${isValidHex(hex) ? p.border : p.down}`,
+            color: p.textStrong,
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -75,7 +226,6 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
   const p = palette(theme);
   const resolved = indicatorColor(theme, value);
   const [open, setOpen] = useState(false);
-  const [hex, setHex] = useState(resolved);
   const boxRef = useRef(null);
   const panelRef = useRef(null);
   // Where the panel goes. Defaults to below-right and is corrected once it has been measured.
@@ -84,11 +234,17 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
   /**
    * KEEP THE PANEL ON SCREEN.
    *
-   * ⚠️ MEASURED, NOT ASSUMED. These controls appear in the drawing rail down the left edge and in the
-   * floating toolbar that follows the selected drawing, both of which reach the edges of the chart — so
+   * ⚠️ MEASURED, NOT ASSUMED. These controls appear in the drawing rail down the left edge, in the
+   * drawing settings dialog and in the indicator browser, all of which reach the edges of the chart — so
    * a panel that always opens below and to the right opens off-screen, and ninety swatches become
    * unreachable. Runs after the panel mounts (it has no size before that), and again on resize and
    * scroll because a chart panel can be moved under a stationary popover.
+   *
+   * ⚠️ AND IT FLIPS WITHIN THE CHART, IT DOES NOT ESCAPE IT. This panel is `position: absolute`, so a
+   * host inside an `overflow: hidden` box can still clip it when NEITHER side has room for the whole
+   * palette — the flip picks the roomier side, which is the best a same-stacking-context panel can do.
+   * The drawing toolbar needed better than that (it floats beside the drawing, anywhere in the plot), so
+   * it mounts ColorPalettePanel in the portalled Popover instead, which is placed against the viewport.
    */
   useEffect(() => {
     if (!open) return undefined;
@@ -138,9 +294,6 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
     };
   }, [open]);
 
-  // The field follows the value while the popover is shut, so reopening never shows a stale entry.
-  useEffect(() => { if (!open) setHex(resolved); }, [resolved, open]);
-
   // ⚠️ CLOSES ON AN OUTSIDE CLICK, and on Escape. A popover that only closes by re-clicking its own
   // trigger is the kind that gets left open over the chart.
   useEffect(() => {
@@ -155,25 +308,18 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
     };
   }, [open]);
 
-  const pick = (c) => {
-    const n = normalizeHex(c);
-    if (!n) return;
-    onChange(n);
-    setOpen(false);
-  };
-
-  const commitHex = () => {
-    const n = normalizeHex(hex);
-    // An invalid entry reverts rather than being stored: a half-typed '#4A8' must not become a colour.
-    if (n) onChange(n); else setHex(resolved);
-  };
+  // A swatch or a themed colour is a final choice, so it applies AND shuts the panel. The hex field
+  // and the native input go through onChange instead, which leaves the panel open — you are still
+  // typing, and a panel that closed on the first keystroke could never be typed into.
+  const pick = (v) => { onChange(v); setOpen(false); };
+  const pickSwatch = (c) => { const n = normalizeHex(c); if (n) pick(n); };
 
   return (
     <div ref={boxRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: GAP }}>
       {/* The common shades, for the case that needs no popover. Each reads on both canvases. */}
       {!compact && COMMON_COLORS.map((c) => (
         <Swatch key={c} p={p} color={c} title={`Color ${c}`}
-          selected={normalizeHex(c) === normalizeHex(resolved)} onPick={pick} />
+          selected={normalizeHex(c) === normalizeHex(resolved)} onPick={pickSwatch} />
       ))}
 
       {/* The current colour, and the trigger. */}
@@ -201,88 +347,21 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
           data-cp-color-panel=""
           style={{
             position: 'absolute', zIndex: 40,
-            // ⚠️ PLACED AGAINST THE VIEWPORT, NOT ALWAYS BELOW-RIGHT. These controls sit in a floating
-            // toolbar and a rail that live at the EDGES of the chart, so a panel pinned to
+            // ⚠️ PLACED AGAINST THE VIEWPORT, NOT ALWAYS BELOW-RIGHT. These controls sit in a rail and
+            // in settings panels that reach the EDGES of the chart, so a panel pinned to
             // top:100%/right:0 opened straight off-screen — 90 swatches clipped to nothing, with no way
             // to reach the one you wanted. `place` measures once the panel exists and flips it above or
             // to the left when there is not room, which is why it is state rather than a style guess.
             ...(place.vertical === 'above' ? { bottom: '100%', marginBottom: 4 } : { top: '100%', marginTop: 4 }),
             ...(place.horizontal === 'left' ? { left: 0 } : { right: 0 }),
             background: p.tooltipBg, border: `1px solid ${p.border}`, borderRadius: 6,
-            padding: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
-            display: 'flex', flexDirection: 'column', gap: 6,
-            // ⚠️ A FIXED WIDTH AND NO SCROLLING, DELIBERATELY. The grid was inside a maxHeight with
-            // overflowY:auto, which put ninety colours behind a scrollbar — choosing one then meant
-            // hunting for it. The 9x10 shape exists so the entire palette is on screen at once, so
-            // there is nothing here to cap and nothing to scroll.
+            padding: PANEL_PAD, boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
             width: PANEL_WIDTH,
             boxSizing: 'border-box',
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: GRID_GAP }}>
-            {PALETTE_GRID.map((row, i) => (
-              // eslint-disable-next-line react/no-array-index-key
-              <div key={i} style={{ display: 'flex', gap: GRID_GAP }}>
-                {row.map((c) => (
-                  <Swatch key={c} p={p} color={c} title={c} size={GRID_SWATCH}
-                    selected={normalizeHex(c) === normalizeHex(resolved)} onPick={pick} />
-                ))}
-              </div>
-            ))}
-          </div>
-
-          {/* ⚠️ THE THEMED SIX ARE STILL OFFERED. An instance storing a legacy index keeps swapping
-              between the light and dark ramps, which an explicit hex cannot do — so the option to
-              choose that behaviour has to remain reachable, not just survive in old saved state. */}
-          <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: 6 }}>
-            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, letterSpacing: '0.6px',
-              color: p.text, marginBottom: 4 }}>THEME-AWARE</div>
-            <div style={{ display: 'flex', gap: GAP }}>
-              {indicatorColors(theme).map((c, i) => (
-                <button
-                  key={c} type="button" title={`Theme color ${i + 1} (follows light and dark)`}
-                  aria-label={`Theme color ${i + 1}`}
-                  onClick={() => { onChange(i); setOpen(false); }}
-                  style={{
-                    width: SWATCH, height: SWATCH, padding: 0, borderRadius: 3, cursor: 'pointer',
-                    background: c, border: `1px solid ${p.border}`,
-                    outline: value === i ? `2px solid ${p.textStrong}` : 'none', outlineOffset: 1,
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Custom colour. The native input means nobody has to know hex to reach one. */}
-          <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: 6,
-            display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input
-              type="color" aria-label="Custom color"
-              value={indicatorColor(theme, value)}
-              onChange={(e) => onChange(normalizeHex(e.target.value) || resolved)}
-              style={{ width: 26, height: 22, padding: 0, border: `1px solid ${p.border}`,
-                borderRadius: 3, background: 'transparent', cursor: 'pointer' }}
-            />
-            <input
-              type="text" aria-label="Hex color" spellCheck={false} maxLength={7}
-              value={hex}
-              onChange={(e) => setHex(e.target.value)}
-              onBlur={commitHex}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); commitHex(); }
-                // Typing in the field must not reach the chart's own key handlers.
-                e.stopPropagation();
-              }}
-              placeholder="#RRGGBB"
-              style={{
-                width: 78, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
-                padding: '3px 5px', borderRadius: 3, background: p.background,
-                // An invalid entry is shown as invalid rather than silently ignored.
-                border: `1px solid ${isValidHex(hex) ? p.border : p.down}`,
-                color: p.textStrong,
-              }}
-            />
-          </div>
+          {/* The palette itself — the same component the drawing toolbar portals. */}
+          <ColorPalettePanel theme={theme} value={value} onPick={pick} onChange={onChange} />
         </div>
       )}
     </div>

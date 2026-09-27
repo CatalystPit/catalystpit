@@ -224,9 +224,17 @@ console.log('\n5. the colour picker still works');
   ok('edge flipping is intact', /place\.vertical === 'above'/.test(picker) && /place\.horizontal === 'left'/.test(picker));
   ok('no scroll container', !/overflowY|maxHeight/.test(picker));
   ok('the picker no longer carries a visualViewport theory of its own', !/visualViewport/.test(picker));
-  for (const f of ['DrawingRail', 'DrawingToolbar', 'DrawingSettings', 'IndicatorBrowser']) {
+  // ⚠️ THE TOOLBAR MOUNTS THE PALETTE, THE OTHERS MOUNT THE PICKER, and both come from this one module.
+  // The toolbar's colour square IS the trigger, so wrapping a ColorPicker (a trigger plus its own
+  // popover) in the toolbar's Popover put a second colour control in front of the ninety colours. What
+  // matters for THIS suite is only that the shared module is still what they all use.
+  for (const f of ['DrawingRail', 'DrawingSettings', 'IndicatorBrowser']) {
     ok(`${f} still uses the shared picker`, /<ColorPicker/.test(code(read(`src/components/chart/${f}.jsx`))));
   }
+  ok('DrawingToolbar mounts the shared palette directly',
+    /<ColorPalettePanel/.test(code(read('src/components/chart/DrawingToolbar.jsx'))));
+  ok('...and does not nest a second colour control in front of it',
+    !/<ColorPicker/.test(code(read('src/components/chart/DrawingToolbar.jsx'))));
   ok('drawing colour persistence is intact',
     /coerceColorValue\(raw\?\.color\)/.test(read('src/lib/chart/chart-drawings.mjs')));
   ok('indicator colour persistence is intact',

@@ -56,7 +56,11 @@ const openPanels = [];
  */
 export function Popover({
   anchorRef, open, onClose, theme, children,
-  placement = 'bottom-start', gap = 4, width = 200, maxHeight = 360, label,
+  placement = 'bottom-start', gap = 4, width = 200, maxHeight, label,
+  // A PANEL WHOSE CONTENT HEIGHT IS KNOWN, e.g. the colour palette: its whole point is that every
+  // swatch is visible at once, so it must be PLACED to fit rather than capped and scrolled. See the
+  // `height` branch in placeFor. Everything else is a list and keeps the scroll-to-fit default.
+  height = null,
   // A CONTEXT MENU IS ANCHORED TO A POINT, not to a control. Passing { x, y } in viewport
   // coordinates opens the menu at the cursor; the same flip-and-clamp logic then applies, because a
   // point is just a rect with no width — which is why placeFor needed no change to support it.
@@ -71,8 +75,8 @@ export function Popover({
       ? { top: point.y, bottom: point.y, left: point.x, right: point.x }
       : anchorRef?.current?.getBoundingClientRect();
     if (!rect) return;
-    setPos(placeFor(rect, placement, { gap, width, maxHeight }));
-  }, [anchorRef, point, placement, gap, width, maxHeight]);
+    setPos(placeFor(rect, placement, { gap, width, maxHeight, height }));
+  }, [anchorRef, point, placement, gap, width, maxHeight, height]);
 
   useIsoLayout(() => { if (open) place(); else setPos(null); }, [open, place]);
 

@@ -78,10 +78,30 @@ for (const f of SURFACES) {
 // ── 2. every surface uses the shared control ───────────────────────────────────────────────────
 console.log('\n2. every surface uses the shared control');
 
+// ⚠️ "THE SHARED MODULE", NOT "THE SHARED COMPONENT NAME". ColorPicker.jsx exports two things: the
+// palette itself (ColorPalettePanel) and a trigger-plus-popover wrapper around it (ColorPicker). Three
+// surfaces want the wrapper — a swatch button sitting in a row of other settings. The drawing toolbar
+// wants the palette on its own, because its colour square IS the trigger: putting a ColorPicker inside
+// the toolbar's Popover produced a popover whose only content was another popover's trigger, and the
+// ninety colours then needed a second tap. So the property is that every surface's colours come from
+// this one module — which is what stops a palette being reimplemented — not that they all render the
+// same wrapper.
 for (const f of SURFACES) {
   const src = read(f);
-  ok(`${path.basename(f)} imports the shared control`, /import ColorPicker from '\.\/ColorPicker'/.test(src));
-  ok(`${path.basename(f)} renders it`, /<ColorPicker/.test(code(src)));
+  ok(`${path.basename(f)} imports from the shared colour module`,
+    /import (?:ColorPicker|\{[^}]*\}) from '\.\/ColorPicker'/.test(src));
+  ok(`${path.basename(f)} renders one of its controls`,
+    /<(?:ColorPicker|ColorPalettePanel)[\s/>]/.test(code(src)));
+}
+// ⚠️ AND THE PALETTE IS BUILT IN EXACTLY ONE FILE. This is the assertion that the two exports did not
+// become two palettes: whatever a surface mounts, only ColorPicker.jsx may walk PALETTE_GRID into
+// swatches. A second file doing that is a second palette, however it is named.
+{
+  const builders = ['src/components/chart/ColorPicker.jsx', ...SURFACES]
+    .filter((f) => /PALETTE_GRID\s*\.?\s*map|PALETTE\.map/.test(code(read(f))));
+  ok('⚠️ exactly one file builds the swatch grid',
+    builders.length === 1 && builders[0] === 'src/components/chart/ColorPicker.jsx',
+    builders.join(', '));
 }
 // The drawing surfaces write through their own style channel, and only that.
 ok('the rail sets the style for NEW drawings', /onStyle\(\{ color: v \}\)/.test(code(read('src/components/chart/DrawingRail.jsx'))));
@@ -393,10 +413,11 @@ console.log('\n8b. all 90 at once, with no scroll container');
   ok('⚠️ all 90 swatches are rendered at once', rendered.length === 90, `${rendered.length}`);
   ok('...and they are the 90 distinct palette colours',
     new Set(rendered).size === 90 && PALETTE.every((c) => rendered.includes(c)));
-  ok('...arranged in nine rows of ten',
-    [...panel.children].some((el) => el.children.length >= 9)
-    || [...panel.querySelectorAll('div')].filter((d) => d.children.length === 10).length === 9,
-    `${[...panel.querySelectorAll('div')].filter((d) => d.children.length === 10).length} rows of ten`);
+  // ⚠️ IN THE SHAPE THE PALETTE DECLARES, read from the palette rather than written as a literal — the
+  // grid has been 10x9 and is now 9x10, and an assertion spelling either out goes stale silently.
+  const rows = [...panel.querySelectorAll('div')].filter((d) => d.children.length === PALETTE_COLUMNS);
+  ok(`...arranged in ${PALETTE_ROWS} rows of ${PALETTE_COLUMNS}`,
+    rows.length === PALETTE_ROWS, `${rows.length} rows of ${PALETTE_COLUMNS}`);
 
   // ⚠️ NO SCROLL CONTAINER, ANYWHERE IN THE PANEL. A scrollbar is exactly what the brief rules out, and
   // it is the kind of thing that creeps back in as a defensive maxHeight on a later change.
@@ -426,8 +447,11 @@ console.log('\n8b. all 90 at once, with no scroll container');
   // The custom controls stay, below the grid.
   ok('the hex field is still offered', !!panel.querySelector('input[aria-label="Hex color"]'));
   ok('the native picker is still offered', !!panel.querySelector('input[type="color"]'));
+  // Null-safe deliberately: a missing palette element must FAIL this assertion, not crash the suite
+  // before the sections below it have run.
+  const paletteEl = panel.querySelector('[data-cp-palette]');
   ok('...and both sit BELOW the preset grid',
-    styleOf(panel).includes('column')
+    !!paletteEl && styleOf(paletteEl).includes('column')
     && panel.innerHTML.indexOf(PALETTE[0]) < panel.innerHTML.indexOf('Hex color'));
 
   // Selecting a preset applies immediately and closes.
@@ -534,7 +558,13 @@ console.log('\n8d. the expanded grid fits a 390px phone in both axes');
   const src = read('src/components/chart/ColorPicker.jsx');
   ok('the picker uses that swatch size', new RegExp(`const GRID_SWATCH = ${SW};`).test(src));
   ok('...and sizes the panel from the palette rather than a literal',
-    /PANEL_WIDTH = PALETTE_COLUMNS \* GRID_SWATCH/.test(src));
+    /COLOR_GRID_WIDTH = PALETTE_COLUMNS \* GRID_SWATCH/.test(src));
+  // ⚠️ AND THE SWATCHES ARE BORDER-BOX, so the arithmetic above describes the boxes the browser lays
+  // out. They were content-box with a 1px border, making every 32px swatch 34px and every row 18px
+  // wider than the panel sized to hold it — nine columns overflowing a nine-column panel.
+  ok('⚠️ the swatch box is the size the arithmetic assumes', /boxSizing: 'border-box'/.test(
+    (/function Swatch\(\{[\s\S]*?\n\}/.exec(src) || [''])[0],
+  ));
   ok('...and still has no scroll container', !/overflowY|maxHeight/.test(code(src)));
 }
 
@@ -568,6 +598,184 @@ console.log('\n8e. every drawing type gets the expanded palette');
     indicatorColor('light', DEFAULT_STYLE.color) !== indicatorColor('dark', DEFAULT_STYLE.color));
   const picker = read('src/components/chart/ColorPicker.jsx');
   ok('...and the themed defaults are still offered in the picker', /THEME-AWARE/.test(picker));
+}
+
+// ── 8f. the drawing toolbar's colour square opens the palette in ONE tap ────────────────────────
+console.log('\n8f. the drawing toolbar colour square opens the palette in one tap');
+
+// ⚠️ THE BUG THIS SECTION EXISTS FOR, AND IT WAS MINE. The toolbar's colour button opened a Popover
+// whose only content was a COMPACT ColorPicker — and a compact ColorPicker is a trigger plus its own
+// popover. So tapping the colour square produced a small box containing one blue swatch and a caret,
+// and the ninety colours needed a SECOND tap on that caret. Every unit test passed: the palette
+// existed, the toolbar used the shared control, the swatches were all there once you got to them. What
+// no test asserted was the number of taps between selecting a drawing and seeing a colour.
+//
+// So this renders the real toolbar, clicks the real button ONCE, and counts swatches.
+{
+  const { build: esbuild } = await import('esbuild');
+  const TMP = path.join(ROOT, 'node_modules', '.cache', 'cp-unify-toolbar');
+  fs.rmSync(TMP, { recursive: true, force: true });
+  fs.mkdirSync(TMP, { recursive: true });
+  const out = path.join(TMP, 'DrawingToolbar.mjs');
+  await build({
+    entryPoints: [path.join(ROOT, 'src/components/chart/DrawingToolbar.jsx')],
+    bundle: true, format: 'esm', platform: 'browser', outfile: out, jsx: 'automatic',
+    external: ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'],
+    logLevel: 'silent', absWorkingDir: ROOT,
+  });
+  void esbuild;
+
+  // Both viewports the brief names. The phone is the one that mattered: a caret is not a tap target.
+  const VIEWPORTS = [['phone', 390, 844], ['desktop', 1440, 900]];
+  for (const [where, vw, vh] of VIEWPORTS) {
+    const dom = new JSDOM('<!doctype html><html><body><div id="page"></div></body></html>',
+      { url: 'https://catalystpit.test/ticker/NVDA', pretendToBeVisual: true });
+    Object.defineProperty(dom.window, 'innerWidth', { value: vw, configurable: true });
+    Object.defineProperty(dom.window, 'innerHeight', { value: vh, configurable: true });
+    for (const k of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node',
+      'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver',
+      'Event', 'ResizeObserver']) {
+      try { globalThis[k] = dom.window[k]; }
+      catch { Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true }); }
+    }
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    // ⚠️ placeFor reads globalThis.innerWidth/innerHeight when no viewport is passed, and the loop above
+    // copies `window` rather than its dimensions — so without these the placement arithmetic is NaN, and
+    // every geometry assertion below reads a MISSING style rather than a wrong one.
+    for (const [k, v] of [['innerWidth', vw], ['innerHeight', vh]]) {
+      Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true });
+    }
+    // The colour square, roughly where a toolbar floating mid-chart puts it.
+    const ANCHOR = { top: 300, bottom: 322, left: 60, right: 82, width: 22, height: 22, x: 60, y: 300 };
+    dom.window.Element.prototype.getBoundingClientRect = () => ({ ...ANCHOR, toJSON() { return this; } });
+
+    const { act } = await import('react');
+    const ReactDOMClient = await import('react-dom/client');
+    const DrawingToolbar = (await import(`${pathToFileURL(out).href}?v=${where}`)).default;
+
+    const applied = [];
+    const drawing = {
+      id: 'd1', type: 'horizontal', locked: false,
+      points: [{ time: 1700000000, price: 101.5 }],
+      style: { color: PALETTE[55], width: 2, dash: 'solid' },
+    };
+    const host = dom.window.document.getElementById('page');
+    const root = ReactDOMClient.createRoot(host);
+    const render = (d) => act(async () => {
+      root.render(React.createElement(DrawingToolbar, {
+        theme: 'dark', drawing: d, box: { x: 40, y: 280, w: 200, h: 2 }, plot: { w: vw, h: 500 },
+        onStyle: (s) => applied.push(s), onPatch: () => {}, onDelete: () => {}, onOpenSettings: () => {},
+      }));
+    });
+    await render(drawing);
+
+    const colourBtn = [...host.querySelectorAll('button')]
+      .find((b) => b.getAttribute('aria-label') === 'Color');
+    ok(`${where}: the toolbar has a colour square`, !!colourBtn);
+
+    // ── ONE TAP ──
+    await act(async () => { colourBtn.click(); });
+    // The Popover is a portal in document.body, so look at the whole document.
+    const doc = dom.window.document;
+    const swatchesOf = (rootEl) => [...rootEl.querySelectorAll('button')]
+      .map((b) => b.getAttribute('aria-label')).filter((l) => PALETTE.includes(l));
+    const opened = swatchesOf(doc.body);
+    ok(`⚠️ ${where}: ONE tap on the colour square shows all 90 swatches`,
+      opened.length === 90, `${opened.length} swatches after one tap`);
+    ok(`⚠️ ${where}: ...and they are the 90 distinct palette colours`,
+      new Set(opened).size === 90 && PALETTE.every((c) => opened.includes(c)));
+
+    // ── AND NO INTERMEDIATE CONTROL ──
+    // ⚠️ THE POSITIVE CONTROL FOR THIS MATCHER is the picker's own trigger, which still exists and
+    // still carries this label on the rail and settings surfaces — so a pattern that could never match
+    // anything would be caught there rather than passing silently here.
+    const nested = [...doc.body.querySelectorAll('button')]
+      .filter((b) => /more colors/.test(b.getAttribute('aria-label') || ''));
+    ok(`⚠️ ${where}: no second colour control stands between the square and the palette`,
+      nested.length === 0, `${nested.length} nested trigger(s)`);
+
+    const paletteEl = doc.body.querySelector('[data-cp-palette]');
+    ok(`${where}: the palette mounted is the shared one`, !!paletteEl);
+    ok(`${where}: the custom hex field came with it`,
+      !!doc.body.querySelector('input[aria-label="Hex color"]'));
+    ok(`${where}: ...and the native colour input`,
+      !!doc.body.querySelector('input[type="color"]'));
+
+    // ── THE CURRENT COLOUR READS AS SELECTED ──
+    const selected = [...doc.body.querySelectorAll('button')]
+      .filter((b) => b.getAttribute('aria-pressed') === 'true')
+      .map((b) => b.getAttribute('aria-label'));
+    ok(`⚠️ ${where}: the drawing's current colour is shown as selected`,
+      selected.length === 1 && selected[0] === PALETTE[55], selected.join(', '));
+
+    // ── THE WHOLE PALETTE IS INSIDE THE VIEWPORT ──
+    // The portal is placed by placeFor in viewport coordinates, so its own inline style is the answer.
+    const portal = paletteEl?.closest('[role="menu"]');
+    ok(`${where}: the palette is in the portalled popover`, !!portal);
+    // Null-safe on purpose: without the fix there is no palette and no portal, and the geometry
+    // assertions below must report that as failures rather than crash the suite mid-section.
+    const num = (prop) => {
+      const m = new RegExp(`(?:^|;)\\s*${prop}:\\s*(-?[\\d.]+)px`).exec(portal?.getAttribute('style') || '');
+      return m ? Number(m[1]) : null;
+    };
+    const boxW = num('width'), boxMaxH = num('max-height');
+    const boxTop = num('top') != null ? num('top') : vh - num('bottom') - boxMaxH;
+    const boxLeft = num('left');
+    ok(`⚠️ ${where}: ...and the popover's box is inside the viewport horizontally`,
+      boxLeft >= 0 && boxLeft + boxW <= vw, `left ${boxLeft}, width ${boxW}, viewport ${vw}`);
+    ok(`⚠️ ${where}: ...and vertically`,
+      boxTop >= 0 && boxTop + boxMaxH <= vh, `top ${boxTop}, maxHeight ${boxMaxH}, viewport ${vh}`);
+    // ⚠️ AND IT IS TALL ENOUGH FOR THE WHOLE PANEL, which is the point of passing a height rather than a
+    // maxHeight: a box clamped to the 360px list default would scroll the palette it has room for.
+    //
+    // ⚠️ THE WHOLE PANEL, NOT JUST THE GRID — and that distinction is why this is written out. Checking
+    // only the swatch rows (356px) passed against a box capped at the 360px default, so every mutation
+    // that dropped the height on the floor went unnoticed here. The theme-aware row and the custom
+    // controls are part of what must be visible without scrolling, so they are part of the number.
+    const CONTENT_H = PALETTE_ROWS * 32 + (PALETTE_ROWS - 1) * 4 + 34 + 36 + 26;
+    ok(`⚠️ ${where}: ...and tall enough to show the whole panel without scrolling`,
+      boxMaxH >= CONTENT_H, `maxHeight ${boxMaxH} for a ${CONTENT_H}px panel`);
+    ok(`${where}: ...and wide enough for nine columns`,
+      boxW >= PALETTE_COLUMNS * 32 + (PALETTE_COLUMNS - 1) * 4, `width ${boxW}`);
+
+    // ── PICKING APPLIES IMMEDIATELY AND DISMISSES ──
+    const target = PALETTE[12];
+    // Guarded so a missing swatch fails the assertion below rather than throwing here.
+    await act(async () => {
+      [...doc.body.querySelectorAll('button')]
+        .find((b) => b.getAttribute('aria-label') === target)?.click();
+    });
+    ok(`⚠️ ${where}: picking a swatch recolours the drawing immediately`,
+      applied.at(-1)?.color === normalizeHex(target), JSON.stringify(applied.at(-1)));
+    ok(`⚠️ ${where}: ...and the palette closes`, !doc.body.querySelector('[data-cp-palette]'));
+
+    // ── REOPENING SHOWS THE NEW COLOUR AS SELECTED ──
+    await render({ ...drawing, style: { ...drawing.style, color: normalizeHex(target) } });
+    await act(async () => {
+      [...host.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Color').click();
+    });
+    const reSelected = [...doc.body.querySelectorAll('button')]
+      .filter((b) => b.getAttribute('aria-pressed') === 'true')
+      .map((b) => b.getAttribute('aria-label'));
+    ok(`⚠️ ${where}: reopening shows the newly picked colour as selected`,
+      reSelected.length === 1 && reSelected[0] === target, reSelected.join(', '));
+    // Still one tap the second time — the palette, not a control that opens one.
+    ok(`⚠️ ${where}: ...and it is still one tap to the palette`,
+      swatchesOf(doc.body).length === 90);
+
+    await act(async () => { root.unmount(); });
+  }
+
+  // The source says the same thing: the toolbar mounts the palette, not a picker.
+  const bar = code(read('src/components/chart/DrawingToolbar.jsx'));
+  ok('⚠️ the toolbar no longer wraps a ColorPicker in a Popover', !/<ColorPicker/.test(bar));
+  ok('...it mounts the shared palette directly', /<ColorPalettePanel/.test(bar));
+  ok('...inside the portalled Popover, so the chart cannot clip it',
+    /<Popover[^>]*anchorRef=\{refs\.color\}[\s\S]{0,300}<ColorPalettePanel/.test(bar));
+  ok('...placed by a known height rather than capped and scrolled',
+    /height=\{COLOR_PANEL_CONTENT_HEIGHT\}/.test(bar));
+  ok('...and it still writes through the drawing style channel',
+    /onStyle\(\{ color: v \}\)/.test(bar));
 }
 
 // ── 9. nothing else about drawings moved ───────────────────────────────────────────────────────

@@ -30,7 +30,18 @@ export const MIN_PANEL = 120;   // below this, a side is too small to be worth f
  * @param viewport   { width, height } — defaults to the window, passed explicitly by the tests
  */
 export function placeFor(rect, placement = 'bottom-start', opts = {}) {
-  const { gap = 4, width = 200, maxHeight = 360, viewport } = opts;
+  const {
+    gap = 4, width = 200, viewport,
+    // A PANEL WHOSE HEIGHT IS KNOWN IN ADVANCE. Most menus are lists: they can be given whatever room
+    // the side has and scroll the overflow, which is what `maxHeight` expresses. A colour palette is
+    // not a list — its whole point is that all ninety swatches are visible at once — so its height is
+    // an input to the DECISION rather than something to be trimmed to fit. Passing it switches the
+    // vertical rule from "hang below and cap" to "keep the whole box on screen".
+    height = null,
+    // ⚠️ DEFAULTS TO UNBOUNDED WHEN A HEIGHT IS GIVEN. The old 360 default would have quietly capped a
+    // 460px palette back into a scroll container — the exact bug the fixed height exists to avoid.
+    maxHeight = height != null ? Infinity : 360,
+  } = opts;
   const vw = viewport?.width ?? globalThis.innerWidth;
   const vh = viewport?.height ?? globalThis.innerHeight;
   const w = Math.min(width, Math.max(1, vw - EDGE * 2));
@@ -54,7 +65,18 @@ export function placeFor(rect, placement = 'bottom-start', opts = {}) {
     // A TOOLBAR DROPDOWN: directly under the control, flipped above only when it will not fit below.
     const spaceBelow = vh - rect.bottom - gap - EDGE;
     const spaceAbove = rect.top - gap - EDGE;
-    if (spaceBelow >= Math.min(maxHeight, MIN_PANEL) || spaceBelow >= spaceAbove) {
+    if (height != null) {
+      // ⚠️ THE WHOLE BOX, OR AS MUCH OF THE WINDOW AS THERE IS — never a trimmed one. Below when it
+      // fits, above when that fits instead, and otherwise slid up the window until the bottom edge is
+      // inside it. The last case OVERLAPS the trigger, which is deliberate: a floating toolbar can sit
+      // dead centre of a phone screen with less than a palette's room on either side, and a palette
+      // that is entirely visible next to its toolbar is worth more than one that is neatly below it
+      // and half off the screen.
+      if (spaceBelow >= height) out.top = rect.bottom + gap;
+      else if (spaceAbove >= height) out.bottom = vh - rect.top + gap;
+      else out.top = Math.max(EDGE, Math.min(rect.bottom + gap, vh - EDGE - height));
+      out.maxHeight = out.top != null ? vh - out.top - EDGE : vh - out.bottom - EDGE;
+    } else if (spaceBelow >= Math.min(maxHeight, MIN_PANEL) || spaceBelow >= spaceAbove) {
       out.top = Math.max(EDGE, Math.min(rect.bottom + gap, vh - EDGE - 1));
       out.maxHeight = vh - out.top - EDGE;
     } else {

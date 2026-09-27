@@ -1303,6 +1303,105 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
     boxOf(tall, { width: 1440, height: 500 }).bottom <= 500 - EDGE + 0.5);
 }
 
+section('19b. a panel with a KNOWN height is placed to fit, never capped and scrolled');
+{
+  // ⚠️ WHY THIS BRANCH EXISTS. Every other chart menu is a list: give it the room a side has and let the
+  // overflow scroll, which is what `maxHeight` expresses. The colour palette is not a list — its whole
+  // point is that all ninety swatches are visible at once — so its height is an INPUT to the placement
+  // decision rather than something to trim. Passing `height` switches the rule from "hang below and cap"
+  // to "keep the whole box on screen".
+  // ColorPicker.jsx cannot be imported in node, so the palette's size is restated from the palette
+  // itself here — and tied back to the component's own constants by the source assertions at the end,
+  // so the two cannot drift apart without something failing.
+  const { PALETTE_COLUMNS: COLS, PALETTE_ROWS: ROWS } = await import('../src/lib/chart/color-palette.mjs');
+  const W = COLS * 32 + (COLS - 1) * 4;
+  const H = ROWS * 32 + (ROWS - 1) * 4 + 34 + 36 + 26;
+
+  // Every plausible place a floating drawing toolbar can put its colour square, on a phone and on a
+  // desktop. The property is the same in all of them: the whole palette lands inside the window.
+  const VIEWPORTS = [
+    { width: 390, height: 844, label: 'phone' },
+    { width: 390, height: 640, label: 'short phone' },
+    { width: 1440, height: 900, label: 'desktop' },
+    { width: 1024, height: 560, label: 'short desktop' },
+    // ⚠️ SHORTER THAN THE PALETTE ITSELF — a phone held sideways, or a small desktop window. There is no
+    // position that shows all ninety here, so this is the one case where the box is capped and scrolls;
+    // it is in the list so that branch is covered rather than assumed.
+    { width: 740, height: 420, label: 'landscape phone' },
+  ];
+  let fitted = 0, scrolled = 0, overlapped = 0;
+  for (const vp of VIEWPORTS) {
+    for (const y of [4, 60, Math.round(vp.height / 2), vp.height - 200, vp.height - 30]) {
+      for (const x of [4, 60, Math.round(vp.width / 2), vp.width - 30]) {
+        const rect = { top: y, bottom: y + 22, left: x, right: x + 22 };
+        const pos = placeFor(rect, 'bottom-center', { width: W, height: H, gap: 4, viewport: vp });
+        const box = boxOf(pos, vp);
+        ok(`⚠️ ${vp.label} @${x},${y}: the whole palette is inside the window`,
+          box.left >= -0.5 && box.top >= -0.5
+          && box.right <= vp.width + 0.5 && box.bottom <= vp.height + 0.5,
+          `${JSON.stringify(box)} in ${vp.width}x${vp.height}`);
+        ok(`${vp.label} @${x},${y}: ...at the palette's full width`, pos.width === W, `${pos.width}`);
+        // ⚠️ AND NOT CAPPED TO THE 360px LIST DEFAULT, which is the mutation this branch is here to
+        // prevent: a maxHeight below the palette's height is a scrollbar over ninety colours.
+        if (H <= vp.height - 12) {
+          ok(`⚠️ ${vp.label} @${x},${y}: ...with room for every row, so nothing scrolls`,
+            pos.maxHeight >= H, `maxHeight ${pos.maxHeight} for a ${H}px palette`);
+          fitted += 1;
+        } else scrolled += 1;
+        // Bookkeeping: how often the placement had to overlap its own trigger to stay on screen.
+        const below = pos.top != null && pos.top >= rect.bottom;
+        const above = pos.bottom != null;
+        if (!below && !above) overlapped += 1;
+      }
+    }
+  }
+  // ⚠️ POSITIVE CONTROLS FOR THE LOOP ABOVE. Without these, a `height` that silently did nothing would
+  // still pass every containment assertion — a panel capped to 360px also fits in the window.
+  ok('the loop actually exercised palettes that fit their viewport', fitted > 40, `${fitted}`);
+  ok('...and viewports too short for one, so both branches are covered', scrolled > 0, `${scrolled}`);
+  ok('...and cases where staying on screen meant overlapping the trigger', overlapped > 0, `${overlapped}`);
+
+  // The discriminating case, spelled out: a trigger dead centre of a phone has room for the palette on
+  // NEITHER side, and the old rule would have hung it below and let it run off the bottom.
+  const mid = { top: 400, bottom: 422, left: 180, right: 202 };
+  const phone = { width: 390, height: 844 };
+  const capped = placeFor(mid, 'bottom-center', { width: W, maxHeight: 360, viewport: phone });
+  const kept = placeFor(mid, 'bottom-center', { width: W, height: H, viewport: phone });
+  ok('⚠️ without a height the box is capped below the palette', capped.maxHeight < H,
+    `${capped.maxHeight} vs ${H}`);
+  ok('⚠️ ...and with one it is not', kept.maxHeight >= H, `${kept.maxHeight} vs ${H}`);
+  ok('⚠️ ...and the kept box is still entirely on screen',
+    boxOf(kept, phone).bottom <= phone.height + 0.5 && boxOf(kept, phone).top >= -0.5,
+    JSON.stringify(boxOf(kept, phone)));
+
+  // A list is unaffected: the default is still cap-and-scroll.
+  const list = placeFor(mid, 'bottom-start', { width: 210, viewport: phone });
+  ok('a menu with no known height still caps at the list default', list.maxHeight <= 360);
+
+  // And a palette taller than the window is placed at the edge and scrolls — the one case where a
+  // scrollbar is correct, because there is no position that shows all of it.
+  const tiny = { width: 390, height: 300 };
+  const squeezed = placeFor(mid, 'bottom-center', { width: W, height: H, viewport: tiny });
+  ok('a palette taller than the window starts at the top edge', squeezed.top === EDGE, `${squeezed.top}`);
+  ok('...and is capped to the window rather than overflowing it',
+    squeezed.maxHeight <= tiny.height - EDGE * 2 + 0.5, `${squeezed.maxHeight}`);
+
+  // The toolbar passes these, and passes the palette's own constants rather than literals.
+  const barSrc = (await readFile(new URL('../src/components/chart/DrawingToolbar.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  ok('the drawing toolbar places its palette by a known height',
+    /height=\{COLOR_PANEL_CONTENT_HEIGHT\}/.test(barSrc) && /width=\{COLOR_GRID_WIDTH\}/.test(barSrc));
+  ok('...and centres it on the colour square', /placement="bottom-center"/.test(barSrc));
+  const pickerSrc = (await readFile(new URL('../src/components/chart/ColorPicker.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  ok('...and those constants are the palette arithmetic, not literals',
+    new RegExp(`COLOR_GRID_WIDTH = PALETTE_COLUMNS \\* GRID_SWATCH`).test(pickerSrc)
+    && /COLOR_PANEL_CONTENT_HEIGHT = GRID_HEIGHT \+ EXTRAS_HEIGHT/.test(pickerSrc));
+  ok('...and the palette is the width this section assumed', W === COLS * 32 + (COLS - 1) * 4);
+  // The Popover must actually forward it, or all of the above describes an unused code path.
+  const uiFwd = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  ok('⚠️ the Popover forwards a known height to the placement',
+    /placeFor\(rect, placement, \{ gap, width, maxHeight, height \}\)/.test(uiFwd));
+}
+
 section('20. the chart header: symbol first, one compact row, overflow before wrapping');
 {
   const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');

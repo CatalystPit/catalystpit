@@ -4,7 +4,7 @@ import { tool, LINE_WIDTHS, LINE_DASHES, LABEL_MAX } from '../../lib/chart/chart
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
 import { Popover, MenuItem, MenuLabel } from './ChartUI';
 import { CONTROL, controlsFor, placeToolbar } from '../../lib/chart/drawing-toolbar.mjs';
-import ColorPicker from './ColorPicker';
+import { ColorPalettePanel, COLOR_GRID_WIDTH, COLOR_PANEL_CONTENT_HEIGHT } from './ColorPicker';
 
 // THE FLOATING TOOLBAR FOR A SELECTED DRAWING.
 //
@@ -280,13 +280,33 @@ function DrawingToolbarBase({
       )}
       {items}
 
+      {/**
+        * ⚠️ THE PALETTE ITSELF, NOT A CONTROL THAT OPENS ONE. This held a COMPACT ColorPicker — which
+        * is a trigger plus its own popover — so one tap on the colour square produced a 128px box
+        * containing a single blue swatch and a caret, and the ninety colours needed a SECOND tap on
+        * that caret. On a phone the caret is a few pixels wide and the palette was unreachable in
+        * practice. Mounting ColorPalettePanel means the swatches ARE the popover's content: select a
+        * drawing, tap the square once, pick a colour.
+        *
+        * ⚠️ AND IT IS THIS Popover RATHER THAN ColorPicker'S OWN PANEL, because ColorPicker positions
+        * its panel `position: absolute` inside itself — inside this toolbar, inside the chart's
+        * `overflow: hidden` box. A 460px palette hung off a toolbar that floats beside a drawing is
+        * clipped by the chart. Popover portals to document.body and is placed against the VIEWPORT,
+        * which is the only way the whole palette is reachable from a toolbar sitting near an edge.
+        *
+        * `height` (rather than a maxHeight) is what keeps it whole: placeFor then chooses a position
+        * that fits all ninety swatches instead of capping them into a scroll container. `bottom-center`
+        * centres it on the square and the placement clamps it into the window, so on a narrow phone it
+        * ends up centred over the chart rather than half off the side.
+        */}
       <Popover anchorRef={refs.color} open={open === CONTROL.COLOR} onClose={close} theme={theme}
-        placement="bottom-start" width={128} label="Drawing colour">
-        {/* The shared control, so the toolbar offers the same palette as everything else. */}
-        <div style={{ padding: 6 }}>
-          <ColorPicker theme={theme} compact label="Drawing color"
-            value={drawing.style?.color} onChange={(v) => { onStyle({ color: v }); close(); }} />
-        </div>
+        placement="bottom-center" width={COLOR_GRID_WIDTH} height={COLOR_PANEL_CONTENT_HEIGHT}
+        label="Drawing color">
+        <ColorPalettePanel
+          theme={theme} value={drawing.style?.color}
+          onPick={(v) => { onStyle({ color: v }); close(); }}
+          onChange={(v) => onStyle({ color: v })}
+        />
       </Popover>
 
       <Popover anchorRef={refs.width} open={open === CONTROL.WIDTH} onClose={close} theme={theme}
