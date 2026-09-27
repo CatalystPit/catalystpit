@@ -87,6 +87,38 @@ const SHELL = {
   dark: { card: '#161F1A', sidebar: '#1B241F', border: '#3A453E', greenHover: '#58BE86' },
 };
 
+// ── ⚠️ THE STATUS BADGES — "Primary", "This device", "Unverified" ───────────
+//
+// These read their TEXT colour from Clerk's border colour, which is why they went unreadable in
+// both themes at once. Read out of the shipped clerk-js bundle, Badge's primary colour scheme is:
+//
+//     primary: { accent: $borderAlpha600, bg: $borderAlpha50, borderColor: $borderAlpha150 }
+//
+// and `accent` is the text colour. So Clerk derives the label from an alpha scale built on
+// `colorBorder` — a token whose whole job everywhere else is to be a hairline you barely notice.
+// Setting it to our divider colour (#E0E2DC light, #3A453E dark) is right for dividers and makes
+// the badge text a pale smudge on white and a dark smudge on near-black. One token, two jobs,
+// pulling opposite ways: the same shape of bug as using a foreground token for a background.
+//
+// ⚠️ SO THE TEXT IS SET DIRECTLY AND colorBorder IS LEFT ALONE. Raising colorBorder until the
+// badge became legible would have thickened every divider in the component, which is the thing
+// this change is explicitly not allowed to do.
+//
+// ⚠️ WHAT THIS TOUCHES. Only `color`, and only on the badge — no background, border, size or
+// layout. In UserProfile every badge a normal user meets is the primary scheme (verified from the
+// bundle: "Primary" and "Unverified" take the default, "This device" passes "primary"), and all
+// three were unreadable for this one reason, so all three are fixed together. The single danger-
+// scheme badge, `badge__userDevice`, appears only under admin impersonation; it loses its red
+// tint there and keeps its shape. That trade is deliberate and is the narrowest one available —
+// Clerk sets no elementId on these badges, so `badge__primary` as an APPEARANCE key never
+// matches, and there is no selector that separates the schemes.
+const BADGE_TEXT = {
+  // --cp-muted at its light value: a readable muted dark gray, still plainly secondary.
+  light: '#5A6458',
+  // --cp-muted at its dark value: a readable muted light gray, still plainly secondary.
+  dark: '#98A49B',
+};
+
 /**
  * Build the appearance object for Clerk's `<UserProfile>`.
  *
@@ -120,6 +152,9 @@ export function clerkAppearance(theme) {
       },
       // The left-hand nav — Profile / Security. A step off the card so the split is readable.
       navbar: { background: s.sidebar, borderRight: `1px solid ${s.border}` },
+      // ⚠️ COLOUR ONLY. See BADGE_TEXT: the badge inherits its text from the border alpha scale,
+      // so it needs its own value in each theme. Nothing else about the badge is touched.
+      badge: { color: dark ? BADGE_TEXT.dark : BADGE_TEXT.light },
       navbarMobileMenuButton: { color: v.colorForeground },
       headerTitle: { fontFamily: "'DM Sans',sans-serif", color: v.colorForeground },
       headerSubtitle: { color: v.colorMutedForeground },
@@ -140,4 +175,4 @@ export function clerkAppearance(theme) {
   };
 }
 
-export const CLERK_THEME_VALUES = { light: LIGHT, dark: DARK, shell: SHELL };
+export const CLERK_THEME_VALUES = { light: LIGHT, dark: DARK, shell: SHELL, badgeText: BADGE_TEXT };

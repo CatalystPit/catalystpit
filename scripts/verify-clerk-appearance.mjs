@@ -160,6 +160,51 @@ sec('⚠️ DARK MODE MEETS CONTRAST ON EVERY SURFACE IT PAINTS');
     v.colorNeutral);
 }
 
+// ── 4b. THE STATUS BADGES ───────────────────────────────────────────────────
+sec('⚠️ "Primary" AND "This device" ARE READABLE IN BOTH THEMES');
+{
+  // ⚠️ WHY THESE NEED THEIR OWN COLOUR AT ALL. Read out of the shipped clerk-js bundle, Badge's
+  // primary colour scheme is { accent: $borderAlpha600, bg: $borderAlpha50, ... } and `accent` is
+  // the TEXT. So the label is derived from colorBorder — a hairline token — which made it a pale
+  // smudge on white and a dark smudge on near-black at the same time. Both labels ("Primary" takes
+  // Badge's default scheme, "This device" passes "primary") are the same element, so one colour
+  // per theme fixes both. "Unverified" is the same scheme and was equally unreadable; it comes
+  // along, which is a fix and not a regression.
+  const badgeBg = {
+    // the badge sits on $borderAlpha50 over the card — 5% of the border colour, i.e. very nearly
+    // the card itself. Contrast is therefore measured against the card, which is the worst case.
+    light: '#FFFFFF',
+    dark: '#161F1A',
+  };
+  for (const theme of ['light', 'dark']) {
+    const a = clerkAppearance(theme);
+    const col = a.elements.badge && a.elements.badge.color;
+    check(`${theme}: the badge has an explicit text colour`, !!col, String(col));
+    const r = ratio(col, badgeBg[theme]);
+    check(`⚠️ ${theme}: "Primary" / "This device" are readable on the card`, r >= 4.5, `${r.toFixed(2)}:1`);
+    // ⚠️ AND STILL SECONDARY. A label that out-shouts the value beside it is a different bug.
+    const rPrimary = ratio(a.variables.colorForeground, badgeBg[theme]);
+    check(`…and still quieter than primary text`, r < rPrimary, `badge ${r.toFixed(2)} vs text ${rPrimary.toFixed(2)}`);
+    // ⚠️ NOT THE BORDER COLOUR. This is the exact value Clerk would have used on its own.
+    check(`⚠️ ${theme}: the badge no longer inherits the hairline colour`,
+      col.toLowerCase() !== a.variables.colorBorder.toLowerCase(), col);
+    // colour only — touching size or background here would be redesigning the badge
+    check(`…and only \`color\` is overridden on the badge`,
+      Object.keys(a.elements.badge).join(',') === 'color', Object.keys(a.elements.badge).join(','));
+  }
+  // ⚠️ THEME-SPECIFIC, NOT ONE SHARED LITERAL — the brief's explicit requirement.
+  check('⚠️ the two themes use DIFFERENT badge colours',
+    clerkAppearance('light').elements.badge.color !== clerkAppearance('dark').elements.badge.color);
+  // a light-mode value on a dark card (or the reverse) is the failure this replaces
+  const swapped = ratio(clerkAppearance('light').elements.badge.color, '#161F1A');
+  check('…and the light colour on a dark card would NOT have passed', swapped < 4.5, `${swapped.toFixed(2)}:1`);
+
+  // ⚠️ colorBorder MUST BE UNTOUCHED. Raising it until the badge read would have thickened every
+  // divider in the component, which this change is explicitly not allowed to do.
+  check('⚠️ the hairline token is unchanged in light', clerkAppearance('light').variables.colorBorder === '#E0E2DC');
+  check('⚠️ …and in dark', clerkAppearance('dark').variables.colorBorder === '#3A453E');
+}
+
 // ── 5. IT ACTUALLY SWITCHES ─────────────────────────────────────────────────
 sec('⚠️ THE TWO THEMES ARE DIFFERENT OBJECTS');
 {
