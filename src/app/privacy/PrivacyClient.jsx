@@ -24,7 +24,7 @@ export default function PrivacyClient() {
           Privacy Policy
         </h1>
         <p style={{ fontSize: 13, color: C.muted, margin: "0 0 40px", fontWeight: 300 }}>
-          Effective date: May 17, 2026 · Last updated: September 25, 2026
+          Effective date: May 17, 2026 · Last updated: September 27, 2026
         </p>
 
         <Section title="1. Who We Are">
@@ -49,11 +49,21 @@ export default function PrivacyClient() {
           <ul style={list}>
             <li><strong>Usage data:</strong> We may collect technical information such as your IP address, browser type, device type, pages visited, and timestamps via our hosting provider (Vercel).</li>
             <li><strong>IP address for security:</strong> The Service reads the IP address of incoming requests to apply rate limiting and to protect against abuse of our APIs. It is used for that purpose and is not used to build an advertising or tracking profile.</li>
-            <li><strong>Cookies and browser storage:</strong> Our authentication provider Clerk uses cookies to keep you signed in. The Service also stores preferences in your browser's local storage — chart settings, indicators, drawings, Terminal layout and similar display choices. That data stays in your browser and is not a tracking mechanism. We do not use advertising or third-party tracking cookies, and we do not currently run an analytics package.</li>
+            <li><strong>Cookies and browser storage:</strong> Our authentication provider Clerk uses cookies to keep you signed in. The Service also stores preferences in your browser's local storage — chart settings, indicators, drawings, Terminal layout and similar display choices. That data stays in your browser and is not a tracking mechanism. We do not run an analytics package. Advertising cookies set by third parties are described in section 2.4 below.</li>
           </ul>
 
           <h3 style={subhead}>2.3 Information from third parties</h3>
           <p>We do not currently purchase or receive personal data about you from third parties beyond what is necessary to deliver our Service (e.g., Google authentication data when you sign in with Google).</p>
+
+          <h3 style={subhead}>2.4 Advertising</h3>
+          <p>We use Google AdSense, Google's advertising service, on the Service. Advertising may be displayed to you on Catalyst Pit pages.</p>
+          <ul style={list}>
+            <li><strong>Third-party advertising cookies:</strong> Third-party vendors, including Google, may use cookies or similar technologies on the Service in connection with advertising. These are set by those vendors, not by us, and we do not control them.</li>
+            <li><strong>How Google may use them:</strong> Google may use advertising cookies to serve ads based on your visits to Catalyst Pit and, where applicable, to other websites. Google's use of advertising cookies enables it and its partners to serve ads to you based on those visits.</li>
+            <li><strong>Your choices:</strong> You can manage or opt out of personalized advertising from Google through Google's own advertising settings at <a href="https://adssettings.google.com" target="_blank" rel="noopener noreferrer" style={linkStyle}>adssettings.google.com</a>. Google describes how it uses information from sites that use its services at <a href="https://policies.google.com/technologies/partner-sites" target="_blank" rel="noopener noreferrer" style={linkStyle}>policies.google.com/technologies/partner-sites</a>. You can also opt out of personalized advertising from participating vendors at <a href="https://optout.aboutads.info" target="_blank" rel="noopener noreferrer" style={linkStyle}>optout.aboutads.info</a>. Your browser's settings may additionally let you block or delete cookies.</li>
+            <li><strong>Other advertising vendors:</strong> We may in future use other third-party advertising vendors or networks. Where we do, those vendors may likewise use cookies or similar technologies in connection with advertising on the Service.</li>
+            <li><strong>What we do not do:</strong> We do not provide your name, email address or account details to advertising vendors, and we do not use the IP address we read for rate limiting to build an advertising profile.</li>
+          </ul>
         </Section>
 
         <Section title="3. How We Use Your Information">
@@ -89,6 +99,7 @@ export default function PrivacyClient() {
               </ul>
             </li>
             <li><strong>Content and market-data vendors:</strong> We obtain market data, filings and news from third parties including Tiingo, Polygon, Finnhub, Financial Modeling Prep, the U.S. Securities and Exchange Commission (SEC EDGAR), CoinGecko and various news and press-release feeds, and we use Anthropic to enrich and summarise that content. <strong>These vendors do not receive your personal information</strong> — we request data about securities and companies, not about you.</li>
+            <li><strong>Advertising vendors:</strong> We use <strong>Google AdSense</strong> to display advertising. We do not send Google your account details; Google and its partners may set and read their own cookies in your browser when you visit the Service, as described in section 2.4. Other advertising vendors or networks may be used in future.</li>
             <li><strong>Legal requirements:</strong> We may disclose information if required by law, subpoena, court order, or similar legal process, or if we believe disclosure is necessary to protect our rights, your safety, or the safety of others.</li>
             <li><strong>Business transfers:</strong> If CatalystPit is acquired, merged, or sells assets, your information may be transferred as part of that transaction. We will notify you before your information becomes subject to a different privacy policy.</li>
           </ul>

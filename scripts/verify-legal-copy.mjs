@@ -89,7 +89,79 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   ok('⚠️ Privacy no longer promises real-time market data outright',
     !/We provide real-time market data/.test(privacy)
     && /freshness of market data shown to you depends on your subscription tier/.test(privacy));
-  ok('the policy was re-dated', /Last updated: September 25, 2026/.test(privacy));
+  ok('the policy was re-dated', /Last updated: September 27, 2026/.test(privacy));
+
+  // ── ⚠️ ADVERTISING: THE POLICY HAD TO CATCH UP WITH THE CODE ──────────────────────────────────
+  //
+  // The AdSense loader went live in the root layout, and the policy still said we used no advertising
+  // cookies. That sentence was true when it was written and false the moment the tag deployed — which
+  // is the failure mode this whole file exists for, and nothing here was pinning it.
+  ok('⚠️ the obsolete "no advertising cookies" claim is gone',
+    !/We do not use advertising or third-party tracking cookies/.test(privacy));
+  // ...while the part of that sentence that is STILL TRUE survives. We run no analytics package.
+  ok('…while the analytics half of it, still true, is kept',
+    /We do not run an analytics package/.test(privacy));
+
+  ok('⚠️ Google AdSense is disclosed by name', /We use Google AdSense/.test(privacy));
+  ok('…in its own numbered section, so it is findable', /2\.4 Advertising/.test(privacy));
+  ok('…and the cookies bullet points at it rather than contradicting it',
+    /Advertising cookies set by third parties are described in section 2\.4/.test(privacy));
+  ok('third-party advertising cookies are disclosed',
+    /Third-party vendors, including Google, may use cookies or similar technologies/.test(privacy));
+  ok('…including that Google may serve ads based on visits to this and other sites',
+    /serve ads based on your visits to Catalyst Pit and, where applicable, to other websites/.test(privacy));
+  ok('⚠️ an opt-out route is given, not just a disclosure',
+    /adssettings\.google\.com/.test(privacy) && /optout\.aboutads\.info/.test(privacy));
+  ok('…and Google\'s own partner-sites notice is linked',
+    /policies\.google\.com\/technologies\/partner-sites/.test(privacy));
+  ok('future advertising vendors are covered',
+    /We may in future use other third-party advertising vendors or networks/.test(privacy));
+  ok('the advertising vendor appears in the sharing section too',
+    /<strong>Advertising vendors:<\/strong>/.test(privacy) && /<strong>Google AdSense<\/strong>/.test(privacy));
+
+  // ⚠️ AND IT DOES NOT OVERCLAIM IN EITHER DIRECTION.
+  ok('⚠️ the no-sale statement is preserved, not widened',
+    /We do not sell your personal information to third parties/.test(privacy));
+  ok('…and we do not claim to send advertisers account details',
+    /We do not send Google your account details/.test(privacy)
+    && /We do not provide your name, email address or account details to advertising vendors/.test(privacy));
+  // The rate-limiting IP statement stays accurate and is not quietly dropped to make room.
+  ok('…the IP-for-security statement is still there',
+    /is not used to build an advertising or tracking profile/.test(privacy));
+
+  // ⚠️ THE POLICY IS CHECKED AGAINST THE CODE, WHICH IS THE ONLY THING THAT PREVENTS THIS RECURRING.
+  //
+  // Every assertion above reads the policy against strings I chose, so all of them would still pass on
+  // the day someone removes the ad loader and leaves the disclosure — or, far worse, adds a second
+  // advertising vendor and leaves the policy naming only Google. Tying the two together makes the
+  // policy's accuracy a property of the repository rather than of whoever remembered to edit it. This
+  // is the same shape as the market-data assertion above, which checks that no user id reaches a vendor
+  // call rather than trusting the sentence that says so.
+  const layoutSrc = read('../src/app/layout.jsx');
+  // ⚠️ A RENDERED TAG, NOT THE HOST APPEARING SOMEWHERE. Testing for 'googlesyndication.com' anywhere in
+  // the file also matched the ADSENSE_SRC constant, which survives on its own if the <script> is deleted
+  // — so removing the loader and leaving the disclosure in place read as consistent. What makes the
+  // policy true is a tag the browser executes, so that is what is detected.
+  const adLoaderLive = /<script[^>]*(?:ADSENSE_SRC|googlesyndication\.com)/.test(layoutSrc);
+  ok('⚠️ if the ad loader ships, the policy discloses advertising',
+    !adLoaderLive || /We use Google AdSense/.test(privacy),
+    'the loader is in the layout but the policy does not disclose it');
+  ok('⚠️ …and if it does not ship, the policy does not claim it does',
+    adLoaderLive || !/We use Google AdSense/.test(privacy),
+    'the policy discloses AdSense but no loader is deployed');
+  // Any advertising host reaching the layout has to be a host the policy actually names.
+  const AD_HOSTS = [['googlesyndication.com', 'Google AdSense'], ['doubleclick.net', 'Google'],
+    ['adsystem.com', 'Amazon'], ['adnxs.com', 'Xandr'], ['criteo', 'Criteo'], ['taboola', 'Taboola'],
+    ['outbrain', 'Outbrain']];
+  for (const [host, vendor] of AD_HOSTS) {
+    if (!new RegExp(host, 'i').test(layoutSrc)) continue;
+    ok(`⚠️ the policy names ${vendor}, whose host is in the layout`,
+      new RegExp(vendor, 'i').test(privacy), `${host} ships but ${vendor} is not named in the policy`);
+  }
+  // And an ad UNIT appearing anywhere would mean ads are actually rendering, not merely verifiable —
+  // at which point "advertising may be displayed" understates it and the policy needs another look.
+  ok('no ad unit exists yet, so "may be displayed" is still the accurate tense',
+    !/className="adsbygoogle"|data-ad-slot/.test(layoutSrc));
 }
 
 L('⚠️ TERMS COVER BOTH PLANS, AND RENEWAL IS STATED');
