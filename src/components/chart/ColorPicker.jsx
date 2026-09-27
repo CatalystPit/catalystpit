@@ -125,10 +125,16 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
     };
     measure();
     window.addEventListener('resize', measure);
-    window.addEventListener('scroll', measure, true);
+    // ⚠️ A PAGE SCROLL CLOSES THIS, IT DOES NOT REPOSITION IT. This used to re-measure on scroll, which
+    // dutifully kept a palette glued to the viewport while the chart it belongs to scrolled away — the
+    // popover ended up floating over unrelated sections of the page, describing a drawing nobody could
+    // see. Following the reader is the wrong instinct for a control that only means something next to
+    // its chart. Capture phase, so a scroll in any ancestor counts.
+    const onScroll = () => setOpen(false);
+    window.addEventListener('scroll', onScroll, true);
     return () => {
       window.removeEventListener('resize', measure);
-      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('scroll', onScroll, true);
     };
   }, [open]);
 

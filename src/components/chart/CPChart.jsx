@@ -748,6 +748,48 @@ export default function CPChart({
   const [selBox, setSelBox] = useState(null);
 
   /**
+   * CHART-OWNED FLOATING UI CLOSES WHEN THE CHART IS NO LONGER THE CONTEXT.
+   *
+   * ⚠️ THE BUG: the drawing toolbar is absolutely positioned inside the chart's box, so page-scrolling
+   * the ticker page carried it up the screen while the chart slid away — leaving it floating over Key
+   * Statistics and Pit Consensus, attached to nothing. Its colour popover went with it.
+   *
+   * ⚠️ AND IT IS AN OWNERSHIP PROBLEM, NOT A POSITIONING ONE. position:fixed, sticky, a larger z-index
+   * or an overflow clip would each move the symptom somewhere else: the toolbar would still be open,
+   * still describing a drawing the reader cannot see. A control that belongs to the chart has no meaning
+   * away from it, so it closes.
+   *
+   * ⚠️ PAGE SCROLL IS NOT CHART PAN. Panning or zooming inside the chart fires no window scroll — it is
+   * a pointer gesture on a canvas — so the toolbar survives those and is re-anchored from the drawing's
+   * own coordinates by DrawingLayer, which is what keeps it on the drawing. Only the PAGE moving, or the
+   * chart leaving the viewport, closes anything.
+   */
+  useEffect(() => {
+    const closeFloating = () => { setSelBox(null); setSelectedIds([]); };
+    // The page moving out from under the chart.
+    const onPageScroll = () => { if (selBox) closeFloating(); };
+    window.addEventListener('scroll', onPageScroll, { passive: true });
+    // ...and the chart leaving the viewport by any other route: a resize, a collapsing dock, a drawer.
+    let io = null;
+    const host = hostRef.current;
+    if (host && typeof IntersectionObserver === 'function') {
+      io = new IntersectionObserver((entries) => {
+        for (const e of entries) if (!e.isIntersecting) closeFloating();
+      // A small threshold rather than 0: a chart one pixel on screen is not a context either.
+      }, { threshold: 0.15 });
+      io.observe(host);
+    }
+    return () => {
+      window.removeEventListener('scroll', onPageScroll);
+      io?.disconnect();
+    };
+  }, [selBox]);
+
+  // Symbol and timeframe changes take the floating controls with them — the drawing they described
+  // either no longer exists or is no longer the one on screen.
+  useEffect(() => { setSelBox(null); }, [sym, tf]);
+
+  /**
    * A patch to the single selected drawing, through the history like every other change.
    *
    * ⚠️ NOT setDrawings. A lock, a label or a hide made outside updateDrawings would not be undoable,
