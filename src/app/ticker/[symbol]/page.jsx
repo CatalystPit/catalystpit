@@ -1,6 +1,7 @@
 import { notFound, permanentRedirect } from 'next/navigation';
 import { canonical, SITE_NAME } from '../../../lib/seo';
 import { normalizeSymbol, tickerPath } from '../../../lib/ticker-symbol.mjs';
+import { tickerTabEnabled } from '../../../lib/feature-availability.mjs';
 import { isKnownSymbol } from '../../../lib/ticker-resolve.server.mjs';
 import TickerPage from './TickerPage';
 
@@ -88,8 +89,12 @@ export default async function Page({ params, searchParams }) {
     // removes /ticker/aapl from the index rather than leaving it there beside /ticker/AAPL.
     // Only a real tab survives the hop — tracking parameters are dropped rather than minted into a
     // second permanent URL for the same view.
+    // ...and only an AVAILABLE tab: a link to a module that is currently switched off lands on
+    // Overview rather than being redirected to an empty panel. tickerPath stays pure URL grammar —
+    // whether a tab is live is a product question, answered here. See feature-availability.mjs.
     const sp = (await searchParams) || {};
-    permanentRedirect(tickerPath(sym, sp.tab));
+    const tab = tickerTabEnabled(sp.tab) ? sp.tab : undefined;
+    permanentRedirect(tickerPath(sym, tab));
   }
 
   return <TickerPage symbol={sym} />;

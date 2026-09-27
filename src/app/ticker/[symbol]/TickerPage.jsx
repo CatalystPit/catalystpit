@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, CARD_COLORS, timeAgo, minsSince, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../../lib/cp-shared';
 import TickerPriceChart from '../../../components/chart/TickerPriceChart';
 import { resolveFutures } from '../../../lib/futures';
+import { featureEnabled, tickerTabEnabled } from '../../../lib/feature-availability.mjs';
 
 // ⚠️ NO TRADINGVIEW WIDGET IS IMPORTED HERE ANY MORE, dynamically or otherwise. The futures view
 // fails closed (see FuturesView below), so there is nothing on a customer-facing page that can
@@ -84,7 +85,8 @@ const fmtRet = (r) => r == null ? '—' : `${r > 0 ? '+' : ''}${r.toFixed(2)}%`;
 const retColor = (r) => r == null ? C.dim : r > 0 ? C.green : r < 0 ? C.red : C.muted;
 
 // ── tab definitions (order locked; labels sentence-case) ──
-const TABS = [
+// Exported for verification only — the suite asserts the real arrays instead of this file's source.
+export const TABS = [
   { id: 'overview',   label: 'Overview' },
   { id: 'news',       label: 'News' },
   { id: 'press',      label: 'Press Releases' },
@@ -98,6 +100,11 @@ const TABS = [
   { id: 'institutions', label: 'Institutions' },
   { id: 'financials', label: 'Financials' },
 ];
+// The tabs actually shown. TABS above is the full, ordered definition and does not change when a
+// module is switched off; feature-availability.mjs decides which of them are live, so a restored
+// feature reappears in its original position.
+export const VISIBLE_TABS = TABS.filter((t) => tickerTabEnabled(t.id));
+
 const PLACEHOLDERS = {
   guidance:   'Company-issued forward guidance, revenue and EPS forecasts, and guidance revisions.',
   analyst:    'Wall Street analyst ratings, price targets, upgrades, downgrades, and consensus forecasts.',
@@ -239,11 +246,13 @@ function Hero({ data, earnings }) {
 }
 
 // ── tab bar: full-width single row, horizontal-scroll on mobile, green-underline active ──
-function TabBar({ active, onSelect }) {
+// Exported for verification only — verify-feature-availability renders it and reads the real markup,
+// which is the only way to assert that a hidden tab is genuinely not in the bar.
+export function TabBar({ active, onSelect }) {
   return (
     <div style={{ marginTop: 16, borderBottom: `1px solid ${C.border}`, overflowX: 'auto' }}>
       <div style={{ display: 'flex', minWidth: 'max-content' }}>
-        {TABS.map((t) => {
+        {VISIBLE_TABS.map((t) => {
           const on = active === t.id;
           return (
             <button key={t.id} onClick={() => onSelect(t.id)}
@@ -974,7 +983,7 @@ function OverviewTab({ data, insider, gov, onTab }) {
           : <GovTable rows={govRows} />}
       </Section>
 
-      <AffiliateStrip />
+      {featureEnabled('toolsAndOffers') ? <AffiliateStrip /> : null}
     </>
   );
 }
@@ -1137,7 +1146,13 @@ function NotFound({ symbol }) {
 function TickerBody({ symbol }) {
   const router = useRouter();
   const params = useSearchParams();
-  const tab = params.get('tab') || 'overview';
+  // A tab id from the URL is only honoured while its feature is available; a link to a disabled
+  // module lands on Overview rather than on an empty panel. See feature-availability.mjs.
+  const requested = params.get('tab') || 'overview';
+  const tab = tickerTabEnabled(requested) ? requested : 'overview';
+  useEffect(() => {
+    if (tab !== requested) router.replace(`/ticker/${encodeURIComponent(symbol)}`, { scroll: false });
+  }, [tab, requested, symbol, router]);
   const onTab = (id) => router.push(`/ticker/${encodeURIComponent(symbol)}${id === 'overview' ? '' : `?tab=${id}`}`, { scroll: false });
 
   const [data, setData] = useState(null);
