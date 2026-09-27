@@ -43,9 +43,13 @@ ok('the palette carries 60-100 swatches', PALETTE.length >= 60 && PALETTE.length
 ok('...which is far more than the six it replaces', PALETTE.length > 6 * 8);
 ok('there is a grayscale ramp', GRAYS.length >= 8 && GRAYS.includes('#FFFFFF') && GRAYS.includes('#000000'));
 // The families the brief asked for, by hue rather than by name alone.
-for (const key of ['red', 'orange', 'green', 'teal', 'cyan', 'blue', 'purple', 'pink']) {
+// ⚠️ THE NINE COLUMNS ARE GRAYSCALE PLUS THESE EIGHT. cyan, amber and indigo were folded away when the
+// grid went to nine columns of ten shades: ten families of eight could not be nine columns, and a hue with
+// ten levels is more useful than three near-neighbours with eight. yellow replaced amber by name.
+for (const key of ['red', 'pink', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple']) {
   ok(`the ${key} family exists`, FAMILIES.some((f) => f.key === key));
 }
+ok('eight families plus grayscale make the nine columns', FAMILIES.length === 8 && PALETTE_COLUMNS === 9);
 ok('every family has multiple shades', FAMILIES.every((f) => f.shades.length >= 6));
 ok('every swatch is a canonical hex', PALETTE.every((c) => normalizeHex(c) === c));
 // ⚠️ NO DUPLICATES. A repeated swatch makes "which one is selected" ambiguous in the grid.
@@ -57,14 +61,18 @@ ok('no swatch appears twice', new Set(PALETTE).size === PALETTE.length,
 ok('the grid covers the whole palette, with nothing left out or repeated',
   PALETTE_GRID.flat().length === PALETTE.length
   && new Set(PALETTE_GRID.flat()).size === PALETTE.length);
-ok('...laid out as ten columns by nine rows',
-  PALETTE_COLUMNS === 10 && PALETTE_ROWS === 9 && PALETTE_GRID.every((r) => r.length === 10));
-ok('...one column per family, beneath the grayscale row',
-  PALETTE_GRID[0].length === GRAYS.length
-  && PALETTE_GRID.slice(1).length === Math.max(...FAMILIES.map((f) => f.shades.length)));
+// ⚠️ NINE COLUMNS BY TEN ROWS NOW, which is what fits nine families at a tap-sized swatch on a 390px
+// phone. A column is one hue through ten brightness levels; a row is the same level across every hue.
+ok('...laid out as nine columns by ten rows',
+  PALETTE_COLUMNS === 9 && PALETTE_ROWS === 10 && PALETTE_GRID.every((r) => r.length === 9));
+ok('...grayscale is the first column, not a row of its own',
+  PALETTE_GRID.every((r, i) => r[0] === GRAYS[i]));
+ok('...and every family has ten levels, so a row means the same thing across the palette',
+  GRAYS.length === 10 && FAMILIES.every((f) => f.shades.length === 10));
 ok('the collapsed row offers one shade per family', COMMON_COLORS.length === FAMILIES.length);
 ok('...and each is drawn from the middle of its ramp, so it reads on both canvases',
   COMMON_COLORS.every((c, i) => FAMILIES[i].shades.includes(c)));
+ok('...specifically the mid level of a ten-step ramp', COMMON_COLORS.every((c, i) => c === FAMILIES[i].shades[5]));
 
 // ── 2. hex handling ───────────────────────────────────────────────────────────────────────────
 console.log('\n2. hex handling');

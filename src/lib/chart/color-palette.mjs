@@ -19,29 +19,40 @@
 // reads on BOTH canvases, so a user picking from the middle of any column gets something legible
 // either way without knowing which theme they will be in tomorrow.
 
-/** A grayscale ramp, white through black. */
+/**
+ * A grayscale ramp, white through black. TEN steps, because it is a column like every other family.
+ *
+ * ⚠️ THE GRID IS NINE COLUMNS BY TEN ROWS, so grayscale is one of the nine columns rather than a row of
+ * its own. That is what makes every column the same shape: one hue, ten brightness levels, read top to
+ * bottom. It also means the row index means the same thing across the whole palette — row 5 is the
+ * mid-tone of every family at once.
+ */
 export const GRAYS = [
-  '#FFFFFF', '#E6E8E6', '#CDD1CE', '#B0B5B2', '#8E948F',
-  '#6C726E', '#4E544F', '#343A36', '#1C211E', '#000000',
+  '#FFFFFF', '#F0F2F0', '#DCDFDD', '#C2C7C3', '#A4AAA6',
+  '#868C88', '#6A706C', '#4C524E', '#2C312E', '#000000',
 ];
 
 /**
- * The colour families, each light → dark. Ten families of eight shades.
+ * The colour families, each light → dark, ten shades apiece.
  *
- * Ordered as a spectrum so the grid reads as one continuous surface rather than a bag of swatches,
- * which is what makes a large palette scannable instead of overwhelming.
+ * ⚠️ EIGHT FAMILIES PLUS GRAYSCALE MAKES THE NINE COLUMNS. Ordered as a spectrum — red through pink,
+ * orange, yellow, green, teal, blue, purple — so the grid reads as one continuous surface rather than a
+ * bag of swatches, which is what makes ninety colours scannable instead of overwhelming.
+ *
+ * ⚠️ TEN LEVELS, NOT EIGHT. The previous ramps had eight, which made the top and bottom of each family
+ * jump: there was a pastel and a near-black with little between them at the ends. Ten gives a usable
+ * light tint AND a usable deep shade in every hue, which is the point of a professional palette — a
+ * drawing on a dark chart and the same drawing on a light one want different ends of the same column.
  */
 export const FAMILIES = [
-  { key: 'red',    label: 'Red',    shades: ['#FFD9D6', '#FFAEA8', '#FF7F76', '#F65246', '#DC3226', '#B3241A', '#8A1A12', '#5E100B'] },
-  { key: 'orange', label: 'Orange', shades: ['#FFE6CC', '#FFC894', '#FFA65C', '#F5872E', '#D96C14', '#B0550C', '#864008', '#5B2B05'] },
-  { key: 'amber',  label: 'Amber',  shades: ['#FFF3CC', '#FFE28F', '#FFCF54', '#F2B824', '#D19C0C', '#A87C08', '#7E5C05', '#553D03'] },
-  { key: 'green',  label: 'Green',  shades: ['#D9F5E2', '#A8E8C0', '#71D69B', '#41BE75', '#2A9E5B', '#1F8049', '#166036', '#0D4124'] },
-  { key: 'teal',   label: 'Teal',   shades: ['#D2F4EE', '#9DE7DA', '#66D5C3', '#35BCA6', '#219C88', '#197E6D', '#125E51', '#0A3F36'] },
-  { key: 'cyan',   label: 'Cyan',   shades: ['#D2F0F7', '#9BDFEF', '#63C9E3', '#31ADCC', '#1C8FAC', '#15738B', '#0F5568', '#093946'] },
-  { key: 'blue',   label: 'Blue',   shades: ['#D8E6FF', '#A9C7FF', '#77A4FF', '#4A80F0', '#2A60D4', '#1F4AA8', '#16357B', '#0D2151'] },
-  { key: 'indigo', label: 'Indigo', shades: ['#E0DEFF', '#BEB9FF', '#9A91FF', '#7A6BF0', '#5B4BD4', '#4539A8', '#31287B', '#1E1851'] },
-  { key: 'purple', label: 'Purple', shades: ['#F0DBFA', '#DCB4F2', '#C489E6', '#A963D2', '#8C48B4', '#6F3790', '#52276A', '#361846'] },
-  { key: 'pink',   label: 'Pink',   shades: ['#FFDCEB', '#FFB0D0', '#FF80B2', '#F25391', '#D43872', '#A82A59', '#7B1D3F', '#511128'] },
+  { key: 'red',    label: 'Red',    shades: ['#FFE5E3', '#FFC7C2', '#FFA39B', '#FF7F76', '#F65B4E', '#DC3226', '#BC241A', '#991C13', '#73140D', '#4A0B06'] },
+  { key: 'pink',   label: 'Pink',   shades: ['#FFE6F1', '#FFC9E0', '#FFA6CB', '#FF80B2', '#F45F98', '#D43872', '#B32B5E', '#8E2049', '#691634', '#440D1F'] },
+  { key: 'orange', label: 'Orange', shades: ['#FFEEDC', '#FFD9B5', '#FFC08A', '#FFA65C', '#F58A33', '#D96C14', '#B8570F', '#94440B', '#6D3107', '#472004'] },
+  { key: 'yellow', label: 'Yellow', shades: ['#FFF8DC', '#FFEFB0', '#FFE384', '#FFD457', '#F2BE2C', '#D1A00C', '#B08609', '#8C6A07', '#674D05', '#433203'] },
+  { key: 'green',  label: 'Green',  shades: ['#E2F8EA', '#BDEFD0', '#94E4B2', '#6AD494', '#45BE76', '#2A9E5B', '#21854B', '#1A6A3C', '#124E2B', '#0A321B'] },
+  { key: 'teal',   label: 'Teal',   shades: ['#DDF7F2', '#B6EFE4', '#8AE3D3', '#5FD3BE', '#3ABBA5', '#219C88', '#1B8373', '#15685B', '#0F4C43', '#09312A'] },
+  { key: 'blue',   label: 'Blue',   shades: ['#E2ECFF', '#C0D6FF', '#9BBCFF', '#77A4FF', '#5188F7', '#2A60D4', '#2250B3', '#1B408F', '#132F69', '#0B1D43'] },
+  { key: 'purple', label: 'Purple', shades: ['#F1E6FF', '#DECBFF', '#C8ABFA', '#B08AEE', '#9668DB', '#7A48BE', '#663A9F', '#522E80', '#3C215E', '#26143C'] },
 ];
 
 /** Every swatch in the palette, in grid order: the grayscale row, then one row per family. */
@@ -55,11 +66,10 @@ export const FAMILIES = [
  * plus the grey row on top: exactly 9 x 10, every swatch visible at once, and the shape reads better
  * anyway — a column is one hue light-to-dark, a row is the same intensity across the spectrum.
  */
-export const PALETTE_GRID = [
-  GRAYS,
-  ...Array.from({ length: Math.max(...FAMILIES.map((f) => f.shades.length)) },
-    (_, shade) => FAMILIES.map((f) => f.shades[shade]).filter(Boolean)),
-];
+export const PALETTE_GRID = Array.from(
+  { length: Math.max(GRAYS.length, ...FAMILIES.map((f) => f.shades.length)) },
+  (_, shade) => [GRAYS[shade], ...FAMILIES.map((f) => f.shades[shade])].filter(Boolean),
+);
 
 /**
  * Every swatch, flat.
@@ -80,7 +90,7 @@ export const PALETTE_ROWS = PALETTE_GRID.length;
  * Offered as the collapsed row so the common case needs no popover, and so the default suggestions
  * cannot be a colour that vanishes on one of the two themes.
  */
-export const COMMON_COLORS = FAMILIES.map((f) => f.shades[3]);
+export const COMMON_COLORS = FAMILIES.map((f) => f.shades[5]);
 
 const HEX_RE = /^#?([0-9a-fA-F]{6})$/;
 const SHORT_HEX_RE = /^#?([0-9a-fA-F]{3})$/;

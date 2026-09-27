@@ -363,7 +363,7 @@ console.log('\n8b. all 90 at once, with no scroll container');
   const ColorPicker = (await import(`${pathToFileURL(out).href}?t=${Date.now()}`)).default;
 
   // The grid's shape is arithmetic, so it can be asserted without a layout engine.
-  ok('the palette is ten columns by nine rows', PALETTE_COLUMNS === 10 && PALETTE_ROWS === 9);
+  ok('the palette is nine columns by ten rows', PALETTE_COLUMNS === 9 && PALETTE_ROWS === 10);
   ok('...which is exactly ninety swatches', PALETTE_COLUMNS * PALETTE_ROWS === 90
     && PALETTE_GRID.flat().length === 90);
 
@@ -410,9 +410,18 @@ console.log('\n8b. all 90 at once, with no scroll container');
   ok('...in the source either', !/overflowY|maxHeight/.test(src));
 
   // Compact: a popover, not a modal.
+  // ⚠️ THE WIDTH FOLLOWS THE TAP TARGET, and that trade was made deliberately. Nine columns of 18px fit
+  // in 232px but are too small to hit with a thumb; nine of 32px need 336px, which still leaves 54px spare
+  // on a 390px phone. Compact now means "fits a phone with room to spare", not "as narrow as possible".
   const w = /width:\s*(\d+)px/.exec(styleOf(panel));
-  ok('⚠️ the popover is compact, 220-260px wide', w && Number(w[1]) >= 220 && Number(w[1]) <= 260,
-    w ? `${w[1]}px` : styleOf(panel).slice(0, 90));
+  ok('⚠️ the popover fits a 390px phone with room to spare',
+    w && Number(w[1]) <= 360 && Number(w[1]) >= 280, w ? `${w[1]}px` : styleOf(panel).slice(0, 90));
+  ok('⚠️ ...and its swatches are big enough to tap', (() => {
+    const first = [...panel.querySelectorAll('button')]
+      .find((b) => PALETTE.includes(b.getAttribute('aria-label')));
+    const m = /width:\s*(\d+)px/.exec(first?.getAttribute('style') || '');
+    return m && Number(m[1]) >= 28;
+  })(), 'a swatch under 28px is a poor touch target');
 
   // The custom controls stay, below the grid.
   ok('the hex field is still offered', !!panel.querySelector('input[aria-label="Hex color"]'));
@@ -506,6 +515,59 @@ console.log('\n8c. edge placement keeps the complete palette on screen');
       host.remove();
     }
   }
+}
+
+// ── 8d. the expanded grid fits a 390px phone in BOTH axes ──────────────────────────────────────
+console.log('\n8d. the expanded grid fits a 390px phone in both axes');
+
+{
+  // Arithmetic from the palette, so this is a statement about the design rather than about a screenshot.
+  const SW = 32, GAP = 4, PAD = 8;
+  const width = PALETTE_COLUMNS * SW + (PALETTE_COLUMNS - 1) * GAP + PAD * 2;
+  const gridH = PALETTE_ROWS * SW + (PALETTE_ROWS - 1) * GAP;
+  const height = gridH + 34 + 36 + 26 + PAD * 2;   // + theme row, custom row, separators
+  ok('⚠️ no horizontal scrolling at 390px', width <= 390 - 16, `${width}px in 390px`);
+  ok('⚠️ no vertical scrolling at 844px', height <= 844 - 16, `${height}px in 844px`);
+  ok('⚠️ the swatches are a comfortable tap target', SW >= 28, `${SW}px`);
+  ok('...and all 90 are in that one panel', PALETTE_COLUMNS * PALETTE_ROWS === 90);
+  // The picker must actually use those numbers.
+  const src = read('src/components/chart/ColorPicker.jsx');
+  ok('the picker uses that swatch size', new RegExp(`const GRID_SWATCH = ${SW};`).test(src));
+  ok('...and sizes the panel from the palette rather than a literal',
+    /PANEL_WIDTH = PALETTE_COLUMNS \* GRID_SWATCH/.test(src));
+  ok('...and still has no scroll container', !/overflowY|maxHeight/.test(code(src)));
+}
+
+// ── 8e. every drawing type gets the expanded palette ───────────────────────────────────────────
+console.log('\n8e. every drawing type gets the expanded palette');
+
+{
+  // ⚠️ ONE COLOUR PATH FOR EVERY TOOL. Each drawing stores its colour in `style.color` and the layer
+  // resolves it the same way, so a tool cannot end up on a different palette — which is what makes
+  // "verify horizontal line, trend line and rectangle" a property rather than three separate checks.
+  const { TOOLS } = await import('../src/lib/chart/chart-drawings.mjs');
+  const styled = Object.values(TOOLS).filter((t) => !t.transient);
+  ok('there are several drawing tools to cover', styled.length >= 5, `${styled.length}`);
+  for (const t of ['horizontal', 'trend', 'rectangle', 'ray', 'vertical', 'fib', 'text']) {
+    if (!TOOLS[t]) continue;
+    const pts = Array.from({ length: TOOLS[t].points }, (_, i) => ({ time: 1700000000 + i * 60, price: 100 + i }));
+    const made = createDrawing(t, pts, { color: PALETTE[55], width: 2, dash: 'solid' });
+    ok(`a ${t} accepts a colour from the expanded palette`, made?.style.color === PALETTE[55],
+      `${made?.style.color}`);
+    const back = coerceDrawing({ type: t, points: pts, style: { color: PALETTE[55], width: 2, dash: 'solid' } });
+    ok(`...and keeps it across a reload`, back?.style.color === PALETTE[55]);
+  }
+  // The layer paints every drawing through one resolver, so none can be on a different palette.
+  const layer = code(read('src/components/chart/DrawingLayer.jsx'));
+  ok('the layer resolves every drawing colour through one call',
+    (layer.match(/indicatorColor\(stateRef\.current\.theme, d\.style\.color\)/g) || []).length >= 1);
+
+  // The default drawing colour is preserved: still the themed index, not a palette hex.
+  ok('⚠️ the default drawing colour is unchanged', DEFAULT_STYLE.color === 0);
+  ok('...so a new drawing still follows the theme',
+    indicatorColor('light', DEFAULT_STYLE.color) !== indicatorColor('dark', DEFAULT_STYLE.color));
+  const picker = read('src/components/chart/ColorPicker.jsx');
+  ok('...and the themed defaults are still offered in the picker', /THEME-AWARE/.test(picker));
 }
 
 // ── 9. nothing else about drawings moved ───────────────────────────────────────────────────────

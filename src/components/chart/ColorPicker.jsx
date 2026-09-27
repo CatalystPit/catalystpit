@@ -24,7 +24,7 @@ const SWATCH = 15;
 const GAP = 3;
 const PANEL_PAD = 8;
 /** Grid swatches are slightly larger than the inline row: ten of them set the popover's width. */
-const GRID_SWATCH = 18;
+const GRID_SWATCH = 32;
 const GRID_GAP = 4;
 
 /**
