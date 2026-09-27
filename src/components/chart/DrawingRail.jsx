@@ -3,8 +3,9 @@ import { memo, useCallback, useRef, useState } from 'react';
 import {
   TOOLS, tool, activeCategories, categoryOfTool, LINE_WIDTHS, LINE_DASHES,
 } from '../../lib/chart/chart-drawings.mjs';
-import { palette, indicatorColors } from '../../lib/chart/chart-theme.mjs';
+import { palette } from '../../lib/chart/chart-theme.mjs';
 import { ToolButton, Popover, MenuItem, MenuLabel, VectorIcon } from './ChartUI';
+import ColorPicker from './ColorPicker';
 
 // The vertical drawing rail.
 //
@@ -31,7 +32,6 @@ function DrawingRailBase({
   compact = false,
 }) {
   const p = palette(theme);
-  const swatches = indicatorColors(theme);
   const [openCat, setOpenCat] = useState(null);
   const [stylePanel, setStylePanel] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -155,12 +155,12 @@ function DrawingRailBase({
       placement="right-start" gap={6} width={186} label="Drawing style">
       <MenuLabel theme={theme}>New drawings</MenuLabel>
       <div style={{ padding: '2px 6px 6px' }}>
-        <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
-          {swatches.map((c, i) => (
-            <button key={c} type="button" title={`Color ${i + 1}`} onClick={() => onStyle({ color: i })}
-              style={{ width: 16, height: 16, borderRadius: 3, cursor: 'pointer', background: c,
-                border: style.color === i ? `2px solid ${p.textStrong}` : `1px solid ${p.border}` }} />
-          ))}
+        {/* The shared chart colour control — the same palette the indicator settings use. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
+          fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>
+          <span style={{ flex: 1 }}>Color</span>
+          <ColorPicker theme={theme} compact label="New drawing color"
+            value={style.color} onChange={(v) => onStyle({ color: v })} />
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
           fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>

@@ -2056,8 +2056,17 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
   // copy was corrected, so this pinned string moved with it. The assertion's intent — that a level can
   // be given a colour of its own from that dialog — is unchanged, and the next line still pins the
   // clearing half of it.
-  ok('the settings dialog can color a level', /Give this level its own color\b/.test(set));
-  ok('...and clear that colour again', /nextIdx >= swatches\.length \? undefined : nextIdx/.test(set));
+  // ⚠️ BOTH OF THESE PINNED THE CYCLER, WHICH IS GONE. A per-level colour used to be one button that
+  // advanced through the six palette indexes and wrapped round to "inherit" on the seventh click. With
+  // ninety colours that would take ninety clicks to reach the last one and never show what was being
+  // chosen, so the level now uses the shared picker and a separate control resets it to the drawing's
+  // colour. Both CAPABILITIES the old assertions cared about survive — set your own, and clear it again —
+  // and they are what is asserted now rather than the mechanism that provided them.
+  ok('the settings dialog can color a level',
+    /<ColorPicker[\s\S]{0,200}setLevel\(i, \{ color: v \}\)/.test(set));
+  ok('...and clear that colour again, back to the drawing\'s',
+    /setLevel\(i, \{ color: undefined \}\)/.test(set)
+    && /Reset to the drawing color/.test(set));
   ok('clearing a field really removes it', /if \(next\[key\] === undefined\) delete merged\[key\];/.test(set));
 
   // ── 3. INTERACTION CONSISTENCY ──────────────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
 'use client';
 import { memo, useEffect, useRef, useState } from 'react';
 import { tool, LINE_WIDTHS, LINE_DASHES, LABEL_MAX } from '../../lib/chart/chart-drawings.mjs';
-import { palette, indicatorColors, indicatorColor } from '../../lib/chart/chart-theme.mjs';
+import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
 import { Popover, MenuItem, MenuLabel } from './ChartUI';
 import { CONTROL, controlsFor, placeToolbar } from '../../lib/chart/drawing-toolbar.mjs';
+import ColorPicker from './ColorPicker';
 
 // THE FLOATING TOOLBAR FOR A SELECTED DRAWING.
 //
@@ -74,7 +75,6 @@ function DrawingToolbarBase({
   onStyle, onPatch, onDelete, onOpenSettings,
 }) {
   const p = palette(theme);
-  const swatches = indicatorColors(theme);
   const [open, setOpen] = useState(null);           // 'color' | 'width' | 'dash' | 'label' | 'more'
   const [draft, setDraft] = useState('');
   const refs = {
@@ -282,13 +282,10 @@ function DrawingToolbarBase({
 
       <Popover anchorRef={refs.color} open={open === CONTROL.COLOR} onClose={close} theme={theme}
         placement="bottom-start" width={128} label="Drawing colour">
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 6 }}>
-          {swatches.map((c, i) => (
-            <button key={c} type="button" title={`Color ${i + 1}`}
-              onClick={() => { onStyle({ color: i }); close(); }}
-              style={{ width: 18, height: 18, borderRadius: 3, cursor: 'pointer', background: c,
-                border: drawing.style?.color === i ? `2px solid ${p.textStrong}` : `1px solid ${p.border}` }} />
-          ))}
+        {/* The shared control, so the toolbar offers the same palette as everything else. */}
+        <div style={{ padding: 6 }}>
+          <ColorPicker theme={theme} compact label="Drawing color"
+            value={drawing.style?.color} onChange={(v) => { onStyle({ color: v }); close(); }} />
         </div>
       </Popover>
 

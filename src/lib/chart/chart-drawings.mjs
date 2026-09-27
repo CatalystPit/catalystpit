@@ -1,5 +1,7 @@
 import { shiftTime } from './chart-coords.mjs';
 import { atEdgeX, atEdgeY, EDGE_LEFT, EDGE_RIGHT, EDGE_TOP, EDGE_BOTTOM } from './chart-project.mjs';
+// One definition of what a colour value is, shared with the indicator store and the picker.
+import { coerceColorValue } from './color-palette.mjs';
 // THE DRAWING MODEL.
 //
 // Pure geometry and state. No canvas, no React, no Lightweight Charts — which is what makes all of
@@ -231,14 +233,16 @@ export function sanitizeFibLevels(raw) {
     if (seen.has(key)) continue;
     seen.add(key);
     const obj = (typeof l === 'object' && l !== null) ? l : {};
-    // A per-level colour is an INDEX into the theme palette, like every other colour in the chart,
-    // and is optional: absent means "use the drawing's own colour", which is what keeps the default
-    // appearance a single clean hue rather than a rainbow.
-    const color = Number(obj.color);
+    // A per-level colour is an index into the theme palette OR an explicit hex, like every other
+    // colour in the chart, and is optional: ABSENT means "use the drawing's own colour", which is what
+    // keeps the default appearance a single clean hue rather than a rainbow. That optionality is why
+    // the key is spread rather than always written — `color: undefined` would round-trip through JSON
+    // as a missing key anyway, but it would read as "set to nothing" to every caller in between.
+    const color = coerceColorValue(obj.color);
     out.push({
       ratio,
       visible: obj.visible !== false,
-      ...(Number.isFinite(color) ? { color: Math.max(0, Math.round(color)) } : {}),
+      ...(color !== null ? { color } : {}),
     });
   }
   if (!out.length) return DEFAULT_FIB_LEVELS.map((l) => ({ ...l }));
@@ -524,11 +528,16 @@ export function cloneDrawing(drawing, existing = []) {
 
 /** Styles are persisted and user-editable, so they arrive as anything at all. */
 export function sanitizeStyle(raw) {
-  const color = Number(raw?.color);
   const width = Number(raw?.width);
+  // ⚠️ A COLOUR IS AN INDEX **OR** AN EXPLICIT HEX, and this used to force it through Number().
+  // `Number('#4A80F0')` is NaN, so every colour a user picked from the palette became the DEFAULT on
+  // the next reload — silently, and only on reload, which is the worst way for it to fail. Exactly the
+  // bug the indicator store had; same fix, same shared helper, so the two cannot drift apart again.
+  // An index still resolves through the theme; a hex is used verbatim in both. See chart-theme's
+  // indicatorColor and color-palette's coerceColorValue.
+  const color = coerceColorValue(raw?.color);
   return {
-    // A palette INDEX, not hex — the chart has two themes and a fixed colour is unreadable in one.
-    color: Number.isFinite(color) ? Math.max(0, Math.round(color)) : DEFAULT_STYLE.color,
+    color: color === null ? DEFAULT_STYLE.color : color,
     width: LINE_WIDTHS.includes(width) ? width : DEFAULT_STYLE.width,
     dash: LINE_DASHES.includes(raw?.dash) ? raw.dash : DEFAULT_STYLE.dash,
   };

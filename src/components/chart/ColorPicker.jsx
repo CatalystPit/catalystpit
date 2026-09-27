@@ -20,6 +20,16 @@ import { PALETTE_ROWS, COMMON_COLORS, normalizeHex, isValidHex } from '../../lib
 
 const SWATCH = 15;
 const GAP = 3;
+const PANEL_PAD = 8;
+/**
+ * The panel's size, derived from the palette rather than guessed.
+ *
+ * Used to decide which way to open BEFORE the browser has laid the panel out — see the placement effect
+ * for why that matters. Rows are the grayscale ramp plus one per family; the three extra blocks are the
+ * theme-aware row, the custom-colour row and their separators.
+ */
+const PANEL_HEIGHT_ESTIMATE = PALETTE_ROWS.length * (SWATCH + GAP) + 3 * 34 + PANEL_PAD * 2;
+const PANEL_WIDTH_ESTIMATE = Math.max(...PALETTE_ROWS.map((r) => r.length)) * (SWATCH + GAP) + PANEL_PAD * 2;
 
 /** One swatch. Selection is a ring rather than a border, so it cannot change the colour it describes. */
 function Swatch({ color, selected, onPick, title, size = SWATCH, p }) {
@@ -56,6 +66,54 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
   const [open, setOpen] = useState(false);
   const [hex, setHex] = useState(resolved);
   const boxRef = useRef(null);
+  const panelRef = useRef(null);
+  // Where the panel goes. Defaults to below-right and is corrected once it has been measured.
+  const [place, setPlace] = useState({ vertical: 'below', horizontal: 'right', maxHeight: null });
+
+  /**
+   * KEEP THE PANEL ON SCREEN.
+   *
+   * ⚠️ MEASURED, NOT ASSUMED. These controls appear in the drawing rail down the left edge and in the
+   * floating toolbar that follows the selected drawing, both of which reach the edges of the chart — so
+   * a panel that always opens below and to the right opens off-screen, and ninety swatches become
+   * unreachable. Runs after the panel mounts (it has no size before that), and again on resize and
+   * scroll because a chart panel can be moved under a stationary popover.
+   */
+  useEffect(() => {
+    if (!open) return undefined;
+    const measure = () => {
+      const panel = panelRef.current;
+      const anchor = boxRef.current;
+      if (!panel || !anchor) return;
+      const a = anchor.getBoundingClientRect();
+      // ⚠️ AN ESTIMATE FIRST, THE MEASUREMENT SECOND. Reading offsetHeight alone meant the decision
+      // depended on layout having already happened: on the very first pass it is 0, so the panel was
+      // placed as if it were weightless and only corrected on a later pass — a visible flash at the
+      // bottom of the chart, and untestable outside a real browser. The palette's size is known from
+      // the palette itself, so the right side is chosen before anything is painted, and the measured
+      // value refines it when there is one.
+      const ph = panel.offsetHeight || PANEL_HEIGHT_ESTIMATE;
+      const pw = panel.offsetWidth || PANEL_WIDTH_ESTIMATE;
+      const vh = window.innerHeight || 0;
+      const vw = window.innerWidth || 0;
+      const PAD = 8;
+      const below = vh - a.bottom - PAD;
+      const above = a.top - PAD;
+      // Flip up only when below genuinely cannot hold it AND above is the roomier side.
+      const vertical = (ph > below && above > below) ? 'above' : 'below';
+      const room = vertical === 'above' ? above : below;
+      // Right-aligned by default; flip to left-aligned when the panel would run off the left edge.
+      const horizontal = (a.right - pw < PAD && a.left + pw < vw - PAD) ? 'left' : 'right';
+      setPlace({ vertical, horizontal, maxHeight: ph > room ? Math.max(160, room) : null });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+    };
+  }, [open]);
 
   // The field follows the value while the popover is shut, so reopening never shows a stale entry.
   useEffect(() => { if (!open) setHex(resolved); }, [resolved, open]);
@@ -115,12 +173,24 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
 
       {open && (
         <div
+          ref={panelRef}
           role="dialog" aria-label={`${label} palette`}
+          data-cp-color-panel=""
           style={{
-            position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 40,
+            position: 'absolute', zIndex: 40,
+            // ⚠️ PLACED AGAINST THE VIEWPORT, NOT ALWAYS BELOW-RIGHT. These controls sit in a floating
+            // toolbar and a rail that live at the EDGES of the chart, so a panel pinned to
+            // top:100%/right:0 opened straight off-screen — 90 swatches clipped to nothing, with no way
+            // to reach the one you wanted. `place` measures once the panel exists and flips it above or
+            // to the left when there is not room, which is why it is state rather than a style guess.
+            ...(place.vertical === 'above' ? { bottom: '100%', marginBottom: 4 } : { top: '100%', marginTop: 4 }),
+            ...(place.horizontal === 'left' ? { left: 0 } : { right: 0 }),
             background: p.tooltipBg, border: `1px solid ${p.border}`, borderRadius: 6,
             padding: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
             display: 'flex', flexDirection: 'column', gap: 6,
+            // Never taller than the space available; the grid scrolls rather than the panel overflowing.
+            maxHeight: place.maxHeight ? `${place.maxHeight}px` : undefined,
+            overflowY: place.maxHeight ? 'auto' : undefined,
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: GAP }}>

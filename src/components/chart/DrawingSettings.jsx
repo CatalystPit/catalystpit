@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { tool, LINE_WIDTHS, LINE_DASHES, sanitizeFibLevels, DEFAULT_FIB_LEVELS } from '../../lib/chart/chart-drawings.mjs';
-import { palette, indicatorColors } from '../../lib/chart/chart-theme.mjs';
+import { palette } from '../../lib/chart/chart-theme.mjs';
 import { Modal, ToolButton } from './ChartUI';
+import ColorPicker from './ColorPicker';
 
 // ONE SETTINGS DIALOG FOR EVERY DRAWING.
 //
@@ -20,7 +21,6 @@ const pct = (r) => `${(r * 100).toFixed(1)}%`;
 
 export default function DrawingSettings({ open, onClose, theme, drawing, onChange }) {
   const p = palette(theme);
-  const swatches = indicatorColors(theme);
   const [newLevel, setNewLevel] = useState('');
   useEffect(() => { if (!open) setNewLevel(''); }, [open]);
 
@@ -128,18 +128,20 @@ export default function DrawingSettings({ open, onClose, theme, drawing, onChang
                     fontFamily: "'DM Sans',sans-serif", fontSize: 11.5 }} />
                 <span style={{ flex: 1, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
                   color: p.text, opacity: 0.85 }}>{pct(l.ratio)}</span>
-                {/* PER-LEVEL COLOUR, and a way back to none. Cycling through the palette and then
-                    returning to "same as the drawing" keeps one control for both, and keeps the
-                    default a single clean hue rather than a rainbow nobody asked for. */}
-                <button type="button"
-                  title={l.color == null ? 'Give this level its own color' : 'Next color (cycles back to default)'}
-                  onClick={() => {
-                    const nextIdx = l.color == null ? 0 : l.color + 1;
-                    setLevel(i, { color: nextIdx >= swatches.length ? undefined : nextIdx });
-                  }}
-                  style={{ width: 16, height: 16, borderRadius: 3, cursor: 'pointer', flexShrink: 0,
-                    background: l.color == null ? 'transparent' : swatches[l.color % swatches.length],
-                    border: `1px solid ${l.color == null ? p.border : p.textStrong}` }} />
+                {/* ⚠️ PER-LEVEL COLOUR, THROUGH THE SHARED CONTROL. This was a CYCLER: one click
+                    advanced to the next palette index and a seventh click returned to "same as the
+                    drawing". That was a reasonable way to fit two states into one button when there
+                    were six colours; with ninety it would take ninety clicks to reach the last one, and
+                    the user could not see what they were choosing. The picker shows the palette, and a
+                    separate control clears back to inheriting the drawing's colour — which is the state
+                    the cycler's wrap-around was really for. */}
+                <ColorPicker theme={theme} compact
+                  label={`${pct(l.ratio)} level color`}
+                  value={l.color == null ? drawing.style?.color : l.color}
+                  onChange={(v) => setLevel(i, { color: v })} />
+                <ToolButton theme={theme}
+                  title={l.color == null ? 'This level uses the drawing color' : 'Reset to the drawing color'}
+                  onClick={() => setLevel(i, { color: undefined })}>{l.color == null ? '◦' : '↺'}</ToolButton>
                 <ToolButton theme={theme} title="Remove level" danger
                   onClick={() => removeLevel(i)}>✕</ToolButton>
               </div>
@@ -171,14 +173,11 @@ export default function DrawingSettings({ open, onClose, theme, drawing, onChang
 
         {section('Appearance', (
           <>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 9, flexWrap: 'wrap' }}>
-              {swatches.map((c, i) => (
-                <button key={c} type="button" title={`Color ${i + 1}`}
-                  onClick={() => patch({ style: { ...drawing.style, color: i } })}
-                  style={{ width: 18, height: 18, borderRadius: 3, cursor: 'pointer', background: c,
-                    border: drawing.style?.color === i ? `2px solid ${p.textStrong}` : `1px solid ${p.border}` }} />
-              ))}
-            </div>
+            {row('Color', (
+              <ColorPicker theme={theme} compact label="Drawing color"
+                value={drawing.style?.color}
+                onChange={(v) => patch({ style: { ...drawing.style, color: v } })} />
+            ))}
             {row('Width', select(drawing.style?.width,
               (v) => patch({ style: { ...drawing.style, width: Number(v) } }),
               LINE_WIDTHS.map((w) => <option key={w} value={w}>{w}px</option>), 'Line width'))}
