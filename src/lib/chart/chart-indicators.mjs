@@ -471,3 +471,58 @@ export function computeIndicator(id, bars, params, ctx) {
     return { plots: [] };
   }
 }
+
+/** Does this indicator need a volume figure to produce anything at all? */
+export const needsVolume = (id) => id === 'volume' || id === 'vwap';
+
+/**
+ * The longest lookback the parameters imply, in bars — what the series has to be able to cover.
+ *
+ * MACD is the awkward one: its slowest leg is `slow`, and its signal line needs `signal` more bars on
+ * top of that before it produces a value, so the binding constraint is the sum rather than the largest
+ * single number.
+ */
+export function requiredBars(id, params = {}) {
+  const p = sanitizeParams(id, params);
+  if (id === 'macd') return (p.slow || 0) + (p.signal || 0);
+  return p.length || 0;
+}
+
+/**
+ * WHY AN ENABLED INDICATOR IS NOT DRAWING — as an answer, not as silence.
+ *
+ * ⚠️ THE BUG THIS EXISTS FOR. Every path that could not produce plots simply `continue`d, so the
+ * Indicators button counted two active indicators and the chart drew neither, with nothing anywhere
+ * saying why. On GOOGL 4h that is exactly what happened to Volume and a 200-period SMA, and the two
+ * had completely different causes — one has no source data at all, the other has only 60 bars where it
+ * needs 200. A reader cannot tell those apart from an empty chart, and neither could we.
+ *
+ * Returns null when the indicator can draw, or { code, reason } when it cannot. One definition, used
+ * by the chart to decide what to build, by the UI to say what is happening, and by the matrix test to
+ * separate a genuine data limit from a regression.
+ */
+export function indicatorAvailability(id, bars = [], params = {}, ctx = {}) {
+  const def = INDICATORS[id];
+  if (!def) return { code: 'unknown', reason: 'Unknown indicator' };
+  if (!Array.isArray(bars) || !bars.length) {
+    return { code: 'no-bars', reason: 'No bars loaded for this symbol and timeframe' };
+  }
+  if (def.intradayOnly && !ctx.intraday) {
+    return { code: 'intraday-only', reason: `${def.label} applies to intraday sessions only` };
+  }
+  // ⚠️ THE SOURCE, NOT THE CALCULATION. Our intraday feed carries no volume field at all — see the
+  // note in api/chart-intraday, where it is omitted deliberately because a single venue's prints are
+  // not consolidated market volume and publishing them as such would be a lie. So a volume-derived
+  // indicator on an intraday timeframe is not broken; it is unsourced, and says so.
+  if (needsVolume(id) && !bars.some((b) => Number(b.volume) > 0)) {
+    return { code: 'no-volume', reason: 'No volume data for this timeframe from our market-data source' };
+  }
+  const need = requiredBars(id, params);
+  if (need > 0 && bars.length < need) {
+    return {
+      code: 'short-history',
+      reason: `Needs ${need} bars; this timeframe has ${bars.length}`,
+    };
+  }
+  return null;
+}

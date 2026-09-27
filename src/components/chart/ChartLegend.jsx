@@ -187,6 +187,19 @@ export default function ChartLegend({
             {ind.value != null && (
               <b style={{ color: ind.color, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmtPrice(ind.value)}</b>
             )}
+            {/* ⚠️ WHY IT IS NOT DRAWING, RATHER THAN NOTHING AT ALL. An enabled indicator that cannot
+                produce a series used to be skipped in silence: the Indicators button counted it, the
+                legend listed it, and the chart drew nothing — with no way to tell "no volume in this
+                feed" from "only 60 bars where 200 are needed". The reason comes from
+                indicatorAvailability, which is also what the chart uses to decide, so the two cannot
+                disagree. */}
+            {ind.unavailable && (
+              <span title={ind.unavailable}
+                style={{ color: p.textDim ?? p.text, opacity: 0.75, fontStyle: 'italic',
+                  whiteSpace: 'nowrap', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                — {ind.unavailable}
+              </span>
+            )}
             <RowButton theme={theme} show={show} title={on ? 'Hide' : 'Show'}
               onClick={() => onToggleIndicator?.(ind.key)}>{on ? '👁' : '◦'}</RowButton>
             <RowButton theme={theme} show={show} title="Settings"

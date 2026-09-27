@@ -38,7 +38,8 @@ async function fetchPayload(url, { fresh = false } = {}) {
   }
   return json;
 }
-import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
+import { INDICATORS, computeIndicator, indicatorLabel, indicatorAvailability,
+} from '../../lib/chart/chart-indicators.mjs';
 import { resolvePaneShares, applyPaneShares, readPaneShares, manualPaneChanges } from '../../lib/chart/chart-panes.mjs';
 import {
   loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW, DEFAULT_ACTIVE,
@@ -354,6 +355,10 @@ export default function CPChart({
   const activeRef = useRef([]);
   const tfRef = useRef(initialTimeframe);
   const volumeOnRef = useRef(true);
+  // Why Volume is not drawing, when it is on and cannot. Set during draw(), read by drawIndicators a
+  // few lines later so the legend can say it — Volume is the chart's own series, so it has no overlay
+  // entry of its own to carry the reason.
+  const volumeReasonRef = useRef(null);
   const barsRef = useRef([]);
   /**
    * WHICH SYMBOL barsRef.current ACTUALLY DESCRIBES.
@@ -821,7 +826,15 @@ export default function CPChart({
     // VOLUME, on its own invisible scale pinned to the bottom so it never rescales price.
     // Volume is a toggle in the same menu as everything else; the chart owns the series because it
     // needs its own pinned scale, but the user's choice decides whether it exists.
-    const hasVolume = volumeOnRef.current && bars.some((b) => Number(b.volume) > 0);
+    // ⚠️ THE SAME QUESTION, ASKED THE SAME WAY. Volume is the chart's own series rather than an
+    // overlay, so it used to have its own inline test and its own silent failure. It now consults
+    // indicatorAvailability like everything else, and the reason reaches the legend through
+    // volumeReasonRef — which is how "Volume is on but the chart is blank" became a sentence.
+    const volumeReason = volumeOnRef.current
+      ? indicatorAvailability('volume', bars, {}, { intraday: kindRef.current === 'intraday' })
+      : null;
+    volumeReasonRef.current = volumeReason ? volumeReason.reason : null;
+    const hasVolume = volumeOnRef.current && !volumeReason;
     if (volumeRef.current) { chart.removeSeries(volumeRef.current); volumeRef.current = null; }
     if (hasVolume) {
       volumeRef.current = chart.addSeries(lwc.HistogramSeries, {
@@ -930,12 +943,43 @@ export default function CPChart({
     const lowerKeys = [];                                   // one per lower pane, top to bottom
     const legendOut = [];
 
+    // ⚠️ VOLUME GETS A LEGEND ROW ONLY WHEN IT CANNOT DRAW. Drawn, it is the histogram at the foot of
+    // the chart and needs no row — that is why it never had one. Undrawable, it needs the one thing it
+    // never had: a reader-facing sentence explaining that the Indicators count includes something the
+    // chart is not showing, and why.
+    if (volumeOnRef.current && volumeReasonRef.current) {
+      legendOut.push({
+        key: 'volume',
+        label: INDICATORS.volume.label,
+        color: palette(th).volumeUp,
+        visible: true,
+        unavailable: volumeReasonRef.current,
+      });
+    }
+
     for (const entry of activeRef.current) {
       const def = INDICATORS[entry.id];
       if (!def || def.builtin) continue;                    // volume is the chart's own series
       if (entry.visible === false) continue;                // parked, but its settings are kept
-      if (def.intradayOnly && !ctx.intraday) continue;      // VWAP on a daily chart is meaningless
+      // ⚠️ AN INDICATOR THAT CANNOT DRAW NOW SAYS SO, instead of being skipped in silence. Three
+      // different situations used to look identical from outside — VWAP on a daily chart, Volume on a
+      // feed that carries none, and a 200-period average on a 60-bar series — and all three left the
+      // Indicators button counting an indicator the chart never drew. indicatorAvailability answers
+      // once, here, and the same answer is handed to the legend below.
+      const unavailable = indicatorAvailability(entry.id, bars, entry.params, ctx);
+      if (unavailable) {
+        legendOut.push({
+          key: entry.key || entry.id,
+          label: indicatorLabel(entry.id, entry.params),
+          color: indicatorColor(th, entry.color != null ? entry.color : (def.colors ? Object.values(def.colors)[0] : 0)),
+          visible: entry.visible !== false,
+          unavailable: unavailable.reason,
+        });
+        continue;
+      }
       const { plots, guides } = computeIndicator(entry.id, bars, entry.params, ctx);
+      // A belt-and-braces guard: availability said yes, so an empty result here would be a bug in the
+      // computation rather than a data limit, and it must not be reported to the reader as a limit.
       if (!plots.length || plots.every((pl) => !pl.data.length)) continue;
 
       const separate = def.pane === 'separate';
