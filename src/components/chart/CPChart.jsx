@@ -97,6 +97,47 @@ const fmtTime = (time, intraday) => {
   const d = businessDayToDate(time);
   return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
 };
+// The other granularities the time axis asks for, all in market time for the same reason.
+const ET_DAY = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' });
+const ET_MONTH = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short' });
+const ET_YEAR = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric' });
+const ET_HMS = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+
+/**
+ * A TIME-AXIS LABEL, AT THE GRANULARITY THE AXIS ASKED FOR.
+ *
+ * ⚠️ THE OLD FORMATTER IGNORED THE ONE ARGUMENT THAT MATTERS. It was
+ *
+ *     (t) => (typeof t === 'number' ? ET_HHMM.format(new Date(t * 1000)) : null)
+ *
+ * so every tick on an intraday chart came out as a time of day — including the ticks Lightweight
+ * Charts had chosen to be a DAY, a MONTH or a YEAR boundary. Scroll an intraday chart across several
+ * sessions and the axis read 09:30 … 09:30 … 09:30, with nothing to say which day any of them was.
+ * `tickMarkType` is exactly how the library says "this one is a day transition"; it was thrown away.
+ *
+ * ⚠️ AND IT STILL DOES NOT DECIDE HOW MANY TICKS THERE ARE. The library generates the ticks and their
+ * weights from the visible range, the chart width and the bar spacing; this only renders the label for
+ * one. Zooming in still produces finer marks and zooming out coarser ones, on every timeframe, with no
+ * per-timeframe special case anywhere.
+ *
+ * A non-numeric time is a daily/business-day bar. Those return null so the library's own formatter
+ * handles them — it already prints the month-and-year landmarks a daily chart wants, and it cannot be
+ * shifted by a timezone because a business day has no time of day to shift.
+ */
+// Exported for verification only — the suite drives it with each TickMarkType the library can ask for.
+export const tickLabel = (TickMarkType) => (t, tickMarkType) => {
+  if (typeof t !== 'number') return null;          // business day → native formatting
+  const d = new Date(t * 1000);
+  switch (tickMarkType) {
+    case TickMarkType.TimeWithSeconds: return ET_HMS.format(d);
+    case TickMarkType.Time: return ET_HHMM.format(d);
+    // ⚠️ THE ONE THAT WAS BROKEN: a day boundary inside an intraday chart.
+    case TickMarkType.DayOfMonth: return ET_DAY.format(d);
+    case TickMarkType.Month: return ET_MONTH.format(d);
+    case TickMarkType.Year: return ET_YEAR.format(d);
+    default: return null;
+  }
+};
 
 /**
  * How much room the News drawer takes from the chart.
@@ -1000,7 +1041,7 @@ export default function CPChart({
         },
         timeScale: {
           ...chartOptions(themeRef.current, { intraday: isIntraday(tf), transparent }).timeScale,
-          tickMarkFormatter: (t) => (typeof t === 'number' ? ET_HHMM.format(new Date(t * 1000)) : null),
+          tickMarkFormatter: tickLabel(lwc.TickMarkType),
         },
       });
       chartRef.current = chart;

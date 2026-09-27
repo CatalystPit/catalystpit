@@ -12,7 +12,7 @@ import {
 } from '../../lib/chart/chart-coords.mjs';
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
 import { selectionBox } from '../../lib/chart/drawing-toolbar.mjs';
-import { axisLabelSpecs, reconcileAxisLabels, priceLineOptionsFor } from '../../lib/chart/price-axis-labels.mjs';
+import { axisLabelSpecs, reconcileAxisLabels, priceLineOptionsFor, priceInPlot } from '../../lib/chart/price-axis-labels.mjs';
 import {
   idleTool, armTool, clickTool, hoverTool, cancelDraft, clearSuppression, draftPreview, hasDraft,
 } from '../../lib/chart/chart-tool-lifecycle.mjs';
@@ -509,23 +509,9 @@ function DrawingLayerBase({
     if (!activeTool) clearCursorPrice();
   }, [activeTool, clearCursorPrice]);
 
-  // Repaint whenever the chart moves. Subscribing to the chart's own events keeps the overlay in
-  // lockstep with it instead of guessing with a timer.
-  useEffect(() => {
-    if (!chart) return undefined;
-    const onRange = () => paint();
-    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
-    const ro = new ResizeObserver(() => paint());
-    if (canvasRef.current) ro.observe(canvasRef.current);
-    paint();
-    return () => {
-      try { chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange); } catch { /* chart gone */ }
-      ro.disconnect();
-    };
-  }, [chart, paint]);
-
-  useEffect(() => { paint(); }, [drawings, selectedIds, theme, visible, bars, activeTool, paint]);
-
+  // ⚠️ DECLARED BEFORE THE EFFECT BELOW THAT DEPENDS ON IT. A dependency array is evaluated on the
+  // first render, so listing a `const` declared further down reads it inside its temporal dead zone
+  // and throws. That is how a chart regression reached production once before.
   /**
    * THE PRICE CHIPS ON THE RIGHT-HAND AXIS, one per price-labelled drawing.
    *
@@ -538,8 +524,8 @@ function DrawingLayerBase({
    * series' own `priceLineVisible`/`lastValueVisible` are not read or written here, so the market
    * price keeps its label and every drawing chip sits alongside it.
    */
-  useEffect(() => {
-    if (!series) return undefined;
+  const syncAxisChips = useCallback(() => {
+    if (!series) return;
     // ⚠️ A NEW SERIES MEANS THE OLD CHIPS ARE ALREADY GONE. CPChart removes and re-adds the price
     // series on a chart-type change, and every price line on it dies with it. The handles we hold
     // would then point at a destroyed object, so the map is dropped rather than reconciled against —
@@ -549,17 +535,72 @@ function DrawingLayerBase({
       axisRef.current = new Map();
       axisOwnerRef.current = series;
     }
-    const specs = axisLabelSpecs(drawings, tool, {
-      visible,
-      colorOf: (d) => indicatorColor(theme, d.style?.color),
+    // ⚠️ THE PLOT'S BOUNDS, MEASURED NOW. A level outside them gets no chip rather than a chip
+    // pinned to the edge, and the test is made against the chart's own conversion so it stays right
+    // through zoom, a price-scale drag, autoscale and a resize.
+    const { plotHeight } = plotSize();
+    const specs = axisLabelSpecs(stateRef.current.drawings, tool, {
+      visible: stateRef.current.visible,
+      colorOf: (d) => indicatorColor(stateRef.current.theme, d.style?.color),
+      inView: (price) => priceInPlot(price, (v) => series.priceToCoordinate(v), 0, plotHeight),
     });
     axisRef.current = reconcileAxisLabels(axisRef.current, specs, {
       create: (spec) => series.createPriceLine(priceLineOptionsFor(spec)),
       update: (handle, spec) => handle.applyOptions(priceLineOptionsFor(spec)),
       remove: (handle) => series.removePriceLine(handle),
     });
-    return undefined;
-  }, [drawings, series, theme, visible]);
+  }, [series, plotSize]);
+
+  // Props that change the chips: the drawings themselves, their colours, and whether the layer shows.
+  useEffect(() => { syncAxisChips(); }, [drawings, theme, visible, syncAxisChips]);
+
+  // Repaint whenever the chart moves. Subscribing to the chart's own events keeps the overlay in
+  // lockstep with it instead of guessing with a timer.
+  useEffect(() => {
+    if (!chart) return undefined;
+    const onRange = () => { paint(); syncAxisChips(); };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
+    const ro = new ResizeObserver(() => { paint(); syncAxisChips(); });
+    if (canvasRef.current) ro.observe(canvasRef.current);
+
+    // ⚠️ THERE IS NO EVENT FOR A VERTICAL SCALE CHANGE.
+    //
+    // Lightweight Charts publishes subscriptions for the time range, clicks, the crosshair and size —
+    // and nothing at all for the price scale. So dragging the price axis, or its own autoscale
+    // settling after new data, moves every price on the chart with no notification: the overlay would
+    // keep its last pixels and a chip would keep its last in-view answer.
+    //
+    // The crosshair fires on any pointer movement over the chart, which includes a price-scale drag,
+    // and the legend already listens to it — so the cost is one extra handler on an event we pay for
+    // anyway. What it does is deliberately almost nothing: read the price at the top and bottom of the
+    // plot, compare with the last pair, and only act when they have actually moved. A drag repaints;
+    // a mouse crossing the chart does not.
+    let lastSig = null;
+    const onCrosshair = () => {
+      if (!series) return;
+      const { plotHeight } = plotSize();
+      const top = series.coordinateToPrice(0);
+      const bottom = series.coordinateToPrice(plotHeight);
+      if (top == null || bottom == null) return;
+      const sig = `${top}:${bottom}:${plotHeight}`;
+      if (sig === lastSig) return;
+      lastSig = sig;
+      paint();
+      syncAxisChips();
+    };
+    try { chart.subscribeCrosshairMove(onCrosshair); } catch { /* optional */ }
+
+    paint();
+    syncAxisChips();
+    return () => {
+      try { chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange); } catch { /* chart gone */ }
+      try { chart.unsubscribeCrosshairMove(onCrosshair); } catch { /* chart gone */ }
+      ro.disconnect();
+    };
+  }, [chart, series, paint, plotSize, syncAxisChips]);
+
+  useEffect(() => { paint(); }, [drawings, selectedIds, theme, visible, bars, activeTool, paint]);
+
 
   // Every chip comes off when the layer goes away, so a symbol change or an unmount cannot leave
   // orphans on the axis of the next chart.

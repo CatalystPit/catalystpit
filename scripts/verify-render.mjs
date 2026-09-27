@@ -311,7 +311,30 @@ console.log('\nchecking hook dependency arrays for forward references');
       }
       for (const m of body.matchAll(/\b(?:useCallback|useMemo|useEffect|useLayoutEffect)\s*\(/g)) {
         const at = m.index;
-        const dep = body.slice(at, at + 2000).match(/\}?\s*,\s*\[([^\]]*)\]\s*\)/);
+        // ⚠️ THE CALL IS BOUNDED BY MATCHING ITS PARENTHESES, NOT BY A FIXED WINDOW.
+        //
+        // This used to read `body.slice(at, at + 2000)` and take the first `}, [...])` inside it. A
+        // hook whose body runs past 2,000 characters — which a well-commented effect easily does —
+        // had no dependency array found at all, so it was skipped silently: the check reported a
+        // clean file for a hook it never looked at. A real forward reference in DrawingLayer's
+        // repaint effect got through exactly this way. Matching the parens reads every hook whatever
+        // its length, and takes the LAST array before the close, which is the dependency array.
+        const openParen = body.indexOf('(', at);
+        if (openParen < 0) continue;
+        let depth = 0;
+        let close = -1;
+        for (let i = openParen; i < body.length; i += 1) {
+          const ch = body[i];
+          if (ch === '(') depth += 1;
+          else if (ch === ')') {
+            depth -= 1;
+            if (depth === 0) { close = i; break; }
+          }
+        }
+        if (close < 0) continue;
+        const call = body.slice(openParen, close + 1);
+        const deps = [...call.matchAll(/,\s*\[([^[\]]*)\]\s*$/g)];
+        const dep = deps.length ? deps[deps.length - 1] : call.match(/\}\s*,\s*\[([^[\]]*)\]\s*\)\s*$/);
         if (!dep) continue;
         for (const raw of dep[1].split(',')) {
           const name = raw.trim().split('.')[0];

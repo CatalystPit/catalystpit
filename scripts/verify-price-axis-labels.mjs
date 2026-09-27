@@ -27,6 +27,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   axisLabelSpecs, reconcileAxisLabels, priceLineOptionsFor, readableTextOn, luminance, sameSpec,
+  priceInPlot,
 } from '../src/lib/chart/price-axis-labels.mjs';
 import { tool, createDrawing, moveDrawing } from '../src/lib/chart/chart-drawings.mjs';
 
@@ -219,7 +220,17 @@ function fakeChart() {
       if (i >= 0) priceLines.splice(i, 1);
     },
   };
+  const crosshairSubs = [];
   const chart = {
+    // ⚠️ THE ONLY HOOK AVAILABLE FOR A VERTICAL RESCALE. The library has subscriptions for the time
+    // range, clicks, the crosshair and size — and none for the price scale. Dragging the price axis
+    // therefore moves every price on the chart silently, so the component watches the crosshair and
+    // re-checks the top and bottom of the plot. Modelled here so that path is actually testable.
+    subscribeCrosshairMove: (fn) => crosshairSubs.push(fn),
+    unsubscribeCrosshairMove: (fn) => {
+      const i = crosshairSubs.indexOf(fn);
+      if (i >= 0) crosshairSubs.splice(i, 1);
+    },
     timeScale: () => ({
       width: () => PLOT_W,
       height: () => 28,
@@ -237,7 +248,10 @@ function fakeChart() {
     setCrosshairPosition: (price, time, s) => crosshair.push({ price, time, series: s }),
     clearCrosshairPosition: () => crosshair.push(null),
   };
-  return { chart, series, view, priceLines, crosshair, ranges, priceToCoordinate, coordinateToPrice };
+  return { chart, series, view, priceLines, crosshair, ranges, crosshairSubs,
+    priceToCoordinate, coordinateToPrice,
+    /** A pointer moving over the chart, which is what a price-scale drag looks like. */
+    fireCrosshair: () => crosshairSubs.forEach((fn) => fn({ point: { x: 10, y: 10 } })) };
 }
 
 function makeDom() {
@@ -418,8 +432,21 @@ for (const [label, apply] of VIEW_CHANGES) {
     `${pixelBefore} -> ${pixelAfter}`);
   ok(`${label}: the stored price is unchanged`,
     drawings[0].points[0].price === PRICE_AT_PLACEMENT, `${drawings[0].points[0].price}`);
-  ok(`${label}: the axis chip is unchanged`,
-    fc.priceLines[0].o.price === CHIP_AT_PLACEMENT, `${fc.priceLines[0].o.price}`);
+  // ⚠️ THE CHIP IS CONDITIONAL ON BEING ON SCREEN — and that is the point, not an exception. Some of
+  // these rescales (autoscale onto a two-dollar window) push the level off the plot entirely, and a
+  // chip that survived that would be the boundary-pinned label this change exists to remove. So the
+  // rule asserted is the full one: present and exact while visible, absent while not. The STORED
+  // price above is unconditional.
+  const onScreen = pixelAfter >= 0 && pixelAfter <= PLOT_H;
+  if (onScreen) {
+    ok(`${label}: the chip is still there, reading exactly the same price`,
+      fc.priceLines.length === 1 && fc.priceLines[0].o.price === CHIP_AT_PLACEMENT,
+      `${fc.priceLines.length} chip(s): ${fc.priceLines.map((h) => h.o.price).join(',')}`);
+  } else {
+    ok(`${label}: the level left the plot, so its chip is gone rather than pinned to the edge`,
+      fc.priceLines.length === 0,
+      `y=${pixelAfter.toFixed(1)} is outside 0..${PLOT_H} yet ${fc.priceLines.length} chip(s) remain`);
+  }
 }
 fc.view.high = 241.37; fc.view.low = 199.11;
 await render();
@@ -729,6 +756,237 @@ ok('...and the price it reports comes from coordinateToPrice',
 // No manual scale arithmetic crept in.
 ok('the layer derives no price from the visible high/low itself',
   !/visibleHigh|visibleLow|\(high - low\) \*/.test(layerCode));
+
+// ── 14. a level off the top or bottom of the plot gets NO chip ─────────────────────────────────
+console.log('\n14. a level off the top or bottom of the plot gets no chip');
+
+// The pure predicate first, then the real layer.
+{
+  const coordOf = (price) => ((300 - price) / 100) * 400;    // 300 at y=0, 200 at y=400
+  ok('a price inside the plot is in view', priceInPlot(250, coordOf, 0, 400));
+  ok('the exact top edge counts as visible', priceInPlot(300, coordOf, 0, 400));
+  ok('the exact bottom edge counts as visible', priceInPlot(200, coordOf, 0, 400));
+  ok('⚠️ a price above the top is NOT in view', !priceInPlot(320, coordOf, 0, 400));
+  ok('⚠️ a price below the bottom is NOT in view', !priceInPlot(180, coordOf, 0, 400));
+  ok('a coordinate the scale cannot produce is not in view', !priceInPlot(250, () => null, 0, 400));
+  ok('a scale that throws is not in view', !priceInPlot(250, () => { throw new Error('gone'); }, 0, 400));
+  ok('a non-finite price is not in view', !priceInPlot(NaN, coordOf, 0, 400));
+  ok('nonsense bounds are not in view', !priceInPlot(250, coordOf, 400, 0));
+
+  // ⚠️ AND NOTHING CLAMPS. The fix is to withhold the price line, never to fold an out-of-range
+  // coordinate back onto the plot edge — a clamped coordinate is precisely the lie being removed.
+  const labelSrc = fs.readFileSync(path.join(ROOT, 'src/lib/chart/price-axis-labels.mjs'), 'utf8');
+  const labelCode = labelSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  ok('⚠️ the label module clamps no coordinate',
+    !/Math\.max\s*\([^)]*Math\.min/.test(labelCode) && !/Math\.min\s*\([^)]*Math\.max/.test(labelCode));
+  const dlCode = fs.readFileSync(path.join(ROOT, 'src/components/chart/DrawingLayer.jsx'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  ok('⚠️ nor does the layer clamp a chip coordinate',
+    !/Math\.max\([^)]*priceToCoordinate/.test(dlCode) && !/priceToCoordinate[^;]*Math\.min/.test(dlCode));
+}
+
+// Now the real component, against a scale this test moves.
+{
+  const f = fakeChart();
+  const dom5 = makeDom();
+  const c5 = dom5.window.document.getElementById('root');
+  const r5 = ReactDOMClient.createRoot(c5);
+  // Three levels: one mid-plot, one near the top, one near the bottom of the initial view.
+  const mid = (f.view.high + f.view.low) / 2;
+  const lines = [hline('m', mid), hline('hi', f.view.high - 1), hline('lo', f.view.low + 1)];
+  const draw = () => act(async () => {
+    r5.render(React.createElement(DrawingLayer, {
+      chart: f.chart, series: f.series, theme: 'light', symbol: 'GOOGL', bars: BARS,
+      drawings: lines, onChange: () => {}, activeTool: null, onToolUsed: () => {},
+      selectedIds: [], onSelect: () => {}, visible: true,
+      style: { color: 0, width: 2, dash: 'solid' }, magnet: false, clearSignal: 0, toolDefaults: null,
+      onRequestText: () => {}, onOpenSettings: () => {}, onSelectionBox: () => {},
+    }));
+  });
+  await draw();
+  ok('all three levels are in view to begin with', f.priceLines.length === 3,
+    `${f.priceLines.length}`);
+
+  // A. IN RANGE -> chip present.  B. BELOW RANGE -> chip gone, not pinned to the bottom.
+  // Rescale to a window ABOVE every line, so all three fall off the bottom.
+  f.view.high = 400; f.view.low = 350;
+  await act(async () => { f.ranges.forEach((fn) => fn({ from: 0, to: BARS.length - 1 })); });
+  await draw();
+  ok('⚠️ levels below the visible range have no chip at all', f.priceLines.length === 0,
+    `${f.priceLines.length} chip(s) left: ${f.priceLines.map((h) => h.o.price).join(',')}`);
+
+  // C. ABOVE RANGE -> chip gone, not pinned to the top.
+  f.view.high = 100; f.view.low = 50;
+  await act(async () => { f.ranges.forEach((fn) => fn({ from: 0, to: BARS.length - 1 })); });
+  await draw();
+  ok('⚠️ levels above the visible range have no chip at all', f.priceLines.length === 0,
+    `${f.priceLines.length}`);
+
+  // D. ZOOM BACK -> the chips return, at their original prices, with nothing having been stored.
+  f.view.high = 241.37; f.view.low = 199.11;
+  await act(async () => { f.ranges.forEach((fn) => fn({ from: 0, to: BARS.length - 1 })); });
+  await draw();
+  ok('⚠️ the chips return when the range covers them again', f.priceLines.length === 3,
+    `${f.priceLines.length}`);
+  ok('...at exactly the prices the drawings still hold',
+    f.priceLines.map((h) => h.o.price).sort((a, b) => a - b).join(',')
+      === lines.map((d) => d.points[0].price).sort((a, b) => a - b).join(','),
+    f.priceLines.map((h) => h.o.price).join(','));
+  ok('...and the drawings themselves never changed', lines[0].points[0].price === mid);
+
+  // G. PARTIAL: a window containing only the middle level.
+  f.view.high = mid + 0.5; f.view.low = mid - 0.5;
+  await act(async () => { f.ranges.forEach((fn) => fn({ from: 0, to: BARS.length - 1 })); });
+  await draw();
+  ok('⚠️ only the level actually on screen keeps its chip', f.priceLines.length === 1,
+    `${f.priceLines.length}: ${f.priceLines.map((h) => h.o.price).join(',')}`);
+  ok('...and it is the right one', near(f.priceLines[0]?.o?.price, mid));
+
+  // ⚠️ THE VERTICAL PATH, WHICH HAS NO NATIVE EVENT. Change the scale WITHOUT firing the logical-range
+  // subscription — that is what dragging the price axis does — and only the crosshair watcher can
+  // notice. Without it the chip would keep its last in-view answer.
+  f.view.high = 900; f.view.low = 800;
+  await act(async () => { f.fireCrosshair(); });
+  ok('⚠️ a price-scale drag alone removes an off-screen chip', f.priceLines.length === 0,
+    `${f.priceLines.length} — the crosshair watcher did not fire`);
+  f.view.high = 241.37; f.view.low = 199.11;
+  await act(async () => { f.fireCrosshair(); });
+  ok('⚠️ ...and brings them back', f.priceLines.length === 3, `${f.priceLines.length}`);
+  ok('the component subscribed to the crosshair exactly once', f.crosshairSubs.length === 1,
+    `${f.crosshairSubs.length}`);
+}
+
+// ── 15. the price axis is adaptive, and denser than the library default ────────────────────────
+console.log('\n15. the price axis is adaptive, and denser than the library default');
+
+{
+  const { chartOptions, PRICE_TICK_DENSITY } = await import('../src/lib/chart/chart-theme.mjs');
+  const opts = chartOptions('light');
+  ok('the price scale sets a tick density', opts.rightPriceScale.tickMarkDensity === PRICE_TICK_DENSITY);
+  // ⚠️ THE LIBRARY DEFAULT IS 2.5, and that is the whole bug: at an 11px axis font it leaves a 28px
+  // floor between labels, which is what produced 220/240/260…420 on a chart that had room for twice as
+  // many. Lower value, smaller floor, more labels.
+  const LIBRARY_DEFAULT = 2.5;
+  ok('⚠️ and it is DENSER than the library default', PRICE_TICK_DENSITY < LIBRARY_DEFAULT,
+    `${PRICE_TICK_DENSITY} vs ${LIBRARY_DEFAULT}`);
+  const fontSize = opts.layout.fontSize;
+  const gap = (d) => Math.ceil(fontSize * d);
+  ok('...by a meaningful amount, not a rounding error', gap(PRICE_TICK_DENSITY) <= gap(LIBRARY_DEFAULT) - 6,
+    `${gap(PRICE_TICK_DENSITY)}px vs ${gap(LIBRARY_DEFAULT)}px at ${fontSize}px font`);
+  // ...but still leaves room for the text, or the labels collide.
+  ok('...while still leaving room for the label text', gap(PRICE_TICK_DENSITY) >= fontSize + 4,
+    `${gap(PRICE_TICK_DENSITY)}px for ${fontSize}px text`);
+
+  // ⚠️ IT IS A DENSITY, NOT AN INTERVAL. The library derives the step; a hard-coded dollar amount is
+  // the one thing guaranteed to be wrong on the next instrument.
+  const themeSrc = fs.readFileSync(path.join(ROOT, 'src/lib/chart/chart-theme.mjs'), 'utf8');
+  ok('⚠️ no fixed price interval is configured anywhere in the chart options',
+    !/priceInterval|tickInterval|priceStep|minMove:\s*\d+\s*\*/.test(themeSrc));
+  const cpSrc = fs.readFileSync(path.join(ROOT, 'src/components/chart/CPChart.jsx'), 'utf8');
+  ok('...nor in the chart itself', !/tickInterval|priceStep|setVisiblePriceRange/.test(cpSrc));
+
+  // THE LIBRARY'S OWN ARITHMETIC, reproduced so the adaptivity is asserted rather than assumed:
+  // maxTickSpan = (high - low) * gap / scaleHeight. Same pixels, different ranges -> different steps.
+  const maxSpan = (high, low, h) => (high - low) * gap(PRICE_TICK_DENSITY) / h;
+  ok('a wider visible range permits a coarser step', maxSpan(400, 200, 500) > maxSpan(250, 200, 500));
+  ok('zooming in permits a finer step', maxSpan(210, 200, 500) < maxSpan(400, 200, 500));
+  ok('a taller chart permits a finer step', maxSpan(400, 200, 900) < maxSpan(400, 200, 400));
+  // ⚠️ AND IT SCALES WITH THE INSTRUMENT. A $5 stock and a $30,000 instrument get proportionate steps
+  // with nothing per-symbol anywhere.
+  const rel = (mid) => maxSpan(mid * 1.1, mid * 0.9, 500) / mid;
+  ok('a $5 stock and a $30,000 instrument get proportionate steps',
+    Math.abs(rel(5) - rel(30000)) < 1e-9, `${rel(5)} vs ${rel(30000)}`);
+  ok('...and the same range on a bigger instrument is not treated as finer',
+    maxSpan(30000 * 1.1, 30000 * 0.9, 500) > maxSpan(5 * 1.1, 5 * 0.9, 500));
+}
+
+// ── 16. the time axis formats each tick class, and generates none of them ──────────────────────
+console.log('\n16. the time axis formats each tick class, and generates none of them');
+
+{
+  const { tickLabel } = await import(pathToFileURL(out).href).catch(() => ({}));
+  void tickLabel;
+  // The formatter is exported from CPChart; bundling the whole chart is unnecessary for a pure
+  // function, so it is imported from the built module used above only if present. Otherwise read it
+  // from a dedicated bundle.
+  // ⚠️ STUBBED, NOT EXTERNAL. Marking next/navigation and @clerk/nextjs external leaves real imports
+  // in the bundle, and Node cannot resolve a bare 'next/navigation' from a cache directory — the whole
+  // suite died on ERR_MODULE_NOT_FOUND rather than running. lightweight-charts is only imported
+  // dynamically inside an effect, so a stub is enough for a pure function.
+  const mk = (name, body) => { const f = path.join(TMP, name); fs.writeFileSync(f, body); return f; };
+  const cpOut = path.join(TMP, 'CPChart.probe.mjs');
+  await build({
+    entryPoints: [path.join(ROOT, 'src/components/chart/CPChart.jsx')],
+    bundle: true, format: 'esm', platform: 'browser', outfile: cpOut, jsx: 'automatic',
+    external: ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'],
+    logLevel: 'silent', absWorkingDir: ROOT,
+    alias: {
+      'next/navigation': mk('nav2.mjs', `
+export const useRouter = () => ({ push() {}, replace() {}, prefetch() {}, back() {}, refresh() {} });
+export const useSearchParams = () => new URLSearchParams();
+export const usePathname = () => '/';
+export const useParams = () => ({});
+export const redirect = () => {}; export const permanentRedirect = () => {}; export const notFound = () => {};
+export default {};`),
+      '@clerk/nextjs': mk('clerk2.mjs', `
+export const SignedIn = () => null; export const SignedOut = ({ children }) => children ?? null;
+export const UserButton = () => null;
+export const useAuth = () => ({ isLoaded: true, isSignedIn: false, userId: null });
+export const useUser = () => ({ isLoaded: true, isSignedIn: false, user: null });
+export const useClerk = () => ({ signOut: async () => {}, openUserProfile: () => {} });
+export const ClerkProvider = ({ children }) => children ?? null;
+export default {};`),
+      'lightweight-charts': mk('lwc2.mjs', 'export default {}; export const createChart = () => ({});'),
+    },
+  });
+  const mod = await import(pathToFileURL(cpOut).href);
+  ok('the chart exports its tick formatter for verification', typeof mod.tickLabel === 'function');
+
+  if (typeof mod.tickLabel === 'function') {
+    // The library's own enum values.
+    const T = { Year: 0, Month: 1, DayOfMonth: 2, Time: 3, TimeWithSeconds: 4 };
+    const fmt = mod.tickLabel(T);
+    // 2026-09-25 14:30:00 UTC = 10:30 ET
+    const t = Math.floor(Date.parse('2026-09-25T14:30:00Z') / 1000);
+
+    ok('a Time tick is a time of day in market time', fmt(t, T.Time) === '10:30', fmt(t, T.Time));
+    ok('a TimeWithSeconds tick carries seconds', /^10:30:00$/.test(fmt(t, T.TimeWithSeconds)),
+      fmt(t, T.TimeWithSeconds));
+    // ⚠️ THE ONE THAT WAS BROKEN. Every tick used to come back as a time of day, so a day boundary on
+    // an intraday chart read "09:30" and the axis could not say which day any of them was.
+    ok('⚠️ a DayOfMonth tick is a DATE, not a time of day', /Sep\s*25/.test(fmt(t, T.DayOfMonth)),
+      fmt(t, T.DayOfMonth));
+    ok('...and carries no time of day at all', !/\d\d:\d\d/.test(fmt(t, T.DayOfMonth)),
+      fmt(t, T.DayOfMonth));
+    ok('a Month tick is a month', /Sep/.test(fmt(t, T.Month)) && !/\d\d:\d\d/.test(fmt(t, T.Month)),
+      fmt(t, T.Month));
+    ok('a Year tick is a year', fmt(t, T.Year) === '2026', fmt(t, T.Year));
+
+    // ⚠️ A BUSINESS DAY FALLS THROUGH TO THE LIBRARY. Returning null is how the library is told to use
+    // its own formatting, which already prints the month/year landmarks a daily chart wants — and a
+    // business day has no time of day, so no timezone can shift it.
+    ok('⚠️ a business-day tick returns null so the library formats it',
+      fmt({ year: 2026, month: 9, day: 25 }, T.Month) === null);
+    ok('...and so does a date string', fmt('2026-09-25', T.DayOfMonth) === null);
+    ok('an unknown tick class also falls back rather than guessing', fmt(t, 99) === null);
+
+    // MARKET TIME, NOT THE READER'S. A viewer in any timezone reads the same session clock.
+    const midnightET = Math.floor(Date.parse('2026-09-26T03:30:00Z') / 1000);   // 23:30 ET on the 25th
+    ok('⚠️ the label is in market time, not the browser\'s',
+      fmt(midnightET, T.Time) === '23:30' && /Sep\s*25/.test(fmt(midnightET, T.DayOfMonth)),
+      `${fmt(midnightET, T.Time)} / ${fmt(midnightET, T.DayOfMonth)}`);
+
+    // ⚠️ AND THE FORMATTER DECIDES NOTHING ABOUT HOW MANY TICKS THERE ARE. It is handed a tick and
+    // returns a string; the library generates the ticks from the range, the width and the bar spacing.
+    const cpCode = fs.readFileSync(path.join(ROOT, 'src/components/chart/CPChart.jsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    ok('⚠️ nothing overrides the number of time ticks',
+      !/setVisibleRange|fixLeftEdge|fixRightEdge|minBarSpacing|tickMarkMaxCharacterLength/.test(cpCode));
+    ok('...and there is no per-timeframe special case in the formatter',
+      !/tickLabel[\s\S]{0,400}(isIntraday|'1D'|tf ===)/.test(cpCode));
+  }
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

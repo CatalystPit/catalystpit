@@ -111,6 +111,39 @@ export const indicatorColor = (theme, index) => {
 };
 
 /**
+ * HOW CLOSE TOGETHER THE PRICE LABELS MAY SIT, as a multiple of the axis font size.
+ *
+ * ⚠️ THIS IS THE $20-BETWEEN-LABELS BUG, AND IT WAS A DEFAULT WE NEVER SET. Lightweight Charts
+ * derives its own tick interval — nothing here manufactures one — but the minimum gap it will leave
+ * between two labels is `ceil(fontSize * tickMarkDensity)`, and `tickMarkDensity` defaults to 2.5.
+ * At our 11px axis font that is a 28px floor, which on a tall chart showing a wide range is what
+ * produced labels at 220, 240, 260 … 420 where a professional chart shows twice as many.
+ *
+ * The library's own arithmetic makes the rest clear: it computes
+ *
+ *     maxTickSpan = (high - low) * ceil(fontSize * tickMarkDensity) / scaleHeight
+ *
+ * and then picks the largest "nice" step (1, 2, 2.5, 5, 10 …) under that ceiling. So the interval
+ * already adapts to the visible range, the pane height, the zoom level and the instrument's
+ * magnitude — a $5 stock and a $30,000 instrument get different steps for free. The only thing
+ * wrong was the size of the floor.
+ *
+ * ⚠️ SO THIS IS A DENSITY DIAL, NOT AN INTERVAL. There is no hard-coded dollar step anywhere, and
+ * none should be added: a fixed step is the one thing guaranteed to be wrong on the next symbol.
+ *
+ * 1.7 * 11px = 19px between labels, against 11px of text — comfortable, and about 1.5x the label
+ * count the default gave. Named and exported so the value is assertable and so there is one place to
+ * change it if the axis font size ever does.
+ *
+ * A SECOND, SMALLER FACTOR IS LEFT ALONE DELIBERATELY: `scaleMargins` insets the data into the
+ * middle 66% of the pane (room for the volume overlay, which owns the bottom 18%), so the range the
+ * tick builder measures across is about 1.5x the data's own range and the labels are correspondingly
+ * coarser. That is a layout decision about where volume sits, not a tick bug, and changing it would
+ * move every series on the chart.
+ */
+export const PRICE_TICK_DENSITY = 1.7;
+
+/**
  * Chart options for a theme, in the shape Lightweight Charts v5 expects.
  *
  * Kept as a pure function of (theme, options) so a theme switch is `chart.applyOptions(chartOptions(next))`
@@ -136,7 +169,11 @@ export function chartOptions(theme, { intraday = false, transparent = false } = 
       },
     },
     grid: { vertLines: { visible: false }, horzLines: { color: p.grid } },
-    rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.08, bottom: 0.26 } },
+    rightPriceScale: {
+      borderVisible: false,
+      scaleMargins: { top: 0.08, bottom: 0.26 },
+      tickMarkDensity: PRICE_TICK_DENSITY,
+    },
     timeScale: {
       borderVisible: false,
       timeVisible: intraday,

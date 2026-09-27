@@ -74,7 +74,7 @@ export const readableTextOn = (hex) => (
  * the axis for a line the user has turned off is a level they cannot see, cannot select and cannot
  * remove — the worst of the three states.
  */
-export function axisLabelSpecs(drawings, toolOf, { colorOf, visible = true } = {}) {
+export function axisLabelSpecs(drawings, toolOf, { colorOf, visible = true, inView } = {}) {
   if (!visible) return [];
   const specs = [];
   for (const d of drawings || []) {
@@ -84,10 +84,45 @@ export function axisLabelSpecs(drawings, toolOf, { colorOf, visible = true } = {
     let price;
     try { price = def.priceLabel(d.points, d); } catch { continue; }
     if (!Number.isFinite(price)) continue;
+    // ⚠️ A PRICE OFF THE TOP OR BOTTOM OF THE PLOT GETS NO CHIP AT ALL.
+    //
+    // Lightweight Charts keeps a price line's axis label visible for ANY resolvable coordinate — its
+    // CustomPriceLinePriceAxisView checks only that the coordinate is non-null — and then the axis
+    // layout PINS a label that falls within half a label-height of an edge back onto that edge. That
+    // is right for the crosshair and for the last-value chip, which always belong somewhere on the
+    // axis. It is wrong for a drawing: zoom until a $270.04 line has left the top of the screen and
+    // its chip sat on the boundary still reading 270.04, describing a level that is nowhere near it.
+    //
+    // ⚠️ THE FIX IS TO WITHHOLD THE PRICE LINE, NOT TO CLAMP A COORDINATE. Nothing here computes a
+    // clamped y — no Math.max/Math.min over the plot bounds — because a clamped coordinate is exactly
+    // the lie being removed. The drawing keeps its real stored price; only the chip comes and goes,
+    // and it returns by itself the moment the price is back in view because this is re-evaluated on
+    // every scale change.
+    if (typeof inView === 'function' && !inView(Number(price))) continue;
     const color = colorOf ? colorOf(d) : '#888888';
     specs.push({ id: d.id, price: Number(price), color, textColor: readableTextOn(color) });
   }
   return specs;
+}
+
+/**
+ * Is this price inside the plot, as the chart currently maps it?
+ *
+ * Built from the live conversion rather than from a remembered range, so it answers for the scale as
+ * it is now. `top`/`bottom` are the plot's pixel bounds; a coordinate the scale cannot produce at all
+ * is out of view by definition.
+ *
+ * ⚠️ INCLUSIVE OF THE EDGES. A level sitting exactly on the first or last pixel of the plot IS
+ * visible — its line is drawn there — so its chip belongs on the axis. Only a coordinate genuinely
+ * past an edge is withheld.
+ */
+export function priceInPlot(price, coordinateOf, top, bottom) {
+  if (!Number.isFinite(price) || typeof coordinateOf !== 'function') return false;
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) return false;
+  let y;
+  try { y = coordinateOf(price); } catch { return false; }
+  if (y == null || !Number.isFinite(y)) return false;
+  return y >= top && y <= bottom;
 }
 
 /** Does this chip need touching, or is it already showing the right number in the right colour? */
