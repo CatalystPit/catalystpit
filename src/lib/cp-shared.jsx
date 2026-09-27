@@ -356,7 +356,12 @@ export const Skel = ({w="100%", h=14, mb=6}) => (
 // Live theme value ('light'|'dark') — updates when the toggle flips data-theme (via MutationObserver).
 // Use in components that must react to theme changes at runtime (e.g. TradingView embeds).
 export function useTheme() {
-  const [theme, setTheme] = useState("light");
+  // ⚠️ LAZY INITIALISER, NOT A CONSTANT. Consumers that style themselves with CSS variables do not
+  // care what this returns on the first render — the browser resolves those against data-theme
+  // anyway. Consumers that pass a colour to a THIRD PARTY as a prop do care, because nothing
+  // corrects it afterwards. Guarded for SSR, where there is no document and "light" is correct.
+  const [theme, setTheme] = useState(() =>
+    (typeof document !== "undefined" && document.documentElement.dataset.theme === "dark") ? "dark" : "light");
   useEffect(() => {
     const read = () => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
     read();

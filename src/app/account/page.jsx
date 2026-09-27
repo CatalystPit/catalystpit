@@ -1,8 +1,16 @@
 'use client';
 import { UserProfile } from '@clerk/nextjs';
-import { C, BrandStyles, Logo, Footer } from '../../lib/cp-shared';
+import { C, BrandStyles, Logo, Footer, useTheme } from '../../lib/cp-shared';
 import AccountBilling from '../../components/AccountBilling';
+import { clerkAppearance } from '../../lib/clerk-appearance.mjs';
+
 export default function AccountPage() {
+  // ⚠️ CLERK IS THE ONE THING ON THIS PAGE THAT CANNOT THEME ITSELF. Everything else here styles
+  // with `C.x`, which are CSS-variable strings the browser re-resolves when data-theme flips.
+  // Clerk parses colours numerically and ignores `var(...)`, so it needs literal hex handed to it
+  // per theme — and handed again whenever the theme changes. See lib/clerk-appearance.mjs.
+  const theme = useTheme();
+
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, minHeight: "100vh" }}>
       <BrandStyles/>
@@ -37,41 +45,10 @@ export default function AccountPage() {
 
       {/* CLERK USER PROFILE */}
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "16px 24px 48px" }}>
-        <UserProfile
-          appearance={{
-            elements: {
-              rootBox: { width: "100%" },
-              card: {
-                background: C.white,
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
-                boxShadow: "none",
-              },
-              navbar: { background: C.surface },
-              headerTitle: {
-                fontFamily: "'DM Sans',sans-serif",
-                color: C.ink,
-              },
-              profileSectionPrimaryButton: {
-                background: C.green,
-                color: "#FFFFFF",
-                '&:hover': { background: C.greenMid },
-              },
-              formButtonPrimary: {
-                background: C.green,
-                color: "#FFFFFF",
-                '&:hover': { background: C.greenMid },
-                textTransform: "none",
-                fontFamily: "'DM Sans',sans-serif",
-                fontWeight: 500,
-              },
-            },
-            variables: {
-              colorPrimary: C.green,
-              fontFamily: "'DM Sans',sans-serif",
-            },
-          }}
-        />
+        {/* ⚠️ KEYED ON THE THEME. Clerk memoises heavily off its appearance prop; remounting on a
+            theme flip is the cheap way to guarantee every already-rendered subview — an open
+            Security page, a form mid-edit — picks up the new palette rather than half of it. */}
+        <UserProfile key={theme} appearance={clerkAppearance(theme)} />
       </div>
       <Footer/>
     </div>
