@@ -4,6 +4,7 @@ import { C, Dot, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
 import ErrorState from '../../components/ErrorState';
 import FearGreedMeter from '../../components/FearGreedMeter';
 import FearGreedHistory from '../../components/FearGreedHistory';
+import { featureEnabled } from '../../lib/feature-availability.mjs';
 
 // CATALYST PIT FEAR & GREED — the page.
 //
@@ -104,15 +105,25 @@ function Methodology({ m, components }) {
           <div style={{ color: C.muted }}><b>Source.</b> {c.source}</div>
         </div>
       ))}
-      <div style={{ marginTop: 16, fontFamily: "'DM Sans',sans-serif", fontSize: 10, letterSpacing: '1px', color: C.dim }}>
-        WHAT WE DELIBERATELY DO NOT INCLUDE
-      </div>
-      {(m.excluded || []).map((x) => (
-        <div key={x.name} style={{ marginTop: 8, paddingLeft: 10, borderLeft: `2px solid ${C.border}` }}>
-          <div style={{ fontWeight: 700, color: C.ink, fontSize: 12 }}>{x.name}</div>
-          <div style={{ color: C.muted }}>{x.why}</div>
-        </div>
-      ))}
+      {/* ⚠️ THE NON-INCLUSION DISCLOSURE IS CURRENTLY OFF, and the methodology ends with the
+          component descriptions above. The text is not deleted — it stays in METHODOLOGY.excluded,
+          where code comments elsewhere already point for the reasoning behind a component's
+          construction. NOT RENDERED rather than hidden: a display:none block still ships four
+          paragraphs of disclosure to every reader and is still in the accessibility tree.
+          See feature-availability.mjs. */}
+      {featureEnabled('fearGreedExclusions') && (
+        <>
+          <div style={{ marginTop: 16, fontFamily: "'DM Sans',sans-serif", fontSize: 10, letterSpacing: '1px', color: C.dim }}>
+            WHAT WE DELIBERATELY DO NOT INCLUDE
+          </div>
+          {(m.excluded || []).map((x) => (
+            <div key={x.name} style={{ marginTop: 8, paddingLeft: 10, borderLeft: `2px solid ${C.border}` }}>
+              <div style={{ fontWeight: 700, color: C.ink, fontSize: 12 }}>{x.name}</div>
+              <div style={{ color: C.muted }}>{x.why}</div>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }

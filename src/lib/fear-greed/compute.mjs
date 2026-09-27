@@ -6,13 +6,16 @@
 
 import {
   scoreComponent, composite, DIRECTION, NORM_WINDOW, COMPONENTS, COMPONENT_KEYS, METHODOLOGY,
-  zoneFor,
+  zoneFor, comparisonsFrom,
 } from './model.mjs';
 import {
   momentumSeries, volatilitySeries, volMarketSeries, relativeReturnSeries, safeHavenSeries, byDate, trailingWindow,
   optionsPcrChangeSeries,
 } from './series.mjs';
 import { OPTIONS_SENTIMENT_ENABLED } from './occ.mjs';
+// The exchange calendar, so a day the market never opened cannot become a session. Pure calendar
+// arithmetic — no imports of its own, nothing to load, safe anywhere this module runs.
+import { isTradingDay } from '../market/market-session.mjs';
 
 /** Which way each component runs. Declared once; model.mjs applies it. */
 export const COMPONENT_DIRECTION = Object.freeze({
@@ -70,6 +73,24 @@ export function validPanelSessions(panel = []) {
   for (const p of panel) {
     const n = Number(p?.eligible);
     if (!Number.isFinite(n) || n <= 0) continue;
+    // ⚠️ AND IT HAS TO BE A SESSION ON THE EXCHANGE CALENDAR AT ALL.
+    //
+    // The fraction test above asks "did today's tape arrive"; it cannot ask "was the market open",
+    // and those are different questions. It happens to reject both non-trading dates our candle
+    // store holds — 2022-06-20 (Juneteenth, 2 bars) and 2026-02-16 (Presidents' Day, 1 bar) come to
+    // 0.8% and 0.0% of their trailing medians — but only because those tapes were nearly empty. A
+    // FULL tape stamped with a Saturday or a holiday would sail through it, and the index would mint
+    // an observation for a day the market never opened: the published methodology says every
+    // component is derived from completed daily sessions, so that would make the page untrue.
+    //
+    // ⚠️ THE EXCHANGE CALENDAR, NOT A WEEKDAY TEST. market-session.mjs computes the NYSE holidays
+    // from their actual rules — including the weekend shifts and Good Friday — so this rejects
+    // Thanksgiving and Juneteenth as readily as it rejects a Sunday. A `getDay() === 0 || === 6`
+    // check would have accepted every holiday in the calendar.
+    //
+    // Verified a no-op on the record as it stands: all 1,030 stored v6 observations already fall on
+    // NYSE trading days, so this changes no published score. It removes the possibility, not a value.
+    if (!isTradingDay(String(p.date))) continue;             // not added to the reference either
     const ref = reference.slice(-PANEL_REFERENCE_SESSIONS);
     if (ref.length >= PANEL_REFERENCE_MIN) {
       const med = median(ref);
@@ -178,8 +199,7 @@ export function indexHistory(series, { window = NORM_WINDOW, limit = null } = {}
 export function buildPayload(series, { window = NORM_WINDOW, historyLimit = 504 } = {}) {
   const history = indexHistory(series, { window });
   const current = history.at(-1) || null;
-  const at = (back) => (history.length > back ? history[history.length - 1 - back] : null);
-  const strip = (r) => (r ? { date: r.date, score: r.score, zone: r.zone?.label ?? null } : null);
+  const strip = (r) => ({ date: r.date, score: r.score, zone: r.zone?.label ?? null });
 
   return {
     version: METHODOLOGY.version,
@@ -207,11 +227,8 @@ export function buildPayload(series, { window = NORM_WINDOW, historyLimit = 504 
         meaning: meta.meaning,
       };
     }),
-    comparisons: {
-      previousClose: strip(at(1)),
-      weekAgo: strip(at(5)),
-      monthAgo: strip(at(21)),
-    },
+    // ⚠️ SELECTED BY THE SHARED RULE, so the cold-cache path cannot pick different sessions.
+    comparisons: comparisonsFrom(history, strip),
     history: history.slice(-historyLimit).map((r) => ({ date: r.date, score: r.score })),
     historySessions: history.length,
     normalizationWindow: window,

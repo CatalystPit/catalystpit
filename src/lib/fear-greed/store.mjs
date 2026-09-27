@@ -18,7 +18,7 @@
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
 import { kvGetJson, kvSetJson, kvConfigured } from '../consensus/materialization.mjs';
-import { METHODOLOGY, COMPONENTS, zoneFor } from './model.mjs';
+import { METHODOLOGY, COMPONENTS, zoneFor, comparisonsFrom } from './model.mjs';
 
 const rows = (res) => res?.rows ?? res ?? [];
 
@@ -127,8 +127,7 @@ export async function payloadFromHistory({ historyLimit = 504 } = {}) {
   if (!desc.length) return null;
   const asc = [...desc].reverse();
   const current = asc.at(-1);
-  const at = (back) => (asc.length > back ? asc[asc.length - 1 - back] : null);
-  const strip = (r) => (r ? { date: r.date, score: r.score, zone: r.zone } : null);
+  const strip = (r) => ({ date: r.date, score: r.score, zone: r.zone });
   const comps = current.components || {};
 
   return {
@@ -150,9 +149,10 @@ export async function payloadFromHistory({ historyLimit = 504 } = {}) {
         available: Boolean(c), direction: meta.direction, meaning: meta.meaning,
       };
     }),
-    comparisons: {
-      previousClose: strip(at(1)), weekAgo: strip(at(5)), monthAgo: strip(at(21)),
-    },
+    // ⚠️ THE SAME SELECTION RULE buildPayload USES. These two paths publish the same three numbers
+    // and each used to carry its own copy of the offsets; a reader must not see a different "1 week
+    // ago" depending on whether KV happened to be warm.
+    comparisons: comparisonsFrom(asc, strip),
     history: asc.map((r) => ({ date: r.date, score: r.score })),
     historySessions: asc.length,
     fromHistory: true,

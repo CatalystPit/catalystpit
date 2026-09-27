@@ -1,5 +1,6 @@
 import { readPayload, payloadFromHistory } from '../../../lib/fear-greed/store.mjs';
 import { METHODOLOGY, COMPONENTS, ZONES, NORM_WINDOW, MIN_COMPONENTS } from '../../../lib/fear-greed/model.mjs';
+import { featureEnabled } from '../../../lib/feature-availability.mjs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,6 +69,13 @@ export async function GET() {
     void MIN_COMPONENTS; void NORM_WINDOW;
     const { version: methodologyVersion, ...publicMethodology } = METHODOLOGY;
     void methodologyVersion;
+
+    // ⚠️ AND THE NON-INCLUSION DISCLOSURE, WHILE IT IS SWITCHED OFF. The page already does not render
+    // it, but serving it anyway would ship four paragraphs of withdrawn disclosure to every reader in
+    // the JSON — visible to anyone reading the response, and the kind of thing that gets quoted back
+    // as though it were published. One flag governs both ends so a restore is a single change; the
+    // text itself stays in METHODOLOGY.excluded. See feature-availability.mjs.
+    if (!featureEnabled('fearGreedExclusions')) delete publicMethodology.excluded;
 
     return Response.json({
       ...publicPayload,

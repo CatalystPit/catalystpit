@@ -65,6 +65,45 @@ export const finite = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+/**
+ * THE COMPARISON POINTS, IN OBSERVATIONS — not in calendar days.
+ *
+ * ⚠️ WHY OFFSETS AND NOT DATES. "A week ago" on a daily market index means five sessions back, not
+ * `today - 7 days`: subtracting a week from a Monday lands on the previous Monday, and subtracting it
+ * from a Tuesday after a Monday holiday lands on a day the market was shut. An offset into the
+ * canonical observation series cannot land on a non-session, because the series contains nothing but
+ * sessions — so a holiday week shortens the calendar gap rather than producing a missing row.
+ *
+ * ⚠️ AND THEY LIVE HERE BECAUSE TWO PATHS NEED THEM. buildPayload (from a fresh calculation) and
+ * payloadFromHistory (a reshape of stored rows when KV is cold) both publish these three numbers, and
+ * each had its own copy of `at(1)`, `at(5)`, `at(21)`. They agreed, but nothing made them agree: a
+ * change to one would have left a reader seeing a different "1 week ago" depending on whether the
+ * cache happened to be warm. One definition, imported by both.
+ */
+export const COMPARISON_OFFSETS = Object.freeze({
+  previousClose: 1,
+  weekAgo: 5,
+  monthAgo: 21,
+});
+
+/**
+ * The three comparison points, taken from a canonical observation series (oldest first).
+ *
+ * `shape` turns one observation into the published point, because the two callers hold rows of
+ * different shapes — a computed result and a database row. The SELECTION is what must not differ, and
+ * it is here; the formatting is theirs.
+ */
+export function comparisonsFrom(observations, shape) {
+  const list = observations || [];
+  const at = (back) => (list.length > back ? list[list.length - 1 - back] : null);
+  const out = {};
+  for (const [key, back] of Object.entries(COMPARISON_OFFSETS)) {
+    const row = at(back);
+    out[key] = row ? shape(row) : null;
+  }
+  return out;
+}
+
 /** The five zones, in ascending order. Boundaries are inclusive of the lower bound. */
 export const ZONES = Object.freeze([
   { max: 24, label: 'EXTREME FEAR', key: 'extreme-fear' },

@@ -29,6 +29,15 @@ export const FEATURES = {
   // RESTORE WHEN: a ratings provider is licensed and ingested.
   analystRatings: false,
 
+  // The "WHAT WE DELIBERATELY DO NOT INCLUDE" block on /fear-greed — the four measures the index
+  // does not carry (VIX, put/call, option-adjusted credit spreads, safe-haven demand) and why.
+  // The text is not deleted: it stays in METHODOLOGY.excluded in fear-greed/model.mjs, which is also
+  // where several code comments point for the reasoning behind a component's construction. This flag
+  // governs only whether the public page renders it and whether the API serves it, so the page's
+  // methodology now ends after the component descriptions.
+  // RESTORE WHEN: we want the non-inclusion disclosure public again.
+  fearGreedExclusions: false,
+
   // The "Tools & offers" affiliate strip on the ticker Overview. The component is env-driven and
   // already renders nothing when no partner IDs are set, so this flag is about not showing the
   // section at all rather than about configuration. RESTORE WHEN: affiliate partnerships are live

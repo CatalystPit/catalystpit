@@ -1,0 +1,394 @@
+{
+ "available": true,
+ "asOf": "2026-09-25",
+ "score": 39.4,
+ "zone": {
+  "max": 44,
+  "label": "FEAR",
+  "key": "fear"
+ },
+ "reason": "ok",
+ "componentCount": 8,
+ "missing": [],
+ "components": [
+  {
+   "key": "momentum",
+   "label": "Market Momentum",
+   "score": 40.6,
+   "zone": "FEAR",
+   "raw": 0.04169862820708459,
+   "available": true,
+   "direction": 1,
+   "meaning": "Measures the strength of the broad market relative to its recent trend."
+  },
+  {
+   "key": "volatility",
+   "label": "Realized Volatility",
+   "score": 67.8,
+   "zone": "GREED",
+   "raw": 0.10470219830144546,
+   "available": true,
+   "direction": -1,
+   "meaning": "Measures how turbulent recent market price movement has been relative to its own history. This is REALIZED volatility — what the market actually did — not implied volatility and not the VIX, for which Catalyst Pit has no entitled source."
+  },
+  {
+   "key": "marketvol",
+   "label": "Market Volatility",
+   "score": 57.6,
+   "zone": "GREED",
+   "raw": -0.17339560256272213,
+   "available": true,
+   "direction": -1,
+   "meaning": "Measures current market stress relative to its own historical conditions. This is NOT the VIX and is not implied volatility — Catalyst Pit has no entitled source for the VIX index — and it is a different measurement from Realized Volatility, which is what the equity market actually did."
+  },
+  {
+   "key": "breadth",
+   "label": "Market Breadth",
+   "score": 8.6,
+   "zone": "EXTREME FEAR",
+   "raw": 0.2882968601332065,
+   "available": true,
+   "direction": 1,
+   "meaning": "Measures how broadly strength or weakness is distributed across U.S. stocks, rather than how far the index itself moved."
+  },
+  {
+   "key": "strength",
+   "label": "Price Strength",
+   "score": 6.4,
+   "zone": "EXTREME FEAR",
+   "raw": -0.03139866793529972,
+   "available": true,
+   "direction": 1,
+   "meaning": "Measures the balance of stocks reaching strong versus weak price territory. Positive when leadership is expanding, negative when it is breaking."
+  },
+  {
+   "key": "options",
+   "label": "Options Sentiment",
+   "score": 44.9,
+   "zone": "NEUTRAL",
+   "raw": 0.02199261375246908,
+   "available": true,
+   "direction": -1,
+   "meaning": "Measures whether equity-options activity is turning more defensive or more speculative relative to its recent history. It covers the whole equity class — options on individual stocks and on exchange-traded products — and excludes index options. Because exchange-traded product options carry hedging as well as directional positioning, this is a measure of overall options posture rather than of speculation alone. Clearing data is published on a short delay, so the most recent sessions may not carry this component yet — it is reported as unavailable rather than estimated."
+  },
+  {
+   "key": "safehaven",
+   "label": "Safe-Haven Demand",
+   "score": 85.4,
+   "zone": "EXTREME GREED",
+   "raw": 0.0529235897527599,
+   "available": true,
+   "direction": 1,
+   "meaning": "Measures whether capital has recently favoured risk assets or defensive ones. A high reading means equities outpaced the defensive side of the market over the window; a low one means the defensive side was preferred. The defensive basket deliberately holds more than government bonds, because when rising interest rates are themselves driving a selloff, bonds fall alongside equities and stop behaving as a haven at all. This is relative market performance, NOT fund-flow data and NOT a survey of investor intentions."
+  },
+  {
+   "key": "credit",
+   "label": "Credit Risk Appetite",
+   "score": 3.9,
+   "zone": "EXTREME FEAR",
+   "raw": -0.015109211455633154,
+   "available": true,
+   "direction": 1,
+   "meaning": "Measures the recent SHIFT in credit risk appetite — whether, over a recent window, the bond market has been paying up for credit risk or moving toward government paper. It is a measure of change, not of level: a low reading means credit has lost ground lately, NOT that credit conditions are historically tight or wide. It is NOT a direct measurement of high-yield credit spreads, an option-adjusted spread, or a junk-bond yield spread."
+  }
+ ],
+ "comparisons": {
+  "previousClose": {
+   "date": "2026-09-24",
+   "score": 36.5,
+   "zone": "FEAR"
+  },
+  "weekAgo": {
+   "date": "2026-09-18",
+   "score": 45.4,
+   "zone": "NEUTRAL"
+  },
+  "monthAgo": {
+   "date": "2026-08-26",
+   "score": 58.2,
+   "zone": "GREED"
+  }
+ },
+ "history": [
+  {
+   "date": "2026-07-31",
+   "score": 40.1
+  },
+  {
+   "date": "2026-08-03",
+   "score": 53.1
+  },
+  {
+   "date": "2026-08-04",
+   "score": 66.4
+  },
+  {
+   "date": "2026-08-05",
+   "score": 60.7
+  },
+  {
+   "date": "2026-08-06",
+   "score": 53
+  },
+  {
+   "date": "2026-08-07",
+   "score": 59.9
+  },
+  {
+   "date": "2026-08-10",
+   "score": 56.9
+  },
+  {
+   "date": "2026-08-11",
+   "score": 55.7
+  },
+  {
+   "date": "2026-08-12",
+   "score": 60.7
+  },
+  {
+   "date": "2026-08-13",
+   "score": 66.7
+  },
+  {
+   "date": "2026-08-14",
+   "score": 67.6
+  },
+  {
+   "date": "2026-08-17",
+   "score": 53.1
+  },
+  {
+   "date": "2026-08-18",
+   "score": 48.8
+  },
+  {
+   "date": "2026-08-19",
+   "score": 57
+  },
+  {
+   "date": "2026-08-20",
+   "score": 46.5
+  },
+  {
+   "date": "2026-08-21",
+   "score": 57.6
+  },
+  {
+   "date": "2026-08-24",
+   "score": 53.1
+  },
+  {
+   "date": "2026-08-25",
+   "score": 57.9
+  },
+  {
+   "date": "2026-08-26",
+   "score": 58.2
+  },
+  {
+   "date": "2026-08-27",
+   "score": 58.2
+  },
+  {
+   "date": "2026-08-28",
+   "score": 55.6
+  },
+  {
+   "date": "2026-08-31",
+   "score": 45.4
+  },
+  {
+   "date": "2026-09-01",
+   "score": 34
+  },
+  {
+   "date": "2026-09-02",
+   "score": 50.9
+  },
+  {
+   "date": "2026-09-03",
+   "score": 55.9
+  },
+  {
+   "date": "2026-09-04",
+   "score": 47.9
+  },
+  {
+   "date": "2026-09-08",
+   "score": 47.6
+  },
+  {
+   "date": "2026-09-09",
+   "score": 40
+  },
+  {
+   "date": "2026-09-10",
+   "score": 32.8
+  },
+  {
+   "date": "2026-09-11",
+   "score": 36.7
+  },
+  {
+   "date": "2026-09-14",
+   "score": 36.8
+  },
+  {
+   "date": "2026-09-15",
+   "score": 38.8
+  },
+  {
+   "date": "2026-09-16",
+   "score": 38.2
+  },
+  {
+   "date": "2026-09-17",
+   "score": 38.6
+  },
+  {
+   "date": "2026-09-18",
+   "score": 45.4
+  },
+  {
+   "date": "2026-09-21",
+   "score": 46.1
+  },
+  {
+   "date": "2026-09-22",
+   "score": 49.7
+  },
+  {
+   "date": "2026-09-23",
+   "score": 35
+  },
+  {
+   "date": "2026-09-24",
+   "score": 36.5
+  },
+  {
+   "date": "2026-09-25",
+   "score": 39.4
+  }
+ ],
+ "historySessions": 1029,
+ "calculatedAt": "2026-09-27T09:21:29.507Z",
+ "source": "kv",
+ "zones": [
+  {
+   "max": 24,
+   "label": "EXTREME FEAR",
+   "key": "extreme-fear"
+  },
+  {
+   "max": 44,
+   "label": "FEAR",
+   "key": "fear"
+  },
+  {
+   "max": 55,
+   "label": "NEUTRAL",
+   "key": "neutral"
+  },
+  {
+   "max": 75,
+   "label": "GREED",
+   "key": "greed"
+  },
+  {
+   "max": 100,
+   "label": "EXTREME GREED",
+   "key": "extreme-greed"
+  }
+ ],
+ "methodology": {
+  "name": "Catalyst Pit Fear & Greed",
+  "updateFrequency": "Daily, after the U.S. equity close. Every component is derived from completed daily sessions, so the index is a daily measure and is never presented as intraday.",
+  "normalization": "Each component is scored by where today sits inside that component's own recent distribution, rather than against any fixed threshold. 0 is the most fearful reading in that history, 50 the median, 100 the most greedy. Rank is used rather than an average or a fixed cut-off so a single extreme session cannot distort the scale for years afterwards, and every published point is ranked against a history of the same length — a component that cannot fill it is refused rather than ranked against a shorter one, because the same percentile drawn from fewer observations does not mean the same thing. One consequence is deliberate and worth stating plainly: because the reference distribution is recent, it moves. The same raw market observation can therefore earn a somewhat different score depending on when it happens, so a reading is best compared with other readings near it in time rather than read as a fixed absolute across years. The alternatives were tested — ranking against all available history instead of recent history, standardising against a robust centre, and anchoring to fixed economic neutral points — and this one was kept. The underlying measures are not stable enough over time for those methods to hold, and each of them shifted the whole index off centre instead of making different periods more comparable.",
+  "composite": "The equal-weighted mean of every component that produced a score. Equal weighting is a deliberate choice that has been measured rather than assumed. The components are correlated with one another to differing degrees, so the index carries meaningfully fewer independent dimensions than it has components, and we say so rather than implying that seven measures are seven independent pieces of information. Alternatives that group components into dimensions, or weight them by how much each one duplicates the others, have been tested against equal weighting and were not adopted: weights derived from measured correlation move substantially as that correlation moves, and grouping concentrates the index on whichever components are left, including ones that are sometimes unavailable. Weights are also deliberately not fitted to historical returns, because this is a sentiment gauge and not a prediction model. A missing component is dropped from the average, never replaced with 50, and if too few components are available the index reports itself unavailable rather than publishing a number built on one or two measures.",
+  "excluded": [
+   {
+    "name": "Implied volatility (VIX)",
+    "why": "No entitled source. Every market-data provider we hold a licence with either does not carry the index or requires a separate subscription for it. Neither volatility component is a substitute for it and neither is presented as one: Realized Volatility measures what the equity market actually did, and Market Volatility reads a traded volatility instrument against its own recent trend. Both are named for what they measure, and no VIX level is quoted, estimated or implied anywhere in this index."
+   },
+   {
+    "name": "Put/call ratio (options sentiment)",
+    "why": "Built, measured against several years of official cleared options volume, and withdrawn rather than published. As a component it averaged far from neutral for a year at a time because the options market's product mix has changed structurally faster than any sensible recent-history comparison can absorb — so it reported that structural change as sentiment. The measure that would avoid this covers a narrower slice of the options market and is not published in a form we can verify to the contract, so it is not sourceable for a daily index. The underlying observations continue to be collected."
+   },
+   {
+    "name": "Credit spreads (option-adjusted)",
+    "why": "These come from public macro series we have no ingestion for. Credit Risk Appetite is NOT a substitute for them: it reads the relative PRICE performance of two bond ETFs, which moves with risk appetite but is not a yield-spread measurement and is never presented as one."
+   },
+   {
+    "name": "Safe-haven demand (equities vs Treasuries)",
+    "why": "Measurable, re-tested on total-return data, and held back on data provenance rather than on information. Built properly — equities against a defensive basket rather than against government bonds alone — it does carry information the rest of the index lacks, and it behaves sensibly in the regime that breaks the naive version, where rising rates push bonds and equities down together. What it needs is a total-return price history we do not yet carry in the pipeline that builds this index, because comparing an income-paying bond fund with an equity index on price alone measures coupons rather than conviction. Components here are not independent of one another and are not presented as such, so the bar for a new one is that it add something the others do not already say; this one may clear that bar, and it is not in the index until the data behind it is built to the same standard as everything else here."
+   }
+  ]
+ },
+ "componentMeta": [
+  {
+   "key": "momentum",
+   "label": "Market Momentum",
+   "direction": 1,
+   "source": "Our own licensed daily bars for the broad U.S. equity market.",
+   "calculation": "Proprietary. The broad market measured against its own medium-term trend, then ranked in the same trailing distribution every other component is ranked in.",
+   "meaning": "Measures the strength of the broad market relative to its recent trend."
+  },
+  {
+   "key": "volatility",
+   "label": "Realized Volatility",
+   "direction": -1,
+   "source": "Our own licensed daily bars for the broad U.S. equity market.",
+   "calculation": "Proprietary. The dispersion of the market's own recent returns, annualised, then ranked in the same trailing distribution every other component is ranked in.",
+   "meaning": "Measures how turbulent recent market price movement has been relative to its own history. This is REALIZED volatility — what the market actually did — not implied volatility and not the VIX, for which Catalyst Pit has no entitled source."
+  },
+  {
+   "key": "marketvol",
+   "label": "Market Volatility",
+   "direction": -1,
+   "source": "Our own licensed daily bars for a market-traded short-term volatility instrument.",
+   "calculation": "Proprietary. The volatility market measured against its own recent trend, then ranked in the same trailing distribution every other component is ranked in. It is a relative measure by construction: no absolute price level is used as a volatility reading.",
+   "meaning": "Measures current market stress relative to its own historical conditions. This is NOT the VIX and is not implied volatility — Catalyst Pit has no entitled source for the VIX index — and it is a different measurement from Realized Volatility, which is what the equity market actually did."
+  },
+  {
+   "key": "breadth",
+   "label": "Market Breadth",
+   "direction": 1,
+   "source": "Our own licensed daily bars for the eligible U.S. equity universe.",
+   "calculation": "Proprietary. The share of a stable panel of U.S. stocks trading above their own recent trend, then ranked in the same trailing distribution every other component is ranked in.",
+   "meaning": "Measures how broadly strength or weakness is distributed across U.S. stocks, rather than how far the index itself moved."
+  },
+  {
+   "key": "strength",
+   "label": "Price Strength",
+   "direction": 1,
+   "source": "Our own licensed daily bars for the eligible U.S. equity universe.",
+   "calculation": "Proprietary. The net balance of stocks reaching new long-term highs against those reaching new lows, then ranked in the same trailing distribution every other component is ranked in.",
+   "meaning": "Measures the balance of stocks reaching strong versus weak price territory. Positive when leadership is expanding, negative when it is breaking."
+  },
+  {
+   "key": "options",
+   "label": "Options Sentiment",
+   "direction": -1,
+   "source": "Official cleared equity-class options volume from the U.S. options clearing house, stored per market session exactly as published.",
+   "calculation": "Proprietary. The recent shift in the balance of defensive against speculative equity-options activity, ranked in the same trailing distribution every other component is ranked in. It reads cleared VOLUME only — never open interest, never a single symbol — and it measures the CHANGE in that balance rather than its level.",
+   "meaning": "Measures whether equity-options activity is turning more defensive or more speculative relative to its recent history. It covers the whole equity class — options on individual stocks and on exchange-traded products — and excludes index options. Because exchange-traded product options carry hedging as well as directional positioning, this is a measure of overall options posture rather than of speculation alone. Clearing data is published on a short delay, so the most recent sessions may not carry this component yet — it is reported as unavailable rather than estimated."
+  },
+  {
+   "key": "safehaven",
+   "label": "Safe-Haven Demand",
+   "direction": 1,
+   "source": "Our own licensed daily total-return history for a broad US equity index and for two defensive assets of different kinds.",
+   "calculation": "Proprietary. The equity market's total return over a fixed recent window, measured against the average total return of a defensive basket over the same window, then ranked in the same trailing distribution every other component is ranked in. Total return rather than price on both sides, because an income-paying asset compared on price alone would be measured as if its distributions never happened.",
+   "meaning": "Measures whether capital has recently favoured risk assets or defensive ones. A high reading means equities outpaced the defensive side of the market over the window; a low one means the defensive side was preferred. The defensive basket deliberately holds more than government bonds, because when rising interest rates are themselves driving a selloff, bonds fall alongside equities and stop behaving as a haven at all. This is relative market performance, NOT fund-flow data and NOT a survey of investor intentions."
+  },
+  {
+   "key": "credit",
+   "label": "Credit Risk Appetite",
+   "direction": 1,
+   "source": "Our own licensed daily bars for a high-yield corporate credit instrument and a short-duration government one.",
+   "calculation": "Proprietary. The relative price performance of credit against government paper over a fixed recent window, ranked in the same trailing distribution every other component is ranked in. The government leg is deliberately short-duration so the measure reflects credit behaviour rather than interest-rate duration.",
+   "meaning": "Measures the recent SHIFT in credit risk appetite — whether, over a recent window, the bond market has been paying up for credit risk or moving toward government paper. It is a measure of change, not of level: a low reading means credit has lost ground lately, NOT that credit conditions are historically tight or wide. It is NOT a direct measurement of high-yield credit spreads, an option-adjusted spread, or a junk-bond yield spread."
+  }
+ ]
+}

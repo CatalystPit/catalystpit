@@ -11,6 +11,11 @@
 // Run: node scripts/verify-fear-greed.mjs
 
 import { readFileSync } from 'node:fs';
+// ⚠️ REAL SESSION DATES FOR THE PANEL FIXTURES. validPanelSessions now also asks the exchange
+// calendar whether a date was a session at all, so an opaque label like 'd000' is rejected before the
+// fraction rule is ever reached. The fraction rule is still what this section tests; the dates just
+// have to be dates.
+import { previousTradingDay, isTradingDay } from '../src/lib/market/market-session.mjs';
 import {
   zoneFor, ZONES, ZONE_BANDS, percentileRank, scoreComponent, composite, DIRECTION,
   NORM_WINDOW, MIN_WINDOW, MIN_COMPONENTS, COMPONENTS, COMPONENT_KEYS, METHODOLOGY,
@@ -311,38 +316,50 @@ sec('⚠️ A DAY THE MARKET WAS SHUT IS NOT A SESSION');
   // published (two components is below the floor of three), but it sat in the trailing window
   // every later session ranks against.
   const day = (d, eligible, breadth = 0.6) => ({ date: d, eligible, breadth, strength: 0.02 });
-  const run = (n, eligible) => Array.from({ length: n }, (_, i) => day(`d${String(i).padStart(3, '0')}`, eligible));
+  // ⚠️ A REAL NYSE CALENDAR, OLDEST FIRST. These used to be 'd000', 'd001' … which read nicely but are
+  // not dates; now that a panel row's date is checked against the exchange calendar, every one of them
+  // was rejected as a non-session and this whole section went red. D(i) is the i-th session of a real
+  // 260-session run, so the fraction rule stays the only thing being measured.
+  const SESSIONS = (() => {
+    const out = [];
+    let d = '2026-09-25';
+    while (out.length < 260) { out.push(d); d = previousTradingDay(d); }
+    return out.reverse();
+  })();
+  const D = (i) => SESSIONS[i];
+  check('the fixture calendar is 260 real trading sessions', SESSIONS.length === 260 && SESSIONS.every(isTradingDay));
+  const run = (n, eligible) => Array.from({ length: n }, (_, i) => day(D(i), eligible));
 
   const normal = run(40, 1000);
   check('a steady panel is left entirely alone', validPanelSessions(normal).length === 40);
 
-  const withHoliday = [...run(20, 1000), day('d020', 1, 0), ...run(10, 1000).map((p, i) => day(`d${String(21 + i).padStart(3, '0')}`, 1000))];
+  const withHoliday = [...run(20, 1000), day(D(20), 1, 0), ...run(10, 1000).map((p, i) => day(D(21 + i), 1000))];
   const kept = validPanelSessions(withHoliday);
   check('⚠️ one ticker against a thousand is not a session',
-    !kept.some((p) => p.date === 'd020'), kept.filter((p) => p.eligible < 10).map((p) => p.date).join(','));
+    !kept.some((p) => p.date === D(20)), kept.filter((p) => p.eligible < 10).map((p) => p.date).join(','));
   check('…and every real session around it survives', kept.length === withHoliday.length - 1);
 
   // ⚠️ A FRACTION, NOT A FLOOR. The panel legitimately held 191 names for months before a backfill
   // took it to ~1,090; a hard minimum would have deleted that entire era.
   const small = run(40, 191);
   check('⚠️ a genuinely small but consistent panel is valid', validPanelSessions(small).length === 40);
-  const grew = [...run(20, 191), ...run(20, 1090).map((p, i) => day(`d${String(20 + i).padStart(3, '0')}`, 1090))];
+  const grew = [...run(20, 191), ...run(20, 1090).map((p, i) => day(D(20 + i), 1090))];
   check('…and a panel that grows is not punished for it', validPanelSessions(grew).length === 40);
 
   // Reporting lag is not a broken tape.
-  const lag = [...run(20, 1096), day('d020', 1050)];
+  const lag = [...run(20, 1096), day(D(20), 1050)];
   check('a 4% reporting shortfall is still a session',
-    validPanelSessions(lag).some((p) => p.date === 'd020'));
-  const half = [...run(20, 1000), day('d020', 499), day('d021', 501)];
+    validPanelSessions(lag).some((p) => p.date === D(20)));
+  const half = [...run(20, 1000), day(D(20), 499), day(D(21), 501)];
   const halfKept = validPanelSessions(half).map((p) => p.date);
   check(`⚠️ the cut is ${MIN_PANEL_FRACTION} of the trailing median`,
-    !halfKept.includes('d020') && halfKept.includes('d021'), halfKept.slice(-3).join(','));
+    !halfKept.includes(D(20)) && halfKept.includes(D(21)), halfKept.slice(-3).join(','));
 
   // ⚠️ TRAILING ONLY, AND REJECTS NEVER JOIN THE REFERENCE.
-  const collapse = [...run(20, 1000), ...run(15, 4).map((p, i) => day(`d${String(20 + i).padStart(3, '0')}`, 4))];
+  const collapse = [...run(20, 1000), ...run(15, 4).map((p, i) => day(D(20 + i), 4))];
   check('⚠️ a run of broken days cannot lower the bar until it qualifies',
     validPanelSessions(collapse).length === 20, String(validPanelSessions(collapse).length));
-  const early = [day('d000', 900), day('d001', 3), day('d002', 900)];
+  const early = [day(D(0), 900), day(D(1), 3), day(D(2), 900)];
   check('with too little history to judge, a session is accepted rather than guessed at',
     validPanelSessions(early).length === 3);
   check('the reference window is trailing and bounded', PANEL_REFERENCE_SESSIONS === 21);
@@ -354,14 +371,14 @@ sec('⚠️ A DAY THE MARKET WAS SHUT IS NOT A SESSION');
     // is absent from momentum" passed on a technicality. Removing the drop from momentum did not
     // fail the suite — which is the whole failure mode this file exists to prevent. 200 sessions,
     // with the broken day at index 150, puts the date inside every component's range.
-    const bars = (n) => Array.from({ length: n }, (_, i) => ({ date: `d${String(i).padStart(3, '0')}`, close: 100 + (i % 7) + i / 50 }));
-    const BAD = 'd150';
-    const panel = Array.from({ length: 200 }, (_, i) => day(`d${String(i).padStart(3, '0')}`, i === 150 ? 1 : 1000, i === 150 ? 0 : 0.6));
+    const bars = (n) => Array.from({ length: n }, (_, i) => ({ date: D(i), close: 100 + (i % 7) + i / 50 }));
+    const BAD = D(150);
+    const panel = Array.from({ length: 200 }, (_, i) => day(D(i), i === 150 ? 1 : 1000, i === 150 ? 0 : 0.6));
     const s = rawSeries({ panel, spy: bars(200), volMarket: bars(200), credit: { risk: bars(200), safe: bars(200) } });
     for (const k of ['breadth', 'strength', 'momentum', 'volatility', 'marketvol', 'credit']) {
       // Each series must actually REACH the date, or the assertion proves nothing.
       check(`${k} reaches the broken date, so the next assertion means something`,
-        s[k].some((p) => p.date === 'd151') || s[k].some((p) => p.date === 'd149'),
+        s[k].some((p) => p.date === D(151)) || s[k].some((p) => p.date === D(149)),
         `${s[k].length} points, ${s[k][0]?.date}…${s[k].at(-1)?.date}`);
       check(`⚠️ the invalid session is absent from ${k}`, !s[k].some((p) => p.date === BAD));
     }
