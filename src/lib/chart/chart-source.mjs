@@ -76,13 +76,73 @@ export const TIMEFRAME_GROUPS = [
 // ⚠️ AND lookbackDays GOES TO 9, NOT 5. It is a CALENDAR span covering a count of TRADING days,
 // so five calendar days spans at most five weekdays and a single weekend leaves the window short.
 // Nine is what 15m already uses to guarantee five sessions across a weekend or a holiday.
-const intra = (id, label, short, group, barMinutes, sessions, lookbackDays) => ({
-  id, label, short, group, kind: 'intraday', endpoint: 'intraday',
-  barSeconds: barMinutes * 60,
-  window: { sessions },
-  request: { barMinutes, sessions, lookbackDays },
-  extendedCapable: true,
-});
+/**
+ * HOW MUCH INTRADAY HISTORY AN INTERVAL GETS — derived, not declared.
+ *
+ * ⚠️ THE DEFECT THIS REPLACES. Every intraday entry used to carry its own hand-picked `sessions` and
+ * `lookbackDays`, and the route then truncated the response to the last `sessions` trading days. A
+ * count of SESSIONS is the wrong unit: the bars it yields collapse as the interval grows, because a
+ * session holds 390 one-minute bars and one four-hour bar. Measured, that is exactly what happened —
+ * 1m served 1,950 bars while 4h served 60, from the same "60 sessions" idea of generous. A
+ * 200-period average was therefore impossible on eight of the twelve intervals, and scrolling back hit
+ * a wall that had nothing to do with the data.
+ *
+ * ⚠️ AND THE WALL WAS ENTIRELY OURS. Measured against the upstream feed over a three-year window:
+ * 1h returns 4,692 bars, 2h 2,346, 3h 1,564, 4h 1,052, and every interval of 30m or finer reaches the
+ * provider's 10,000-bar-per-request ceiling. We were asking for a fraction of what was there.
+ *
+ * SO THE UNIT IS BARS, AND ONE FORMULA SERVES ALL TWELVE. An interval asks for TARGET_BARS, the
+ * sessions needed to produce that many follow from how many of its bars fit in a session, and the
+ * calendar span follows from that. Nothing is per-interval, so a new interval inherits the behaviour
+ * and cannot be forgotten — which is the whole point: 1m and 4h differ only in `barMinutes`.
+ */
+const SESSION_MINUTES = 390;                 // 09:30–16:00 ET, the regular session
+export const TARGET_BARS = 1000;
+/**
+ * A floor in SESSIONS as well, for the finest intervals only as a consequence of the arithmetic.
+ *
+ * 1,000 one-minute bars is two and a half trading days, which is a correct bar count and a poor
+ * chart: before the open it would be yesterday and a stub. Five sessions is the same floor the minute
+ * group already had, kept because it is about having several days to read against rather than about
+ * any one interval.
+ */
+export const MIN_SESSIONS = 5;
+/** Weekends and holidays, so a calendar span always covers the trading days it is meant to. */
+const CALENDAR_SLACK = 1.45;
+/** The provider returns at most this many bars for one request; asking for more is wasted span. */
+export const UPSTREAM_MAX_BARS = 10_000;
+
+/** How many bars of this size fit in one regular session. At least one: a 4-hour bar is 1. */
+export const barsPerSession = (barMinutes) => Math.max(1, Math.floor(SESSION_MINUTES / barMinutes));
+
+/**
+ * The history one intraday interval should request: sessions to keep, and the calendar span to ask
+ * for. Pure arithmetic on the bar size — the single place intraday depth is decided.
+ */
+export function intradayHistory(barMinutes, { targetBars = TARGET_BARS } = {}) {
+  const perSession = barsPerSession(barMinutes);
+  // Never ask for more than the provider will return in one response.
+  const capped = Math.min(targetBars, UPSTREAM_MAX_BARS);
+  // ⚠️ THE CAP IS APPLIED AFTER ROUNDING, NOT BEFORE. Sessions round UP to cover the target, so a
+  // target already at the ceiling overshoots it: 10,000 one-minute bars is 25.6 sessions, and 26
+  // sessions is 10,140 bars — past what a single response carries, which would silently truncate the
+  // oldest end of the window. Clamping the SESSION count is what keeps the request inside one response.
+  const maxSessions = Math.max(1, Math.floor(UPSTREAM_MAX_BARS / perSession));
+  const sessions = Math.min(maxSessions, Math.max(MIN_SESSIONS, Math.ceil(capped / perSession)));
+  const lookbackDays = Math.ceil(sessions * CALENDAR_SLACK) + 5;
+  return { sessions, lookbackDays, barsWanted: sessions * perSession, barsPerSession: perSession };
+}
+
+const intra = (id, label, short, group, barMinutes) => {
+  const { sessions, lookbackDays, barsWanted } = intradayHistory(barMinutes);
+  return {
+    id, label, short, group, kind: 'intraday', endpoint: 'intraday',
+    barSeconds: barMinutes * 60,
+    window: { sessions },
+    request: { barMinutes, sessions, lookbackDays, barsWanted },
+    extendedCapable: true,
+  };
+};
 
 // Daily entries are Tiingo daily candles over a named range the daily route already understands.
 const day = (id, label, short, window, range) => ({
@@ -127,20 +187,24 @@ const longInterval = (id, label, short, period, barSeconds, initialBars) => ({
 export const initialBarsFor = (id) => timeframe(id)?.initialBars ?? null;
 
 export const TIMEFRAMES = [
-  //     id      label          short  group      barMin  sessions  lookback
-  intra('1m',  '1 minute',   '1m',  'minutes',    1,     5,   9),
-  intra('2m',  '2 minutes',  '2m',  'minutes',    2,     5,   9),
-  intra('3m',  '3 minutes',  '3m',  'minutes',    3,     5,   9),
-  intra('5m',  '5 minutes',  '5m',  'minutes',    5,     5,   9),
-  intra('10m', '10 minutes', '10m', 'minutes',   10,     2,   9),
-  intra('15m', '15 minutes', '15m', 'minutes',   15,     5,   9),
-  intra('30m', '30 minutes', '30m', 'minutes',   30,    10,  18),
-  intra('45m', '45 minutes', '45m', 'minutes',   45,    10,  18),
+  // ⚠️ NO PER-INTERVAL HISTORY NUMBERS ANY MORE. The bar size is the only thing that differs between
+  // these twelve; the sessions to keep and the calendar span to request both follow from it through
+  // intradayHistory(). That is what stopped 4h being served 60 bars while 1m got 1,950 from the same
+  // notion of "enough", and it is why adding an interval needs nothing but its bar size.
+  //     id      label          short  group      barMin
+  intra('1m',  '1 minute',   '1m',  'minutes',    1),
+  intra('2m',  '2 minutes',  '2m',  'minutes',    2),
+  intra('3m',  '3 minutes',  '3m',  'minutes',    3),
+  intra('5m',  '5 minutes',  '5m',  'minutes',    5),
+  intra('10m', '10 minutes', '10m', 'minutes',   10),
+  intra('15m', '15 minutes', '15m', 'minutes',   15),
+  intra('30m', '30 minutes', '30m', 'minutes',   30),
+  intra('45m', '45 minutes', '45m', 'minutes',   45),
 
-  intra('1h',  '1 hour',     '1h',  'hours',     60,    20,  35),
-  intra('2h',  '2 hours',    '2h',  'hours',    120,    40,  65),
-  intra('3h',  '3 hours',    '3h',  'hours',    180,    60,  95),
-  intra('4h',  '4 hours',    '4h',  'hours',    240,    60,  95),
+  intra('1h',  '1 hour',     '1h',  'hours',     60),
+  intra('2h',  '2 hours',    '2h',  'hours',    120),
+  intra('3h',  '3 hours',    '3h',  'hours',    180),
+  intra('4h',  '4 hours',    '4h',  'hours',    240),
 
   // ONE CANDLE PER TRADING DAY, and the default chart. Five years rather than the three-year floor
   // because the daily route already serves 5Y as a named range and the extra years cost one request
@@ -186,7 +250,11 @@ export const timeframesByGroup = () => TIMEFRAME_GROUPS
  *   daily     Tiingo daily candles, at the named ranges the daily route implements.
  */
 export const ADAPTER = {
-  intraday: { minBarMinutes: 1, maxBarMinutes: 1440, maxSessions: 60 },
+  // ⚠️ maxSessions IS GONE. It declared a ceiling in the wrong unit — 60 sessions is 23,400
+  // one-minute bars and 60 four-hour ones — and it was the number that made 4h shallow. The real
+  // upstream ceilings are a per-request bar count and about three years of intraday history, both of
+  // which live with the arithmetic that respects them.
+  intraday: { minBarMinutes: 1, maxBarMinutes: 1440, maxBarsPerRequest: UPSTREAM_MAX_BARS },
   daily: { ranges: new Set(['1M', '3M', '6M', 'YTD', '1Y', '5Y', 'all']) },
 };
 
@@ -195,11 +263,18 @@ export function unavailableReason(id) {
   const tf = timeframe(id);
   if (!tf) return 'Unknown timeframe';
   if (tf.kind === 'intraday') {
-    const { barMinutes, sessions } = tf.request;
+    const { barMinutes, barsWanted } = tf.request;
     if (barMinutes < ADAPTER.intraday.minBarMinutes || barMinutes > ADAPTER.intraday.maxBarMinutes) {
       return 'Bar size not available from the current data provider';
     }
-    if (sessions > ADAPTER.intraday.maxSessions) return 'Intraday history is limited on the current data provider';
+    // ⚠️ THE CEILING IS A BAR COUNT, NOT A SESSION COUNT. The old test compared sessions against 60,
+    // which refused nothing our registry asked for and described no real provider limit. What the
+    // provider actually caps is bars per response, and intradayHistory already clamps to it — so this
+    // now guards the one thing that could still go wrong: an interval asking for more than one
+    // response can carry.
+    if (barsWanted > ADAPTER.intraday.maxBarsPerRequest) {
+      return 'Intraday history is limited on the current data provider';
+    }
     return null;
   }
   if (!ADAPTER.daily.ranges.has(tf.request.range)) return 'Range not available from the current data provider';

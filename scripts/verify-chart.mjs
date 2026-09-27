@@ -88,11 +88,27 @@ section('1. the timeframe registry describes data we actually have');
   // it is what stops a five-year chart being asked for as a million one-minute bars.
   ok('every timeframe declares a display window', TIMEFRAMES.every((t) => t.window != null));
   ok('...and a bar resolution independent of it', TIMEFRAMES.every((t) => t.barSeconds > 0));
-  // Two intraday intervals over the same number of sessions, differing only in candle width. (This
-  // compared 1W against 15m when 1W was a five-session WINDOW rather than a weekly candle.)
-  ok('two intraday charts can span the same sessions, differing only in resolution',
-    timeframe('30m').window.sessions === timeframe('45m').window.sessions
-      && timeframe('30m').barSeconds !== timeframe('45m').barSeconds);
+  // ⚠️ THIS ASSERTION USED TO REQUIRE TWO INTERVALS TO SHARE A SESSION COUNT (30m against 45m), and
+  // that is no longer true BY DESIGN. Intraday depth is derived from the bar size now, so a coarser bar
+  // asks for more sessions to reach the same number of bars — which is exactly the fix for 4h having
+  // been served 60 bars while 1m got 1,950. The property it was reaching for is that window and
+  // resolution are separate concerns, which the two assertions above still pin. What matters here is
+  // the direction of the relationship, and that is stronger than the old equality: a coarser bar must
+  // reach FURTHER back, never less far, or depth collapses as the interval grows.
+  ok('a coarser intraday bar reaches at least as far back as a finer one',
+    timeframe('45m').window.sessions >= timeframe('30m').window.sessions
+      && timeframe('45m').barSeconds > timeframe('30m').barSeconds);
+  ok('...and that holds across the whole intraday group, not just one pair', (() => {
+    const intra = TIMEFRAMES.filter((t) => t.kind === 'intraday')
+      .sort((a, b) => a.barSeconds - b.barSeconds);
+    return intra.every((t, i) => i === 0 || t.window.sessions >= intra[i - 1].window.sessions);
+  })());
+  // ⚠️ AND DEPTH IN BARS DOES NOT COLLAPSE, which is the thing the old shape allowed. Owned in detail
+  // by verify-intraday-depth; pinned here too because this file is where the registry's contract lives.
+  ok('...while every intraday interval still asks for a comparable number of BARS', (() => {
+    const counts = TIMEFRAMES.filter((t) => t.kind === 'intraday').map((t) => t.request.barsWanted);
+    return Math.max(...counts) / Math.min(...counts) <= 2.5;
+  })());
   // Longer windows must use coarser bars, never the other way round.
   const dayEntries = TIMEFRAMES.filter((t) => t.group === 'days' && typeof t.window?.days === 'number');
   ok('a longer window never uses finer bars than a shorter one',

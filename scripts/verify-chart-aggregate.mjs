@@ -251,12 +251,24 @@ console.log('\n=== the registry now says interval, not window ===');
     ok(`${id} is still a daily window`, tf.kind === 'daily' && tf.barSeconds === 86400 && !tf.aggregate, JSON.stringify(tf));
     ok(`${id} still requests its own range`, tf.request.range === range);
   }
-  // INTRADAY intervals must be untouched. 1D and 1W are no longer among them: they are a trading
-  // day and a trading week now, which is the point of this change.
-  for (const [id, seconds, sessions] of [['1m', 60, 1], ['5m', 300, 1], ['15m', 900, 5], ['1h', 3600, 20], ['4h', 14400, 60]]) {
+  // INTRADAY intervals must be untouched BY THE AGGREGATION CHANGE. 1D and 1W are no longer among
+  // them: they are a trading day and a trading week now, which is the point of this change.
+  //
+  // ⚠️ THE SESSION COUNT IS NO LONGER PART OF THIS SNAPSHOT, and it should never have been. It was
+  // pinned as 1 for 1m and 5m, which had already been wrong for some time — those two intervals were
+  // moved to five sessions long before intraday depth was reworked, and these two assertions sat red
+  // without anyone reading them. Depth is now derived from the bar size and is owned, in detail, by
+  // verify-intraday-depth; duplicating it here produced a snapshot that contradicted the real rule.
+  // What this section is actually for is that AGGREGATION did not turn an intraday interval into
+  // something else, so it pins the two fields that would show that: its kind and its bar width.
+  for (const [id, seconds] of [['1m', 60], ['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400]]) {
     const tf = timeframe(id);
-    ok(`${id} is unchanged`, tf.kind === 'intraday' && tf.barSeconds === seconds && tf.window.sessions === sessions,
-      JSON.stringify({ kind: tf.kind, barSeconds: tf.barSeconds, window: tf.window }));
+    ok(`${id} is still an intraday interval of its own bar width`,
+      tf.kind === 'intraday' && tf.barSeconds === seconds,
+      JSON.stringify({ kind: tf.kind, barSeconds: tf.barSeconds }));
+    // ...and it still declares a display window, which is the field aggregation could have replaced.
+    ok(`${id} still declares a display window in sessions`,
+      Number.isFinite(tf.window?.sessions) && tf.window.sessions > 0, JSON.stringify(tf.window));
   }
   ok('every minute and hour interval is still intraday',
     TIMEFRAMES.filter((t) => t.group === 'minutes' || t.group === 'hours').every((t) => t.kind === 'intraday'));
