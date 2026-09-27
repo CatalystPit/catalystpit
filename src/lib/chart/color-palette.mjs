@@ -45,8 +45,34 @@ export const FAMILIES = [
 ];
 
 /** Every swatch in the palette, in grid order: the grayscale row, then one row per family. */
-export const PALETTE_ROWS = [GRAYS, ...FAMILIES.map((f) => f.shades)];
-export const PALETTE = PALETTE_ROWS.flat();
+/**
+ * THE GRID THE PICKER DRAWS: 9 rows of 10, all 90 swatches, no scrolling.
+ *
+ * ⚠️ TRANSPOSED, AND THAT IS THE WHOLE POINT. Laid out as one row per family this is eleven rows —
+ * a grey row of ten, then ten rows of eight — which is tall and narrow, and tall enough that the
+ * popover needed a scroll container. A palette behind a scrollbar is a palette the user cannot see, so
+ * choosing from it means hunting. Turning the families into COLUMNS gives ten columns of eight shades
+ * plus the grey row on top: exactly 9 x 10, every swatch visible at once, and the shape reads better
+ * anyway — a column is one hue light-to-dark, a row is the same intensity across the spectrum.
+ */
+export const PALETTE_GRID = [
+  GRAYS,
+  ...Array.from({ length: Math.max(...FAMILIES.map((f) => f.shades.length)) },
+    (_, shade) => FAMILIES.map((f) => f.shades[shade]).filter(Boolean)),
+];
+
+/**
+ * Every swatch, flat.
+ *
+ * ⚠️ DERIVED FROM THE FAMILIES, NOT FROM THE GRID. Flattening the grid would also be correct today,
+ * but it makes the list's ORDER an artefact of a layout decision — and a later change to the grid's
+ * shape would then silently reorder the palette for every caller that walks it.
+ */
+export const PALETTE = [...GRAYS, ...FAMILIES.flatMap((f) => f.shades)];
+
+/** How many columns the grid uses. Read by the picker to size itself without measuring. */
+export const PALETTE_COLUMNS = Math.max(...PALETTE_GRID.map((r) => r.length));
+export const PALETTE_ROWS = PALETTE_GRID.length;
 
 /**
  * The shades that read acceptably on BOTH canvases — the middle of every ramp.

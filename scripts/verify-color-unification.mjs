@@ -18,7 +18,7 @@ import React from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { PALETTE, COMMON_COLORS, normalizeHex } from '../src/lib/chart/color-palette.mjs';
+import { PALETTE, PALETTE_GRID, PALETTE_COLUMNS, PALETTE_ROWS, COMMON_COLORS, normalizeHex } from '../src/lib/chart/color-palette.mjs';
 import { indicatorColor, indicatorColors } from '../src/lib/chart/chart-theme.mjs';
 import { sanitizeStyle, sanitizeFibLevels, coerceDrawing, createDrawing, DEFAULT_STYLE } from '../src/lib/chart/chart-drawings.mjs';
 import { seriesColorValue, primaryColorValue, defaultParams } from '../src/lib/chart/chart-indicators.mjs';
@@ -334,6 +334,178 @@ console.log('\n8. the control, mounted, and it stays on screen');
   ok('picking a preset reports a canonical hex', picked2.at(-1) === normalizeHex(target), `${picked2.at(-1)}`);
   ok('the common row is offered when not compact',
     COMMON_COLORS.length > 0 && indicatorColors('light').length === 6);
+}
+
+// ── 8b. all 90 at once, with no scroll container ───────────────────────────────────────────────
+console.log('\n8b. all 90 at once, with no scroll container');
+
+{
+  const TMP = path.join(ROOT, 'node_modules', '.cache', 'cp-unify2');
+  fs.rmSync(TMP, { recursive: true, force: true });
+  fs.mkdirSync(TMP, { recursive: true });
+  const out = path.join(TMP, 'ColorPicker.mjs');
+  await build({
+    entryPoints: [path.join(ROOT, 'src/components/chart/ColorPicker.jsx')],
+    bundle: true, format: 'esm', platform: 'browser', outfile: out, jsx: 'automatic',
+    external: ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'],
+    logLevel: 'silent', absWorkingDir: ROOT,
+  });
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>',
+    { url: 'https://catalystpit.test/', pretendToBeVisual: true });
+  for (const k of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node',
+    'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver', 'Event']) {
+    try { globalThis[k] = dom.window[k]; }
+    catch { Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true }); }
+  }
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act } = await import('react');
+  const ReactDOMClient = await import('react-dom/client');
+  const ColorPicker = (await import(`${pathToFileURL(out).href}?t=${Date.now()}`)).default;
+
+  // The grid's shape is arithmetic, so it can be asserted without a layout engine.
+  ok('the palette is ten columns by nine rows', PALETTE_COLUMNS === 10 && PALETTE_ROWS === 9);
+  ok('...which is exactly ninety swatches', PALETTE_COLUMNS * PALETTE_ROWS === 90
+    && PALETTE_GRID.flat().length === 90);
+
+  const host = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(host);
+  dom.window.Element.prototype.getBoundingClientRect = () => ({
+    top: 200, bottom: 222, left: 500, right: 590, width: 90, height: 22, x: 500, y: 200,
+    toJSON() { return this; },
+  });
+  const picked = [];
+  const root = ReactDOMClient.createRoot(host);
+  await act(async () => {
+    root.render(React.createElement(ColorPicker, {
+      theme: 'light', value: 2, compact: true, label: 'Drawing color', onChange: (v) => picked.push(v),
+    }));
+  });
+  await act(async () => {
+    [...host.querySelectorAll('button')].find((b) => /more colors/.test(b.getAttribute('aria-label') || '')).click();
+  });
+  const panel = host.querySelector('[data-cp-color-panel]');
+  ok('the palette opens', !!panel);
+
+  // ⚠️ EVERY SWATCH RENDERED, SIMULTANEOUSLY. Not "reachable after scrolling" — present in the DOM in
+  // one open panel, which is what the 9x10 shape is for.
+  const rendered = [...panel.querySelectorAll('button')]
+    .map((b) => b.getAttribute('aria-label')).filter((l) => PALETTE.includes(l));
+  ok('⚠️ all 90 swatches are rendered at once', rendered.length === 90, `${rendered.length}`);
+  ok('...and they are the 90 distinct palette colours',
+    new Set(rendered).size === 90 && PALETTE.every((c) => rendered.includes(c)));
+  ok('...arranged in nine rows of ten',
+    [...panel.children].some((el) => el.children.length >= 9)
+    || [...panel.querySelectorAll('div')].filter((d) => d.children.length === 10).length === 9,
+    `${[...panel.querySelectorAll('div')].filter((d) => d.children.length === 10).length} rows of ten`);
+
+  // ⚠️ NO SCROLL CONTAINER, ANYWHERE IN THE PANEL. A scrollbar is exactly what the brief rules out, and
+  // it is the kind of thing that creeps back in as a defensive maxHeight on a later change.
+  const styleOf = (el) => (el.getAttribute('style') || '');
+  const scrollers = [panel, ...panel.querySelectorAll('*')]
+    .filter((el) => /overflow(?:-y|-x)?:\s*(?:auto|scroll)/i.test(styleOf(el)));
+  ok('⚠️ nothing in the panel is a scroll container', scrollers.length === 0,
+    scrollers.map((el) => styleOf(el).slice(0, 60)).join(' | '));
+  ok('⚠️ ...and nothing caps its height', !/max-height/i.test(styleOf(panel)), styleOf(panel).slice(0, 90));
+  const src = code(read('src/components/chart/ColorPicker.jsx'));
+  ok('...in the source either', !/overflowY|maxHeight/.test(src));
+
+  // Compact: a popover, not a modal.
+  const w = /width:\s*(\d+)px/.exec(styleOf(panel));
+  ok('⚠️ the popover is compact, 220-260px wide', w && Number(w[1]) >= 220 && Number(w[1]) <= 260,
+    w ? `${w[1]}px` : styleOf(panel).slice(0, 90));
+
+  // The custom controls stay, below the grid.
+  ok('the hex field is still offered', !!panel.querySelector('input[aria-label="Hex color"]'));
+  ok('the native picker is still offered', !!panel.querySelector('input[type="color"]'));
+  ok('...and both sit BELOW the preset grid',
+    styleOf(panel).includes('column')
+    && panel.innerHTML.indexOf(PALETTE[0]) < panel.innerHTML.indexOf('Hex color'));
+
+  // Selecting a preset applies immediately and closes.
+  const target = PALETTE[47];
+  await act(async () => {
+    [...panel.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === target).click();
+  });
+  ok('⚠️ picking a preset applies it immediately', picked.at(-1) === normalizeHex(target), `${picked.at(-1)}`);
+  ok('⚠️ ...and closes the palette', host.querySelector('[data-cp-color-panel]') === null);
+  await act(async () => { root.unmount(); });
+}
+
+// ── 8c. edge placement keeps the COMPLETE palette on screen ────────────────────────────────────
+console.log('\n8c. edge placement keeps the complete palette on screen');
+
+{
+  const out = path.join(ROOT, 'node_modules', '.cache', 'cp-unify2', 'ColorPicker.mjs');
+  const dom = new JSDOM('<!doctype html><html><body></body></html>',
+    { url: 'https://catalystpit.test/', pretendToBeVisual: true });
+  for (const k of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node',
+    'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver', 'Event']) {
+    try { globalThis[k] = dom.window[k]; }
+    catch { Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true }); }
+  }
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const { act } = await import('react');
+  const ReactDOMClient = await import('react-dom/client');
+  const ColorPicker = (await import(`${pathToFileURL(out).href}?t=${Date.now()}b`)).default;
+
+  const VW = dom.window.innerWidth, VH = dom.window.innerHeight;
+  // The panel's size is arithmetic, so the expected geometry is known exactly.
+  const PANEL_W = PALETTE_COLUMNS * 18 + (PALETTE_COLUMNS - 1) * 4 + 16;
+  const PANEL_H = PALETTE_ROWS * 18 + (PALETTE_ROWS - 1) * 4 + 34 + 36 + 26 + 16;
+
+  const CASES = [
+    ['top-left', 4, 4], ['top-right', 4, VW - 94],
+    ['bottom-left', VH - 30, 4], ['bottom-right', VH - 30, VW - 94],
+    ['middle', Math.round(VH / 2), Math.round(VW / 2)],
+    // ⚠️ THE CASE THAT ACTUALLY TESTS THE SIZE ESTIMATE. At the extreme edges there is almost no room
+    // below, so even a wildly wrong estimate still flips upward and the geometry works out — a mutation
+    // that shrank the estimate to 40px passed every corner. Here there is SOME room below (about 110px)
+    // but not enough for the 306px panel: only a correct estimate chooses to open upward, and a panel
+    // that thinks it is small opens downward and runs off the bottom.
+    ['near-bottom-partial-room', VH - 140, Math.round(VW / 2)],
+    ['near-left-partial-room', Math.round(VH / 2), 40],
+  ];
+  for (const theme of ['light', 'dark']) {
+    for (const [where, top, left] of CASES) {
+      const host = dom.window.document.createElement('div');
+      dom.window.document.body.appendChild(host);
+      dom.window.Element.prototype.getBoundingClientRect = () => ({
+        top, bottom: top + 22, left, right: left + 90, width: 90, height: 22, x: left, y: top,
+        toJSON() { return this; },
+      });
+      const root = ReactDOMClient.createRoot(host);
+      await act(async () => {
+        root.render(React.createElement(ColorPicker, { theme, value: 0, compact: true, onChange: () => {} }));
+      });
+      await act(async () => {
+        [...host.querySelectorAll('button')].find((b) => /more colors/.test(b.getAttribute('aria-label') || '')).click();
+      });
+      const panel = host.querySelector('[data-cp-color-panel]');
+      ok(`${theme}/${where}: the palette opens`, !!panel);
+      if (!panel) { await act(async () => { root.unmount(); }); host.remove(); continue; }
+
+      // Still all ninety, whatever the placement.
+      const n = [...panel.querySelectorAll('button')]
+        .filter((b) => PALETTE.includes(b.getAttribute('aria-label'))).length;
+      ok(`⚠️ ${theme}/${where}: all 90 swatches are still rendered`, n === 90, `${n}`);
+
+      // ⚠️ AND THE WHOLE PANEL LANDS INSIDE THE VIEWPORT. Computed from the anchor rect and the side the
+      // component chose, which is the only thing jsdom can tell us — but it is the actual decision.
+      const st = panel.getAttribute('style') || '';
+      const openedUp = /bottom:\s*100%/.test(st);
+      const alignedLeft = /left:\s*0/.test(st);
+      const panelTop = openedUp ? top - 4 - PANEL_H : top + 22 + 4;
+      const panelLeft = alignedLeft ? left : left + 90 - PANEL_W;
+      ok(`⚠️ ${theme}/${where}: the whole palette fits vertically on screen`,
+        panelTop >= -1 && panelTop + PANEL_H <= VH + 1,
+        `top ${panelTop}, bottom ${panelTop + PANEL_H}, viewport ${VH}, openedUp=${openedUp}`);
+      ok(`⚠️ ${theme}/${where}: ...and horizontally`,
+        panelLeft >= -1 && panelLeft + PANEL_W <= VW + 1,
+        `left ${panelLeft}, right ${panelLeft + PANEL_W}, viewport ${VW}, alignedLeft=${alignedLeft}`);
+      await act(async () => { root.unmount(); });
+      host.remove();
+    }
+  }
 }
 
 // ── 9. nothing else about drawings moved ───────────────────────────────────────────────────────

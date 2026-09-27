@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-  PALETTE, PALETTE_ROWS, GRAYS, FAMILIES, COMMON_COLORS,
+  PALETTE, PALETTE_GRID, PALETTE_COLUMNS, PALETTE_ROWS, GRAYS, FAMILIES, COMMON_COLORS,
   normalizeHex, isValidHex, coerceColorValue, isExplicitColor,
 } from '../src/lib/chart/color-palette.mjs';
 import { indicatorColor, indicatorColors } from '../src/lib/chart/chart-theme.mjs';
@@ -51,8 +51,17 @@ ok('every swatch is a canonical hex', PALETTE.every((c) => normalizeHex(c) === c
 // ⚠️ NO DUPLICATES. A repeated swatch makes "which one is selected" ambiguous in the grid.
 ok('no swatch appears twice', new Set(PALETTE).size === PALETTE.length,
   `${PALETTE.length - new Set(PALETTE).size} duplicates`);
-ok('the grid rows cover the whole palette',
-  PALETTE_ROWS.flat().length === PALETTE.length && PALETTE_ROWS.length === FAMILIES.length + 1);
+// ⚠️ THE GRID IS TRANSPOSED NOW. It used to be one row per family — eleven rows, tall and narrow, tall
+// enough that the popover needed a scrollbar. Families are COLUMNS, so the grid is 9 x 10 and the whole
+// palette is visible at once. PALETTE_GRID is the render order; PALETTE_ROWS is now its row COUNT.
+ok('the grid covers the whole palette, with nothing left out or repeated',
+  PALETTE_GRID.flat().length === PALETTE.length
+  && new Set(PALETTE_GRID.flat()).size === PALETTE.length);
+ok('...laid out as ten columns by nine rows',
+  PALETTE_COLUMNS === 10 && PALETTE_ROWS === 9 && PALETTE_GRID.every((r) => r.length === 10));
+ok('...one column per family, beneath the grayscale row',
+  PALETTE_GRID[0].length === GRAYS.length
+  && PALETTE_GRID.slice(1).length === Math.max(...FAMILIES.map((f) => f.shades.length)));
 ok('the collapsed row offers one shade per family', COMMON_COLORS.length === FAMILIES.length);
 ok('...and each is drawn from the middle of its ramp, so it reads on both canvases',
   COMMON_COLORS.every((c, i) => FAMILIES[i].shades.includes(c)));

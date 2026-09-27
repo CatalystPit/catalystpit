@@ -1,7 +1,9 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { palette, indicatorColor, indicatorColors } from '../../lib/chart/chart-theme.mjs';
-import { PALETTE_ROWS, COMMON_COLORS, normalizeHex, isValidHex } from '../../lib/chart/color-palette.mjs';
+import {
+  PALETTE_GRID, PALETTE_COLUMNS, PALETTE_ROWS, COMMON_COLORS, normalizeHex, isValidHex,
+} from '../../lib/chart/color-palette.mjs';
 
 // THE COLOUR CONTROL — one component, used by every indicator series.
 //
@@ -21,15 +23,24 @@ import { PALETTE_ROWS, COMMON_COLORS, normalizeHex, isValidHex } from '../../lib
 const SWATCH = 15;
 const GAP = 3;
 const PANEL_PAD = 8;
+/** Grid swatches are slightly larger than the inline row: ten of them set the popover's width. */
+const GRID_SWATCH = 18;
+const GRID_GAP = 4;
+
 /**
- * The panel's size, derived from the palette rather than guessed.
+ * The panel's size, derived from the palette rather than guessed or measured.
  *
- * Used to decide which way to open BEFORE the browser has laid the panel out — see the placement effect
- * for why that matters. Rows are the grayscale ramp plus one per family; the three extra blocks are the
- * theme-aware row, the custom-colour row and their separators.
+ * ⚠️ IT IS ALSO THE PROOF THE PANEL NEEDS NO SCROLLBAR. The whole grid is 9 rows of 10 at a known
+ * swatch size, so its height is arithmetic rather than something the browser discovers — which is what
+ * lets the placement decision happen before the first paint (see the placement effect) AND lets a test
+ * assert the popover is tall enough to show all ninety without one.
  */
-const PANEL_HEIGHT_ESTIMATE = PALETTE_ROWS.length * (SWATCH + GAP) + 3 * 34 + PANEL_PAD * 2;
-const PANEL_WIDTH_ESTIMATE = Math.max(...PALETTE_ROWS.map((r) => r.length)) * (SWATCH + GAP) + PANEL_PAD * 2;
+const PANEL_WIDTH = PALETTE_COLUMNS * GRID_SWATCH + (PALETTE_COLUMNS - 1) * GRID_GAP + PANEL_PAD * 2;
+const GRID_HEIGHT = PALETTE_ROWS * GRID_SWATCH + (PALETTE_ROWS - 1) * GRID_GAP;
+// The theme-aware row, the custom-colour row, and the two separators and gaps around them.
+const EXTRAS_HEIGHT = 34 + 36 + 26;
+const PANEL_HEIGHT_ESTIMATE = GRID_HEIGHT + EXTRAS_HEIGHT + PANEL_PAD * 2;
+const PANEL_WIDTH_ESTIMATE = PANEL_WIDTH;
 
 /** One swatch. Selection is a ring rather than a border, so it cannot change the colour it describes. */
 function Swatch({ color, selected, onPick, title, size = SWATCH, p }) {
@@ -68,7 +79,7 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
   const boxRef = useRef(null);
   const panelRef = useRef(null);
   // Where the panel goes. Defaults to below-right and is corrected once it has been measured.
-  const [place, setPlace] = useState({ vertical: 'below', horizontal: 'right', maxHeight: null });
+  const [place, setPlace] = useState({ vertical: 'below', horizontal: 'right', fits: true });
 
   /**
    * KEEP THE PANEL ON SCREEN.
@@ -99,12 +110,18 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
       const PAD = 8;
       const below = vh - a.bottom - PAD;
       const above = a.top - PAD;
-      // Flip up only when below genuinely cannot hold it AND above is the roomier side.
-      const vertical = (ph > below && above > below) ? 'above' : 'below';
-      const room = vertical === 'above' ? above : below;
+      // ⚠️ THE WHOLE PALETTE OR THE ROOMIER SIDE — never a shortened one. This used to cap the panel's
+      // height to whatever room there was and let the grid scroll; the grid does not scroll any more, so
+      // the only useful decision is which side actually fits it. Below is preferred when it fits, because
+      // a menu opening downward is what a reader expects; otherwise above if IT fits; otherwise whichever
+      // has more room, which is the best available answer in a viewport shorter than the palette.
+      let vertical;
+      if (ph <= below) vertical = 'below';
+      else if (ph <= above) vertical = 'above';
+      else vertical = above > below ? 'above' : 'below';
       // Right-aligned by default; flip to left-aligned when the panel would run off the left edge.
       const horizontal = (a.right - pw < PAD && a.left + pw < vw - PAD) ? 'left' : 'right';
-      setPlace({ vertical, horizontal, maxHeight: ph > room ? Math.max(160, room) : null });
+      setPlace({ vertical, horizontal, fits: ph <= Math.max(above, below) });
     };
     measure();
     window.addEventListener('resize', measure);
@@ -188,17 +205,20 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
             background: p.tooltipBg, border: `1px solid ${p.border}`, borderRadius: 6,
             padding: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
             display: 'flex', flexDirection: 'column', gap: 6,
-            // Never taller than the space available; the grid scrolls rather than the panel overflowing.
-            maxHeight: place.maxHeight ? `${place.maxHeight}px` : undefined,
-            overflowY: place.maxHeight ? 'auto' : undefined,
+            // ⚠️ A FIXED WIDTH AND NO SCROLLING, DELIBERATELY. The grid was inside a maxHeight with
+            // overflowY:auto, which put ninety colours behind a scrollbar — choosing one then meant
+            // hunting for it. The 9x10 shape exists so the entire palette is on screen at once, so
+            // there is nothing here to cap and nothing to scroll.
+            width: PANEL_WIDTH,
+            boxSizing: 'border-box',
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP }}>
-            {PALETTE_ROWS.map((row, i) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: GRID_GAP }}>
+            {PALETTE_GRID.map((row, i) => (
               // eslint-disable-next-line react/no-array-index-key
-              <div key={i} style={{ display: 'flex', gap: GAP }}>
+              <div key={i} style={{ display: 'flex', gap: GRID_GAP }}>
                 {row.map((c) => (
-                  <Swatch key={c} p={p} color={c} title={c}
+                  <Swatch key={c} p={p} color={c} title={c} size={GRID_SWATCH}
                     selected={normalizeHex(c) === normalizeHex(resolved)} onPick={pick} />
                 ))}
               </div>
