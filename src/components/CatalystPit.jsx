@@ -800,7 +800,7 @@ export default function CatalystPit() {
                 </li>
               ))}
             </ul>
-            {/* ⚠️ WAS A MONTHLY BUTTON PLUS A SMALL "or save with $199/year" LINK. That link was the
+            {/* ⚠️ WAS A MONTHLY BUTTON PLUS A SMALL "or save with $200/year" LINK. That link was the
                 only route to the annual price anywhere in the product, and it read as an afterthought
                 next to a full-width primary button. Both plans are published in the Terms, so both get
                 equal standing at the point of decision. */}

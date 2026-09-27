@@ -5,9 +5,9 @@
 // ── ⚠️ WHY THIS EXISTS ──────────────────────────────────────────────────────
 //
 // The Terms sell two plans. Until now exactly ONE link in the whole product reached the annual
-// price — a small "or save with $199/year →" under the homepage pricing card — while /account, the
+// price — a small "or save with $200/year →" under the homepage pricing card — while /account, the
 // page a signed-in Free user visits precisely to upgrade, offered monthly only and yet printed the
-// both-plan renewal terms underneath it. Someone reading "$199/year renews annually" on that card
+// both-plan renewal terms underneath it. Someone reading "$200/year renews annually" on that card
 // had no way to buy it.
 //
 // ── ⚠️ AND WHY IT IS NOT ON ALL FIFTEEN BUTTONS ─────────────────────────────
@@ -24,14 +24,23 @@ import PlanTerms from './PlanTerms';
 
 /** Published prices. Display only — Stripe is the source of truth for what is charged. */
 export const MONTHLY_PRICE = 20;
-export const ANNUAL_PRICE = 199;
-/** $240 of monthly against $199 annual. Stated because "save money" without the figure is noise. */
-export const ANNUAL_SAVING = MONTHLY_PRICE * 12 - ANNUAL_PRICE;   // 41
+export const ANNUAL_PRICE = 200;
+/**
+ * $240 of monthly against $200 annual. Stated because "save money" without the figure is noise,
+ * and DERIVED rather than typed so the badge can never disagree with the two prices above it.
+ */
+export const ANNUAL_SAVING = MONTHLY_PRICE * 12 - ANNUAL_PRICE;                 // 40
+/** The same saving expressed the way people actually compare plans. 40 / 20 = 2. */
+export const ANNUAL_MONTHS_FREE = ANNUAL_SAVING / MONTHLY_PRICE;                // 2
 
 const OPTIONS = [
   { key: 'monthly', label: 'Monthly', price: `$${MONTHLY_PRICE}`, unit: '/month', note: 'Renews monthly until cancelled.' },
   { key: 'annual', label: 'Annual', price: `$${ANNUAL_PRICE}`, unit: '/year', note: 'Renews annually until cancelled.',
-    badge: `Save $${ANNUAL_SAVING}/year` },
+    badge: `Save $${ANNUAL_SAVING}/year`,
+    // ⚠️ THE SECOND LINE IS THE COMPARISON PEOPLE ACTUALLY MAKE. "Save $40" is an amount; "2 months
+    // free" is what it buys. Kept out of the badge because the badge sits beside the plan name and
+    // has to stay short enough not to wrap at 390px.
+    extra: `${ANNUAL_MONTHS_FREE} months free vs monthly` },
 ];
 
 /**
@@ -91,6 +100,11 @@ export default function PlanChoice({ defaultInterval = 'monthly', align = 'left'
               <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 300, marginTop: 2, lineHeight: 1.35 }}>
                 {o.note}
               </div>
+              {o.extra && (
+                <div style={{ fontSize: 10.5, color: on ? C.green : C.muted, fontWeight: 500, marginTop: 2, lineHeight: 1.35 }}>
+                  {o.extra}
+                </div>
+              )}
             </button>
           );
         })}

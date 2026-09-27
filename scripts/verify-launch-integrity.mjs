@@ -64,14 +64,20 @@ L('=== PRICING SAYS WHAT WE CHARGE ===');
   ok('…in either casing', !/\$12\/MO/i.test(all));
   ok('the monthly price is quoted', /\$20\/month/.test(all));
   ok('the yearly price is quoted where a yearly plan is offered',
-    mut('noannual') ? false : /\$199\/year/.test(all));
+    mut('noannual') ? false : /\$200\/year/.test(all));
 
   // The annual CTA and the annual price must appear together — an "or save yearly" button with no
   // amount, or an amount with no way to buy it, is a half-shipped plan.
   const home = read('../src/components/CatalystPit.jsx');
-  const annualCta = /startCheckout\('annual'\)/.test(home);
+  const choice = read('../src/components/PlanChoice.jsx');
+  const annualCta = /startCheckout\('annual'\)/.test(home)
+    || (/<PlanChoice/.test(home) && /key: 'annual'/.test(choice));
   ok('the annual CTA exists', annualCta);
-  ok('…and names its price', !annualCta || /\$199\/year/.test(home));
+  ok('…and names its price', !annualCta || /ANNUAL_PRICE = 200/.test(choice));
+  // ⚠️ THE SAVING IS DERIVED, NOT TYPED. A hard-coded "Save $40" would survive a price change and
+  // start lying; keeping it computed ties the badge to the two amounts above it.
+  ok('⚠️ the annual saving is derived from the two prices, never hard-coded',
+    /ANNUAL_SAVING = MONTHLY_PRICE \* 12 - ANNUAL_PRICE/.test(choice));
 
   // ⚠️ NO INVENTED PRICES. Stripe price IDs are env-only and are not touched by this ticket; the
   // displayed amount is copy, and the charge is whatever the ID says. Asserted so a future edit
@@ -80,7 +86,9 @@ L('=== PRICING SAYS WHAT WE CHARGE ===');
   ok('checkout still resolves its price from the environment',
     /process\.env\.STRIPE_PRICE_ID/.test(checkout));
   ok('…and hard-codes no amount',
-    mut('hardcodedprice') ? false : !/\b(unit_amount|1200|2000|19900)\b/.test(checkout));
+    // ⚠️ CENTS AMOUNTS FOR EVERY PRICE WE HAVE EVER SHOWN, so a future edit cannot hard-code the
+    // CURRENT one either: 1200/2000 monthly, 19900 the old annual, 20000 the annual we sell now.
+    mut('hardcodedprice') ? false : !/\b(unit_amount|1200|2000|19900|20000)\b/.test(checkout));
 }
 
 // ── 2. ONE SCAN API ─────────────────────────────────────────────────────────

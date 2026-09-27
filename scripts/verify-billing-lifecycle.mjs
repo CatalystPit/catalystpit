@@ -5,7 +5,7 @@
 // Two defects, both found by production verification rather than by a test:
 //
 //   1. Checkout resolved an annual request to the MONTHLY price whenever STRIPE_PRICE_ID_ANNUAL was
-//      unset. A customer choosing $199/year would have been charged $20/month and nothing in the
+//      unset. A customer choosing $200/year would have been charged $20/month and nothing in the
 //      system would have said so. The no-substitution rule below is the whole point of section 1.
 //
 //   2. A retried `customer.subscription.updated` carrying status `active` could arrive AFTER the

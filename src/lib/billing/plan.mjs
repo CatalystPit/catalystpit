@@ -17,7 +17,7 @@ export const INTERVALS = Object.freeze(['monthly', 'annual']);
  * Resolve one interval to one Stripe price id.
  *
  * ⚠️ THE NO-SUBSTITUTION RULE. This used to fall back to the monthly price whenever the annual one
- * was unset, so a customer choosing "$199/year" silently received a $20/month Checkout session.
+ * was unset, so a customer choosing "$200/year" silently received a $20/month Checkout session.
  * Each interval resolves to its OWN price or to null, and every caller treats null as a
  * configuration failure. There is no path here where one interval yields another's price.
  *

@@ -13,7 +13,7 @@ export const runtime = 'nodejs';
 //     const PRICE_ID = (interval === 'annual' && PRICE_ANNUAL) ? PRICE_ANNUAL : PRICE;
 //
 // which quietly sold the MONTHLY plan to anyone who asked for annual while STRIPE_PRICE_ID_ANNUAL
-// was unset. A customer clicking "$199/year" would have been charged $20/month, seen a monthly
+// was unset. A customer clicking "$200/year" would have been charged $20/month, seen a monthly
 // Checkout, and had no way to tell from our side that anything had gone wrong. A missing price is a
 // configuration failure and has to be reported as one — substituting the other billing interval's
 // price is worse than not selling at all, because the customer has already decided what they want.

@@ -13,7 +13,7 @@
 //
 // "Cancel anytime" on its own reads as "cancel and stop paying for the rest of the year", which is
 // not what happens: cancelling stops the next renewal and access runs to the end of the period
-// already paid for. On a monthly plan that distinction costs a few weeks; on the $199 annual plan
+// already paid for. On a monthly plan that distinction costs a few weeks; on the $200 annual plan
 // it is most of a year, so the sentence has to survive being read quickly by someone about to buy.
 //
 // Deliberately three short lines and a link row — a wall of terms beside a CTA is not disclosure,
@@ -33,10 +33,10 @@ const link = { color: C.muted, textDecoration: 'underline' };
  */
 export default function PlanTerms({ interval = 'both', align = 'center' }) {
   const renewal = interval === 'annual'
-    ? '$199/year. Renews annually until cancelled.'
+    ? '$200/year. Renews annually until cancelled.'
     : interval === 'monthly'
       ? '$20/month. Renews monthly until cancelled.'
-      : '$20/month renews monthly · $199/year renews annually — until cancelled.';
+      : '$20/month renews monthly · $200/year renews annually — until cancelled.';
 
   return (
     <div style={{ textAlign: align, marginTop: 6 }}>

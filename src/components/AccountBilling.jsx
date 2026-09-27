@@ -66,7 +66,7 @@ export default function AccountBilling() {
       ) : null)}
       </div>
       {/* ⚠️ THE CHOICE LIVES HERE, NOT A SINGLE MONTHLY BUTTON. This card printed the
-          both-plan renewal terms — "$199/year renews annually" — under a button that could only
+          both-plan renewal terms — "$200/year renews annually" — under a button that could only
           buy the monthly plan. Someone reading that had no way to act on it. PlanChoice carries
           its own terms block, which now matches whichever plan is selected. */}
       {tier != null && !planUnknown && !isPro && <PlanChoice align="left" cta="Upgrade to Pro" />}

@@ -27,6 +27,10 @@ const terms = read('../src/app/terms/TermsClient.jsx');
 const privacy = read('../src/app/privacy/PrivacyClient.jsx');
 const disclaimer = read('../src/app/disclaimer/DisclaimerClient.jsx');
 const planTerms = read('../src/components/PlanTerms.jsx');
+// ⚠️ THE PRICES LIVE IN PlanChoice NOW, not in the homepage file. The homepage renders the choice
+// rather than hard-coding two buttons, so the amounts a buyer sees come from there.
+const planChoice = read('../src/components/PlanChoice.jsx');
+const billingPlan = read('../src/lib/billing/plan.mjs');
 const home = read('../src/components/CatalystPit.jsx');
 const billing = read('../src/components/AccountBilling.jsx');
 const signUp = read('../src/app/sign-up/[[...sign-up]]/page.jsx');
@@ -91,10 +95,26 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
 L('⚠️ TERMS COVER BOTH PLANS, AND RENEWAL IS STATED');
 {
   ok('⚠️ the monthly plan and its price appear', /\$20 per month/.test(terms));
-  ok('⚠️ the annual plan and its price appear', /\$199 per year/.test(terms));
+  ok('⚠️ the annual plan and its price appear', /\$200 per year/.test(terms));
   // ⚠️ BOTH PRICES MUST MATCH WHAT THE BUTTONS SAY.
   ok('…and both match the purchase copy',
-    /\$20\/month/.test(planTerms) && /\$199\/year/.test(planTerms) && /\$20\/month/.test(home) && /\$199\/year/.test(home));
+    /\$20\/month/.test(planTerms) && /\$200\/year/.test(planTerms)
+    && /MONTHLY_PRICE = 20/.test(planChoice) && /ANNUAL_PRICE = 200/.test(planChoice));
+  // ⚠️ EACH INTERVAL'S OWN SENTENCE, NOT JUST THE COMBINED ONE. PlanTerms renders three variants and
+  // PlanChoice passes the SELECTED interval, so the annual-only line is what a buyer actually reads
+  // once they pick Annual — and it was the one line no assertion covered. Reverting it to the old
+  // price used to pass this suite clean.
+  ok('⚠️ the monthly-only renewal sentence names the monthly price',
+    /\$20\/month\. Renews monthly until cancelled\./.test(planTerms));
+  ok('⚠️ the annual-only renewal sentence names the annual price',
+    /\$200\/year\. Renews annually until cancelled\./.test(planTerms));
+  ok('…and no renewal sentence still quotes a superseded price',
+    !/\$199/.test(planTerms) && !/\$199/.test(planChoice) && !/\$199/.test(terms));
+  // ⚠️ THE SAVING IS COMPUTED FROM THE TWO PRICES. A typed "Save $40" would outlive the next price
+  // change and quietly mis-state it; 20*12-200 cannot.
+  ok('⚠️ the annual saving and months-free are derived, not typed',
+    /ANNUAL_SAVING = MONTHLY_PRICE \* 12 - ANNUAL_PRICE/.test(planChoice)
+    && /ANNUAL_MONTHS_FREE = ANNUAL_SAVING \/ MONTHLY_PRICE/.test(planChoice));
   ok('⚠️ automatic renewal is stated for each interval',
     /Renews automatically every month/.test(terms) && /Renews automatically every year/.test(terms)
     && /renews automatically at its applicable billing interval/.test(terms));
@@ -111,7 +131,7 @@ L('⚠️ TERMS COVER BOTH PLANS, AND RENEWAL IS STATED');
   ok('⚠️ no trial is promised anywhere in the purchase path',
     !/free trial|trial period|try free/i.test(terms) && !/free trial|trial/i.test(planTerms) && !/free trial/i.test(home));
   ok('…while the code still honours a Stripe-side trial without us advertising it',
-    /trialing/.test(webhook));
+    /trialing/.test(webhook) || /trialing/.test(billingPlan));
   // ⚠️ PROMOTION CODES ARE ENABLED IN CHECKOUT, SO NOTHING MAY CONTRADICT THEM.
   ok('⚠️ promotion codes are enabled in code and not contradicted by the Terms',
     /allow_promotion_codes/.test(checkout) && /promotion codes/i.test(terms));
@@ -134,7 +154,8 @@ L('⚠️ THE BUYER SEES THE TERMS BEFORE STRIPE');
   for (const [name, src] of [['homepage', home], ['account billing', billing],
     ['Terminal gate', read('../src/app/terminal/TerminalClient.jsx')],
     ['Consensus', consensus], ['Insiders', read('../src/app/insiders/InsidersClient.jsx')]]) {
-    ok(`${name} renders PlanTerms beside its CTA`, /<PlanTerms/.test(src));
+    ok(`${name} renders the plan terms beside its CTA`,
+      /<PlanTerms/.test(src) || /<PlanChoice/.test(src));
   }
 }
 

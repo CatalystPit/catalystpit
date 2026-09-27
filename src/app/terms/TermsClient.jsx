@@ -63,7 +63,7 @@ export default function TermsClient() {
           <p>Paid subscriptions are billed <strong>in advance</strong> through our payment processor Stripe. Pit Pro is currently offered on two plans:</p>
           <ul style={list}>
             <li><strong>Monthly — $20 per month.</strong> Renews automatically every month.</li>
-            <li><strong>Annual — $199 per year.</strong> Renews automatically every year.</li>
+            <li><strong>Annual — $200 per year.</strong> Renews automatically every year.</li>
           </ul>
           <p><strong>Automatic renewal.</strong> Each plan renews automatically at its applicable billing interval, at the then-current price, until you cancel. By subscribing, you authorize us to charge your payment method at the start of each billing period until you cancel.</p>
           <ul style={list}>
