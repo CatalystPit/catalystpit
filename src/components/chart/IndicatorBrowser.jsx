@@ -3,11 +3,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   INDICATORS, INDICATOR_CATEGORIES, searchIndicators, indicatorMeta,
   defaultParams, defaultParamsForNew, sanitizeParams, indicatorLabel,
-  isMultiInstance, MAX_INSTANCES_PER_INDICATOR, nextInstanceKey,
+  isMultiInstance, MAX_INSTANCES_PER_INDICATOR, nextInstanceKey, seriesKeys, seriesColorValue, primaryColorValue,
 } from '../../lib/chart/chart-indicators.mjs';
+import ColorPicker from './ColorPicker';
+
 import { palette, indicatorColor, indicatorColors } from '../../lib/chart/chart-theme.mjs';
 import { Modal, ToolButton } from './ChartUI';
 import { loadFavorites, saveFavorites } from '../../lib/chart/chart-settings.mjs';
+
+// What each drawn series is CALLED, for the per-series colour controls. The registry names plots for
+// the maths ('hist', 'basis'); these are the words a reader recognises on the chart.
+const SERIES_LABELS = {
+  upper: 'Upper band', basis: 'Basis', lower: 'Lower band',
+  macd: 'MACD line', signal: 'Signal', hist: 'Histogram',
+};
 
 // The indicator browser.
 //
@@ -143,17 +152,42 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
               fontFamily: "'DM Sans',sans-serif", fontSize: 11 }} />
         </label>
       ))}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ flex: 1, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>Colour</span>
-        <div style={{ display: 'flex', gap: 3 }}>
-          {swatches.map((c, i) => (
-            <button key={c} type="button" title={`Colour ${i + 1}`} onClick={() => patch(inst.key, { color: i })}
-              style={{ width: 14, height: 14, borderRadius: 3, cursor: 'pointer', background: c,
-                border: (inst.color ?? -1) === i ? `2px solid ${p.textStrong}` : `1px solid ${p.border}` }} />
-          ))}
+      {/* ⚠️ ONE CONTROL PER DRAWN SERIES, NOT ONE PER INDICATOR. A single row of six swatches was the
+          whole colour story, and for Bollinger Bands and MACD it did nothing at all: the chart only
+          applied an instance colour when the indicator had exactly one plot. An indicator that draws
+          three distinguishable lines gets three controls, named after the series they colour, so an
+          upper band and a signal line can differ — which is the only reason to look at either. */}
+      {seriesKeys(inst.id).length > 1 ? (
+        seriesKeys(inst.id).map((plotKey) => (
+          <div key={plotKey} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ flex: 1, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>
+              {SERIES_LABELS[plotKey] || plotKey} color
+            </span>
+            <ColorPicker
+              theme={theme} compact
+              label={`${INDICATORS[inst.id].label} ${SERIES_LABELS[plotKey] || plotKey}`}
+              value={seriesColorValue(inst.id, inst, plotKey)}
+              onChange={(v) => patch(inst.key, { colors: { ...(inst.colors || {}), [plotKey]: v } })}
+            />
+          </div>
+        ))
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ flex: 1, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>Color</span>
+          <ColorPicker
+            theme={theme}
+            label={`${INDICATORS[inst.id].label} color`}
+            value={primaryColorValue(inst.id, inst)}
+            onChange={(v) => patch(inst.key, { color: v })}
+          />
         </div>
-      </div>
-      <button type="button" onClick={() => patch(inst.key, { params: defaultParams(inst.id) })}
+      )}
+      {/* ⚠️ RESET CLEARS THE COLOURS TOO, AND ONLY THIS INSTANCE'S. It used to restore the periods and
+          leave a recoloured line recoloured, so "reset settings" did not reset the settings. Both
+          colour fields go back to null, which means "use the registry's" — not to a hard-coded hex,
+          so a later change to the registry's defaults is picked up rather than frozen here. */}
+      <button type="button"
+        onClick={() => patch(inst.key, { params: defaultParams(inst.id), color: null, colors: {} })}
         style={{ alignSelf: 'flex-start', background: 'transparent', border: `1px solid ${p.border}`,
           borderRadius: 3, cursor: 'pointer', padding: '1px 7px',
           fontFamily: "'DM Sans',sans-serif", fontSize: 10, color: p.text }}>Reset settings</button>
@@ -170,7 +204,7 @@ export default function IndicatorBrowser({ open, onClose, theme, intraday, activ
             fontFamily: "'DM Sans',sans-serif", fontSize: 12, marginBottom: 8 }} />
 
         <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 8 }}>
-          {[...INDICATOR_CATEGORIES, { id: 'favorites', label: 'Favourites' }].map((c) => (
+          {[...INDICATOR_CATEGORIES, { id: 'favorites', label: 'Favorites' }].map((c) => (
             <button key={c.id} type="button" onClick={() => setCategory(c.id)}
               style={{ background: category === c.id ? p.grid : 'transparent',
                 border: `1px solid ${category === c.id ? p.up : p.border}`, borderRadius: 999,

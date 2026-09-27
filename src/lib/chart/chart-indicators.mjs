@@ -255,8 +255,14 @@ export function volume() { return { plots: [] }; }
 // ── the registry ─────────────────────────────────────────────────────────────
 
 /**
- * Colours are indexes into the chart palette rather than hex, because the chart has two themes and a
- * hard-coded colour would be unreadable in one of them. See chart-theme.mjs → indicatorColors.
+ * A registry colour is an INDEX into the themed palette, never a hex, because the chart has two themes
+ * and a hard-coded default would be unreadable in one of them. See chart-theme.mjs → indicatorColors.
+ *
+ * ⚠️ A USER'S CHOICE MAY BE EITHER. An instance can store an explicit #RRGGBB from the palette (used
+ * verbatim in both themes, because a colour someone picked deliberately must not be swapped) or one of
+ * these indexes (which keeps following the theme). seriesColorValue resolves the precedence and
+ * indicatorColor renders both; the defaults below stay indexes so a new instance always reads well on
+ * whichever canvas it first appears on.
  */
 export const INDICATORS = {
   volume:    { id: 'volume',    label: 'Volume',          pane: 'price',    builtin: true, compute: volume, params: [] },
@@ -474,6 +480,57 @@ export function computeIndicator(id, bars, params, ctx) {
 
 /** Does this indicator need a volume figure to produce anything at all? */
 export const needsVolume = (id) => id === 'volume' || id === 'vwap';
+
+/**
+ * The plot keys an indicator draws, in registry order — its individually colourable series.
+ *
+ * Read from `colors`, which the registry already declares per plot, so this cannot drift from what is
+ * actually drawn. Bollinger returns upper/basis/lower; MACD returns macd/signal/hist; a single-plot
+ * indicator returns one key.
+ */
+export function seriesKeys(id) {
+  const def = INDICATORS[id];
+  if (!def) return [];
+  return Object.keys(def.colors || {});
+}
+
+/** True when an indicator draws more than one visually distinct series. */
+export const isMultiSeries = (id) => seriesKeys(id).length > 1;
+
+/**
+ * THE COLOUR FOR ONE SERIES OF ONE INSTANCE — the single resolver.
+ *
+ * ⚠️ THE ORDER MATTERS AND USED TO BE WRONG FOR MULTI-SERIES INDICATORS. The chart applied
+ * `entry.color` only when an indicator had exactly one plot:
+ *
+ *     const color = indicatorColor(th, (plots.length === 1 && entry.color != null) ? entry.color : baseIdx);
+ *
+ * so Bollinger Bands and MACD silently ignored any colour the user chose — there was no way to
+ * recolour either, and the settings panel offered a control that did nothing for them. Per-series
+ * values fix that without flattening a three-series indicator to one hue.
+ *
+ * Precedence, most specific first:
+ *   1. `entry.colors[plotKey]`  this series, on this instance
+ *   2. `entry.color`            the whole instance, for single-series indicators only
+ *   3. `def.colors[plotKey]`    the registry's own colour for that series
+ *
+ * ⚠️ STEP 2 IS DELIBERATELY NOT APPLIED TO A MULTI-SERIES INDICATOR. Letting one instance-wide colour
+ * win over three registry colours is exactly how Bollinger would become three identical lines.
+ */
+export function seriesColorValue(id, entry, plotKey) {
+  const def = INDICATORS[id];
+  if (!def) return 0;
+  const perSeries = entry?.colors?.[plotKey];
+  if (perSeries !== undefined && perSeries !== null) return perSeries;
+  if (!isMultiSeries(id) && entry?.color !== undefined && entry?.color !== null) return entry.color;
+  const registry = def.colors?.[plotKey];
+  if (registry !== undefined) return registry;
+  // An unknown plot key falls back to the indicator's first declared colour rather than to black.
+  return Object.values(def.colors || {})[0] ?? 0;
+}
+
+/** The colour that represents the whole instance — its first series. Used by the legend and the swatch. */
+export const primaryColorValue = (id, entry) => seriesColorValue(id, entry, seriesKeys(id)[0]);
 
 /**
  * The longest lookback the parameters imply, in bars — what the series has to be able to cover.

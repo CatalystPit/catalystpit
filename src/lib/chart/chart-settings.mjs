@@ -12,8 +12,9 @@ import { CHART_TYPE_IDS } from './chart-types.mjs';
 
 import {
   INDICATORS, sanitizeParams, defaultParams, isMultiInstance,
-  MAX_INSTANCES_PER_INDICATOR, nextInstanceKey,
+  MAX_INSTANCES_PER_INDICATOR, nextInstanceKey, seriesKeys,
 } from './chart-indicators.mjs';
+import { coerceColorValue } from './color-palette.mjs';
 import { sanitizePaneShares } from './chart-panes.mjs';
 
 // ⚠️ ALL FOUR OF THIS FILE'S KEYS GO THROUGH THE ACTIVE USER'S NAMESPACE. `sk()` returns null
@@ -48,14 +49,30 @@ const MAX_TOTAL = 16;
 function coerceInstance(raw, existing) {
   const id = typeof raw?.id === 'string' ? raw.id : null;
   if (!id || !INDICATORS[id]) return null;
-  const colour = Number(raw?.color);
+  // ⚠️ A STORED COLOUR IS NOW EITHER AN INDEX OR AN EXPLICIT HEX, and this used to force it through
+  // Number(). That dropped every hex the palette can produce — `Number('#4A80F0')` is NaN, so the
+  // value became null and the series silently reverted to the registry's colour on the next reload.
+  // coerceColorValue keeps a legacy index a number and canonicalises a hex, so both round-trip.
+  const color = coerceColorValue(raw?.color);
+  // Per-series colours, for the indicators that draw more than one line. Only keys the registry
+  // actually declares are kept, so a stale or hand-edited payload cannot smuggle in a plot that does
+  // not exist, and a colour for a series that has since been removed is dropped rather than carried.
+  const known = new Set(seriesKeys(id));
+  const colors = {};
+  for (const [k, v] of Object.entries(raw?.colors || {})) {
+    if (!known.has(k)) continue;
+    const c = coerceColorValue(v);
+    if (c !== null) colors[k] = c;
+  }
   return {
     key: typeof raw?.key === 'string' && raw.key ? raw.key : nextInstanceKey(id, existing),
     id,
     params: sanitizeParams(id, { ...defaultParams(id), ...(raw?.params || {}) }),
-    // null means "use the registry's colour for this indicator". A stored colour is an INDEX into
-    // the themed palette, never a hex value — see chart-theme.mjs for why.
-    color: Number.isFinite(colour) ? Math.max(0, Math.round(colour)) : null,
+    // null means "use the registry's colour for this indicator".
+    color,
+    // Omitted entirely when empty, so an instance that has never been recoloured stores the same
+    // shape it always did — a payload written before per-series colours existed is byte-identical.
+    ...(Object.keys(colors).length ? { colors } : {}),
     // Absent means visible: a setting saved before visibility existed should not hide a line.
     visible: raw?.visible !== false,
   };

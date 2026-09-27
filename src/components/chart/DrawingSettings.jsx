@@ -132,7 +132,7 @@ export default function DrawingSettings({ open, onClose, theme, drawing, onChang
                     returning to "same as the drawing" keeps one control for both, and keeps the
                     default a single clean hue rather than a rainbow nobody asked for. */}
                 <button type="button"
-                  title={l.color == null ? 'Give this level its own colour' : 'Next colour (cycles back to default)'}
+                  title={l.color == null ? 'Give this level its own color' : 'Next color (cycles back to default)'}
                   onClick={() => {
                     const nextIdx = l.color == null ? 0 : l.color + 1;
                     setLevel(i, { color: nextIdx >= swatches.length ? undefined : nextIdx });
@@ -173,7 +173,7 @@ export default function DrawingSettings({ open, onClose, theme, drawing, onChang
           <>
             <div style={{ display: 'flex', gap: 4, marginBottom: 9, flexWrap: 'wrap' }}>
               {swatches.map((c, i) => (
-                <button key={c} type="button" title={`Colour ${i + 1}`}
+                <button key={c} type="button" title={`Color ${i + 1}`}
                   onClick={() => patch({ style: { ...drawing.style, color: i } })}
                   style={{ width: 18, height: 18, borderRadius: 3, cursor: 'pointer', background: c,
                     border: drawing.style?.color === i ? `2px solid ${p.textStrong}` : `1px solid ${p.border}` }} />

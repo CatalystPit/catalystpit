@@ -6,7 +6,7 @@ import { DEFAULT_UNIVERSE, universeLimit, UNIVERSES } from '../../lib/heatmap/he
 
 export const metadata = pageMeta({
   title: { absolute: 'Market Heatmap · US Market Performance by Sector · CatalystPit' },
-  description: 'A market heatmap of the largest US-listed securities, sized by market capitalisation and coloured by return over one day, week, month or year.',
+  description: 'A market heatmap of the largest US-listed securities, sized by market capitalization and colored by return over one day, week, month or year.',
   path: '/heatmap',
 });
 

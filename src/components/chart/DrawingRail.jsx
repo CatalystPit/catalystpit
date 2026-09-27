@@ -125,7 +125,7 @@ function DrawingRailBase({
     divider('d2'),
     <div key="style" ref={styleRef} style={{ display: 'flex', flexShrink: 0 }}>
       <ToolButton theme={theme} active={stylePanel} expanded={stylePanel}
-        onClick={() => setStylePanel((v) => !v)} title="Colour, width and line style">🎨</ToolButton>
+        onClick={() => setStylePanel((v) => !v)} title="Color, width and line style">🎨</ToolButton>
     </div>,
     // MAGNET. Snapping is a DRAWING behaviour: with it on, an anchor lands exactly on a candle's
     // open, high, low or close. The crosshair is untouched either way.
@@ -157,7 +157,7 @@ function DrawingRailBase({
       <div style={{ padding: '2px 6px 6px' }}>
         <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
           {swatches.map((c, i) => (
-            <button key={c} type="button" title={`Colour ${i + 1}`} onClick={() => onStyle({ color: i })}
+            <button key={c} type="button" title={`Color ${i + 1}`} onClick={() => onStyle({ color: i })}
               style={{ width: 16, height: 16, borderRadius: 3, cursor: 'pointer', background: c,
                 border: style.color === i ? `2px solid ${p.textStrong}` : `1px solid ${p.border}` }} />
           ))}

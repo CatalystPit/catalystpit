@@ -164,7 +164,7 @@ function DrawingToolbarBase({
   if (controls.includes(CONTROL.COLOR)) {
     items.push(
       <div key="color" ref={refs.color} style={{ display: 'flex' }}>
-        <Btn theme={theme} title="Colour" active={open === CONTROL.COLOR} onClick={() => toggle(CONTROL.COLOR)}>
+        <Btn theme={theme} title="Color" active={open === CONTROL.COLOR} onClick={() => toggle(CONTROL.COLOR)}>
           <span style={{ width: 13, height: 13, borderRadius: 3, background: colour,
             border: `1px solid ${p.border}`, display: 'block' }} />
         </Btn>
@@ -284,7 +284,7 @@ function DrawingToolbarBase({
         placement="bottom-start" width={128} label="Drawing colour">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 6 }}>
           {swatches.map((c, i) => (
-            <button key={c} type="button" title={`Colour ${i + 1}`}
+            <button key={c} type="button" title={`Color ${i + 1}`}
               onClick={() => { onStyle({ color: i }); close(); }}
               style={{ width: 18, height: 18, borderRadius: 3, cursor: 'pointer', background: c,
                 border: drawing.style?.color === i ? `2px solid ${p.textStrong}` : `1px solid ${p.border}` }} />

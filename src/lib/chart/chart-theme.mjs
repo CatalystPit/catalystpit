@@ -99,15 +99,33 @@ export const palette = (theme) => CHART_THEMES[theme === 'dark' ? 'dark' : 'ligh
  * Chosen to stay distinguishable from the up/down candle colours, so a moving average is never
  * mistaken for price action.
  */
+// Hex parsing lives with the palette, so the chart, the picker and the store agree what a colour is.
+import { normalizeHex } from './color-palette.mjs';
+
 const INDICATOR_COLORS = {
   light: ['#1A3A78', '#7A5818', '#7B3F98', '#2A7848', '#B4530A', '#0F6E6E'],
   dark:  ['#6FA8FF', '#E0B84A', '#C08CE0', '#4FB37C', '#F0913F', '#4FC5C5'],
 };
 
 export const indicatorColors = (theme) => INDICATOR_COLORS[theme === 'dark' ? 'dark' : 'light'];
-export const indicatorColor = (theme, index) => {
+
+/**
+ * A colour for a series, from either shape a stored value can take.
+ *
+ * ⚠️ TWO SHAPES, ON PURPOSE. A NUMBER is a legacy index into the six themed colours above, and is
+ * still resolved through the theme exactly as before — every setting saved before the palette existed
+ * keeps rendering, and keeps swapping between the light and dark ramps. A STRING is an explicit
+ * #RRGGBB the user chose from the palette, and is used verbatim in both themes, because a colour
+ * someone picked deliberately must not be silently replaced with a different one.
+ *
+ * Anything else falls back to index 0 rather than to `undefined`, which Lightweight Charts would draw
+ * as black on a black canvas.
+ */
+export const indicatorColor = (theme, value) => {
+  const hex = normalizeHex(value);
+  if (hex) return hex;
   const arr = indicatorColors(theme);
-  return arr[((Number(index) || 0) % arr.length + arr.length) % arr.length];
+  return arr[((Number(value) || 0) % arr.length + arr.length) % arr.length];
 };
 
 /**

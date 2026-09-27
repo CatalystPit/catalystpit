@@ -171,7 +171,7 @@ export default function InstitutionsHeatmap() {
           letterSpacing: '0.8px', color: C.dim, textTransform: 'uppercase' }}>Institutional Accumulation</span>
         {data?.quarter && (
           <span style={{ fontSize: 10.5, color: C.muted }}>
-            {data.prevQuarter} {'→'} {data.quarter} {'·'} size = position value {'·'} colour = change in shares held
+            {data.prevQuarter} {'→'} {data.quarter} {'·'} size = position value {'·'} color = change in shares held
           </span>
         )}
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -197,7 +197,7 @@ export default function InstitutionsHeatmap() {
             </div>
             {/* The card was reachable by HOVER ONLY, so on a phone the position size, value and
                 quarter-over-quarter change behind each tile were simply unavailable — the tile
-                showed a ticker and a colour and nothing else.
+                showed a ticker and a color and nothing else.
                 onClick gives touch the same card. Mouse behaviour is untouched: a desktop pointer
                 still opens it on enter and closes it on leave, and a click there just re-pins the
                 tile already under the cursor. Tapping the same tile again closes it. */}

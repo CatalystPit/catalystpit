@@ -380,7 +380,7 @@ const LEGEND_HELP = (
     {[
       ['Red', 'net open-market selling'],
       ['Green', 'net open-market buying'],
-      ['Colour intensity', 'magnitude of the activity'],
+      ['Color intensity', 'magnitude of the activity'],
       ['Tile size', 'dollar value of insider activity'],
       ['Grouping', 'companies are grouped by sector'],
     ].map(([k, v]) => <span key={k} style={{ display: 'block' }}><b>{k}</b>: {v}</span>)}
@@ -557,7 +557,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
         borderBottom: `1px solid ${C.border}`, background: C.surface, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Insider Activity</span>
         <span style={{ fontSize: 10.5, color: C.muted }}>
-          past {String(window || '').toUpperCase()} {'·'} size = dollar value {'·'} colour = {mode === 'net' ? 'net buying or selling' : mode === 'buys' ? 'purchases' : 'sales'}
+          past {String(window || '').toUpperCase()} {'·'} size = dollar value {'·'} color = {mode === 'net' ? 'net buying or selling' : mode === 'buys' ? 'purchases' : 'sales'}
         </span>
         <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <HeatmapLegend />
@@ -594,7 +594,7 @@ function Heatmap({ data, window, onWindow, mode, onMode, onPick }) {
       {/* Footer strip, matching the Institutions card. States what the map is built from. */}
       <div style={{ padding: '8px 13px', fontSize: 10, color: C.dim, lineHeight: 1.55, borderTop: `1px solid ${C.border}` }}>
         Open-market insider transactions reported on SEC Form 4 over the past {String(window || '').toUpperCase()}.
-        Tile size is the dollar value of activity; colour is {mode === 'net' ? 'net buying against selling' : mode === 'buys' ? 'purchase value' : 'sale value'}.
+        Tile size is the dollar value of activity; color is {mode === 'net' ? 'net buying against selling' : mode === 'buys' ? 'purchase value' : 'sale value'}.
       </div>
       <HeatmapTooltip hover={hover} windowLabel={window} container={wrap} />
     </div>

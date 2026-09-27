@@ -266,7 +266,7 @@ section('6. chart colours are real colours, not CSS variables');
 section('7. the Apache-2.0 attribution is present on every chart surface');
 {
   ok('the credit names TradingView', /TradingView/.test(CHART_ATTRIBUTION));
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the component renders it', /CHART_ATTRIBUTION/.test(cmp));
   ok('it is not hidden behind a conditional',
     !/\{\s*false\s*&&[\s\S]{0,80}CHART_ATTRIBUTION/.test(cmp));
@@ -690,7 +690,7 @@ section('13. view options persist');
   ok('the view key follows the cp_ convention', /^cp_/.test(VIEW_STORAGE_KEY));
   ok('the view key is separate from the indicator key', VIEW_STORAGE_KEY !== STORAGE_KEY);
 
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('log and linear are applied to the live scale', /PriceScaleMode\.Logarithmic/.test(cmp));
   ok('auto-scale is applied to the live scale', /autoScale: view\.autoScale/.test(cmp));
   ok('reset refits the content', /fitContent\(\)/.test(cmp));
@@ -704,7 +704,7 @@ section('13. view options persist');
     /el\.addEventListener\('keydown'/.test(cmp) && !/document\.addEventListener\('keydown'/.test(cmp));
   ok('typing in an input is never hijacked', /isTypingTarget\(t\)/.test(cmp));
 
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the overlay is pointer-transparent when idle', /pointerEvents: interactive \? 'auto' : 'none'/.test(layer));
   ok('selection comes from the chart click, so panning still works', /subscribeClick/.test(layer));
   ok('anchors are snapped to a bar', /coordinateToLogical/.test(layer));
@@ -740,7 +740,7 @@ section('14. chart types are a registry, and only what we draw is listed');
   // An unknown id must still draw something rather than leaving a blank box.
   ok('an unknown type falls back to candles', chartTypeOf('nope').id === 'Candles');
 
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the chart draws from the registry', /chart\.addSeries\(lwc\[ct\.series\]/.test(cmp));
   ok('...including on incremental updates', /chartTypeOf\(typeRef\.current\)\.map\(b\)/.test(cmp));
 
@@ -811,7 +811,7 @@ section('14. chart types are a registry, and only what we draw is listed');
     CHART_TYPES.every((t) => typeof t.glyph === 'string' && t.glyph.length > 0));
   ok('every icon is visually distinct',
     new Set(CHART_TYPES.map((t) => JSON.stringify(t.shapes))).size === CHART_TYPES.length);
-  const uiSrc = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  const uiSrc = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const kinds = [...new Set(CHART_TYPES.flatMap((t) => t.shapes.map((sh) => sh[0])))];
   ok('the renderer handles every primitive the registry uses',
     kinds.length > 0 && kinds.every((k) => uiSrc.includes(`kind === '${k}'`)));
@@ -822,7 +822,7 @@ section('14. chart types are a registry, and only what we draw is listed');
 
   // ONE selector, not two. The settings menu used to carry a Candles/Line toggle that could not
   // reach Area at all; the compact icon control replaces it at every width.
-  const menuSrc = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  const menuSrc = (await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the settings menu no longer duplicates the chart-type control', !/chartType/.test(menuSrc));
 }
 
@@ -854,7 +854,7 @@ section('15. the indicator browser: searchable, categorised, registry-driven');
   ok('VWAP is not searchable on a daily chart', !ids('vwap', { intraday: false }).includes('vwap'));
   ok('...but is on intraday', ids('vwap', { intraday: true }).includes('vwap'));
 
-  const br = await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8');
+  const br = (await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the browser has a search box', /Search indicators/.test(br));
   // Still driven by the registry; Favourites is appended as a filter over the same search rather
   // than being a hard-coded category the registry does not know about.
@@ -870,7 +870,7 @@ section('15. the indicator browser: searchable, categorised, registry-driven');
     /Reset settings/.test(br) && /title="Remove"/.test(br) && /'Show' : 'Hide'/.test(br));
   ok('it is a modal, not another toolbar row', /<Modal/.test(br));
 
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('one prominent Indicators button opens it', /setBrowserOpen\(true\)/.test(cmp));
   ok('the old inline indicator menu is gone', !/IndicatorMenu/.test(cmp));
 }
@@ -895,7 +895,7 @@ section('16. drawing tools are grouped into categories on a left rail');
   ok('every rendered category has a real tool',
     activeCategories().every((c) => c.tools.some((t) => !!TOOLS[t])));
 
-  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
+  const rail = (await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the rail renders categories, not every tool', /activeCategories\(\)/.test(rail));
   ok('...so it is not one button per tool', !/Object\.values\(TOOLS\)\.map/.test(rail));
   ok('a category remembers the last tool picked from it', /lastOf/.test(rail));
@@ -928,7 +928,7 @@ section('16. drawing tools are grouped into categories on a left rail');
   ok('colour, width and style are all there',
     /Colour|colour/i.test(rail) && /Width/.test(rail) && /Style/.test(rail));
 
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   // The rail must stay a layout sibling so it can never cover price.
   ok('the rail sits beside the chart, not over it', /rail \+ chart row/.test(cmp));
   ok('the chart box can shrink beside it', /flex: 1, minWidth: 0, minHeight: 0/.test(cmp));
@@ -936,7 +936,7 @@ section('16. drawing tools are grouped into categories on a left rail');
 
 section('17. shared UI primitives, and responsive collapse');
 {
-  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  const ui = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   // One implementation of dismissal, so every menu behaves the same.
   ok('there is a shared dismiss hook', /export function useDismiss/.test(ui));
   ok('it closes on an outside click', /mousedown/.test(ui));
@@ -950,7 +950,7 @@ section('17. shared UI primitives, and responsive collapse');
   // A modal inside a 260px panel would be unusable, so it overlays the viewport instead.
   ok('the modal is fixed to the viewport, not the panel', /position: 'fixed', inset: 0/.test(ui));
 
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('width is measured with a ResizeObserver', /new ResizeObserver/.test(cmp));
   ok('...on the element, not the window', !/window\.matchMedia/.test(cmp));
   // The timeframes no longer NEED collapsing: the row of nine buttons is gone and the control is a
@@ -959,9 +959,9 @@ section('17. shared UI primitives, and responsive collapse');
   ok('...with no width-dependent variant', !/narrow[\s\S]{0,80}Timeframe/.test(cmp));
   ok('narrow shrinks the labelled buttons to icons', /narrow \? 30 :/.test(cmp));
   ok('narrow collapses the rail', /compact=\{narrow\}/.test(cmp));
-  ok('the compact rail is a popover, not a squeezed rail', /if \(compact\)/.test(await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')));
+  ok('the compact rail is a popover, not a squeezed rail', /if \(compact\)/.test((await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
 
-  const menu = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  const menu = (await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   // Moving controls, never dropping them.
   for (const control of ['Extended hours', 'Price scale', 'Auto scale', 'Reset view'])
     ok(`"${control}" is in the controls menu`, menu.includes(control));
@@ -974,7 +974,7 @@ section('17. shared UI primitives, and responsive collapse');
 
 section('9. the component does not reach past the boundary');
 {
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   // The point of the boundary: the chart must not know a vendor's name or build its own URL.
   for (const vendor of ['polygon', 'tiingo', 'api.polygon.io', 'apiKey'])
     ok(`the component never mentions ${vendor}`, !new RegExp(vendor, 'i').test(cmp));
@@ -1006,7 +1006,7 @@ if (!process.env.POLYGON_API_KEY && !process.env.POLYGON_KEY) {
   ok('pre-market bars are included', pre > 0, String(pre));
   ok('after-hours bars are included', post > 0, String(post));
 
-  const route = await readFile(new URL('../src/app/api/chart-intraday/route.js', import.meta.url), 'utf8');
+  const route = (await readFile(new URL('../src/app/api/chart-intraday/route.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the route can serve them on request', /session === 'extended' \? inExtended/.test(route));
   ok('the default is unchanged', /params\.get\('session'\) === 'extended' \? 'extended' : 'regular'/.test(route));
   // A shared cache key would serve one session's bars for the other.
@@ -1130,7 +1130,7 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
   ok('a flipped menu never gets a useless height', flipped.maxHeight >= Math.min(MIN_PANEL, 360));
 
   // ── the components actually use it ──────────────────────────────────────────────────────────
-  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  const ui = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   // Scoped to each component's own body: a file-wide search for `createPortal` is satisfied by the
   // Modal even when the Popover has stopped portalling, which is the case that actually clips.
   const bodyOf = (name, next) => ui.slice(ui.indexOf(`export function ${name}`), ui.indexOf(`export function ${next}`));
@@ -1168,12 +1168,12 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
 
   // Nothing in the chart may go back to an in-panel absolute menu: that is the clipped design.
   for (const f of ['CPChart', 'ChartMenu', 'DrawingRail', 'ChartUI', 'IndicatorBrowser']) {
-    const src = await readFile(new URL(`../src/components/chart/${f}.jsx`, import.meta.url), 'utf8');
+    const src = (await readFile(new URL(`../src/components/chart/${f}.jsx`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
     const menus = src.split('\n').filter((l) => /position: 'absolute'/.test(l) && /zIndex: [23]\d\b/.test(l));
     ok(`${f} has no panel-clipped absolute menu left`, menus.length === 0, menus[0]?.trim());
   }
 
-  const rail2 = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
+  const rail2 = (await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('every rail menu is a shared Popover', (rail2.match(/<Popover/g) || []).length >= 2);
   // BOTH side flyouts open beside the icon — the category menu and the style panel — and exactly one
   // menu hangs below: the collapsed rail's own button, which is a toolbar control, not a flyout.
@@ -1188,10 +1188,10 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
   ok('the flyout is anchored to the whole button group, so ▸ toggles it',
     /<div key=\{cat\.id\} ref=\{ref\}/.test(rail2));
 
-  const cmp2 = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp2 = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the chart-type menu is the shared dropdown, so it is portalled too',
     /<Dropdown theme=\{theme\} width=\{180\} menuLabel="Chart type"/.test(cmp2));
-  const menu2 = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  const menu2 = (await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the settings menu is too', /from '\.\/ChartUI'/.test(menu2) && !/position: 'absolute'/.test(menu2));
 }
 
@@ -1263,7 +1263,7 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
   ok('the declared capability was restored', barsUrl('AAPL', '1m') !== null);
 
   // ── the route is driven by the registry, so an interval is one entry and not a code change ──
-  const route = await readFile(new URL('../src/app/api/chart-intraday/route.js', import.meta.url), 'utf8');
+  const route = (await readFile(new URL('../src/app/api/chart-intraday/route.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the route reads the timeframe registry', /from '\.\.\/\.\.\/\.\.\/lib\/chart\/chart-source\.mjs'/.test(route));
   ok('...instead of keeping its own list of ranges', !/const RANGES = new Set/.test(route));
   ok('the bar multiplier comes from the timeframe', /barMinutes: mult/.test(route));
@@ -1273,7 +1273,7 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
   ok('an unservable id never reaches the provider', /INTRADAY\.has\(range\)/.test(route));
 
   // ── the toolbar control ──────────────────────────────────────────────────────────────────────
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the row of timeframe buttons is gone', !/TIMEFRAMES\.map\(\(t\) => btn\(/.test(cmp));
   ok('the control shows the SHORT label', /label=\{timeframe\(tf\)\?\.short/.test(cmp));
   ok('...and never the long one in the toolbar',
@@ -1291,7 +1291,7 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
   ok('...and says why on hover', /title=\{why \|\| undefined\}/.test(cmp));
 
   // The menu is tall: it MUST be the portalled popover, or the panel clips it (see section 18).
-  const uiSrc = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
+  const uiSrc = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the timeframe menu scrolls rather than overflowing', /overflowY: 'auto'/.test(uiSrc));
   // 20 rows at ~30px plus three headings needs far more than a short panel has; the placement must
   // cap the height against the WINDOW, which is what makes it scrollable instead of clipped.
@@ -1305,7 +1305,7 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
 
 section('20. the chart header: symbol first, one compact row, overflow before wrapping');
 {
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const bar = cmp.slice(cmp.indexOf('{showToolbar && ('), cmp.indexOf('{/* THE RAIL IS A SIBLING'));
   ok('the toolbar block was located', bar.length > 800);
 
@@ -1366,12 +1366,12 @@ section('20. the chart header: symbol first, one compact row, overflow before wr
   ok('nor does the chart type', !overflowBlock.includes('menuLabel="Chart type"'));
   // The overflow's view rows are the SAME rows the settings menu renders, not a second copy.
   ok('the overflow shares the settings rows', /viewMenuItems\(\{ theme, view, canExtend/.test(bar));
-  const menuSrc = await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8');
+  const menuSrc = (await readFile(new URL('../src/components/chart/ChartMenu.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('...which the settings menu renders from the same function', /export function viewMenuItems/.test(menuSrc)
     && /\{viewMenuItems\(\{ theme, view, canExtend, onPatch, onReset \}\)\}/.test(menuSrc));
 
   // ── THE SYMBOL IS NO LONGER IN THE PANEL TITLE BAR ──────────────────────────────────────────
-  const term = await readFile(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8');
+  const term = (await readFile(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the Terminal chart panel no longer prints the symbol top-right',
     !/headerRightOf = \(def\) => \(def\.id === 'chart'/.test(term));
   ok('the chart panel still receives the bus symbol', /<ChartBody symbol=\{selectedSymbol\} \/>/.test(term));
@@ -1387,14 +1387,14 @@ section('20. the chart header: symbol first, one compact row, overflow before wr
   // the symbol is the whole page and a pick must take the page with it).
   ok('a pick writes local state by default', /onPick=\{onSymbolPick \|\| setSym\}/.test(cmp));
   ok('...and the host can take ownership instead', /onSymbolPick = null,/.test(cmp));
-  const tpc = await readFile(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8');
+  const tpc = (await readFile(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the ticker page takes that ownership', /onSymbolPick=\{\(s\) => router\.push/.test(tpc));
   ok('...so its chart cannot drift from the page around it', /\/ticker\/\$\{encodeURIComponent\(s\)\}/.test(tpc));
   ok('the Terminal panel does NOT, so its chart keeps its own symbol',
     !/onSymbolPick/.test(term));
 
   // ── THE SYMBOL SEARCH ───────────────────────────────────────────────────────────────────────
-  const ss = await readFile(new URL('../src/components/chart/SymbolSearch.jsx', import.meta.url), 'utf8');
+  const ss = (await readFile(new URL('../src/components/chart/SymbolSearch.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('it reuses the existing symbol-search endpoint', /\/api\/symbol-search\?q=/.test(ss));
   // NO SECOND SECURITY DATABASE: nothing here may carry its own list of tickers.
   ok('it keeps no ticker list of its own', !/\[\s*'[A-Z]{1,5}'\s*,\s*'[A-Z]{1,5}'/.test(ss));
@@ -1420,8 +1420,8 @@ section('20. the chart header: symbol first, one compact row, overflow before wr
 
 section('21. the chart surface: legend, crosshair and the readout that is always there');
 {
-  const leg = await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8');
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const leg = (await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
   // ── THE LEGEND IS ALWAYS POPULATED ──────────────────────────────────────────────────────────
   // It used to exist only while the pointer was over the chart, so at rest — which is most of the
@@ -1478,7 +1478,7 @@ section('21. the chart surface: legend, crosshair and the readout that is always
   // The ⚙ opens the browser ON that instance, rather than making the user find it again.
   ok('settings opens the browser focused on that instance',
     /setFocusIndicator\(key\); setBrowserOpen\(true\);/.test(cmp));
-  const br = await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8');
+  const br = (await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('...and the browser honours that focus', /if \(open && focusKey\) setExpanded\(focusKey\)/.test(br));
   ok('the focus is cleared when the browser closes', /setBrowserOpen\(false\); setFocusIndicator\(null\);/.test(cmp));
 
@@ -1488,7 +1488,7 @@ section('21. the chart surface: legend, crosshair and the readout that is always
   ok('the crosshair follows the pointer instead of snapping',
     /crosshair: \{ mode: lwc\.CrosshairMode\.Normal \}/.test(cmp));
   ok('...set from the library enum, not a magic number', !/mode: 0/.test(cmp));
-  const theme = await readFile(new URL('../src/lib/chart/chart-theme.mjs', import.meta.url), 'utf8');
+  const theme = (await readFile(new URL('../src/lib/chart/chart-theme.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the crosshair axis chips are neutral, not brand-green',
     /labelBackgroundColor: p\.crosshairLabel/.test(theme) && !/labelBackgroundColor: p\.up/.test(theme));
   ok('both themes define that colour',
@@ -1517,12 +1517,12 @@ section('21. the chart surface: legend, crosshair and the readout that is always
 
 section('22. context menu, magnet, drawing manager, panes');
 {
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
-  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
-  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
-  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
-  const theme = await readFile(new URL('../src/lib/chart/chart-theme.mjs', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const ui = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const rail = (await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const mgr = (await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const theme = (await readFile(new URL('../src/lib/chart/chart-theme.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
   // ── 1. THE CONTEXT MENU ─────────────────────────────────────────────────────────────────────
   ok('right-clicking the chart opens our menu, not the browser’s',
@@ -1584,7 +1584,7 @@ section('22. context menu, magnet, drawing manager, panes');
   ok('...and only where a candle exists', /const bar = inData \? list\[Math\.round\(logical\)\] : null;/.test(layer));
   ok(String.fromCharCode(46,46,46) + "and otherwise returns the pointer’s own price", /return { time, price };/.test(layer));
   ok('magnet is off by default', DEFAULT_VIEW.magnet === false);
-  ok('...and is remembered', /magnet: v\.magnet === true/.test(await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')));
+  ok('...and is remembered', /magnet: v\.magnet === true/.test((await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
   ok('the rail carries a magnet toggle', /active=\{magnet\} onClick=\{onToggleMagnet\}/.test(rail));
 
   // ── 3. LOCK, CLONE AND THE OBJECT TREE ──────────────────────────────────────────────────────
@@ -1662,7 +1662,7 @@ section('22. context menu, magnet, drawing manager, panes');
   // ── 6. THE AREA PERSISTENCE BUG ─────────────────────────────────────────────────────────────
   // loadView hard-coded `=== 'Line' ? 'Line' : 'Candles'`, so choosing Area and reloading silently
   // gave back candles. It is validated against the registry now.
-  const settings = await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8');
+  const settings = (await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the saved chart type is validated against the registry',
     /CHART_TYPE_IDS\.includes\(v\.chartType\)/.test(settings));
   ok('...so Area is no longer thrown away on reload', !/v\.chartType === 'Line' \? 'Line' : 'Candles'/.test(settings));
@@ -1670,11 +1670,11 @@ section('22. context menu, magnet, drawing manager, panes');
 
 section('23. undo/redo, the ruler, notes, the price scale and nudge');
 {
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
-  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
-  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
-  const settings = await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const rail = (await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const mgr = (await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const settings = (await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
   // ── 1. UNDO / REDO ──────────────────────────────────────────────────────────────────────────
   let h = emptyHistory();
@@ -1823,11 +1823,11 @@ section('23. undo/redo, the ruler, notes, the price scale and nudge');
 
 section('24. z-order, multi-select, editable fibs, trendline options, export');
 {
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
-  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
-  const set = await readFile(new URL('../src/components/chart/DrawingSettings.jsx', import.meta.url), 'utf8');
-  const br = await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const mgr = (await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const set = (await readFile(new URL('../src/components/chart/DrawingSettings.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const br = (await readFile(new URL('../src/components/chart/IndicatorBrowser.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
   // ── 1. Z-ORDER ──────────────────────────────────────────────────────────────────────────────
   // THE ARRAY IS THE ORDER. A z-index field beside it would be a second source of truth, and the
@@ -1972,7 +1972,7 @@ section('24. z-order, multi-select, editable fibs, trendline options, export');
   ok('...which genuinely changes draw and legend order', /\[next\[idx\], next\[to\]\] = \[next\[to\], next\[idx\]\];/.test(br));
   ok('...and the ends are not movable further', /disabled=\{idx === 0\}/.test(br) && /disabled=\{idx === active\.length - 1\}/.test(br));
   ok('indicators can be starred', /toggleFavorite\(def\.id\)/.test(br));
-  ok('...persisted as ids only', /export const FAVORITES_KEY/.test(await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')));
+  ok('...persisted as ids only', /export const FAVORITES_KEY/.test((await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
   ok('the star is a sibling of the row, not a button inside a button',
     br.indexOf('</button>\n      <button type="button" onClick={() => toggleFavorite') > 0);
 
@@ -1998,19 +1998,19 @@ section('24. z-order, multi-select, editable fibs, trendline options, export');
   // The WHOLE-CANVAS fill specifically. A bare search for the fill style also matches the caption
   // strip, which would pass while the area behind the chart stayed transparent.
   ok('the exported PNG is never transparent',
-    /ctx\.fillRect\(0, 0, layout\.width, layout\.height\);/.test(await readFile(new URL('../src/lib/chart/chart-export.mjs', import.meta.url), 'utf8')));
+    /ctx\.fillRect\(0, 0, layout\.width, layout\.height\);/.test((await readFile(new URL('../src/lib/chart/chart-export.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
 }
 
 section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
 {
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
-  const ui = await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8');
-  const leg = await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8');
-  const rail = await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8');
-  const mgr = await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8');
-  const set = await readFile(new URL('../src/components/chart/DrawingSettings.jsx', import.meta.url), 'utf8');
-  const settings = await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const ui = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const leg = (await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const rail = (await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const mgr = (await readFile(new URL('../src/components/chart/DrawingManager.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const set = (await readFile(new URL('../src/components/chart/DrawingSettings.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const settings = (await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
   // ── 1. WHAT EACH TOOL REMEMBERS ─────────────────────────────────────────────────────────────
   // Not a template system: each TOOL remembers what it was last used with, keyed by tool id.
@@ -2052,7 +2052,11 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
   ok('...survives a reload', coerceDrawing({ type: 'fib', points: [{ time: 1, price: 1 }, { time: 2, price: 2 }], fill: true }).fill === true);
   ok('...and is drawn faintly, alternating, when it is on',
     /ctx\.globalAlpha = 0\.07;/.test(layer) && /if \(i % 2 === 1\) continue;/.test(layer));
-  ok('the settings dialog can colour a level', /Give this level its own colour/.test(set));
+  // ⚠️ U.S. SPELLING. The control's tooltip read "its own colour"; the product is U.S. English and the
+  // copy was corrected, so this pinned string moved with it. The assertion's intent — that a level can
+  // be given a colour of its own from that dialog — is unchanged, and the next line still pins the
+  // clearing half of it.
+  ok('the settings dialog can color a level', /Give this level its own color\b/.test(set));
   ok('...and clear that colour again', /nextIdx >= swatches\.length \? undefined : nextIdx/.test(set));
   ok('clearing a field really removes it', /if \(next\[key\] === undefined\) delete merged\[key\];/.test(set));
 
@@ -2096,7 +2100,7 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
   ok('...with room left for the chart itself', NARROWEST - used > 100, `${NARROWEST - used}px spare`);
   // Menus are placed against the WINDOW, so panel size cannot clip them — proved in section 18.
   ok('menu placement is still window-relative, not panel-relative', /viewport\?\.width \?\? globalThis\.innerWidth/.test(
-    await readFile(new URL('../src/lib/chart/chart-popover.mjs', import.meta.url), 'utf8')));
+    (await readFile(new URL('../src/lib/chart/chart-popover.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
 
   // ── 6. COST ─────────────────────────────────────────────────────────────────────────────────
   // THE CROSSHAIR RUNS ON EVERY POINTER MOVE. It used to scan the whole bar list backwards for the
@@ -2132,7 +2136,7 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
 
 section('26. drawings live in chart space, not only where candles exist');
 {
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   // 60-second bars, so a logical step is a minute and every expectation below is arithmetic a
   // reader can do in their head.
   const bars = Array.from({ length: 50 }, (_, i) => ({ time: 1000 + i * 60, o: 1, h: 2, l: 0, c: 1 }));
@@ -2264,7 +2268,7 @@ section('27. a horizontal line is a price level and cannot tilt');
   ok('...whatever the visible window happens to be',
     JSON.stringify(TOOLS.horizontal.segments(hline.points, { from: 'x', to: null, high: 0, low: 0 }))
       === JSON.stringify(TOOLS.horizontal.segments(hline.points, view)));
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the visible window comes from the logical range, so it reaches future space',
     /getVisibleLogicalRange\(\)/.test(layer));
   // Scoped past the explanatory comment above it: a bare search for the old call is defeated by the
@@ -2325,7 +2329,7 @@ section('28. Fibonacci in future space, with its settings intact');
 
 section('29. type a timeframe on the chart');
 {
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 
   // ── 14, 15, 16 ──────────────────────────────────────────────────────────────────────────────
   ok('typing 5 selects five minutes', resolveTypedTimeframe('5').id === '5m');
@@ -2345,9 +2349,9 @@ section('29. type a timeframe on the chart');
   // A timeframe the feed cannot serve is refused WITH ITS OWN REASON — the same message the
   // dropdown shows — rather than applied and left drawing nothing.
   ok('an unservable timeframe is refused by the resolver', /if \(why\) return \{ ok: false, reason: why, id \};/.test(
-    await readFile(new URL('../src/lib/chart/chart-quick-timeframe.mjs', import.meta.url), 'utf8')));
+    (await readFile(new URL('../src/lib/chart/chart-quick-timeframe.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
   ok('there is no second resolution table', /MINUTES_TO_ID/.test(
-    await readFile(new URL('../src/lib/chart/chart-quick-timeframe.mjs', import.meta.url), 'utf8')));
+    (await readFile(new URL('../src/lib/chart/chart-quick-timeframe.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
 
   // ── 17, 18. what opens it, and what must never ──────────────────────────────────────────────
   const ev = (key, extra = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, ...extra });
@@ -2510,7 +2514,7 @@ section('31. Fibonacci renders the lines it calculates');
   const narrow = [{ x: 770, y: 5 }, { x: 790, y: 5 }];
   ok('a narrow level at the right edge still labels inside the plot',
     labelX(narrow, 60, sc.plotWidth) + 60 <= sc.plotWidth, String(labelX(narrow, 60, sc.plotWidth)));
-  const drawingLayer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const drawingLayer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the label is placed from its own segment, not the panel width', /labelX\(seg, w, plotW\)/.test(drawingLayer));
   ok('the layer projects through the shared module',
     /projectDrawings\(stateRef\.current\.drawings, view, sc, tool\)/.test(drawingLayer));
@@ -2608,8 +2612,8 @@ section('32. a horizontal line is a plot-wide price level');
 
 section('33. the indicator legend collapses without collapsing the indicators');
 {
-  const legend = await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8');
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const legend = (await readFile(new URL('../src/components/chart/ChartLegend.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const bodyOf = (src, name) => {
     const i = src.indexOf(name);
     return i < 0 ? '' : src.slice(i, src.indexOf('\n  }', i) + 4);
@@ -2831,7 +2835,7 @@ section('33. the indicator legend collapses without collapsing the indicators');
 
 section('34. the line tools: one-click and two-click creation, end to end');
 {
-  const layer = await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8');
+  const layer = (await readFile(new URL('../src/components/chart/DrawingLayer.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const bars = Array.from({ length: 200 }, (_, i) => ({ time: 1_700_000_000 + i * 60, o: 100, h: 101, l: 99, c: 100 }));
   const last = bars[bars.length - 1].time;
   const future = last + 60 * 30;
@@ -2930,12 +2934,12 @@ section('34. the line tools: one-click and two-click creation, end to end');
   // EXTENSION IS DECLARED, NOT COMPUTED FROM A FABRICATED TIME. The old slope-to-view.to helper is
   // gone rather than left sitting there to be reused — it is the thing that made a ray stop at the
   // last candle. Scoped to a CALL, so the sentence explaining its removal cannot satisfy this.
-  const drawSrc = await readFile(new URL('../src/lib/chart/chart-drawings.mjs', import.meta.url), 'utf8');
+  const drawSrc = (await readFile(new URL('../src/lib/chart/chart-drawings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('no tool extends through a manufactured view time', !/extendRay\(\w/.test(drawSrc));
   ok('...and the helper itself is gone', !/export function extendRay/.test(drawSrc));
   ok('the ray declares its extension', typeof TOOLS.ray.extend === 'function');
   ok('...and the projector is what applies it', /extendToBox\(p1, p2, scale\.plotWidth, scale\.plotHeight\)/.test(
-    await readFile(new URL('../src/lib/chart/chart-project.mjs', import.meta.url), 'utf8')));
+    (await readFile(new URL('../src/lib/chart/chart-project.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
 
   // ── 13-21: HORIZONTAL LINE ──────────────────────────────────────────────────────────────────
   ok('a horizontal line is a one-point tool', isOnePoint('horizontal') === true);
@@ -3078,7 +3082,7 @@ section('34. the line tools: one-click and two-click creation, end to end');
 section('35. lower indicator panes: compact defaults, shares that do not drift, drags that stick');
 {
   const P = await import('../src/lib/chart/chart-panes.mjs');
-  const cmp = await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8');
+  const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const settingsMod = await import('../src/lib/chart/chart-settings.mjs');
   const near = (a, b, eps = 0.005) => Number.isFinite(a) && Math.abs(a - b) <= eps;
 
@@ -3309,11 +3313,11 @@ section('35. lower indicator panes: compact defaults, shares that do not drift, 
   ok('the chart re-sizes panes when its host resizes',
     /new ResizeObserver\(/.test(cmp) && /ro\.observe\(hostRef\.current\)/.test(cmp) && /sizePanes\(paneAppliedRef\.current\.keys\)/.test(cmp));
   ok('...and releases that observer with the chart', /if \(ro\) ro\.disconnect\(\);/.test(cmp) && /if \(detachPanes\) detachPanes\(\);/.test(cmp));
-  const terminalSrc = await readFile(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8');
+  const terminalSrc = (await readFile(new URL('../src/app/terminal/TerminalClient.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the Terminal panel resizing is untouched by pane sizing', !/paneShares|sizePanes|setStretchFactor/.test(terminalSrc));
 
   // ── 12, 13: both hosts share the one implementation ───────────────────────────────────────
-  const tickerSrc = await readFile(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8');
+  const tickerSrc = (await readFile(new URL('../src/components/chart/TickerPriceChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the Terminal chart panel renders the shared CPChart', /<CPChart symbol=\{symbol\}/.test(terminalSrc));
   ok('the ticker Price Chart renders the shared CPChart', /<CPChart symbol=\{symbol\}/.test(tickerSrc));
   ok('...and neither host sizes panes on its own',

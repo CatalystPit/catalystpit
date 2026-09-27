@@ -39,6 +39,7 @@ async function fetchPayload(url, { fresh = false } = {}) {
   return json;
 }
 import { INDICATORS, computeIndicator, indicatorLabel, indicatorAvailability,
+  seriesColorValue, primaryColorValue,
 } from '../../lib/chart/chart-indicators.mjs';
 import { resolvePaneShares, applyPaneShares, readPaneShares, manualPaneChanges } from '../../lib/chart/chart-panes.mjs';
 import {
@@ -971,7 +972,7 @@ export default function CPChart({
         legendOut.push({
           key: entry.key || entry.id,
           label: indicatorLabel(entry.id, entry.params),
-          color: indicatorColor(th, entry.color != null ? entry.color : (def.colors ? Object.values(def.colors)[0] : 0)),
+          color: indicatorColor(th, primaryColorValue(entry.id, entry)),
           visible: entry.visible !== false,
           unavailable: unavailable.reason,
         });
@@ -991,9 +992,14 @@ export default function CPChart({
         if (!plot.data.length) continue;
         // The INSTANCE's colour wins. Two EMAs differ only by their settings, so the colour has to
         // belong to the instance rather than to the indicator, or a ribbon would be one flat hue.
-        // Multi-plot indicators (Bollinger's three bands) still take their shape from the registry.
-        const baseIdx = def.colors?.[plot.key] ?? 0;
-        const color = indicatorColor(th, (plots.length === 1 && entry.color != null) ? entry.color : baseIdx);
+        //
+        // ⚠️ AND EVERY PLOT ASKS SEPARATELY NOW. This used to read
+        //     (plots.length === 1 && entry.color != null) ? entry.color : baseIdx
+        // so Bollinger Bands and MACD ignored the chosen colour outright — the settings panel offered
+        // a control that did nothing for them. seriesColorValue answers per plot key, with the
+        // instance-wide colour applying only where there is one series to apply it to, so a
+        // three-series indicator keeps three distinct hues unless the user sets them individually.
+        const color = indicatorColor(th, seriesColorValue(entry.id, entry, plot.key));
         const series = plot.type === 'histogram'
           ? chart.addSeries(lwc.HistogramSeries, {
             color, priceLineVisible: false, lastValueVisible: false,
@@ -1027,7 +1033,7 @@ export default function CPChart({
       legendOut.push({
         key: entry.key || entry.id,
         label: indicatorLabel(entry.id, entry.params),
-        color: indicatorColor(th, entry.color != null ? entry.color : (def.colors ? Object.values(def.colors)[0] : 0)),
+        color: indicatorColor(th, primaryColorValue(entry.id, entry)),
         visible: entry.visible !== false,
       });
     }

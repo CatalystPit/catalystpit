@@ -356,7 +356,7 @@ export default function MarketHeatmapClient({ initial }) {
       <div style={{ maxWidth: 1480, margin: '0 auto', padding: '18px 20px 40px' }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: C.ink, margin: '0 0 2px' }}>Market Heatmap</h1>
         <div style={{ fontSize: 13, color: C.muted, margin: '0 0 12px' }}>
-          Tiles sized by market capitalisation, coloured by return over the selected window.
+          Tiles sized by market capitalization, colored by return over the selected window.
         </div>
 
         {/* ── CONTROLS ── */}
@@ -458,7 +458,7 @@ export default function MarketHeatmapClient({ initial }) {
               {coverage.hidden.toLocaleString()} are too small to draw at this size — choose a sector, or a smaller universe, to see them.
             </span>
           )}
-          <span>Colour saturates at ±{scale}% for {timeframe}.</span>
+          <span>Color saturates at ±{scale}% for {timeframe}.</span>
         </div>
 
         {/* ── LEADERSHIP. Three equal cards across the full width; wrapping at medium widths and
