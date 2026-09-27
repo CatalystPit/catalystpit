@@ -51,6 +51,31 @@ export const metadata = {
 //
 // The logo is the wordmark this app already draws (see Logo in cp-shared), rendered by the icon
 // route rather than a new mark.
+/**
+ * GOOGLE ADSENSE — SITE VERIFICATION ONLY, AT THIS POINT.
+ *
+ * This is the loader Google hands you to prove you own the domain. It is NOT an ad placement: no ad
+ * unit is declared anywhere in this codebase, Auto Ads is a setting inside the AdSense account rather
+ * than something this tag turns on, and nothing here reserves space or renders a slot.
+ *
+ * ⚠️ IT IS A PLAIN TAG IN <head>, NOT next/script, AND THAT IS THE POINT. Google's verification
+ * crawler reads the SERVED HTML. next/script's afterInteractive strategy injects the tag from the
+ * client bundle after hydration, so the document Google fetches would not contain it; beforeInteractive
+ * would put it in the HTML but is render-blocking, which this must not be. A plain async tag is both
+ * present in the server-rendered head and non-blocking, which is exactly what Google's own snippet is.
+ * The ld+json blocks above are in this head for the same reason — a crawler must see them without
+ * running JS.
+ *
+ * ⚠️ THE ID IS PUBLIC. A publisher id appears in the markup of every AdSense site by design; it is an
+ * account identifier, not a secret, and there is nothing here to keep server-side.
+ *
+ * ⚠️ ONE PLACE ONLY. Declared as a constant and rendered once in the root layout, so a second copy
+ * cannot be added to a page without someone noticing the duplication — two loaders on one document is
+ * a policy problem as well as a wasted request.
+ */
+const ADSENSE_CLIENT = 'ca-pub-8341744464373905';
+const ADSENSE_SRC = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`;
+
 const ORG_LD = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
@@ -108,6 +133,9 @@ export default function RootLayout({ children }) {
             dangerouslySetInnerHTML={{ __html: JSON.stringify(ORG_LD) }} />
           <script type="application/ld+json"
             dangerouslySetInnerHTML={{ __html: JSON.stringify(SITE_LD) }} />
+          {/* Google AdSense site verification. Async, so it cannot block first paint; server-rendered,
+              so the verification crawler sees it in the HTML without executing anything. */}
+          <script async src={ADSENSE_SRC} crossOrigin="anonymous" />
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
           <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
