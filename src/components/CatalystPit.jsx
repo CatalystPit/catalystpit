@@ -771,7 +771,7 @@ export default function CatalystPit() {
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,
             borderRadius:8, padding:"16px"}}>
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
-              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO · $20/MO</div>
+              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
               {/* ⚠️ THIS LIST IS A PROMISE. Each line is something a paying user receives today.
                   "Options flow & dark pool" was removed because it is a product we do not have and
