@@ -293,11 +293,41 @@ L('⚠️ A DELETED DRAWING LEAVES NOTHING BEHIND');
   ok('…before anything is drawn', layer.indexOf('ctx.clearRect(0, 0, w, h);') < layer.indexOf('for (const d of projected)'));
   ok('⚠️ and a repaint follows any change to the drawing list',
     /useEffect\(\(\) => \{ paint\(\); \}, \[drawings, selectedIds/.test(layer));
-  // ⚠️ NO DRAWING OWNS A CHART OBJECT. A price line or a series created per level would survive the
-  // list it came from, which is exactly how an orphaned Fibonacci would happen.
-  ok('⚠️ no drawing creates a price line', !/createPriceLine/.test(layer));
-  ok('⚠️ nor a series of its own', !/addLineSeries|addSeries/.test(layer));
+  // ⚠️ NO DRAWING OWNS A CHART OBJECT — WITH ONE AUDITED EXCEPTION.
+  //
+  // A price line or a series created per level can survive the list it came from, which is exactly
+  // how an orphaned Fibonacci would happen. This used to be a flat ban on createPriceLine, and the
+  // ban made the orphan case impossible by construction.
+  //
+  // THE EXCEPTION IS THE PRICE CHIP ON THE RIGHT-HAND AXIS. That chip is drawn by the price scale,
+  // not by a pane, so the canvas — which is inside the pane — physically cannot put anything there.
+  // A horizontal line without its number on the axis makes the user guess the level they placed, so
+  // each price-labelled drawing now gets a native price line with `lineVisible: false`: it draws no
+  // line and contributes only the chip. See price-axis-labels.mjs.
+  //
+  // SO THE RULE IS ENFORCED RATHER THAN MADE IMPOSSIBLE, and the rule is what matters: a chip must
+  // not outlive its drawing. verify-price-axis-labels.mjs holds that behaviourally — chips are
+  // reconciled by drawing id, and it asserts that clearing the list, hiding the layer, hiding one
+  // drawing, recreating the series and unmounting each leave nothing on the axis. Those are
+  // mutation-tested; a leak in any of them fails there.
+  //
+  // What stays banned here is everything that would put a drawing's GEOMETRY outside the canvas,
+  // because that is what the single-cleared-surface invariant actually protects.
+  ok('⚠️ a drawing still owns no series of its own', !/addLineSeries|addSeries/.test(layer));
   ok('⚠️ nor a chart primitive', !/attachPrimitive/.test(layer));
+  // The one price-line use is the axis chip, and it must draw no line — otherwise it is a second,
+  // unselectable copy of a level the canvas is already drawing.
+  ok('⚠️ the only price line is the axis chip, and it is line-less',
+    !/createPriceLine/.test(layer) || /priceLineOptionsFor/.test(layer));
+  const axisLabels = readFileSync(new URL('../src/lib/chart/price-axis-labels.mjs', import.meta.url), 'utf8');
+  ok('⚠️ …so the canvas remains the only thing drawing a level',
+    /lineVisible: false/.test(axisLabels) && !/lineVisible: true/.test(axisLabels));
+  // And the chips are reconciled, not rebuilt — the mechanism that keeps them from orphaning.
+  // ⚠️ THE CALL, NOT THE IMPORT. A bare /reconcileAxisLabels/ matched the import line, so replacing
+  // the reconciliation with a rebuild-every-pass loop — which orphans chips — left this green.
+  ok('⚠️ the chips are reconciled by drawing id, so one cannot be left behind',
+    /axisRef\.current = reconcileAxisLabels\(axisRef\.current, specs,/.test(layer)
+    && /adapter\.remove/.test(axisLabels));
   ok('the fib levels are painted from the drawing, not from remembered state',
     /fibLevels\(d\.source\.points, d\.source\.levels\)/.test(layer));
 
@@ -425,8 +455,11 @@ L('⚠️ IF A FIBONACCI IS ON SCREEN, A FIBONACCI IS IN STATE');
   ok('⚠️ the fib levels come from that drawing\'s own anchors and levels',
     fibCalls.length >= 2 && fibCalls.every((c) => c === 'fibLevels(d.source.points, d.source.levels)'),
     fibCalls.join(' | '));
-  ok('…so a level cannot outlive the drawing that produced it',
-    !/createPriceLine/.test(layer) && !/attachPrimitive/.test(layer) && !/addSeries/.test(layer));
+  // A FIB LEVEL owns no chart object at all — it is painted, and the canvas is cleared each frame.
+  // The axis chip is the audited exception above and belongs to the horizontal line, not to a fib.
+  ok('…so a fib level cannot outlive the drawing that produced it',
+    !/attachPrimitive/.test(layer) && !/addSeries/.test(layer)
+    && !/fibLevels[\s\S]{0,200}createPriceLine/.test(layer));
 
   // The persisted side: a delete must reach storage, or a reload brings it back.
   ok('⚠️ every change to the list is persisted', /saveDrawings/.test(chart));

@@ -12,6 +12,7 @@ import {
 } from '../../lib/chart/chart-coords.mjs';
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
 import { selectionBox } from '../../lib/chart/drawing-toolbar.mjs';
+import { axisLabelSpecs, reconcileAxisLabels, priceLineOptionsFor } from '../../lib/chart/price-axis-labels.mjs';
 import {
   idleTool, armTool, clickTool, hoverTool, cancelDraft, clearSuppression, draftPreview, hasDraft,
 } from '../../lib/chart/chart-tool-lifecycle.mjs';
@@ -22,6 +23,13 @@ import {
 // series-primitive API, neither of which can express a ray, a rectangle or a Fibonacci fan. An
 // overlay that shares the chart's coordinate system gives every tool the same treatment and keeps
 // the chart itself untouched — nothing here reaches into its internals.
+//
+// ONE EXCEPTION, AND IT IS DELIBERATE: a price level's chip on the right-hand axis. That chip is
+// drawn by the price scale, not by a pane, so a canvas cannot put anything there. Each price-labelled
+// drawing therefore gets a native price line with `lineVisible: false` — it contributes the axis chip
+// and draws no line, so the geometry, selection, dragging and styling all stay here where they were.
+// See price-axis-labels.mjs. The library also formats that chip with the series' own price formatter,
+// which is how an instrument's precision is honoured without a decimal count being hard-coded.
 //
 // EVERY ANCHOR IS STORED AS { time, price } AND PROJECTED AT PAINT TIME. The chart's own scales do
 // the conversion, so a drawing tracks its level exactly through zoom, pan, resize and a reload.
@@ -39,6 +47,15 @@ function DrawingLayerBase({
   onSelectionBox,
 }) {
   const canvasRef = useRef(null);
+  // drawing id -> { spec, handle } for the axis chips, so each is created once and only updated when
+  // its price or colour actually changes. A ref, not state: it is the chart's state, not React's, and
+  // putting it in state would re-render on every reconciliation.
+  const axisRef = useRef(new Map());
+  // Which series the chips above belong to, so a recreated series cannot be handed stale handles.
+  const axisOwnerRef = useRef(null);
+  // The series, readable from the unmount cleanup, which must not close over a stale prop.
+  const seriesRef = useRef(null);
+  seriesRef.current = series;
   const onSelectionBoxRef = useRef(null);
   onSelectionBoxRef.current = onSelectionBox || null;
   const stateRef = useRef({});
@@ -108,6 +125,32 @@ function DrawingLayerBase({
     }
     return { time, price };
   }, [chart, series]);
+
+  /**
+   * THE LIVE PRICE ON THE AXIS, while a tool is armed or a drawing is being dragged.
+   *
+   * ⚠️ ROOT CAUSE THIS FIXES. The chart's crosshair already puts the pointer's price on the right
+   * axis — `crosshair.horzLine` has its label on by default and chart-theme gives it the neutral
+   * `crosshairLabel` colour for exactly this readout. It stopped the moment a drawing tool was
+   * picked, because the overlay sets `pointerEvents: auto` while it is in use, so the chart below
+   * never received another mousemove and its crosshair froze where the pointer last crossed it. The
+   * readout was not missing; it was starved. So the overlay hands the position back.
+   *
+   * setCrosshairPosition, not a label of our own: it is the SAME chip the chart draws when nothing is
+   * armed, so the number is formatted by the series' own formatter and stays correct through zoom,
+   * pan, autoscale, resize and a timeframe change. A hand-drawn label would have to re-derive all of
+   * that, and would be the second price source this must not have.
+   */
+  const showCursorPrice = useCallback((data) => {
+    if (!chart || !series || !data || !Number.isFinite(data.price)) return;
+    try { chart.setCrosshairPosition(data.price, data.time, series); }
+    catch { /* an extrapolated time the scale will not take; the chip is not worth an exception */ }
+  }, [chart, series]);
+
+  /** Put the crosshair back under the chart's own control. */
+  const clearCursorPrice = useCallback(() => {
+    try { chart?.clearCrosshairPosition(); } catch { /* chart gone */ }
+  }, [chart]);
 
   /**
    * THE PLOT'S OWN MEASUREMENTS, not the canvas's.
@@ -455,8 +498,16 @@ function DrawingLayerBase({
     if (!clearSignal) return;
     stateRef.current.measure = null;
     stateRef.current.life = cancelDraft(stateRef.current.life || idleTool());
+    // Cancelling mid-placement takes the preview with it: there is no longer a level being chosen.
+    clearCursorPrice();
     paint();
-  }, [clearSignal, paint]);
+  }, [clearSignal, paint, clearCursorPrice]);
+
+  // PUTTING THE TOOL DOWN ENDS THE PREVIEW. Without this the temporary chip stayed on the axis after
+  // the tool was disarmed — a price the user is no longer placing, sitting next to the real ones.
+  useEffect(() => {
+    if (!activeTool) clearCursorPrice();
+  }, [activeTool, clearCursorPrice]);
 
   // Repaint whenever the chart moves. Subscribing to the chart's own events keeps the overlay in
   // lockstep with it instead of guessing with a timer.
@@ -474,6 +525,52 @@ function DrawingLayerBase({
   }, [chart, paint]);
 
   useEffect(() => { paint(); }, [drawings, selectedIds, theme, visible, bars, activeTool, paint]);
+
+  /**
+   * THE PRICE CHIPS ON THE RIGHT-HAND AXIS, one per price-labelled drawing.
+   *
+   * Each is a native price line with its line hidden, so the chip is the library's own — same shape,
+   * same font and same formatter as the current-price chip above it, which means an instrument's
+   * precision is inherited rather than guessed at. The number comes from the drawing's stored anchor
+   * via the tool's `priceLabel`, so the chip and the line cannot disagree: there is one price.
+   *
+   * ⚠️ THE CURRENT-PRICE CHIP IS UNTOUCHED. These are additional price lines on the same series; the
+   * series' own `priceLineVisible`/`lastValueVisible` are not read or written here, so the market
+   * price keeps its label and every drawing chip sits alongside it.
+   */
+  useEffect(() => {
+    if (!series) return undefined;
+    // ⚠️ A NEW SERIES MEANS THE OLD CHIPS ARE ALREADY GONE. CPChart removes and re-adds the price
+    // series on a chart-type change, and every price line on it dies with it. The handles we hold
+    // would then point at a destroyed object, so the map is dropped rather than reconciled against —
+    // reconciling would try to applyOptions a dead line, and removePriceLine it from the wrong
+    // series. Nothing is removed here because there is nothing left to remove.
+    if (axisOwnerRef.current !== series) {
+      axisRef.current = new Map();
+      axisOwnerRef.current = series;
+    }
+    const specs = axisLabelSpecs(drawings, tool, {
+      visible,
+      colorOf: (d) => indicatorColor(theme, d.style?.color),
+    });
+    axisRef.current = reconcileAxisLabels(axisRef.current, specs, {
+      create: (spec) => series.createPriceLine(priceLineOptionsFor(spec)),
+      update: (handle, spec) => handle.applyOptions(priceLineOptionsFor(spec)),
+      remove: (handle) => series.removePriceLine(handle),
+    });
+    return undefined;
+  }, [drawings, series, theme, visible]);
+
+  // Every chip comes off when the layer goes away, so a symbol change or an unmount cannot leave
+  // orphans on the axis of the next chart.
+  useEffect(() => () => {
+    const host = seriesRef.current;
+    if (!host) return;
+    for (const { handle } of axisRef.current.values()) {
+      try { host.removePriceLine(handle); } catch { /* chart already gone */ }
+    }
+    axisRef.current = new Map();
+  }, []);
 
   /**
    * SELECTION COMES FROM THE CHART'S OWN CLICK, not from the canvas.
@@ -554,6 +651,9 @@ function DrawingLayerBase({
           if (made) { onChange([...s.drawings, made]); onSelect(made.id); }
         }
         onToolUsed();
+        // The preview has served its purpose — the committed drawing owns that price now, and carries
+        // its own chip. Leaving the temporary one up would show the same number twice.
+        clearCursorPrice();
       }
       e.currentTarget.setPointerCapture?.(e.pointerId);
       paint();
@@ -595,7 +695,11 @@ function DrawingLayerBase({
   const onPointerMove = (e) => {
     const pt = localPoint(e);
     if (s.life?.activeTool) {
-      s.life = hoverTool(s.life, anchorAt(pt, e));
+      const hover = anchorAt(pt, e);
+      s.life = hoverTool(s.life, hover);
+      // The price under the cursor, on the axis, before anything is committed — which is the whole
+      // point of a preview: the user picks the level by reading it, not by guessing.
+      showCursorPrice(hover);
       // A ruler that only reports once both ends are placed is far less useful than one that counts
       // as you move, so the measurement updates live from the first anchor to the cursor.
       if (tool(s.life.activeTool)?.transient && s.life.cursor && s.life.points[0]) {
@@ -607,6 +711,9 @@ function DrawingLayerBase({
     if (!s.drag) return;
     const now = toData(pt.x, pt.y);
     if (!now || !s.drag.from) return;
+    // Dragging an existing level gets the same readout, so the user can see the price they are
+    // moving it TO rather than only where it started.
+    showCursorPrice(now);
     const dTime = timeDeltaSeconds(s.drag.from.time, now.time);
     const dPrice = now.price - s.drag.from.price;
     // Every drawing in the group takes the SAME delta, each measured from its own original — so a
@@ -619,8 +726,11 @@ function DrawingLayerBase({
   };
 
   const endDrag = (e) => {
-    if (s.drag) { s.drag = null; e.currentTarget.releasePointerCapture?.(e.pointerId); }
+    if (s.drag) { s.drag = null; e.currentTarget.releasePointerCapture?.(e.pointerId); clearCursorPrice(); }
   };
+
+  // The pointer leaving the plot ends the preview, exactly as it ends the chart's own crosshair.
+  const onPointerLeave = () => clearCursorPrice();
 
   // The overlay is INERT unless it is doing something: no armed tool, no selection and no draft means
   // the chart underneath owns the pointer and keeps its native zoom, pan and crosshair.
@@ -636,6 +746,7 @@ function DrawingLayerBase({
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onPointerLeave={onPointerLeave}
       style={{
         position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 3,
         pointerEvents: interactive ? 'auto' : 'none',
