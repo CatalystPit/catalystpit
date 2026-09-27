@@ -41,10 +41,12 @@ async function fetchPayload(url, { fresh = false } = {}) {
 import { INDICATORS, computeIndicator, indicatorLabel } from '../../lib/chart/chart-indicators.mjs';
 import { resolvePaneShares, applyPaneShares, readPaneShares, manualPaneChanges } from '../../lib/chart/chart-panes.mjs';
 import {
-  loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW,
+  loadIndicators, saveIndicators, loadView, saveView, DEFAULT_VIEW, DEFAULT_ACTIVE,
   loadToolDefaults, saveToolDefaults, rememberToolDefaults,
 } from '../../lib/chart/chart-settings.mjs';
 import { loadDrawings, saveDrawings } from '../../lib/chart/chart-drawing-store.mjs';
+import { setChartScope, currentChartScope } from '../../lib/chart/chart-scope.mjs';
+import { useUser } from '@clerk/nextjs';
 import {
   DEFAULT_STYLE, sanitizeStyle, cloneDrawing, moveDrawing, createDrawing, reorderDrawing,
 } from '../../lib/chart/chart-drawings.mjs';
@@ -183,8 +185,27 @@ export default function CPChart({
    * change, and applied to the next drawing of that type. Keyed by tool, so editing a Fibonacci's
    * levels never changes what a rectangle looks like.
    */
+  // ── ⚠️ WHOSE CHART IS THIS ────────────────────────────────────────────────
+  //
+  // Chart state used to be read once on mount from a browser-global key, which meant two things
+  // went wrong together: the KEY belonged to the device rather than the account, and the LOAD
+  // never ran again. Sign out, sign into a second account on the same machine, and the chart —
+  // still mounted, still holding the first account's React state — showed one customer's trend
+  // lines and indicators to another.
+  //
+  // `scope` is the answer to "who is this", and it is a DEPENDENCY of every loader below. While
+  // Clerk is still resolving it is null, the stores refuse to read or write, and the chart shows
+  // defaults; the moment it resolves, everything reloads under the right namespace.
+  const { isLoaded: authLoaded, user } = useUser();
+  const [scope, setScope] = useState(() => currentChartScope());
+  useEffect(() => {
+    const { scope: next, changed } = setChartScope(user?.id ?? null, { resolved: authLoaded });
+    if (changed || next !== scope) setScope(next);
+  }, [authLoaded, user?.id, scope]);
+
   const [toolDefaults, setToolDefaults] = useState({});
-  useEffect(() => { setToolDefaults(loadToolDefaults()); }, []);
+  // ⚠️ KEYED ON SCOPE, NOT ON MOUNT. Same for every loader below it.
+  useEffect(() => { setToolDefaults(loadToolDefaults()); }, [scope]);
   // Saved selections are read once on mount rather than at module scope: localStorage does not exist
   // during server rendering, and reading it in the initial state would make the first client render
   // disagree with the server's.
@@ -326,13 +347,22 @@ export default function CPChart({
   // above its declaration is a TDZ throw, not a stale value.
   volumeOnRef.current = volumeOn;
 
-  // Saved selections, loaded on mount only (see the note on `active` above).
-  useEffect(() => { setActive(loadIndicators()); setView(loadView()); }, []);
+  // ⚠️ RELOADED WHEN THE ACCOUNT CHANGES, NOT ONLY ON MOUNT. The previous user's selections are
+  // cleared before the next user's are read, so nothing carries across through React state even
+  // though the component never unmounted.
+  useEffect(() => {
+    if (!scope) { setActive(DEFAULT_ACTIVE.map((d) => ({ ...d }))); setView({ ...DEFAULT_VIEW }); return; }
+    setActive(loadIndicators());
+    setView(loadView());
+  }, [scope]);
 
   // DRAWINGS ARE PER SYMBOL: reloaded whenever the symbol changes, and the selection is dropped
   // because the drawing it referred to belongs to a different chart now.
+  // ⚠️ SCOPE IS A DEPENDENCY ALONGSIDE THE SYMBOL. A drawing belongs to one account AND one
+  // symbol; changing either has to reload, and an account change must not leave the outgoing
+  // user's shapes on screen.
   useEffect(() => {
-    setDrawings(loadDrawings(sym));
+    setDrawings(scope ? loadDrawings(sym) : []);
     setSelectedIds([]);
     setActiveTool(null);
     // THE HISTORY IS PER SYMBOL. Undoing into a stack of another symbol's drawings would paste them
@@ -357,7 +387,9 @@ export default function CPChart({
     // The bars in memory still belong to the PREVIOUS symbol until the new fetch lands. Saying so
     // is what stops the realtime overlay writing this symbol's price into them.
     barsSymRef.current = null;
-  }, [sym]);
+    // ⚠️ SCOPE IS HERE FOR THE SAME REASON sym IS: a different account is a different set of
+    // drawings, and leaving the outgoing user's on screen is the bug this fix exists for.
+  }, [sym, scope]);
 
   const drawingsDirty = useRef(false);
   useEffect(() => {
@@ -1090,7 +1122,7 @@ export default function CPChart({
   // Restore the saved family preferences once, on mount, the same way indicators and view are.
   // Changing symbol or timeframe must not reset the user's choices, which is why this is keyed on
   // mount rather than on either of those.
-  useEffect(() => { setEvidenceVis(loadVisibility()); }, []);
+  useEffect(() => { setEvidenceVis(loadVisibility()); }, [scope]);
 
   // A visibility change re-filters and re-applies IN PLACE. The series is untouched, so
   // applyEvidenceMarkers takes its setMarkers path: one live plugin, no recreation, no refetch —

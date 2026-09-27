@@ -10,9 +10,15 @@
 // recently touched symbol evicted first.
 
 import { coerceDrawing } from './chart-drawings.mjs';
+import { chartScopeKey } from './chart-scope.mjs';
 
 const KEY = 'cp_chart_drawings';
 const VERSION = 1;
+// ⚠️ EVERY READ AND WRITE GOES THROUGH THE ACTIVE USER'S NAMESPACE. `k()` returns null while
+// Clerk has not resolved an identity yet, and null means NO STORAGE: reads fall back to defaults
+// and writes are dropped. There is deliberately no path back to the unscoped key — see
+// chart-scope.mjs for why a fallback is the original account-leak bug in disguise.
+const k = () => chartScopeKey(KEY);
 
 export const MAX_PER_SYMBOL = 120;
 export const MAX_SYMBOLS = 40;
@@ -23,7 +29,9 @@ const norm = (s) => String(s || '').toUpperCase().trim();
 function readAll() {
   if (!isBrowser()) return { v: VERSION, symbols: {}, order: [] };
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(KEY) || 'null');
+    const key = k();
+    if (!key) return { v: VERSION, symbols: {}, order: [] };
+    const parsed = JSON.parse(window.localStorage.getItem(key) || 'null');
     if (!parsed || parsed.v !== VERSION || typeof parsed.symbols !== 'object' || parsed.symbols === null) {
       return { v: VERSION, symbols: {}, order: [] };
     }
@@ -35,8 +43,10 @@ function readAll() {
 
 function writeAll(state) {
   if (!isBrowser()) return;
+  const key = k();
+  if (!key) return;   // identity unknown — dropping the write beats writing it to the wrong account
   try {
-    window.localStorage.setItem(KEY, JSON.stringify(state));
+    window.localStorage.setItem(key, JSON.stringify(state));
   } catch {
     // Most likely the quota. Drop the oldest half and try once more rather than silently losing the
     // drawing the user just made.
@@ -44,7 +54,7 @@ function writeAll(state) {
       const keep = state.order.slice(-Math.ceil(state.order.length / 2));
       const symbols = {};
       for (const s of keep) if (state.symbols[s]) symbols[s] = state.symbols[s];
-      window.localStorage.setItem(KEY, JSON.stringify({ v: VERSION, symbols, order: keep }));
+      window.localStorage.setItem(key, JSON.stringify({ v: VERSION, symbols, order: keep }));
     } catch { /* give up quietly; a lost drawing must not break the chart */ }
   }
 }

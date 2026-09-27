@@ -1,3 +1,4 @@
+import { chartScopeKey } from './chart-scope.mjs';
 // EVIDENCE VISIBILITY — which marker families the chart draws. PURE + localStorage.
 //
 // DISPLAY STATE ONLY. Nothing here touches what evidence IS: no fetch, no placement, no materiality,
@@ -36,6 +37,12 @@ export const FAMILY_IDS = Object.freeze(EVIDENCE_FAMILIES.map((f) => f.id));
 const KEY = 'cp_chart_evidence';
 const VERSION = 1;
 const isBrowser = () => typeof window !== 'undefined' && !!window.localStorage;
+
+// ⚠️ EVERY READ AND WRITE GOES THROUGH THE ACTIVE USER'S NAMESPACE. `k()` returns null while Clerk
+// has not resolved an identity yet, and null means NO STORAGE: reads fall back to defaults and
+// writes are dropped. There is deliberately no path back to the unscoped key — see chart-scope.mjs
+// for why a fallback is the original account-leak bug in disguise.
+const k = () => chartScopeKey(KEY);
 
 /** Everything on. What a chart shows before the user has chosen anything. */
 export function defaultVisibility() {
@@ -123,7 +130,9 @@ export function toggleAll(vis) {
 export function loadVisibility() {
   if (!isBrowser()) return defaultVisibility();
   try {
-    const raw = JSON.parse(window.localStorage.getItem(KEY) || 'null');
+    const key = k();
+    if (!key) return defaultVisibility();
+    const raw = JSON.parse(window.localStorage.getItem(key) || 'null');
     if (!raw || typeof raw !== 'object') return defaultVisibility();
     const out = defaultVisibility();
     if (typeof raw.enabled === 'boolean') out.enabled = raw.enabled;
@@ -144,7 +153,9 @@ export function saveVisibility(vis) {
   try {
     const families = {};
     for (const id of FAMILY_IDS) families[id] = vis.families?.[id] !== false;
-    window.localStorage.setItem(KEY, JSON.stringify({ v: VERSION, enabled: !!vis.enabled, families }));
+    const key = k();
+    if (!key) return;   // identity unknown — dropping the write beats writing it to the wrong account
+    window.localStorage.setItem(key, JSON.stringify({ v: VERSION, enabled: !!vis.enabled, families }));
   } catch { /* quota, private mode, disabled storage — a lost preference is not a broken chart */ }
 }
 

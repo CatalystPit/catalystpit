@@ -52,6 +52,13 @@ import {
 import { exportLayout, captionFor, exportFilename, CAPTION_HEIGHT } from '../src/lib/chart/chart-export.mjs';
 import { rememberToolDefaults } from '../src/lib/chart/chart-settings.mjs';
 import { emptyHistory, record, undo, redo, canUndo, canRedo, MAX_HISTORY } from '../src/lib/chart/chart-history.mjs';
+
+// ⚠️ PERSISTENCE IS PER ACCOUNT NOW. Without a resolved identity the chart stores refuse every
+// read and write by design (see chart-scope.mjs), so this harness signs in as a fixed test user
+// exactly as a real browser does before any of these round-trips can happen.
+import { setChartScope, chartScopeKey } from '../src/lib/chart/chart-scope.mjs';
+setChartScope('user_verify_harness', { resolved: true });
+
 import { TIMEFRAME_GROUPS, timeframesByGroup, ADAPTER, isServable, unavailableReason,
   PLANNED_TIMEFRAMES } from '../src/lib/chart/chart-source.mjs';
 
@@ -2786,13 +2793,17 @@ section('33. the indicator legend collapses without collapsing the indicators');
     saveView({ ...DEFAULT_VIEW, legendCollapsed: false });
     ok('...and so does an expanded one', loadView().legendCollapsed === false);
     // BACKWARD COMPATIBILITY: a view saved before this existed must open expanded, not collapsed.
-    store.set(VIEW_STORAGE_KEY, JSON.stringify({ v: 1, view: { chartType: 'Candles', logScale: true } }));
+    store.set(chartScopeKey(VIEW_STORAGE_KEY), JSON.stringify({ v: 1, view: { chartType: 'Candles', logScale: true } }));
     ok('a saved view from before the control opens expanded', loadView().legendCollapsed === false);
     ok('...without losing the preferences it did carry', loadView().logScale === true);
   } finally { delete globalThis.window; }
-  // Symbol and timeframe changes do not touch the view: the chart reads it once, at mount.
-  ok('the view is loaded once, not per symbol',
-    /useEffect\(\(\) => \{ setActive\(loadIndicators\(\)\); setView\(loadView\(\)\); \}, \[\]\);/.test(cmp));
+  // Symbol and timeframe changes do not touch the view: the chart reads it per ACCOUNT, never
+  // per symbol. It used to read once at mount, which is why a second account signing in on the
+  // same browser inherited the first one's view.
+  ok('the view is loaded per account, not per symbol',
+    /setActive\(loadIndicators\(\)\);\s*\n\s*setView\(loadView\(\)\);\s*\n\s*\}, \[scope\]\)/.test(cmp));
+  ok('...and never on the symbol, which would reset it on every ticker change',
+    !/setView\(loadView\(\)\)[\s\S]{0,80}\}, \[sym/.test(cmp));
   ok('...so changing symbol or timeframe cannot reset it',
     (cmp.match(/setView\(loadView\(\)\)/g) || []).length === 1);
 
@@ -3244,10 +3255,10 @@ section('35. lower indicator panes: compact defaults, shares that do not drift, 
       settingsMod.saveView({ ...settingsMod.DEFAULT_VIEW, paneShares: { 'rsi-1': 0.31, 'macd-1': 0.2 } });
       const back = settingsMod.loadView().paneShares;
       ok('a dragged pane size survives a reload', back?.['rsi-1'] === 0.31 && back?.['macd-1'] === 0.2, JSON.stringify(back));
-      store.set(settingsMod.VIEW_STORAGE_KEY, JSON.stringify({ v: 1, view: { paneShares: { a: 'x', b: 7, c: -1, d: 0.3, '': 0.2 } } }));
+      store.set(chartScopeKey(settingsMod.VIEW_STORAGE_KEY), JSON.stringify({ v: 1, view: { paneShares: { a: 'x', b: 7, c: -1, d: 0.3, '': 0.2 } } }));
       ok('junk in a saved size is dropped, the good entry kept', JSON.stringify(settingsMod.loadView().paneShares) === '{"d":0.3}',
         JSON.stringify(settingsMod.loadView().paneShares));
-      store.set(settingsMod.VIEW_STORAGE_KEY, JSON.stringify({ v: 1, view: { logScale: true } }));
+      store.set(chartScopeKey(settingsMod.VIEW_STORAGE_KEY), JSON.stringify({ v: 1, view: { logScale: true } }));
       ok('a view saved before pane sizes existed opens with defaults', JSON.stringify(settingsMod.loadView().paneShares) === '{}');
     } finally { delete globalThis.window; }
   }

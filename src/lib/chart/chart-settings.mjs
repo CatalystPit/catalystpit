@@ -1,3 +1,4 @@
+import { chartScopeKey } from './chart-scope.mjs';
 import { CHART_TYPE_IDS } from './chart-types.mjs';
 // Saved chart settings.
 //
@@ -14,6 +15,12 @@ import {
   MAX_INSTANCES_PER_INDICATOR, nextInstanceKey,
 } from './chart-indicators.mjs';
 import { sanitizePaneShares } from './chart-panes.mjs';
+
+// ⚠️ ALL FOUR OF THIS FILE'S KEYS GO THROUGH THE ACTIVE USER'S NAMESPACE. `sk()` returns null
+// while Clerk has not resolved an identity, and null means NO STORAGE: reads fall back to their
+// own defaults and writes are dropped rather than landing in whichever account we guessed. There
+// is no path back to the unscoped key — see chart-scope.mjs.
+const sk = (base) => chartScopeKey(base);
 
 const KEY = 'cp_chart_indicators';
 
@@ -87,7 +94,9 @@ function enforce(list) {
 export function loadIndicators() {
   if (!isBrowser()) return DEFAULT_ACTIVE.map((e) => ({ ...e }));
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(KEY) || 'null');
+    const key = sk(KEY);
+    if (!key) return DEFAULT_ACTIVE.map((d) => ({ ...d }));
+    const parsed = JSON.parse(window.localStorage.getItem(key) || 'null');
     if (!parsed) return DEFAULT_ACTIVE.map((e) => ({ ...e }));
     if (parsed.v === 1) return enforce(migrateV1(parsed.items));
     if (parsed.v !== VERSION || !Array.isArray(parsed.items)) return DEFAULT_ACTIVE.map((e) => ({ ...e }));
@@ -109,7 +118,9 @@ export function saveIndicators(items) {
     const clean = enforce((Array.isArray(items) ? items : [])
       .map((raw, i, arr) => coerceInstance(raw, arr.slice(0, i)))
       .filter(Boolean));
-    window.localStorage.setItem(KEY, JSON.stringify({ v: VERSION, items: clean }));
+    const key = sk(KEY);
+    if (!key) return;
+    window.localStorage.setItem(key, JSON.stringify({ v: VERSION, items: clean }));
   } catch { /* ignore */ }
 }
 
@@ -146,7 +157,9 @@ export const DEFAULT_VIEW = {
 export function loadView() {
   if (!isBrowser()) return { ...DEFAULT_VIEW };
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(VIEW_KEY) || 'null');
+    const key = sk(VIEW_KEY);
+    if (!key) return { ...DEFAULT_VIEW };
+    const parsed = JSON.parse(window.localStorage.getItem(key) || 'null');
     if (!parsed || parsed.v !== VIEW_VERSION) return { ...DEFAULT_VIEW };
     const v = parsed.view || {};
     return {
@@ -178,7 +191,9 @@ export function loadView() {
 export function saveView(view) {
   if (!isBrowser()) return;
   try {
-    window.localStorage.setItem(VIEW_KEY, JSON.stringify({ v: VIEW_VERSION, view: { ...DEFAULT_VIEW, ...view } }));
+    const key = sk(VIEW_KEY);
+    if (!key) return;
+    window.localStorage.setItem(key, JSON.stringify({ v: VIEW_VERSION, view: { ...DEFAULT_VIEW, ...view } }));
   } catch { /* ignore */ }
 }
 
@@ -197,7 +212,9 @@ export const FAVORITES_KEY = 'cp_chart_favorites';
 export function loadFavorites() {
   if (!isBrowser()) return [];
   try {
-    const raw = JSON.parse(window.localStorage.getItem(FAVORITES_KEY) || 'null');
+    const key = sk(FAVORITES_KEY);
+    if (!key) return [];
+    const raw = JSON.parse(window.localStorage.getItem(key) || 'null');
     if (!Array.isArray(raw)) return [];
     return raw.filter((id) => typeof id === 'string');
   } catch {
@@ -208,7 +225,9 @@ export function loadFavorites() {
 export function saveFavorites(ids) {
   if (!isBrowser()) return;
   try {
-    window.localStorage.setItem(FAVORITES_KEY, JSON.stringify((ids || []).filter((x) => typeof x === 'string')));
+    const key = sk(FAVORITES_KEY);
+    if (!key) return;
+    window.localStorage.setItem(key, JSON.stringify((ids || []).filter((x) => typeof x === 'string')));
   } catch { /* ignore */ }
 }
 
@@ -229,7 +248,9 @@ const REMEMBERED = ['style', 'extendLeft', 'extendRight', 'levels', 'fill'];
 export function loadToolDefaults() {
   if (!isBrowser()) return {};
   try {
-    const raw = JSON.parse(window.localStorage.getItem(TOOL_DEFAULTS_KEY) || 'null');
+    const key = sk(TOOL_DEFAULTS_KEY);
+    if (!key) return {};
+    const raw = JSON.parse(window.localStorage.getItem(key) || 'null');
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const out = {};
     for (const [toolId, v] of Object.entries(raw)) {
@@ -247,7 +268,9 @@ export function loadToolDefaults() {
 export function saveToolDefaults(map) {
   if (!isBrowser()) return;
   try {
-    window.localStorage.setItem(TOOL_DEFAULTS_KEY, JSON.stringify(map || {}));
+    const key = sk(TOOL_DEFAULTS_KEY);
+    if (!key) return;
+    window.localStorage.setItem(key, JSON.stringify(map || {}));
   } catch { /* ignore */ }
 }
 

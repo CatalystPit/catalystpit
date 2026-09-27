@@ -14,6 +14,16 @@ import {
 import { buildEvidenceMarkers, snapToBar } from '../src/lib/chart/evidence-markers.mjs';
 import { makeEvidence, FAMILY, DIRECTION } from '../src/lib/evidence/model.mjs';
 
+// ⚠️ PERSISTENCE IS PER ACCOUNT NOW. Without a resolved identity the chart stores refuse every
+// read and write by design (see chart-scope.mjs), so this harness signs in as a fixed test user
+// exactly as a real browser does before any of these round-trips can happen.
+import { setChartScope, chartScopeKey } from '../src/lib/chart/chart-scope.mjs';
+setChartScope('user_verify_harness', { resolved: true });
+// ⚠️ ASKED FOR, NOT HARD-CODED, so a future change to the key format cannot leave this fixture
+// writing somewhere the product no longer reads.
+const SCOPED_EVIDENCE_KEY = chartScopeKey('cp_chart_evidence');
+
+
 let pass = 0, fail = 0;
 const check = (name, cond, detail = '') => {
   if (cond) { pass++; console.log('  ok   ' + name); }
@@ -158,22 +168,22 @@ sec('PERSISTENCE');
   saveVisibility(toggleAll(defaultVisibility()));
   check('the master switch round-trips', loadVisibility().enabled === false);
 
-  store.set('cp_chart_evidence', '{ not json');
+  store.set(SCOPED_EVIDENCE_KEY, '{ not json');
   check('corrupt storage falls back to the default', allFamiliesOn(loadVisibility()));
-  store.set('cp_chart_evidence', JSON.stringify({ enabled: 'yes', families: { insider: 'no' } }));
+  store.set(SCOPED_EVIDENCE_KEY, JSON.stringify({ enabled: 'yes', families: { insider: 'no' } }));
   check('wrong-typed values are ignored, not coerced', allFamiliesOn(loadVisibility()));
   // A falsy non-boolean must be IGNORED, not read as "off". Coercing it would let a stray 0 in
   // storage silently disable every marker with no way to tell why.
-  store.set('cp_chart_evidence', JSON.stringify({ enabled: 0, families: { insider: 0 } }));
+  store.set(SCOPED_EVIDENCE_KEY, JSON.stringify({ enabled: 0, families: { insider: 0 } }));
   check('a falsy non-boolean master is ignored, not coerced to off',
     loadVisibility().enabled === true, JSON.stringify(loadVisibility()));
   check('a falsy non-boolean family is ignored, not coerced to off',
     loadVisibility().families.insider === true);
-  store.set('cp_chart_evidence', JSON.stringify({ enabled: true, families: { ghost: false, insider: false } }));
+  store.set(SCOPED_EVIDENCE_KEY, JSON.stringify({ enabled: true, families: { ghost: false, insider: false } }));
   const loaded = loadVisibility();
   check('an unknown stored family is dropped', loaded.families.ghost === undefined);
   check('a known stored family is honoured', loaded.families.insider === false);
-  store.set('cp_chart_evidence', JSON.stringify({ enabled: true, families: null }));
+  store.set(SCOPED_EVIDENCE_KEY, JSON.stringify({ enabled: true, families: null }));
   check('a null families block falls back to the default', allFamiliesOn(loadVisibility()));
 
   // A storage that throws (private mode, quota) must not break anything.

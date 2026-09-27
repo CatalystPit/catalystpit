@@ -12,6 +12,13 @@
 // Run: node scripts/verify-drawing-toolbar.mjs
 
 import { readFileSync } from 'node:fs';
+
+// ⚠️ PERSISTENCE IS PER ACCOUNT NOW. Without a resolved identity the chart stores refuse every
+// read and write by design (see chart-scope.mjs), so this harness signs in as a fixed test user
+// exactly as a real browser does before any of these round-trips can happen.
+import { setChartScope } from '../src/lib/chart/chart-scope.mjs';
+setChartScope('user_verify_harness', { resolved: true });
+
 import {
   CONTROL, controlsFor, hasMore, selectionBox, placeToolbar, fitsInside,
   TOOLBAR_GAP, TOOLBAR_EDGE,
@@ -311,9 +318,9 @@ L('⚠️ A DELETED DRAWING LEAVES NOTHING BEHIND');
   // ⚠️ AND A SYMBOL CHANGE REPLACES THE LIST RATHER THAN MERGING INTO IT — the other way a drawing
   // could appear on a chart it does not belong to.
   ok('⚠️ a symbol change reloads the list for that symbol',
-    /setDrawings\(loadDrawings\(sym\)\);/.test(chart));
+    /setDrawings\(scope \? loadDrawings\(sym\) : \[\]\);/.test(chart));
   ok('…and drops the selection, which referred to another chart\'s drawing',
-    /setDrawings\(loadDrawings\(sym\)\);\s*\n\s*setSelectedIds\(\[\]\);/.test(chart));
+    /setDrawings\([\s\S]{0,60}\);\s*\n\s*setSelectedIds\(\[\]\);/.test(chart));
   ok('…and the undo stack, so undo cannot paste another symbol\'s drawings back',
     /historyRef\.current = emptyHistory\(\);/.test(chart));
 }
@@ -425,7 +432,9 @@ L('⚠️ IF A FIBONACCI IS ON SCREEN, A FIBONACCI IS IN STATE');
   ok('⚠️ every change to the list is persisted', /saveDrawings/.test(chart));
   ok('…keyed by symbol', /export function loadDrawings\(symbol\)/.test(store) || /loadDrawings = \(symbol\)/.test(store));
   ok('⚠️ a symbol change reloads from storage rather than merging',
-    /setDrawings\(loadDrawings\(sym\)\);/.test(chart));
+    /setDrawings\(scope \? loadDrawings\(sym\) : \[\]\);/.test(chart));
+  ok('⚠️ …and an unresolved account shows nothing, never the previous one\'s drawings',
+    /scope \? loadDrawings\(sym\) : \[\]/.test(chart));
   ok('…and a delete goes through the same path that persists', /updateDrawings\(\(ds\) => ds\.filter/.test(chart));
 }
 
