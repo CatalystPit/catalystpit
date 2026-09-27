@@ -132,9 +132,12 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
     // its chart. Capture phase, so a scroll in any ancestor counts.
     const onScroll = () => setOpen(false);
     window.addEventListener('scroll', onScroll, true);
+    const vvPick = window.visualViewport;
+    vvPick?.addEventListener('scroll', onScroll);
     return () => {
       window.removeEventListener('resize', measure);
       window.removeEventListener('scroll', onScroll, true);
+      vvPick?.removeEventListener('scroll', onScroll);
     };
   }, [open]);
 

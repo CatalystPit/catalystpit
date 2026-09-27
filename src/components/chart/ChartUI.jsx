@@ -127,9 +127,43 @@ export function Popover({
       e.stopPropagation();
       onClose();
     };
+    /**
+     * ⚠️ A PAGE SCROLL CLOSES EVERY CHART POPOVER, AND THIS IS WHERE IT HAS TO LIVE.
+     *
+     * These panels are `position: fixed` portals in document.body — see the note above for why they
+     * have to escape the chart's box — so they do not move when the page scrolls. They stayed pinned to
+     * the viewport while the chart slid away, floating over Key Statistics and Pit Consensus, describing
+     * a drawing the reader could no longer see.
+     *
+     * The earlier fix cleared the chart's selection on scroll, which unmounted the drawing toolbar and
+     * took its popover with it — enough to look fixed on desktop, and nothing at all for any popover
+     * opened from somewhere else: the rail's style flyout, the chart menus, the indicator popovers. Those
+     * were orphaned on every surface. Closing here covers all of them at once, because every chart
+     * popover is this component.
+     *
+     * ⚠️ AND MOBILE NEEDED MORE THAN `mousedown`. A touch scroll fires no mousedown, so on a phone
+     * nothing dismissed these at all. `pointerdown` covers touch and pen alongside the mouse, and iOS
+     * reports page panning through visualViewport rather than always through window scroll.
+     *
+     * ⚠️ visualViewport SCROLL ONLY, NOT RESIZE. Resize fires when the keyboard or URL bar appears and
+     * on a page pinch — closing on that would dismiss the toolbar mid-gesture while someone is zooming
+     * the chart, which is exactly the behaviour being asked for in the other direction. A chart pan or
+     * pinch is a pointer gesture on a canvas and moves neither viewport, so neither path fires for it.
+     */
+    const onScroll = () => onClose();
     document.addEventListener('mousedown', onDown);
+    document.addEventListener('pointerdown', onDown);
     document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+    window.addEventListener('scroll', onScroll, true);
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    vv?.addEventListener('scroll', onScroll);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      vv?.removeEventListener('scroll', onScroll);
+    };
   }, [open, onClose, anchorRef]);
 
   // NOTHING RENDERS UNTIL IT HAS BEEN PLACED. `place` runs in a layout effect, so the positioned

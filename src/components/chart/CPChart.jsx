@@ -768,7 +768,17 @@ export default function CPChart({
     const closeFloating = () => { setSelBox(null); setSelectedIds([]); };
     // The page moving out from under the chart.
     const onPageScroll = () => { if (selBox) closeFloating(); };
-    window.addEventListener('scroll', onPageScroll, { passive: true });
+    // ⚠️ CAPTURE, AND visualViewport TOO — WHICH IS WHY MOBILE WAS STILL BROKEN. A `scroll` event does
+    // not bubble, so a listener on window without capture only ever hears the document scrolling; any
+    // scrollable ancestor between the chart and the document is silent. And iOS reports page panning
+    // through visualViewport rather than always through window scroll, so a phone could scroll the chart
+    // clean off the screen without this handler firing once. Capture hears every scroll on the way down.
+    //
+    // NOT visualViewport `resize`: that fires for the keyboard, the URL bar and a page pinch, and closing
+    // on it would dismiss the toolbar while someone is pinch-zooming the chart.
+    window.addEventListener('scroll', onPageScroll, { passive: true, capture: true });
+    const vv = window.visualViewport;
+    vv?.addEventListener('scroll', onPageScroll);
     // ...and the chart leaving the viewport by any other route: a resize, a collapsing dock, a drawer.
     let io = null;
     const host = hostRef.current;
@@ -780,7 +790,8 @@ export default function CPChart({
       io.observe(host);
     }
     return () => {
-      window.removeEventListener('scroll', onPageScroll);
+      window.removeEventListener('scroll', onPageScroll, { capture: true });
+      vv?.removeEventListener('scroll', onPageScroll);
       io?.disconnect();
     };
   }, [selBox]);
