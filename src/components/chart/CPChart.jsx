@@ -748,57 +748,65 @@ export default function CPChart({
   const [selBox, setSelBox] = useState(null);
 
   /**
-   * CHART-OWNED FLOATING UI CLOSES WHEN THE CHART IS NO LONGER THE CONTEXT.
+   * ONE DISMISSAL PATH FOR EVERY PIECE OF SELECTED-DRAWING UI.
    *
-   * ⚠️ THE BUG: the drawing toolbar is absolutely positioned inside the chart's box, so page-scrolling
-   * the ticker page carried it up the screen while the chart slid away — leaving it floating over Key
-   * Statistics and Pit Consensus, attached to nothing. Its colour popover went with it.
+   * The toolbar and its colour popover are not two problems. The popover renders inside the toolbar, so
+   * unmounting the toolbar unmounts the portal in the same commit — which is why this clears STATE rather
+   * than asking each control to close itself. Nothing here waits for a pointerdown, a visualViewport
+   * event or an observer callback to tidy up afterwards.
+   */
+  const dismissDrawingUI = useCallback(() => {
+    setSelBox(null);
+    setSelectedIds([]);
+  }, []);
+
+  /**
+   * OUTER SCROLL DISMISSES THE DRAWING UI; CHART INTERACTION DOES NOT.
    *
-   * ⚠️ AND IT IS AN OWNERSHIP PROBLEM, NOT A POSITIONING ONE. position:fixed, sticky, a larger z-index
-   * or an overflow clip would each move the symptom somewhere else: the toolbar would still be open,
-   * still describing a drawing the reader cannot see. A control that belongs to the chart has no meaning
-   * away from it, so it closes.
+   * ⚠️ WHY LISTENING ON window WAS NOT ENOUGH, ON ANY PLATFORM. A `scroll` event does not bubble. It is
+   * dispatched at the element that scrolled, and it reaches window only if window IS that element — the
+   * document scrolling. Capture phase does deliver an ancestor's scroll to a window listener, but only
+   * for elements in that propagation path, and the two previous attempts leaned on window and
+   * visualViewport to infer scrolling they could not actually observe. Whichever container the mobile
+   * layout scrolls, neither was hearing it.
    *
-   * ⚠️ PAGE SCROLL IS NOT CHART PAN. Panning or zooming inside the chart fires no window scroll — it is
-   * a pointer gesture on a canvas — so the toolbar survives those and is re-anchored from the drawing's
-   * own coordinates by DrawingLayer, which is what keeps it on the drawing. Only the PAGE moving, or the
-   * chart leaving the viewport, closes anything.
+   * So the listener goes where the scrolling happens: walk up from the chart's own host through every
+   * ancestor, and bind to each one, plus the document and window as the outer fallbacks. That is
+   * structural — it does not care which element the layout chose to make scrollable, or which platform
+   * chose it.
+   *
+   * ⚠️ THE EXCEPTION IS BY ORIGIN, NOT BY PLATFORM. A scroll whose target is the chart host or anything
+   * inside it belongs to the chart, so it is ignored: pan, pinch, wheel zoom, dragging a drawing and
+   * selecting one all stay working. Everything else is the page moving out from under the chart.
    */
   useEffect(() => {
-    const closeFloating = () => { setSelBox(null); setSelectedIds([]); };
-    // The page moving out from under the chart.
-    const onPageScroll = () => { if (selBox) closeFloating(); };
-    // ⚠️ CAPTURE, AND visualViewport TOO — WHICH IS WHY MOBILE WAS STILL BROKEN. A `scroll` event does
-    // not bubble, so a listener on window without capture only ever hears the document scrolling; any
-    // scrollable ancestor between the chart and the document is silent. And iOS reports page panning
-    // through visualViewport rather than always through window scroll, so a phone could scroll the chart
-    // clean off the screen without this handler firing once. Capture hears every scroll on the way down.
-    //
-    // NOT visualViewport `resize`: that fires for the keyboard, the URL bar and a page pinch, and closing
-    // on it would dismiss the toolbar while someone is pinch-zooming the chart.
-    window.addEventListener('scroll', onPageScroll, { passive: true, capture: true });
-    const vv = window.visualViewport;
-    vv?.addEventListener('scroll', onPageScroll);
-    // ...and the chart leaving the viewport by any other route: a resize, a collapsing dock, a drawer.
-    let io = null;
+    if (!selBox) return undefined;
     const host = hostRef.current;
-    if (host && typeof IntersectionObserver === 'function') {
-      io = new IntersectionObserver((entries) => {
-        for (const e of entries) if (!e.isIntersecting) closeFloating();
-      // A small threshold rather than 0: a chart one pixel on screen is not a context either.
-      }, { threshold: 0.15 });
-      io.observe(host);
-    }
-    return () => {
-      window.removeEventListener('scroll', onPageScroll, { capture: true });
-      vv?.removeEventListener('scroll', onPageScroll);
-      io?.disconnect();
+    if (!host) return undefined;
+
+    const onScroll = (e) => {
+      // A scroll from the chart's own surface is chart interaction, not the page leaving.
+      const t = e.target;
+      if (t === host || (t && typeof t.contains === 'function' && host.contains(t))) return;
+      // A canvas or element inside the chart that is not an ancestor of the host either.
+      if (t instanceof Node && host.contains(t)) return;
+      dismissDrawingUI();
     };
-  }, [selBox]);
+
+    // Every ancestor between the chart and the document, then the document and window.
+    const targets = [];
+    for (let el = host.parentElement; el; el = el.parentElement) targets.push(el);
+    if (typeof document !== 'undefined') targets.push(document);
+    targets.push(window);
+
+    const opts = { capture: true, passive: true };
+    for (const t of targets) t.addEventListener('scroll', onScroll, opts);
+    return () => { for (const t of targets) t.removeEventListener('scroll', onScroll, opts); };
+  }, [selBox, dismissDrawingUI]);
 
   // Symbol and timeframe changes take the floating controls with them — the drawing they described
   // either no longer exists or is no longer the one on screen.
-  useEffect(() => { setSelBox(null); }, [sym, tf]);
+  useEffect(() => { dismissDrawingUI(); }, [sym, tf, dismissDrawingUI]);
 
   /**
    * A patch to the single selected drawing, through the history like every other change.

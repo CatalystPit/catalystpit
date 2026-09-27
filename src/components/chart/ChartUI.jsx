@@ -141,28 +141,24 @@ export function Popover({
      * were orphaned on every surface. Closing here covers all of them at once, because every chart
      * popover is this component.
      *
-     * ⚠️ AND MOBILE NEEDED MORE THAN `mousedown`. A touch scroll fires no mousedown, so on a phone
-     * nothing dismissed these at all. `pointerdown` covers touch and pen alongside the mouse, and iOS
-     * reports page panning through visualViewport rather than always through window scroll.
+     * ⚠️ `pointerdown` AS WELL AS `mousedown`, because a touch fires no mousedown — a tap outside could
+     * not dismiss these on a phone at all.
      *
-     * ⚠️ visualViewport SCROLL ONLY, NOT RESIZE. Resize fires when the keyboard or URL bar appears and
-     * on a page pinch — closing on that would dismiss the toolbar mid-gesture while someone is zooming
-     * the chart, which is exactly the behaviour being asked for in the other direction. A chart pan or
-     * pinch is a pointer gesture on a canvas and moves neither viewport, so neither path fires for it.
+     * ⚠️ THIS IS NOT WHAT DISMISSES THE SELECTED-DRAWING UI. That has one path, in CPChart, which clears
+     * the selection and unmounts this portal with the toolbar it lives in. What is left here covers the
+     * popovers that have no toolbar to be unmounted with: the rail's style flyout, the chart menus, the
+     * indicator popovers.
      */
     const onScroll = () => onClose();
     document.addEventListener('mousedown', onDown);
     document.addEventListener('pointerdown', onDown);
     document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
-    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
-    vv?.addEventListener('scroll', onScroll);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('pointerdown', onDown);
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onScroll, true);
-      vv?.removeEventListener('scroll', onScroll);
     };
   }, [open, onClose, anchorRef]);
 
