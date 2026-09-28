@@ -4,7 +4,7 @@ import { tool, LINE_WIDTHS, LINE_DASHES, LABEL_MAX } from '../../lib/chart/chart
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
 import { Popover, MenuItem, MenuLabel } from './ChartUI';
 import { CONTROL, controlsFor, placeToolbar } from '../../lib/chart/drawing-toolbar.mjs';
-import { ColorPalettePanel, COLOR_GRID_WIDTH, COLOR_PANEL_CONTENT_HEIGHT } from './ColorPicker';
+import { ColorPalettePanel, usePaletteMetrics } from './ColorPicker';
 
 // THE FLOATING TOOLBAR FOR A SELECTED DRAWING.
 //
@@ -75,6 +75,9 @@ function DrawingToolbarBase({
   onStyle, onPatch, onDelete, onOpenSettings,
 }) {
   const p = palette(theme);
+  // Resolved HERE, in the host, so it is settled long before a palette is opened and the numbers the
+  // Popover places against are the same ones the panel lays itself out with.
+  const cm = usePaletteMetrics();
   const [open, setOpen] = useState(null);           // 'color' | 'width' | 'dash' | 'label' | 'more'
   const [draft, setDraft] = useState('');
   const refs = {
@@ -300,12 +303,13 @@ function DrawingToolbarBase({
         * ends up centred over the chart rather than half off the side.
         */}
       <Popover anchorRef={refs.color} open={open === CONTROL.COLOR} onClose={close} theme={theme}
-        placement="bottom-center" width={COLOR_GRID_WIDTH} height={COLOR_PANEL_CONTENT_HEIGHT}
+        placement="bottom-center" width={cm.contentWidth} height={cm.contentHeight}
         label="Drawing color">
         <ColorPalettePanel
           theme={theme} value={drawing.style?.color}
           onPick={(v) => { onStyle({ color: v }); close(); }}
           onChange={(v) => onStyle({ color: v })}
+          metrics={cm}
         />
       </Popover>
 

@@ -92,6 +92,74 @@ export const PALETTE_ROWS = PALETTE_GRID.length;
  */
 export const COMMON_COLORS = FAMILIES.map((f) => f.shades[5]);
 
+// ── HOW BIG THE GRID IS ────────────────────────────────────────────────────────────────────────
+//
+// ⚠️ THE SIZING LIVES HERE, WITH THE PALETTE, AND NOT IN THE COMPONENT. Two reasons. The panel's size
+// has to be known BEFORE the first paint, because the popover's placement depends on it (see placeFor's
+// `height` branch) — so it is arithmetic, not a measurement. And a number that only exists inside a .jsx
+// file cannot be imported by a node test, which is how the suites ended up restating "32" and "4" as
+// literals and then quietly describing a palette that had moved on.
+//
+// ⚠️ TWO POINTER KINDS, NOT TWO SCREEN WIDTHS. What decides the swatch size is whether a finger or a
+// cursor is doing the pointing, which is what `(pointer: coarse)` asks. A narrow window on a desktop is
+// still a mouse and wants the dense grid; a wide tablet is still a thumb and wants the big one. Sizing
+// off viewport width gets both of those wrong, and sniffing the user agent gets them wrong differently.
+
+/** Selection is drawn as a 2px outline 1px clear of the swatch, so it needs 3px outside the box. */
+export const SELECTION_RING = 3;
+
+/**
+ * The two sizings.
+ *
+ * ⚠️ `fine` IS DELIBERATELY DENSE. A 90-swatch palette built at touch size is 330px across and 443px
+ * tall, which on a desktop chart is a panel, not a menu — it covers the thing you are recolouring, and
+ * the eye has to travel to scan it. A dense grid is not a compromise on desktop, it is the better
+ * control: professional charting palettes are ~16px cells because at that size all ninety are inside
+ * one saccade.
+ *
+ * ⚠️ `coarse` IS UNCHANGED FROM THE TOUCH DESIGN. 32px stays 32px. Shrinking the phone to match the
+ * desktop would trade a real problem (a palette you cannot hit) for a cosmetic one.
+ */
+export const PALETTE_SIZINGS = {
+  fine:   { swatch: 16, gap: 2, themeSwatch: 12, labelFont: 8, hexInput: 20, hexWidth: 66, nativeW: 22, nativeH: 18, stackGap: 4, sepPad: 5, hostPad: 4 },
+  coarse: { swatch: 32, gap: 4, themeSwatch: 15, labelFont: 9, hexInput: 22, hexWidth: 78, nativeW: 26, nativeH: 22, stackGap: 6, sepPad: 6, hostPad: 8 },
+};
+
+/**
+ * Every number the panel and its host need, derived from the palette's own shape.
+ *
+ * `contentWidth`/`contentHeight` are what the HOST must give the panel — the box the panel fills. The
+ * grid is inset by SELECTION_RING on each side inside that, which is what gives the leftmost and
+ * rightmost columns identical breathing room and stops the selection ring on an edge column being
+ * clipped by the popover's `overflow: hidden`.
+ *
+ * ⚠️ THE INSET IS NOT DECORATION, IT IS THE BUG FIX. The grid used to be exactly as wide as the box
+ * holding it: nine 32px swatches and eight 4px gaps in a 320px content box, correct to the pixel. A
+ * layout with zero slack has nowhere to round to, and the selection ring on a purple swatch was drawn
+ * 3px into a clipping boundary — which is what made the last column look cut off.
+ */
+export function paletteMetrics(kind = 'fine') {
+  const s = PALETTE_SIZINGS[kind] || PALETTE_SIZINGS.fine;
+  const gridWidth = PALETTE_COLUMNS * s.swatch + (PALETTE_COLUMNS - 1) * s.gap;
+  const gridHeight = PALETTE_ROWS * s.swatch + (PALETTE_ROWS - 1) * s.gap;
+  // The label's own line box, plus the gap under it.
+  const labelHeight = Math.round(s.labelFont * 1.45) + 4;
+  const themeRow = 1 + s.sepPad + labelHeight + s.themeSwatch;
+  const customRow = 1 + s.sepPad + Math.max(s.hexInput, s.nativeH);
+  return {
+    kind, ...s,
+    ring: SELECTION_RING,
+    gridWidth,
+    gridHeight,
+    labelHeight,
+    contentWidth: gridWidth + SELECTION_RING * 2,
+    contentHeight: gridHeight + themeRow + customRow + s.stackGap * 2,
+  };
+}
+
+/** Which sizing a pointer implies. Pure, so the decision can be tested without a browser. */
+export const sizingForPointer = (coarse) => (coarse ? 'coarse' : 'fine');
+
 const HEX_RE = /^#?([0-9a-fA-F]{6})$/;
 const SHORT_HEX_RE = /^#?([0-9a-fA-F]{3})$/;
 

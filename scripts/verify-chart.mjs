@@ -10,6 +10,7 @@
 // vendor rather than trusting the comment that says it works.
 
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import {
   TIMEFRAMES, DEFAULT_TIMEFRAME, timeframe, isIntraday, supportsExtendedHours,
   barsUrl, normalizeBars, refreshIntervalMs, diffBars, isValidSymbol,
@@ -1305,17 +1306,24 @@ section('19. the timeframe menu: one compact control, grouped, nothing invented'
 
 section('19b. a panel with a KNOWN height is placed to fit, never capped and scrolled');
 {
+  const readSrc = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   // ⚠️ WHY THIS BRANCH EXISTS. Every other chart menu is a list: give it the room a side has and let the
   // overflow scroll, which is what `maxHeight` expresses. The colour palette is not a list — its whole
   // point is that all ninety swatches are visible at once — so its height is an INPUT to the placement
   // decision rather than something to trim. Passing `height` switches the rule from "hang below and cap"
   // to "keep the whole box on screen".
-  // ColorPicker.jsx cannot be imported in node, so the palette's size is restated from the palette
-  // itself here — and tied back to the component's own constants by the source assertions at the end,
-  // so the two cannot drift apart without something failing.
-  const { PALETTE_COLUMNS: COLS, PALETTE_ROWS: ROWS } = await import('../src/lib/chart/color-palette.mjs');
-  const W = COLS * 32 + (COLS - 1) * 4;
-  const H = ROWS * 32 + (ROWS - 1) * 4 + 34 + 36 + 26;
+  // ⚠️ THE SIZE COMES FROM THE PALETTE MODULE, NOT FROM LITERALS RESTATED HERE. This used to compute the
+  // box as `COLS * 32 + (COLS - 1) * 4`, duplicating the component's constants in the test — so when the
+  // desktop grid became 16px on a 2px gap, the suite went on asserting the geometry of a palette that no
+  // longer existed. paletteMetrics is now the single source for both.
+  const { paletteMetrics } = await import('../src/lib/chart/color-palette.mjs');
+  // The TOUCH palette is the larger of the two, so it is the one the placement has to survive.
+  const fine = paletteMetrics('fine');
+  const coarse = paletteMetrics('coarse');
+  const W = coarse.contentWidth;
+  const H = coarse.contentHeight;
+  ok('the dense sizing really is denser', fine.contentWidth < coarse.contentWidth
+    && fine.contentHeight < coarse.contentHeight, `${fine.contentWidth}x${fine.contentHeight} vs ${W}x${H}`);
 
   // Every plausible place a floating drawing toolbar can put its colour square, on a phone and on a
   // desktop. The property is the same in all of them: the whole palette lands inside the window.
@@ -1389,13 +1397,29 @@ section('19b. a panel with a KNOWN height is placed to fit, never capped and scr
   // The toolbar passes these, and passes the palette's own constants rather than literals.
   const barSrc = (await readFile(new URL('../src/components/chart/DrawingToolbar.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the drawing toolbar places its palette by a known height',
-    /height=\{COLOR_PANEL_CONTENT_HEIGHT\}/.test(barSrc) && /width=\{COLOR_GRID_WIDTH\}/.test(barSrc));
+    /height=\{cm\.contentHeight\}/.test(barSrc) && /width=\{cm\.contentWidth\}/.test(barSrc));
   ok('...and centres it on the colour square', /placement="bottom-center"/.test(barSrc));
-  const pickerSrc = (await readFile(new URL('../src/components/chart/ColorPicker.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-  ok('...and those constants are the palette arithmetic, not literals',
-    new RegExp(`COLOR_GRID_WIDTH = PALETTE_COLUMNS \\* GRID_SWATCH`).test(pickerSrc)
-    && /COLOR_PANEL_CONTENT_HEIGHT = GRID_HEIGHT \+ EXTRAS_HEIGHT/.test(pickerSrc));
-  ok('...and the palette is the width this section assumed', W === COLS * 32 + (COLS - 1) * 4);
+  ok('...from the metrics its own host resolved', /const cm = usePaletteMetrics\(\);/.test(barSrc));
+  const pickerSrc = readSrc('../src/components/chart/ColorPicker.jsx');
+  ok('...and the panel is handed those same metrics, so the two cannot disagree',
+    /metrics=\{cm\}/.test(barSrc) && /metrics = DEFAULT_PALETTE_METRICS/.test(pickerSrc));
+  const paletteSrc = readSrc('../src/lib/chart/color-palette.mjs');
+  // ⚠️ THE ARITHMETIC LIVES WITH THE PALETTE, which is what lets this suite import the real numbers
+  // instead of restating 32 and 4 as literals and then describing a palette that has moved on.
+  ok('...and the sizing is the palette arithmetic, not literals in the component',
+    /gridWidth = PALETTE_COLUMNS \* s\.swatch \+ \(PALETTE_COLUMNS - 1\) \* s\.gap/.test(paletteSrc)
+    && /gridHeight = PALETTE_ROWS \* s\.swatch \+ \(PALETTE_ROWS - 1\) \* s\.gap/.test(paletteSrc));
+  // ⚠️ SCOPED TO THE SIZING HOOK, not the whole file. ColorPicker reads window.innerWidth legitimately,
+  // in the effect that keeps its panel on screen — banning the identifier outright failed on that, which
+  // is a different concern from how big a swatch is. What must not decide the SIZE is a window dimension
+  // or a user-agent string, because a narrow desktop window is still a mouse and a wide tablet is still
+  // a thumb.
+  const hook = (/export function usePaletteMetrics\(\)[\s\S]*?\n}/.exec(pickerSrc) || [''])[0];
+  ok('the sizing hook was located', hook.length > 200, `${hook.length} chars`);
+  ok('⚠️ ...and the POINTER KIND decides the size, not a viewport width or a user agent',
+    /matchMedia\('\(pointer: coarse\)'\)/.test(hook)
+    && !/innerWidth|innerHeight|userAgent|iPhone|Android/i.test(hook),
+    hook.slice(0, 120));
   // The Popover must actually forward it, or all of the above describes an unused code path.
   const uiFwd = (await readFile(new URL('../src/components/chart/ChartUI.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('⚠️ the Popover forwards a known height to the placement',

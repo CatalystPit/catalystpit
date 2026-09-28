@@ -18,7 +18,7 @@ import React from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { PALETTE, PALETTE_GRID, PALETTE_COLUMNS, PALETTE_ROWS, COMMON_COLORS, normalizeHex } from '../src/lib/chart/color-palette.mjs';
+import { PALETTE, PALETTE_GRID, PALETTE_COLUMNS, PALETTE_ROWS, COMMON_COLORS, normalizeHex, paletteMetrics, sizingForPointer } from '../src/lib/chart/color-palette.mjs';
 import { indicatorColor, indicatorColors } from '../src/lib/chart/chart-theme.mjs';
 import { sanitizeStyle, sanitizeFibLevels, coerceDrawing, createDrawing, DEFAULT_STYLE } from '../src/lib/chart/chart-drawings.mjs';
 import { seriesColorValue, primaryColorValue, defaultParams } from '../src/lib/chart/chart-indicators.mjs';
@@ -431,19 +431,52 @@ console.log('\n8b. all 90 at once, with no scroll container');
   ok('...in the source either', !/overflowY|maxHeight/.test(src));
 
   // Compact: a popover, not a modal.
-  // ⚠️ THE WIDTH FOLLOWS THE TAP TARGET, and that trade was made deliberately. Nine columns of 18px fit
-  // in 232px but are too small to hit with a thumb; nine of 32px need 336px, which still leaves 54px spare
-  // on a 390px phone. Compact now means "fits a phone with room to spare", not "as narrow as possible".
+  // ⚠️ THE SIZE IS PER POINTER KIND, AND THIS jsdom HAS NO matchMedia — so what renders here is the
+  // DESKTOP palette, and that is what these two assertions describe. The touch sizing is checked from
+  // paletteMetrics below and rendered for real in 8g.
+  //
+  // ⚠️ WHAT CHANGED AND WHY. This used to assert 280-360px, because desktop and touch shared one 32px
+  // grid: 336px, "fits a phone with room to spare". On a desktop chart that is a panel rather than a
+  // menu — it covers the drawing being recoloured, and the far column sat flush against the clipping
+  // edge. Desktop is now 16px on a 2px gap, which is the density a charting palette wants.
+  const fineM = paletteMetrics('fine');
+  const coarseM = paletteMetrics('coarse');
+  // `panel` is the picker's own positioned BOX; the palette content sits inside its padding, so the two
+  // have different widths and an assertion has to say which one it means.
+  const paletteBox = panel.querySelector('[data-cp-palette]');
   const w = /width:\s*(\d+)px/.exec(styleOf(panel));
-  ok('⚠️ the popover fits a 390px phone with room to spare',
-    w && Number(w[1]) <= 360 && Number(w[1]) >= 280, w ? `${w[1]}px` : styleOf(panel).slice(0, 90));
-  ok('⚠️ ...and its swatches are big enough to tap', (() => {
+  const pw = /width:\s*(\d+)px/.exec(styleOf(paletteBox));
+  ok('⚠️ the desktop palette content is exactly the width the metrics describe',
+    pw && Number(pw[1]) === fineM.contentWidth, `${pw ? pw[1] : '?'}px vs ${fineM.contentWidth}px`);
+  ok('⚠️ ...and the box around it adds only its own padding and border',
+    w && Number(w[1]) === fineM.contentWidth + fineM.hostPad * 2 + 2,
+    `${w ? w[1] : '?'}px vs ${fineM.contentWidth + fineM.hostPad * 2 + 2}px`);
+  ok('⚠️ ...which is materially smaller than the 336px grid it replaces',
+    fineM.contentWidth <= 200, `${fineM.contentWidth}px`);
+  ok('⚠️ ...and the touch sizing is NOT shrunk with it',
+    coarseM.swatch >= 28 && coarseM.swatch > fineM.swatch,
+    `touch ${coarseM.swatch}px, desktop ${fineM.swatch}px`);
+  ok('⚠️ ...while the touch palette still fits a 390px phone',
+    coarseM.contentWidth + coarseM.hostPad * 2 + 2 <= 390 - 8,
+    `${coarseM.contentWidth + coarseM.hostPad * 2 + 2}px in 390px`);
+  ok('⚠️ the rendered swatch is the metric swatch', (() => {
     const first = [...panel.querySelectorAll('button')]
       .find((b) => PALETTE.includes(b.getAttribute('aria-label')));
     const m = /width:\s*(\d+)px/.exec(first?.getAttribute('style') || '');
-    return m && Number(m[1]) >= 28;
-  })(), 'a swatch under 28px is a poor touch target');
-
+    return m && Number(m[1]) === fineM.swatch;
+  })(), `expected ${fineM.swatch}px`);
+  // ⚠️ AND THE GRID IS INSET FROM ITS OWN EDGES. This is the fix for the clipped purple column: the grid
+  // used to be exactly as wide as the box holding it, measured in a real browser as 0.00px of padding on
+  // both sides, so the 2px selection ring on an edge column fell outside and was cut off by the
+  // popover's overflow. The inset is symmetrical by construction — one number used on both sides.
+  ok('⚠️ the grid is inset from both edges by the selection ring',
+    fineM.contentWidth === fineM.gridWidth + fineM.ring * 2
+    && coarseM.contentWidth === coarseM.gridWidth + coarseM.ring * 2,
+    `${fineM.contentWidth} vs ${fineM.gridWidth} + 2x${fineM.ring}`);
+  const padStyle = styleOf(paletteBox);
+  ok('⚠️ ...and the panel actually applies it on both sides',
+    new RegExp(`padding-left:\\s*${fineM.ring}px`).test(padStyle)
+    && new RegExp(`padding-right:\\s*${fineM.ring}px`).test(padStyle), padStyle.slice(0, 120));
   // The custom controls stay, below the grid.
   ok('the hex field is still offered', !!panel.querySelector('input[aria-label="Hex color"]'));
   ok('the native picker is still offered', !!panel.querySelector('input[type="color"]'));
@@ -541,24 +574,53 @@ console.log('\n8c. edge placement keeps the complete palette on screen');
   }
 }
 
-// ── 8d. the expanded grid fits a 390px phone in BOTH axes ──────────────────────────────────────
-console.log('\n8d. the expanded grid fits a 390px phone in both axes');
+// ── 8d. both sizings fit their target, and neither is a literal ────────────────────────────────
+console.log('\n8d. both sizings fit their target, and neither is a literal');
 
 {
-  // Arithmetic from the palette, so this is a statement about the design rather than about a screenshot.
-  const SW = 32, GAP = 4, PAD = 8;
-  const width = PALETTE_COLUMNS * SW + (PALETTE_COLUMNS - 1) * GAP + PAD * 2;
-  const gridH = PALETTE_ROWS * SW + (PALETTE_ROWS - 1) * GAP;
-  const height = gridH + 34 + 36 + 26 + PAD * 2;   // + theme row, custom row, separators
-  ok('⚠️ no horizontal scrolling at 390px', width <= 390 - 16, `${width}px in 390px`);
-  ok('⚠️ no vertical scrolling at 844px', height <= 844 - 16, `${height}px in 844px`);
-  ok('⚠️ the swatches are a comfortable tap target', SW >= 28, `${SW}px`);
-  ok('...and all 90 are in that one panel', PALETTE_COLUMNS * PALETTE_ROWS === 90);
-  // The picker must actually use those numbers.
+  // ⚠️ ARITHMETIC IMPORTED, NOT RESTATED. This block used to open `const SW = 32, GAP = 4, PAD = 8` and
+  // recompute the panel from those — a copy of the component's constants living in the test, which is
+  // exactly how a suite ends up describing a palette that has since changed shape. The numbers now come
+  // from paletteMetrics, the one place that owns them.
+  for (const [kind, vw, vh] of [['fine', 1440, 900], ['coarse', 390, 844]]) {
+    const m = paletteMetrics(kind);
+    const boxW = m.contentWidth + m.hostPad * 2 + 2;
+    const boxH = m.contentHeight + m.hostPad * 2 + 2;
+    ok(`⚠️ ${kind}: no horizontal scrolling at ${vw}px`, boxW <= vw - 16, `${boxW}px in ${vw}px`);
+    ok(`⚠️ ${kind}: no vertical scrolling at ${vh}px`, boxH <= vh - 16, `${boxH}px in ${vh}px`);
+    ok(`${kind}: all 90 are in that one panel`, PALETTE_COLUMNS * PALETTE_ROWS === 90);
+    ok(`${kind}: the grid is inset by the ring on both sides`,
+      m.contentWidth === m.gridWidth + m.ring * 2);
+  }
+  const fineM = paletteMetrics('fine');
+  const coarseM = paletteMetrics('coarse');
+  // ⚠️ THE TWO REQUIREMENTS THAT PULL IN OPPOSITE DIRECTIONS, stated as the assertions they are: dense
+  // enough to scan on a desktop, big enough to hit with a thumb. One number cannot do both, which is
+  // why there are two sizings rather than one compromise.
+  ok('⚠️ desktop is dense enough to scan', fineM.swatch <= 20, `${fineM.swatch}px`);
+  ok('⚠️ ...and still large enough to read as a colour', fineM.swatch >= 12, `${fineM.swatch}px`);
+  ok('⚠️ touch stays a comfortable tap target', coarseM.swatch >= 28, `${coarseM.swatch}px`);
+  ok('⚠️ ...and was not shrunk to match the desktop', coarseM.swatch > fineM.swatch);
+  ok('⚠️ the desktop popover is materially smaller than the 336px one it replaces',
+    fineM.contentWidth + fineM.hostPad * 2 + 2 <= 200,
+    `${fineM.contentWidth + fineM.hostPad * 2 + 2}px`);
+
+  // The palette module must actually derive those numbers rather than carry them as literals.
+  const psrc = read('src/lib/chart/color-palette.mjs');
+  ok('the grid width is derived from the palette shape',
+    /gridWidth = PALETTE_COLUMNS \* s\.swatch \+ \(PALETTE_COLUMNS - 1\) \* s\.gap/.test(psrc));
+  ok('...and the grid height likewise',
+    /gridHeight = PALETTE_ROWS \* s\.swatch \+ \(PALETTE_ROWS - 1\) \* s\.gap/.test(psrc));
+  ok('...and the content width adds the selection ring on both sides',
+    /contentWidth: gridWidth \+ SELECTION_RING \* 2/.test(psrc));
+
+  // The component must take them from there rather than declaring its own.
   const src = read('src/components/chart/ColorPicker.jsx');
-  ok('the picker uses that swatch size', new RegExp(`const GRID_SWATCH = ${SW};`).test(src));
-  ok('...and sizes the panel from the palette rather than a literal',
-    /COLOR_GRID_WIDTH = PALETTE_COLUMNS \* GRID_SWATCH/.test(src));
+  ok('⚠️ the picker declares no swatch size of its own',
+    !/const GRID_SWATCH|const GRID_GAP/.test(code(src)),
+    'a local swatch constant is how the desktop and the phone ended up sharing one grid');
+  ok('...and sizes every box from the metrics it was given',
+    /size=\{m\.swatch\}/.test(src) && /width: m\.contentWidth/.test(src));
   // ⚠️ AND THE SWATCHES ARE BORDER-BOX, so the arithmetic above describes the boxes the browser lays
   // out. They were content-box with a 1px border, making every 32px swatch 34px and every row 18px
   // wider than the panel sized to hold it — nine columns overflowing a nine-column panel.
@@ -567,7 +629,6 @@ console.log('\n8d. the expanded grid fits a 390px phone in both axes');
   ));
   ok('...and still has no scroll container', !/overflowY|maxHeight/.test(code(src)));
 }
-
 // ── 8e. every drawing type gets the expanded palette ───────────────────────────────────────────
 console.log('\n8e. every drawing type gets the expanded palette');
 
@@ -732,11 +793,14 @@ console.log('\n8f. the drawing toolbar colour square opens the palette in one ta
     // only the swatch rows (356px) passed against a box capped at the 360px default, so every mutation
     // that dropped the height on the floor went unnoticed here. The theme-aware row and the custom
     // controls are part of what must be visible without scrolling, so they are part of the number.
-    const CONTENT_H = PALETTE_ROWS * 32 + (PALETTE_ROWS - 1) * 4 + 34 + 36 + 26;
+    // ⚠️ THE METRICS, NOT LITERALS. jsdom has no matchMedia, so the toolbar resolves the DESKTOP sizing
+    // here; the touch sizing is exercised in 8g with matchMedia stubbed, and both are measured for real
+    // in verify-picker-layout.
+    const jm = paletteMetrics('fine');
     ok(`⚠️ ${where}: ...and tall enough to show the whole panel without scrolling`,
-      boxMaxH >= CONTENT_H, `maxHeight ${boxMaxH} for a ${CONTENT_H}px panel`);
-    ok(`${where}: ...and wide enough for nine columns`,
-      boxW >= PALETTE_COLUMNS * 32 + (PALETTE_COLUMNS - 1) * 4, `width ${boxW}`);
+      boxMaxH >= jm.contentHeight, `maxHeight ${boxMaxH} for a ${jm.contentHeight}px panel`);
+    ok(`${where}: ...and wide enough for every column plus its inset`,
+      boxW >= jm.contentWidth, `width ${boxW} vs ${jm.contentWidth}`);
 
     // ── PICKING APPLIES IMMEDIATELY AND DISMISSES ──
     const target = PALETTE[12];
@@ -773,9 +837,122 @@ console.log('\n8f. the drawing toolbar colour square opens the palette in one ta
   ok('...inside the portalled Popover, so the chart cannot clip it',
     /<Popover[^>]*anchorRef=\{refs\.color\}[\s\S]{0,300}<ColorPalettePanel/.test(bar));
   ok('...placed by a known height rather than capped and scrolled',
-    /height=\{COLOR_PANEL_CONTENT_HEIGHT\}/.test(bar));
+    /height=\{cm\.contentHeight\}/.test(bar));
+  ok('...sized from the metrics the host resolved, so panel and placement agree',
+    /const cm = usePaletteMetrics\(\);/.test(bar) && /metrics=\{cm\}/.test(bar));
   ok('...and it still writes through the drawing style channel',
     /onStyle\(\{ color: v \}\)/.test(bar));
+}
+
+// ── 8g. the sizing follows the POINTER, and the component honours it ───────────────────────────
+console.log('\n8g. the sizing follows the pointer, and the component honours it');
+
+// ⚠️ THE AXIS IS POINTER KIND, NOT SCREEN WIDTH. A narrow desktop window is still a mouse and wants the
+// dense grid; a wide tablet is still a thumb and wants the big one. Sizing off viewport width gets both
+// of those wrong, and a user-agent branch gets them wrong differently — and is banned outright in this
+// codebase. So the decision is `(pointer: coarse)`, and this section drives the real component with that
+// query stubbed both ways.
+{
+  ok('the pure decision maps a coarse pointer to the large sizing',
+    sizingForPointer(true) === 'coarse' && sizingForPointer(false) === 'fine');
+
+  const { build: esbuild } = await import('esbuild');
+  const TMP = path.join(ROOT, 'node_modules', '.cache', 'cp-unify-pointer');
+  fs.rmSync(TMP, { recursive: true, force: true });
+  fs.mkdirSync(TMP, { recursive: true });
+  const out = path.join(TMP, 'DrawingToolbar.mjs');
+  await build({
+    entryPoints: [path.join(ROOT, 'src/components/chart/DrawingToolbar.jsx')],
+    bundle: true, format: 'esm', platform: 'browser', outfile: out, jsx: 'automatic',
+    external: ['react', 'react-dom', 'react/jsx-runtime', 'react-dom/client'],
+    logLevel: 'silent', absWorkingDir: ROOT,
+  });
+  void esbuild;
+
+  for (const [kind, coarse, vw, vh] of [['fine', false, 1440, 900], ['coarse', true, 390, 844]]) {
+    const m = paletteMetrics(kind);
+    const dom = new JSDOM('<!doctype html><html><body><div id="page"></div></body></html>',
+      { url: 'https://catalystpit.test/ticker/NVDA', pretendToBeVisual: true });
+    Object.defineProperty(dom.window, 'innerWidth', { value: vw, configurable: true });
+    Object.defineProperty(dom.window, 'innerHeight', { value: vh, configurable: true });
+    // ⚠️ THE STUB IS THE POINT OF THIS SECTION. jsdom has no matchMedia at all, which is why every other
+    // jsdom section here renders the desktop sizing — that is the component's SSR-safe default, not a
+    // measurement of a phone.
+    dom.window.matchMedia = (q) => ({
+      matches: /pointer:\s*coarse/.test(q) ? coarse : false,
+      media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+    });
+    for (const k of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node',
+      'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame', 'MutationObserver',
+      'Event', 'ResizeObserver']) {
+      try { globalThis[k] = dom.window[k]; }
+      catch { Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true }); }
+    }
+    globalThis.matchMedia = dom.window.matchMedia;
+    for (const [k, v] of [['innerWidth', vw], ['innerHeight', vh]]) {
+      Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true });
+    }
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    dom.window.Element.prototype.getBoundingClientRect = () => ({
+      top: 300, bottom: 322, left: 60, right: 82, width: 22, height: 22, x: 60, y: 300,
+      toJSON() { return this; },
+    });
+
+    const { act } = await import('react');
+    const ReactDOMClient = await import('react-dom/client');
+    const DrawingToolbar = (await import(`${pathToFileURL(out).href}?p=${kind}`)).default;
+    const host = dom.window.document.getElementById('page');
+    const root = ReactDOMClient.createRoot(host);
+    await act(async () => {
+      root.render(React.createElement(DrawingToolbar, {
+        theme: 'dark',
+        drawing: { id: 'd1', type: 'horizontal', locked: false,
+          points: [{ time: 1700000000, price: 101.5 }],
+          style: { color: PALETTE[85], width: 2, dash: 'solid' } },
+        box: { x: 40, y: 280, w: 200, h: 2 }, plot: { w: vw, h: 500 },
+        onStyle: () => {}, onPatch: () => {}, onDelete: () => {}, onOpenSettings: () => {},
+      }));
+    });
+    await act(async () => {
+      [...host.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'Color').click();
+    });
+    const doc = dom.window.document;
+    const paletteEl = doc.body.querySelector('[data-cp-palette]');
+    ok(`${kind}: the palette opened`, !!paletteEl);
+    if (!paletteEl) continue;
+    const styleOf = (el) => (el?.getAttribute('style') || '');
+    const swatch = [...paletteEl.querySelectorAll('button')]
+      .find((b) => PALETTE.includes(b.getAttribute('aria-label')));
+    const sw = /width:\s*(\d+)px/.exec(styleOf(swatch));
+    ok(`⚠️ ${kind}: the swatch is the ${kind} size`, sw && Number(sw[1]) === m.swatch,
+      `${sw ? sw[1] : '?'}px, expected ${m.swatch}px`);
+    const pwm = /width:\s*(\d+)px/.exec(styleOf(paletteEl));
+    ok(`⚠️ ${kind}: the panel is the ${kind} width`, pwm && Number(pwm[1]) === m.contentWidth,
+      `${pwm ? pwm[1] : '?'}px, expected ${m.contentWidth}px`);
+    ok(`⚠️ ${kind}: the grid is inset on BOTH sides by the selection ring`,
+      new RegExp(`padding-left:\\s*${m.ring}px`).test(styleOf(paletteEl))
+      && new RegExp(`padding-right:\\s*${m.ring}px`).test(styleOf(paletteEl)), styleOf(paletteEl).slice(0, 120));
+    // All ninety, whichever sizing: density is not achieved by dropping colours.
+    const n = [...paletteEl.querySelectorAll('button')]
+      .filter((b) => PALETTE.includes(b.getAttribute('aria-label'))).length;
+    ok(`⚠️ ${kind}: all 90 colours are still there`, n === 90, `${n}`);
+    // The custom controls survive the compaction.
+    ok(`${kind}: the hex field is still offered`, !!doc.body.querySelector('input[aria-label="Hex color"]'));
+    ok(`${kind}: the native picker is still offered`, !!doc.body.querySelector('input[type="color"]'));
+    ok(`${kind}: the theme-aware row is still offered`,
+      !!doc.body.querySelector('button[aria-label="Theme color 1"]'));
+    // And the popover it is placed in is sized for THIS sizing, not the other one.
+    const portal = paletteEl.closest('[role="menu"]');
+    const bw = /width:\s*(\d+)px/.exec(styleOf(portal));
+    ok(`⚠️ ${kind}: the popover was placed for the ${kind} palette`,
+      bw && Number(bw[1]) === m.contentWidth, `${bw ? bw[1] : '?'}px, expected ${m.contentWidth}px`);
+    await act(async () => { root.unmount(); });
+  }
+  // ⚠️ POSITIVE CONTROL: the two sizings must actually differ, or every assertion above passes against a
+  // component that ignores the pointer entirely.
+  ok('⚠️ the two sizings are genuinely different',
+    paletteMetrics('fine').swatch !== paletteMetrics('coarse').swatch
+    && paletteMetrics('fine').contentWidth !== paletteMetrics('coarse').contentWidth);
 }
 
 // ── 9. nothing else about drawings moved ───────────────────────────────────────────────────────

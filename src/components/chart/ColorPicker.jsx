@@ -1,8 +1,8 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { palette, indicatorColor, indicatorColors } from '../../lib/chart/chart-theme.mjs';
 import {
-  PALETTE_GRID, PALETTE_COLUMNS, PALETTE_ROWS, COMMON_COLORS, normalizeHex, isValidHex,
+  PALETTE_GRID, COMMON_COLORS, normalizeHex, isValidHex, paletteMetrics, sizingForPointer,
 } from '../../lib/chart/color-palette.mjs';
 
 // THE COLOUR CONTROL — one palette, in one of two boxes.
@@ -35,34 +35,36 @@ import {
 
 const SWATCH = 15;
 const GAP = 3;
-const PANEL_PAD = 8;
-/** Grid swatches are slightly larger than the inline row: nine of them set the popover's width. */
-const GRID_SWATCH = 32;
-const GRID_GAP = 4;
+
+// ⚠️ EVERY SIZE COMES FROM paletteMetrics(), IN color-palette.mjs. It used to be a set of constants
+// here — GRID_SWATCH = 32, GRID_GAP = 4 — which meant the desktop and the phone got the same grid, and
+// the numbers the tests asserted were literals restated in each suite. See the note over
+// PALETTE_SIZINGS for why the choice is pointer kind rather than viewport width.
 
 /**
- * The panel's size, derived from the palette rather than guessed or measured.
+ * Which sizing this client wants: dense for a cursor, large for a thumb.
  *
- * ⚠️ IT IS ALSO THE PROOF THE PANEL NEEDS NO SCROLLBAR. The whole grid is 10 rows of 9 at a known
- * swatch size, so its height is arithmetic rather than something the browser discovers — which is what
- * lets the placement decision happen before the first paint (see the placement effect) AND lets a test
- * assert the popover is tall enough to show all ninety without one.
- *
- * ⚠️ THE SWATCHES ARE BORDER-BOX, so 32 means 32. They were content-box with a 1px border, which made
- * every swatch 34px wide and each row 18px wider than the width computed from GRID_SWATCH — nine
- * columns overflowing a panel sized for nine columns. The arithmetic here is only worth anything if the
- * boxes it describes are the boxes the browser lays out.
+ * ⚠️ RESOLVED IN AN EFFECT AND DEFAULTED TO 'fine', NOT READ DURING RENDER. matchMedia during render
+ * would disagree with the server's markup and make this a hydration mismatch. The effect runs when the
+ * HOST mounts — the toolbar, the rail — which is long before anyone opens a palette, so by the time a
+ * grid is drawn the answer is already correct and there is no visible re-size.
  */
-export const COLOR_GRID_WIDTH = PALETTE_COLUMNS * GRID_SWATCH + (PALETTE_COLUMNS - 1) * GRID_GAP;
-const GRID_HEIGHT = PALETTE_ROWS * GRID_SWATCH + (PALETTE_ROWS - 1) * GRID_GAP;
-// The theme-aware row, the custom-colour row, and the two separators and gaps around them.
-const EXTRAS_HEIGHT = 34 + 36 + 26;
-/** What the palette needs INSIDE a host's padding — the number a portalled host places against. */
-export const COLOR_PANEL_CONTENT_HEIGHT = GRID_HEIGHT + EXTRAS_HEIGHT;
-/** The self-hosted panel's own box, border-box: the grid, its padding, and its 1px border each side. */
-const PANEL_WIDTH = COLOR_GRID_WIDTH + PANEL_PAD * 2 + 2;
-const PANEL_HEIGHT_ESTIMATE = COLOR_PANEL_CONTENT_HEIGHT + PANEL_PAD * 2 + 2;
-const PANEL_WIDTH_ESTIMATE = PANEL_WIDTH;
+export function usePaletteMetrics() {
+  const [kind, setKind] = useState('fine');
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(pointer: coarse)');
+    const apply = () => setKind(sizingForPointer(mq.matches));
+    apply();
+    // A pointer kind can change under you: a tablet gaining a mouse, a laptop's touchscreen.
+    mq.addEventListener?.('change', apply);
+    return () => mq.removeEventListener?.('change', apply);
+  }, []);
+  return useMemo(() => paletteMetrics(kind), [kind]);
+}
+
+/** The desktop sizing, for a host that has not resolved a pointer kind yet. */
+export const DEFAULT_PALETTE_METRICS = paletteMetrics('fine');
 
 /** One swatch. Selection is a ring rather than a border, so it cannot change the colour it describes. */
 function Swatch({ color, selected, onPick, title, size = SWATCH, p }) {
@@ -112,9 +114,11 @@ function Swatch({ color, selected, onPick, title, size = SWATCH, p }) {
  * @param {number|string|null} props.value  the STORED value: a palette index, a hex, or null
  * @param {(v: string|number) => void} props.onPick    a deliberate choice; the host should dismiss
  * @param {(v: string|number) => void} props.onChange  a live edit; the host should stay open
+ * @param {object} [props.metrics]  the sizing, from the HOST's usePaletteMetrics()
  */
-export function ColorPalettePanel({ theme, value, onPick, onChange }) {
+export function ColorPalettePanel({ theme, value, onPick, onChange, metrics = DEFAULT_PALETTE_METRICS }) {
   const p = palette(theme);
+  const m = metrics;
   const resolved = indicatorColor(theme, value);
   const [hex, setHex] = useState(resolved);
 
@@ -136,21 +140,28 @@ export function ColorPalettePanel({ theme, value, onPick, onChange }) {
     <div
       data-cp-palette=""
       style={{
-        display: 'flex', flexDirection: 'column', gap: 6,
-        // ⚠️ THE GRID'S OWN WIDTH, AND NOTHING TO SCROLL. The grid used to sit in a maxHeight with
-        // overflowY:auto, which put ninety colours behind a scrollbar — choosing one then meant
-        // hunting for it. The 9x10 shape exists so the entire palette is on screen at once, so there
-        // is nothing here to cap and nothing to scroll.
-        width: COLOR_GRID_WIDTH,
+        display: 'flex', flexDirection: 'column', gap: m.stackGap,
+        // ⚠️ THE GRID IS INSET BY THE SELECTION RING, ON BOTH SIDES. The panel used to be exactly as
+        // wide as its grid, so the leftmost and rightmost columns sat flush against the content box —
+        // measured in a real browser as 0.00px of padding either side. Two things went wrong with that.
+        // The 2px selection outline, drawn 1px clear of the swatch, fell OUTSIDE the box and was cut off
+        // by the popover's `overflow: hidden` whenever the chosen colour was in the purple column. And a
+        // layout that fits to the pixel has nowhere to round, so under fractional display scaling the
+        // last column loses a sliver. The inset is symmetrical, so both edge columns get the same gap.
+        paddingLeft: m.ring, paddingRight: m.ring,
+        // ⚠️ AND NOTHING TO SCROLL. The grid used to sit in a maxHeight with overflowY:auto, which put
+        // ninety colours behind a scrollbar — choosing one then meant hunting for it. The 9x10 shape
+        // exists so the entire palette is on screen at once, so there is nothing here to cap.
+        width: m.contentWidth,
         boxSizing: 'border-box',
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: GRID_GAP }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: m.gap }}>
         {PALETTE_GRID.map((row, i) => (
           // eslint-disable-next-line react/no-array-index-key
-          <div key={i} style={{ display: 'flex', gap: GRID_GAP }}>
+          <div key={i} style={{ display: 'flex', gap: m.gap }}>
             {row.map((c) => (
-              <Swatch key={c} p={p} color={c} title={c} size={GRID_SWATCH}
+              <Swatch key={c} p={p} color={c} title={c} size={m.swatch}
                 selected={normalizeHex(c) === normalizeHex(resolved)} onPick={pick} />
             ))}
           </div>
@@ -160,18 +171,18 @@ export function ColorPalettePanel({ theme, value, onPick, onChange }) {
       {/* ⚠️ THE THEMED SIX ARE STILL OFFERED. An instance storing a legacy index keeps swapping
           between the light and dark ramps, which an explicit hex cannot do — so the option to
           choose that behaviour has to remain reachable, not just survive in old saved state. */}
-      <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: 6 }}>
-        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, letterSpacing: '0.6px',
-          color: p.text, marginBottom: 4 }}>THEME-AWARE</div>
-        <div style={{ display: 'flex', gap: GAP }}>
+      <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: m.sepPad }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: m.labelFont, letterSpacing: '0.6px',
+          color: p.text, marginBottom: 4, lineHeight: 1.45 }}>THEME-AWARE</div>
+        <div style={{ display: 'flex', gap: m.gap }}>
           {indicatorColors(theme).map((c, i) => (
             <button
               key={c} type="button" title={`Theme color ${i + 1} (follows light and dark)`}
               aria-label={`Theme color ${i + 1}`}
               onClick={() => onPick(i)}
               style={{
-                width: SWATCH, height: SWATCH, padding: 0, borderRadius: 3, cursor: 'pointer',
-                boxSizing: 'border-box',
+                width: m.themeSwatch, height: m.themeSwatch, padding: 0, borderRadius: 3,
+                cursor: 'pointer', boxSizing: 'border-box',
                 background: c, border: `1px solid ${p.border}`,
                 outline: value === i ? `2px solid ${p.textStrong}` : 'none', outlineOffset: 1,
               }}
@@ -181,14 +192,15 @@ export function ColorPalettePanel({ theme, value, onPick, onChange }) {
       </div>
 
       {/* Custom colour. The native input means nobody has to know hex to reach one. */}
-      <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: 6,
-        display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ borderTop: `1px solid ${p.border}`, paddingTop: m.sepPad,
+        display: 'flex', alignItems: 'center', gap: m.gap + 2 }}>
         <input
           type="color" aria-label="Custom color"
           value={resolved}
           onChange={(e) => onChange(normalizeHex(e.target.value) || resolved)}
-          style={{ width: 26, height: 22, padding: 0, border: `1px solid ${p.border}`,
-            borderRadius: 3, background: 'transparent', cursor: 'pointer' }}
+          style={{ width: m.nativeW, height: m.nativeH, padding: 0, border: `1px solid ${p.border}`,
+            borderRadius: 3, background: 'transparent', cursor: 'pointer', boxSizing: 'border-box',
+            flexShrink: 0 }}
         />
         <input
           type="text" aria-label="Hex color" spellCheck={false} maxLength={7}
@@ -202,8 +214,9 @@ export function ColorPalettePanel({ theme, value, onPick, onChange }) {
           }}
           placeholder="#RRGGBB"
           style={{
-            width: 78, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
-            padding: '3px 5px', borderRadius: 3, background: p.background,
+            width: m.hexWidth, height: m.hexInput, boxSizing: 'border-box', minWidth: 0,
+            fontFamily: "'DM Sans',sans-serif", fontSize: m.kind === 'fine' ? 10 : 11,
+            padding: '0 5px', borderRadius: 3, background: p.background,
             // An invalid entry is shown as invalid rather than silently ignored.
             border: `1px solid ${isValidHex(hex) ? p.border : p.down}`,
             color: p.textStrong,
@@ -224,6 +237,10 @@ export function ColorPalettePanel({ theme, value, onPick, onChange }) {
  */
 export default function ColorPicker({ theme, value, onChange, label = 'Color', compact = false }) {
   const p = palette(theme);
+  const m = usePaletteMetrics();
+  // The panel's own box: the content the palette needs, plus this popover's padding and 1px border.
+  const panelWidth = m.contentWidth + m.hostPad * 2 + 2;
+  const panelHeight = m.contentHeight + m.hostPad * 2 + 2;
   const resolved = indicatorColor(theme, value);
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
@@ -259,8 +276,8 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
       // bottom of the chart, and untestable outside a real browser. The palette's size is known from
       // the palette itself, so the right side is chosen before anything is painted, and the measured
       // value refines it when there is one.
-      const ph = panel.offsetHeight || PANEL_HEIGHT_ESTIMATE;
-      const pw = panel.offsetWidth || PANEL_WIDTH_ESTIMATE;
+      const ph = panel.offsetHeight || panelHeight;
+      const pw = panel.offsetWidth || panelWidth;
       const vh = window.innerHeight || 0;
       const vw = window.innerWidth || 0;
       const PAD = 8;
@@ -292,7 +309,7 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
       window.removeEventListener('resize', measure);
       window.removeEventListener('scroll', onScroll, true);
     };
-  }, [open]);
+  }, [open, panelWidth, panelHeight]);
 
   // ⚠️ CLOSES ON AN OUTSIDE CLICK, and on Escape. A popover that only closes by re-clicking its own
   // trigger is the kind that gets left open over the chart.
@@ -318,7 +335,7 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
     <div ref={boxRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: GAP }}>
       {/* The common shades, for the case that needs no popover. Each reads on both canvases. */}
       {!compact && COMMON_COLORS.map((c) => (
-        <Swatch key={c} p={p} color={c} title={`Color ${c}`}
+        <Swatch key={c} p={p} color={c} title={`Color ${c}`} size={m.themeSwatch}
           selected={normalizeHex(c) === normalizeHex(resolved)} onPick={pickSwatch} />
       ))}
 
@@ -355,13 +372,14 @@ export default function ColorPicker({ theme, value, onChange, label = 'Color', c
             ...(place.vertical === 'above' ? { bottom: '100%', marginBottom: 4 } : { top: '100%', marginTop: 4 }),
             ...(place.horizontal === 'left' ? { left: 0 } : { right: 0 }),
             background: p.tooltipBg, border: `1px solid ${p.border}`, borderRadius: 6,
-            padding: PANEL_PAD, boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
-            width: PANEL_WIDTH,
+            padding: m.hostPad, boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
+            width: panelWidth,
             boxSizing: 'border-box',
           }}
         >
           {/* The palette itself — the same component the drawing toolbar portals. */}
-          <ColorPalettePanel theme={theme} value={value} onPick={pick} onChange={onChange} />
+          <ColorPalettePanel theme={theme} value={value} onPick={pick} onChange={onChange}
+            metrics={m} />
         </div>
       )}
     </div>
