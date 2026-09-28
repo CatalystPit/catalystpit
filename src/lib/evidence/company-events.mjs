@@ -138,6 +138,12 @@ export const GENERAL_NOISE = [
   // vocabulary ("wins", "achieves", "milestone", "recognized") overlaps heavily with real ones.
   /\b(?:wins?|won|receives?|named|awarded|honou?red|recognized|recognised)\s+(?:.{0,30})?\b(?:award|prize|ranking|certification|accreditation|best\s+places?|top\s+\d+|fortune\s+\d+|great\s+place)\b/i,
   /\b(?:best\s+places?\s+to\s+work|employer\s+of\s+the\s+year|company\s+of\s+the\s+year)\b/i,
+  // ⚠️ AN HONOUR IS NOT AN APPOINTMENT. "Acme CEO named to industry hall of fame" classified as a
+  // CEO APPOINTMENT, because the class turns on "CEO" plus "named" and this sentence has both.
+  // Recognition vocabulary overlaps the management class almost exactly, which is why it belongs
+  // here in the general noise gate rather than in one class's exclusions.
+  /\bhall\s+of\s+fame\b/i,
+  /\bnamed\s+(?:to|one\s+of|among)\s+(?:the\s+)?(?:\w+\s+){0,3}(?:list|100|500|50|30\s+under|40\s+under|most\s+\w+)\b/i,
   /\b(?:esg|sustainability|csr|impact|diversity|inclusion)\s+report\b/i,
   /\bcelebrat(?:es?|ing)\b/i,
   /\bfinalist\b/i,
@@ -186,7 +192,17 @@ export const GENERAL_NOISE = [
 // the SPECIFIC before the GENERAL: "Completes Merger" must not be read as "Merger Agreement".
 
 /** A fiscal period or a company financial metric — see the guidance rules that require it. */
-const GUIDANCE_ANCHOR = /\b(?:fy\s?20\d\d|fiscal|full-?year|q[1-4]\b|(?:first|second|third|fourth)\s+quarter|revenue|sales|ebitda|eps|earnings|margins?|production|deliveries|bookings)\b/i;
+// ⚠️ "GUIDANCE" IS ITSELF AN ANCHOR; "outlook" and "forecast" are not.
+//
+// The anchor exists to establish that the statement is the ISSUER'S OWN, and the three measured
+// failures it was written for — "BOFA RAISES 10-YEAR TREASURY YIELD TARGET", "GOLDMAN SACHS RAISES
+// BRENT OIL FORECAST", "GOLDMAN CUTS SMARTPHONE SHIPMENT OUTLOOK" — say forecast and outlook.
+// None says guidance, and none could: guidance is what a company says about ITSELF, which is why
+// banks publish forecasts about other people and never guidance about them. So the bare word
+// carries the anchor's whole meaning, while outlook and forecast still have to earn it.
+//
+// "full year" is also written with a space at least as often as with a hyphen.
+const GUIDANCE_ANCHOR = /\bguidance\b|\b(?:fy\s?20\d\d|fiscal|full[-\s]?year|q[1-4]\b|(?:first|second|third|fourth)\s+quarter|revenue|sales|ebitda|eps|earnings|margins?|production|deliveries|bookings)\b/i;
 
 export const COMPANY_EVENTS = Object.freeze([
   // ══ EXCHANGE / LISTING ═════════════════════════════════════════════════════
@@ -254,8 +270,17 @@ export const COMPANY_EVENTS = Object.freeze([
 
   // ⚠️ AUTHORISED IS NOT REPURCHASED. A board authorisation creates permission and nothing else;
   // companies routinely authorise programmes they never execute.
+  // ⚠️ THE VERB LIST IS THE WHOLE CLASS, AND IT WAS TOO NARROW TO SURVIVE ONE STORY. NVIDIA
+  // authorised an extra $150bn and only the copies saying "Authorization" classified — "launches
+  // record $150bn share buyback", "Adds Record $150 Billion to Stock Buyback" and "adds $150
+  // billion to existing share repurchase plan" all produced nothing. The event reached the wire
+  // eight ways and was recognised in two; which outlet filed first decided whether we saw it.
+  // Every verb added below still has to appear alongside "repurchase" or "buyback", so execution
+  // reporting ("repurchased 2.1 million shares during the quarter") and commentary ("why the
+  // buyback may not be enough") remain unmatched — they carry no authorising verb at all.
   { type: 'cap_buyback_authorized', label: 'Share repurchase authorised', materiality: 0.70, direction: DIRECTION.POSITIVE,
-    all: [/\b(?:repurchase|buy-?back)\b/i, /\b(?:authoriz|authoris|approv|adopt|announc|expand|increas|renew)/i] },
+    all: [/\b(?:repurchase|buy-?back)\b/i,
+          /\b(?:authoriz|authoris|approv|adopt|announc|expand|increas|renew|launch|boost|upsiz|enlarg|adds?\b|added\b|extend)/i] },
   { type: 'cap_special_dividend', label: 'Special dividend declared', materiality: 0.75, direction: DIRECTION.POSITIVE,
     all: [/\bspecial\s+(?:cash\s+)?dividend\b/i] },
   // ⚠️ 'cap_stock_dividend' WAS MEASURED AND REMOVED. A stock dividend pays shareholders in shares,
@@ -291,7 +316,11 @@ export const COMPANY_EVENTS = Object.freeze([
   { type: 'ma_tender_offer', label: 'Tender offer', materiality: 0.88, direction: DIRECTION.UNKNOWN,
     all: [/\btender\s+offer\b|\bexchange\s+offer\b/i] },
   { type: 'ma_agreement', label: 'Definitive merger or acquisition agreement signed', materiality: 0.88, direction: DIRECTION.UNKNOWN,
-    all: [/\b(?:definitive\s+(?:merger\s+)?agreement|agreement\s+to\s+acquire|merger\s+agreement|agrees?\s+to\s+acquire|to\s+acquire\b)/i] },
+    // ⚠️ "ACQUIRE" IS NOT THE ONLY WORD FOR BUYING A COMPANY. Measured against the same wording
+    // sweep that exposed the buyback gap: "agrees to buy", "takeover of" and "to combine with" are
+    // ordinary deal vocabulary and none of them classified. A rumour still does not — there is no
+    // agreement verb in "rumoured to be weighing a bid".
+    all: [/\b(?:definitive\s+(?:merger\s+)?agreement|agreement\s+to\s+acquire|merger\s+agreement|agrees?\s+to\s+acquire|to\s+acquire\b|acquires\b|agrees?\s+to\s+(?:buy|purchase)\b|takeover\s+of\b|to\s+combine\s+with\b)/i] },
   { type: 'ma_unsolicited', label: 'Unsolicited or revised acquisition proposal', materiality: 0.88, direction: DIRECTION.UNKNOWN,
     all: [/\b(?:unsolicited|hostile|non-?binding)\b/i, /\b(?:proposal|offer|bid)\b/i] },
   { type: 'ma_strategic_review', label: 'Strategic alternatives review', materiality: 0.82, direction: DIRECTION.UNKNOWN,
@@ -331,7 +360,10 @@ export const COMPANY_EVENTS = Object.freeze([
   { type: 'earn_guidance_lowered', label: 'Guidance lowered', materiality: 0.88, direction: DIRECTION.NEGATIVE,
     all: [/\b(?:guidance|outlook|forecast|expectations?)\b/i, /\b(?:lower|cut|reduc|trim|slash|downward|below\s+prior)/i, GUIDANCE_ANCHOR] },
   { type: 'earn_guidance_raised', label: 'Guidance raised', materiality: 0.85, direction: DIRECTION.POSITIVE,
-    all: [/\b(?:guidance|outlook|forecast)\b/i, /\b(?:rais(?:e|es|ed)|increas|boost|upward|hik(?:e|es|ed))/i, GUIDANCE_ANCHOR] },
+    // ⚠️ NO TRAILING \b. These are PREFIXES — "increas" has no word boundary before the "es" of
+    // "increases", so anchoring the end silently drops the commonest conjugation of half of them.
+    // The same mistake has already been made once in this file, on `appoint`.
+    all: [/\b(?:guidance|outlook|forecast)\b/i, /\b(?:rais(?:e|es|ed)|increas|boost|upward|hik(?:e|es|ed)|lift)/i, GUIDANCE_ANCHOR] },
   { type: 'earn_preliminary', label: 'Preliminary results reported', materiality: 0.72, direction: DIRECTION.UNKNOWN,
     all: [/\bpreliminary\b/i, /\b(?:results?|revenue|sales|financial)\b/i] },
   { type: 'earn_guidance_issued', label: 'Guidance issued', materiality: 0.62, direction: DIRECTION.UNKNOWN,
@@ -355,7 +387,10 @@ export const COMPANY_EVENTS = Object.freeze([
     // ⚠️ THE TRAILING \b HAD TO MOVE INSIDE. `(?:appoint|…)\b` cannot match "Appoints" — there is
     // no word boundary between the t and the s — so the rule silently required the summary to
     // carry the verb and the most common phrasing in the class never matched on its own.
-    all: [/\b(?:chief\s+executive|ceo)\b/i, /\b(?:appoints?|appointed|names?|named|hir(?:e|es|ed)|succeed(?:s|ed)?|elect(?:s|ed)?)\b/i],
+    // "…announces Jane Doe as its new CEO" carries no appointing verb at all — the construction IS
+    // the appointment, and it is one of the commonest forms on the wire.
+    all: [/\b(?:chief\s+executive|ceo)\b/i,
+          /\b(?:appoints?|appointed|names?|named|hir(?:e|es|ed)|succeed(?:s|ed)?|elect(?:s|ed)?)\b|\bas\s+(?:its\s+)?(?:new\s+|incoming\s+)?(?:ceo|chief\s+executive)\b/i],
     // ⚠️ "Brighter Signals to Appoint Bill Russo, Founder and CEO of Automobility, as Independent
     // Director" names a CEO and appoints nobody to that job — the title belongs to another company.
     none: [/\b(?:independent\s+director|to\s+(?:the\s+)?board|board\s+of\s+directors|advisory\s+board)\b/i] },

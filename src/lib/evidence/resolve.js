@@ -574,7 +574,14 @@ export async function form144Evidence(ticker, { now = Date.now(), ctx = null } =
       subtype: f.relationship || null,
       direction: DIRECTION.UNKNOWN,
       // Scaled by size within the qualifying population: a 5% notice is not a $5M notice.
-      materiality: pct != null && pct >= 0.02 ? 0.75 : value != null && value >= 50_000_000 ? 0.70 : 0.60,
+      //
+      // ⚠️ THE RESIDUAL TIER IS ROUTINE, AND SCORING IT 0.60 PUT IT LEVEL WITH AN OFFICER CHANGE.
+      // A Form 144 is a NOTICE OF INTENT TO SELL, not a transaction, and at large issuers officers
+      // file them continuously under 10b5-1 plans. Measured across the heaviest-traded names in one
+      // week, the base tier was the single commonest reason a mega-cap would have interrupted
+      // someone — AAPL, META and NVDA all carried one. The sized tiers above still rank as before;
+      // only the "nothing distinguishes this one" case drops to where a routine insider row sits.
+      materiality: pct != null && pct >= 0.02 ? 0.75 : value != null && value >= 50_000_000 ? 0.70 : 0.55,
       quality: 0.95,                       // a document filed with the SEC under liability
       // ⚠️ THE PROPOSED SALE DATE IS NOT AN eventTime EITHER, FOR THE SAME REASON.
       //

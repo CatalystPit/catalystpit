@@ -29,6 +29,8 @@ import { readFileSync } from 'node:fs';
 process.env.DATABASE_URL ||= 'postgres://verify:verify@127.0.0.1/verify';
 const { pressReleaseEvidence } = await import('../src/lib/evidence/resolve.js');
 const { watchlistChanges } = await import('../src/lib/watchlist-changes.js');
+const { eligibleForNew, countNew, newEventKey, NEW_MATERIALITY_FLOOR, NEW_FAMILIES } =
+  await import('../src/lib/watchlist-new.mjs');
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -88,6 +90,27 @@ L('B. a generic article about a company is not new material information');
   ]);
   ok('⚠️ a market-wrap naming the company is not an event either', roundup.length === 0,
     JSON.stringify(roundup.map((x) => x.type)));
+
+  // The column tail on its own, with no column name to fall back on — "…, X and more" is the
+  // Bloomberg/Reuters roundup shape and names several unrelated companies.
+  const tail = await ev([
+    row({ seq: 5, source: 'BLOOMBERG', headline: 'Nvidia expands buyback, Paramount settles merger lawsuit & more', at: mins(65) }),
+  ]);
+  ok('⚠️ ...and the roundup TAIL alone is enough to refuse it', tail.length === 0,
+    JSON.stringify(tail.map((x) => x.type)));
+
+  // A Form 144 is a notice of intent to sell. At large issuers officers file them continuously
+  // under 10b5-1 plans, and scoring the residual tier at the floor made it the commonest reason a
+  // mega-cap would interrupt someone — AAPL, META and NVDA all carried one in a single week.
+  ok('⚠️ a routine Form 144 is below the badge floor',
+    !eligibleForNew({ family: 'insider', type: 'sec_144_proposed_sale', materiality: 0.55,
+      publicTime: mins(60), ticker: 'XXX' }),
+    'a notice of intent to sell is not a company decision');
+  // ⚠️ AND THE ENGINE ACTUALLY SCORES IT THERE. Asserting the floor alone would pass however the
+  // residual tier were scored — the two halves have to be pinned together.
+  ok('⚠️ ...because the residual tier is scored below the floor, not at it',
+    /value != null && value >= 50_000_000 \? 0\.70 : 0\.55,/.test(code(read('../src/lib/evidence/resolve.js'))),
+    'the sized tiers stay where they were; only "nothing distinguishes this one" drops');
 }
 
 // ── H. ONE EVENT, HOWEVER MANY OUTLETS CARRY IT ──────────────────────────────
@@ -145,14 +168,17 @@ L('D. the count is the real number of qualifying events');
     _candidates: async (tickers) => tickers.filter((t) => byTicker[t]?.length),
     _resolve: async (t) => ({ evidence: byTicker[t] || [], failedFamilies: [] }),
   });
-  const evidence = (type, at) => ({ family: 'catalyst', type, direction: null, summary: type, publicTime: at });
+  const evidence = (type, at, materiality = 0.70) => ({ ticker: 'XXX', family: 'catalyst', type, materiality, direction: null, summary: type, publicTime: at });
 
+  // ⚠️ TWO GENUINELY DIFFERENT CATALYSTS. A CEO departure and the appointment that came with it
+  // would be ONE event by design — see the collapse tests below — so using that pair here would
+  // have asserted the opposite of what the system should do.
   const two = await watchlistChanges(['META'], {
     since: days(1), now: NOW,
-    ...fake({ META: [evidence('mgmt_ceo_departure', mins(300)), evidence('mgmt_ceo_appointed', mins(110))] }),
+    ...fake({ META: [evidence('mgmt_ceo_departure', mins(300), 0.85), evidence('ma_agreement', mins(110), 0.88)] }),
   });
   ok('⚠️ two qualifying events show 2, not 1', two.byTicker.META?.length === 2, JSON.stringify(two.byTicker.META?.length));
-  ok('...newest first', two.changes[0].type === 'mgmt_ceo_appointed');
+  ok('...newest first', two.changes[0].type === 'ma_agreement');
 
   const one = await watchlistChanges(['NVDA'], {
     since: days(1), now: NOW, ...fake({ NVDA: [evidence('cap_buyback_authorized', mins(90))] }),
@@ -161,6 +187,18 @@ L('D. the count is the real number of qualifying events');
 
   const none = await watchlistChanges(['SPY'], { since: days(1), now: NOW, ...fake({}) });
   ok('no qualifying events shows no badge at all', !none.byTicker.SPY && none.changes.length === 0);
+
+  // ⚠️ THE CONTRACT IS APPLIED HERE, NOT ONLY DEFINED. The engine legitimately returns the routine
+  // filing alongside the material one; the badge must count one of them.
+  const mixed = await watchlistChanges(['XXX'], {
+    since: days(1), now: NOW,
+    ...fake({ XXX: [evidence('cap_buyback_authorized', mins(90), 0.70),
+                    evidence('sec_8k_other', mins(80), 0.45),
+                    evidence('sec_144_proposed_sale', mins(70), 0.55)] }),
+  });
+  ok('⚠️ the badge applies the eligibility contract to what the engine returns',
+    mixed.byTicker.XXX?.length === 1 && mixed.byTicker.XXX[0].type === 'cap_buyback_authorized',
+    JSON.stringify(mixed.byTicker.XXX?.map((x) => x.type)));
 
   // G — the engine only ever reads the canonical `tickers` column, so a name the wire never
   // attached cannot acquire a badge here.
@@ -215,6 +253,91 @@ L('F/J. read state is per account, and new events after it return');
   const lib = code(read('../src/lib/watchlist-changes.js'));
   ok('⚠️ I. the engine applies the exact since cut after the prefilter',
     /_resolve\(ticker, \{ now, since: sinceIso \}\)/.test(lib));
+}
+
+// ── THE ELIGIBILITY CONTRACT ─────────────────────────────────────────────────
+//
+// ⚠️ ONE FUNCTION, EVERY FAMILY, EVERY TICKER. The badge used to mean "the engine returned
+// something", and the engine correctly returns everything it knows — including the routine Item
+// 8.01 filing that badged MSTR while NVIDIA's $150bn buyback badged nothing. Eligibility is now a
+// decision the watchlist makes on top of the engine, in one place, with no per-family rule and no
+// knowledge of any company's name.
+
+L('the universal eligibility contract');
+{
+  const at = (iso, over = {}) => ({
+    ticker: 'XYZ', family: 'catalyst', type: 'cap_buyback_authorized',
+    materiality: 0.70, publicTime: iso, ...over,
+  });
+  const NOW2 = Date.parse('2026-09-28T18:00:00Z');
+  const opt = { now: NOW2 };
+  const hoursAgo = (h) => new Date(NOW2 - h * 3600e3).toISOString();
+  const daysAgo = (d) => new Date(NOW2 - d * 86400e3).toISOString();
+
+  ok('a material, fresh, well-formed event qualifies', eligibleForNew(at(hoursAgo(2)), opt));
+  ok(`⚠️ H. a routine filing does not — materiality below ${NEW_MATERIALITY_FLOOR}`,
+    !eligibleForNew(at(hoursAgo(2), { type: 'sec_8k_other', materiality: 0.45 }), opt),
+    'this exact event is what badged MSTR while a $150bn buyback badged nothing');
+  ok('an event exactly at the floor qualifies', eligibleForNew(at(hoursAgo(2), { materiality: NEW_MATERIALITY_FLOOR }), opt));
+  ok('⚠️ an unscored event never qualifies — unjudged is not the same as material',
+    !eligibleForNew(at(hoursAgo(2), { materiality: undefined }), opt)
+    && !eligibleForNew(at(hoursAgo(2), { materiality: null }), opt));
+  ok('a family the badge does not speak for is silent',
+    !eligibleForNew(at(hoursAgo(2), { family: 'market' }), opt));
+  ok('every named family is one the engine actually produces',
+    NEW_FAMILIES.every((f) => ['catalyst', 'insider', 'congress', 'institution'].includes(f)));
+  ok('⚠️ I. an old event is not new', !eligibleForNew(at(daysAgo(200)), opt));
+  ok('...and the window follows the family — a 40-day congressional disclosure still counts',
+    eligibleForNew(at(daysAgo(40), { family: 'congress', type: 'congress_multi', materiality: 0.65 }), opt)
+    && !eligibleForNew(at(daysAgo(40), { family: 'catalyst' }), opt));
+  ok('a publication time in the future is never news', !eligibleForNew(at(new Date(NOW2 + 86400e3).toISOString()), opt));
+  ok('nonsense in is nothing out', !eligibleForNew(null, opt) && !eligibleForNew('x', opt) && !eligibleForNew({}, opt));
+
+  // ── L / M. ONE REAL EVENT, ONE NEW ──
+  const copy = (over) => at(hoursAgo(3), over);
+  const six = ['BLOOMBERG', 'REUTERS', 'WSJ', 'FT', 'CNBC', 'GLOBENEWSWIRE'].map((s, i) =>
+    copy({ source: s, publicTime: new Date(NOW2 - (3 * 3600e3) - i * 60_000).toISOString() }));
+  ok('⚠️ L. six outlets carrying one announcement count ONCE', countNew(six, opt).count === 1, `${countNew(six, opt).count}`);
+  ok('⚠️ M. two DIFFERENT catalysts on the same day count twice',
+    countNew([copy({}), copy({ type: 'ma_agreement', materiality: 0.88 })], opt).count === 2);
+  ok('⚠️ ...and the same kind of event on two different days counts twice',
+    countNew([at(hoursAgo(3)), at(daysAgo(4))], opt).count === 2);
+  ok('⚠️ one earnings arriving as an 8-K AND a press release counts once',
+    countNew([copy({ type: 'sec_8k_results', materiality: 0.70 }), copy({ type: 'earn_results', materiality: 0.70 })], opt).count === 1,
+    'two shapes of one quarter is the duplicate that showed COST 2 NEW');
+  ok('⚠️ a CEO transition is one decision, not a departure plus an appointment',
+    countNew([copy({ type: 'mgmt_ceo_departure', materiality: 0.85 }),
+              copy({ type: 'mgmt_ceo_appointed', materiality: 0.70 })], opt).count === 1);
+  ok('...and the line kept is the more material half',
+    countNew([copy({ type: 'mgmt_ceo_appointed', materiality: 0.70 }),
+              copy({ type: 'mgmt_ceo_departure', materiality: 0.85 })], opt).events[0].type === 'mgmt_ceo_departure');
+  ok('⚠️ K. the same event on two tickers is two separate counts, one each',
+    newEventKey(copy({ ticker: 'AAA' })) !== newEventKey(copy({ ticker: 'BBB' })));
+  ok('T. nothing qualifying means a count of zero', countNew([], opt).count === 0
+    && countNew([at(hoursAgo(1), { materiality: 0.2 })], opt).count === 0);
+
+  // ── R / S. NO TICKER IS SPECIAL ──
+  // ⚠️ THE SAME EVENT, THE SAME ANSWER, WHATEVER THE SYMBOL IS. A large cap, a micro cap and a
+  // company whose ticker is an ordinary English word all go through one contract; there is no cap
+  // threshold, no liquidity test and no symbol vocabulary anywhere in it.
+  const shapes = ['NVDA', 'CHAI', 'HERE', 'ON', 'ALL', 'BRK.B', 'QNME'];
+  const counts = shapes.map((t) => countNew([at(hoursAgo(2), { ticker: t })], opt).count);
+  ok('⚠️ R/S. every symbol shape gets the identical answer', counts.every((c) => c === 1), JSON.stringify(counts));
+}
+
+L('the badge has no ticker-specific behaviour anywhere');
+{
+  const files = ['../src/lib/watchlist-new.mjs', '../src/lib/watchlist-changes.js',
+    '../src/components/WatchlistChanges.jsx', '../src/app/api/watchlist/changes/route.js'];
+  for (const f of files) {
+    const src = code(read(f));
+    const literals = (src.match(/['"][A-Z]{2,5}['"]/g) || [])
+      .filter((s) => !/^['"](GET|POST|PUT|DELETE|ALL|NONE|USD|SEC|DOJ|FDA|FTC|CFTC|WSJ|FT|CNBC|NEW|UTC)['"]$/.test(s));
+    ok(`${f.split('/').pop()} names no company`, literals.length === 0, literals.join(' '));
+  }
+  // A positive control: the pattern does find such literals when they exist.
+  ok('(control) the detector would catch a hardcoded ticker',
+    (code("const x = 'NVDA';").match(/['"][A-Z]{2,5}['"]/g) || []).length === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

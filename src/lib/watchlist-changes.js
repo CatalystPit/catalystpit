@@ -3,6 +3,7 @@ import { db } from './db';
 import { tickerEvidence } from './evidence/resolve';
 import { isIngestableTicker } from './security-identity.mjs';
 import { ISSUER_WIRE, NEWS_DESK } from './evidence/company-events.mjs';
+import { countNew } from './watchlist-new.mjs';
 
 // WHAT CHANGED ON YOUR NAMES — "what became public since you last looked".
 //
@@ -31,10 +32,22 @@ import { ISSUER_WIRE, NEWS_DESK } from './evidence/company-events.mjs';
 // hides a filing from someone who is watching for it. The engine applies the exact
 // publicTime > since cut afterwards; this only decides who to ask about.
 
-/** Never ask the engine about more names than this in one request. */
-export const MAX_RESOLVE = 25;
-/** How many resolver calls run at once. Each is several DB queries, so this stays small. */
-export const RESOLVE_CONCURRENCY = 4;
+/**
+ * Never ask the engine about more names than this in one request.
+ *
+ * ⚠️ 25 WAS TOO LOW ONCE THE WIRE BRANCH EXISTED. Measured on the 100 largest US issuers, the
+ * prefilter nominates 81 in a week — because most large companies do SOMETHING most weeks — and the
+ * old cap checked 25 of them and reported the rest as nothing. That is a silent miss for exactly
+ * the user who cares most. At 60, with the concurrency below, the same list resolves in a few
+ * seconds against a route that allows 60 and a poll that runs once a minute.
+ *
+ * Beyond this the answer is still TRUNCATED rather than wrong: `truncated` is returned and the UI
+ * says which names were checked. Watchlist order is the user's own, so the names they put first are
+ * the names that get answered.
+ */
+export const MAX_RESOLVE = 60;
+/** How many resolver calls run at once. Each is several DB queries, so this stays modest. */
+export const RESOLVE_CONCURRENCY = 6;
 /** With no watermark, "what changed" means the last day. */
 export const DEFAULT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
 
@@ -164,7 +177,14 @@ export async function watchlistChanges(tickers, {
     if (r.error) { failed.push({ ticker: r.ticker, error: r.error }); continue; }
     for (const f of r.failedFamilies) failed.push({ ticker: r.ticker, ...f });
     if (!r.evidence.length) continue;
-    const rows = r.evidence.map((e) => ({
+    // ⚠️ THE ENGINE ANSWERS "what is true about this company"; THE BADGE ASKS "is this worth
+    // interrupting someone for". Those are different questions and conflating them is what put a
+    // badge on a Reg FD filing while a $150bn buyback showed nothing. One contract, every family,
+    // every ticker — see watchlist-new.mjs. It also collapses the six outlets that carried one
+    // announcement into the one event they are all about.
+    const { events } = countNew(r.evidence, { now });
+    if (!events.length) continue;
+    const rows = events.map((e) => ({
       ticker: r.ticker,
       family: e.family,
       type: e.type,
