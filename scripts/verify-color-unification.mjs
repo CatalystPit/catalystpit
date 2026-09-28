@@ -98,7 +98,7 @@ for (const f of SURFACES) {
 // swatches. A second file doing that is a second palette, however it is named.
 {
   const builders = ['src/components/chart/ColorPicker.jsx', ...SURFACES]
-    .filter((f) => /PALETTE_GRID\s*\.?\s*map|PALETTE\.map/.test(code(read(f))));
+    .filter((f) => /PALETTE_GRID\s*\.?\s*map|PALETTE\.map|m\.grid\.map/.test(code(read(f))));
   ok('⚠️ exactly one file builds the swatch grid',
     builders.length === 1 && builders[0] === 'src/components/chart/ColorPicker.jsx',
     builders.join(', '));
@@ -609,8 +609,11 @@ console.log('\n8d. both sizings fit their target, and neither is a literal');
   const psrc = read('src/lib/chart/color-palette.mjs');
   ok('the grid width is derived from the palette shape',
     /gridWidth = PALETTE_COLUMNS \* s\.swatch \+ \(PALETTE_COLUMNS - 1\) \* s\.gap/.test(psrc));
-  ok('...and the grid height likewise',
-    /gridHeight = PALETTE_ROWS \* s\.swatch \+ \(PALETTE_ROWS - 1\) \* s\.gap/.test(psrc));
+  ok('...and the grid height from the rows that sizing actually draws',
+    /gridHeight = rows \* s\.swatch \+ \(rows - 1\) \* s\.gap/.test(psrc));
+  ok('...where a touch sizing draws a subset of the levels, not of the hues',
+    /const grid = s\.shades \? s\.shades\.map/.test(psrc)
+    && /export const COARSE_SHADES = \[0, 3, 5, 7, 9\]/.test(psrc));
   ok('...and the content width adds the selection ring on both sides',
     /contentWidth: gridWidth \+ SELECTION_RING \* 2/.test(psrc));
 
@@ -937,10 +940,17 @@ console.log('\n8g. the sizing follows the pointer, and the component honours it'
     ok(`⚠️ ${kind}: the grid is inset on BOTH sides by the selection ring`,
       new RegExp(`padding-left:\\s*${m.ring}px`).test(styleOf(paletteEl))
       && new RegExp(`padding-right:\\s*${m.ring}px`).test(styleOf(paletteEl)), styleOf(paletteEl).slice(0, 120));
-    // All ninety, whichever sizing: density is not achieved by dropping colours.
+    // ⚠️ THE COUNT IS PER SIZING. Desktop draws all ninety; touch draws every other level, because at a
+    // thumb-sized cell ninety of them is a panel that fills the phone. Every HUE survives either way —
+    // it is the ramp that is coarser, not the spectrum that is smaller.
     const n = [...paletteEl.querySelectorAll('button')]
       .filter((b) => PALETTE.includes(b.getAttribute('aria-label'))).length;
-    ok(`⚠️ ${kind}: all 90 colours are still there`, n === 90, `${n}`);
+    ok(`⚠️ ${kind}: draws ${m.swatchCount} colours`, n === m.swatchCount, `${n} vs ${m.swatchCount}`);
+    const cols = new Set();
+    for (const row of m.grid) row.forEach((c, i) => cols.add(i));
+    ok(`⚠️ ${kind}: ...across all ${PALETTE_COLUMNS} hues`, cols.size === PALETTE_COLUMNS, `${cols.size}`);
+    ok(`⚠️ ${kind}: ...and every swatch it draws is a real palette colour`,
+      m.grid.flat().every((c) => PALETTE.includes(c)));
     // The custom controls survive the compaction.
     ok(`${kind}: the hex field is still offered`, !!doc.body.querySelector('input[aria-label="Hex color"]'));
     ok(`${kind}: the native picker is still offered`, !!doc.body.querySelector('input[type="color"]'));

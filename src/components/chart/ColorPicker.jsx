@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { palette, indicatorColor, indicatorColors } from '../../lib/chart/chart-theme.mjs';
 import {
-  PALETTE_GRID, COMMON_COLORS, normalizeHex, isValidHex, paletteMetrics, sizingForPointer,
+  COMMON_COLORS, normalizeHex, isValidHex, paletteMetrics, sizingForPointer,
 } from '../../lib/chart/color-palette.mjs';
 
 // THE COLOUR CONTROL — one palette, in one of two boxes.
@@ -157,7 +157,7 @@ export function ColorPalettePanel({ theme, value, onPick, onChange, metrics = DE
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: m.gap }}>
-        {PALETTE_GRID.map((row, i) => (
+        {m.grid.map((row, i) => (
           // eslint-disable-next-line react/no-array-index-key
           <div key={i} style={{ display: 'flex', gap: m.gap }}>
             {row.map((c) => (

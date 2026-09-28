@@ -219,7 +219,9 @@ console.log('\n5. the colour picker still works');
 
 {
   const picker = code(read('src/components/chart/ColorPicker.jsx'));
-  ok('the 90-swatch grid is intact', /PALETTE_GRID\.map/.test(picker));
+  // The panel renders the grid its sizing gives it — all ten levels for a cursor, five for a thumb —
+  // so what this asserts is that the grid still comes from the palette rather than from a local array.
+  ok('the swatch grid is intact', /m\.grid\.map/.test(picker));
   ok('custom hex is intact', /aria-label="Hex color"/.test(picker));
   ok('edge flipping is intact', /place\.vertical === 'above'/.test(picker) && /place\.horizontal === 'left'/.test(picker));
   ok('no scroll container', !/overflowY|maxHeight/.test(picker));

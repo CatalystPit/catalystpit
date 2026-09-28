@@ -109,6 +109,27 @@ export const COMMON_COLORS = FAMILIES.map((f) => f.shades[5]);
 export const SELECTION_RING = 3;
 
 /**
+ * The shade levels a TOUCH palette shows: half of them.
+ *
+ * ⚠️ HALF THE ROWS, NOT HALF THE HUES. Ninety swatches at a thumb-sized 30px is a panel that fills a
+ * phone; the desktop answer — shrink the cells — is not available, because a cell you cannot hit is
+ * worse than a colour you cannot reach. So the grid keeps all nine columns and drops every other level.
+ * Losing a hue would remove a colour outright; losing a level leaves a slightly coarser ramp of the same
+ * spectrum, and the neighbour above or below is a shade away.
+ *
+ * ⚠️ WHICH FIVE, AND WHY THESE. The ends are kept because pure white and pure black are the two most
+ * asked-for drawing colours and neither has a neighbour. Level 5 is kept because it is the mid-tone —
+ * the one that reads on both canvases, what COMMON_COLORS offers and what the defaults resolve to — so
+ * every colour Catalyst Pit suggests is still reachable on a phone. 3 and 7 fill the gaps evenly.
+ *
+ * ⚠️ IT IS A DISPLAY SUBSET, NOT A SMALLER PALETTE. All ninety still exist, still persist and still
+ * render; a drawing coloured from the desktop grid keeps that exact colour on a phone. What changes is
+ * that if that colour is not one of these forty-five, no swatch shows as selected there — the hex field
+ * and the native input still show it, which is how it stays visible and editable.
+ */
+export const COARSE_SHADES = [0, 3, 5, 7, 9];
+
+/**
  * The two sizings.
  *
  * ⚠️ `fine` IS DELIBERATELY DENSE. A 90-swatch palette built at touch size is 330px across and 443px
@@ -121,8 +142,8 @@ export const SELECTION_RING = 3;
  * desktop would trade a real problem (a palette you cannot hit) for a cosmetic one.
  */
 export const PALETTE_SIZINGS = {
-  fine:   { swatch: 16, gap: 2, themeSwatch: 12, labelFont: 8, hexInput: 20, hexWidth: 66, nativeW: 22, nativeH: 18, stackGap: 4, sepPad: 5, hostPad: 4 },
-  coarse: { swatch: 32, gap: 4, themeSwatch: 15, labelFont: 9, hexInput: 22, hexWidth: 78, nativeW: 26, nativeH: 22, stackGap: 6, sepPad: 6, hostPad: 8 },
+  fine:   { swatch: 16, gap: 2, themeSwatch: 12, labelFont: 8, hexInput: 20, hexWidth: 66, nativeW: 22, nativeH: 18, stackGap: 4, sepPad: 5, hostPad: 4, shades: null },
+  coarse: { swatch: 30, gap: 3, themeSwatch: 14, labelFont: 9, hexInput: 22, hexWidth: 74, nativeW: 24, nativeH: 20, stackGap: 5, sepPad: 5, hostPad: 6, shades: COARSE_SHADES },
 };
 
 /**
@@ -140,8 +161,11 @@ export const PALETTE_SIZINGS = {
  */
 export function paletteMetrics(kind = 'fine') {
   const s = PALETTE_SIZINGS[kind] || PALETTE_SIZINGS.fine;
+  // The rows this sizing actually draws: all ten for a cursor, every other one for a thumb.
+  const grid = s.shades ? s.shades.map((i) => PALETTE_GRID[i]).filter(Boolean) : PALETTE_GRID;
+  const rows = grid.length;
   const gridWidth = PALETTE_COLUMNS * s.swatch + (PALETTE_COLUMNS - 1) * s.gap;
-  const gridHeight = PALETTE_ROWS * s.swatch + (PALETTE_ROWS - 1) * s.gap;
+  const gridHeight = rows * s.swatch + (rows - 1) * s.gap;
   // The label's own line box, plus the gap under it.
   const labelHeight = Math.round(s.labelFont * 1.45) + 4;
   const themeRow = 1 + s.sepPad + labelHeight + s.themeSwatch;
@@ -149,6 +173,10 @@ export function paletteMetrics(kind = 'fine') {
   return {
     kind, ...s,
     ring: SELECTION_RING,
+    /** The rows to render, and how many swatches that is. Never the whole palette's shape. */
+    grid,
+    rows,
+    swatchCount: rows * PALETTE_COLUMNS,
     gridWidth,
     gridHeight,
     labelHeight,

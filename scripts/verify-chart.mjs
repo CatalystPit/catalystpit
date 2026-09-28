@@ -1322,8 +1322,13 @@ section('19b. a panel with a KNOWN height is placed to fit, never capped and scr
   const coarse = paletteMetrics('coarse');
   const W = coarse.contentWidth;
   const H = coarse.contentHeight;
-  ok('the dense sizing really is denser', fine.contentWidth < coarse.contentWidth
-    && fine.contentHeight < coarse.contentHeight, `${fine.contentWidth}x${fine.contentHeight} vs ${W}x${H}`);
+  // ⚠️ THE TWO SIZINGS TRADE DIFFERENT THINGS, so 'denser' is not one comparison. Desktop wins on cell
+  // size and total area; touch wins on how many colours fit, because it halves the ramp instead.
+  ok('the desktop cell is smaller', fine.swatch < coarse.swatch, `${fine.swatch} vs ${coarse.swatch}`);
+  ok('...and the desktop panel is narrower', fine.contentWidth < coarse.contentWidth,
+    `${fine.contentWidth} vs ${coarse.contentWidth}`);
+  ok('...while the touch panel shows fewer colours', coarse.swatchCount < fine.swatchCount,
+    `${coarse.swatchCount} vs ${fine.swatchCount}`);
 
   // Every plausible place a floating drawing toolbar can put its colour square, on a phone and on a
   // desktop. The property is the same in all of them: the whole palette lands inside the window.
@@ -1336,6 +1341,9 @@ section('19b. a panel with a KNOWN height is placed to fit, never capped and scr
     // position that shows all ninety here, so this is the one case where the box is capped and scrolls;
     // it is in the list so that branch is covered rather than assumed.
     { width: 740, height: 420, label: 'landscape phone' },
+    // ⚠️ SHORTER THAN THE PALETTE EVEN AFTER THE TOUCH GRID HALVED. 420px used to be below a 454px
+    // palette; at 237px it is not, and without this row the capped branch stopped being exercised at all.
+    { width: 740, height: 220, label: 'very short window' },
   ];
   let fitted = 0, scrolled = 0, overlapped = 0;
   for (const vp of VIEWPORTS) {
@@ -1369,12 +1377,20 @@ section('19b. a panel with a KNOWN height is placed to fit, never capped and scr
   ok('...and viewports too short for one, so both branches are covered', scrolled > 0, `${scrolled}`);
   ok('...and cases where staying on screen meant overlapping the trigger', overlapped > 0, `${overlapped}`);
 
-  // The discriminating case, spelled out: a trigger dead centre of a phone has room for the palette on
-  // NEITHER side, and the old rule would have hung it below and let it run off the bottom.
-  const mid = { top: 400, bottom: 422, left: 180, right: 202 };
-  const phone = { width: 390, height: 844 };
+  // ⚠️ THE DISCRIMINATING CASE, AND IT HAS TO BE CHOSEN, NOT ASSUMED. The point of `height` is a trigger
+  // with room for the palette on NEITHER side: the old rule hangs the box off the roomier side and caps
+  // it, so the palette scrolls; the new one slides the box up the window until all of it is on screen.
+  //
+  // ⚠️ THE FIXTURE HAD TO CHANGE WHEN THE TOUCH PALETTE HALVED. It used to be a 390x844 phone, which
+  // worked while the palette was 454px tall. At 237px it fits below the anchor on that phone, so both
+  // branches agreed and the contrast this pair exists to draw had quietly evaporated — the assertion
+  // still passed, describing nothing. A window short enough to squeeze it is the case that discriminates.
+  const mid = { top: 140, bottom: 162, left: 180, right: 202 };
+  const phone = { width: 800, height: 300 };
   const capped = placeFor(mid, 'bottom-center', { width: W, maxHeight: 360, viewport: phone });
   const kept = placeFor(mid, 'bottom-center', { width: W, height: H, viewport: phone });
+  ok('the fixture really does squeeze the palette on both sides',
+    H > phone.height - mid.bottom - 10 && H > mid.top - 10, `palette ${H} in ${phone.height}`);
   ok('⚠️ without a height the box is capped below the palette', capped.maxHeight < H,
     `${capped.maxHeight} vs ${H}`);
   ok('⚠️ ...and with one it is not', kept.maxHeight >= H, `${kept.maxHeight} vs ${H}`);
@@ -1388,7 +1404,7 @@ section('19b. a panel with a KNOWN height is placed to fit, never capped and scr
 
   // And a palette taller than the window is placed at the edge and scrolls — the one case where a
   // scrollbar is correct, because there is no position that shows all of it.
-  const tiny = { width: 390, height: 300 };
+  const tiny = { width: 390, height: 200 };
   const squeezed = placeFor(mid, 'bottom-center', { width: W, height: H, viewport: tiny });
   ok('a palette taller than the window starts at the top edge', squeezed.top === EDGE, `${squeezed.top}`);
   ok('...and is capped to the window rather than overflowing it',
@@ -1409,7 +1425,7 @@ section('19b. a panel with a KNOWN height is placed to fit, never capped and scr
   // instead of restating 32 and 4 as literals and then describing a palette that has moved on.
   ok('...and the sizing is the palette arithmetic, not literals in the component',
     /gridWidth = PALETTE_COLUMNS \* s\.swatch \+ \(PALETTE_COLUMNS - 1\) \* s\.gap/.test(paletteSrc)
-    && /gridHeight = PALETTE_ROWS \* s\.swatch \+ \(PALETTE_ROWS - 1\) \* s\.gap/.test(paletteSrc));
+    && /gridHeight = rows \* s\.swatch \+ \(rows - 1\) \* s\.gap/.test(paletteSrc));
   // ⚠️ SCOPED TO THE SIZING HOOK, not the whole file. ColorPicker reads window.innerWidth legitimately,
   // in the effect that keeps its panel on screen — banning the identifier outright failed on that, which
   // is a different concern from how big a swatch is. What must not decide the SIZE is a window dimension

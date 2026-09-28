@@ -244,7 +244,9 @@ for (let i = 0; i < 60; i += 1) {
 }
 ok('the harness page loaded in a real browser', !!(await evaluate('typeof window.mount === "function"')));
 
-const { PALETTE, PALETTE_COLUMNS, PALETTE_ROWS } = await import('../src/lib/chart/color-palette.mjs');
+const { PALETTE, PALETTE_COLUMNS, PALETTE_ROWS, paletteMetrics } = await import('../src/lib/chart/color-palette.mjs');
+// What each pointer kind is expected to draw. Touch halves the ramp; desktop draws every level.
+const expected = (c) => paletteMetrics(c.touch ? 'coarse' : 'fine');
 
 /**
  * ⚠️ FRACTIONAL SCALING IS PART OF THE TEST, NOT AN EDGE CASE. 125% and 150% are the Windows defaults
@@ -303,10 +305,28 @@ console.log('\n1. the palette opens and renders every swatch, in a real browser'
 for (const { c, opened, m } of results) {
   ok(`${c.label}: the trigger exists and opens the palette`, opened && !m.error, m.error || '');
   if (m.error) continue;
-  ok(`${c.label}: all ${PALETTE.length} swatches are laid out`, m.swatchCount === PALETTE.length, `${m.swatchCount}`);
-  ok(`${c.label}: in ${PALETTE_ROWS} rows of ${PALETTE_COLUMNS}`,
-    m.rows.length === PALETTE_ROWS && m.rows.every((r) => r.n === PALETTE_COLUMNS),
+  // ⚠️ THE EXPECTED COUNT IS PER POINTER KIND. A thumb-sized ninety-swatch grid fills a phone, so touch
+  // draws every other level -- all nine hues, half the ramp. Desktop still draws all ninety.
+  const exp = expected(c);
+  ok(`${c.label}: all ${exp.swatchCount} swatches are laid out`,
+    m.swatchCount === exp.swatchCount, `${m.swatchCount} vs ${exp.swatchCount}`);
+  ok(`${c.label}: in ${exp.rows} rows of ${PALETTE_COLUMNS}`,
+    m.rows.length === exp.rows && m.rows.every((r) => r.n === PALETTE_COLUMNS),
     `${m.rows.length} rows: ${m.rows.map((r) => r.n).join(',')}`);
+  ok(`${c.label}: every hue column is present`,
+    m.rows.every((r) => r.colours.length === PALETTE_COLUMNS));
+  // ⚠️ DESKTOP IS PINNED TO A FIXED 90, NOT TO paletteMetrics. `exp` above comes from the same function
+  // under test, so a change that halved the DESKTOP grid as well would move the expectation with it and
+  // this suite would report nothing -- which is exactly what a mutation run showed. A literal closes it.
+  if (!c.touch) {
+    ok(`${c.label}: the desktop grid is the whole palette`,
+      m.swatchCount === PALETTE.length && m.rows.length === PALETTE_ROWS,
+      `${m.swatchCount} swatches in ${m.rows.length} rows`);
+  } else {
+    ok(`${c.label}: the touch grid is half the levels, all the hues`,
+      m.swatchCount === PALETTE.length / 2 && m.rows.length === PALETTE_ROWS / 2,
+      `${m.swatchCount} swatches in ${m.rows.length} rows`);
+  }
 }
 
 console.log('\n2. ⚠️ NOTHING IS CLIPPED, and the padding is symmetrical');
