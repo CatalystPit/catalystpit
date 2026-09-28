@@ -16,6 +16,7 @@
 // silent-wrong-answer generator, and a wrong cashtag on a public wire is worse than a missing one.
 
 import { isSicDescription } from './sic-descriptions.mjs';
+import { COMMON_WORDS } from './common-words.mjs';
 
 // ── normalisation ────────────────────────────────────────────────────────────
 // Legal scaffolding carries no identity: "COSTCO WHOLESALE CORP /NEW" and "Costco Wholesale" are
@@ -234,6 +235,19 @@ export const ALIASES = new Map(Object.entries({
   'NETEASE': 'NTES', 'PINDUODUO': 'PDD', 'NIO': 'NIO', 'XPENG': 'XPEV', 'LI AUTO': 'LI',
   'HUB GROUP': 'HUBG', 'ENVIRONMENTAL TECTONICS': 'ETCC',
   'AT&T': 'T', FORD: 'F', 'GENERAL MOTORS': 'GM', PALANTIR: 'PLTR', SNOWFLAKE: 'SNOW', ZOOM: 'ZM', SHOPIFY: 'SHOP', SPOTIFY: 'SPOT',
+
+  // ── companies whose registered name IS an ordinary English word ──────────────────────────────
+  // These cannot be derived from the reference table any more: a one-token name that our own
+  // headlines also use as a word is refused at index time (see buildIndex). Stating them here is
+  // the deliberate human fact that outranks the measurement — and it is the ONLY way such a name
+  // should ever resolve, which is why the list is short and each entry is a company nobody would
+  // mistake for the word in a financial headline.
+  //
+  // APPLE sits at one lowercase use in 65k headlines, so it survives the floor today; it is pinned
+  // here so a growing corpus cannot quietly drop the most-covered company on the tape.
+  // ARGENX is the case the measurement genuinely misreads: argenx SE styles its own name in lower
+  // case, so the corpus reads its every mention as evidence that it is a word.
+  APPLE: 'AAPL', ARGENX: 'ARGX',
 }).filter(([, v]) => v !== null));
 
 // ── index ────────────────────────────────────────────────────────────────────
@@ -251,11 +265,54 @@ export const ALIASES = new Map(Object.entries({
  */
 const hasMarketPresence = (row) => Number(row?.market_cap) > 0 || Number(row?.price) > 0;
 
+// ── evidence that a headline names an ENTITY, not merely a word ──────────────
+//
+// Two kinds, and both are things the text does rather than things we assume:
+//
+//   1. THE COMPANY'S OWN SCAFFOLDING. Matching strips Corp/Inc/Holdings from both sides, because a
+//      headline almost never prints them. When the name is otherwise an ordinary word, that missing
+//      scaffolding is precisely the evidence — "Pool Corporation", "POOL CORP", "Rocket Companies",
+//      "Booking Holdings", "Quantum Corp". Spelling variants collapse to one family so "Corp" and
+//      "Corporation" are the same fact.
+//   2. SPOKEN OF AS A SECURITY. "Grab stock price target", "UBS upgrades Stem stock rating". Nobody
+//      writes "here stock" or "bullish stock", so this costs nothing and recovers the references
+//      that name the issuer without its suffix.
+const MARKER_FAMILY = new Map(Object.entries({
+  INC: 'INC', INCORPORATED: 'INC',
+  CORP: 'CORP', CORPORATION: 'CORP',
+  CO: 'CO', COMPANY: 'CO', COMPANIES: 'CO',
+  LTD: 'LTD', LIMITED: 'LTD',
+  HOLDINGS: 'HOLDINGS', HOLDING: 'HOLDINGS', HLDGS: 'HOLDINGS', HLDG: 'HOLDINGS',
+  GROUP: 'GROUP', GRP: 'GROUP',
+  PLC: 'PLC', LLC: 'LLC', LLP: 'LLC', SE: 'SE', NV: 'NV', SA: 'SA', AG: 'AG',
+  TRUST: 'TRUST', REIT: 'REIT',
+}));
+const EQUITY_CONTEXT = new Set(['STOCK', 'STOCKS', 'SHARES', 'SHAREHOLDERS']);
+
+/** The marker families a registered name actually carries, which is what a headline must echo. */
+function nameMarkers(name) {
+  const out = new Set();
+  for (const w of String(name || '').toUpperCase().split(/[^A-Z]+/)) {
+    const fam = MARKER_FAMILY.get(w);
+    if (fam) out.add(fam);
+  }
+  return out;
+}
+
+/** The word printed immediately after `span` in `text`, upper-cased, or ''. */
+function wordAfter(text, span) {
+  const i = String(text).indexOf(span);
+  if (i < 0) return '';
+  const rest = String(text).slice(i + span.length);
+  const m = /^[^A-Za-z0-9]*([A-Za-z]+)/.exec(rest);
+  return m ? m[1].toUpperCase() : '';
+}
+
 export function buildIndex(rows) {
   // Keyed on the FIRST token of the name. A headline reference has to start where the company's
   // name starts, so this is both the lookup and the first filter.
   const byFirst = new Map();
-  const add = (toks, ticker, curated = false) => {
+  const add = (toks, ticker, curated = false, markers = null) => {
     if (!toks.length) return;
     const head = toks[0];
     // A short head is only dangerous ALONE. "R F INDUSTRIES LTD" collapses to ["RF","INDUSTRIES"],
@@ -269,7 +326,33 @@ export function buildIndex(rows) {
     // capitalises every word and the usual proof that a word is a name disappears. Refusing at
     // index time rather than at match time means Pit Wire and the X post both stop seeing it, so
     // the two surfaces cannot disagree about a symbol that should never have existed.
-    if (!curated && toks.length === 1 && AMBIGUOUS_WORD.has(head)) return;
+    //
+    // ⚠️ "ORDINARY ENGLISH WORD" IS NOW MEASURED, NOT LISTED. AMBIGUOUS_WORD below is a hand-written
+    // set of words someone had already been burned by, which cannot know about the word that burns
+    // us tomorrow — and one did: "Here Group Ltd" reduces to HERE, so a Michael Saylor story reading
+    // "…Buying Bitcoin Again. Here's Why…" went out tagged $HERE. COMMON_WORDS answers the question
+    // as a PROPERTY OF THE WORD instead: a word written lower case in our own headlines is a word,
+    // and a company name essentially never is (here 7, beyond 57, strategy 150, workshop 4 — against
+    // nvidia 0, tesla 0, costco 0, palantir 0, apple 1). See scripts/build-common-words.mjs.
+    //
+    // The curated list stays as a floor, so nothing already refused becomes allowed. A company whose
+    // real name IS an ordinary word — Apple, argenx — is stated deliberately in ALIASES, which is
+    // what `curated` exempts: a human fact outranks a measured guess.
+    //
+    // ⚠️ IT IS NOT REFUSED OUTRIGHT — IT IS MADE TO ASK FOR EVIDENCE. "Pool Corporation announces a
+    // director appointment", "Rocket Companies stock hits a 52-week low" and "BofA cuts Grab stock
+    // price target" are real references to real issuers, and dropping the name from the index
+    // entirely lost all three. What separates them from "Here's why" is that the text names the
+    // ENTITY — the word carries the company's own scaffolding, or it is spoken of as a security.
+    // So the entry survives with `needs`, and resolveCompanies will only accept it on that evidence.
+    // A name with no scaffolding at all to demand ("Bullish") has no evidence to ask for and is
+    // still refused, because nothing in a headline could ever distinguish it from the word.
+    if (!curated && toks.length === 1 && (AMBIGUOUS_WORD.has(head) || COMMON_WORDS.has(head))) {
+      if (!markers || !markers.size) return;
+      if (!byFirst.has(head)) byFirst.set(head, []);
+      byFirst.get(head).push({ toks, ticker: String(ticker).toUpperCase(), curated, needs: markers });
+      return;
+    }
 
     if (!byFirst.has(head)) byFirst.set(head, []);
     byFirst.get(head).push({ toks, ticker: String(ticker).toUpperCase(), curated });
@@ -282,7 +365,7 @@ export function buildIndex(rows) {
     // needs no vocabulary and cannot go stale, so it holds for any description EDGAR invents later.
     if (r.industry != null && r.company != null && String(r.company) === String(r.industry)) continue;
     if (looksLikeIndustry(r.company)) continue;
-    add(tokens(r.company), t);
+    add(tokens(r.company), t, false, nameMarkers(r.company));
   }
   // Aliases are single-token facts, allowed below the derived-name floor (ATT, BP).
   for (const [name, t] of ALIASES) add(tokens(name), t, true);
@@ -546,10 +629,20 @@ export function resolveCompanies(headline, index, max = 3) {
     // An EXACT name beats a longer name that merely starts the same way. "Apple" is Apple Inc, not
     // an ambiguity between Apple and Apple Hospitality REIT; without this the right answer loses to
     // a company that happens to extend it.
+    // ⚠️ AN ORDINARY-WORD NAME MUST BE CORROBORATED BY THE TEXT ITSELF. Computed once per span: the
+    // word printed straight after it, which is where both kinds of evidence appear.
+    const after = wordAfter(text, span);
+    const afterFamily = MARKER_FAMILY.get(after) || '';
+    const spokenAsSecurity = EQUITY_CONTEXT.has(after);
+
     const exact = new Set(), prefix = new Set(), curatedHit = new Set();
     for (const e of entries) {
       if (spanToks.length > e.toks.length) continue;
       if (!spanToks.every((t, i) => t === e.toks[i])) continue;
+      // The name is an ordinary English word. Accept it only where the headline names the ENTITY —
+      // the company's own scaffolding, or the word spoken of as a security. "Pool Corporation" and
+      // "Grab stock" resolve; "Here's why" and "a little more orange" do not.
+      if (e.needs && !(spokenAsSecurity || (afterFamily && e.needs.has(afterFamily)))) continue;
       if (e.curated && spanToks.length === e.toks.length) curatedHit.add(e.ticker);
       (spanToks.length === e.toks.length ? exact : prefix).add(e.ticker);
     }

@@ -6,7 +6,18 @@
 //
 // Run: node scripts/verify-company-symbols.mjs
 
-import { buildIndex, resolveCompanies, tokens, pickOne, looksLikeIndustry, maskUnitsAfterNumbers, isRelationalContext, tickersSupportedBy } from '../src/lib/company-symbols.mjs';
+import fs from 'node:fs';
+import { buildIndex, resolveCompanies, tokens, pickOne, looksLikeIndustry, maskUnitsAfterNumbers, isRelationalContext, tickersSupportedBy, ALIASES } from '../src/lib/company-symbols.mjs';
+import { COMMON_WORDS } from '../src/lib/common-words.mjs';
+
+// The hand-written list, read from source. Used only to prove the fix is NOT another entry in it:
+// adding 'HERE' there would have silenced one headline and taught the resolver nothing.
+const AMBIGUOUS_WORD_SNAPSHOT = new Set(
+  (/const AMBIGUOUS_WORD = new Set\(\[([\s\S]*?)\n\]\);/
+    .exec(fs.readFileSync(new URL('../src/lib/company-symbols.mjs', import.meta.url), 'utf8'))?.[1] || '')
+    .replace(/\/\/[^\n]*/g, '')
+    .split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean),
+);
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -288,6 +299,98 @@ ok('nothing to check is nothing to drop', tickersSupportedBy('anything', [], rel
 ok('no index means no dropping — the guard fails open, never silently empty',
   tickersSupportedBy('Meritage files', ['WEN'], null).join() === 'WEN');
 ok('duplicates collapse', tickersSupportedBy('Apple rises', ['AAPL', 'AAPL'], rel).length === 1);
+
+// ── AN ORDINARY ENGLISH WORD IS NOT A COMPANY REFERENCE ───────────────────────
+//
+// ⚠️ THE FAILURE THIS PINS, verbatim from production. Pit Wire published a Michael Saylor / Bitcoin
+// story tagged $HERE, because "Here Group Ltd" reduces to the single token HERE and the headline
+// said "Here's Why". Nothing about $HERE was a cashtag, source metadata or an entity extraction —
+// it was COMPANY-NAME MATCHING against a name that is an ordinary word.
+//
+// The old defence was AMBIGUOUS_WORD, a hand-written list of words someone had already been burned
+// by, which by construction cannot know the next one. It is now a property of the word: a token our
+// own headlines print in lower case is a word (here 7, beyond 57, strategy 150 — against nvidia 0,
+// tesla 0, costco 0, palantir 0). See src/lib/common-words.mjs and its generator.
+console.log('\n=== an ordinary word is not a company ===');
+const wordIdx = buildIndex([
+  { ticker: 'HERE', company: 'Here Group Ltd' },
+  { ticker: 'POOL', company: 'POOL CORP' },
+  { ticker: 'GRAB', company: 'Grab Holdings Ltd' },
+  { ticker: 'BKNG', company: 'Booking Holdings Inc.' },
+  { ticker: 'BLSH', company: 'Bullish' },
+  { ticker: 'BYON', company: 'BEYOND, INC.' },
+  { ticker: 'NVDA', company: 'NVIDIA CORP' },
+  { ticker: 'AAPL', company: 'Apple Inc.' },
+  { ticker: 'TSLA', company: 'Tesla, Inc.' },
+  { ticker: 'PLTR', company: 'Palantir Technologies Inc.' },
+]);
+
+// TASK 7 — the exact event, kept as a permanent fixture. This is the source headline as stored.
+const SAYLOR = '‘A Little More Orange,’ Says Saylor as He Starts Buying Bitcoin Again. '
+  + 'Here’s Why I Don&#039;t See Much Orange in the Short Term.';
+ok('⚠️ the Saylor headline resolves to NO ticker at all',
+  resolveCompanies(SAYLOR, wordIdx).length === 0, JSON.stringify(resolveCompanies(SAYLOR, wordIdx)));
+ok('⚠️ ...and specifically not HERE', !resolveCompanies(SAYLOR, wordIdx).includes('HERE'));
+
+for (const h of [
+  "British Pound Futures Just Hit a 3-Month Low. Here's How to Play It.",
+  'I Just Added $10,000 To A Turnaround Story - Here\'s Why',
+  'Gold: Rising Yields Prove Too Much for Now, but Longer-Term Outlook Stays Bullish',
+  'The SEO Answer Rebrands as Rank & Revenue, Expanding Beyond SEO',
+  'Slovakia’s Fico Warns of Snap Vote as Coalition Majority at Risk',
+]) ok(`no ticker: "${h.slice(0, 52)}"`, resolveCompanies(h, wordIdx).length === 0,
+  JSON.stringify(resolveCompanies(h, wordIdx)));
+
+// ⚠️ AND THE COMPANIES ARE NOT SIMPLY GONE. Refusing the word outright lost real references —
+// measured over 20,000 recent events, 54 of them. A headline that names the ENTITY still resolves.
+console.log('\n=== ...but naming the entity still resolves it ===');
+for (const [h, t] of [
+  ['Pool Corporation Announces Director Appointment', 'POOL'],
+  ['POOL CORP · 8-K (5.02,9.01)', 'POOL'],
+  ['BTIG thinks AI agent fears with Booking Holdings are overdone', 'BKNG'],
+  ['BofA cuts Grab stock price target on valuation, keeps buy rating', 'GRAB'],
+  ['Grab shares jump after the COO buys 300,000 of them', 'GRAB'],
+]) ok(`${t} from "${h.slice(0, 46)}"`, resolveCompanies(h, wordIdx)[0] === t,
+  JSON.stringify(resolveCompanies(h, wordIdx)));
+
+// ⚠️ AND IT MUST BE THE COMPANY'S OWN SCAFFOLDING. "Pool Group" is not Pool Corp; accepting any
+// corporate-looking word after the span would let a different company — or a phrase that merely
+// sounds corporate — stand in as evidence for this one.
+ok('a marker the company does not carry is not evidence',
+  resolveCompanies('Pool Group opens a new distribution site', wordIdx).length === 0,
+  JSON.stringify(resolveCompanies('Pool Group opens a new distribution site', wordIdx)));
+ok('...while the one it does carry still is',
+  resolveCompanies('Pool Corp opens a new distribution site', wordIdx)[0] === 'POOL');
+ok('Apple is stated deliberately in ALIASES, not left to the corpus to allow',
+  ALIASES.get('APPLE') === 'AAPL',
+  'one lowercase use in 65k headlines is too thin a margin for the most-covered name on the tape');
+
+ok('a name with no scaffolding to ask for is refused outright, not half-accepted',
+  resolveCompanies('Bullish Corp posts record volume', wordIdx).length === 0,
+  'Bullish files as the bare word, so no headline could ever corroborate it');
+
+// TASK 5 — entity resolution must keep working without a cashtag.
+console.log('\n=== legitimate detection is untouched ===');
+for (const [h, t] of [
+  ['Nvidia launches new AI chip', 'NVDA'],
+  ['Apple announces record September quarter', 'AAPL'],
+  ['Tesla deliveries beat expectations', 'TSLA'],
+  ['Palantir wins Army contract', 'PLTR'],
+]) ok(`${t} still resolves from "${h.slice(0, 40)}"`, resolveCompanies(h, wordIdx)[0] === t,
+  JSON.stringify(resolveCompanies(h, wordIdx)));
+
+ok('the hand-written list was actually read (positive control)',
+  AMBIGUOUS_WORD_SNAPSHOT.has('BEYOND') && AMBIGUOUS_WORD_SNAPSHOT.size > 100,
+  `parsed ${AMBIGUOUS_WORD_SNAPSHOT.size} entries — an empty parse would make the next check vacuous`);
+ok('⚠️ the measured word set is what refuses HERE, not a hand-written entry',
+  COMMON_WORDS.has('HERE') && !AMBIGUOUS_WORD_SNAPSHOT.has('HERE'),
+  'if HERE were merely added to the old list this would pass while nothing general had changed');
+for (const w of ['ON', 'IT', 'ALL', 'ARE', 'FOR', 'NOW', 'LOVE', 'OPEN', 'GO', 'SO', 'CAN']) {
+  ok(`"${w}" is known to be an ordinary word`, COMMON_WORDS.has(w));
+}
+for (const w of ['NVIDIA', 'TESLA', 'COSTCO', 'PALANTIR', 'KYNDRYL', 'MICROSOFT', 'MODERNA']) {
+  ok(`"${w}" is not mistaken for one`, !COMMON_WORDS.has(w));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
