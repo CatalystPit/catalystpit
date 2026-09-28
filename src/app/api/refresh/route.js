@@ -1,6 +1,6 @@
 import { db } from '../../../lib/db';
 import { insiderTrades as insiderTradesTable } from '../../../lib/schema';
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import { recordJobRun } from '../../../lib/job-heartbeat';
 import { isIngestableTicker } from '../../../lib/security-identity.mjs';
 
@@ -104,8 +104,86 @@ async function throttledBatch(items, concurrency, gapMs, worker) {
   return out;
 }
 
+/**
+ * Fill in `amendsAccession` / `amendLinkBasis` on freshly parsed amendment rows, and mark the
+ * filings they supersede.
+ *
+ * ⚠️ IT ASKS ONLY THE SEC'S OWN METADATA. Candidates are the non-amendment filings for this issuer
+ * filed on the date the amendment states — nothing about matching shares, prices or codes, which
+ * would be a coincidence promoted to a lineage claim.
+ */
+async function resolveLineageForRows(rows) {
+  const amendments = new Map();
+  for (const r of rows) {
+    if (!r.isAmendment || !r.origSubmissionDate || !r.issuerCik) continue;
+    if (!amendments.has(r.accession)) amendments.set(r.accession, r);
+  }
+  if (!amendments.size) return;
+
+  const { resolveAmendment, LINK_BASIS } = await import('../../../lib/form4-lineage.mjs');
+  for (const [accession, r] of amendments) {
+    try {
+      // Candidates are the issuer's non-amendment filings submitted on the stated date — plus, when
+      // the filer named an accession outright, that filing too, since it need not share the date.
+      const named = r.lineage?.accessionRefs?.length ? r.lineage.accessionRefs : [''];
+      const res_ = await db.execute(sql`
+        SELECT DISTINCT accession, issuer_cik, owner_cik, filing_date::text AS filing_date,
+               period_of_report::text AS period_of_report
+          FROM insider_trades
+         WHERE issuer_cik = ${r.issuerCik}
+           AND coalesce(is_amendment, false) = false
+           AND (filing_date = ${r.origSubmissionDate}::date OR accession = ANY(${named}))`);
+      const res = resolveAmendment(
+        { isAmendment: true, issuerCik: r.issuerCik,
+          ownerCiks: r.lineage?.ownerCiks?.length ? r.lineage.ownerCiks : (r.ownerCik ? [r.ownerCik] : []),
+          periodOfReport: r.periodOfReport, origSubmissionDate: r.origSubmissionDate,
+          accessionRefs: r.lineage?.accessionRefs ?? [] },
+        (res_.rows ?? res_ ?? []).map((c) => ({
+          accession: c.accession, issuerCik: c.issuer_cik, ownerCik: c.owner_cik,
+          filingDate: c.filing_date, periodOfReport: c.period_of_report,
+        })),
+        accession,
+      );
+      for (const row of rows) {
+        if (row.accession !== accession) continue;
+        row.amendsAccession = res.accession;
+        row.amendLinkBasis = res.basis;
+      }
+      if (res.basis === LINK_BASIS.DETERMINISTIC || res.basis === LINK_BASIS.EXPLICIT) {
+        await db.execute(sql`
+          UPDATE insider_trades SET superseded_by = ${accession}
+           WHERE accession = ${res.accession} AND coalesce(superseded_by, '') = ''`);
+      }
+    } catch (e) {
+      // Lineage is an improvement to the row, never a precondition for storing the filing.
+      console.log(`[form4] lineage unresolved for ${accession}: ${e.message}`);
+    }
+  }
+}
+
 function parseForm4(xml, filing) {
-  if (extractFormText(xml, 'documentType') !== '4') return [];
+  // ── ⚠️ THE LIVE PATH HAD NEVER INGESTED A SINGLE AMENDMENT ─────────────────
+  //
+  // This read `!== '4'`, so every Form 4/A the per-minute cron ever saw was dropped on the floor.
+  // The 2,027 amendments in the table all arrived through the backfill scripts, which use
+  // lib/form4.mjs and do accept them. That is the two parsers drifting again, on the document type
+  // this time rather than on the ticker gate — and it meant a filer correcting a price, a share
+  // count or a transaction code was invisible to production from the moment the backfills stopped.
+  const documentType = extractFormText(xml, 'documentType');
+  if (documentType !== '4' && documentType !== '4/A') return [];
+  const isAmendment = documentType === '4/A';
+
+  // The SEC's own statement of WHEN the amended filing was submitted. There is no element naming
+  // the accession — across all 901 distinct 4/A filings in our corpus exactly one states it, and
+  // that one typed it into <remarks> by hand — so this date, the issuer, the owners and the period
+  // are effectively the whole of the lineage a Form 4/A makes available. Resolving it into an
+  // accession happens at the write, where the corpus is in reach; see form4-lineage.mjs, which
+  // refuses when more than one filing fits.
+  const origSubmissionDate = normalizeDate(extractFormText(xml, 'dateOfOriginalSubmission'));
+  // ...but when a filer DOES name one, it is better evidence than the date, so it is carried through
+  // rather than thrown away here and rediscovered only by the backfill.
+  const accessionRefs = isAmendment
+    ? [...new Set([...String(xml).matchAll(/\b\d{10}-\d{2}-\d{6}\b/g)].map((m) => m[0]))] : [];
 
   const ticker  = extractFormText(xml, 'issuerTradingSymbol')?.toUpperCase();
   const company = decodeEntities(extractFormText(xml, 'issuerName'));
@@ -200,6 +278,16 @@ function parseForm4(xml, filing) {
       // The SEC's own identifiers, carried through so the context and conviction pipelines
       // downstream have the keys they partition on.
       issuerCik, ownerCik,
+      // Provenance the amendment lineage needs. The live path wrote none of it, so even once it
+      // accepted a 4/A there would have been nothing to resolve a lineage from.
+      periodOfReport: normalizeDate(extractFormText(xml, 'periodOfReport')),
+      formType: documentType,
+      isAmendment,
+      origSubmissionDate: isAmendment ? origSubmissionDate : null,
+      // ⚠️ NOT COLUMNS — lineage inputs, stripped before the insert. ownerCiks is every reporting
+      // owner on the filing (ownerCik above is null on a joint filing, which would leave the
+      // resolver with nothing to match), and accessionRefs is the rare hand-typed reference.
+      lineage: isAmendment ? { ownerCiks: [...new Set(ownerCiks)], accessionRefs } : null,
       transactionCode, action,
       shares, pricePerShare,
       totalValue: shares * pricePerShare,
@@ -625,7 +713,31 @@ async function insertInsiderTrades(insiderTrades) {
   if (rejected) console.log(`[form4] rejected ${rejected} row(s) with an unusable ticker`);
   lastInsiderReject = rejected;
   if (!rows.length) return 0;
-  const inserted = await db.insert(insiderTradesTable).values(rows)
+  // ── ⚠️ AMENDMENT LINEAGE, RESOLVED BEFORE THE WRITE ────────────────────────
+  //
+  // A 4/A arriving now must land already knowing which filing it amends, or the correction sits
+  // beside the thing it corrects and both count. The parser carried the SEC's own
+  // dateOfOriginalSubmission; this is the only place with the corpus in reach to turn it into an
+  // accession. resolveAmendment refuses when more than one filing fits, and an UNRESOLVED
+  // amendment supersedes nothing — a missing link is visible debt, a false one silently rewrites
+  // what the evidence engine believes about a company.
+  await resolveLineageForRows(rows);
+
+  // ⚠️ AN AMENDMENT WE CANNOT PLACE IS NOT INGESTED. If a 4/A arrives and the SEC metadata does not
+  // identify exactly one filing it amends, storing it would put the correction beside the thing it
+  // corrects with nothing marking either as superseded — and both would count. Dropping it is what
+  // this path already did for every amendment, so this is the status quo for the unresolvable
+  // minority rather than a new gap, and it is recoverable: the backfill re-examines them whenever
+  // more of the corpus is present. A double count is not recoverable, because nothing downstream
+  // can tell which of the two rows is the correction.
+  // `lineage` was an input to the resolution above, not a column; it goes no further than this.
+  const placeable = rows.filter((r) => !r.isAmendment || r.amendsAccession)
+    .map(({ lineage, ...row }) => row);
+  const droppedAmendments = rows.length - placeable.length;
+  if (droppedAmendments) console.log(`[form4] held back ${droppedAmendments} row(s) from unresolvable amendments`);
+  if (!placeable.length) return 0;
+
+  const inserted = await db.insert(insiderTradesTable).values(placeable)
     .onConflictDoNothing({ target: [insiderTradesTable.accession, insiderTradesTable.transactionDate, insiderTradesTable.transactionCode, insiderTradesTable.securityTitle, insiderTradesTable.shares, insiderTradesTable.pricePerShare, insiderTradesTable.sharesOwnedAfter] })
     .returning({ id: insiderTradesTable.id, ticker: insiderTradesTable.ticker });
 

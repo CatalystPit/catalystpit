@@ -38,7 +38,10 @@ export async function buildReplyContext(ev) {
            select company, exchange, sector, market_cap from screener_stocks where ticker = $1) r) as identity,
         (select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) from (
            select executive, title, action, shares, total_value, transaction_date::text as d
+             -- Amendments out AND the originals they superseded out; one without the other quotes
+             -- the very figures a 4/A was filed to correct.
              from insider_trades where ticker = $1 and is_amendment is not true
+              and coalesce(superseded_by, '') = ''
               and filing_date > current_date - 90
             order by total_value desc nulls last limit 3) r) as insider,
         (select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) from (

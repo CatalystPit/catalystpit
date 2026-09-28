@@ -168,10 +168,28 @@ export function parseForm4(xml, filing) {
   const ownerCik = extractText(xml, 'rptOwnerCik')?.replace(/^0+/, '') || null;
 
   const periodOfReport = normalizeDate(extractText(xml, 'periodOfReport'));
-  // 4/A carries the accession of the filing it corrects when the filer supplies it.
-  const amendsAccession = extractText(xml, 'accessionNumber') || null;
 
-  out.meta = { documentType, isAmendment, ticker, company, issuerCik, ownerCik, periodOfReport };
+  // ── ⚠️ THERE IS NO <accessionNumber> IN THE FORM 4 SCHEMA ──────────────────
+  //
+  // This line used to read `extractText(xml, 'accessionNumber')`, described as "the accession of the
+  // filing it corrects when the filer supplies it". No filer has ever supplied it, because the
+  // element does not exist in the SEC ownership schema. Measured across every 4/A in our corpus:
+  // ZERO carry an accession-shaped string anywhere in the document. So amends_accession was null on
+  // all 2,027 amendments we hold, and it was never going to be anything else.
+  //
+  // What the SEC does give is the date the amended filing was submitted. That, with the issuer, the
+  // reporting owners and the period, is what form4-lineage.mjs resolves a lineage from — and it
+  // refuses to guess when more than one filing fits.
+  const origSubmissionDate = normalizeDate(extractText(xml, 'dateOfOriginalSubmission'));
+
+  out.meta = {
+    documentType, isAmendment, ticker, company, issuerCik, ownerCik, periodOfReport,
+    // The lineage facts, carried to the ingest layer, which is the only place that can look up the
+    // filing they point at. The parser stays pure.
+    origSubmissionDate,
+    ownerCiks: [...new Set((xml.match(/<rptOwnerCik>([^<]*)<\/rptOwnerCik>/gi) || [])
+      .map((m) => m.replace(/<\/?rptOwnerCik>/gi, '').trim().replace(/^0+/, '')).filter(Boolean))],
+  };
 
   if (!ticker) {
     out.quarantine.push({
@@ -251,7 +269,12 @@ export function parseForm4(xml, filing) {
         periodOfReport,
         formType: documentType,
         isAmendment,
-        amendsAccession: isAmendment ? amendsAccession : null,
+        // ⚠️ RESOLVED BY THE INGEST LAYER, NOT GUESSED HERE. The parser records the SEC's own
+        // statement of when the amended filing was submitted; only something with the corpus in
+        // front of it can turn that into an accession, and form4-lineage.mjs refuses to when more
+        // than one filing fits.
+        origSubmissionDate: isAmendment ? origSubmissionDate : null,
+        amendsAccession: null,
         ownershipType: extractValueOrText(txn, 'directOrIndirectOwnership') || null,
         ownershipNature: decodeEntities(extractValueOrText(txn, 'natureOfOwnership') || '') || null,
         isDerivative: derivative,

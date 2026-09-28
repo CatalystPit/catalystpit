@@ -56,7 +56,10 @@ const BUNDLE_SQL = `
                executive, title, action, shares, price_per_share, total_value,
                rule_10b5_1, filing_url
           from insider_trades
-         where ticker = $1 and is_amendment is not true
+         -- ⚠️ BOTH HALVES, OR THE PAGE SHOWS A CORRECTED FILING'S OLD NUMBERS. Excluding amendments
+         -- alone leaves the superseded original in, which is the version the 4/A came to replace;
+         -- every other insider consumer pairs these two predicates.
+         where ticker = $1 and is_amendment is not true and coalesce(superseded_by, '') = ''
          order by filing_date desc, transaction_date desc
          limit 5
       ) r) as insider_recent,
@@ -76,7 +79,7 @@ const BUNDLE_SQL = `
                max(filing_date)::text                                 as latest
           from insider_trades
          where ticker = $1
-           and is_amendment is not true
+           and is_amendment is not true and coalesce(superseded_by, '') = ''
            and filing_date > (current_date - $2::int)
       ) r) as insider_summary,
 

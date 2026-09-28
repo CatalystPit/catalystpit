@@ -34,6 +34,15 @@ export const insiderTrades = pgTable('insider_trades', {
   formType:         text('form_type'),
   isAmendment:      boolean('is_amendment').default(false),
   supersededBy:     text('superseded_by'),
+  // ── amendment lineage (drizzle/0031) ──────────────────────────────────────
+  // `amends_accession` existed in the database but not here, so nothing could write it through
+  // drizzle. The other two are the audit trail: WHAT the SEC said, and HOW the link was decided.
+  amendsAccession:  text('amends_accession'),
+  // <dateOfOriginalSubmission> verbatim — the only lineage fact a Form 4/A states about itself.
+  origSubmissionDate: date('orig_submission_date', { mode: 'string' }),
+  // EXPLICIT | DETERMINISTIC | UNRESOLVED. Kept so a consumer can tell a resolved lineage from an
+  // unresolved one, and so nothing downstream can mistake a missing link for a decided one.
+  amendLinkBasis:   text('amend_link_basis'),
   ownershipType:    text('ownership_type'),                  // 'D' direct | 'I' indirect
   isDerivative:     boolean('is_derivative').default(false),
   // Precomputed historical context (scripts/build-insider-context.mjs). These are FACTS
