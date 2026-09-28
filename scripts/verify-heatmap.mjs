@@ -19,6 +19,7 @@
 //
 // Run: node scripts/verify-heatmap.mjs
 
+import fs from 'node:fs';
 import {
   TIMEFRAMES, DEFAULT_TIMEFRAME, isTimeframe, asDay, daysInMonth, shiftDays, shiftMonths,
   anchorDateFor, sessionAtOrBefore, baselineFor, pctReturn, securityReturn, NO_RETURN, MAX_BASELINE_GAP_DAYS,
@@ -448,6 +449,50 @@ console.log('\n=== universes: we do not claim membership we do not know ===');
   ok('the available ones use their own limit',
     universeLimit('top100') === 100 && universeLimit('top300') === 300 && universeLimit('top2000') === 2000);
   ok('every universe declares availability and a reason', UNIVERSES.every((u) => typeof u.available === 'boolean' && u.description));
+
+  // ── THE GATED ONES ARE NOT OFFERED AT ALL ────────────────────────────────────────────────────
+  //
+  // ⚠️ THEY USED TO BE SHOWN DISABLED, WITH THE REASON. That was honest about the product's intent and
+  // wrong for the reader: a control whose job is to pick a size was advertising two entries that could
+  // not be picked, each carrying a sentence about index licensing that means nothing to someone
+  // choosing between Top 100 and Top 500. Naming a constraint we cannot act on is not transparency in
+  // a dropdown, it is noise. The definitions stay — the blocker is a licence, not a design decision.
+  {
+    const client = fs.readFileSync(new URL('../src/app/heatmap/MarketHeatmapClient.jsx', import.meta.url), 'utf8')
+      .replace(/\r\n/g, '\n');
+    const jsx = client.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    ok('⚠️ the dropdown is built from the AVAILABLE universes, not all of them',
+      /availableUniverses\(\)\.map/.test(jsx) && !/UNIVERSES\.map/.test(jsx));
+    ok('⚠️ S&P 500 appears nowhere in the control', !/S&P 500/.test(jsx));
+    ok('⚠️ Nasdaq 100 appears nowhere in the control', !/Nasdaq 100/.test(jsx));
+    ok('⚠️ ...and no licensing or unavailable message is shown',
+      !/licensed index/i.test(jsx) && !/needs licensed/i.test(jsx) && !/disabled=\{!u\.available\}/.test(jsx));
+
+    // ⚠️ AND A GATED UNIVERSE CANNOT ARRIVE THROUGH THE BACK DOOR EITHER — stale saved state, a
+    // hand-edited query string, a preference written before the option was withdrawn.
+    ok('⚠️ the setter refuses anything the reader could not have picked',
+      /const u = universeById\(id\);/.test(jsx) && /u && u\.available \? id : DEFAULT_UNIVERSE/.test(jsx));
+    ok('⚠️ ...and the server falls back too, so the API cannot serve one',
+      universeLimit('sp500') === universeById(DEFAULT_UNIVERSE).limit
+      && universeLimit('nasdaq100') === universeById(DEFAULT_UNIVERSE).limit);
+
+    // Exactly the seven, in order — the list a reader should see.
+    ok('⚠️ the offered list is exactly the seven sizes',
+      availableUniverses().map((u) => u.label).join(' | ')
+        === 'Top 100 | Top 150 | Top 300 | Top 500 | Top 1000 | Top 2000 | All eligible',
+      availableUniverses().map((u) => u.label).join(' | '));
+
+    // ⚠️ AND RE-ENABLING IS ONE FLAG. Not a promise in a comment: the definitions still carry the
+    // limits and descriptions the feature would need, and nothing reads a separate allow-list.
+    for (const id of ['sp500', 'nasdaq100']) {
+      const u = universeById(id);
+      ok(`${id} is still fully defined for later`,
+        !!u && u.limit > 0 && !!u.description && !!u.label);
+    }
+    ok('⚠️ ...and availability is the only thing standing in the way',
+      UNIVERSES.filter((u) => !u.available).every((u) => !availableUniverses().includes(u)));
+  }
 
   // ELIGIBILITY IS A CLASSIFICATION RULE, not a list of tickers.
   ok('operating companies and depositary receipts are eligible',

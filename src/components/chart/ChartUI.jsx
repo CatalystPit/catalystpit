@@ -193,6 +193,26 @@ export function Popover({
         top: pos.top, left: pos.left, right: pos.right, bottom: pos.bottom,
         width: pos.width, maxHeight: pos.maxHeight,
         zIndex: POPOVER_Z, overflowY: 'auto', overflowX: 'hidden',
+        /**
+         * ⚠️ THE WHEEL STOPS HERE. A menu long enough to scroll — the timeframe list is the one people
+         * hit — scrolls to its end and then, by default, the browser hands the REMAINING delta to the
+         * next scrollable thing behind it. That is the page. So wheeling down through the intervals ran
+         * the list out, scrolled the document, and the chart moved out from under the cursor; worse, a
+         * page scroll is what every chart popover closes on, so the menu then shut and the next notch of
+         * the same gesture went to the chart itself and zoomed it.
+         *
+         * `overscroll-behavior: contain` is the browser's own answer to exactly this, and it is why the
+         * fix is one line rather than a wheel listener: it keeps the scroll inside this box without
+         * touching the chart's input handling at all. A preventDefault-on-wheel handler would have been
+         * a second, hand-rolled scrolling policy living next to the real one, and it would have had to
+         * decide for itself when the box was at its end — which is the browser's job, done correctly.
+         *
+         * ⚠️ AND IT IS ON THE SHARED Popover, so it covers every chart overlay at once: the timeframe
+         * and chart-type menus, the indicator dropdowns, the drawing category flyouts, the selected-
+         * drawing toolbar's popovers and the colour palette. They all had the same boundary and the
+         * same hole in it.
+         */
+        overscrollBehavior: 'contain',
         // Pinned, not inherited: POPOVER_CHROME above is only true if this stays border-box.
         boxSizing: 'border-box',
         background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, borderRadius: 8,
@@ -381,7 +401,9 @@ export function Modal({ theme, open, onClose, title, width = 460, children }) {
             fontWeight: 600, color: p.textStrong }}>{title}</span>
           <ToolButton theme={theme} onClick={onClose} title="Close">✕</ToolButton>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>{children}</div>
+        {/* Contained for the same reason as Popover above: a sheet scrolled to its end must not hand
+            the rest of the gesture to the page behind it. */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>{children}</div>
       </div>
     </div>,
     document.body,

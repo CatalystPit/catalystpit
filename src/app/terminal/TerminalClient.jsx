@@ -30,6 +30,16 @@ import PitWire from '../../components/PitWire';
 // removed in React 19). Free-floating panels: drag by the header, resize from the corner, layout
 // saved to localStorage. Chart center, halt scanner + movers around it.
 // Full widget registry — users add/remove any of these (Benzinga-style).
+//
+// ⚠️ `addable: false` RETIRES A PANEL FROM THE MENU WITHOUT DELETING IT. Three panels are retired:
+// Why Moving, Ticker News and Feed. The definitions stay because the ids are still in people's SAVED
+// layouts and station presets — PANEL_BY_ID is what those are validated against, so deleting an entry
+// would turn a saved layout's panel into an unknown id and silently drop it. They are simply no longer
+// offered, and cannot be re-added once closed.
+//
+// ⚠️ THIS RETIRES THE TERMINAL PANEL ONLY. The underlying components and data services are untouched:
+// the ticker page's own news, News Wire, Pit Wire, the main News section, Evidence and Catalyst
+// Convergence are all separate surfaces that do not go through this registry.
 const PANELS = [
   { id: 'pitwire',   title: 'Pit Wire',     tag: 'LIVE · CANONICAL' },
   { id: 'tape',      title: 'Tape · X',     tag: 'SOCIAL' },
@@ -39,7 +49,7 @@ const PANELS = [
   { id: 'pitscan',   title: 'Pit Scan',        tag: 'PROPRIETARY' },
   { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
   { id: 'movers',    title: 'Movers',       tag: 'DELAYED' },
-  { id: 'why',       title: 'Why Moving',   tag: 'CATALYST' },
+  { id: 'why',       title: 'Why Moving',   tag: 'CATALYST', addable: false },
   // '◆ SMART MONEY' was the old confluence vocabulary. The panel shows public evidence lining up
   // across independent sources, which is what the tag now says.
   { id: 'convergence', title: 'Catalyst Convergence', tag: '◆ EVIDENCE' },
@@ -48,11 +58,11 @@ const PANELS = [
   { id: 'evidence',  title: 'Evidence',     tag: '◆ CANONICAL' },
   // ⚠️ NOT 'newswire'. That panel is the market-wide wire; this one inspects ONE ticker, opened by
   // the Watchlist badge. Two panels about news that answer different questions need two names.
-  { id: 'tickernews', title: 'Ticker News',   tag: '◆ SEC 8-K' },
+  { id: 'tickernews', title: 'Ticker News',   tag: '◆ SEC 8-K', addable: false },
   { id: 'alerts',    title: 'Alerts',       tag: 'ENGINE' },
   { id: 'watchlist', title: 'Watchlist',    tag: 'YOURS' },
   { id: 'chat',      title: 'The Pit',      tag: 'CHAT' },
-  { id: 'feed',      title: 'Feed',         tag: 'SOCIAL' },
+  { id: 'feed',      title: 'Feed',         tag: 'SOCIAL', addable: false },
   { id: 'heatmap',   title: 'Heat Map',     tag: 'MARKET' },
   { id: 'earnings',  title: 'Earnings',     tag: 'CALENDAR' },
 ];
@@ -126,7 +136,7 @@ const STATION_PRESETS = [
   { key: 'newsdesk', name: 'News Desk',  visible: ['pitwire', 'newswire', 'tape', 'halts', 'watchlist', 'chart'] },
   { key: 'custom',   name: 'Custom',     visible: [] },   // blank canvas — add panels from scratch
 ];
-const presetVisible = (p) => p.visible.filter((id) => PANEL_BY_ID[id]);
+const presetVisible = (p) => p.visible.filter((id) => PANEL_BY_ID[id] && PANEL_BY_ID[id].addable !== false);
 
 // Auto-arrange a set of panels into a clean, non-overlapping layout (chart center-large, the rest
 // stacked in side columns). Reuses the {x,y,w,h,color} format so it plugs into the existing engine.
@@ -1547,7 +1557,8 @@ function Workspace() {
   }
 
   const containerH = Math.max(...visible.map((id) => (layout[id]?.y || 0) + (layout[id]?.h || 0)), 400) + 8;
-  const hidden = PANELS.filter((d) => !visible.includes(d.id));
+  // Retired panels are not offered. See the note over PANELS for why they are flagged, not deleted.
+  const hidden = PANELS.filter((d) => d.addable !== false && !visible.includes(d.id));
   const dirty = !!baselineRef.current && sigOf(layout, visible) !== baselineRef.current;
   return (
     <>

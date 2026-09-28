@@ -140,7 +140,15 @@ L('⚠️ THREE SURFACES, ONE IMPLEMENTATION');
   ok('⚠️ …and fetches nothing of its own either', !/api\/eightk|api\/press-releases/.test(chart));
   ok('the Watchlist badge reaches it through the same panel',
     /inspectNews\(r\.ticker\)/.test(term) && /<NewsPanel symbol={newsSym} \/>/.test(term));
-  ok('⚠️ the panel is still available from + Add panel', /id: 'tickernews'/.test(term));
+  // ⚠️ THE TERMINAL PANEL WAS RETIRED FROM THE ADD MENU, AND THAT IS ALL THAT CHANGED. Its definition
+  // stays in the registry — saved layouts and station presets are validated against it, so deleting the
+  // entry would turn someone's open panel into an unknown id and silently drop it — and every OTHER
+  // surface that shows this news is untouched, which is what the rest of this suite is about.
+  ok('the panel definition is still in the registry, for saved layouts', /id: 'tickernews'/.test(term));
+  ok('⚠️ …but it is no longer offered from + Add panel',
+    /id: 'tickernews',[^}]*addable: false/.test(term));
+  ok('⚠️ …while the ticker page\'s own news is untouched',
+    /export default function TickerNewsBody/.test(shared) && /<TickerNewsBody symbol={sym} compact/.test(chart));
   // ⚠️ THE ONLY DIFFERENCE BETWEEN THE SURFACES IS HOW MUCH ROOM THEY HAVE.
   ok('the surfaces differ by one prop', /compact = false/.test(shared));
 

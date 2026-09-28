@@ -1,11 +1,10 @@
 'use client';
 import { memo, useCallback, useRef, useState } from 'react';
 import {
-  TOOLS, tool, activeCategories, categoryOfTool, LINE_WIDTHS, LINE_DASHES,
+  TOOLS, tool, activeCategories, categoryOfTool,
 } from '../../lib/chart/chart-drawings.mjs';
 import { palette } from '../../lib/chart/chart-theme.mjs';
 import { ToolButton, Popover, MenuItem, MenuLabel, VectorIcon } from './ChartUI';
-import ColorPicker from './ColorPicker';
 
 // The vertical drawing rail.
 //
@@ -25,15 +24,14 @@ import ColorPicker from './ColorPicker';
 const RAIL_W = 34;
 
 function DrawingRailBase({
-  theme, activeTool, onPick, style, onStyle,
+  theme, activeTool, onPick,
   selected, onDelete, count, showDrawings, onToggleShow, onClearAll,
-  magnet = false, onToggleMagnet, onOpenManager,
+  onOpenManager,
   onUndo, onRedo, canUndo = false, canRedo = false,
   compact = false,
 }) {
   const p = palette(theme);
   const [openCat, setOpenCat] = useState(null);
-  const [stylePanel, setStylePanel] = useState(false);
   const [menu, setMenu] = useState(false);
   // What each category last placed, so its button repeats that choice on a single click.
   const [lastOf, setLastOf] = useState({});
@@ -46,11 +44,9 @@ function DrawingRailBase({
     if (!catRefs.current[id]) catRefs.current[id] = { current: null };
     return catRefs.current[id];
   };
-  const styleRef = useRef(null);
   const compactRef = useRef(null);
 
   const closeCat = useCallback(() => setOpenCat(null), []);
-  const closeStyle = useCallback(() => setStylePanel(false), []);
   const closeMenu = useCallback(() => setMenu(false), []);
 
   // ⚠️ SELECTING A DRAWING NO LONGER OPENS THIS PANEL. It used to, on the reasoning that selection
@@ -123,14 +119,17 @@ function DrawingRailBase({
     divider('d1'),
     ...cats.map(categoryButton),
     divider('d2'),
-    <div key="style" ref={styleRef} style={{ display: 'flex', flexShrink: 0 }}>
-      <ToolButton theme={theme} active={stylePanel} expanded={stylePanel}
-        onClick={() => setStylePanel((v) => !v)} title="Color, width and line style">🎨</ToolButton>
-    </div>,
-    // MAGNET. Snapping is a DRAWING behaviour: with it on, an anchor lands exactly on a candle's
-    // open, high, low or close. The crosshair is untouched either way.
-    <ToolButton key="magnet" theme={theme} active={magnet} onClick={onToggleMagnet}
-      title={magnet ? 'Magnet on — anchors snap to candle prices' : 'Magnet off — anchors follow the pointer'}>🧲</ToolButton>,
+    // ⚠️ THE PAINT TRAY AND THE MAGNET USED TO SIT HERE, between this rule and the eye. The list is
+    // flat, so removing them closes the gap on its own — and the rule above still separates the
+    // drawing TOOLS from the controls that act on drawings already made, which is what it was for.
+    //
+    // The paint tray set the style for the NEXT drawing: a setting a reader reaches for about once,
+    // sitting in the rail looking exactly like the control that restyles what they have selected. Two
+    // controls for one concept, the less useful one more prominent and further from its effect.
+    // Colour, width and line style all remain, on the toolbar that appears beside a selected drawing.
+    //
+    // The magnet snapped anchors to candle prices. The snapping code is untouched in DrawingLayer;
+    // nothing asks for it now, and CPChart pins it off so a saved magnet:true cannot strand anyone.
     <ToolButton key="vis" theme={theme} active={!showDrawings} onClick={onToggleShow}
       title={showDrawings ? 'Hide all drawings' : 'Show all drawings'}>{showDrawings ? '👁' : '◦'}</ToolButton>,
     // The object tree. Always present, because "I cannot find the drawing" is exactly the case where
@@ -143,48 +142,6 @@ function DrawingRailBase({
     // "Delete all" moved into the object tree, beside the list of what would be deleted — a button
     // that silently wipes every drawing is safer next to the thing it wipes.
   ];
-
-  // The style panel is a flyout beside its own icon, on the same model as the category menus.
-  //
-  // Selecting a drawing opens it, and in the collapsed rail that can happen while the menu holding
-  // the 🎨 button is shut — so there is no 🎨 to anchor to. It falls back to the rail's own button,
-  // which is always mounted, instead of trying to hang off an element that does not exist.
-  const styleAnchor = compact && !menu ? compactRef : styleRef;
-  const stylePopover = (
-    <Popover anchorRef={styleAnchor} open={stylePanel} onClose={closeStyle} theme={theme}
-      placement="right-start" gap={6} width={186} label="Drawing style">
-      <MenuLabel theme={theme}>New drawings</MenuLabel>
-      <div style={{ padding: '2px 6px 6px' }}>
-        {/* The shared chart colour control — the same palette the indicator settings use. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
-          fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>
-          <span style={{ flex: 1 }}>Color</span>
-          <ColorPicker theme={theme} compact label="New drawing color"
-            value={style.color} onChange={(v) => onStyle({ color: v })} />
-        </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
-          fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>
-          <span style={{ flex: 1 }}>Width</span>
-          <select value={style.width} onChange={(e) => onStyle({ width: Number(e.target.value) })}
-            aria-label="Line width"
-            style={{ background: 'transparent', color: p.textStrong, border: `1px solid ${p.border}`,
-              borderRadius: 3, fontSize: 11, padding: '2px 4px' }}>
-            {LINE_WIDTHS.map((w) => <option key={w} value={w}>{w}px</option>)}
-          </select>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6,
-          fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: p.text }}>
-          <span style={{ flex: 1 }}>Style</span>
-          <select value={style.dash} onChange={(e) => onStyle({ dash: e.target.value })}
-            aria-label="Line style"
-            style={{ background: 'transparent', color: p.textStrong, border: `1px solid ${p.border}`,
-              borderRadius: 3, fontSize: 11, padding: '2px 4px' }}>
-            {LINE_DASHES.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </label>
-      </div>
-    </Popover>
-  );
 
   // COMPACT: in a narrow panel a 34px rail is a large share of the chart, so it collapses to one
   // button that opens the same controls. Deliberately not a squeezed rail, which would leave neither
@@ -203,7 +160,6 @@ function DrawingRailBase({
             {buttons}
           </div>
         </Popover>
-        {stylePopover}
       </div>
     );
   }
@@ -213,11 +169,12 @@ function DrawingRailBase({
       <div style={{
         width: RAIL_W, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
         padding: '4px 0', borderRight: `1px solid ${p.border}`, height: '100%',
-        overflowY: 'auto', overflowX: 'visible',
+        // The rail can scroll in a short panel; when it runs out, the gesture stays here rather than
+        // chaining to the page and dragging the chart out from under the pointer.
+        overflowY: 'auto', overflowX: 'visible', overscrollBehavior: 'contain',
       }}>
         {buttons}
       </div>
-      {stylePopover}
     </div>
   );
 }

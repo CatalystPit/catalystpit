@@ -34,12 +34,19 @@ const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*
   .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
 
 // Every chart surface that can set a colour.
+//
+// ⚠️ THE DRAWING RAIL IS NO LONGER ONE. Its paint-tray button set the style for the NEXT drawing —
+// a second colour control, far from its effect, for a setting reached about once — and it was removed
+// in favour of the floating toolbar, which recolours the drawing the reader is actually looking at.
+// Colour, width and line style all still exist; there is now one place to reach them. The rail is
+// checked below for the property that still matters: that it carries no palette of its own.
 const SURFACES = [
-  'src/components/chart/DrawingRail.jsx',
   'src/components/chart/DrawingToolbar.jsx',
   'src/components/chart/DrawingSettings.jsx',
   'src/components/chart/IndicatorBrowser.jsx',
 ];
+/** Surfaces that must contain no colour control at all, for the same "one palette" reason. */
+const NON_SURFACES = ['src/components/chart/DrawingRail.jsx'];
 
 // ── 1. no legacy palette survives on any chart colour control ──────────────────────────────────
 console.log('\n1. no legacy palette survives on any chart colour control');
@@ -97,14 +104,22 @@ for (const f of SURFACES) {
 // become two palettes: whatever a surface mounts, only ColorPicker.jsx may walk PALETTE_GRID into
 // swatches. A second file doing that is a second palette, however it is named.
 {
-  const builders = ['src/components/chart/ColorPicker.jsx', ...SURFACES]
+  const builders = ['src/components/chart/ColorPicker.jsx', ...SURFACES, ...NON_SURFACES]
     .filter((f) => /PALETTE_GRID\s*\.?\s*map|PALETTE\.map|m\.grid\.map/.test(code(read(f))));
   ok('⚠️ exactly one file builds the swatch grid',
     builders.length === 1 && builders[0] === 'src/components/chart/ColorPicker.jsx',
     builders.join(', '));
 }
+// ⚠️ AND A NON-SURFACE CARRIES NO COLOUR CONTROL AT ALL. The rail's paint tray is gone; this is what
+// stops it coming back as a convenience and quietly becoming a second place to set a colour.
+for (const f of NON_SURFACES) {
+  const src = code(read(f));
+  ok(`${path.basename(f)} mounts no colour control`,
+    !/<(?:ColorPicker|ColorPalettePanel)[\s/>]/.test(src),
+    'colour belongs to the selected-drawing toolbar, in one place');
+  ok(`${path.basename(f)} imports none either`, !/from '\.\/ColorPicker'/.test(src));
+}
 // The drawing surfaces write through their own style channel, and only that.
-ok('the rail sets the style for NEW drawings', /onStyle\(\{ color: v \}\)/.test(code(read('src/components/chart/DrawingRail.jsx'))));
 ok('the toolbar recolours the SELECTED drawing', /onStyle\(\{ color: v \}\)/.test(code(read('src/components/chart/DrawingToolbar.jsx'))));
 ok('the settings dialog patches that drawing\'s style',
   /patch\(\{ style: \{ \.\.\.drawing\.style, color: v \} \}\)/.test(code(read('src/components/chart/DrawingSettings.jsx'))));

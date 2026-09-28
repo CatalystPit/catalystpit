@@ -169,9 +169,16 @@ const TARGETS = [
       // Windows are offered as returns, not as candle intervals.
       check('all four windows are offered', ['1D', '1W', '1M', '1Y'].every((t) => html.includes(`>${t}</button>`)));
       check('the leaders follow the selected window', /Top gainers · 1D/.test(html) && /Top losers · 1D/.test(html));
-      // We never claim index membership we do not hold.
-      check('index universes are offered but disabled with a reason',
-        /needs licensed index data/.test(html) && /disabled/.test(html));
+      // ⚠️ WE NEVER CLAIM INDEX MEMBERSHIP WE DO NOT HOLD — AND WE NO LONGER ADVERTISE THE GAP EITHER.
+      // These were rendered disabled, each with a sentence about index licensing. That was honest about
+      // the product's intent and wrong for the reader: a control whose job is to pick a size carried two
+      // entries that could not be picked, explaining a constraint they cannot act on. The definitions
+      // stay in heatmap-universe.mjs behind their `available` flag; they are simply not offered.
+      check('⚠️ gated index universes are not rendered at all',
+        !/S&amp;P 500|S&P 500/.test(html) && !/Nasdaq 100/.test(html));
+      check('⚠️ ...and no licensing message is shown', !/needs licensed index data/.test(html));
+      check('...while the size ladder is all there',
+        ['Top 100', 'Top 500', 'Top 2000', 'All eligible'].every((l) => html.includes(l)));
       // A security we could not measure keeps its tile and is never shown as 0%.
       check('an unmeasurable security is not rendered as a percentage', !/BNY[^<]*0\.0%/.test(html));
     },
@@ -466,10 +473,12 @@ console.log('\nmounting the drawing rail and picking tools from its flyout');
     // without it a rail that crashed on mount would read as one that mounted.
     const root = ReactDOMClient.createRoot(container, { onUncaughtError: (e) => { mountError = mountError || e; } });
     try {
+      // `style`, `onStyle` and `onToggleMagnet` are gone: the rail's paint tray and magnet were
+      // removed, so it no longer takes them. Passing them here would test a signature nothing uses.
       root.render(React.createElement(DrawingRail, {
         theme: 'dark', activeTool: null, onPick: (t) => picks.push(t),
-        style: { color: 0, width: 2, dash: 'solid' }, onStyle: noop, selected: false, onDelete: noop,
-        count: 0, showDrawings: true, onToggleShow: noop, onClearAll: noop, onToggleMagnet: noop,
+        selected: false, onDelete: noop,
+        count: 0, showDrawings: true, onToggleShow: noop, onClearAll: noop,
         onOpenManager: noop, onUndo: noop, onRedo: noop,
       }));
       await tick(); await tick();

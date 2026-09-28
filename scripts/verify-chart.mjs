@@ -911,23 +911,29 @@ section('16. drawing tools are grouped into categories on a left rail');
   // that silently wipes every drawing on the symbol is the wrong place for it.
   ok('...while delete-all lives beside the list it empties', !/Clear all \$\{count\}/.test(rail));
 
-  // CONTEXTUAL, NOT A PERMANENT ROW.
-  ok('style settings are a popover', /const \[stylePanel, setStylePanel\] = useState/.test(rail));
-  // ⚠️ THIS PANEL NO LONGER OPENS ON SELECTION, AND THAT IS THE CHANGE, NOT A REGRESSION.
+  // ⚠️ THE STYLE PANEL IS GONE FROM THE RAIL ENTIRELY, AND THAT IS THE CHANGE, NOT A REGRESSION.
   //
-  // It used to, on the reasoning that selecting a drawing is exactly when colour and width are
-  // wanted. That reasoning was right and the placement was wrong: the panel opened on the far side
-  // of the chart from the drawing it was editing, showed the whole palette permanently, and was
-  // the same control that sets the style for the NEXT drawing — so one panel meant two different
-  // things depending on whether something happened to be selected. Those controls now appear
-  // beside the drawing, in DrawingToolbar, and this panel kept the one job it can do unambiguously.
-  ok('...and it is now only about the NEXT drawing',
-    !/useEffect\(\(\) => \{ if \(selected\) setStylePanel\(true\); \}/.test(rail)
-    && /New drawings/.test(rail));
-  ok('...with the selected-drawing controls moved to the floating toolbar',
-    !/Selected drawing/.test(rail.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')));
-  ok('colour, width and style are all there',
-    /Colour|colour/i.test(rail) && /Width/.test(rail) && /Style/.test(rail));
+  // It went in two steps. It used to open on SELECTION, on the reasoning that selecting a drawing is
+  // exactly when colour and width are wanted — right reasoning, wrong placement: it opened on the far
+  // side of the chart from the drawing it was editing. Those controls moved beside the drawing, into
+  // DrawingToolbar, and the panel kept one job: the style the NEXT drawing would be made with.
+  //
+  // That job did not justify a permanent button. It is a setting a reader touches about once, sitting
+  // in the rail looking exactly like the control that restyles what they have selected — two controls
+  // for one concept, the less useful one more prominent. Colour, width and line style all still exist,
+  // on the toolbar that appears when a drawing is selected; the rail no longer offers a second way in.
+  const railCode = rail.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  ok('⚠️ the rail has no paint tray', !/stylePanel/.test(railCode) && !/🎨/.test(railCode));
+  ok('...and no style controls of its own',
+    !/LINE_WIDTHS/.test(railCode) && !/LINE_DASHES/.test(railCode) && !/ColorPicker/.test(railCode));
+  ok('...nor the props that fed it', !/onStyle/.test(railCode));
+  ok('...with the selected-drawing controls on the floating toolbar instead',
+    !/Selected drawing/.test(railCode));
+  {
+    const bar = (await readFile(new URL('../src/components/chart/DrawingToolbar.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+    ok('⚠️ colour, width and line style are all still reachable there',
+      /CONTROL\.COLOR/.test(bar) && /CONTROL\.WIDTH/.test(bar) && /CONTROL\.DASH/.test(bar));
+  }
 
   const cmp = (await readFile(new URL('../src/components/chart/CPChart.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   // The rail must stay a layout sibling so it can never cover price.
@@ -1176,16 +1182,17 @@ section('18. menus overlay the chart and are never clipped by the Terminal panel
 
   const rail2 = (await readFile(new URL('../src/components/chart/DrawingRail.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('every rail menu is a shared Popover', (rail2.match(/<Popover/g) || []).length >= 2);
-  // BOTH side flyouts open beside the icon — the category menu and the style panel — and exactly one
-  // menu hangs below: the collapsed rail's own button, which is a toolbar control, not a flyout.
-  // Counted absolutely, because a relative count stays balanced when one flips to the other.
+  // ⚠️ ONE SIDE FLYOUT NOW, NOT TWO. It used to be the category menu AND the style panel; the style
+  // panel was removed with the paint tray, so the count is one — and it is counted absolutely, because
+  // a relative count stays balanced when one flips to the other.
   const sideCount = (rail2.match(/placement="right-start"/g) || []).length;
   const belowCount = (rail2.match(/placement="bottom-start"/g) || []).length;
-  ok('both rail flyouts open beside their icon', sideCount === 2, `${sideCount} right-start`);
+  ok('the category flyout opens beside its icon', sideCount === 1, `${sideCount} right-start`);
   ok('...and only the collapsed rail button opens below', belowCount === 1, `${belowCount} bottom-start`);
-  ok('...and the category flyout is one of them',
+  ok('...and it is the category flyout',
     /placement="right-start" gap=\{6\} width=\{182\}/.test(rail2));
-  ok('...as is the style panel', /placement="right-start" gap=\{6\} width=\{186\}/.test(rail2));
+  ok('⚠️ ...with no style panel left beside it',
+    !/placement="right-start" gap=\{6\} width=\{186\}/.test(rail2));
   ok('the flyout is anchored to the whole button group, so ▸ toggles it',
     /<div key=\{cat\.id\} ref=\{ref\}/.test(rail2));
 
@@ -1686,9 +1693,13 @@ section('22. context menu, magnet, drawing manager, panes');
   // EVERY ACTION IS ONE WE ACTUALLY SUPPORT. A context menu listing things that do nothing is worse
   // than a short one.
   const ctx = cmp.slice(cmp.indexOf('open={!!menuAt}'), cmp.indexOf('</Popover>', cmp.indexOf('open={!!menuAt}')));
-  for (const action of ['Reset view', 'Add indicator', 'Price scale', 'Auto scale', 'Magnet',
+  for (const action of ['Reset view', 'Add indicator', 'Price scale', 'Auto scale',
     'Show drawings', 'Manage drawings', 'Fullscreen'])
     ok(`the menu offers "${action}"`, ctx.includes(action));
+  // ⚠️ AND NOT MAGNET. Its rail button was removed, and a control taken off one surface and left on
+  // another is still a control — the menu item went with it. See section 22's magnet notes for what
+  // stayed: the snapping code, which is simply never asked for now.
+  ok('⚠️ the menu no longer offers Magnet', !ctx.includes('Magnet'));
   ok('extended hours appears only where it means something', /\{canExtend && \(/.test(ctx));
   ok('scroll-to-latest appears only when scrolled back', /\{scrolledBack && \(/.test(ctx));
   ok('toggles keep the menu open', (ctx.match(/closeOnPick=\{false\}/g) || []).length >= 5);
@@ -1724,8 +1735,18 @@ section('22. context menu, magnet, drawing manager, panes');
   ok('...and only where a candle exists', /const bar = inData \? list\[Math\.round\(logical\)\] : null;/.test(layer));
   ok(String.fromCharCode(46,46,46) + "and otherwise returns the pointer’s own price", /return { time, price };/.test(layer));
   ok('magnet is off by default', DEFAULT_VIEW.magnet === false);
-  ok('...and is remembered', /magnet: v\.magnet === true/.test((await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
-  ok('the rail carries a magnet toggle', /active=\{magnet\} onClick=\{onToggleMagnet\}/.test(rail));
+  ok('...and the stored field still round-trips', /magnet: v\.magnet === true/.test((await readFile(new URL('../src/lib/chart/chart-settings.mjs', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')));
+
+  // ⚠️ THE CONTROL IS GONE, THE SNAPPING CODE IS NOT. Everything above still holds — snapToLevel is
+  // still pure, still tested, still correct — it is simply never asked for, because nothing offers it.
+  // Keeping the internals means re-enabling it is one prop, and it also means the assertions above are
+  // still meaningful rather than describing dead code nobody could reach.
+  ok('⚠️ the rail no longer carries a magnet toggle',
+    !/onToggleMagnet/.test(rail) && !/🧲/.test(rail));
+  // ⚠️ AND A SAVED magnet: true CANNOT STRAND ANYONE. With no control left, a stored true would snap
+  // every anchor for ever with nothing to turn it off, so the one consumer is pinned to off.
+  ok('⚠️ the layer is handed magnet off, not the stored view',
+    /magnet=\{false\}/.test(cmp) && !/magnet=\{view\.magnet/.test(cmp));
 
   // ── 3. LOCK, CLONE AND THE OBJECT TREE ──────────────────────────────────────────────────────
   const d = createDrawing('trend', [{ time: 1, price: 10 }, { time: 2, price: 12 }], {}, []);
@@ -2262,13 +2283,16 @@ section('25. polish: tool memory, Fibonacci presentation, consistency, cost');
   ok('the drawing rail is memoised', /const DrawingRail = memo\(DrawingRailBase\);/.test(rail));
   ok('the drawing layer is memoised', /const DrawingLayer = memo\(DrawingLayerBase\);/.test(layer));
   // A memo is worthless if its props are new objects every render.
-  for (const cb of ['toggleShowDrawings', 'toggleMagnet', 'openManager', 'openSettingsFor', 'requestNote'])
+  // toggleMagnet is absent from both lists because its control is gone — see section 22.
+  for (const cb of ['toggleShowDrawings', 'openManager', 'openSettingsFor', 'requestNote'])
     ok(`${cb} is a stable callback`, new RegExp(`const ${cb} = useCallback\\(`).test(cmp));
-  for (const prop of ['onToggleShow={toggleShowDrawings}', 'onToggleMagnet={toggleMagnet}',
+  for (const prop of ['onToggleShow={toggleShowDrawings}',
     'onOpenManager={openManager}', 'onOpenSettings={openSettingsFor}', 'onRequestText={requestNote}'])
     ok(`...and is passed as one (${prop.split('=')[0]})`, cmp.includes(prop));
   ok('no inline arrow is passed to the memoised children',
-    !/onToggleMagnet=\{\(\) =>/.test(cmp) && !/onRequestText=\{\(points\) =>/.test(cmp));
+    !/onToggleShow=\{\(\) =>/.test(cmp) && !/onRequestText=\{\(points\) =>/.test(cmp));
+  ok('⚠️ and the removed magnet callback is gone rather than left dangling',
+    !/const toggleMagnet = useCallback/.test(cmp) && !/onToggleMagnet=/.test(cmp));
   // Listener hygiene: everything registered on the document is removed again.
   const adds = (ui.match(/document\.addEventListener/g) || []).length;
   const removes = (ui.match(/document\.removeEventListener/g) || []).length;

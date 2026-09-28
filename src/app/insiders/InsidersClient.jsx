@@ -793,8 +793,6 @@ export default function InsidersClient() {
   const lockedCount = data?.lockedCount || 0;
 
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"}) : "--:--";
-  const buys  = isTradeView ? rows.filter(i=>i.type==='BUY').length  : 0;
-  const sells = isTradeView ? rows.filter(i=>i.type==='SELL').length : 0;
 
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
@@ -838,19 +836,12 @@ export default function InsidersClient() {
             <h1 style={{fontFamily:"'Cormorant Garamond',serif",fontSize:32,fontWeight:600,color:C.ink,margin:"0 0 4px",letterSpacing:"-0.5px"}}>Insider Trades</h1>
             <p style={{fontSize:13,color:C.muted,margin:0,fontWeight:300}}>Form 4 filings, as reported to the SEC. See when executives buy or sell their own company stock.</p>
           </div>
-          <div style={{display:"flex",gap:12,alignItems:"center"}}>
-            {isTradeView && (
-              <>
-                <div style={{background:C.greenLight,border:`1px solid ${C.greenBorder}`,borderRadius:8,padding:"10px 18px",textAlign:"center"}}>
-                  <div className="cp-num" style={{fontFamily:"'DM Sans',sans-serif",fontSize:20,fontWeight:600,color:C.green}}>{loading?'—':buys}</div>
-                  <div style={{fontSize:11,color:C.green,fontWeight:500}}>BUYS</div>
-                </div>
-                <div style={{background:C.redLight,border:`1px solid #E0AAAA`,borderRadius:8,padding:"10px 18px",textAlign:"center"}}>
-                  <div className="cp-num" style={{fontFamily:"'DM Sans',sans-serif",fontSize:20,fontWeight:600,color:C.red}}>{loading?'—':sells}</div>
-                  <div style={{fontSize:11,color:C.red,fontWeight:500}}>SELLS</div>
-                </div>
-              </>
-            )}
+          {/* ⚠️ THE BUYS / SELLS COUNTERS ARE GONE. They counted the rows on the CURRENT PAGE of the
+              current view, so "6 BUYS" meant six on this screen rather than six anywhere — a number
+              that changed with pagination and with the category chip, next to a heading that reads
+              like a market-wide summary. The Insider Market Pulse below answers that question
+              properly, over a stated window. Two numbers that disagree is worse than one. */}
+          <div style={{display:"flex",gap:12,alignItems:"center",marginLeft:"auto"}}>
             <div className="cp-num" style={{fontFamily:"'DM Sans',sans-serif",fontSize:10,color:C.dim}}>
               Updated {timeStr} ET
               <button onClick={refresh} style={{background:"transparent",border:"none",color:C.green,cursor:"pointer",fontSize:12,marginLeft:8,fontFamily:"'DM Sans',sans-serif"}}>↻</button>

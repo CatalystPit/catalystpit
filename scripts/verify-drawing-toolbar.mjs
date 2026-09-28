@@ -226,8 +226,15 @@ L('⚠️ ONE SYSTEM, NOT TWO');
   ok('⚠️ …nor a Delete drawing button of its own', !code(rail).includes('Delete drawing'));
   ok('⚠️ …and selecting a drawing no longer forces it open',
     !/useEffect\(\(\) => \{ if \(selected\) setStylePanel/.test(rail));
-  ok('the rail keeps the style panel for NEW drawings, which is its remaining job',
-    code(rail).includes('New drawings'));
+  // ⚠️ AND THE PANEL IS NOW GONE FROM THE RAIL ALTOGETHER. It kept one job — the style the NEXT drawing
+  // would be made with — which did not justify a permanent button sitting beside the tools, looking
+  // exactly like the control that restyles what is selected. Colour, width and line style live on the
+  // floating toolbar, which is asserted below to still offer all three.
+  ok('⚠️ the rail has no style panel at all', !code(rail).includes('New drawings')
+    && !/stylePanel/.test(code(rail)));
+  ok('⚠️ ...and no magnet toggle', !/onToggleMagnet/.test(code(rail)));
+  ok('⚠️ ...while the floating toolbar still carries colour, width and line style',
+    /CONTROL\.COLOR/.test(bar) && /CONTROL\.WIDTH/.test(bar) && /CONTROL\.DASH/.test(bar));
 
   // ⚠️ THE CLICK-THROUGH BUG THIS PREVENTS. The canvas underneath reads a pointerdown that hits no
   // drawing as "deselect". A toolbar button is such a miss, so the very first click on any control

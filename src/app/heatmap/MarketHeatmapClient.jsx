@@ -8,7 +8,8 @@ import { useTickerHover, TickerHoverPreview } from '../../components/TickerHover
 import { TIMEFRAMES, DEFAULT_TIMEFRAME, TIMEFRAME_LABEL, NO_RETURN } from '../../lib/heatmap/heatmap-window.mjs';
 import { scaleFor } from '../../lib/heatmap/heatmap-layout.mjs';
 import {
-  UNIVERSES, DEFAULT_UNIVERSE, ALL_SECTORS, SECTOR_OTHER, sectorOptions, filterBySector,
+  DEFAULT_UNIVERSE, availableUniverses, universeById,
+  ALL_SECTORS, SECTOR_OTHER, sectorOptions, filterBySector,
   mostActive,
 } from '../../lib/heatmap/heatmap-universe.mjs';
 import { moversNoteState } from '../../lib/movers/movers-universe.mjs';
@@ -117,7 +118,14 @@ const FRESHNESS_COPY = {
 export default function MarketHeatmapClient({ initial }) {
   const router = useRouter();
   const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
-  const [universe, setUniverse] = useState(DEFAULT_UNIVERSE);
+  // ⚠️ GATED UNIVERSES CANNOT BE REACHED THROUGH STATE EITHER. The dropdown no longer offers them, but
+  // a value can also arrive from a saved preference or a hand-edited URL — so the setter refuses
+  // anything the reader could not have picked, rather than trusting that the only way in is the menu.
+  const [universe, setUniverseState] = useState(DEFAULT_UNIVERSE);
+  const setUniverse = (id) => {
+    const u = universeById(id);
+    setUniverseState(u && u.available ? id : DEFAULT_UNIVERSE);
+  };
   const [sector, setSector] = useState(ALL_SECTORS);
   const [data, setData] = useState(initial || null);
   const [status, setStatus] = useState('ready');
@@ -368,10 +376,10 @@ export default function MarketHeatmapClient({ initial }) {
             ))}
           </div>
           <select value={universe} onChange={(e) => setUniverse(e.target.value)} style={field} aria-label="Universe">
-            {UNIVERSES.map((u) => (
-              <option key={u.id} value={u.id} disabled={!u.available}>
-                {u.label}{u.available ? '' : ' — needs licensed index data'}
-              </option>
+            {/* ⚠️ THE AVAILABLE ONES, NOT ALL OF THEM. A gated universe is not an option the reader can
+                take, so it is not offered — see the note over UNIVERSES for why the definitions stay. */}
+            {availableUniverses().map((u) => (
+              <option key={u.id} value={u.id}>{u.label}</option>
             ))}
           </select>
           <select value={sector} onChange={(e) => setSector(e.target.value)} style={field} aria-label="Sector">

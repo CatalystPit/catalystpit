@@ -693,7 +693,6 @@ export default function CPChart({
    * dead zone.
    */
   const toggleShowDrawings = useCallback(() => patchView({ showDrawings: !viewRef.current.showDrawings }), [patchView]);
-  const toggleMagnet = useCallback(() => patchView({ magnet: !viewRef.current.magnet }), [patchView]);
   const openManager = useCallback(() => setManagerOpen(true), []);
   const openSettingsFor = useCallback((id) => setSettingsId(id), []);
   const requestNote = useCallback((points, at) => { setNoteDraft({ points, at }); setNoteText(''); }, []);
@@ -1841,13 +1840,10 @@ export default function CPChart({
         {showToolbar && (
           <DrawingRail
             theme={theme} activeTool={activeTool} onPick={setActiveTool}
-            style={drawStyle} onStyle={applyStyle}
             selected={selectedIds.length > 0} onDelete={deleteSelected}
             count={drawings.length} showDrawings={view.showDrawings}
             onToggleShow={toggleShowDrawings}
             onClearAll={clearAllDrawings}
-            magnet={view.magnet === true}
-            onToggleMagnet={toggleMagnet}
             onOpenManager={openManager}
             onUndo={undoDrawings} onRedo={redoDrawings}
             canUndo={canUndo(historyRef.current)} canRedo={canRedo(historyRef.current)}
@@ -1885,6 +1881,11 @@ export default function CPChart({
 
         {/* Drawings live on a canvas over the chart, sharing its scales. Mounted once the chart
             instance exists — chartReady is what says so. */}
+        {/* ⚠️ MAGNET IS PINNED OFF BELOW, NOT READ FROM THE VIEW. Its control is gone from the UI, and
+            a saved view carrying magnet: true would otherwise snap every anchor for ever with nothing
+            left to turn it off. The snapping code itself is untouched — this is the one place that
+            asks for it, so passing false is the whole switch, and restoring the control is putting
+            view.magnet back in one prop. */}
         {chartReady > 0 && chartRef.current && priceRef.current && (
           <DrawingLayer
             chart={chartRef.current} series={priceRef.current} theme={theme}
@@ -1893,7 +1894,7 @@ export default function CPChart({
             activeTool={activeTool} onToolUsed={() => setActiveTool(null)}
             selectedIds={selectedIds} onSelect={selectDrawing}
             onOpenSettings={openSettingsFor}
-            visible={view.showDrawings} style={drawStyle} magnet={view.magnet === true}
+            visible={view.showDrawings} style={drawStyle} magnet={false}
             clearSignal={clearSignal} toolDefaults={toolDefaults}
             onRequestText={requestNote}
             onSelectionBox={setSelBox}
@@ -2100,9 +2101,6 @@ export default function CPChart({
           </>
         )}
         <MenuLabel theme={theme}>Drawings</MenuLabel>
-        <MenuItem theme={theme} role="menuitemcheckbox" active={view.magnet === true} closeOnPick={false}
-          onClick={() => patchView({ magnet: !view.magnet })}
-          right={view.magnet ? 'On' : 'Off'}>Magnet</MenuItem>
         <MenuItem theme={theme} role="menuitemcheckbox" active={view.showDrawings !== false} closeOnPick={false}
           onClick={() => patchView({ showDrawings: !view.showDrawings })}
           right={view.showDrawings === false ? 'Hidden' : 'Shown'}>Show drawings</MenuItem>

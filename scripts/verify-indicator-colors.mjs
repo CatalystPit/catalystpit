@@ -433,9 +433,23 @@ console.log('\n9. user-facing copy is U.S. English');
     ok(`${path.basename(f)} has no "Colour" in a title or label`,
       !attrs.some((a) => /colour/i.test(a)), attrs.filter((a) => /colour/i.test(a)).join(' | '));
     // Body text in JSX, between tags.
-    const text = [...src.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)].map((m) => m[1]);
+    // ⚠️ COMMENTS ARE STRIPPED FIRST, AND THIS IS THE THIRD TIME THAT HAS MATTERED IN THIS REPO. The
+    // body-text matcher runs from a '>' to the next '<', which happily spans a block of `//` comments
+    // sitting between two JSX elements — so a note explaining the colour system failed a check about
+    // what the SCREEN says. British spelling is fine in a comment and wrong in a label; this suite is
+    // about labels, so it has to look at labels.
+    const visible = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    const text = [...visible.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)].map((m) => m[1]);
     ok(`${path.basename(f)} has no "Colour" in visible text`,
       !text.some((t) => /\bcolour/i.test(t)), text.filter((t) => /\bcolour/i.test(t)).join(' | '));
+  }
+  // ⚠️ POSITIVE CONTROL FOR THE MATCHER ABOVE. Comment-stripping could just as easily have left it
+  // matching nothing at all, in which case every file would pass for the wrong reason.
+  {
+    const probe = '<span>Colour</span>';
+    const found = [...probe.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)].map((m) => m[1]);
+    ok('the visible-text matcher still catches a real one', found.some((t) => /\bcolour/i.test(t)));
   }
   ok('the indicator panel says "Color"', /Color</.test(read('src/components/chart/IndicatorBrowser.jsx')));
   ok('and "Favorites", not "Favourites"',

@@ -206,7 +206,9 @@ export default function EvidenceCard({ detail, theme, onClose, hostWidth = 0, ho
         position: 'absolute', left, top, width: W, zIndex: 6,
         background: C.white, border: `1px solid ${C.border2}`, borderRadius: 6,
         boxShadow: '0 4px 16px rgba(0,0,0,0.13)', padding: '8px 11px 10px',
-        maxHeight: 260, overflowY: 'auto',
+        // ⚠️ THIS ONE SITS DIRECTLY OVER THE PLOT, so a wheel that ran past its end would chain to the
+        // page and move the chart the card is anchored to. Contained, like every other chart overlay.
+        maxHeight: 260, overflowY: 'auto', overscrollBehavior: 'contain',
       }}
       // The chart's own pointer handlers would otherwise close the card the moment it is touched.
       onPointerDown={(e) => e.stopPropagation()}

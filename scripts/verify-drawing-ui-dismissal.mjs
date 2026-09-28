@@ -230,7 +230,8 @@ console.log('\n5. the colour picker still works');
   // The toolbar's colour square IS the trigger, so wrapping a ColorPicker (a trigger plus its own
   // popover) in the toolbar's Popover put a second colour control in front of the ninety colours. What
   // matters for THIS suite is only that the shared module is still what they all use.
-  for (const f of ['DrawingRail', 'DrawingSettings', 'IndicatorBrowser']) {
+  // The rail is not in this list any more: its paint tray was removed, so it mounts no colour control.
+  for (const f of ['DrawingSettings', 'IndicatorBrowser']) {
     ok(`${f} still uses the shared picker`, /<ColorPicker/.test(code(read(`src/components/chart/${f}.jsx`))));
   }
   ok('DrawingToolbar mounts the shared palette directly',

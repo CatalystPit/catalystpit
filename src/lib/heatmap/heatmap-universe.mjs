@@ -56,8 +56,17 @@ export const isTradeableAssetType = (t) => TRADEABLE_ASSET_TYPES.includes(t);
  * a meaningful slice of the market rather than a round number: 100 = 62%, 300 = 79%, 500 = 87%,
  * 1000 = 94%, 2000 = 98%. "All eligible" is every operating company we can measure.
  *
- * `available: false` entries are real product intent with a stated blocker, and the UI shows them
- * disabled with the reason rather than pretending the option does not exist.
+ * `available: false` IS THE VISIBILITY FLAG, and it means the option is not offered at all.
+ *
+ * ⚠️ IT USED TO MEAN "SHOW IT DISABLED, WITH THE REASON". That was honest about the product's intent
+ * and wrong for the reader: a dropdown whose first job is to pick a size was advertising two entries
+ * that could not be picked, each carrying a sentence about data licensing that means nothing to
+ * someone choosing between Top 100 and Top 500. Naming a constraint we cannot act on is not
+ * transparency, it is noise in a control.
+ *
+ * The DEFINITIONS stay, with their limits and their descriptions, because the blocker is a licence
+ * rather than a design decision — flipping one of these to `available: true` is all it takes to offer
+ * it again, and every consumer below already reads the flag.
  */
 export const UNIVERSES = Object.freeze([
   { id: 'top100', label: 'Top 100', available: true, limit: 100, coverage: 62,
