@@ -211,12 +211,18 @@ console.log('\n3. the chart\'s left rail');
     !/canonical\.headline/.test(ev) && !/canonical\.label\b/.test(ev));
   ok('⚠️ family colour is driven by the family STATE, not by a missing number',
     /const familyTone = \(f\) =>/.test(ev) && !/f\.D/.test(code(ev)));
-  ok('⚠️ ...and covers the canonical disclosure vocabulary',
-    ['POSITIVE', 'NEGATIVE', 'MIXED', 'INACTIVE'].every((s) => new RegExp(`${s}:`).test(ev)));
-  ok('⚠️ ...and the market-structure vocabulary it also receives',
-    ['CONFIRMING', 'DIVERGING', 'UNAVAILABLE'].every((s) => new RegExp(`${s}:`).test(ev)));
-  ok('an unknown state word is not coloured as if it were understood',
-    /\|\| \(f\?\.active \? C\.muted : C\.dim\)/.test(ev));
+  // ⚠️ THE VOCABULARY IS THE ENGINE'S, NOT A COPY. Each family speaks its own words — insiders say
+  // bullish/bearish/routine-sale, institutions accumulating/distributing, structure
+  // higher-highs-and-lows — and familyLean is the engine's own reader for them. My first attempt
+  // invented a POSITIVE/NEGATIVE/MIXED map, which matched none of those words: the live endpoint
+  // caught it. Restating the sets here would drift the first time a family gains a word.
+  ok('⚠️ ...through the engine\'s own familyLean, not a copied vocabulary',
+    /import \{ familyLean \} from '\.\.\/\.\.\/lib\/consensus\/synthesis\.mjs'/.test(ev)
+    && /const lean = familyLean\(f\);/.test(ev));
+  ok('⚠️ ...and no family state word is hardcoded in the panel',
+    !/(bullish|bearish|accumulating|distributing|higher-highs)/.test(code(ev)));
+  ok('an inactive family is not coloured as if it had a view',
+    /if \(!f \|\| !f\.active\) return C\.dim;/.test(ev));
 
   // Everything the panel already did must still be there — this was a defect fix, not a redesign.
   ok('Pit Scan integration is intact', /symbol/.test(ev) && /EvidencePanel\(\{ symbol \}\)/.test(ev));

@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { C, Dot, TickerLogo } from '../../lib/cp-shared';
+import { familyLean } from '../../lib/consensus/synthesis.mjs';
 
 // THE TERMINAL'S EVIDENCE INSPECTOR.
 //
@@ -52,29 +53,29 @@ const FAMILY_LABEL = {
 };
 
 /**
- * A family's colour comes from ITS OWN STATE WORD.
+ * A family's colour comes from THE ENGINE'S OWN READING OF ITS STATE.
  *
  * ⚠️ IT USED TO READ `f.D`, A FIELD THE ENGINE DOES NOT EMIT. `Number(undefined)` is NaN, and NaN
- * fails every comparison, so the tone silently fell through to muted on every family of every
- * ticker — POSITIVE, NEGATIVE and MIXED all rendered in the same grey. The state word was right; the
- * colour said nothing.
+ * fails every comparison, so the tone fell through to muted on every family of every ticker —
+ * bullish, bearish and mixed all rendered in the same grey. The state word was right; the colour
+ * said nothing.
  *
- * The canonical disclosure vocabulary is POSITIVE | NEGATIVE | MIXED | INACTIVE (FAMILY_STATE), and
- * the market-structure layer speaks CONFIRMING | DIVERGING | MIXED | UNAVAILABLE (MARKET). Both are
- * mapped, because both reach this panel and a family whose word the map does not know must not be
- * coloured as if it did — it falls back to muted, which is what "we have no opinion" looks like.
+ * ⚠️ AND THE VOCABULARY IS NOT MINE TO RESTATE. Each family speaks its own words — insiders say
+ * `bullish` / `bearish` / `routine-sale`, institutions say `accumulating` / `distributing`,
+ * structure says `higher-highs-and-lows` — and `familyLean` is the engine's own function for
+ * reading them directionally. Copying those sets into this file would be a second opinion that
+ * drifts the first time a family gains a word, which is the one thing this panel must not do.
+ *
+ * A routine 10b5-1 disposal deliberately reads MIXED rather than bearish: it is a scheduled sale
+ * carrying no view, and colouring it red is the commonest way insider data is misread.
  */
-const STATE_TONE = {
-  POSITIVE: C.green,
-  CONFIRMING: C.green,
-  NEGATIVE: C.red,
-  DIVERGING: C.red,
-  MIXED: C.conflictAccent || C.red,
-  INACTIVE: C.dim,
-  UNAVAILABLE: C.dim,
+const familyTone = (f) => {
+  if (!f || !f.active) return C.dim;
+  const lean = familyLean(f);
+  if (lean === 'up') return C.green;
+  if (lean === 'down') return C.red;
+  return C.muted;
 };
-const familyTone = (f) => STATE_TONE[String(f?.state || '').toUpperCase()]
-  || (f?.active ? C.muted : C.dim);
 
 const Label = ({ children }) => (
   <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, letterSpacing: '1px', color: C.dim, marginBottom: 5 }}>
