@@ -301,13 +301,15 @@ L('⚠️ THE BELL: EXISTING ICON, BOTH SOURCES, HONEST COUNT');
     && /fetch\('\/api\/notifications', \{ method: 'POST' \}\)/.test(shared));
   ok('the empty state accounts for both', /list\.length === 0 && alerts\.length === 0/.test(shared));
 
-  // ⚠️ REUSE THE TERMINAL'S INSPECTOR RATHER THAN NAVIGATING OUT OF THE WORKSPACE.
-  ok('⚠️ inside the Terminal an alert opens the existing Evidence inspector',
-    /inspectEvidence\(a\.ticker\);/.test(shared) && /evidenceInspectorAvailable\(\)/.test(shared));
-  ok('⚠️ …and it asks the bus rather than sniffing the URL',
-    !/pathname[\s\S]{0,40}terminal/.test(shared.split('function EvidenceAlertRow')[1]?.split('\n}')[0] || ''));
-  ok('…while off the Terminal it is an ordinary ticker link',
+  // ⚠️ THE ROW NAVIGATES, EVERYWHERE. It used to be intercepted inside the Terminal to open the
+  // Evidence panel on a bus; that panel was removed for duplicating Pit Consensus, so the row is
+  // the plain ticker link it always was underneath. Nothing is dead — the href never changed.
+  ok('⚠️ it is an ordinary ticker link, on the Terminal and off it',
     /href=\{`\/ticker\/\$\{encodeURIComponent\(a\.ticker\)\}`\}/.test(shared));
+  ok('⚠️ …and nothing intercepts that navigation any more',
+    !/inspectEvidence/.test(shared) && !/evidenceInspectorAvailable/.test(shared)
+    && !/preventDefault\(\)/.test(shared.split('function EvidenceAlertRow')[1]?.split('\n}')[0] || ''));
+  ok('…while opening it still marks it read', /const open = \(\) => \{ onRead\(a\.id\); onClose\?\.\(\); \};/.test(shared));
   ok('the row shows ticker, family, the engine\'s sentence and the age',
     /\{a\.ticker\}/.test(shared) && /\{a\.title\}/.test(shared) && /\{a\.detail\}/.test(shared)
     && /timeAgo\(minsSince\(a\.publicTime\)\)/.test(shared));

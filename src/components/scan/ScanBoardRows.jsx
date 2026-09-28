@@ -31,7 +31,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import AlertToggle from '../AlertToggle';
 import { C, Badge, TickerLogo } from '../../lib/cp-shared';
-import { inspectEvidence, evidenceInspectorAvailable } from '../../lib/terminalEvidenceBus';
 
 const BOARD_TABS = [
   // ⚠️ THE BLURB NO LONGER NAMES A CLOCK, AND THAT IS THE POINT. It used to read "on the last
@@ -102,26 +101,17 @@ export function FeedBanner({ freshness, compact = false }) {
 }
 
 /**
- * THE EVIDENCE ACTION.
+ * THE EVIDENCE ACTION — a plain link to where this row's evidence is documented.
  *
- * ⚠️ IT DECIDES AT CLICK TIME, NOT AT RENDER TIME, AND THAT IS DELIBERATE. Whether an inspector is
- * listening is a fact about the page, and the row renders before the Terminal has finished
- * subscribing. Reading it during render would leave the first paint of a Terminal board holding
- * plain links; reading it in the handler means the answer is whatever is true at the moment the
- * trader clicks.
- *
- * It stays an anchor either way — middle-click, copy-link and open-in-new-tab keep working, and a
- * trader who WANTS the full ticker page can still get it from this control without the panel.
+ * ⚠️ IT USED TO BE INTERCEPTED INSIDE THE TERMINAL, opening an Evidence panel on a bus instead of
+ * navigating. That panel was removed for duplicating Pit Consensus, so the interception went with
+ * it and the anchor does what it always said it did. Nothing is dead: the control was ALREADY a
+ * real link — `evidenceUrl`, or the ticker page — which is why removing the panel did not cost it
+ * its purpose. Middle-click, copy-link and open-in-new-tab behave as they always have.
  */
-function EvidenceAction({ ticker, href }) {
+function EvidenceAction({ href }) {
   return (
     <a href={href}
-      onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;   // let the browser have it
-        if (!evidenceInspectorAvailable()) return;                            // /scan: navigate as before
-        e.preventDefault();
-        inspectEvidence(ticker);
-      }}
       style={{ fontSize: 10.5, fontWeight: 700, color: C.green, textDecoration: 'none' }}>Evidence</a>
   );
 }
@@ -236,7 +226,7 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
             opens it; where there is none — the public /scan page — it stays the link it always was.
             The row asks the bus rather than being told by each of its two callers, so a third
             caller cannot get it wrong by omission. */}
-        <EvidenceAction ticker={r.ticker} href={r.evidenceUrl || `/ticker/${encodeURIComponent(r.ticker)}`} />
+        <EvidenceAction href={r.evidenceUrl || `/ticker/${encodeURIComponent(r.ticker)}`} />
         <button type="button" onClick={() => onWatch(r.ticker)} disabled={busy === r.ticker}
           style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, background: 'none', border: 'none',
             padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>Watch</button>

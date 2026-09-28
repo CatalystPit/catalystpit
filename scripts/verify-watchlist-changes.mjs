@@ -403,13 +403,22 @@ L('⚠️ ONE BATCHED REQUEST, AND EXISTING INSPECTORS');
   ok('…its marker loses its fill rather than its place', /background: 'transparent', border: `1px solid \$\{C\.hint\}`/.test(changeLine));
   ok('⚠️ the age shown is still the true age, not softened', /changeAgo\(change\.at\)/.test(changeLine));
 
-  // ⚠️ EXISTING INSPECTORS, NOT NEW ONES.
+  // ⚠️ EXISTING SURFACES, NOT NEW ONES — AND NO DEAD CLICK.
+  //
+  // A filing still opens the news inspector. The other kinds used to open the Terminal's Evidence
+  // panel; that panel was removed for duplicating Pit Consensus, and a click that silently does
+  // nothing would be worse than the panel was. They open the ticker page — where a Form 4's and a
+  // congressional disclosure's canonical record actually live — in a NEW TAB, so reading one row
+  // never costs the workspace.
   ok('⚠️ a company-event line opens the existing news inspector',
-    /toNews \? inspectNews : inspectEvidence/.test(term)
+    /if \(toNews\) \{ inspectNews\(sym\); return; \}/.test(term)
     && /change\.kind === CHANGE\.FILING \|\| change\.kind === CHANGE\.WIRE/.test(term));
-  ok('…and a transaction opens the existing evidence inspector', /inspectEvidence/.test(term));
+  ok('⚠️ …and a transaction opens the ticker page rather than nothing',
+    /window\.open\(`\/ticker\/\$\{encodeURIComponent\(sym\)\}`, '_blank', 'noopener,noreferrer'\)/.test(term));
+  ok('⚠️ …in a new tab, so the workspace survives it', /'_blank', 'noopener,noreferrer'/.test(term));
+  ok('the removed inspector is not referenced anywhere here', !/inspectEvidence/.test(term));
   ok('neither is reimplemented here', !/api\/eightk|api\/consensus/.test(changeLine));
-  ok('⚠️ the line does not steal the row\'s own click', /e\.stopPropagation\(\); \(toNews \? inspectNews : inspectEvidence\)\(sym\)/.test(term));
+  ok('⚠️ the line does not steal the row\'s own click', /e\.stopPropagation\(\); open\(\);/.test(term));
   ok('it is reachable from a keyboard', /onKeyDown=\{\(e\) => \{ if \(e\.key === 'Enter'/.test(changeLine));
 
   // ⚠️ A ROW WITH NOTHING TO SAY IS THE ROW IT ALWAYS WAS.

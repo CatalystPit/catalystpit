@@ -1,13 +1,11 @@
 // "SHOW ME THIS TICKER'S NEWS" — one channel, window-anchored.
 //
-// ── ⚠️ A SIBLING OF terminalEvidenceBus, DELIBERATELY DUPLICATED ────────────
+// ── ⚠️ THIS WAS ONE OF TWO; IT IS NOW THE ONLY ONE ──────────────────────────
 //
-// The two are the same forty lines and it is tempting to factor them into one bus factory. Not in
-// this change. The evidence channel is live, covered by its own suite, and the only thing standing
-// between a scan row and a working inspector; rewriting it to prove a point about duplication is a
-// change to working code in a task that is about adding a second inspector. If a third arrives,
-// that is the moment to extract the shape — with three examples in front of us rather than two and
-// a guess about what the third will need.
+// terminalEvidenceBus was its twin — the same forty lines, carrying a ticker to the Terminal's
+// Evidence panel. That panel was removed for duplicating Pit Consensus, which left the bus with no
+// listener and no publisher, so it was deleted rather than left as a channel nobody is on.
+// The argument for keeping two copies of this shape went with it.
 //
 // ── ⚠️ AND IT IS ITS OWN CHANNEL, NOT THE EVIDENCE ONE ──────────────────────
 //

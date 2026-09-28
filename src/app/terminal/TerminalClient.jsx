@@ -16,13 +16,10 @@ import PitChat from '../../components/PitChat';
 import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
-import { onEvidenceRequest } from '../../lib/terminalEvidenceBus';
 import { moversFreshnessLabel } from '../../lib/movers/movers-universe.mjs';
 import { onNewsRequest, inspectNews, newsInspectorAvailable } from '../../lib/terminalNewsBus';
-import { inspectEvidence } from '../../lib/terminalEvidenceBus';
 import { CHANGE, ago as changeAgo } from '../../lib/terminal/watchlist-changes.mjs';
 import { useTickerEvidence } from '../../lib/chart/use-ticker-evidence';
-import EvidencePanel from '../../components/terminal/EvidencePanel';
 import NewsPanel from '../../components/terminal/NewsPanel';
 import HeatMap from '../../components/HeatMap';
 import PitWire from '../../components/PitWire';
@@ -63,9 +60,6 @@ const PANELS = [
   // and the rest of the layout loads untouched — which is exactly the behaviour wanted here.
   // Nothing under it changed: /api/consensus-board, the /consensus page and the engine are intact.
   //
-  // ⚠️ AN INSPECTOR, OPENED BY A ROW RATHER THAN CHOSEN FROM A MENU — though it is in the menu too,
-  // because a panel a user cannot add deliberately is a panel they cannot get back after closing.
-  { id: 'evidence',  title: 'Evidence',     tag: '◆ CANONICAL' },
   // ⚠️ NOT 'newswire'. That panel is the market-wide wire; this one inspects ONE ticker, opened by
   // the Watchlist badge. Two panels about news that answer different questions need two names.
   { id: 'tickernews', title: 'Ticker News',   tag: '◆ SEC 8-K', addable: false },
@@ -117,8 +111,6 @@ function defaultLayout(width) {
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     movers:    { x: centerX + 12, y: 402, w: centerW, h: 260, color: 'blue' },
     why:       { x: centerX + 36, y: 422, w: centerW, h: 220, color: 'green' },
-    // Opens beside the scanner that summoned it rather than on top of it.
-    evidence:  { x: centerX + 84, y: 462, w: centerW, h: 300, color: 'green' },
     tickernews: { x: centerX + 96, y: 482, w: centerW, h: 300, color: 'orange' },
     alerts:    { x: centerX + 60, y: 442, w: centerW, h: 260, color: 'blue' },
     feed:      { x: rightX, y: botY, w: rightW, h: top, color: 'green' },
@@ -131,7 +123,7 @@ function defaultLayout(width) {
 }
 
 // Category color per panel id (used when a station preset auto-arranges panels).
-const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', evidence: 'green', tickernews: 'orange', alerts: 'blue', watchlist: 'blue', chat: 'green' };
+const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', tickernews: 'orange', alerts: 'blue', watchlist: 'blue', chat: 'green' };
 
 // Built-in Station presets — starting layouts only (code config, not stored per user). Panels that
 // don't exist yet are simply skipped; add more panel ids as future panels land. After loading a
@@ -893,15 +885,23 @@ const WL_BADGE = { news: { label: 'NEWS', fg: '#B45309', bg: '#FEF3C7' }, halt: 
 /**
  * WHAT CHANGED IN THIS NAME — one line, from one canonical record.
  *
- * ⚠️ IT OPENS AN EXISTING INSPECTOR AND BUILDS NOTHING. A filing is news, so it opens the ticker
- * news drawer; a Form 4 or a congressional disclosure is research, so it opens the Evidence
- * inspector. Both already exist, both are already reached by a bus, and neither is duplicated here.
+ * ⚠️ IT OPENS AN EXISTING SURFACE AND BUILDS NOTHING. A filing is news, so it opens the ticker news
+ * drawer, which already exists and is already reached by a bus.
+ *
+ * ⚠️ THE OTHER KINDS NOW OPEN THE TICKER PAGE, IN A NEW TAB. They used to open the Terminal's
+ * Evidence inspector; that panel was removed for duplicating Pit Consensus, and a click that
+ * silently does nothing is worse than the panel ever was. The ticker page is where a Form 4's or a
+ * congressional disclosure's canonical record actually lives — it is the surface Evidence was
+ * showing a copy of — and a new tab is what keeps a workspace from being closed to read one row.
  */
 function ChangeLine({ sym, change }) {
   // The News inspector already merges filings, press releases and the wire, so BOTH company-event
-  // families land in the surface that can actually show them. The transaction families open
-  // Evidence, which is where their canonical record lives.
+  // families land in the surface that can actually show them.
   const toNews = change.kind === CHANGE.FILING || change.kind === CHANGE.WIRE;
+  const open = () => {
+    if (toNews) { inspectNews(sym); return; }
+    window.open(`/ticker/${encodeURIComponent(sym)}`, '_blank', 'noopener,noreferrer');
+  };
   const tone = change.kind === CHANGE.INSIDER ? C.green
     : change.kind === CHANGE.CONGRESS ? C.blue
       : change.kind === CHANGE.SCAN ? C.gold
@@ -919,8 +919,8 @@ function ChangeLine({ sym, change }) {
       role="button"
       tabIndex={0}
       title={`Inspect ${sym} — ${change.label}`}
-      onClick={(e) => { e.stopPropagation(); (toNews ? inspectNews : inspectEvidence)(sym); }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (toNews ? inspectNews : inspectEvidence)(sym); } }}
+      onClick={(e) => { e.stopPropagation(); open(); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
       style={{
         display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 2, cursor: 'pointer',
         fontFamily: "'DM Sans',sans-serif", fontSize: 10, lineHeight: 1.3, maxWidth: 230,
@@ -1365,26 +1365,6 @@ function Workspace() {
   const addPanel = (id) => { if (visibleRef.current.includes(id)) return; const v = [...visibleRef.current, id]; setVisible(v); persistVisible(v); setAddOpen(false); bringToFront(id); };
 
   /**
-   * THE EVIDENCE INSPECTOR'S TICKER.
-   *
-   * ⚠️ ONE PANEL, RE-POINTED — NOT A NEW PANEL PER CLICK. Clicking Evidence on CDT and then on JAGX
-   * must move the same inspector, or a trader scanning twenty rows ends up with twenty panels
-   * stacked on their workspace. addPanel already no-ops when the panel is visible, so opening is
-   * idempotent by construction; this only changes which ticker it is pointed at.
-   *
-   * ⚠️ AND IT TOUCHES NOTHING ELSE. Adding an id to `visible` leaves every other panel's element
-   * and key alone, so Pit Scan is not remounted, its selected tab is not reset, and the boards it
-   * has already fetched are not re-fetched. That is the whole reason this is a panel rather than a
-   * route.
-   */
-  const [evidenceSym, setEvidenceSym] = useState(null);
-  useEffect(() => onEvidenceRequest((sym) => {
-    setEvidenceSym(sym);
-    addPanel('evidence');          // no-op when it is already open
-    bringToFront('evidence');
-  }), []);   // eslint-disable-line react-hooks/exhaustive-deps
-
-  /**
    * THE NEWS INSPECTOR'S TICKER — the same shape as the evidence one, deliberately.
    *
    * ⚠️ TWO INSPECTORS, TWO CHANNELS, ONE PATTERN. Evidence and News answer different questions and
@@ -1482,7 +1462,6 @@ function Workspace() {
     : def.id === 'alerts' ? <AlertsBody symbol={selectedSymbol} />
     // ⚠️ ITS OWN SYMBOL, NOT THE WORKSPACE'S. Inspecting CDT's evidence must not move the chart off
     // whatever the trader was studying, so this panel deliberately does NOT read selectedSymbol.
-    : def.id === 'evidence' ? <EvidencePanel symbol={evidenceSym} />
     // Its own symbol too, for the same reason: reading a ticker's news must not move the chart.
     : def.id === 'tickernews' ? <NewsPanel symbol={newsSym} />
     : null);

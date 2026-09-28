@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { inspectEvidence, evidenceInspectorAvailable } from './terminalEvidenceBus';
 import { useRouter } from 'next/navigation';
 import { SignedIn, SignedOut, useAuth } from '@clerk/nextjs';
 import AccountMenu from '../components/AccountMenu';
@@ -759,22 +758,13 @@ export function EntitySearch({ endpoint, placeholder = 'Search…', hrefFor, onS
  * were written when the alert was persisted; nothing is composed here and nothing is characterised
  * as good or bad news. The row says what became public and when, and links to where it is verified.
  *
- * ⚠️ AND INSIDE THE TERMINAL IT DOES NOT NAVIGATE. The Terminal already has an Evidence
- * inspector on a bus; sending a trader to a ticker page from inside their workspace would close
- * the workspace to show them one row. Off the Terminal there is no bus, so the link is the answer.
+ * ⚠️ IT NAVIGATES, EVERYWHERE. It used to be intercepted inside the Terminal to open an Evidence
+ * panel on a bus; that panel was removed for duplicating Pit Consensus, so the row is the plain
+ * link it always was underneath. The ticker page is where the alert's own evidence is documented,
+ * and marking it read is still the click's other job.
  */
 function EvidenceAlertRow({ a, onRead, onClose }) {
-  const open = (e) => {
-    onRead(a.id);
-    // ⚠️ ASK THE BUS, DO NOT SNIFF THE URL. evidenceInspectorAvailable() is the same question the
-    // Pit Scan row already asks — "is a workspace listening?" — and it stays right when an
-    // inspector exists somewhere the path does not say, or does not exist on /terminal because
-    // the panel was closed. A pathname check would get both of those wrong.
-    if (!evidenceInspectorAvailable()) return;   // no workspace: let the anchor navigate
-    e.preventDefault();
-    inspectEvidence(a.ticker);
-    onClose?.();
-  };
+  const open = () => { onRead(a.id); onClose?.(); };
   return (
     <a href={`/ticker/${encodeURIComponent(a.ticker)}`} onClick={open}
       style={{ display: 'block', padding: '10px 14px', borderBottom: `1px solid ${C.surface}`, textDecoration: 'none',

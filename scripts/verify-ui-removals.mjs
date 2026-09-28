@@ -50,7 +50,7 @@ console.log('\n1. the Terminal\'s Add Panel menu');
   ok('the default layout was found', !!DEFAULT_VISIBLE);
   const visible = [...DEFAULT_VISIBLE[1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
   const offered = entries.filter((e) => e.addable && !visible.includes(e.id)).map((e) => e.title);
-  const WANT = ['Custom Scanner', 'Movers', 'Evidence', 'Alerts', 'Heat Map', 'Earnings'];
+  const WANT = ['Custom Scanner', 'Movers', 'Alerts', 'Heat Map', 'Earnings'];
   ok('⚠️ the Add Panel menu is exactly what it should be on a default layout',
     offered.join(' | ') === WANT.join(' | '), offered.join(' | '));
   // The two the brief also lists are offered as soon as they are closed — they start open by default.
@@ -77,7 +77,6 @@ console.log('\n1. the Terminal\'s Add Panel menu');
   // go through this registry, and the brief named each of them.
   ok('⚠️ News Wire is untouched', entries.some((e) => e.id === 'newswire' && e.addable));
   ok('⚠️ Pit Wire is untouched', entries.some((e) => e.id === 'pitwire' && e.addable));
-  ok('⚠️ Evidence is untouched', entries.some((e) => e.id === 'evidence' && e.addable));
   // ⚠️ CATALYST CONVERGENCE IS GONE, AND GONE MEANS DELETED. It showed the Pit Consensus board a
   // second time, so it was removed rather than retired: an `addable: false` entry would have kept it
   // alive in every saved layout that still names it. PANEL_BY_ID is the validation gate, so an
@@ -192,46 +191,52 @@ console.log('\n3. the chart\'s left rail');
   ok('the colour map no longer lists it', !/convergence: '(green|blue|orange|red)'/.test(src));
 
   // The panels that share the Terminal with it are untouched.
-  for (const id of ['evidence', 'pitscan', 'chart', 'watchlist', 'pitwire']) {
+  for (const id of ['pitscan', 'chart', 'watchlist', 'pitwire']) {
     ok(`${id} is still in the registry`, new RegExp(`id: '${id}'`).test(src));
   }
 }
 
-// ── THE EVIDENCE PANEL READS THE FIELDS THE ENGINE ACTUALLY EMITS ────────────
+// ── THE EVIDENCE PANEL IS GONE TOO ───────────────────────────────────────────
 //
-// ⚠️ TWO FIELDS THAT NEVER EXISTED. `canonical.headline` and `canonical.label` are not on a canonical
-// payload — the engine writes `stateLabel` — so "WHAT CHANGED" always fell through to the raw enum
-// and read "POSITIVE ALIGNMENT" instead of "Positive alignment". And each family's colour came from
-// `f.D`, also absent: Number(undefined) is NaN, NaN fails every comparison, and every family of
-// every ticker rendered in the same grey whatever its state said.
+// ⚠️ IT DUPLICATED PIT CONSENSUS. It read /api/consensus and reproduced the same per-family evidence
+// the ticker page already shows, so it was removed for the same reason Convergence was — and
+// deleted rather than retired for the same reason as well: PANEL_BY_ID is the validation gate, so an
+// id nobody defines is discarded from a saved layout and the rest of the workspace loads normally.
+//
+// ⚠️ AND NOTHING UNDER IT MOVED. /api/consensus, the engine, the Pit Consensus page and the chart's
+// evidence markers are untouched — the panel was one consumer, never the source.
 {
-  const ev = fs.readFileSync(path.join(ROOT, 'src/components/terminal/EvidencePanel.jsx'), 'utf8');
-  ok('⚠️ the state line reads canonical.stateLabel', /shown\.canonical\.stateLabel \|\|/.test(ev));
-  ok('⚠️ ...and no longer reads fields the engine does not emit',
-    !/canonical\.headline/.test(ev) && !/canonical\.label\b/.test(ev));
-  ok('⚠️ family colour is driven by the family STATE, not by a missing number',
-    /const familyTone = \(f\) =>/.test(ev) && !/f\.D/.test(code(ev)));
-  // ⚠️ THE VOCABULARY IS THE ENGINE'S, NOT A COPY. Each family speaks its own words — insiders say
-  // bullish/bearish/routine-sale, institutions accumulating/distributing, structure
-  // higher-highs-and-lows — and familyLean is the engine's own reader for them. My first attempt
-  // invented a POSITIVE/NEGATIVE/MIXED map, which matched none of those words: the live endpoint
-  // caught it. Restating the sets here would drift the first time a family gains a word.
-  ok('⚠️ ...through the engine\'s own familyLean, not a copied vocabulary',
-    /import \{ familyLean \} from '\.\.\/\.\.\/lib\/consensus\/synthesis\.mjs'/.test(ev)
-    && /const lean = familyLean\(f\);/.test(ev));
-  ok('⚠️ ...and no family state word is hardcoded in the panel',
-    !/(bullish|bearish|accumulating|distributing|higher-highs)/.test(code(ev)));
-  ok('an inactive family is not coloured as if it had a view',
-    /if \(!f \|\| !f\.active\) return C\.dim;/.test(ev));
+  const term = fs.readFileSync(path.join(ROOT, 'src/app/terminal/TerminalClient.jsx'), 'utf8');
+  ok('⚠️ the Evidence panel component is deleted',
+    !fs.existsSync(path.join(ROOT, 'src/components/terminal/EvidencePanel.jsx')));
+  ok('⚠️ ...and the bus that fed it, which now has no publisher and no listener',
+    !fs.existsSync(path.join(ROOT, 'src/lib/terminalEvidenceBus.js')));
+  ok('⚠️ the Terminal registry no longer defines it', !/id: 'evidence'/.test(term));
+  ok('⚠️ ...nor positions it, nor colours it',
+    !/^\s*evidence:\s*\{/m.test(term) && !/evidence: '(green|blue|orange|red)'/.test(term));
+  ok('⚠️ ...and nothing imports the panel or the bus',
+    !/EvidencePanel/.test(term) && !/terminalEvidenceBus/.test(term));
 
-  // Everything the panel already did must still be there — this was a defect fix, not a redesign.
-  ok('Pit Scan integration is intact', /symbol/.test(ev) && /EvidencePanel\(\{ symbol \}\)/.test(ev));
-  ok('it still reads the canonical consensus endpoint', /\/api\/consensus\?ticker=/.test(ev));
-  ok('reasons are still printed verbatim', /reasons\.slice\(0, 3\)/.test(ev));
-  ok('item counts are still shown', /f\.evidenceCount > 0/.test(ev));
-  ok('EDGAR refs still link out', /sec\.gov\/cgi-bin\/browse-edgar/.test(ev));
-  ok('agreement and conflicts are still shown', /shown\.agreement/.test(ev) && /shown\.conflicts/.test(ev));
-  ok('the families-active line is still shown', /activeCount/.test(ev) && /evaluatedCount/.test(ev));
+  // ⚠️ NO DEAD CONTROLS. Three places used to open the panel. Two were already anchors with a real
+  // href, so they simply navigate now; the third was a div that would have become a click doing
+  // nothing, and it opens the ticker page in a new tab instead.
+  const scan = fs.readFileSync(path.join(ROOT, 'src/components/scan/ScanBoardRows.jsx'), 'utf8');
+  ok('⚠️ Pit Scan\'s Evidence control is a plain link, not a dead button',
+    /<a href=\{href\}/.test(scan) && !/inspectEvidence/.test(scan));
+  ok('...and it still points somewhere real', /evidenceUrl \|\| /.test(scan));
+  const shared = fs.readFileSync(path.join(ROOT, 'src/lib/cp-shared.jsx'), 'utf8');
+  ok('⚠️ the bell\'s evidence alert navigates instead of being intercepted',
+    !/inspectEvidence/.test(shared) && /href=\{`\/ticker\//.test(shared));
+  ok('⚠️ the watchlist change line opens the ticker page rather than nothing',
+    /window\.open\(`\/ticker\/\$\{encodeURIComponent\(sym\)\}`, '_blank'/.test(term));
+
+  // ⚠️ THE DATA IS NOT THE PANEL.
+  ok('⚠️ /api/consensus is untouched', fs.existsSync(path.join(ROOT, 'src/app/api/consensus/route.js')));
+  ok('⚠️ the consensus engine is untouched', fs.existsSync(path.join(ROOT, 'src/lib/consensus/synthesis.mjs')));
+  ok('⚠️ the Pit Consensus board endpoint is untouched',
+    fs.existsSync(path.join(ROOT, 'src/app/api/consensus-board/route.js')));
+  ok('⚠️ the chart\'s evidence markers are untouched',
+    fs.existsSync(path.join(ROOT, 'src/lib/chart/use-ticker-evidence.js')));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
