@@ -178,6 +178,38 @@ console.log('\n2. a wheel in an open menu never reaches the chart\'s subtree');
     /overscroll-behavior:\s*contain/.test(style), style.slice(0, 160));
   ok('...and is still the thing that scrolls', /overflow-y:\s*auto/.test(style), style.slice(0, 160));
 
+  // ⚠️ AND SCROLLING THE MENU DOES NOT CLOSE THE MENU — the half of this bug that containment alone did
+  // not fix, and that only showed up against production. The dismiss-on-scroll listener is on WINDOW in
+  // the CAPTURE phase, because scroll events do not bubble and that is the only way to see an ancestor
+  // container scrolling. The cost is that it also sees THIS panel's own list scrolling, so a menu long
+  // enough to scroll closed itself the moment anyone scrolled it, and the rest of the wheel gesture
+  // landed on the chart. Containment stops the delta escaping at the ends; this stops the list's own
+  // scrolling being read as the page moving.
+  let closes = 0;
+  const onClose = () => { closes += 1; };
+  await act(async () => {
+    root.render(React.createElement(Popover, {
+      anchorRef, open: true, onClose, theme: 'dark', label: 'Timeframe', width: 200, maxHeight: 240,
+    }, React.createElement('div', { style: { height: 900 } }, 'intervals')));
+  });
+  const panel = doc.querySelector('[role="menu"]');
+  await act(async () => {
+    panel.dispatchEvent(new dom.window.Event('scroll', { bubbles: false }));
+  });
+  ok('⚠️ scrolling the menu itself does NOT close it', closes === 0, `${closes} close(s)`);
+  await act(async () => {
+    (panel.firstElementChild || panel).dispatchEvent(new dom.window.Event('scroll', { bubbles: false }));
+  });
+  ok('⚠️ ...nor does a scroll of something inside it', closes === 0, `${closes} close(s)`);
+  // ⚠️ POSITIVE CONTROL. The dismissal still has to work, or this would be a fix that simply stopped
+  // the menu closing on a page scroll — which is the orphaned-popover bug it exists to prevent.
+  await act(async () => {
+    doc.getElementById('plot').dispatchEvent(new dom.window.Event('scroll', { bubbles: false }));
+  });
+  ok('⚠️ ...but a scroll OUTSIDE it still closes it', closes === 1, `${closes} close(s)`);
+  ok('...and the source says which is which',
+    /t === el \|\| el\.contains\(t\)/.test(read('src/components/chart/ChartUI.jsx')));
+
   await act(async () => { root.unmount(); });
   ok('⚠️ closing the menu leaves nothing behind to swallow a wheel',
     doc.querySelectorAll('[role="menu"]').length === 0);

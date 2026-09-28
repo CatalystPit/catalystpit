@@ -164,7 +164,28 @@ export function Popover({
      * popovers that have no toolbar to be unmounted with: the rail's style flyout, the chart menus, the
      * indicator popovers.
      */
-    const onScroll = () => onClose();
+    /**
+     * ⚠️ A MENU SCROLLING ITS OWN LIST IS NOT THE CHART MOVING OUT FROM UNDER IT.
+     *
+     * This listener is on WINDOW in the CAPTURE phase, which is what lets it see a scroll in any
+     * ancestor container — scroll events do not bubble, so capture is the only way to see them at all.
+     * The cost is that it sees every scroll in the document, including this panel's own.
+     *
+     * So the timeframe menu, which is long enough to scroll, closed itself the instant anyone scrolled
+     * it, and the remaining notches of that same wheel gesture landed on the chart and zoomed it. That
+     * is what "the dropdown scrolls but the chart moves too" actually was. The overscroll-behavior above
+     * stops the delta escaping at the ENDS of the list; this stops the list's own scrolling from being
+     * read as the page moving.
+     *
+     * The check is the same shape as the chart's own dismissal path: the event's target is inside this
+     * panel, so it is ours, so it is not a reason to close.
+     */
+    const onScroll = (e) => {
+      const el = panelRef.current;
+      const t = e.target;
+      if (el && t instanceof Node && (t === el || el.contains(t))) return;
+      onClose();
+    };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('pointerdown', onDown);
     document.addEventListener('keydown', onKey);
