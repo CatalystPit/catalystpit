@@ -2,6 +2,7 @@ import { shiftTime } from './chart-coords.mjs';
 import { atEdgeX, atEdgeY, EDGE_LEFT, EDGE_RIGHT, EDGE_TOP, EDGE_BOTTOM } from './chart-project.mjs';
 // One definition of what a colour value is, shared with the indicator store and the picker.
 import { coerceColorValue } from './color-palette.mjs';
+import { sanitizeLabelStyle } from './drawing-label.mjs';
 // THE DRAWING MODEL.
 //
 // Pure geometry and state. No canvas, no React, no Lightweight Charts — which is what makes all of
@@ -175,7 +176,7 @@ export const TOOLS = {
  * a Terminal panel; something paragraph-length would cover the price action it is naming. The text
  * NOTE tool exists for anything longer, and is uncapped.
  */
-export const LABEL_MAX = 24;
+export const LABEL_MAX = 80;
 
 export const TOOL_IDS = Object.keys(TOOLS);
 export const tool = (id) => TOOLS[id] || null;
@@ -492,7 +493,10 @@ export function createDrawing(type, points, style = {}, existing = [], extra = {
     ...(def.hasText ? { text: typeof extra.text === 'string' ? extra.text : '' } : {}),
     // The attached tag, on the tools whose geometry gives it somewhere to sit. Empty until asked
     // for, so a drawing made before labels existed and one made now are the same shape.
-    ...(def.labelable ? { label: typeof extra.label === 'string' ? extra.label.slice(0, LABEL_MAX) : '' } : {}),
+    ...(def.labelable ? {
+      label: typeof extra.label === 'string' ? extra.label.slice(0, LABEL_MAX) : '',
+      labelStyle: sanitizeLabelStyle(extra.labelStyle),
+    } : {}),
     // Only a tool that CAN extend carries the flags, and only one with editable levels carries them;
     // an extendLeft on a rectangle would be a field nothing reads and everything has to preserve.
     ...(def.extendable ? { extendLeft: extra.extendLeft === true, extendRight: extra.extendRight === true } : {}),
@@ -599,7 +603,13 @@ export function coerceDrawing(raw, existing = []) {
     // ⚠️ AN ABSENT LABEL IS AN EMPTY ONE, NOT A MISSING FIELD. Every drawing stored before labels
     // existed comes back through here, and a label of undefined would reach the renderer and the
     // toolbar input as undefined rather than as "no label yet".
-    ...(def.labelable ? { label: typeof raw?.label === 'string' ? raw.label.slice(0, LABEL_MAX) : '' } : {}),
+    ...(def.labelable ? {
+      label: typeof raw?.label === 'string' ? raw.label.slice(0, LABEL_MAX) : '',
+      // An absent style is the DEFAULT style, not a missing field: every drawing stored before
+      // captions had styling comes back through here, and an undefined size would reach canvas as
+      // 'undefinedpx' and paint nothing at all.
+      labelStyle: sanitizeLabelStyle(raw?.labelStyle),
+    } : {}),
     ...(def.extendable ? { extendLeft: raw?.extendLeft === true, extendRight: raw?.extendRight === true } : {}),
     ...(def.editableLevels ? { levels: sanitizeFibLevels(raw?.levels), fill: raw?.fill === true } : {}),
   };

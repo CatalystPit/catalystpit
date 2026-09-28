@@ -202,7 +202,13 @@ L('⚠️ A LABEL BELONGS TO THE DRAWING, NOT BESIDE IT');
       .label.length === LABEL_MAX);
   ok('⚠️ a text note carries no label field at all, having its own words',
     !('label' in coerceDrawing({ type: 'text', points: [{ time: 1, price: 2 }], text: 'hi' })));
-  ok('the cap is a tag length, not a paragraph', LABEL_MAX > 0 && LABEL_MAX <= 40);
+  // ⚠️ THE CAP GREW WHEN THE TAG BECAME A CAPTION. 24 characters was a tag length — "Resistance",
+  // "PM High" — and it truncated the brief's own example the moment anyone wrote more than a couple
+  // of words. There is still a cap, because a paragraph painted over the candles is not a caption,
+  // but it is now a short-sentence length rather than a two-word one.
+  ok('the cap is a caption length, not a paragraph', LABEL_MAX >= 60 && LABEL_MAX <= 120);
+  ok('...and it fits the text a caption is actually for',
+    'Previous Resistance from the Q3 high'.length <= LABEL_MAX);
 }
 
 // ── 5. THE OLD PANEL IS GONE, AND THE CLICKS ARE ISOLATED ───────────────────

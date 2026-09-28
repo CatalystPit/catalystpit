@@ -12,6 +12,7 @@ import {
 } from '../../lib/chart/chart-coords.mjs';
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
 import { selectionBox } from '../../lib/chart/drawing-toolbar.mjs';
+import { sanitizeLabelStyle, labelFont, labelBox } from '../../lib/chart/drawing-label.mjs';
 import { axisLabelSpecs, reconcileAxisLabels, priceLineOptionsFor, priceInPlot } from '../../lib/chart/price-axis-labels.mjs';
 import {
   idleTool, armTool, clickTool, hoverTool, cancelDraft, clearSuppression, draftPreview, hasDraft,
@@ -343,31 +344,44 @@ function DrawingLayerBase({
         }
       }
 
-      // AN ATTACHED LABEL. Painted from the drawing's own first segment, so it travels with the
-      // line rather than sitting at a remembered position the line has since been dragged away from.
+      // ATTACHED TEXT. Painted from the drawing's own first segment every frame, so it travels with
+      // the line rather than sitting at a remembered position the line has since been dragged away
+      // from — and so panning, zooming and resizing move it exactly as much as they move the line.
+      //
+      // ⚠️ WHERE IT LANDS IS NOT DECIDED HERE. labelBox() is pure and asserted in node; this measures
+      // the string, asks, and paints. Placement arithmetic inlined in a paint loop is placement
+      // arithmetic no test can reach.
       const tag = typeof d.source.label === 'string' ? d.source.label.trim() : '';
       if (tag) {
-        const start = d.segments[0]?.[0] || d.handles[0];
-        if (start && Number.isFinite(start.x) && Number.isFinite(start.y)) {
+        const lstyle = sanitizeLabelStyle(d.source.labelStyle);
+        const seg = d.segments[0]
+          || (d.handles[0] ? [d.handles[0], d.handles[0]] : null);
+        if (seg) {
           ctx.save();
-          ctx.font = "600 10px 'DM Sans', sans-serif";
-          ctx.textBaseline = 'bottom';
-          const tw = ctx.measureText(tag).width;
-          // Clamped to the plot: a tag on a line that runs to the right edge would otherwise be
-          // drawn out over the price scale, where it reads as a rendering fault.
-          const bx = Math.min(Math.max(2, start.x + 4), Math.max(2, plotSize().plotWidth - tw - 10));
-          const by = Math.max(12, start.y - 4);
-          ctx.fillStyle = p.tooltipBg;
-          ctx.strokeStyle = colour;
-          ctx.lineWidth = 1;
-          if (ctx.roundRect) {
-            ctx.beginPath();
-            ctx.roundRect(bx, by - 13, tw + 8, 14, 3);
-            ctx.fill();
-            ctx.stroke();
+          ctx.font = labelFont(lstyle);
+          const { plotWidth, plotHeight } = plotSize();
+          const box = labelBox(seg, lstyle, ctx.measureText(tag).width,
+            { w: plotWidth, h: plotHeight });
+          if (box) {
+            // An explicit caption colour wins; absent, it inherits the line's, which is what every
+            // drawing stored before captions had a colour of their own already did.
+            const ink = lstyle.color === undefined
+              ? colour : indicatorColor(stateRef.current.theme, lstyle.color);
+            // A backing plate, so a caption stays readable over candles instead of fighting them.
+            ctx.fillStyle = p.tooltipBg;
+            ctx.strokeStyle = ink;
+            ctx.lineWidth = 1;
+            if (ctx.roundRect) {
+              ctx.beginPath();
+              ctx.roundRect(box.x, box.y, box.w, box.h, 3);
+              ctx.fill();
+              ctx.stroke();
+            }
+            ctx.fillStyle = ink;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(tag, box.textX, box.textY);
           }
-          ctx.fillStyle = colour;
-          ctx.fillText(tag, bx + 4, by - 2);
           ctx.restore();
         }
       }

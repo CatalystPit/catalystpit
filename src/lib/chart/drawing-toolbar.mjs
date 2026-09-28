@@ -32,7 +32,11 @@ export const CONTROL = Object.freeze({
   COLOR: 'color',
   WIDTH: 'width',
   DASH: 'dash',
-  /** A tag attached to a line — "Resistance", "PM High". Moves with the drawing. */
+  /**
+   * Text attached to a line — "Previous Resistance", "PM High". Moves with the drawing, and carries
+   * its own colour, size, weight, alignment and side. The toolbar shows it as a "T" beside the
+   * colour square; it is NOT the standalone Text note tool, where the string is the drawing itself.
+   */
   LABEL: 'label',
   /** The body of a text note, which IS the drawing rather than an annotation on one. */
   TEXT: 'text',
@@ -57,10 +61,14 @@ export function controlsFor(type) {
   // A note is its words: they come first, and they are the only text it has.
   if (def.hasText) out.push(CONTROL.TEXT);
   out.push(CONTROL.COLOR);
+  // ⚠️ THE CAPTION SITS IMMEDIATELY AFTER THE COLOUR, and that ordering is the requirement rather
+  // than a preference. Every professional charting toolbar reads colour, then text, then the stroke
+  // controls, so a user arriving from one reaches for the second button and finds what they expect.
+  // It used to sit after the dash style, where it read as a minor setting rather than as the thing
+  // you came to the toolbar to do.
+  if (def.labelable) out.push(CONTROL.LABEL);
   // Stroke controls only for something that strokes a line.
   if (!def.hasText) { out.push(CONTROL.WIDTH); out.push(CONTROL.DASH); }
-  // An attached tag, for the tools whose model carries one.
-  if (def.labelable) out.push(CONTROL.LABEL);
   out.push(CONTROL.LOCK, CONTROL.DELETE);
   if (hasMore(type)) out.push(CONTROL.MORE);
   return out;
