@@ -139,7 +139,89 @@ ok('⚠️ ...as a field on the line, not as a new text drawing',
   !/"type":"text"/.test(stored || ''), (stored || '').slice(0, 200));
 ok('⚠️ ...with a style alongside it', /labelStyle/.test(stored || ''));
 
-console.log('\n4. it is painted on the chart, and it follows the line');
+console.log('\n4. the text is plain, and it can be dragged on its own');
+{
+  const stored = () => ev(`(() => { const raw = window.localStorage.getItem([...Object.keys(window.localStorage)].find((k) => /draw/i.test(k))); return raw || ''; })()`);
+  const firstDrawing = (o) => {
+    const syms = o?.symbols || {};
+    const list = syms[Object.keys(syms)[0]] || [];
+    return list[0] || null;
+  };
+
+  // Re-select the drawing. Clicking its midpoint would land on an evidence marker as often as not, so
+  // the press goes on the line a little off-centre.
+  await click(plot.left + plot.w * 0.40, plot.top + plot.h * 0.365);
+  await sleep(800);
+  let barOpen = await ev(`!!document.querySelector('[role="toolbar"]')`);
+  if (!barOpen) { await click(plot.left + plot.w * 0.52, plot.top + plot.h * 0.455); await sleep(800); barOpen = await ev(`!!document.querySelector('[role="toolbar"]')`); }
+  ok('the drawing is selected again', barOpen);
+
+  // ⚠️ THE CAPTION IS PUT SOMEWHERE KNOWN BEFORE IT IS DRAGGED. Its default is right-aligned above the
+  // line, whose right-hand end depends on how the chart happened to project the segment — so guessing
+  // at those pixels is guessing. Align left / place below puts it just past the line's FIRST anchor,
+  // which is the point this test clicked to create the line and therefore the one coordinate it knows.
+  const press = async (label) => {
+    const r = await ev(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === ${JSON.stringify(label)}); if (!b) return null; const q = b.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
+    if (!r) return false;
+    await click(r.x, r.y);
+    return true;
+  };
+  // ⚠️ THE EDITOR MAY ALREADY BE OPEN. Committing the text with Enter deliberately leaves it open —
+  // you have just typed, you may want to restyle — so clicking T here would TOGGLE it shut, and every
+  // control inside it would then be missing. Ask first.
+  let editorOpen = await ev(`!!document.querySelector('[aria-label="Drawing text"]')`);
+  if (!editorOpen) {
+    const tBtn2 = await ev(`(() => { const b = [...document.querySelectorAll('[role="toolbar"] button')].find((x) => /^(Add text to this drawing|Text: )/.test(x.getAttribute('aria-label') || '')); if (!b) return null; const q = b.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
+    if (tBtn2) { await click(tBtn2.x, tBtn2.y); editorOpen = await ev(`!!document.querySelector('[aria-label="Drawing text"]')`); }
+  }
+  ok('the text editor is open', editorOpen);
+  if (editorOpen) {
+    ok('alignment can be set to left', await press('Align left'));
+    ok('placement can be set to below', await press('Below the line'));
+    await ev(`document.activeElement && document.activeElement.blur()`);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape' });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape' });
+    await sleep(700);
+  }
+  // Re-select after the editor closed.
+  await click(plot.left + plot.w * 0.40, plot.top + plot.h * 0.365);
+  await sleep(800);
+
+  const before = JSON.parse((await stored()) || '{}');
+  const d0 = firstDrawing(before);
+  ok('the drawing is in storage before the drag', !!d0 && !!d0.label, JSON.stringify(d0?.label));
+  ok('⚠️ ...with no manual position yet', !d0?.labelStyle?.offset, JSON.stringify(d0?.labelStyle));
+
+  // The caption now sits just right of, and below, the line's first anchor — the point this test
+  // clicked at 30% / 32% when it drew the line.
+  const capX = plot.left + plot.w * 0.30 + 34;
+  const capY = plot.top + plot.h * 0.32 + 20;
+
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: capX, y: capY, button: 'left', clickCount: 1, buttons: 1 });
+  for (let i = 1; i <= 8; i += 1) {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: capX + 16 * i, y: capY + 10 * i, button: 'left', buttons: 1 });
+    await sleep(45);
+  }
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: capX + 128, y: capY + 80, button: 'left', buttons: 0 });
+  await sleep(1000);
+
+  const after = JSON.parse((await stored()) || '{}');
+  const d1 = firstDrawing(after);
+  ok('⚠️ dragging the caption stores a manual position', !!d1?.labelStyle?.offset,
+    JSON.stringify(d1?.labelStyle));
+  ok('⚠️ ...as a data-space offset, not pixels',
+    !!d1?.labelStyle?.offset && Number.isFinite(d1.labelStyle.offset.dt)
+    && Number.isFinite(d1.labelStyle.offset.dp), JSON.stringify(d1?.labelStyle?.offset));
+  // ⚠️ AND THE DRAWING DID NOT MOVE. This is the assertion the whole interaction turns on: the same
+  // gesture that repositions the words must not move the line underneath them.
+  ok('⚠️ ...and the drawing itself did not move',
+    JSON.stringify(d1?.points) === JSON.stringify(d0?.points),
+    `${JSON.stringify(d0?.points)} -> ${JSON.stringify(d1?.points)}`);
+  ok('⚠️ ...and its text is unchanged', d1?.label === d0?.label, `${d0?.label} -> ${d1?.label}`);
+  await shoot('live-text-dragged.png');
+}
+
+console.log('\n5. it is painted on the chart, and it follows the line');
 // Dismiss the editor, then read the canvas: the caption is drawn, so it has to be found in pixels.
 await key('Escape', 'Escape');
 await click(plot.left + plot.w * 0.9, plot.top + plot.h * 0.9);
@@ -195,7 +277,7 @@ ok('⚠️ ...and the caption moved with the line it belongs to',
 const afterPan = await ev(`(() => { const raw = window.localStorage.getItem([...Object.keys(window.localStorage)].find((k) => /draw/i.test(k))); return raw || ''; })()`);
 ok('⚠️ the caption is still attached after panning', /Previous Resistance/.test(afterPan || ''));
 
-console.log('\n5. it survives a reload');
+console.log('\n6. it survives a reload');
 await send('Page.navigate', { url: URL_ });
 await sleep(1000);
 for (let i = 0; i < 60; i += 1) { if (await ev('!!document.querySelector("canvas")')) break; await sleep(500); }
