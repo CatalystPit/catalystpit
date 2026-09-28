@@ -30,6 +30,17 @@ import { placeFor } from '../../lib/chart/chart-popover.mjs';
 // Above the fullscreen chart (200) and anything the Terminal panels use, matching the convention the
 // Insiders and Institutions portals already established in this codebase.
 const POPOVER_Z = 2147482000;
+
+/**
+ * What a Popover's own chrome costs: 4px of padding each side plus a 1px border each side.
+ *
+ * ⚠️ THE APP SETS `* { box-sizing: border-box }` GLOBALLY, so a Popover's `width` is its OUTER width and
+ * the content gets 10px less. Every menu here is a list and does not care. The colour palette does: it
+ * is sized to the pixel, so 10px short meant the rightmost column overflowed and was cut off by the
+ * overflow rule — which is what the purple column looked like on production. A caller with fixed-size
+ * content adds this to what it needs.
+ */
+export const POPOVER_CHROME = 10;
 const MODAL_Z = 2147482600;
 // useLayoutEffect warns during SSR; placement must still run pre-paint in the browser so a menu
 // never appears at 0,0 for a frame.
@@ -182,6 +193,8 @@ export function Popover({
         top: pos.top, left: pos.left, right: pos.right, bottom: pos.bottom,
         width: pos.width, maxHeight: pos.maxHeight,
         zIndex: POPOVER_Z, overflowY: 'auto', overflowX: 'hidden',
+        // Pinned, not inherited: POPOVER_CHROME above is only true if this stays border-box.
+        boxSizing: 'border-box',
         background: p.tooltipBg, border: `1px solid ${p.tooltipBorder}`, borderRadius: 8,
         boxShadow: '0 10px 32px rgba(0,0,0,0.26)', padding: 4,
       }}>{children}</div>,

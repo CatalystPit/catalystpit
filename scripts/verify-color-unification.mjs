@@ -837,7 +837,12 @@ console.log('\n8f. the drawing toolbar colour square opens the palette in one ta
   ok('...inside the portalled Popover, so the chart cannot clip it',
     /<Popover[^>]*anchorRef=\{refs\.color\}[\s\S]{0,300}<ColorPalettePanel/.test(bar));
   ok('...placed by a known height rather than capped and scrolled',
-    /height=\{cm\.contentHeight\}/.test(bar));
+    /height=\{cm\.contentHeight \+ POPOVER_CHROME\}/.test(bar));
+  // ⚠️ AND IT ADDS THE POPOVER'S OWN CHROME. The app sets box-sizing: border-box globally, so a
+  // Popover's width is its OUTER width — passing the content width left the palette 10px short and the
+  // rightmost column overflowed it. Measured on the live site as a right gap of −7px.
+  ok('⚠️ ...with room for the popover\'s own padding and border',
+    /width=\{cm\.contentWidth \+ POPOVER_CHROME\}/.test(bar));
   ok('...sized from the metrics the host resolved, so panel and placement agree',
     /const cm = usePaletteMetrics\(\);/.test(bar) && /metrics=\{cm\}/.test(bar));
   ok('...and it still writes through the drawing style channel',
@@ -944,8 +949,10 @@ console.log('\n8g. the sizing follows the pointer, and the component honours it'
     // And the popover it is placed in is sized for THIS sizing, not the other one.
     const portal = paletteEl.closest('[role="menu"]');
     const bw = /width:\s*(\d+)px/.exec(styleOf(portal));
-    ok(`⚠️ ${kind}: the popover was placed for the ${kind} palette`,
-      bw && Number(bw[1]) === m.contentWidth, `${bw ? bw[1] : '?'}px, expected ${m.contentWidth}px`);
+    // The popover's width is its OUTER width (global border-box), so it must exceed the content by
+    // exactly its own chrome -- no more, or the palette floats in a box bigger than itself.
+    ok(`⚠️ ${kind}: the popover was placed for the ${kind} palette, plus its own chrome`,
+      bw && Number(bw[1]) === m.contentWidth + 10, `${bw ? bw[1] : '?'}px, expected ${m.contentWidth + 10}px`);
     await act(async () => { root.unmount(); });
   }
   // ⚠️ POSITIVE CONTROL: the two sizings must actually differ, or every assertion above passes against a

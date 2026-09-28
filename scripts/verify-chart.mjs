@@ -1397,7 +1397,8 @@ section('19b. a panel with a KNOWN height is placed to fit, never capped and scr
   // The toolbar passes these, and passes the palette's own constants rather than literals.
   const barSrc = (await readFile(new URL('../src/components/chart/DrawingToolbar.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   ok('the drawing toolbar places its palette by a known height',
-    /height=\{cm\.contentHeight\}/.test(barSrc) && /width=\{cm\.contentWidth\}/.test(barSrc));
+    /height=\{cm\.contentHeight \+ POPOVER_CHROME\}/.test(barSrc)
+    && /width=\{cm\.contentWidth \+ POPOVER_CHROME\}/.test(barSrc));
   ok('...and centres it on the colour square', /placement="bottom-center"/.test(barSrc));
   ok('...from the metrics its own host resolved', /const cm = usePaletteMetrics\(\);/.test(barSrc));
   const pickerSrc = readSrc('../src/components/chart/ColorPicker.jsx');

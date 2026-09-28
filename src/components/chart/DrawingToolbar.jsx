@@ -2,7 +2,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { tool, LINE_WIDTHS, LINE_DASHES, LABEL_MAX } from '../../lib/chart/chart-drawings.mjs';
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
-import { Popover, MenuItem, MenuLabel } from './ChartUI';
+import { Popover, MenuItem, MenuLabel, POPOVER_CHROME } from './ChartUI';
 import { CONTROL, controlsFor, placeToolbar } from '../../lib/chart/drawing-toolbar.mjs';
 import { ColorPalettePanel, usePaletteMetrics } from './ColorPicker';
 
@@ -303,7 +303,7 @@ function DrawingToolbarBase({
         * ends up centred over the chart rather than half off the side.
         */}
       <Popover anchorRef={refs.color} open={open === CONTROL.COLOR} onClose={close} theme={theme}
-        placement="bottom-center" width={cm.contentWidth} height={cm.contentHeight}
+        placement="bottom-center" width={cm.contentWidth + POPOVER_CHROME} height={cm.contentHeight + POPOVER_CHROME}
         label="Drawing color">
         <ColorPalettePanel
           theme={theme} value={drawing.style?.color}

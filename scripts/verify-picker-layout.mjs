@@ -14,6 +14,12 @@
 // and the popover's own `overflowX: hidden` clips it rather than revealing it. So this runs at several
 // device pixel ratios, and asserts SLACK rather than equality.
 //
+// ⚠️ THE HARNESS PAGE CARRIES `* { box-sizing: border-box }` BECAUSE THE APP DOES. Leaving it out is
+// not a harmless simplification: it changes what `width` means on every box, so the popover measured
+// 176px here and 166px on production, the palette overflowed its host by exactly the chrome, and this
+// suite reported 209/0 against a build whose purple column was still cut off. A harness that does not
+// reproduce the page's box model measures a different component.
+//
 // It drives the Chrome already installed on the machine over the DevTools protocol — no puppeteer, no
 // Chromium download, no new dependency. Needs a browser, so like verify-deployed it is not part of the
 // offline run.
@@ -171,7 +177,7 @@ await build({
 fs.writeFileSync(path.join(TMP, 'index.html'),
   '<!doctype html><html><head><meta charset="utf-8">'
   + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-  + '<style>html,body{margin:0;padding:0;background:#0b0f0d}</style>'
+  + '<style>*{box-sizing:border-box}html,body{margin:0;padding:0;background:#0b0f0d}</style>'
   + '</head><body><div id="root"></div><script src="bundle.js"></script></body></html>', 'utf8');
 
 // ── drive the browser ──────────────────────────────────────────────────────────────────────────
