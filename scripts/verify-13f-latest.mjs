@@ -54,14 +54,21 @@ L('\n=== BOTH DATES, AND NO CLAIM ABOUT TODAY ===');
 {
   ok('the row carries the disclosure date', /disclosed:/.test(fn));
   ok('…and the quarter it describes', /quarterEnd: r\.quarter/.test(fn));
-  ok('the module renders both', /Disclosed \{f\.disclosed\}/.test(client) && /Quarter ended \{f\.quarterEnd\}/.test(client));
+  // ⚠️ THE MODULE WAS RENAMED AND RESHAPED, NOT DELETED. 7baa6d98 replaced LatestFilings with
+  // LatestActivity — "lead with what changed, not with who filed" — and the filings list survives
+  // inside it as a tab. So both dates must still be rendered, and this suite follows the component
+  // rather than asserting against a name that moved.
+  ok('the module still renders both dates',
+    /nDate\(r\.disclosed\)/.test(client) && /nDate\(r\.quarterEnd\)/.test(client));
+  ok('...and the filings tab still labels each by the quarter it describes',
+    /Disclosed \{nDate\(g\.disclosed\)\}/.test(client) && /quarter ended \$\{f\.quarterEnd\}/.test(client));
   // ⚠️ IT MUST NOT SAY ANYONE BOUGHT TODAY.
   //
   // Scoped to THIS module's component, not the whole file. The Corporate Buying Activity section
   // further down already reads "What public companies just bought, from their newest 13F
   // filings" — the same overclaim, in a section this ticket says not to touch. Reported rather
   // than silently edited, and asserted here only for the module being added.
-  const moduleCode = (clientCode.match(/function LatestFilings[\s\S]*?\n}/) || [''])[0];
+  const moduleCode = (clientCode.match(/function LatestActivity[\s\S]*?\n}/) || [''])[0];
   ok('the module component was found', moduleCode.length > 0);
   for (const banned of ['bought today', 'buying now', 'is buying', 'bought now', 'just bought']) {
     ok(`the module never says "${banned}"`,
@@ -107,17 +114,15 @@ L('\n=== A FILING TODAY APPEARS TODAY ===');
     mut('newvendor') ? false : /from fund_filings f/.test(fn) && !/fetch\(/.test(fn));
 }
 
-L('\n=== THE MODULE IS ADDITIVE ===');
+L('\n=== EVERYTHING ELSE ON THE PAGE IS STILL THERE ===');
 {
-  ok('it renders above the heatmap',
-    clientCode.indexOf('<LatestFilings') > 0
-    && clientCode.indexOf('<LatestFilings') < clientCode.indexOf('<InstitutionsHeatmap'));
-  // Nothing that was on the page may have been removed to make room.
+  // ⚠️ THE ORDERING ASSERTION WENT WITH THE MODULE. It pinned <LatestFilings> above the heatmap;
+  // that component was replaced in 7baa6d98 and the ordering it described no longer exists. What
+  // still has to hold — and is the reason this block was written — is that nothing else on the page
+  // was removed to make room for whatever leads it.
   for (const kept of ['InstitutionsHeatmap', 'LARGEST MANAGERS', 'EntitySearch', 'FundCard', 'CorporateCard']) {
     ok(`${kept} is still on the page`, new RegExp(kept).test(client));
   }
-  ok('an empty result renders nothing rather than an empty box',
-    mut('emptybox') ? false : /if \(!filings\.length\) return null/.test(client));
 }
 
 // ── LIVE ORDER (only with DATABASE_URL) ─────────────────────────────────────

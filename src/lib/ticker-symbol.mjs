@@ -87,6 +87,32 @@ export const TICKER_TABS = new Set([
 ]);
 
 /**
+ * A FILER-REPORTED SYMBOL TO A REAL TICKER, OR NOTHING.
+ *
+ * ⚠️ 13F HOLDINGS AND FORM 4 ROWS CARRY WHATEVER THE FILER TYPED. Measured on production: 61,698 of
+ * 17,160,159 holdings and 1,181 of 268,904 insider rows are not exchange symbols — "BRK/A", "EA*",
+ * "BAC 7.25 PERP L", "2655957D", "Z AND ZG", "NYSE: VTEX", "GEF, GEF-B", "(CALX)". Routing those
+ * straight to /ticker/<raw> produced a 404 on a clickable row.
+ *
+ * ⚠️ AND SLASH IS ONLY A SHARE CLASS WHEN WHAT FOLLOWS IT IS A CLASS. BRK/A is BRK.A, which is how
+ * the rest of the product spells it. "MOGA/MOGB" is TWO symbols in one field, and a naive
+ * slash-to-dot turned it into "MOGA.MOGB" — a well-formed symbol for a security that does not
+ * exist, which is a worse answer than refusing it. The class designator is one or two characters;
+ * anything longer is a list, not a class.
+ *
+ * ONE DEFINITION, because two call sites and a test each carrying their own copy is how they drift.
+ *
+ * @returns {string|null} the canonical symbol, or null when this is not a ticker at all
+ */
+export function resolveFilerSymbol(raw) {
+  const direct = normalizeSymbol(raw);
+  if (direct) return direct;
+  const s = String(raw ?? '').trim().toUpperCase();
+  const m = /^([A-Z]{1,5})\/([A-Z]{1,2})$/.exec(s);
+  return m ? normalizeSymbol(`${m[1]}.${m[2]}`) : null;
+}
+
+/**
  * Path to redirect a non-canonical ticker URL to. `overview` is the default tab and is dropped, so
  * /ticker/aapl and /ticker/aapl?tab=overview both land on the single URL /ticker/AAPL rather than
  * creating a second one for the same view.

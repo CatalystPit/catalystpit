@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import PlanTerms from '../../components/PlanTerms';
 import { meaningFor } from '../../lib/insider-meaning';
+import { resolveFilerSymbol } from '../../lib/ticker-symbol.mjs';
 import { ownershipChangePct, fmtOwnershipPct } from '../../lib/insider-format';
 import { treemap } from '../../lib/treemap';
 import SharedInfoTip from '../../components/InfoTip';
@@ -684,7 +685,20 @@ export default function InsidersClient() {
   const [dateBasis, setDateBasis] = useState('trade'); // window applies to trade or filing date
   const [maxDelay, setMaxDelay] = useState(0);  // filing-delay ceiling (days)
   const router = useRouter();
-  const goTicker = (sym) => { if (sym && sym !== '?') router.push(`/ticker/${encodeURIComponent(sym)}`); };
+  /**
+   * Open a row's ticker page — but only when the filer's symbol IS one.
+   *
+   * ⚠️ A FORM 4's TRADING-SYMBOL FIELD IS FREE TEXT, and 1,181 of 268,904 rows are not a symbol:
+   * "Z AND ZG", "NYSE: VTEX", "GEF, GEF-B", "(CALX)", "ASX:LNW", "MOGA/MOGB". Each was routed
+   * straight to /ticker/<raw>, where normalizeSymbol refuses it and the page answers 404 — a
+   * clickable row that leads nowhere. resolveFilerSymbol owns the rule. Same fix, same reason, as
+   * the 13F holdings rows.
+   */
+  const goTicker = (sym) => {
+    if (!sym || sym === '?') return;
+    const t = resolveFilerSymbol(sym);
+    if (t) router.push(`/ticker/${encodeURIComponent(t)}`);
+  };
   // Click an insider's name → pull up that exact person's trades (name + their company).
   const openInsider = (ins) => {
     if (!ins?.name) return;

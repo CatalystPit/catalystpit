@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo, useLogoBg, LOGO_DARK_BG } from '../../../lib/cp-shared';
+import { resolveFilerSymbol } from '../../../lib/ticker-symbol.mjs';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -111,7 +112,23 @@ export default function FundProfile({ slug }) {
   const [importMsg, setImportMsg] = useState('');
   const [admin, setAdmin] = useState(false);
   const router = useRouter();
-  const go = (t) => { if (t) router.push(`/ticker/${encodeURIComponent(t)}`); };
+  /**
+   * Open a holding's ticker page — but only when the filer's symbol IS one.
+   *
+   * ⚠️ A 13F CARRIES WHATEVER THE MANAGER TYPED, and 61,698 of 17.2m holding rows are not exchange
+   * symbols: "BRK/A", "HEI/A" and "MOG/A" are share classes in slash notation, and "EA*",
+   * "BAC 7.25 PERP L" and "2655957D" are a preferred line, a vendor id and a footnote marker. Every
+   * one of them was routed straight to /ticker/<raw>, where normalizeSymbol refuses it and the page
+   * answers 404 — a clickable row that leads nowhere.
+   *
+   * Slash notation is the same security under a different convention, so it is converted: BRK/A is
+   * BRK.A, which is how the rest of the product spells a share class. Anything that still does not
+   * normalise is not a ticker we can show, so the row simply does not navigate.
+   */
+  const go = (t) => {
+    const sym = resolveFilerSymbol(t);
+    if (sym) router.push(`/ticker/${encodeURIComponent(sym)}`);
+  };
 
   async function runImport() {
     if (importing) return;
