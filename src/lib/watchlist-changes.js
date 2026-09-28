@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { db } from './db';
 import { tickerEvidence } from './evidence/resolve';
 import { isIngestableTicker } from './security-identity.mjs';
+import { ISSUER_WIRE, NEWS_DESK } from './evidence/company-events.mjs';
 
 // WHAT CHANGED ON YOUR NAMES — "what became public since you last looked".
 //
@@ -46,8 +47,28 @@ export const DEFAULT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
  *   Congress → disclosure_date   (NEVER transaction_date — a member's trade is not news until
  *                                 disclosed, typically 30-45 days later)
  *   13F      → filed_date        (the quarter is the reference period, not the clock)
- * inserted_at is deliberately absent from all four: it records when WE caught up, so a backfill
+ *   wire     → published_at      (the moment the release or desk report went out)
+ * inserted_at is deliberately absent from all of them: it records when WE caught up, so a backfill
  * would present years-old filings as things that just happened.
+ *
+ * ── ⚠️ THE WIRE BRANCH, AND WHY ITS ABSENCE WAS A REAL BUG ──────────────────
+ *
+ * catalystEvidence() has read company press releases and desk reports out of primary_events for a
+ * long time — that is what surfaces an FDA approval or a buyback for an issuer that files no 8-K.
+ * This prefilter never asked about them, so the engine was never CALLED for those tickers and the
+ * whole class was invisible to every consumer of watchlistChanges.
+ *
+ * Measured on one production watchlist: NVIDIA authorised an additional $150bn of buybacks, the
+ * engine classified it `cap_buyback_authorized` from the Bloomberg and GlobeNewswire copies within
+ * minutes, and the badge showed nothing — while MSTR badged for a routine Item 7.01/8.01 filing,
+ * because an 8-K row existed and a wire row did not. META's CEO change was invisible for the same
+ * reason. The prefilter's own contract is that it must never miss, only over-include, and it was
+ * missing an entire family.
+ *
+ * The source gate is the engine's own (ISSUER_WIRE ∪ NEWS_DESK) so this stays an INDEX of what the
+ * engine could possibly use, not a second opinion about it. It is deliberately looser than the
+ * engine — no classification, no noise gate, no relevance window — because everything it nominates
+ * is re-judged there, and a name nominated for nothing costs one resolver call that returns [].
  */
 export async function candidateTickers(tickers, since) {
   const clean = [...new Set((tickers || []).filter(isIngestableTicker).map((t) => t.toUpperCase()))];
@@ -60,6 +81,8 @@ export async function candidateTickers(tickers, since) {
   // explicit parameterised IN list is bound correctly and stays injection-safe: every element has
   // already passed isIngestableTicker, and each is still sent as its own placeholder.
   const list = sql.join(clean.map((t) => sql`${t}`), sql`, `);
+  // The engine's own source vocabulary, bound the same parameterised way.
+  const sources = sql.join([...ISSUER_WIRE, ...NEWS_DESK].map((s) => sql`${s}`), sql`, `);
 
   const res = await db.execute(sql`
     select distinct ticker from (
@@ -75,6 +98,11 @@ export async function candidateTickers(tickers, since) {
       select upper(h.ticker) from fund_holdings h
         join fund_filings f on f.cik = h.cik and f.quarter = h.quarter
         where upper(h.ticker) in (${list}) and f.filed_date >= ${sinceDay}::date
+      union all
+      select upper(t) from primary_events, unnest(tickers) as t
+        where upper(t) in (${list})
+          and published_at >= ${sinceIso}::timestamptz
+          and upper(source) in (${sources})
     ) s`);
   return (res.rows ?? res).map((r) => String(r.ticker).toUpperCase());
 }

@@ -11,16 +11,30 @@
 //
 // ── WHAT IT IS NOT ──────────────────────────────────────────────────────────
 //
-// Not an alert, not a notification, not a feed. It answers a question the user asked by opening
-// the page. Nothing here polls in the background, and nothing fires.
+// Not an alert, not a notification, not a feed. It sends nothing, emails nothing and fires nothing.
+//
+// ⚠️ IT DOES NOW REFRESH ITSELF, AND THAT IS NOT THE SAME THING. It used to fetch exactly once on
+// mount, so a watchlist left open all day answered a question from whenever the tab was opened —
+// NVIDIA authorised $150bn of buybacks and a user staring at the page saw nothing until they
+// reloaded. A monitor that only updates when you reload is not a monitor. The refresh is a plain
+// re-read on the same endpoint, on the same visibility-aware schedule the Wire already uses;
+// nothing about what counts as new, and nothing about read state, changes with it.
 //
 // ⚠️ NO PRICE, NO MOVE, NO "UP ON VOLUME". Every line is a PUBLIC DISCLOSURE and its publication
 // time. Realtime is not entitled, so a change line implying live movement would be untrue at the
 // moment it mattered most; the list's own quote column already says LAST CLOSE and that is the
 // only place price is claimed at all.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { C } from '../lib/cp-shared';
+
+// ⚠️ GENTLER THAN THE WIRE ON PURPOSE. A Wire poll reads one indexed tail; this one fans out over
+// the Evidence Engine for up to 25 names, so it is measured in seconds, not milliseconds. A minute
+// is well inside the cadence of the sources feeding it — the 8-K cron runs every 5 minutes and a
+// wire item is canonical within a minute or two of publication — and a backgrounded tab drops to
+// five, because nobody is reading a badge they cannot see.
+const POLL_ACTIVE = 60_000;
+const POLL_HIDDEN = 300_000;
 
 // One word per family, in the vocabulary the rest of the product already uses.
 const FAMILY_LABEL = {
@@ -57,28 +71,64 @@ export function useWatchlistChanges({ enabled = true } = {}) {
   const [data, setData] = useState(null);      // null = loading
   const [error, setError] = useState(null);
 
+  // ⚠️ A GENERATION COUNTER, BECAUSE "MARK SEEN" RACES THE POLL. A request already in flight when
+  // the user clears the list would land afterwards and put every cleared row back on screen — the
+  // badge reappearing a second after being dismissed, for events the user has just read. Marking
+  // seen bumps the generation; anything issued before it is discarded on arrival.
+  const genRef = useRef(0);
+
   useEffect(() => {
-    if (!enabled) { setData({ changes: [], byTicker: {} }); return; }
+    if (!enabled) { setData({ changes: [], byTicker: {} }); return undefined; }
     let alive = true;
-    (async () => {
+    let timer = null;
+
+    const load = async () => {
+      const gen = genRef.current;
       try {
         const r = await fetch('/api/watchlist/changes', { cache: 'no-store' });
-        if (!alive) return;
+        if (!alive || gen !== genRef.current) return;
         if (r.status === 401) { setData({ changes: [], byTicker: {}, signedOut: true }); return; }
         // ⚠️ A 503 IS NOT AN EMPTY LIST. The endpoint fails loudly on purpose; rendering that as
         // "no new public evidence" would be a calm, reassuring lie.
-        if (!r.ok) { setError('unavailable'); setData({ changes: [], byTicker: {} }); return; }
-        setData(await r.json());
+        if (!r.ok) { setError('unavailable'); setData((d) => d || { changes: [], byTicker: {} }); return; }
+        const next = await r.json();
+        if (!alive || gen !== genRef.current) return;
+        setError(null);
+        setData(next);
       } catch {
-        if (alive) { setError('unavailable'); setData({ changes: [], byTicker: {} }); }
+        // ⚠️ A FAILED REFRESH MUST NOT WIPE A GOOD ANSWER. On the first load there is nothing to
+        // keep and the error state is right; on a later poll the list already on screen is still
+        // the truth as of its own timestamp, and blanking it would read as "nothing happened".
+        if (alive && gen === genRef.current) { setError('unavailable'); setData((d) => d || { changes: [], byTicker: {} }); }
       }
-    })();
-    return () => { alive = false; };
+    };
+
+    const schedule = () => {
+      clearTimeout(timer);
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      timer = setTimeout(async () => { await load(); if (alive) schedule(); }, hidden ? POLL_HIDDEN : POLL_ACTIVE);
+    };
+
+    // Coming back to the tab is the moment the answer matters most, so it re-reads at once rather
+    // than waiting out whatever remained of the hidden interval.
+    const wake = () => { if (document.visibilityState === 'visible') { load(); schedule(); } };
+
+    load().then(() => { if (alive) schedule(); });
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('online', wake);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('online', wake);
+    };
   }, [enabled]);
 
   // Advancing the watermark is a deliberate act, never a side effect of rendering: a page opened
-  // in a background tab must not silently consume the thing it was opened to show.
+  // in a background tab must not silently consume the thing it was opened to show — and neither
+  // may the poll above, which is why it only ever reads.
   const markSeen = useCallback(async () => {
+    genRef.current += 1;
     try { await fetch('/api/watchlist/changes', { method: 'POST' }); } catch { /* best effort */ }
     setData((d) => (d ? { ...d, changes: [], byTicker: {}, justCleared: true } : d));
   }, []);

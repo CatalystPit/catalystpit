@@ -123,6 +123,15 @@ export const GENERAL_NOISE = [
   // A Bloomberg column tail — "Paramount Settles Merger Lawsuit, AMD on Track to Top $1T, More" —
   // names three unrelated companies and is the record of none of them.
   /,\s*more\s*$/im,
+  // The ampersand spelling of the same tail, and the column name it usually rides under.
+  // "Midday Need to Know: Nvidia expands buyback, yields climb & more" classified as a BUYBACK
+  // AUTHORISATION for NVDA — a roundup becoming the record of one of the companies it lists, which
+  // is the exact failure the line above exists to stop. It never reached production because the
+  // column ran on an aggregator and the source gate caught it first, but the gate is not the
+  // classifier's job to rely on. Measured over 14 days of evidence-source tape: 505 headlines
+  // classify as events and these two patterns drop NONE of them.
+  /&\s*more\s*$/im,
+  /\bneed\s+to\s+know\b/i,
   /\b(?:stock\s+movers?|market\s+wrap|movers?\s+and\s+shakers|what'?s\s+moving|midday\s+movers|premarket\s+movers|daily\s+(?:briefing|roundup)|week\s+ahead)\b/i,
 
   // Self-congratulation. A ranking, an award or a certification is not a corporate event, and the
