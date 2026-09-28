@@ -4,6 +4,7 @@ import { tickerEvidence } from './evidence/resolve';
 import { isIngestableTicker } from './security-identity.mjs';
 import { ISSUER_WIRE, NEWS_DESK } from './evidence/company-events.mjs';
 import { countNew } from './watchlist-new.mjs';
+import { coverage } from './watchlist-materialise.mjs';
 
 // WHAT CHANGED ON YOUR NAMES — "what became public since you last looked".
 //
@@ -136,6 +137,67 @@ async function pooled(items, n, fn) {
  * object passed through unchanged apart from being trimmed to what a one-line row renders —
  * nothing here rewords the engine.
  */
+/**
+ * The changes on a set of watched tickers since `since`, READ FROM THE MATERIALISED VIEW.
+ *
+ * ⚠️ THIS IS THE PATH THAT REPLACED THE FAN-OUT, and the reason there is no longer a cap.
+ *
+ * The old path asked the Evidence Engine about every nominated ticker on every request: ~1,350ms
+ * and seven queries each, so sixty names cost twenty-two seconds and four hundred queries — per
+ * user, per minute. It was bounded by MAX_RESOLVE, and that bound reported unchecked securities as
+ * "nothing happened", which is a wrong answer rather than a slow one.
+ *
+ * Every one of those costs belongs to the EVENT, not to the reader, so they are paid once by
+ * buildWatchlistEvents. What is left here is a single indexed query over (ticker, public_time), and
+ * a watchlist of any supported size is one query.
+ *
+ * ⚠️ AND IT REPORTS ITS OWN COVERAGE. "Checked, nothing happened" and "not checked" are different
+ * answers; `coverage.fresh` says which one this is, and the caller must not render the second as
+ * the first. That is what makes removing the cap safe rather than merely quiet.
+ */
+export async function watchlistChangesFast(tickers, { since, now = Date.now() } = {}) {
+  const sinceIso = new Date(Number.isFinite(new Date(since).getTime()) ? new Date(since).getTime() : now - DEFAULT_LOOKBACK_MS).toISOString();
+  const watched = [...new Set((tickers || []).filter(isIngestableTicker).map((t) => t.toUpperCase()))];
+  const cov = await coverage();
+  const builtMs = cov.builtThrough ? Date.parse(cov.builtThrough) : null;
+  const fresh = builtMs != null && (now - builtMs) <= STALE_AFTER_MS && !cov.lastError;
+  const base = {
+    since: sinceIso, scanned: watched.length, resolved: watched.length, truncated: false, failed: [],
+    coverage: { fresh, builtThrough: cov.builtThrough, builtAt: cov.builtAt, ageMs: builtMs != null ? now - builtMs : null },
+  };
+  if (!watched.length) return { ...base, changes: [], byTicker: {} };
+
+  const list = sql.join(watched.map((t) => sql`${t}`), sql`, `);
+  const res = await db.execute(sql`
+    select ticker, family, event_type, materiality, public_time, summary, url, reference_period
+      from watchlist_events
+     where ticker in (${list}) and public_time > ${sinceIso}::timestamptz
+     order by public_time desc
+     limit 500`);
+
+  const byTicker = {};
+  const changes = [];
+  for (const r of (res.rows ?? res)) {
+    const row = {
+      ticker: String(r.ticker).toUpperCase(),
+      family: r.family,
+      type: r.event_type,
+      direction: null,
+      summary: r.summary,
+      publicTime: new Date(r.public_time).toISOString(),
+      referencePeriod: r.reference_period ?? null,
+      url: r.url ?? null,
+      tickerUrl: `/ticker/${encodeURIComponent(String(r.ticker).toUpperCase())}`,
+    };
+    (byTicker[row.ticker] ||= []).push(row);
+    changes.push(row);
+  }
+  return { ...base, changes, byTicker };
+}
+
+/** How old the materialised view may be before the read stops claiming to be complete. */
+export const STALE_AFTER_MS = 20 * 60 * 1000;
+
 export async function watchlistChanges(tickers, {
   since, now = Date.now(), limit = MAX_RESOLVE,
   // Seams, for tests only. The suite drives this with Form 4 / 8-K fixtures instead of a live

@@ -340,5 +340,66 @@ L('the badge has no ticker-specific behaviour anywhere');
     (code("const x = 'NVDA';").match(/['"][A-Z]{2,5}['"]/g) || []).length === 1);
 }
 
+// ── THE READ PATH HAS NO CAP, AND SAYS WHEN IT DOES NOT KNOW ─────────────────
+//
+// ⚠️ THE CORRECTNESS BUG A CAP IS. Resolving one ticker through the Evidence Engine cost ~1,350ms
+// and SEVEN queries, so a sixty-name list cost ~420 queries and twenty-two seconds — per user, per
+// minute — and was bounded by MAX_RESOLVE. Measured on the 100 largest issuers, 81 were nominated,
+// 60 resolved, and the other 21 were returned to the user as "nothing happened". That is not a
+// performance limit; it is a wrong answer. None of that work depends on the reader, so it now runs
+// once per event and the read is one indexed query with nothing to truncate.
+L('the read path evaluates every watched security');
+{
+  const lib = code(read('../src/lib/watchlist-changes.js'));
+  const mat = code(read('../src/lib/watchlist-materialise.mjs'));
+  const route = code(read('../src/app/api/watchlist/changes/route.js'));
+  const cron = code(read('../src/app/api/cron/watchlist-events/route.js'));
+
+  ok('⚠️ the endpoint reads the materialised view, not the engine',
+    /watchlistChangesFast\(tickers, \{ since \}\)/.test(route) && !/MAX_RESOLVE/.test(route),
+    'the fan-out is what forced the cap');
+  ok('⚠️ ...with one indexed query over (ticker, public_time)',
+    /from watchlist_events/.test(lib) && /where ticker in \(\$\{list\}\) and public_time > /.test(lib));
+  // Anchored to the fast path's OWN return shape: the legacy function also returns a `truncated`
+  // field, and a loose match was satisfied by its empty-list early return.
+  ok('⚠️ ...and never truncates',
+    /since: sinceIso, scanned: watched\.length, resolved: watched\.length, truncated: false, failed: \[\],/.test(lib),
+    'every watched security is evaluated, so there is nothing to cap');
+  ok('the index the read pattern needs is declared',
+    /CREATE INDEX IF NOT EXISTS idx_watchlist_events_read ON watchlist_events \(ticker, public_time DESC\)/.test(mat));
+  ok('⚠️ one real event is one ROW, enforced by the database rather than by the counter',
+    /CREATE UNIQUE INDEX IF NOT EXISTS uq_watchlist_events_key ON watchlist_events \(event_key\)/.test(mat)
+    && /on conflict \(event_key\) do update/.test(mat));
+  ok('⚠️ the materialiser uses the SAME engine and the SAME contract — no second classifier',
+    /tickerEvidence\(ticker/.test(mat) && /countNew\(r\.evidence/.test(mat)
+    && !/classifyCompanyEvent/.test(mat));
+  ok('the expensive work is scheduled once per event, not per reader',
+    /\/api\/cron\/watchlist-events/.test(JSON.stringify(JSON.parse(read('../vercel.json')).crons))
+    && /buildWatchlistEvents/.test(cron));
+
+  // ── TASK 6. UNKNOWN IS NOT ZERO ──
+  ok('⚠️ the read reports its own coverage', /coverage: \{ fresh,/.test(lib));
+  ok('⚠️ ...and freshness is a measured age, not an assumption',
+    /const fresh = builtMs != null && \(now - builtMs\) <= STALE_AFTER_MS && !cov\.lastError;/.test(lib));
+  const ui = code(read('../src/components/WatchlistChanges.jsx'));
+  ok('⚠️ ...and a stale view is never rendered as "nothing happened"',
+    /data\.coverage\.fresh === false/.test(ui) && /Still checking your names/.test(ui),
+    'an unchecked security shown as silent is the same lie as an outage shown as silence');
+
+  // ── the builder cannot skip work ──
+  ok('⚠️ a capped run resumes where it stopped instead of repeating itself',
+    /const pending = resumeAfter \? changed\.filter\(\(t\) => t > resumeAfter\) : changed;/.test(mat)
+    && /resume_after/.test(mat),
+    'without this, 726 changed names and a 400 cap repeated the same 400 forever');
+  ok('⚠️ ...and the clock never advances over a failure or an unfinished sweep',
+    /const advance = failed === 0 && complete;/.test(mat),
+    'moving the cursor past a ticker that threw turns a transient error into a permanent hole');
+  ok('the builder sorts, so "after the last name finished" is a stable position',
+    /\(await changedTickersSince\(from\)\)\.sort\(\)/.test(mat));
+  ok('the builder sweeps the whole universe, not one list',
+    /export async function changedTickersSince\(since\)/.test(mat)
+    && /from primary_events, unnest\(tickers\) as t/.test(mat));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

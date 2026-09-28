@@ -229,6 +229,14 @@ export default function WatchlistChanges({ enabled = true, limit = 6, compact = 
         <div style={{ fontSize: 11.5, color: C.muted }}>
           Couldn’t check for new evidence just now. This is not a statement that nothing changed.
         </div>
+      ) : shown.length === 0 && data?.coverage && data.coverage.fresh === false ? (
+        // ⚠️ "NOT CHECKED" IS NOT "NOTHING HAPPENED". The qualifying events are materialised by a
+        // job; if that job is behind, an empty list means we have not looked yet, and saying "no new
+        // public evidence on your names" would be the same reassuring lie as rendering an outage as
+        // silence. The endpoint reports its own coverage precisely so this case can be told apart.
+        <div style={{ fontSize: 11.5, color: C.muted }}>
+          Still checking your names for new evidence. This is not a statement that nothing changed.
+        </div>
       ) : shown.length === 0 ? (
         <div style={{ fontSize: 11.5, color: C.muted }}>No new public evidence on your names.</div>
       ) : (

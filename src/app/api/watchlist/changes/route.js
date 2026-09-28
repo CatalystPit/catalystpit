@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../../lib/db';
 import { watchlist } from '../../../../lib/schema';
 import { eq, desc, sql } from 'drizzle-orm';
-import { watchlistChanges, DEFAULT_LOOKBACK_MS, MAX_RESOLVE } from '../../../../lib/watchlist-changes';
+import { watchlistChangesFast, DEFAULT_LOOKBACK_MS } from '../../../../lib/watchlist-changes';
 import { apiRateLimit } from '../../../../lib/api-guard.mjs';
 
 export const runtime = 'nodejs';
@@ -82,7 +82,10 @@ export async function GET(request) {
     const defaulted = !Number.isFinite(storedMs);
     const since = defaulted ? new Date(Date.now() - DEFAULT_LOOKBACK_MS).toISOString() : new Date(storedMs).toISOString();
 
-    const out = await watchlistChanges(tickers, { since, limit: MAX_RESOLVE });
+    // ⚠️ ONE INDEXED QUERY, NOT A FAN-OUT. The expensive half runs once per event in
+    // /api/cron/watchlist-events, so there is no per-ticker resolution here, no cap, and nothing to
+    // truncate — every security on the list is evaluated, up to the 500 the list itself allows.
+    const out = await watchlistChangesFast(tickers, { since });
 
     return Response.json({
       ...out,
