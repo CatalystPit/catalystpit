@@ -118,6 +118,34 @@ export function logicalOfTime(time, bars) {
 }
 
 /**
+ * A logical position to a pixel, asking the chart only about WHOLE bars.
+ *
+ * ⚠️ Lightweight Charts' `logicalToCoordinate` answers 0 for a FRACTIONAL logical — not null, which
+ * a caller would check, but the left edge of the chart. And `logicalOfTime` returns fractions almost
+ * by definition: its whole purpose is times that fall BETWEEN two bars (a weekend, or a drawing made
+ * on a coarser timeframe) or PAST the last one (empty space), and both interpolate.
+ *
+ * So the two whole bars either side are placed and the fraction is spanned across them. Same
+ * arithmetic, asked of the chart in the only form it answers. Symptom of getting this wrong: a note
+ * dragged onto a Saturday jumped to the left edge of the chart and could not be picked up again.
+ *
+ * @param logical fractional bar index, as logicalOfTime returns.
+ * @param toCoordinate the chart's own logicalToCoordinate, called ONLY with integers.
+ */
+export function coordinateOfLogical(logical, toCoordinate) {
+  if (!Number.isFinite(logical) || typeof toCoordinate !== 'function') return null;
+  const i = Math.floor(logical);
+  const x0 = toCoordinate(i);
+  if (x0 == null || !Number.isFinite(x0)) return null;
+  const frac = logical - i;
+  if (frac === 0) return x0;
+  const x1 = toCoordinate(i + 1);
+  if (x1 == null || !Number.isFinite(x1)) return null;
+  const x = x0 + (x1 - x0) * frac;
+  return Number.isFinite(x) ? x : null;
+}
+
+/**
  * The moment at a logical position.
  *
  * Inside the data this returns the BAR'S OWN TIME, which is what keeps anchors landing on candles

@@ -46,6 +46,7 @@ import { measureBetween, formatDuration } from '../src/lib/chart/chart-drawings.
 import { reorderDrawing, canReorder, constrainAngle, sanitizeFibLevels, DEFAULT_FIB_LEVELS } from '../src/lib/chart/chart-drawings.mjs';
 import {
   logicalOfTime, timeOfLogical, isFutureTime, barSpacingMs, shiftTime, timeDeltaSeconds,
+  coordinateOfLogical,
 } from '../src/lib/chart/chart-coords.mjs';
 import {
   resolveTypedTimeframe, shouldOpenQuickTimeframe, isTypingTarget, REACHABLE_IDS, ALL_TIMEFRAME_IDS,
@@ -2324,7 +2325,12 @@ section('26. drawings live in chart space, not only where candles exist');
   ok('an anchor is no longer clamped to a bar index',
     !/Math\.max\(0, Math\.min\(list\.length - 1, Math\.round\(logical/.test(layer));
   ok('the layer resolves a moment from the logical axis', /const time = timeOfLogical\(logical, list\)/.test(layer));
-  ok('...and can place a time the scale does not know', /logicalToCoordinate\(logical\)/.test(layer));
+  // ⚠️ THROUGH coordinateOfLogical, NOT logicalToCoordinate(logical). The chart answers a FRACTIONAL
+  // logical with 0 — the left edge — and every logical on this path is fractional almost by
+  // definition, since it exists for times between bars and past the last one.
+  ok('...and can place a time the scale does not know',
+    /coordinateOfLogical\(logical, \(l\) => ts\.logicalToCoordinate\(l\)\)/.test(layer));
+  ok('...without ever handing the chart a fraction', !/logicalToCoordinate\(logical\)/.test(layer));
 
   // ── 1 & 3. anchors beyond the final candle ──────────────────────────────────────────────────
   const future = timeOfLogical(lastIdx + 8, bars);
@@ -2411,6 +2417,41 @@ section('26. drawings live in chart space, not only where candles exist');
   ok('spacing needs at least two bars', barSpacingMs([{ time: 1 }]) === null);
   ok('an unknown time has no logical position', logicalOfTime(null, bars) === null);
   ok('no bars means no coordinates', timeOfLogical(4, []) === null);
+
+  // ── A FRACTIONAL LOGICAL IS THE NORMAL CASE, AND THE CHART CANNOT TAKE ONE ──
+  //
+  // ⚠️ Lightweight Charts answers 0 — the LEFT EDGE, not null — when handed a fractional logical.
+  // Every logical that reaches this path is fractional almost by definition: it exists for times
+  // between two bars (a weekend) and past the last one (empty space), and both interpolate. The
+  // observed failure: a note dragged onto a Saturday was stored correctly and drawn at x=0.
+  {
+    const asked = [];
+    const ltc = (l) => { asked.push(l); return l === Math.floor(l) ? 100 + l * 10 : 0; };
+    ok('⚠️ a fractional logical is spanned across the two whole bars either side',
+      Math.abs(coordinateOfLogical(1032.25, ltc) - 10422.5) < 1e-9,
+      String(coordinateOfLogical(1032.25, ltc)));
+    ok('⚠️ ...and the chart is only ever asked about WHOLE bars',
+      asked.every((l) => Number.isInteger(l)), JSON.stringify(asked));
+    ok('...a whole logical is passed straight through', coordinateOfLogical(7, ltc) === 170);
+    ok('...and asks for only the one bar', asked.filter((l) => l === 8).length === 0);
+    ok('a negative fraction spans the pair BELOW it, not above',
+      Math.abs(coordinateOfLogical(-3.5, ltc) - 65) < 1e-9, String(coordinateOfLogical(-3.5, ltc)));
+    ok('a logical the chart cannot place has no coordinate',
+      coordinateOfLogical(2.5, () => null) === null);
+    ok('...and so does one whose far side it cannot place',
+      coordinateOfLogical(2.5, (l) => (l === 2 ? 40 : null)) === null);
+    // ⚠️ AND THE CHART IS NEVER ASKED AT ALL. A NaN reaching a chart API is how a canvas starts
+    // throwing `NaN is an invalid value` from somewhere three layers from the cause; refusing it
+    // here keeps the bad value where it can still be named.
+    const probed = [];
+    const spy = (l) => { probed.push(l); return 10; };
+    ok('a non-finite logical has no coordinate', coordinateOfLogical(NaN, ltc) === null
+      && coordinateOfLogical(Infinity, ltc) === null);
+    ok('⚠️ ...and the chart is not asked about it either',
+      coordinateOfLogical(NaN, spy) === null && coordinateOfLogical(-Infinity, spy) === null
+      && probed.length === 0, JSON.stringify(probed));
+    ok('with nothing to ask, there is no coordinate', coordinateOfLogical(3, null) === null);
+  }
 }
 
 section('27. a horizontal line is a price level and cannot tilt');

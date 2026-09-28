@@ -510,6 +510,11 @@ console.log('\nmounting the drawing rail and picking tools from its flyout');
     const wasOpen = !!openMenu();
     const outside = doc.createElement('div');
     doc.body.appendChild(outside);
+    // ⚠️ A WHOLE TASK LATER, BECAUSE A SECOND PRESS IS A SECOND TASK. A panel ignores presses until
+    // the gesture that opened it is over — one physical click is a pointerdown AND a mousedown, and
+    // without that the second of the two shuts the panel the first just opened. Dismissing here in
+    // the same task as the open is something no user can do.
+    await new Promise((r) => { setTimeout(r, 0); });
     dispatch('mousedown', outside);
     await tick();
     ok('an outside mousedown still closes the Lines flyout', wasOpen && !openMenu(),

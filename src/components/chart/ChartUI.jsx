@@ -128,7 +128,29 @@ export function Popover({
 
   useEffect(() => {
     if (!open) return undefined;
+    /**
+     * ⚠️ THE PRESS THAT OPENED THIS IS NOT AN OUTSIDE CLICK.
+     *
+     * React flushes a discrete event's effects synchronously, so this listener is attached to
+     * `document` WHILE the opening pointerdown is still propagating — and a listener added mid-flight
+     * on a node the event has not reached yet still gets called. The press that opened the panel then
+     * arrived here, matched nothing, and shut it again.
+     *
+     * Every other chart popover is opened by a BUTTON and is saved by the anchorRef guard below: the
+     * trigger is inside the anchor, so the opening press is exempt. The note editor is anchored to a
+     * POINT on the chart — there is no trigger element — so nothing exempted it, and placing a text
+     * note opened an editor that vanished in the same gesture. It looked like the tool was dead.
+     *
+     * The general answer is to start listening for presses only once the current one is over. Comparing
+     * `e.timeStamp` against `performance.now()` looks tidier but rests on the two sharing a time origin
+     * — true in a browser, not guaranteed of any other host — and a guard that silently inverts is
+     * worse than no guard. A deferred attach needs no such agreement. Escape and scroll bind straight
+     * away: neither can be the gesture that opened this.
+     */
+    let armed = false;
+    const arm = setTimeout(() => { armed = true; }, 0);
     const onDown = (e) => {
+      if (!armed) return;                                   // still the press that opened me
       if (anchorRef?.current?.contains(e.target)) return;   // the trigger toggles itself
       const mine = openPanels.indexOf(panelRef.current);
       const hit = openPanels.findIndex((el) => el.contains(e.target));
@@ -191,6 +213,7 @@ export function Popover({
     document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
     return () => {
+      clearTimeout(arm);
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('pointerdown', onDown);
       document.removeEventListener('keydown', onKey);

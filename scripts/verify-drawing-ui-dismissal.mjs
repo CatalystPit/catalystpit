@@ -332,6 +332,71 @@ console.log('\n6. the picker and the Popover at a phone viewport');
   });
   ok('⚠️ a pointerdown outside closes it, since a touch fires no mousedown', closes.length > before2);
   await act(async () => { root2.unmount(); });
+
+  // ── THE PRESS THAT OPENS A POPOVER MUST NOT ALSO CLOSE IT ──
+  //
+  // ⚠️ THIS IS WHY THE LEFT-RAIL TEXT TOOL LOOKED DEAD. One physical press is several events:
+  // pointerdown, then mousedown, then mouseup, then click — dispatched back to back. The chart's
+  // tools commit on POINTERDOWN, so the note editor is already open and listening by the time
+  // MOUSEDOWN arrives from that same press. This panel listens to both, and mousedown's target is
+  // the chart, not the panel. Every other chart popover is opened by a BUTTON and survives because
+  // the anchorRef guard exempts its trigger; the note editor is anchored to a POINT on the chart and
+  // passes anchorRef null, so nothing exempted it. It closed inside the gesture that made it, which
+  // reads as "clicking with the T tool does nothing".
+  //
+  // So the harness is the real shape: a press on a chart-like element opens the panel, and the rest
+  // of that press follows in the SAME TASK. Rendering the panel already-open would attach its
+  // listener before the gesture and prove nothing.
+  const host3 = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(host3);
+  const root3 = ReactDOMClient.createRoot(host3);
+  const pointClosed = [];
+  const Harness = () => {
+    const [noteOpen, setNoteOpen] = React.useState(false);
+    return React.createElement(
+      'div', null,
+      React.createElement('div', { 'data-canvas': '', onPointerDown: () => setNoteOpen(true) }, 'chart'),
+      React.createElement(Popover, {
+        anchorRef: null, point: { x: 120, y: 90 }, open: noteOpen, theme: 'light', label: 'Note',
+        onClose: () => { pointClosed.push(1); setNoteOpen(false); },
+      }, React.createElement('textarea', null)),
+    );
+  };
+  await act(async () => { root3.render(React.createElement(Harness)); });
+  const canvas = host3.querySelector('[data-canvas]');
+  const note = () => dom.window.document.querySelector('[role="menu"][aria-label="Note"]');
+  ok('nothing is open before the press', !note());
+  await act(async () => {
+    canvas.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
+    // The rest of the same press. No await in between: a timer firing here would be the browser
+    // pausing mid-click, which does not happen.
+    canvas.dispatchEvent(new dom.window.Event('mousedown', { bubbles: true }));
+  });
+  ok('the press opened the note editor', !!note());
+  // ⚠️ WHETHER THE REST OF THAT PRESS CLOSES IT CANNOT BE ASSERTED HERE. Under `act`, React defers
+  // the passive effect that attaches the dismissal listener until the act scope ends — so the
+  // mousedown above reaches no listener whether the guard is present or not, and an assertion on it
+  // passes against the broken code too. Mutation-testing showed exactly that. The guard is asserted
+  // structurally below and PROVEN BEHAVIOURALLY IN A REAL BROWSER by verify-standalone-text-live.mjs,
+  // which is where the failure was found in the first place.
+  const ui = code(read('src/components/chart/ChartUI.jsx'));
+  ok('⚠️ the dismissal listener ignores presses until the opening gesture is over',
+    /let armed = false;[\s\S]{0,200}setTimeout\(\(\) => \{ armed = true; \}, 0\);/.test(ui)
+    && /if \(!armed\) return;/.test(ui),
+    'without this the mousedown that follows the opening pointerdown closes the panel it just opened');
+  ok('⚠️ ...and the arming timer is cancelled on unmount',
+    /clearTimeout\(arm\);/.test(ui), 'a timer writing to a dead closure is a leak');
+  ok('⚠️ ...and it does not lean on e.timeStamp sharing a clock with performance.now()',
+    !/e\.timeStamp <= /.test(ui),
+    'those agree in a browser and not everywhere else; a guard that silently inverts is worse than none');
+  // A separate press, a whole task later — the ordinary way to dismiss it.
+  await new Promise((r) => { setTimeout(r, 5); });
+  await act(async () => {
+    dom.window.document.body.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
+  });
+  ok('⚠️ ...but the NEXT press outside still closes it', pointClosed.length === 1 && !note(),
+    `${pointClosed.length} — a guard wide enough to swallow later presses leaves the editor unclosable`);
+  await act(async () => { root3.unmount(); });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

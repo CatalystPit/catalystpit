@@ -8,7 +8,7 @@ import {
 import { palette, indicatorColor } from '../../lib/chart/chart-theme.mjs';
 import { gestureToken } from '../../lib/chart/chart-history.mjs';
 import {
-  logicalOfTime, timeOfLogical, timeDeltaSeconds,
+  logicalOfTime, timeOfLogical, timeDeltaSeconds, coordinateOfLogical,
 } from '../../lib/chart/chart-coords.mjs';
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
 import { selectionBox } from '../../lib/chart/drawing-toolbar.mjs';
@@ -90,35 +90,52 @@ function DrawingLayerBase({
    * panning would start failing in places the reader cannot see the reason for. Selecting first says
    * "I mean this one", and only then does its text become something to grab.
    *
-   * ⚠️ AND A NOTE IS EXCLUDED, because a note's text IS the drawing. Dragging it must move the drawing,
-   * which the normal drag path already does — treating it as a caption would let the words wander off
-   * the thing they are.
+   * ⚠️ A NOTE IS INCLUDED, BUT ANSWERED DIFFERENTLY. A note's text IS the drawing, and its anchor IS
+   * its position — so grabbing its words has to move the DRAWING, not a caption offset, or the words
+   * would wander off the thing they are. The hit says which kind it found and the caller branches;
+   * before, notes were skipped entirely, which left the only way to grab one a nine-pixel anchor dot.
    */
   const textHitAt = (pt) => {
     for (const [id, r] of textRectsRef.current) {
-      if (r.note) continue;
-      if (pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h) return id;
+      if (pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h) {
+        return { id, note: !!r.note };
+      }
     }
     return null;
   };
 
   // ── data space <-> screen space ──
+
+  /**
+   * A moment to an x, INCLUDING the moments the time scale has never heard of.
+   *
+   * A time the scale knows resolves directly. One it does not — a weekend, or an anchor drawn into
+   * the empty space past the last candle — goes through the logical axis instead, which is
+   * unbounded. Without that second path a future anchor simply vanished.
+   *
+   * ⚠️ AND THE LOGICAL GOES THROUGH coordinateOfLogical, NOT STRAIGHT INTO THE CHART — see the note
+   * there: a fractional logical is answered with 0, the left edge, rather than null.
+   *
+   * ONE DEFINITION, used by both the pure projection and toScreen, because two copies of this is how
+   * only one of them would get fixed.
+   */
+  const timeToX = useCallback((time) => {
+    if (!chart) return null;
+    const ts = chart.timeScale();
+    const direct = ts.timeToCoordinate(time);
+    if (direct != null) return direct;
+    const logical = logicalOfTime(time, stateRef.current.bars || []);
+    if (logical == null) return null;
+    return coordinateOfLogical(logical, (l) => ts.logicalToCoordinate(l));
+  }, [chart]);
+
   const toScreen = useCallback((pt) => {
     if (!chart || !series) return null;
     const y = series.priceToCoordinate(pt.price);
     if (y == null) return null;
-    // A time the scale knows resolves directly. One it does NOT — an anchor drawn into empty space
-    // past the last candle — is placed through the logical axis instead, which is unbounded. Without
-    // this second path a future anchor simply vanished, because timeToCoordinate returns null for
-    // anything outside the data.
-    let x = chart.timeScale().timeToCoordinate(pt.time);
-    if (x == null) {
-      const logical = logicalOfTime(pt.time, stateRef.current.bars || []);
-      if (logical == null) return null;
-      x = chart.timeScale().logicalToCoordinate(logical);
-    }
+    const x = timeToX(pt.time);
     return x == null ? null : { x, y };
-  }, [chart, series]);
+  }, [chart, series, timeToX]);
 
   const toData = useCallback((x, y) => {
     if (!chart || !series) return null;
@@ -214,17 +231,9 @@ function DrawingLayerBase({
       plotWidth,
       plotHeight,
       toY: (price) => series.priceToCoordinate(price),
-      toX: (time) => {
-        // A time the scale knows resolves directly. One it does NOT — an anchor drawn into empty
-        // space past the last candle — goes through the logical axis instead, which is unbounded.
-        const direct = chart.timeScale().timeToCoordinate(time);
-        if (direct != null) return direct;
-        const logical = logicalOfTime(time, stateRef.current.bars || []);
-        if (logical == null) return null;
-        return chart.timeScale().logicalToCoordinate(logical);
-      },
+      toX: timeToX,
     };
-  }, [chart, series, plotSize]);
+  }, [chart, series, plotSize, timeToX]);
 
   /** The visible window, in data space — what a ray extends across. */
   const currentView = useCallback(() => {
@@ -685,7 +694,7 @@ function DrawingLayerBase({
       // first. The chart reports the click with coordinates, so the same rectangles are consulted
       // here. Once selected the overlay is live and the drag path takes over.
       const onText = textHitAt(param.point);
-      if (onText) { onSelect(onText, false); return; }
+      if (onText) { onSelect(onText.id, false); return; }
       const hit = hitTest(param.point, project());
       // Always a fresh selection: the chart's own click carries no modifier we can read, and the
       // canvas (which does) is what handles shift-clicking a second drawing.
@@ -740,6 +749,13 @@ function DrawingLayerBase({
           // The click's VIEWPORT position travels with it, so the editor opens where the note will
           // be rather than hanging off the bottom of the chart.
           onRequestText?.(pts, { x: e.clientX, y: e.clientY });
+          // ⚠️ AND NOTHING IS LEFT ARMED TO SWALLOW A CLICK. Every other tool commits and then lets
+          // Lightweight Charts report the same press as a click, which `suppressClick` exists to eat.
+          // A note opens an EDITOR on this pointerdown, and that editor takes the release — so no
+          // chart click ever follows, the suppression outlives the gesture, and it is spent instead
+          // on whatever the user clicks next. That next click is usually the note's own words, which
+          // is why placing a note appeared to work and then the note could not be picked up again.
+          s.life = clearSuppression(s.life);
         } else {
           const made = createDrawing(toolId, pts, s.style, s.drawings, s.toolDefaults?.[toolId] || {});
           if (made) { onChange([...s.drawings, made]); onSelect(made.id); }
@@ -757,7 +773,25 @@ function DrawingLayerBase({
     // caption usually sits ON its own line, so whichever of the two is asked first is the one you can
     // grab — and a reader pressing on the word "support" means the word. Returning here is what keeps
     // the gesture from also moving the drawing underneath and from panning the chart.
-    const textId = textHitAt(pt);
+    const textHit = textHitAt(pt);
+    // ⚠️ A NOTE FALLS THROUGH TO THE ORDINARY DRAWING DRAG. Its words are its body, so moving them is
+    // moving it — and hitTest below cannot see them, since a note has one anchor handle and no
+    // segments. Selecting here and letting the normal path take over gives it free X/Y movement from
+    // the drag code that already exists, rather than a second mover for the same job.
+    if (textHit?.note) {
+      const target = s.drawings.find((d) => d.id === textHit.id);
+      onSelect(textHit.id, !!e.shiftKey);
+      if (target && !target.locked) {
+        const data = toData(pt.x, pt.y);
+        if (data) {
+          s.drag = { handle: null, from: data, originals: [target], token: gestureToken('drag') };
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+        }
+      }
+      paint();
+      return;
+    }
+    const textId = textHit?.id || null;
     if (textId) {
       const target = s.drawings.find((d) => d.id === textId);
       // ⚠️ CLICKING THE WORDS SELECTS THE DRAWING THEY BELONG TO. It used to require the drawing to be

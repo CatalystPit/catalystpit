@@ -705,6 +705,18 @@ console.log('\n11. the text is plain, and it goes where the user puts it');
     ok('a locked drawing moves neither', JSON.stringify(moveDrawing({ ...d, locked: true }, { dTime: 99, dPrice: 9 })) === JSON.stringify({ ...d, locked: true }));
   }
 
+  // ── WHERE A DRAGGED NOTE IS DRAWN ──
+  // A drag lands a note on whatever day the pixel falls on, weekends included, and a weekend has no
+  // bar — so the off-bar projection is not an edge case here, it is the common one.
+  ok('⚠️ one definition converts a moment to an x, used by both the projection and toScreen',
+    /const timeToX = useCallback/.test(layer) && /toX: timeToX,/.test(layer)
+    && /const x = timeToX\(pt\.time\);/.test(layer),
+    'two copies of this is how only one of them gets fixed');
+  ok('⚠️ ...and a logical is never handed to the chart raw',
+    /coordinateOfLogical\(logical, \(l\) => ts\.logicalToCoordinate\(l\)\)/.test(layer)
+    && !/= ts\.logicalToCoordinate\(logical\)/.test(layer),
+    'a fractional logical is answered with 0 — the left edge — rather than null');
+
   // ── THE DRAG PATH ──
   ok('⚠️ clicking the words selects the drawing they belong to',
     /onSelect\(textId, !!e\.shiftKey\);/.test(layer),
@@ -718,15 +730,33 @@ console.log('\n11. the text is plain, and it goes where the user puts it');
   ok('⚠️ the chart\'s own click consults the caption rectangles',
     /const onText = textHitAt\(param\.point\);/.test(layer));
   ok('⚠️ ...and selects the owning drawing before falling through to the geometry',
-    /if \(onText\) \{ onSelect\(onText, false\); return; \}[\s\S]{0,120}const hit = hitTest\(param\.point/.test(layer));
+    /if \(onText\) \{ onSelect\(onText\.id, false\); return; \}[\s\S]{0,120}const hit = hitTest\(param\.point/.test(layer));
   ok('⚠️ ...while the overlay stays inert otherwise, so panning is untouched',
     /const interactive = !!activeTool \|\| selectedIds\.length > 0 \|\| hasDraft\(s\.life\);/.test(layer),
     'making the overlay always-live would capture every pan on any chart carrying a caption');
   ok('the helper is defined before the click effect that uses it',
     layer.indexOf('const textHitAt = (pt) =>') < layer.indexOf('const onText = textHitAt('));
-  ok('⚠️ a note is still excluded, because a note\'s text IS the drawing', /if \(r\.note\) continue;/.test(layer));
+  // ⚠️ A NOTE IS NO LONGER EXCLUDED — IT IS ANSWERED DIFFERENTLY. A standalone note's words ARE the
+  // drawing and its anchor IS its position, so grabbing the words has to move the drawing itself, not
+  // a caption offset, or the words would wander off the thing they are. Skipping notes outright left
+  // the only way to grab one a nine-pixel anchor dot, which is what made the left-rail T feel dead.
+  ok('⚠️ notes are no longer skipped by the text hit-test', !/if \(r\.note\) continue;/.test(layer));
+  ok('⚠️ ...the hit reports WHICH KIND of text it found', /return \{ id, note: !!r\.note \};/.test(layer));
+  ok('⚠️ ...and the paint pass is what marks a rectangle as a note',
+    /textRects\.set\(d\.id, \{ x: box\.x, y: box\.y, w: box\.w, h: box\.h, note: isNote \}\);/.test(layer),
+    'an unmarked rectangle would send every note down the caption-offset path');
+  ok('⚠️ pressing a note selects it and starts the ORDINARY drawing drag',
+    /if \(textHit\?\.note\) \{[\s\S]{0,600}onSelect\(textHit\.id, !!e\.shiftKey\);[\s\S]{0,400}s\.drag = \{ handle: null, from: data, originals: \[target\], token: gestureToken\('drag'\) \};/.test(layer),
+    'a second mover for the same job is how the two text features drift apart');
+  ok('⚠️ ...and it returns, so a note never also falls into the caption path',
+    /if \(textHit\?\.note\) \{[\s\S]{0,900}\n      paint\(\);\n      return;\n    \}\n    const textId =/.test(layer));
+  ok('⚠️ ...while a locked note still refuses to move',
+    /if \(textHit\?\.note\) \{[\s\S]{0,400}if \(target && !target\.locked\)/.test(layer));
+  ok('⚠️ a CAPTION keeps its own path, separate from the note branch',
+    /const textId = textHit\?\.id \|\| null;/.test(layer));
   ok('⚠️ the text drag is checked BEFORE hit-testing the drawing',
-    layer.indexOf('const textId = textHitAt(pt)') < layer.indexOf('const hit = hitTest(pt, project())'));
+    layer.includes('const textHit = textHitAt(pt);')
+    && layer.indexOf('const textHit = textHitAt(pt);') < layer.indexOf('const hit = hitTest(pt, project())'));
   ok('⚠️ ...and it returns, so the drawing does not move and the chart does not pan',
     /if \(textId\) \{[\s\S]{0,900}return;/.test(layer));
   ok('⚠️ ...with the press stopped from reaching the chart',
