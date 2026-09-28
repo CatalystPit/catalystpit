@@ -326,7 +326,7 @@ async function latestFilings(limit = 25) {
 }
 
 // Corporate Buying Activity: market-wide NEW + INCREASED stock positions across corporate filers,
-// newest filings first — "NVIDIA disclosed a new stake in XYZ." Feeds Catalyst Convergence.
+// newest filings first — "NVIDIA disclosed a new stake in XYZ." Feeds the Pit Consensus board.
 async function corporateActivity(limit = 120) {
   try {
     const res = await db.execute(sql`

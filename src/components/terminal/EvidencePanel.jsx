@@ -51,7 +51,30 @@ const FAMILY_LABEL = {
   price: 'Price', options: 'Options',
 };
 
-const DIR_TONE = (d) => (d > 0.05 ? C.green : d < -0.05 ? C.red : C.muted);
+/**
+ * A family's colour comes from ITS OWN STATE WORD.
+ *
+ * ⚠️ IT USED TO READ `f.D`, A FIELD THE ENGINE DOES NOT EMIT. `Number(undefined)` is NaN, and NaN
+ * fails every comparison, so the tone silently fell through to muted on every family of every
+ * ticker — POSITIVE, NEGATIVE and MIXED all rendered in the same grey. The state word was right; the
+ * colour said nothing.
+ *
+ * The canonical disclosure vocabulary is POSITIVE | NEGATIVE | MIXED | INACTIVE (FAMILY_STATE), and
+ * the market-structure layer speaks CONFIRMING | DIVERGING | MIXED | UNAVAILABLE (MARKET). Both are
+ * mapped, because both reach this panel and a family whose word the map does not know must not be
+ * coloured as if it did — it falls back to muted, which is what "we have no opinion" looks like.
+ */
+const STATE_TONE = {
+  POSITIVE: C.green,
+  CONFIRMING: C.green,
+  NEGATIVE: C.red,
+  DIVERGING: C.red,
+  MIXED: C.conflictAccent || C.red,
+  INACTIVE: C.dim,
+  UNAVAILABLE: C.dim,
+};
+const familyTone = (f) => STATE_TONE[String(f?.state || '').toUpperCase()]
+  || (f?.active ? C.muted : C.dim);
 
 const Label = ({ children }) => (
   <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, letterSpacing: '1px', color: C.dim, marginBottom: 5 }}>
@@ -67,7 +90,7 @@ function Family({ f }) {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: f.active ? C.ink : C.dim }}>{name}</span>
         {/* The engine's own state word, not a rephrasing of it. */}
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.4px', color: DIR_TONE(Number(f.D)) }}>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.4px', color: familyTone(f) }}>
           {f.state || (f.active ? 'active' : 'inactive')}
         </span>
         {f.evidenceCount > 0 && (
@@ -186,8 +209,12 @@ export default function EvidencePanel({ symbol }) {
           {shown.canonical && (
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: '8px 10px', marginBottom: 8 }}>
               <Label>WHAT CHANGED</Label>
+              {/* ⚠️ `stateLabel` IS THE FIELD THE ENGINE EMITS. This read `headline` and then
+                  `label`, neither of which exists on a canonical payload, so it always fell through
+                  to the raw enum — a reader saw "POSITIVE ALIGNMENT" where the engine had written
+                  "Positive alignment". The fallback stays for a payload that predates the field. */}
               <div style={{ fontSize: 12, color: C.ink, fontWeight: 600, lineHeight: 1.4 }}>
-                {shown.canonical.headline || shown.canonical.label || String(shown.state || '').replace(/_/g, ' ')}
+                {shown.canonical.stateLabel || String(shown.canonical.state || shown.state || '').replace(/_/g, ' ')}
               </div>
               {shown.canonical.why && (
                 <div style={{ fontSize: 11, color: C.muted, marginTop: 4, lineHeight: 1.45 }}>{shown.canonical.why}</div>

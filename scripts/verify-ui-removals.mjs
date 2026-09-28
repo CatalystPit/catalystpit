@@ -50,7 +50,7 @@ console.log('\n1. the Terminal\'s Add Panel menu');
   ok('the default layout was found', !!DEFAULT_VISIBLE);
   const visible = [...DEFAULT_VISIBLE[1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
   const offered = entries.filter((e) => e.addable && !visible.includes(e.id)).map((e) => e.title);
-  const WANT = ['Custom Scanner', 'Movers', 'Catalyst Convergence', 'Evidence', 'Alerts', 'Heat Map', 'Earnings'];
+  const WANT = ['Custom Scanner', 'Movers', 'Evidence', 'Alerts', 'Heat Map', 'Earnings'];
   ok('⚠️ the Add Panel menu is exactly what it should be on a default layout',
     offered.join(' | ') === WANT.join(' | '), offered.join(' | '));
   // The two the brief also lists are offered as soon as they are closed — they start open by default.
@@ -78,7 +78,17 @@ console.log('\n1. the Terminal\'s Add Panel menu');
   ok('⚠️ News Wire is untouched', entries.some((e) => e.id === 'newswire' && e.addable));
   ok('⚠️ Pit Wire is untouched', entries.some((e) => e.id === 'pitwire' && e.addable));
   ok('⚠️ Evidence is untouched', entries.some((e) => e.id === 'evidence' && e.addable));
-  ok('⚠️ Catalyst Convergence is untouched', entries.some((e) => e.id === 'convergence' && e.addable));
+  // ⚠️ CATALYST CONVERGENCE IS GONE, AND GONE MEANS DELETED. It showed the Pit Consensus board a
+  // second time, so it was removed rather than retired: an `addable: false` entry would have kept it
+  // alive in every saved layout that still names it. PANEL_BY_ID is the validation gate, so an
+  // unknown id is discarded and the rest of the layout loads untouched.
+  ok('⚠️ Catalyst Convergence is not in the registry at all',
+    !entries.some((e) => e.id === 'convergence'), JSON.stringify(entries.filter((e) => e.id === 'convergence')));
+  ok('⚠️ ...and nothing in the Terminal still renders it',
+    !/ConvergenceBody|CONV_SRC/.test(src));
+  ok('⚠️ ...while the consensus data it read is untouched',
+    fs.existsSync(path.join(ROOT, 'src/app/api/consensus-board/route.js'))
+    && fs.existsSync(path.join(ROOT, 'src/lib/consensus/board.mjs')));
   ok('⚠️ the ticker page\'s own news component still exists',
     fs.existsSync(path.join(ROOT, 'src/components/terminal/TickerNews.jsx')));
   ok('⚠️ ...and the standalone news panel component was not deleted',
@@ -160,6 +170,62 @@ console.log('\n3. the chart\'s left rail');
   for (const t of ['horizontal', 'trend', 'ray', 'vertical', 'rectangle', 'fib', 'text']) {
     ok(`the ${t} tool is untouched`, new RegExp(`\\b${t}: \\{`).test(tools) || new RegExp(`id: '${t}'`).test(tools));
   }
+}
+
+// ── A SAVED LAYOUT NAMING A REMOVED PANEL STILL LOADS ────────────────────────
+//
+// ⚠️ THE ONE RISK IN DELETING A REGISTRY ENTRY. Someone's stored workspace still says 'convergence',
+// and the requirement is that they get their other panels, not a blank or broken one. Every place a
+// stored id is trusted must filter through PANEL_BY_ID, which is what makes an unknown id a discard
+// rather than a crash.
+{
+  const src = fs.readFileSync(path.join(ROOT, 'src/app/terminal/TerminalClient.jsx'), 'utf8');
+  ok('⚠️ a saved visible-panel list is filtered against the registry',
+    /setVisible\(Array\.isArray\(vis\) && vis\.length \? vis\.filter\(\(id\) => PANEL_BY_ID\[id\]\) : DEFAULT_VISIBLE\)/.test(src));
+  ok('⚠️ ...and so is a saved station', /\.filter\(\(id\) => PANEL_BY_ID\[id\]\)/.test(src));
+  ok('⚠️ ...and the renderer skips an id it does not know',
+    /const def = PANEL_BY_ID\[id\]; if \(!def\) return null;/.test(src));
+  // Against CODE: the note explaining the removal names the id, as any honest note would.
+  ok('⚠️ ...and a station preset cannot name it either',
+    !/'convergence'/.test(code(src)) && !/visible: \[[^\]]*convergence/.test(code(src)));
+  ok('the default layout no longer positions it', !/^\s*convergence:\s*\{/m.test(src));
+  ok('the colour map no longer lists it', !/convergence: '(green|blue|orange|red)'/.test(src));
+
+  // The panels that share the Terminal with it are untouched.
+  for (const id of ['evidence', 'pitscan', 'chart', 'watchlist', 'pitwire']) {
+    ok(`${id} is still in the registry`, new RegExp(`id: '${id}'`).test(src));
+  }
+}
+
+// ── THE EVIDENCE PANEL READS THE FIELDS THE ENGINE ACTUALLY EMITS ────────────
+//
+// ⚠️ TWO FIELDS THAT NEVER EXISTED. `canonical.headline` and `canonical.label` are not on a canonical
+// payload — the engine writes `stateLabel` — so "WHAT CHANGED" always fell through to the raw enum
+// and read "POSITIVE ALIGNMENT" instead of "Positive alignment". And each family's colour came from
+// `f.D`, also absent: Number(undefined) is NaN, NaN fails every comparison, and every family of
+// every ticker rendered in the same grey whatever its state said.
+{
+  const ev = fs.readFileSync(path.join(ROOT, 'src/components/terminal/EvidencePanel.jsx'), 'utf8');
+  ok('⚠️ the state line reads canonical.stateLabel', /shown\.canonical\.stateLabel \|\|/.test(ev));
+  ok('⚠️ ...and no longer reads fields the engine does not emit',
+    !/canonical\.headline/.test(ev) && !/canonical\.label\b/.test(ev));
+  ok('⚠️ family colour is driven by the family STATE, not by a missing number',
+    /const familyTone = \(f\) =>/.test(ev) && !/f\.D/.test(code(ev)));
+  ok('⚠️ ...and covers the canonical disclosure vocabulary',
+    ['POSITIVE', 'NEGATIVE', 'MIXED', 'INACTIVE'].every((s) => new RegExp(`${s}:`).test(ev)));
+  ok('⚠️ ...and the market-structure vocabulary it also receives',
+    ['CONFIRMING', 'DIVERGING', 'UNAVAILABLE'].every((s) => new RegExp(`${s}:`).test(ev)));
+  ok('an unknown state word is not coloured as if it were understood',
+    /\|\| \(f\?\.active \? C\.muted : C\.dim\)/.test(ev));
+
+  // Everything the panel already did must still be there — this was a defect fix, not a redesign.
+  ok('Pit Scan integration is intact', /symbol/.test(ev) && /EvidencePanel\(\{ symbol \}\)/.test(ev));
+  ok('it still reads the canonical consensus endpoint', /\/api\/consensus\?ticker=/.test(ev));
+  ok('reasons are still printed verbatim', /reasons\.slice\(0, 3\)/.test(ev));
+  ok('item counts are still shown', /f\.evidenceCount > 0/.test(ev));
+  ok('EDGAR refs still link out', /sec\.gov\/cgi-bin\/browse-edgar/.test(ev));
+  ok('agreement and conflicts are still shown', /shown\.agreement/.test(ev) && /shown\.conflicts/.test(ev));
+  ok('the families-active line is still shown', /activeCount/.test(ev) && /evaluatedCount/.test(ev));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

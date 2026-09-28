@@ -39,8 +39,8 @@ import PitWire from '../../components/PitWire';
 // offered, and cannot be re-added once closed.
 //
 // ⚠️ THIS RETIRES THE TERMINAL PANEL ONLY. The underlying components and data services are untouched:
-// the ticker page's own news, News Wire, Pit Wire, the main News section, Evidence and Catalyst
-// Convergence are all separate surfaces that do not go through this registry.
+// the ticker page's own news, News Wire, Pit Wire, the main News section and Evidence are all
+// separate surfaces that do not go through this registry.
 const PANELS = [
   { id: 'pitwire',   title: 'Pit Wire',     tag: 'LIVE · CANONICAL' },
   { id: 'tape',      title: 'Tape · X',     tag: 'SOCIAL' },
@@ -56,9 +56,13 @@ const PANELS = [
   // the panel states its own freshness from the data and the title says nothing.
   { id: 'movers',    title: 'Movers' },
   { id: 'why',       title: 'Why Moving',   tag: 'CATALYST', addable: false },
-  // '◆ SMART MONEY' was the old confluence vocabulary. The panel shows public evidence lining up
-  // across independent sources, which is what the tag now says.
-  { id: 'convergence', title: 'Catalyst Convergence', tag: '◆ EVIDENCE' },
+  // ⚠️ 'convergence' IS GONE, AND DELETING THE ENTRY IS THE POINT. Catalyst Convergence showed the
+  // Pit Consensus board a second time, so it was removed rather than retired: an `addable: false`
+  // entry would keep it alive in every saved layout that still names it. Because PANEL_BY_ID is what
+  // saved layouts, stations and the renderer are all validated against, an unknown id is discarded
+  // and the rest of the layout loads untouched — which is exactly the behaviour wanted here.
+  // Nothing under it changed: /api/consensus-board, the /consensus page and the engine are intact.
+  //
   // ⚠️ AN INSPECTOR, OPENED BY A ROW RATHER THAN CHOSEN FROM A MENU — though it is in the menu too,
   // because a panel a user cannot add deliberately is a panel they cannot get back after closing.
   { id: 'evidence',  title: 'Evidence',     tag: '◆ CANONICAL' },
@@ -113,7 +117,6 @@ function defaultLayout(width) {
     scanner:   { x: centerX + 24, y: 412, w: centerW, h: 260, color: 'blue' },
     movers:    { x: centerX + 12, y: 402, w: centerW, h: 260, color: 'blue' },
     why:       { x: centerX + 36, y: 422, w: centerW, h: 220, color: 'green' },
-    convergence: { x: centerX + 48, y: 432, w: centerW, h: 260, color: 'green' },
     // Opens beside the scanner that summoned it rather than on top of it.
     evidence:  { x: centerX + 84, y: 462, w: centerW, h: 300, color: 'green' },
     tickernews: { x: centerX + 96, y: 482, w: centerW, h: 300, color: 'orange' },
@@ -128,7 +131,7 @@ function defaultLayout(width) {
 }
 
 // Category color per panel id (used when a station preset auto-arranges panels).
-const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', convergence: 'green', evidence: 'green', tickernews: 'orange', alerts: 'blue', watchlist: 'blue', chat: 'green' };
+const COLOR_BY_ID = { pitwire: 'orange', tape: 'orange', halts: 'red', chart: 'blue', newswire: 'orange', pitscan: 'green', scanner: 'blue', movers: 'blue', why: 'green', evidence: 'green', tickernews: 'orange', alerts: 'blue', watchlist: 'blue', chat: 'green' };
 
 // Built-in Station presets — starting layouts only (code config, not stored per user). Panels that
 // don't exist yet are simply skipped; add more panel ids as future panels land. After loading a
@@ -137,7 +140,7 @@ const STATION_PRESETS = [
   { key: 'day',      name: 'Day Trader', visible: ['chart', 'pitwire', 'scanner', 'watchlist', 'pitscan', 'halts'] },
   { key: 'smallcap', name: 'Small Cap',  visible: ['pitscan', 'newswire', 'halts', 'watchlist', 'scanner', 'chat', 'chart'] },
   { key: 'macro',    name: 'Macro',      visible: ['chart', 'newswire', 'tape', 'watchlist'] },
-  { key: 'investor', name: 'Investor',   visible: ['chart', 'watchlist', 'convergence', 'newswire'] },
+  { key: 'investor', name: 'Investor',   visible: ['chart', 'watchlist', 'newswire'] },
   { key: 'minimal',  name: 'Minimal',    visible: ['chart', 'watchlist', 'newswire'] },
   { key: 'newsdesk', name: 'News Desk',  visible: ['pitwire', 'newswire', 'tape', 'halts', 'watchlist', 'chart'] },
   { key: 'custom',   name: 'Custom',     visible: [] },   // blank canvas — add panels from scratch
@@ -588,66 +591,6 @@ function WhyMovingBody({ symbol }) {
           {ctx.company && <div style={{ width: '100%', fontSize: 10.5, color: C.dim, marginTop: 4 }}>{ctx.company}</div>}
         </div>
       ) : <div style={{ fontSize: 11.5, color: C.dim }}>Not in our covered universe yet, so there is no reaction context.</div>}
-    </div>
-  );
-}
-
-// ── CATALYST CONVERGENCE — surfaces the Pit Consensus board (insiders + Congress + 13F stacking the
-// same direction) inside the Terminal. Reads the CANONICAL consensus board; free sees a teaser, Pro the full board. ──
-const CONV_SRC = { insiders: 'INSIDER', congress: 'CONGRESS', institutions: '13F', catalysts: 'CATALYST', structure: 'STRUCTURE' };
-function ConvergenceBody({ onPick }) {
-  const [data, setData] = useState(null);
-  const [ref, w] = useContainerSize();
-  useEffect(() => {
-    let alive = true; setData(null);
-    const load = () => fetch('/api/consensus-board', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setData(j); }).catch(() => { if (alive) setData({ rows: [] }); });
-    load(); const id = setInterval(load, 120000);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
-  const list = data ? (data.rows || []) : null; const locked = data?.lockedCount || 0;
-  const showChips = w >= 300;
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
-        {/* THE BULL/BEAR TABS ARE GONE. They filed a ticker under Accumulation or Distribution
-            before the reader saw any evidence, and the board behind them could only ever query one
-            side — action='BUY' for bull — so a ticker with heavy opposing evidence still appeared
-            as clean accumulation. The canonical board reports the state it actually finds. */}
-        <span style={{ fontSize: 10.5, fontWeight: 700, color: C.ink }}>Evidence alignment</span>
-        <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>◆ CANONICAL CONSENSUS</span>
-      </div>
-      <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>
-        {list === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading the board…</div>
-          : list.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No stacked signals right now.</div>
-            : (
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                <tbody>
-                  {list.map((r, i) => (
-                    <tr key={r.ticker + i} style={{ borderTop: i ? `1px solid ${C.surface}` : 'none' }}>
-                      <td style={{ padding: '6px 9px', whiteSpace: 'nowrap' }}>
-                        <span onClick={() => onPick && onPick(r.ticker)} title="Load in chart" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                          <TickerLogo symbol={r.ticker} size={15} /><span className="cp-tkr" style={{ color: C.ink, fontWeight: 700 }}>{r.ticker}</span>
-                        </span>
-                      </td>
-                      {showChips && <td style={{ padding: '6px 9px' }}>
-                        <span style={{ display: 'inline-flex', gap: 3, flexWrap: 'wrap' }}>
-                          {Object.keys(CONV_SRC).filter((k) => r[k]).map((k) => (
-                            <span key={k} style={{ fontSize: 8, fontWeight: 700, color: C.green, background: C.greenLight, borderRadius: 3, padding: '1px 4px' }}>{CONV_SRC[k]}</span>
-                          ))}
-                        </span>
-                      </td>}
-                      <td className="cp-num" style={{ padding: '6px 9px', textAlign: 'right', fontWeight: 800, color: r.state === 'POSITIVE_ALIGNMENT' ? C.green : r.state === 'NEGATIVE_ALIGNMENT' || r.state === 'CONFLICT' ? C.red : C.muted }}>{(r.normalised || []).filter((f) => f.active).length}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-        {locked > 0 && (
-          <a href="/consensus" style={{ display: 'block', padding: '10px 12px', textAlign: 'center', fontSize: 11.5, fontWeight: 600, color: C.green, textDecoration: 'none', borderTop: `1px solid ${C.surface}`, background: C.greenLight }}>
-            🔒 +{locked} more names. Unlock the full board with Pro ↗
-          </a>
-        )}
-      </div>
     </div>
   );
 }
@@ -1536,7 +1479,6 @@ function Workspace() {
     : def.id === 'scanner' ? <CustomScannerPanel onPick={(s) => linkSymbol('scanner', s)} />
     : def.id === 'movers' ? <MoversBody onPick={(s) => linkSymbol('movers', s)} />
     : def.id === 'why' ? <WhyMovingBody symbol={selectedSymbol} />
-    : def.id === 'convergence' ? <ConvergenceBody onPick={(s) => linkSymbol('convergence', s)} />
     : def.id === 'alerts' ? <AlertsBody symbol={selectedSymbol} />
     // ⚠️ ITS OWN SYMBOL, NOT THE WORKSPACE'S. Inspecting CDT's evidence must not move the chart off
     // whatever the trader was studying, so this panel deliberately does NOT read selectedSymbol.
