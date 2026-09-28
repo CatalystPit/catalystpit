@@ -30,8 +30,8 @@ const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail+
 // list was the pre-refresh eleven long after the nav became seven; every count below then
 // described an arrangement the header no longer had. Widths are the rendered widths at fontSize
 // 15 in the product's font stack.
-const LINKS = ['Terminal', 'Pit Consensus', 'Scan', 'Insiders', 'Politicians', 'Institutions', 'News', 'Screener'];
-const W = [62, 103, 36, 57, 76, 81, 40, 66];   // Institutions measured at 81px
+const LINKS = ['Terminal', 'Pit Consensus', 'Insiders', 'Politicians', 'Institutions', 'News', 'Screener'];
+const W = [62, 103, 57, 76, 81, 40, 66];   // Institutions measured at 81px; Scan's 36px is gone with it
 const MORE_W = 52;
 const GAP = 16;
 
@@ -193,9 +193,22 @@ L('\n=== THE HEADER IS ACTUALLY WIRED TO IT ===');
   // The top row leads with the evidence products; Dividends, Fear & Greed and Heatmap are menu
   // destinations. Feed is deliberately absent from BOTH — the feature is being reworked, and a nav
   // slot is a promise about something finished. Its route and code are untouched.
-  ok('⚠️ the top row is the eight primary destinations, in priority order',
+  ok('⚠️ the top row is the seven primary destinations, in priority order',
     topRow.replace(/\s+/g, ' ').trim()
-      === '"Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "Institutions", "News", "Screener"');
+      === '"Terminal", "Pit Consensus", "Insiders", "Politicians", "Institutions", "News", "Screener"',
+    topRow.replace(/\s+/g, ' ').trim());
+  // ⚠️ SCAN LEFT THE ROW, AND FOR A SHARPER REASON THAN FEED. Pit Scan is a Terminal TOOL — it answers
+  // "what is moving right now" while you work, beside a chart and a watchlist. A top-level slot said it
+  // was a place you go instead, which is a different product. Its route, components and APIs are all
+  // untouched; it is out of this array only, and it is still a Terminal panel.
+  ok('⚠️ Scan appears in neither list', !/"Scan"/.test(topRow) && !/"Scan"/.test(menuOnly));
+  ok('⚠️ …but the Scan route is untouched',
+    existsSync(new URL('../src/app/scan/page.jsx', import.meta.url))
+    && existsSync(new URL('../src/app/scan/ScanClient.jsx', import.meta.url)));
+  // ⚠️ AND PIT CONSENSUS STAYS. The two are not interchangeable: Consensus is a standalone board with
+  // its own page and its own answer; Scan is the instrument you use. Losing both would be the wrong
+  // reading of this change.
+  ok('⚠️ Pit Consensus is still a primary destination', /"Pit Consensus"/.test(topRow));
   ok('⚠️ the menu holds exactly Dividends, Fear & Greed and Heatmap',
     menuOnly.replace(/\s+/g, ' ').trim() === '"Dividends", "Fear & Greed", "Heatmap"');
   ok('⚠️ Feed appears in neither list', !/Feed/.test(topRow) && !/Feed/.test(menuOnly));

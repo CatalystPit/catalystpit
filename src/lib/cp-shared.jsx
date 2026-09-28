@@ -991,7 +991,16 @@ export function TopNav({ active }) {
   // link, not a menu item, so it is the ownership trio — Insiders, Politicians, Institutions —
   // reading together before the general-interest rooms. Moving it changes which link survives first
   // as the bar narrows, so do not reorder it casually.
-  const links = ["Terminal", "Pit Consensus", "Scan", "Insiders", "Politicians", "Institutions", "News", "Screener"];
+  // ⚠️ SCAN IS HIDDEN, NOT REMOVED — the same treatment Feed has, and for a sharper reason.
+  //
+  // Pit Scan is a Terminal TOOL, not a destination. It answers "what is moving right now" while you
+  // are working, beside a chart and a watchlist; a top-level nav slot said it was a place you go
+  // instead, which is a different product. It remains a Terminal panel, its /scan route still serves,
+  // and every component, hook and API behind it is untouched — it is out of this array only.
+  //
+  // Pit CONSENSUS stays, and the two are not interchangeable: Consensus is a standalone board with
+  // its own page, its own URL people share, and its own answer. Scan is the instrument you use.
+  const links = ["Terminal", "Pit Consensus", "Insiders", "Politicians", "Institutions", "News", "Screener"];
 
   /**
    * ⚠️ DESTINATIONS THAT LIVE ONLY IN "MORE", NEVER IN THE TOP ROW.
