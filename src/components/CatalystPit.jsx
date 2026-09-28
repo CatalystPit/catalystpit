@@ -44,16 +44,30 @@ import {
  * /insiders and /politicians, which already carry the canonical Pro lock and checkout. Pointing
  * there reuses that surface instead of growing a second checkout on the front door.
  */
-function HomeTeaserGate({ children, anonTitle, anonSub, proTitle, proSub, href, proCta }) {
+/**
+ * DOES THIS VIEWER ALREADY HAVE PRO?
+ *
+ * ⚠️ ONE READ OF THE CANONICAL SOURCE, USED BY EVERY GATE ON THIS PAGE. /api/me/plan is
+ * resolveUserTier() — the same resolution that protects the actual Pro features server-side — so the
+ * UI cannot disagree with the authorisation. Nothing here infers entitlement from an email address,
+ * an admin role or any client-side guess: admin-granted, complimentary and beta access all arrive
+ * through that one endpoint already, and a surface that re-derives them would be a second, wrong
+ * answer. Never CDN-cached, so one viewer's plan cannot be served to another.
+ *
+ * ⚠️ `resolved` IS A THIRD STATE, AND IT IS THE POINT. A boolean that starts false says "not Pro"
+ * before anyone has asked, so a paying subscriber sees the upgrade card for a beat and then watches
+ * it vanish. Signed out needs no request and resolves at once; signed in waits for the answer.
+ *
+ * @returns {{ resolved: boolean, pro: boolean, tier: string|null, isSignedIn: boolean }}
+ */
+function useProEntitlement() {
   const { isLoaded, isSignedIn } = useAuth();
   const [tier, setTier] = useState(null);          // null = not yet known
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn) return;
+    if (!isLoaded || !isSignedIn) return undefined;
     let alive = true;
     (async () => {
-      // The canonical per-user plan read, same endpoint the Terminal, ticker page and billing
-      // card use. Never CDN-cached, so it cannot serve one user's plan to another.
       try {
         const r = await fetch('/api/me/plan', { cache: 'no-store' });
         const j = r.ok ? await r.json() : null;
@@ -63,9 +77,31 @@ function HomeTeaserGate({ children, anonTitle, anonSub, proTitle, proSub, href, 
     return () => { alive = false; };
   }, [isLoaded, isSignedIn]);
 
-  if (!isLoaded) return null;                                    // session resolving
-  if (isSignedIn && tier === null) return null;                  // plan resolving
-  if (isSignedIn && (tier === 'pro' || tier === 'elite')) return null;   // nothing is locked
+  return {
+    resolved: isLoaded && (!isSignedIn || tier !== null),
+    pro: !!isSignedIn && (tier === 'pro' || tier === 'elite'),
+    tier, isSignedIn: !!isSignedIn,
+  };
+}
+
+/**
+ * Renders its children only for a viewer who does NOT already have Pro.
+ *
+ * ⚠️ IT RENDERS NOTHING WHILE THE ANSWER IS UNKNOWN, rather than defaulting to showing the pitch.
+ * Showing an upgrade card to somebody who already pays is worse than showing it 200ms late, and the
+ * anonymous case — which is most visitors — resolves with no request at all.
+ */
+function FreeOnly({ children }) {
+  const { resolved, pro } = useProEntitlement();
+  if (!resolved || pro) return null;
+  return children;
+}
+
+function HomeTeaserGate({ children, anonTitle, anonSub, proTitle, proSub, href, proCta }) {
+  const { resolved, pro, isSignedIn } = useProEntitlement();
+
+  if (!resolved) return null;     // session or plan still resolving
+  if (pro) return null;           // nothing is locked for them
 
   const anon = !isSignedIn;
   const title = anon ? anonTitle : proTitle;
@@ -570,7 +606,10 @@ export default function CatalystPit() {
                   )}
                 </>
               )}
+              {/* The same rule, for the other conversion CTA on this page: a Pro reader already
+                  has the full feed, so inviting them to unlock it is an error, not a nudge. */}
               {!loading && news.length > 0 && (
+                <FreeOnly>
                 <div style={{marginTop:12, background:C.greenLight,
                   border:`1px solid ${C.greenBorder}`, borderRadius:7,
                   padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
@@ -590,6 +629,7 @@ export default function CatalystPit() {
                     Unlock Pro · $20/month
                   </button>
                 </div>
+                </FreeOnly>
               )}
             </div>
           </div>
@@ -767,7 +807,12 @@ export default function CatalystPit() {
 
           <WatchlistHomeCard/>
 
-          {/* PRO UPSELL */}
+          {/* ⚠️ PRO UPSELL — FREE VIEWERS ONLY. It used to render unconditionally, so a paying
+              subscriber, an admin and a complimentary account were all shown a card inviting them to
+              buy what they already had. FreeOnly asks the same source that protects the features. And
+              when it renders nothing the card leaves no shell behind: the rail is a flex column whose
+              gap only applies between children that exist, so the space closes on its own. */}
+          <FreeOnly>
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,
             borderRadius:8, padding:"16px"}}>
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
@@ -806,6 +851,7 @@ export default function CatalystPit() {
                 equal standing at the point of decision. */}
             <PlanChoice align="center" cta="Start Pro" />
           </div>
+          </FreeOnly>
 
           {/* CATALYST PIT FEAR & GREED — the compact rail read. Deliberately score + zone + scale
               + the three comparison points only; the five-component breakdown and the history chart

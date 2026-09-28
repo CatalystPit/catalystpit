@@ -255,12 +255,24 @@ L('\n=== HOMEPAGE TEASER GATES ===');
     /anon \? anonTitle/.test(code) && /anon \? ['"]Sign in['"]/.test(code));
 
   // Resolving is its own state. A flash of "sign in" at a signed-in user is the same lie, briefer.
+  //
+  // ⚠️ THE THREE CHECKS BELOW MOVED WITH THE LOGIC, THEY WERE NOT RELAXED. This was three inline
+  // guards inside HomeTeaserGate; the homepage's UNLOCK PRO card needed exactly the same decision and
+  // had none at all, so the guards became one `useProEntitlement` hook that both now use. Same
+  // properties, one implementation — which is the point, because the bug was a second surface making
+  // the decision independently and getting it wrong by omission.
   ok('the gate renders nothing while the session is resolving',
-    mut('flashgate') ? false : /if \(!isLoaded\) return null;/.test(code));
+    mut('flashgate') ? false
+      : /resolved: isLoaded &&/.test(code) && /if \(!resolved\) return null;/.test(code));
   ok('…and nothing while the plan is still resolving',
-    /if \(isSignedIn && tier === null\) return null;/.test(code));
+    /\(!isSignedIn \|\| tier !== null\)/.test(code));
   ok('a Pro subscriber sees no lock at all',
-    mut('progated') ? false : /tier === ['"]pro['"] \|\| tier === ['"]elite['"]\)\) return null/.test(code));
+    mut('progated') ? false
+      : /tier === 'pro' \|\| tier === 'elite'/.test(code) && /if \(pro\) return null;/.test(code));
+  // ⚠️ AND THE SAME DECISION NOW GUARDS THE UPSELL, which is what the report was about: a paying
+  // subscriber was being shown a card inviting them to buy what they already had.
+  ok('⚠️ the upsell uses that one decision too',
+    /function FreeOnly\(\{ children \}\)/.test(code) && /const \{ resolved, pro \} = useProEntitlement\(\)/.test(code));
 
   // ONE GATE, NOT TWO. The overlay existed twice as copied markup, which is how one bug shipped
   // to two sections; the fix only holds if they keep sharing the component.
