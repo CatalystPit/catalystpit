@@ -1946,7 +1946,10 @@ section('23. undo/redo, the ruler, notes, the price scale and nudge');
   ok('...while clearing an existing one deletes it', /else updateDrawings\(\(ds\) => ds\.filter\(\(d\) => d\.id !== noteDraft\.id\)\);/.test(cmp));
   ok('Enter commits the note', /if \(e\.key === 'Enter'\) \{ e\.preventDefault\(\); commitNote\(\); \}/.test(cmp));
   ok('the note editor focuses immediately', (cmp.match(/if \(el\) el\.focus\(\)/g) || []).length >= 1);
-  ok('a note is painted, since it draws no segments', /tool\(d\.source\.type\)\?\.hasText/.test(layer));
+  // ⚠️ THE NOTE AND THE ATTACHED CAPTION ARE ONE TEXT PASS NOW. Both are words written on a chart,
+  // both are plain, both are grabbable — so what identifies a note is a flag inside that pass rather
+  // than a block of its own. Two near-identical painters is how the two drifted apart in the first place.
+  ok('a note is painted, since it draws no segments', /const isNote = def\?\.hasText === true;/.test(layer));
   ok('the object tree shows a note by its words', /if \(typeof d\.text === 'string'\) return d\.text \|\| '\(empty\)';/.test(mgr));
   ok('...and can reopen it through its settings', /onSettings\?\.\(d\.id\)/.test(mgr));
 

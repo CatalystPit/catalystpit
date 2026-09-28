@@ -22,7 +22,8 @@ import {
   createDrawing, coerceDrawing, LABEL_MAX, TOOLS,
 } from '../src/lib/chart/chart-drawings.mjs';
 import {
-  sanitizeLabelStyle, labelBox, labelFont, labelHeight,
+  sanitizeLabelStyle, sanitizeLabelOffset, labelBox, labelFont, labelHeight,
+  labelRefPoint, labelOffsetFor, labelOffsetPoint,
   LABEL_ALIGNS, LABEL_PLACES, LABEL_SIZES, DEFAULT_LABEL_STYLE, LABEL_GAP, LABEL_PAD,
 } from '../src/lib/chart/drawing-label.mjs';
 import { CONTROL, controlsFor } from '../src/lib/chart/drawing-toolbar.mjs';
@@ -529,7 +530,7 @@ console.log('\n10. the renderer asks, it does not decide');
   const layer = code(read('src/components/chart/DrawingLayer.jsx'));
   ok('the layer places the caption with the shared geometry', /labelBox\(seg, lstyle,/.test(layer));
   ok('...measuring the real string rather than guessing a width',
-    /ctx\.measureText\(tag\)\.width/.test(layer));
+    /ctx\.measureText\(body\)\.width/.test(layer));
   ok('...using the font the style asks for', /ctx\.font = labelFont\(lstyle\)/.test(layer));
   ok('...through the sanitizer, so a legacy drawing cannot paint undefined',
     /sanitizeLabelStyle\(d\.source\.labelStyle\)/.test(layer));
@@ -541,6 +542,155 @@ console.log('\n10. the renderer asks, it does not decide');
   // The caption is painted from the projection, which is the same one the strokes came from.
   ok('the caption is painted from the drawing\'s own segment',
     /const seg = d\.segments\[0\]/.test(layer));
+}
+
+
+// ── 11. the text is plain, and it goes where the user puts it ──────────────────────────────────
+console.log('\n11. the text is plain, and it goes where the user puts it');
+
+{
+  const layer = code(read('src/components/chart/DrawingLayer.jsx'));
+  // ⚠️ NO PLATE. Both kinds used to be painted inside a rounded, stroked, filled box, so a one-word
+  // note read as a badge stuck onto the chart rather than as writing on it. What is drawn now is the
+  // glyphs — and, only while the drawing is selected, a dashed outline saying what can be dragged.
+  // Located by a CODE landmark, not a comment: `layer` is comment-stripped, so anchoring on the
+  // section heading found nothing and every assertion below it passed against an empty string.
+  const passStart = layer.indexOf('const isNote = def?.hasText === true;');
+  const passEnd = layer.indexOf('textRects.set(', passStart);
+  const pass = passStart < 0 || passEnd < 0 ? '' : layer.slice(passStart, passEnd + 120);
+  ok('the text pass was located', pass.length > 400, `${pass.length}`);
+  ok('⚠️ no rounded plate is drawn behind the text', !/roundRect/.test(pass), 'a badge, not writing');
+  ok('⚠️ ...and no plate is filled behind it either',
+    !/fillStyle = p\.tooltipBg/.test(pass), 'a background box is the bubble this removed');
+  ok('the glyphs are drawn', /ctx\.fillText\(body,/.test(pass));
+  // ⚠️ THE ONE AFFORDANCE IS TEMPORARY. "Selection UI may appear while selected, and must disappear
+  // when deselected" — so the outline is inside an isSel branch, which is the only thing that makes
+  // "disappears on deselect" true by construction rather than by remembering to clear it.
+  ok('⚠️ the drag outline is drawn only while selected',
+    /if \(isSel\) \{[\s\S]{0,320}setLineDash/.test(pass));
+  ok('...and it is a dashed hint, not a box', /setLineDash\(\[3, 3\]\)/.test(pass) && /globalAlpha = 0\.45/.test(pass));
+
+  // ── THE POSITION MODEL ──
+  const model = read('src/lib/chart/drawing-label.mjs');
+  ok('⚠️ a manual position is stored in DATA space, not pixels',
+    /dt = Number\(raw\?\.dt\)/.test(model) && /dp = Number\(raw\?\.dp\)/.test(model));
+  ok('⚠️ ...measured from the drawing\'s own anchor, so it travels with the line',
+    /labelRefPoint = \(drawing\) =>/.test(model) && /drawing\?\.points\?\.\[0\]/.test(model));
+  ok('⚠️ ...and it is absent until the user drags', /\.\.\.\(offset \? \{ offset \} : \{\}\)/.test(model));
+
+  // Junk cannot become a position.
+  for (const bad of [undefined, null, {}, { dt: 'x', dp: 1 }, { dt: 1 }, { dt: NaN, dp: 0 }, { dt: 1, dp: Infinity }]) {
+    ok(`a nonsense offset is rejected (${JSON.stringify(bad)})`, sanitizeLabelOffset(bad) === null);
+  }
+  ok('a real one is kept', JSON.stringify(sanitizeLabelOffset({ dt: -3600, dp: 2.5 })) === '{"dt":-3600,"dp":2.5}');
+
+  // ── OFFSET ARITHMETIC ──
+  const d = createDrawing('horizontal', ptsFor('horizontal'), {}, [], { label: 'support' });
+  const ref = labelRefPoint(d);
+  ok('the reference point is the drawing\'s first anchor',
+    ref.time === d.points[0].time && ref.price === d.points[0].price);
+  const off = labelOffsetFor(d, { time: ref.time + 7200, price: ref.price + 5 });
+  ok('⚠️ an offset is the delta from that anchor', off.dt === 7200 && off.dp === 5, JSON.stringify(off));
+  ok('a position with no drawing yields nothing', labelOffsetFor(null, { time: 1, price: 1 }) === null);
+  ok('a nonsense position yields nothing', labelOffsetFor(d, { time: null, price: 1 }) === null);
+
+  // ⚠️ AND IT TRAVELS WITH THE DRAWING. This is the property the whole data-space choice is for: move
+  // the line and the caption must move with it, keeping the placement the user chose. Storing an
+  // absolute time and price would be just as durable through a zoom and would fail exactly here.
+  const moved = { ...d, points: [{ time: d.points[0].time + 86400, price: d.points[0].price + 12 }] };
+  const sameOffset = labelOffsetFor(moved, {
+    time: moved.points[0].time + off.dt, price: moved.points[0].price + off.dp,
+  });
+  ok('⚠️ the same offset describes the same relative place after the drawing moves',
+    sameOffset.dt === off.dt && sameOffset.dp === off.dp, JSON.stringify(sameOffset));
+
+  // ── THE PROJECTION ──
+  // A stand-in for the chart's own projection, which is what the renderer passes in.
+  const toScreen = (pt) => ({ x: (pt.time - 1700000000) / 60, y: 500 - pt.price });
+  const placed = { ...d, labelStyle: sanitizeLabelStyle({ offset: { dt: 600, dp: 4 } }) };
+  const at = labelOffsetPoint(placed, placed.labelStyle, toScreen);
+  ok('⚠️ a stored offset projects to a pixel point', !!at && Number.isFinite(at.x) && Number.isFinite(at.y),
+    JSON.stringify(at));
+  ok('⚠️ ...at the anchor plus the offset, in the chart\'s own coordinates',
+    at.x === 10 && at.y === 500 - (d.points[0].price + 4), JSON.stringify(at));
+  ok('no offset projects to nothing', labelOffsetPoint(d, sanitizeLabelStyle({}), toScreen) === null);
+  ok('no projection projects to nothing', labelOffsetPoint(placed, placed.labelStyle, null) === null);
+
+  // ⚠️ PAN AND ZOOM DO NOT MOVE IT. Same data, a different projection — which is exactly what a pan or
+  // a zoom is — puts it at the pixel that same data point now occupies, and nowhere else.
+  const zoomed = (pt) => ({ x: (pt.time - 1700000000) / 15, y: 500 - pt.price * 2 });
+  const atZoom = labelOffsetPoint(placed, placed.labelStyle, zoomed);
+  ok('⚠️ a zoom moves it exactly as far as it moves the chart',
+    atZoom.x === 40 && atZoom.y === 500 - (d.points[0].price + 4) * 2, JSON.stringify(atZoom));
+
+  // ── THE BOX ──
+  const PLOT = { w: 600, h: 400 };
+  const st = sanitizeLabelStyle({});
+  const manual = labelBox([{ x: 0, y: 200 }, { x: 600, y: 200 }], st, 60, PLOT, { at: { x: 123, y: 77 } });
+  ok('⚠️ a manual position is used verbatim, not re-derived from align/place',
+    manual.x === 123 && manual.y === 77 && manual.manual === true, JSON.stringify(manual));
+  const auto = labelBox([{ x: 0, y: 200 }, { x: 600, y: 200 }], st, 60, PLOT);
+  ok('⚠️ ...while a drawing that has not been dragged still uses the default',
+    auto.manual === false && auto.x !== 123);
+  // Still inside the plot, however far the user drags.
+  const far = labelBox([{ x: 0, y: 200 }, { x: 600, y: 200 }], st, 60, PLOT, { at: { x: 9999, y: -9999 } });
+  ok('⚠️ a manual position is still clamped into the plot',
+    far.x >= 0 && far.y >= 0 && far.x + far.w <= PLOT.w && far.y + far.h <= PLOT.h, JSON.stringify(far));
+
+  // ── PERSISTENCE ──
+  const withPos = createDrawing('trend', ptsFor('trend'), {}, [], {
+    label: 'support', labelStyle: { offset: { dt: -1800, dp: -3.25 }, size: 14, bold: false, align: 'left', place: 'below' },
+  });
+  const back = coerceDrawing(JSON.parse(JSON.stringify(withPos)));
+  ok('⚠️ the manual position survives a round trip',
+    back.labelStyle.offset.dt === -1800 && back.labelStyle.offset.dp === -3.25,
+    JSON.stringify(back.labelStyle.offset));
+  ok('⚠️ ...alongside the style, which is unchanged',
+    back.labelStyle.size === 14 && back.labelStyle.bold === false
+    && back.labelStyle.align === 'left' && back.labelStyle.place === 'below');
+  ok('⚠️ a drawing saved before dragging existed still loads, with no offset',
+    !('offset' in coerceDrawing({ type: 'trend', points: ptsFor('trend'), label: 'old' }).labelStyle));
+
+  // ── THE DRAG PATH ──
+  ok('⚠️ the writing is grabbable only on a SELECTED drawing',
+    /if \(r\.note \|\| !s\.selected\.has\(id\)\) continue;/.test(layer),
+    'any stray word swallowing a press would break panning in places a reader cannot see');
+  ok('⚠️ ...and a note is excluded, because a note\'s text IS the drawing', /r\.note \|\|/.test(layer));
+  ok('⚠️ the text drag is checked BEFORE hit-testing the drawing',
+    layer.indexOf('const textId = textHitAt(pt)') < layer.indexOf('const hit = hitTest(pt, project())'));
+  ok('⚠️ ...and it returns, so the drawing does not move and the chart does not pan',
+    /if \(textId\) \{[\s\S]{0,900}return;/.test(layer));
+  ok('⚠️ ...with the press stopped from reaching the chart',
+    /e\.stopPropagation\?\.\(\);[\s\S]{0,60}e\.preventDefault\?\.\(\);/.test(layer));
+  ok('⚠️ dragging writes only the caption, never the geometry',
+    /labelStyle: sanitizeLabelStyle\(\{ \.\.\.sanitizeLabelStyle\(d\.labelStyle\), offset: next \}\)/.test(layer)
+    && !/points:[^\n]*textDrag/.test(layer));
+  ok('⚠️ ...under ONE token, so the whole drag is one undo step',
+    /gestureToken\('text'\)/.test(layer) && /\}\)\), s\.textDrag\.token\)/.test(layer));
+  ok('⚠️ ...recomputed from the drag\'s start each frame, so a long drag does not drift',
+    /s\.textDrag\.base\.dt \+ dt/.test(layer) && /s\.textDrag\.base\.dp \+ dp/.test(layer));
+  ok('the drag is released on pointer up', /s\.textDrag = null;/.test(layer));
+  ok('⚠️ a locked drawing\'s text cannot be dragged', /target && !target\.locked/.test(layer));
+
+  // ⚠️ THE FIRST DRAG STARTS FROM WHERE THE CAPTION LOOKS, not from the anchor. Without this a caption
+  // that had never been moved would jump to the drawing's anchor the instant it was touched.
+  ok('⚠️ an undragged caption starts from its current position',
+    /let base = lstyle\.offset;[\s\S]{0,320}labelOffsetFor\(target, at\)/.test(layer));
+
+  // ── COVERAGE ──
+  // Every labelable tool goes through this one path, so this is a property rather than seven checks —
+  // asserted for each anyway, because "it is the same code" is what a regression quietly disproves.
+  for (const id of LABELABLE) {
+    const made = createDrawing(id, ptsFor(id), {}, [], {
+      label: 'support', labelStyle: { offset: { dt: 60, dp: 1 } },
+    });
+    ok(`${id}: keeps a dragged caption position`, made.labelStyle.offset.dt === 60);
+    ok(`${id}: ...across a reload`, coerceDrawing(JSON.parse(JSON.stringify(made))).labelStyle.offset.dp === 1);
+  }
+  // And the standalone note: plain text, and dragged by the ordinary drawing drag, since it IS one.
+  ok('⚠️ a standalone note is still just its words', TOOLS.text.hasText === true);
+  ok('⚠️ ...and carries no caption offset of its own, having nothing to offset from',
+    !('labelStyle' in createDrawing('text', [{ time: 1, price: 2 }], {}, [], { text: 'hey' })));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -50,12 +50,34 @@ export const LABEL_GAP = 5;
  * had styling comes back through here, and a size of undefined would reach canvas as `undefinedpx`
  * and silently paint nothing.
  */
+/**
+ * A manually chosen position, or null.
+ *
+ * ⚠️ IT IS AN OFFSET IN DATA SPACE, NOT A SCREEN POSITION. Stored pixels would be wrong the moment the
+ * chart was panned, zoomed, resized, or opened on another monitor — the caption would sit where those
+ * pixels now are rather than where the user put it. `dt` is a time offset in seconds and `dp` a price
+ * offset, both measured from the drawing's own first anchor, which gives three things at once: the
+ * caption stays at the same point in the chart's world through any pan or zoom; it travels with the
+ * line when the line is dragged, keeping the relative placement the user chose; and it round-trips
+ * through storage as two numbers.
+ */
+export function sanitizeLabelOffset(raw) {
+  const dt = Number(raw?.dt);
+  const dp = Number(raw?.dp);
+  if (!Number.isFinite(dt) || !Number.isFinite(dp)) return null;
+  return { dt, dp };
+}
+
 export function sanitizeLabelStyle(raw) {
   const color = coerceColorValue(raw?.color);
   const size = Number(raw?.size);
+  const offset = sanitizeLabelOffset(raw?.offset);
   return {
     // Absent means inherit; present means the user chose it, in both themes.
     ...(color !== null ? { color } : {}),
+    // ⚠️ ABSENT UNTIL THE USER DRAGS IT. While it is absent the caption follows align/place — the
+    // sensible default near the drawing. Once it is present, it wins and nothing snaps it back.
+    ...(offset ? { offset } : {}),
     size: LABEL_SIZES.includes(size) ? size : DEFAULT_LABEL_STYLE.size,
     bold: raw?.bold === undefined ? DEFAULT_LABEL_STYLE.bold : raw.bold === true,
     align: LABEL_ALIGNS.includes(raw?.align) ? raw.align : DEFAULT_LABEL_STYLE.align,
@@ -72,6 +94,73 @@ export const labelHeight = (style) =>
   Math.round((style?.size || DEFAULT_LABEL_STYLE.size) * 1.35) + LABEL_PAD * 2;
 
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+/**
+ * The drawing's own reference point — what a manual caption offset is measured from.
+ *
+ * ⚠️ THE FIRST ANCHOR, BECAUSE THAT IS THE POINT THE DRAWING IS MADE OF. Measuring from it is what
+ * makes the caption travel with the line when the line is dragged: both move by the same delta, so the
+ * offset — and therefore the placement the user chose — is unchanged.
+ */
+export const labelRefPoint = (drawing) => {
+  const p0 = drawing?.points?.[0];
+  return p0 && p0.time != null && Number.isFinite(Number(p0.price))
+    ? { time: p0.time, price: Number(p0.price) } : null;
+};
+
+/**
+ * Where a manually placed caption sits, in pixels — or null if the user has not placed one.
+ *
+ * The stored offset is data, so turning it into a position needs the chart's own projection. That is
+ * passed in rather than imported: this module stays pure, and the caller already holds the exact
+ * projection the strokes were drawn with, which is the one the caption has to agree with.
+ */
+export function labelOffsetPoint(drawing, style, toScreen) {
+  const off = style?.offset;
+  const ref = labelRefPoint(drawing);
+  if (!off || !ref || typeof toScreen !== 'function') return null;
+  const at = toScreen({ time: shiftSeconds(ref.time, off.dt), price: ref.price + off.dp });
+  return at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: at.x, y: at.y } : null;
+}
+
+/**
+ * The offset a caption should store to sit at a given data point.
+ *
+ * ⚠️ TIME IS A DELTA IN SECONDS, NOT A SECOND TIMESTAMP. Storing the absolute time would be just as
+ * durable through a zoom, and would NOT travel with the line: drag the drawing and its caption would
+ * stay behind at the time it was left at.
+ */
+export function labelOffsetFor(drawing, at) {
+  const ref = labelRefPoint(drawing);
+  if (!ref || !at || at.time == null || !Number.isFinite(Number(at.price))) return null;
+  return sanitizeLabelOffset({ dt: secondsBetween(ref.time, at.time), dp: Number(at.price) - ref.price });
+}
+
+/**
+ * Chart times are seconds for an intraday series and a business-day object for a daily one, so the
+ * two shapes are handled here rather than in every caller.
+ */
+function toSeconds(t) {
+  if (typeof t === 'number') return t;
+  if (t && typeof t === 'object' && t.year != null) {
+    return Math.floor(Date.UTC(t.year, (t.month || 1) - 1, t.day || 1) / 1000);
+  }
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+const secondsBetween = (from, to) => {
+  const a = toSeconds(from);
+  const b = toSeconds(to);
+  return a == null || b == null ? 0 : b - a;
+};
+/** Applied in the same shape it arrived in, so a daily chart keeps getting business days. */
+function shiftSeconds(t, dt) {
+  if (typeof t === 'number') return t + dt;
+  const base = toSeconds(t);
+  if (base == null) return t;
+  const d = new Date((base + dt) * 1000);
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
 
 /**
  * Where a caption's plate goes, in plot pixels.
@@ -113,6 +202,17 @@ export function labelBox(segment, style, textWidth, plot, opts = {}) {
   const pad = opts.pad ?? LABEL_PAD;
   const s = style || DEFAULT_LABEL_STYLE;
 
+  // ⚠️ A MANUAL POSITION WINS, AND NOTHING SNAPS IT BACK. `opts.at` is where the caller projected the
+  // stored data-space offset to, in pixels. align and place still exist and still work — they are the
+  // DEFAULT, used until the user drags the caption somewhere of their own choosing.
+  if (opts.at && Number.isFinite(opts.at.x) && Number.isFinite(opts.at.y)) {
+    const wFixed = Math.max(1, textWidth) + pad * 2;
+    const hFixed = labelHeight(s);
+    const x0 = clamp(opts.at.x, pad, Math.max(pad, plot.w - wFixed - pad));
+    const y0 = clamp(opts.at.y, pad, Math.max(pad, plot.h - hFixed - pad));
+    return { x: x0, y: y0, w: wFixed, h: hFixed, textX: x0 + pad, textY: y0 + hFixed / 2, manual: true };
+  }
+
   const f = s.align === 'left' ? 0 : s.align === 'center' ? 0.5 : 1;
   const px = a.x + (b.x - a.x) * f;
   const py = a.y + (b.y - a.y) * f;
@@ -136,5 +236,5 @@ export function labelBox(segment, style, textWidth, plot, opts = {}) {
   // over the price scale reads as a rendering fault rather than as a label.
   x = clamp(x, pad, Math.max(pad, plot.w - w - pad));
   y = clamp(y, pad, Math.max(pad, plot.h - h - pad));
-  return { x, y, w, h, textX: x + pad, textY: y + h / 2 };
+  return { x, y, w, h, textX: x + pad, textY: y + h / 2, manual: false };
 }

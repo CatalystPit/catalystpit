@@ -12,7 +12,9 @@ import {
 } from '../../lib/chart/chart-coords.mjs';
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
 import { selectionBox } from '../../lib/chart/drawing-toolbar.mjs';
-import { sanitizeLabelStyle, labelFont, labelBox } from '../../lib/chart/drawing-label.mjs';
+import {
+  sanitizeLabelStyle, labelFont, labelBox, labelHeight, labelOffsetPoint, labelOffsetFor, LABEL_GAP,
+} from '../../lib/chart/drawing-label.mjs';
 import { axisLabelSpecs, reconcileAxisLabels, priceLineOptionsFor, priceInPlot } from '../../lib/chart/price-axis-labels.mjs';
 import {
   idleTool, armTool, clickTool, hoverTool, cancelDraft, clearSuppression, draftPreview, hasDraft,
@@ -57,6 +59,14 @@ function DrawingLayerBase({
   // The series, readable from the unmount cleanup, which must not close over a stale prop.
   const seriesRef = useRef(null);
   seriesRef.current = series;
+  /**
+   * WHERE EACH DRAWING'S TEXT LANDED, IN PIXELS — rebuilt on every paint.
+   *
+   * ⚠️ IT HAS TO BE MEASURED, NOT PREDICTED. The box depends on the glyph widths in the font that was
+   * actually used, which only the canvas knows. The pointer handler needs the same rectangle the reader
+   * can see, so it reads the one the painter just produced rather than recomputing a second opinion.
+   */
+  const textRectsRef = useRef(new Map());
   const onSelectionBoxRef = useRef(null);
   onSelectionBoxRef.current = onSelectionBox || null;
   const stateRef = useRef({});
@@ -241,6 +251,8 @@ function DrawingLayerBase({
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    const textRects = new Map();
+    textRectsRef.current = textRects;
     if (!stateRef.current.visible) return;
 
     const p = palette(stateRef.current.theme);
@@ -322,65 +334,64 @@ function DrawingLayerBase({
         ctx.restore();
       }
 
-      // A TEXT NOTE IS ITS STRING. It draws no segments, so without this it would be invisible.
-      if (tool(d.source.type)?.hasText) {
-        const anchor = d.handles[0];
-        if (anchor) {
-          ctx.save();
-          ctx.font = "600 12px 'DM Sans', sans-serif";
-          ctx.textBaseline = 'middle';
-          const label = d.source.text || 'Note';
-          const w = ctx.measureText(label).width;
-          // A backing plate, so a note stays readable over candles rather than fighting them.
-          ctx.fillStyle = p.tooltipBg;
-          ctx.strokeStyle = colour;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.roundRect?.(anchor.x + 6, anchor.y - 10, w + 12, 20, 4);
-          if (ctx.roundRect) { ctx.fill(); ctx.stroke(); }
-          ctx.fillStyle = colour;
-          ctx.fillText(label, anchor.x + 12, anchor.y);
-          ctx.restore();
-        }
-      }
-
-      // ATTACHED TEXT. Painted from the drawing's own first segment every frame, so it travels with
-      // the line rather than sitting at a remembered position the line has since been dragged away
-      // from — and so panning, zooming and resizing move it exactly as much as they move the line.
+      // ── TEXT ON THE CHART ────────────────────────────────────────────────────────────────────
       //
-      // ⚠️ WHERE IT LANDS IS NOT DECIDED HERE. labelBox() is pure and asserted in node; this measures
-      // the string, asks, and paints. Placement arithmetic inlined in a paint loop is placement
-      // arithmetic no test can reach.
-      const tag = typeof d.source.label === 'string' ? d.source.label.trim() : '';
-      if (tag) {
-        const lstyle = sanitizeLabelStyle(d.source.labelStyle);
-        const seg = d.segments[0]
-          || (d.handles[0] ? [d.handles[0], d.handles[0]] : null);
-        if (seg) {
+      // ⚠️ PLAIN TEXT, NO PLATE. Both kinds used to be drawn inside a rounded, stroked, filled box, so
+      // a one-word note read as a badge stuck onto the chart rather than as writing on it. Professional
+      // charting tools draw the glyphs and nothing else; the reader is annotating a chart, not adding
+      // widgets to one. What is left is the text, and — only while the drawing is selected — a faint
+      // dashed outline saying "this is the thing you can drag". That disappears on deselect.
+      //
+      // ⚠️ AND THE BOX IS RECORDED, NOT JUST DRAWN. textRects is what makes the writing grabbable: the
+      // pointer handler needs to know where the glyphs ended up, and the only place that is known is
+      // here, after measuring them in the font they were actually painted in.
+      {
+        const def = tool(d.source.type);
+        const isNote = def?.hasText === true;
+        const body = isNote
+          ? (d.source.text || '')
+          : (typeof d.source.label === 'string' ? d.source.label.trim() : '');
+        if (body) {
+          const lstyle = sanitizeLabelStyle(d.source.labelStyle);
+          const { plotWidth, plotHeight } = plotSize();
+          const plotBox = { w: plotWidth, h: plotHeight };
           ctx.save();
           ctx.font = labelFont(lstyle);
-          const { plotWidth, plotHeight } = plotSize();
-          const box = labelBox(seg, lstyle, ctx.measureText(tag).width,
-            { w: plotWidth, h: plotHeight });
+          const tw = ctx.measureText(body).width;
+
+          // A note's anchor IS the drawing, so its text hangs off its own handle. An attached caption
+          // is placed along the line it belongs to, or wherever the user dragged it to.
+          let box = null;
+          if (isNote) {
+            const a = d.handles[0];
+            if (a && Number.isFinite(a.x) && Number.isFinite(a.y)) {
+              box = labelBox([a, a], lstyle, tw, plotBox, { at: { x: a.x + LABEL_GAP, y: a.y - labelHeight(lstyle) / 2 } });
+            }
+          } else {
+            const seg = d.segments[0] || (d.handles[0] ? [d.handles[0], d.handles[0]] : null);
+            // The manual position, projected from data space to pixels. Absent until the user drags.
+            const at = labelOffsetPoint(d.source, lstyle, toScreen);
+            if (seg) box = labelBox(seg, lstyle, tw, plotBox, at ? { at } : {});
+          }
+
           if (box) {
-            // An explicit caption colour wins; absent, it inherits the line's, which is what every
-            // drawing stored before captions had a colour of their own already did.
             const ink = lstyle.color === undefined
               ? colour : indicatorColor(stateRef.current.theme, lstyle.color);
-            // A backing plate, so a caption stays readable over candles instead of fighting them.
-            ctx.fillStyle = p.tooltipBg;
-            ctx.strokeStyle = ink;
-            ctx.lineWidth = 1;
-            if (ctx.roundRect) {
-              ctx.beginPath();
-              ctx.roundRect(box.x, box.y, box.w, box.h, 3);
-              ctx.fill();
-              ctx.stroke();
-            }
             ctx.fillStyle = ink;
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(tag, box.textX, box.textY);
+            ctx.fillText(body, box.textX, box.textY);
+            // The one temporary affordance, and only while selected.
+            if (isSel) {
+              ctx.save();
+              ctx.strokeStyle = ink;
+              ctx.globalAlpha = 0.45;
+              ctx.lineWidth = 1;
+              ctx.setLineDash([3, 3]);
+              ctx.strokeRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1);
+              ctx.restore();
+            }
+            textRects.set(d.id, { x: box.x, y: box.y, w: box.w, h: box.h, note: isNote });
           }
           ctx.restore();
         }
@@ -678,6 +689,26 @@ function DrawingLayerBase({
     return toData(c.x, c.y);
   };
 
+  /**
+   * IS THE POINTER ON A DRAWING'S TEXT?
+   *
+   * ⚠️ ONLY ON A SELECTED DRAWING, and that is the whole interaction model. Writing on a chart sits on
+   * top of the candles a reader is trying to read; if any stray word could swallow a press, ordinary
+   * panning would start failing in places the reader cannot see the reason for. Selecting first says
+   * "I mean this one", and only then does its text become something to grab.
+   *
+   * ⚠️ AND A NOTE IS EXCLUDED, because a note's text IS the drawing. Dragging it must move the drawing,
+   * which the normal drag path already does — treating it as a caption would let the words wander off
+   * the thing they are.
+   */
+  const textHitAt = (pt) => {
+    for (const [id, r] of textRectsRef.current) {
+      if (r.note || !s.selected.has(id)) continue;
+      if (pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h) return id;
+    }
+    return null;
+  };
+
   const onPointerDown = (e) => {
     const pt = localPoint(e);
     // PLACING a new drawing. WHEN it commits is the lifecycle's decision, and it is the same
@@ -711,6 +742,33 @@ function DrawingLayerBase({
         clearCursorPrice();
       }
       e.currentTarget.setPointerCapture?.(e.pointerId);
+      paint();
+      return;
+    }
+    // ⚠️ DRAGGING THE WRITING COMES FIRST, BEFORE hitTest AND BEFORE THE CHART SEES THE PRESS. The
+    // caption usually sits ON its own line, so whichever of the two is asked first is the one you can
+    // grab — and a reader pressing on the word "support" means the word. Returning here is what keeps
+    // the gesture from also moving the drawing underneath and from panning the chart.
+    const textId = textHitAt(pt);
+    if (textId) {
+      const from = toData(pt.x, pt.y);
+      const target = s.drawings.find((d) => d.id === textId);
+      if (from && target && !target.locked) {
+        const lstyle = sanitizeLabelStyle(target.labelStyle);
+        // Starting from where the caption IS: if it has never been dragged, its current default
+        // position becomes the starting offset, so the first drag moves it from where it looks rather
+        // than jumping to the anchor.
+        let base = lstyle.offset;
+        if (!base) {
+          const r = textRectsRef.current.get(textId);
+          const at = r ? toData(r.x, r.y) : null;
+          base = at ? labelOffsetFor(target, at) : { dt: 0, dp: 0 };
+        }
+        s.textDrag = { id: textId, from, base: base || { dt: 0, dp: 0 }, token: gestureToken('text') };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        e.stopPropagation?.();
+        e.preventDefault?.();
+      }
       paint();
       return;
     }
@@ -763,6 +821,21 @@ function DrawingLayerBase({
       paint();
       return;
     }
+    // ⚠️ MOVING THE WRITING MOVES ONLY THE WRITING. The offset is recomputed from the drag's own start
+    // point each frame rather than accumulated, so there is no per-move drift over a long drag — the
+    // same reason the drawing drag measures every step from its original.
+    if (s.textDrag) {
+      const now = toData(pt.x, pt.y);
+      if (!now) return;
+      const dt = timeDeltaSeconds(s.textDrag.from.time, now.time);
+      const dp = now.price - s.textDrag.from.price;
+      const next = { dt: s.textDrag.base.dt + dt, dp: s.textDrag.base.dp + dp };
+      onChange(s.drawings.map((d) => (d.id !== s.textDrag.id ? d : {
+        ...d, labelStyle: sanitizeLabelStyle({ ...sanitizeLabelStyle(d.labelStyle), offset: next }),
+      })), s.textDrag.token);
+      paint();
+      return;
+    }
     if (!s.drag) return;
     const now = toData(pt.x, pt.y);
     if (!now || !s.drag.from) return;
@@ -781,6 +854,12 @@ function DrawingLayerBase({
   };
 
   const endDrag = (e) => {
+    if (s.textDrag) {
+      // Release SAVES it: every move already wrote through onChange under one token, so the whole
+      // drag is one undo step and the last position is the stored one.
+      s.textDrag = null;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    }
     if (s.drag) { s.drag = null; e.currentTarget.releasePointerCapture?.(e.pointerId); clearCursorPrice(); }
   };
 
