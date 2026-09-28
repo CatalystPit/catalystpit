@@ -190,13 +190,33 @@ section('7. identity is not computed from a signal window');
   // Scoped to the function BODY, so nothing in rebuildScreener below it can satisfy this assertion
   // or break it by accident.
   const body = src.slice(src.indexOf('async function companyIdentity'),
-                         src.indexOf('export async function rebuildScreener'));
+                         src.indexOf('async function companyIdentityFromFilings'));
+  const fallback = src.slice(src.indexOf('async function companyIdentityFromFilings'),
+                             src.indexOf('export async function rebuildScreener'));
   ok('identity lookup exists and is non-trivial', body.length > 400, 'len=' + body.length);
-  ok('identity reads insider_trades with no window and no signal filter',
-    /from insider_trades/.test(body) && !/since90|interval|current_date\s*-|total_value/.test(body),
-    body.match(/since90|interval|current_date\s*-|total_value/)?.[0] || '');
-  ok('identity takes the most recent filing', /order by ticker, filing_date desc/.test(body));
-  ok('8-K is the second tier', /from eightk_filings/.test(src) && /a Form 4 name outranks a registrant name/.test(src));
+  // ⚠️ THESE THREE WERE ASSERTING AGAINST CODE THAT MOVED, AND SO WERE ASSERTING NOTHING.
+  //
+  // Identity is no longer derived inline: companyIdentity() reads the security master
+  // (security-identity.mjs), and the filings-only derivation survives ONLY as the fallback for a
+  // database on which the master has not been built yet. The old assertions grepped the function
+  // body for `from insider_trades`, for an `order by`, and for a comment string — all three of
+  // which now live behind filerNameMap or in the master. They failed while the behaviour they
+  // describe was intact, which is the worst state for a test to be in.
+  //
+  // What must remain true is the PRECEDENCE and the no-window rule, so that is what is checked.
+  ok('identity reads the security master, not a signal aggregate',
+    /const master = await readSecurityIdentity\(\);/.test(body) && /if \(master\) return master;/.test(body));
+  ok('...and falls back to the filings derivation only when the master is empty',
+    /return companyIdentityFromFilings\(\);/.test(body));
+  ok('⚠️ the fallback reads filings with NO window and NO signal filter',
+    !/since90|interval|current_date\s*-|total_value/.test(fallback),
+    fallback.match(/since90|interval|current_date\s*-|total_value/)?.[0] || '');
+  ok('⚠️ ...from both filing sources', /filerNameMap\(sql`insider_trades`/.test(fallback)
+    && /filerNameMap\(sql`eightk_filings`/.test(fallback));
+  ok('⚠️ Form 4 outranks the 8-K registrant name',
+    /for \(const \[t, n\] of registrant\) if \(!byTicker\.has\(t\)\) byTicker\.set\(t, n\);/.test(fallback));
+  ok('the filing lookup still takes the most recent filing',
+    /order by ticker, \$\{dateCol\} desc/.test(src) || /filing_date desc/.test(src));
   ok('no 13F, FINRA or vendor name in the identity path',
     !/companyIdentity[\s\S]{0,1200}(fund_holdings|short_interest|d\.name)/.test(src));
   ok('the stale-name coalesce is gone',
