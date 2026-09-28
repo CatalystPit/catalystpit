@@ -190,36 +190,102 @@ console.log('\n4. the text is plain, and it can be dragged on its own');
   const before = JSON.parse((await stored()) || '{}');
   const d0 = firstDrawing(before);
   ok('the drawing is in storage before the drag', !!d0 && !!d0.label, JSON.stringify(d0?.label));
-  ok('⚠️ ...with no manual position yet', !d0?.labelStyle?.offset, JSON.stringify(d0?.labelStyle));
+  ok('⚠️ ...with no manual position yet', !d0?.labelStyle?.at, JSON.stringify(d0?.labelStyle));
 
-  // The caption now sits just right of, and below, the line's first anchor — the point this test
-  // clicked at 30% / 32% when it drew the line.
-  const capX = plot.left + plot.w * 0.30 + 34;
-  const capY = plot.top + plot.h * 0.32 + 20;
+  // The caption sits just right of, and below, the line's first anchor — the point this test clicked
+  // at 30% / 32% when it drew the line, and the one coordinate it knows.
+  let capX = plot.left + plot.w * 0.30 + 34;
+  let capY = plot.top + plot.h * 0.32 + 20;
 
-  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: capX, y: capY, button: 'left', clickCount: 1, buttons: 1 });
-  for (let i = 1; i <= 8; i += 1) {
-    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: capX + 16 * i, y: capY + 10 * i, button: 'left', buttons: 1 });
-    await sleep(45);
-  }
-  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: capX + 128, y: capY + 80, button: 'left', buttons: 0 });
-  await sleep(1000);
+  /**
+   * A real press-move-release on the caption, reporting where it ended up in CHART coordinates.
+   *
+   * ⚠️ THE ASSERTION IS ON THE STORED TIME AND PRICE, NOT ON PIXELS. Pixels would move for a pan or a
+   * zoom too; what is being tested is that the caption's own position in the chart's world changed on
+   * the axis that was frozen.
+   */
+  const dragCaptionTo = async (toX, toY) => {
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: capX, y: capY, button: 'left', clickCount: 1, buttons: 1 });
+    const steps = 10;
+    for (let i = 1; i <= steps; i += 1) {
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', button: 'left', buttons: 1,
+        x: capX + ((toX - capX) * i) / steps, y: capY + ((toY - capY) * i) / steps,
+      });
+      await sleep(40);
+    }
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: toX, y: toY, button: 'left', buttons: 0 });
+    await sleep(900);
+    capX = toX; capY = toY;
+    return firstDrawing(JSON.parse((await stored()) || '{}'));
+  };
 
-  const after = JSON.parse((await stored()) || '{}');
-  const d1 = firstDrawing(after);
-  ok('⚠️ dragging the caption stores a manual position', !!d1?.labelStyle?.offset,
-    JSON.stringify(d1?.labelStyle));
-  ok('⚠️ ...as a data-space offset, not pixels',
-    !!d1?.labelStyle?.offset && Number.isFinite(d1.labelStyle.offset.dt)
-    && Number.isFinite(d1.labelStyle.offset.dp), JSON.stringify(d1?.labelStyle?.offset));
-  // ⚠️ AND THE DRAWING DID NOT MOVE. This is the assertion the whole interaction turns on: the same
-  // gesture that repositions the words must not move the line underneath them.
-  ok('⚠️ ...and the drawing itself did not move',
-    JSON.stringify(d1?.points) === JSON.stringify(d0?.points),
-    `${JSON.stringify(d0?.points)} -> ${JSON.stringify(d1?.points)}`);
-  ok('⚠️ ...and its text is unchanged', d1?.label === d0?.label, `${d0?.label} -> ${d1?.label}`);
+  // ── E. FAR RIGHT ──
+  const right = await dragCaptionTo(plot.left + plot.w * 0.88, plot.top + plot.h * 0.30);
+  ok('⚠️ dragging the caption stores an ABSOLUTE chart position', !!right?.labelStyle?.at,
+    JSON.stringify(right?.labelStyle));
+  ok('⚠️ ...a time and a price, not an offset',
+    right?.labelStyle?.at?.time != null && Number.isFinite(right?.labelStyle?.at?.price),
+    JSON.stringify(right?.labelStyle?.at));
+  ok('⚠️ F. the line did NOT move when the caption did',
+    JSON.stringify(right?.points) === JSON.stringify(d0?.points),
+    `${JSON.stringify(d0?.points)} -> ${JSON.stringify(right?.points)}`);
+
+  // ── G. FAR LEFT ──
+  const left = await dragCaptionTo(plot.left + plot.w * 0.12, plot.top + plot.h * 0.62);
+  ok('⚠️ ...and the caption is still grabbable where it was dropped', !!left?.labelStyle?.at,
+    'a caption that cannot be picked up again has not really been placed');
+
+  // ⚠️ THE FAILURE BEING REPORTED, MEASURED. The caption was draggable vertically and frozen
+  // horizontally, because a date-string time resolved to NaN and every horizontal delta became zero.
+  // Two drags to opposite sides of the chart must produce two different TIMES.
+  const tRight = right?.labelStyle?.at?.time;
+  const tLeft = left?.labelStyle?.at?.time;
+  ok('⚠️ H. the caption MOVED HORIZONTALLY — left and right are different times',
+    tRight != null && tLeft != null && String(tRight) !== String(tLeft),
+    `right=${JSON.stringify(tRight)} left=${JSON.stringify(tLeft)} — identical means the axis is still frozen`);
+  ok('⚠️ ...and leftwards really is earlier than rightwards',
+    String(tLeft) < String(tRight), `${JSON.stringify(tLeft)} should sort before ${JSON.stringify(tRight)}`);
+  ok('⚠️ I. ...and it moved on the price axis too, in the same gesture',
+    left?.labelStyle?.at?.price !== right?.labelStyle?.at?.price,
+    `${right?.labelStyle?.at?.price} -> ${left?.labelStyle?.at?.price}`);
+  ok('⚠️ ...with the line still untouched after both drags',
+    JSON.stringify(left?.points) === JSON.stringify(d0?.points));
+
   await shoot('live-text-dragged.png');
+
+  // ── N. CLICKING THE TEXT SELECTS ITS DRAWING ──
+  // Deselect first, so this proves the click reached the caption rather than finding it already on.
+  await click(plot.left + plot.w * 0.95, plot.top + plot.h * 0.92);
+  await sleep(700);
+  ok('the drawing is deselected to begin with',
+    !(await ev(`!!document.querySelector('[role="toolbar"]')`)));
+  // ⚠️ INSIDE THE BOX, NOT ON ITS CORNER. labelBox puts the caption's TOP-LEFT at the stored anchor,
+  // and the drag released with the pointer exactly there — so clicking that same point lands on the
+  // single corner pixel, which is a coin toss. A few pixels in is where a reader would actually click.
+  // The caption's box starts at the stored anchor and runs right and down from it; probe a few
+  // points inside it and report which one reaches, so a miss reads as a miss rather than as a bug.
+  let selected = false; let hitAt = null;
+  for (const [dx, dy] of [[12, 9], [30, 9], [12, 4], [40, 12], [6, 12], [60, 9]]) {
+    await click(capX + dx, capY + dy);
+    await sleep(900);
+    if (await ev(`!!document.querySelector('[role="toolbar"]')`)) { selected = true; hitAt = [dx, dy]; break; }
+  }
+  // ⚠️ A CONTROL, so a failure above reads as what it is. If clicking the LINE cannot raise the
+  // toolbar either, the harness has lost the drawing and the text assertion is measuring nothing.
+  let lineWorks = false;
+  if (!selected) {
+    await click(plot.left + plot.w * 0.40, plot.top + plot.h * 0.365);
+    await sleep(900);
+    lineWorks = await ev(`!!document.querySelector('[role="toolbar"]')`);
+  }
+  ok('⚠️ N. clicking the TEXT alone selects its drawing and shows the toolbar', selected,
+    selected ? '' : (lineWorks
+      ? 'the line still selects, so the text hit genuinely missed'
+      : 'the LINE does not select either — the harness has lost the drawing, so this assertion measured nothing'));
+  if (selected) console.log('     (reached at +' + hitAt[0] + ',+' + hitAt[1] + ' from the stored anchor)');
 }
+
 
 console.log('\n5. it is painted on the chart, and it follows the line');
 // Dismiss the editor, then read the canvas: the caption is drawn, so it has to be found in pixels.

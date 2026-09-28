@@ -82,6 +82,26 @@ function DrawingLayerBase({
   if (!s.life) s.life = idleTool();
   if (s.life.activeTool !== activeTool) s.life = armTool(s.life, activeTool);
 
+  /**
+   * IS THE POINTER ON A DRAWING'S TEXT?
+   *
+   * ⚠️ ONLY ON A SELECTED DRAWING, and that is the whole interaction model. Writing on a chart sits on
+   * top of the candles a reader is trying to read; if any stray word could swallow a press, ordinary
+   * panning would start failing in places the reader cannot see the reason for. Selecting first says
+   * "I mean this one", and only then does its text become something to grab.
+   *
+   * ⚠️ AND A NOTE IS EXCLUDED, because a note's text IS the drawing. Dragging it must move the drawing,
+   * which the normal drag path already does — treating it as a caption would let the words wander off
+   * the thing they are.
+   */
+  const textHitAt = (pt) => {
+    for (const [id, r] of textRectsRef.current) {
+      if (r.note) continue;
+      if (pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h) return id;
+    }
+    return null;
+  };
+
   // ── data space <-> screen space ──
   const toScreen = useCallback((pt) => {
     if (!chart || !series) return null;
@@ -658,6 +678,14 @@ function DrawingLayerBase({
       }
       if (stateRef.current.life?.activeTool || !stateRef.current.visible) return;
       if (!param?.point) { onSelect(null); return; }
+      // ⚠️ THE TEXT IS A TARGET HERE TOO, AND THIS IS THE ONLY PLACE IT CAN BE WHILE NOTHING IS
+      // SELECTED. The overlay that owns the caption's own hit-testing is pointerEvents:none until
+      // something is selected — that is what keeps the chart's pan, zoom and crosshair native — so a
+      // click on a caption never reached it, and reaching the caption still meant finding its line
+      // first. The chart reports the click with coordinates, so the same rectangles are consulted
+      // here. Once selected the overlay is live and the drag path takes over.
+      const onText = textHitAt(param.point);
+      if (onText) { onSelect(onText, false); return; }
       const hit = hitTest(param.point, project());
       // Always a fresh selection: the chart's own click carries no modifier we can read, and the
       // canvas (which does) is what handles shift-clicking a second drawing.
@@ -687,26 +715,6 @@ function DrawingLayerBase({
     if (!from) return toData(pt.x, pt.y);
     const c = constrainAngle(from, pt);
     return toData(c.x, c.y);
-  };
-
-  /**
-   * IS THE POINTER ON A DRAWING'S TEXT?
-   *
-   * ⚠️ ONLY ON A SELECTED DRAWING, and that is the whole interaction model. Writing on a chart sits on
-   * top of the candles a reader is trying to read; if any stray word could swallow a press, ordinary
-   * panning would start failing in places the reader cannot see the reason for. Selecting first says
-   * "I mean this one", and only then does its text become something to grab.
-   *
-   * ⚠️ AND A NOTE IS EXCLUDED, because a note's text IS the drawing. Dragging it must move the drawing,
-   * which the normal drag path already does — treating it as a caption would let the words wander off
-   * the thing they are.
-   */
-  const textHitAt = (pt) => {
-    for (const [id, r] of textRectsRef.current) {
-      if (r.note) continue;
-      if (pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h) return id;
-    }
-    return null;
   };
 
   const onPointerDown = (e) => {

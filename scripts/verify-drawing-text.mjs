@@ -710,6 +710,20 @@ console.log('\n11. the text is plain, and it goes where the user puts it');
     /onSelect\(textId, !!e\.shiftKey\);/.test(layer),
     'requiring the drawing to be selected first is what made the caption unreachable');
   ok('⚠️ ...without needing it selected already', !/!s\.selected\.has\(id\)/.test(layer));
+  // ⚠️ AND WHILE NOTHING IS SELECTED, WHICH IS THE CASE THAT MATTERS. The overlay that owns the
+  // caption's hit-testing is pointerEvents:none until something is selected — that is what keeps the
+  // chart's own pan, zoom and crosshair native — so a click on a caption never reached it at all, and
+  // reaching the caption still meant finding its line first. The chart reports the click with
+  // coordinates, so the same rectangles are consulted there too.
+  ok('⚠️ the chart\'s own click consults the caption rectangles',
+    /const onText = textHitAt\(param\.point\);/.test(layer));
+  ok('⚠️ ...and selects the owning drawing before falling through to the geometry',
+    /if \(onText\) \{ onSelect\(onText, false\); return; \}[\s\S]{0,120}const hit = hitTest\(param\.point/.test(layer));
+  ok('⚠️ ...while the overlay stays inert otherwise, so panning is untouched',
+    /const interactive = !!activeTool \|\| selectedIds\.length > 0 \|\| hasDraft\(s\.life\);/.test(layer),
+    'making the overlay always-live would capture every pan on any chart carrying a caption');
+  ok('the helper is defined before the click effect that uses it',
+    layer.indexOf('const textHitAt = (pt) =>') < layer.indexOf('const onText = textHitAt('));
   ok('⚠️ a note is still excluded, because a note\'s text IS the drawing', /if \(r\.note\) continue;/.test(layer));
   ok('⚠️ the text drag is checked BEFORE hit-testing the drawing',
     layer.indexOf('const textId = textHitAt(pt)') < layer.indexOf('const hit = hitTest(pt, project())'));
