@@ -19,11 +19,10 @@ import path from 'node:path';
 import { build } from 'esbuild';
 import { pathToFileURL } from 'node:url';
 import {
-  createDrawing, coerceDrawing, LABEL_MAX, TOOLS,
+  createDrawing, coerceDrawing, moveDrawing, LABEL_MAX, TOOLS,
 } from '../src/lib/chart/chart-drawings.mjs';
 import {
-  sanitizeLabelStyle, sanitizeLabelOffset, labelBox, labelFont, labelHeight,
-  labelRefPoint, labelOffsetFor, labelOffsetPoint,
+  sanitizeLabelStyle, sanitizeLabelAnchor, labelBox, labelFont, labelHeight, labelAnchorPoint,
   LABEL_ALIGNS, LABEL_PLACES, LABEL_SIZES, DEFAULT_LABEL_STYLE, LABEL_GAP, LABEL_PAD,
 } from '../src/lib/chart/drawing-label.mjs';
 import { CONTROL, controlsFor } from '../src/lib/chart/drawing-toolbar.mjs';
@@ -572,56 +571,73 @@ console.log('\n11. the text is plain, and it goes where the user puts it');
 
   // ── THE POSITION MODEL ──
   const model = read('src/lib/chart/drawing-label.mjs');
-  ok('⚠️ a manual position is stored in DATA space, not pixels',
-    /dt = Number\(raw\?\.dt\)/.test(model) && /dp = Number\(raw\?\.dp\)/.test(model));
-  ok('⚠️ ...measured from the drawing\'s own anchor, so it travels with the line',
-    /labelRefPoint = \(drawing\) =>/.test(model) && /drawing\?\.points\?\.\[0\]/.test(model));
-  ok('⚠️ ...and it is absent until the user drags', /\.\.\.\(offset \? \{ offset \} : \{\}\)/.test(model));
+  ok('⚠️ a manual position is an ABSOLUTE chart point, not an offset from the drawing',
+    /export function sanitizeLabelAnchor/.test(model) && /\{ time, price \}/.test(model));
+  ok('⚠️ ...and nothing derives it from the drawing\'s geometry any more',
+    !/labelRefPoint|labelOffsetFor|labelOffsetPoint|points\?\.\[0\]/.test(model),
+    'a position derived from the geometry can only ever be placed relative to it');
+  ok('⚠️ ...and it is absent until the user drags', /\.\.\.\(at \? \{ at \} : \{\}\)/.test(model));
 
-  // Junk cannot become a position.
-  for (const bad of [undefined, null, {}, { dt: 'x', dp: 1 }, { dt: 1 }, { dt: NaN, dp: 0 }, { dt: 1, dp: Infinity }]) {
-    ok(`a nonsense offset is rejected (${JSON.stringify(bad)})`, sanitizeLabelOffset(bad) === null);
+  // ⚠️ THE BUG THIS REPLACES, PINNED SO IT CANNOT RETURN. Daily series carry times as 'YYYY-MM-DD'
+  // STRINGS. The old offset arithmetic converted a time to seconds with a helper that understood
+  // numbers and {year,month,day} objects and nothing else, so Number('2026-09-25') was NaN, every
+  // horizontal delta resolved to zero, and the shift was silently dropped. Price is a plain number, so
+  // the vertical axis worked and the horizontal one was frozen.
+  ok('⚠️ a date-string time is accepted, which is what daily charts use',
+    !!sanitizeLabelAnchor({ time: '2026-09-25', price: 100 }),
+    'rejecting it is what froze the horizontal axis');
+  ok('⚠️ ...and a unix-seconds time too, which is what intraday uses',
+    !!sanitizeLabelAnchor({ time: 1700000000, price: 100 }));
+  ok('the module does no time arithmetic of its own at all',
+    !/toSeconds|secondsBetween|shiftSeconds|Date\.UTC/.test(model),
+    'the chart already owns that, and owning it twice is how the axes diverged');
+
+  for (const bad of [undefined, null, {}, { time: '2026-09-25' }, { price: 1 },
+    { time: 'nonsense', price: 1 }, { time: {}, price: 1 }, { time: 1, price: NaN }]) {
+    ok(`a nonsense anchor is rejected (${JSON.stringify(bad)})`, sanitizeLabelAnchor(bad) === null);
   }
-  ok('a real one is kept', JSON.stringify(sanitizeLabelOffset({ dt: -3600, dp: 2.5 })) === '{"dt":-3600,"dp":2.5}');
 
-  // ── OFFSET ARITHMETIC ──
-  const d = createDrawing('horizontal', ptsFor('horizontal'), {}, [], { label: 'support' });
-  const ref = labelRefPoint(d);
-  ok('the reference point is the drawing\'s first anchor',
-    ref.time === d.points[0].time && ref.price === d.points[0].price);
-  const off = labelOffsetFor(d, { time: ref.time + 7200, price: ref.price + 5 });
-  ok('⚠️ an offset is the delta from that anchor', off.dt === 7200 && off.dp === 5, JSON.stringify(off));
-  ok('a position with no drawing yields nothing', labelOffsetFor(null, { time: 1, price: 1 }) === null);
-  ok('a nonsense position yields nothing', labelOffsetFor(d, { time: null, price: 1 }) === null);
+  // ── BOTH AXES MOVE, INDEPENDENTLY ──
+  // ⚠️ THE ASSERTION THE WHOLE FIX EXISTS FOR. A horizontal line's caption must move LEFT and RIGHT,
+  // not only up and down, and its horizontal position must owe nothing to the line's anchor.
+  {
+    const line = createDrawing('horizontal', [{ time: '2026-09-25', price: 100 }], {}, [], { label: 'TEST' });
+    const place = (t, p) => coerceDrawing({ ...line, labelStyle: { ...line.labelStyle, at: { time: t, price: p } } });
+    const west = place('2026-09-01', 100);
+    const east = place('2026-10-15', 100);
+    ok('⚠️ a caption can be placed far to the LEFT of the line\'s anchor',
+      west.labelStyle.at.time === '2026-09-01', JSON.stringify(west.labelStyle.at));
+    ok('⚠️ ...and far to the RIGHT of it',
+      east.labelStyle.at.time === '2026-10-15', JSON.stringify(east.labelStyle.at));
+    ok('⚠️ ...and the two are different positions, so the axis is genuinely free',
+      west.labelStyle.at.time !== east.labelStyle.at.time);
+    const up = place('2026-09-25', 180);
+    const down = place('2026-09-25', 20);
+    ok('⚠️ and it moves UP and DOWN independently of that',
+      up.labelStyle.at.price === 180 && down.labelStyle.at.price === 20);
+    const diag = place('2026-08-14', 175);
+    ok('⚠️ ...and diagonally, both at once',
+      diag.labelStyle.at.time === '2026-08-14' && diag.labelStyle.at.price === 175);
+    // ⚠️ AND NONE OF IT TOUCHED THE LINE.
+    ok('⚠️ the drawing\'s own anchors are unchanged throughout',
+      [west, east, up, down, diag].every((d) => d.points[0].time === '2026-09-25' && d.points[0].price === 100));
+  }
 
-  // ⚠️ AND IT TRAVELS WITH THE DRAWING. This is the property the whole data-space choice is for: move
-  // the line and the caption must move with it, keeping the placement the user chose. Storing an
-  // absolute time and price would be just as durable through a zoom and would fail exactly here.
-  const moved = { ...d, points: [{ time: d.points[0].time + 86400, price: d.points[0].price + 12 }] };
-  const sameOffset = labelOffsetFor(moved, {
-    time: moved.points[0].time + off.dt, price: moved.points[0].price + off.dp,
-  });
-  ok('⚠️ the same offset describes the same relative place after the drawing moves',
-    sameOffset.dt === off.dt && sameOffset.dp === off.dp, JSON.stringify(sameOffset));
-
-  // ── THE PROJECTION ──
-  // A stand-in for the chart's own projection, which is what the renderer passes in.
-  const toScreen = (pt) => ({ x: (pt.time - 1700000000) / 60, y: 500 - pt.price });
-  const placed = { ...d, labelStyle: sanitizeLabelStyle({ offset: { dt: 600, dp: 4 } }) };
-  const at = labelOffsetPoint(placed, placed.labelStyle, toScreen);
-  ok('⚠️ a stored offset projects to a pixel point', !!at && Number.isFinite(at.x) && Number.isFinite(at.y),
-    JSON.stringify(at));
-  ok('⚠️ ...at the anchor plus the offset, in the chart\'s own coordinates',
-    at.x === 10 && at.y === 500 - (d.points[0].price + 4), JSON.stringify(at));
-  ok('no offset projects to nothing', labelOffsetPoint(d, sanitizeLabelStyle({}), toScreen) === null);
-  ok('no projection projects to nothing', labelOffsetPoint(placed, placed.labelStyle, null) === null);
-
-  // ⚠️ PAN AND ZOOM DO NOT MOVE IT. Same data, a different projection — which is exactly what a pan or
-  // a zoom is — puts it at the pixel that same data point now occupies, and nowhere else.
-  const zoomed = (pt) => ({ x: (pt.time - 1700000000) / 15, y: 500 - pt.price * 2 });
-  const atZoom = labelOffsetPoint(placed, placed.labelStyle, zoomed);
-  ok('⚠️ a zoom moves it exactly as far as it moves the chart',
-    atZoom.x === 40 && atZoom.y === 500 - (d.points[0].price + 4) * 2, JSON.stringify(atZoom));
+  // ── PROJECTION: THE CHART'S COORDINATES, NOT PIXELS ──
+  {
+    const style = sanitizeLabelStyle({ at: { time: '2026-09-10', price: 150 } });
+    // A stand-in for the chart's projection, which the renderer passes in.
+    const toScreen = (pt) => ({ x: (Date.parse(pt.time) - Date.parse('2026-09-01')) / 86400000 * 10, y: 400 - pt.price });
+    const at = labelAnchorPoint(style, toScreen);
+    ok('⚠️ a stored anchor projects to a pixel point', !!at && at.x === 90 && at.y === 250, JSON.stringify(at));
+    // ⚠️ PAN AND ZOOM DO NOT MOVE IT. Same data, a different projection — which is what a pan or a
+    // zoom is — puts it at the pixel that same time and price now occupy, and nowhere else.
+    const zoomed = (pt) => ({ x: (Date.parse(pt.time) - Date.parse('2026-09-01')) / 86400000 * 40, y: 400 - pt.price * 2 });
+    const az = labelAnchorPoint(style, zoomed);
+    ok('⚠️ a zoom moves it exactly as far as it moves the chart', az.x === 360 && az.y === 100, JSON.stringify(az));
+    ok('no anchor projects to nothing', labelAnchorPoint(sanitizeLabelStyle({}), toScreen) === null);
+    ok('no projection projects to nothing', labelAnchorPoint(style, null) === null);
+  }
 
   // ── THE BOX ──
   const PLOT = { w: 600, h: 400 };
@@ -632,64 +648,99 @@ console.log('\n11. the text is plain, and it goes where the user puts it');
   const auto = labelBox([{ x: 0, y: 200 }, { x: 600, y: 200 }], st, 60, PLOT);
   ok('⚠️ ...while a drawing that has not been dragged still uses the default',
     auto.manual === false && auto.x !== 123);
-  // Still inside the plot, however far the user drags.
+  // ⚠️ CLAMPED ONLY ENOUGH TO STAY REACHABLE, never back to the drawing.
   const far = labelBox([{ x: 0, y: 200 }, { x: 600, y: 200 }], st, 60, PLOT, { at: { x: 9999, y: -9999 } });
-  ok('⚠️ a manual position is still clamped into the plot',
+  ok('⚠️ a manual position is kept inside the plot so it cannot be lost',
     far.x >= 0 && far.y >= 0 && far.x + far.w <= PLOT.w && far.y + far.h <= PLOT.h, JSON.stringify(far));
 
   // ── PERSISTENCE ──
   const withPos = createDrawing('trend', ptsFor('trend'), {}, [], {
-    label: 'support', labelStyle: { offset: { dt: -1800, dp: -3.25 }, size: 14, bold: false, align: 'left', place: 'below' },
+    label: 'support', labelStyle: { at: { time: 1700003600, price: 222.5 }, size: 14, bold: false, align: 'left', place: 'below' },
   });
   const back = coerceDrawing(JSON.parse(JSON.stringify(withPos)));
   ok('⚠️ the manual position survives a round trip',
-    back.labelStyle.offset.dt === -1800 && back.labelStyle.offset.dp === -3.25,
-    JSON.stringify(back.labelStyle.offset));
+    back.labelStyle.at.time === 1700003600 && back.labelStyle.at.price === 222.5,
+    JSON.stringify(back.labelStyle.at));
   ok('⚠️ ...alongside the style, which is unchanged',
     back.labelStyle.size === 14 && back.labelStyle.bold === false
     && back.labelStyle.align === 'left' && back.labelStyle.place === 'below');
-  ok('⚠️ a drawing saved before dragging existed still loads, with no offset',
-    !('offset' in coerceDrawing({ type: 'trend', points: ptsFor('trend'), label: 'old' }).labelStyle));
+  ok('⚠️ a drawing saved before dragging existed still loads, with no anchor',
+    !('at' in coerceDrawing({ type: 'trend', points: ptsFor('trend'), label: 'old' }).labelStyle));
+
+  // ⚠️ AND A POSITION SAVED UNDER THE BROKEN OFFSET MODEL IS TRANSLATED, NOT DISCARDED. Its time delta
+  // could never be anything but zero, so what those drawings actually rendered was the anchor's own
+  // time with the price offset applied — which is exactly what the migration reconstructs.
+  {
+    const legacy = coerceDrawing({
+      type: 'horizontal', points: [{ time: '2026-09-25', price: 100 }],
+      label: 'old', labelStyle: { offset: { dt: 0, dp: 7 }, size: 14 },
+    });
+    ok('⚠️ a legacy offset becomes an absolute anchor',
+      legacy.labelStyle.at?.time === '2026-09-25' && legacy.labelStyle.at?.price === 107,
+      JSON.stringify(legacy.labelStyle));
+    ok('...and the rest of its style is kept', legacy.labelStyle.size === 14);
+    ok('...and the dead offset field is gone', !('offset' in legacy.labelStyle));
+  }
+
+  // ── IT STILL BELONGS TO THE DRAWING ──
+  // ⚠️ BELONGING AND BEING POSITIONALLY DERIVED ARE DIFFERENT THINGS, and conflating them is what
+  // broke this. The anchor is absolute, so it does not follow the line on its own — moveDrawing
+  // carries it, by the same delta and under the same axis locks.
+  {
+    const d = createDrawing('trend', [{ time: '2026-09-01', price: 100 }, { time: '2026-09-20', price: 120 }],
+      {}, [], { label: 'x', labelStyle: { at: { time: '2026-09-10', price: 150 } } });
+    const moved = moveDrawing(d, { dTime: 86400 * 5, dPrice: 10 });
+    ok('⚠️ dragging the LINE carries its caption with it',
+      moved.labelStyle.at.time === '2026-09-15' && moved.labelStyle.at.price === 160,
+      JSON.stringify(moved.labelStyle.at));
+    ok('...by exactly the delta the line moved',
+      moved.points[0].time === '2026-09-06' && moved.points[0].price === 110);
+    // A horizontal line locks time, so its caption must not drift sideways when the line is nudged.
+    const hz = createDrawing('horizontal', [{ time: '2026-09-01', price: 100 }], {}, [],
+      { label: 'x', labelStyle: { at: { time: '2026-09-10', price: 150 } } });
+    const hzMoved = moveDrawing(hz, { dTime: 86400 * 5, dPrice: 10 });
+    ok('⚠️ ...and the drawing\'s axis locks apply to the caption too',
+      hzMoved.labelStyle.at.time === '2026-09-10' && hzMoved.labelStyle.at.price === 160,
+      JSON.stringify(hzMoved.labelStyle.at));
+    ok('a locked drawing moves neither', JSON.stringify(moveDrawing({ ...d, locked: true }, { dTime: 99, dPrice: 9 })) === JSON.stringify({ ...d, locked: true }));
+  }
 
   // ── THE DRAG PATH ──
-  ok('⚠️ the writing is grabbable only on a SELECTED drawing',
-    /if \(r\.note \|\| !s\.selected\.has\(id\)\) continue;/.test(layer),
-    'any stray word swallowing a press would break panning in places a reader cannot see');
-  ok('⚠️ ...and a note is excluded, because a note\'s text IS the drawing', /r\.note \|\|/.test(layer));
+  ok('⚠️ clicking the words selects the drawing they belong to',
+    /onSelect\(textId, !!e\.shiftKey\);/.test(layer),
+    'requiring the drawing to be selected first is what made the caption unreachable');
+  ok('⚠️ ...without needing it selected already', !/!s\.selected\.has\(id\)/.test(layer));
+  ok('⚠️ a note is still excluded, because a note\'s text IS the drawing', /if \(r\.note\) continue;/.test(layer));
   ok('⚠️ the text drag is checked BEFORE hit-testing the drawing',
     layer.indexOf('const textId = textHitAt(pt)') < layer.indexOf('const hit = hitTest(pt, project())'));
   ok('⚠️ ...and it returns, so the drawing does not move and the chart does not pan',
     /if \(textId\) \{[\s\S]{0,900}return;/.test(layer));
   ok('⚠️ ...with the press stopped from reaching the chart',
     /e\.stopPropagation\?\.\(\);[\s\S]{0,60}e\.preventDefault\?\.\(\);/.test(layer));
-  ok('⚠️ dragging writes only the caption, never the geometry',
-    /labelStyle: sanitizeLabelStyle\(\{ \.\.\.sanitizeLabelStyle\(d\.labelStyle\), offset: next \}\)/.test(layer)
-    && !/points:[^\n]*textDrag/.test(layer));
+  ok('⚠️ the drag stores the pointer\'s own time and price, with no arithmetic',
+    /at: \{ time: now\.time, price: now\.price \}/.test(layer));
+  ok('⚠️ ...and no delta or offset survives in the drag path',
+    !/textDrag\.base|labelOffsetFor|timeDeltaSeconds\(s\.textDrag/.test(layer),
+    'the delta model is what dropped the horizontal axis');
   ok('⚠️ ...under ONE token, so the whole drag is one undo step',
     /gestureToken\('text'\)/.test(layer) && /\}\)\), s\.textDrag\.token\)/.test(layer));
-  ok('⚠️ ...recomputed from the drag\'s start each frame, so a long drag does not drift',
-    /s\.textDrag\.base\.dt \+ dt/.test(layer) && /s\.textDrag\.base\.dp \+ dp/.test(layer));
+  ok('⚠️ dragging writes only the caption, never the geometry',
+    /labelStyle: sanitizeLabelStyle\(\{ \.\.\.sanitizeLabelStyle\(d\.labelStyle\), at:/.test(layer)
+    && !/points:[^\n]*textDrag/.test(layer));
   ok('the drag is released on pointer up', /s\.textDrag = null;/.test(layer));
   ok('⚠️ a locked drawing\'s text cannot be dragged', /target && !target\.locked/.test(layer));
-
-  // ⚠️ THE FIRST DRAG STARTS FROM WHERE THE CAPTION LOOKS, not from the anchor. Without this a caption
-  // that had never been moved would jump to the drawing's anchor the instant it was touched.
-  ok('⚠️ an undragged caption starts from its current position',
-    /let base = lstyle\.offset;[\s\S]{0,320}labelOffsetFor\(target, at\)/.test(layer));
+  ok('the renderer reads the absolute anchor', /labelAnchorPoint\(lstyle, toScreen\)/.test(layer));
 
   // ── COVERAGE ──
-  // Every labelable tool goes through this one path, so this is a property rather than seven checks —
-  // asserted for each anyway, because "it is the same code" is what a regression quietly disproves.
   for (const id of LABELABLE) {
     const made = createDrawing(id, ptsFor(id), {}, [], {
-      label: 'support', labelStyle: { offset: { dt: 60, dp: 1 } },
+      label: 'support', labelStyle: { at: { time: 1700009999, price: 42 } },
     });
-    ok(`${id}: keeps a dragged caption position`, made.labelStyle.offset.dt === 60);
-    ok(`${id}: ...across a reload`, coerceDrawing(JSON.parse(JSON.stringify(made))).labelStyle.offset.dp === 1);
+    ok(`${id}: keeps a freely placed caption position`, made.labelStyle.at.time === 1700009999);
+    ok(`${id}: ...across a reload`, coerceDrawing(JSON.parse(JSON.stringify(made))).labelStyle.at.price === 42);
   }
-  // And the standalone note: plain text, and dragged by the ordinary drawing drag, since it IS one.
   ok('⚠️ a standalone note is still just its words', TOOLS.text.hasText === true);
-  ok('⚠️ ...and carries no caption offset of its own, having nothing to offset from',
+  ok('⚠️ ...and carries no caption anchor of its own, being one itself',
     !('labelStyle' in createDrawing('text', [{ time: 1, price: 2 }], {}, [], { text: 'hey' })));
 }
 

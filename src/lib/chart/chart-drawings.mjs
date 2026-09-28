@@ -480,6 +480,22 @@ export function newDrawingId(type, existing = []) {
   return `${type}-x${seq}`;
 }
 
+/**
+ * A caption position saved under the old offset model, translated to the absolute one.
+ *
+ * ⚠️ THE MIGRATION IS EXACT, NOT APPROXIMATE, and only because the old model was broken. Its time
+ * delta could never be anything but zero on a daily chart — the conversion silently failed — so the
+ * position those drawings actually rendered at was the anchor's own time with the price offset
+ * applied. That is precisely what this reconstructs. Nothing is guessed.
+ */
+function migrateLabelAnchor(raw, anchor) {
+  if (!raw || raw.at || !raw.offset || !anchor) return raw;
+  const dp = Number(raw.offset.dp);
+  if (!Number.isFinite(dp)) return raw;
+  const { offset, ...rest } = raw;
+  return { ...rest, at: { time: anchor.time, price: anchor.price + dp } };
+}
+
 export function createDrawing(type, points, style = {}, existing = [], extra = {}) {
   const def = tool(type);
   if (!def || !Array.isArray(points) || points.length !== def.points) return null;
@@ -573,7 +589,15 @@ export function moveDrawing(drawing, { dTime = 0, dPrice = 0 }, handle = null) {
   const points = handle == null
     ? drawing.points.map(shift)
     : drawing.points.map((p, i) => (i === handle ? shift(p) : p));
-  return { ...drawing, points };
+  // ⚠️ A MANUALLY PLACED CAPTION TRAVELS WITH THE DRAWING. Its position is an absolute time and price
+  // — not an offset from the geometry, which is what made it impossible to move sideways — so it does
+  // not follow along on its own. Belonging has to be expressed here instead: the same delta, and the
+  // same axis locks, so a caption on a horizontal line cannot drift sideways when the line is nudged.
+  const at = drawing?.labelStyle?.at;
+  const labelStyle = at
+    ? { ...drawing.labelStyle, at: { time: shiftTime(at.time, dt), price: at.price + dp } }
+    : drawing.labelStyle;
+  return { ...drawing, points, ...(drawing.labelStyle ? { labelStyle } : {}) };
 }
 
 // ── serialisation ────────────────────────────────────────────────────────────
@@ -608,7 +632,7 @@ export function coerceDrawing(raw, existing = []) {
       // An absent style is the DEFAULT style, not a missing field: every drawing stored before
       // captions had styling comes back through here, and an undefined size would reach canvas as
       // 'undefinedpx' and paint nothing at all.
-      labelStyle: sanitizeLabelStyle(raw?.labelStyle),
+      labelStyle: sanitizeLabelStyle(migrateLabelAnchor(raw?.labelStyle, points[0])),
     } : {}),
     ...(def.extendable ? { extendLeft: raw?.extendLeft === true, extendRight: raw?.extendRight === true } : {}),
     ...(def.editableLevels ? { levels: sanitizeFibLevels(raw?.levels), fill: raw?.fill === true } : {}),

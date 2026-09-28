@@ -53,31 +53,45 @@ export const LABEL_GAP = 5;
 /**
  * A manually chosen position, or null.
  *
- * ⚠️ IT IS AN OFFSET IN DATA SPACE, NOT A SCREEN POSITION. Stored pixels would be wrong the moment the
- * chart was panned, zoomed, resized, or opened on another monitor — the caption would sit where those
- * pixels now are rather than where the user put it. `dt` is a time offset in seconds and `dp` a price
- * offset, both measured from the drawing's own first anchor, which gives three things at once: the
- * caption stays at the same point in the chart's world through any pan or zoom; it travels with the
- * line when the line is dragged, keeping the relative placement the user chose; and it round-trips
- * through storage as two numbers.
+ * ⚠️ AN ABSOLUTE POINT IN THE CHART'S OWN COORDINATES — a time and a price — NOT AN OFFSET FROM THE
+ * DRAWING. It was an offset in seconds and price from the drawing's first anchor, and that model was
+ * wrong twice over.
+ *
+ * It could not move horizontally at all on a daily chart. Daily series carry times as 'YYYY-MM-DD'
+ * STRINGS, and the offset arithmetic converted a time to seconds with a helper that understood
+ * numbers and {year,month,day} objects and nothing else. Number('2026-09-25') is NaN, so every
+ * horizontal delta resolved to zero and the shift was silently dropped. Price is a plain number, so
+ * the vertical axis worked and the horizontal one was frozen — exactly the reported symptom.
+ *
+ * And even repaired it would have been the wrong shape: a caption whose position is derived from the
+ * drawing's geometry is a caption that can only ever be placed relative to it. A time and a price are
+ * what the chart is made of, so they survive a pan, a zoom, a resize, a timeframe change and a reload
+ * for the same reason the drawing's own anchors do, and they place the text anywhere in the plot.
+ *
+ * The caption still BELONGS to the drawing: it is stored on it, deleted with it, and carried along
+ * when the drawing is dragged — see moveDrawing, which shifts this by the same delta. Belonging and
+ * being positionally derived are different things, and conflating them is what broke this.
  */
-export function sanitizeLabelOffset(raw) {
-  const dt = Number(raw?.dt);
-  const dp = Number(raw?.dp);
-  if (!Number.isFinite(dt) || !Number.isFinite(dp)) return null;
-  return { dt, dp };
+export function sanitizeLabelAnchor(raw) {
+  const price = Number(raw?.price);
+  const time = raw?.time;
+  if (!Number.isFinite(price)) return null;
+  // The two shapes a series actually uses: unix seconds, or a 'YYYY-MM-DD' business day.
+  const ok = (typeof time === 'number' && Number.isFinite(time))
+    || (typeof time === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(time));
+  return ok ? { time, price } : null;
 }
 
 export function sanitizeLabelStyle(raw) {
   const color = coerceColorValue(raw?.color);
   const size = Number(raw?.size);
-  const offset = sanitizeLabelOffset(raw?.offset);
+  const at = sanitizeLabelAnchor(raw?.at);
   return {
     // Absent means inherit; present means the user chose it, in both themes.
     ...(color !== null ? { color } : {}),
     // ⚠️ ABSENT UNTIL THE USER DRAGS IT. While it is absent the caption follows align/place — the
     // sensible default near the drawing. Once it is present, it wins and nothing snaps it back.
-    ...(offset ? { offset } : {}),
+    ...(at ? { at } : {}),
     size: LABEL_SIZES.includes(size) ? size : DEFAULT_LABEL_STYLE.size,
     bold: raw?.bold === undefined ? DEFAULT_LABEL_STYLE.bold : raw.bold === true,
     align: LABEL_ALIGNS.includes(raw?.align) ? raw.align : DEFAULT_LABEL_STYLE.align,
@@ -96,70 +110,17 @@ export const labelHeight = (style) =>
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 
 /**
- * The drawing's own reference point — what a manual caption offset is measured from.
- *
- * ⚠️ THE FIRST ANCHOR, BECAUSE THAT IS THE POINT THE DRAWING IS MADE OF. Measuring from it is what
- * makes the caption travel with the line when the line is dragged: both move by the same delta, so the
- * offset — and therefore the placement the user chose — is unchanged.
- */
-export const labelRefPoint = (drawing) => {
-  const p0 = drawing?.points?.[0];
-  return p0 && p0.time != null && Number.isFinite(Number(p0.price))
-    ? { time: p0.time, price: Number(p0.price) } : null;
-};
-
-/**
  * Where a manually placed caption sits, in pixels — or null if the user has not placed one.
  *
- * The stored offset is data, so turning it into a position needs the chart's own projection. That is
- * passed in rather than imported: this module stays pure, and the caller already holds the exact
- * projection the strokes were drawn with, which is the one the caption has to agree with.
+ * The stored anchor is chart data, so turning it into a position needs the chart's own projection.
+ * That is passed in rather than imported: this module stays pure, and the caller already holds the
+ * exact projection the strokes were drawn with, which is the one the caption has to agree with.
  */
-export function labelOffsetPoint(drawing, style, toScreen) {
-  const off = style?.offset;
-  const ref = labelRefPoint(drawing);
-  if (!off || !ref || typeof toScreen !== 'function') return null;
-  const at = toScreen({ time: shiftSeconds(ref.time, off.dt), price: ref.price + off.dp });
-  return at && Number.isFinite(at.x) && Number.isFinite(at.y) ? { x: at.x, y: at.y } : null;
-}
-
-/**
- * The offset a caption should store to sit at a given data point.
- *
- * ⚠️ TIME IS A DELTA IN SECONDS, NOT A SECOND TIMESTAMP. Storing the absolute time would be just as
- * durable through a zoom, and would NOT travel with the line: drag the drawing and its caption would
- * stay behind at the time it was left at.
- */
-export function labelOffsetFor(drawing, at) {
-  const ref = labelRefPoint(drawing);
-  if (!ref || !at || at.time == null || !Number.isFinite(Number(at.price))) return null;
-  return sanitizeLabelOffset({ dt: secondsBetween(ref.time, at.time), dp: Number(at.price) - ref.price });
-}
-
-/**
- * Chart times are seconds for an intraday series and a business-day object for a daily one, so the
- * two shapes are handled here rather than in every caller.
- */
-function toSeconds(t) {
-  if (typeof t === 'number') return t;
-  if (t && typeof t === 'object' && t.year != null) {
-    return Math.floor(Date.UTC(t.year, (t.month || 1) - 1, t.day || 1) / 1000);
-  }
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-}
-const secondsBetween = (from, to) => {
-  const a = toSeconds(from);
-  const b = toSeconds(to);
-  return a == null || b == null ? 0 : b - a;
-};
-/** Applied in the same shape it arrived in, so a daily chart keeps getting business days. */
-function shiftSeconds(t, dt) {
-  if (typeof t === 'number') return t + dt;
-  const base = toSeconds(t);
-  if (base == null) return t;
-  const d = new Date((base + dt) * 1000);
-  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+export function labelAnchorPoint(style, toScreen) {
+  const at = style?.at;
+  if (!at || typeof toScreen !== 'function') return null;
+  const px = toScreen(at);
+  return px && Number.isFinite(px.x) && Number.isFinite(px.y) ? { x: px.x, y: px.y } : null;
 }
 
 /**

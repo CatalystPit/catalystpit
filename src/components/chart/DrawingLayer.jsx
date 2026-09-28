@@ -13,7 +13,7 @@ import {
 import { projectDrawings, resolveAnchor, labelX } from '../../lib/chart/chart-project.mjs';
 import { selectionBox } from '../../lib/chart/drawing-toolbar.mjs';
 import {
-  sanitizeLabelStyle, labelFont, labelBox, labelHeight, labelOffsetPoint, labelOffsetFor, LABEL_GAP,
+  sanitizeLabelStyle, labelFont, labelBox, labelHeight, labelAnchorPoint, LABEL_GAP,
 } from '../../lib/chart/drawing-label.mjs';
 import { axisLabelSpecs, reconcileAxisLabels, priceLineOptionsFor, priceInPlot } from '../../lib/chart/price-axis-labels.mjs';
 import {
@@ -370,7 +370,7 @@ function DrawingLayerBase({
           } else {
             const seg = d.segments[0] || (d.handles[0] ? [d.handles[0], d.handles[0]] : null);
             // The manual position, projected from data space to pixels. Absent until the user drags.
-            const at = labelOffsetPoint(d.source, lstyle, toScreen);
+            const at = labelAnchorPoint(lstyle, toScreen);
             if (seg) box = labelBox(seg, lstyle, tw, plotBox, at ? { at } : {});
           }
 
@@ -703,7 +703,7 @@ function DrawingLayerBase({
    */
   const textHitAt = (pt) => {
     for (const [id, r] of textRectsRef.current) {
-      if (r.note || !s.selected.has(id)) continue;
+      if (r.note) continue;
       if (pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h) return id;
     }
     return null;
@@ -751,20 +751,15 @@ function DrawingLayerBase({
     // the gesture from also moving the drawing underneath and from panning the chart.
     const textId = textHitAt(pt);
     if (textId) {
-      const from = toData(pt.x, pt.y);
       const target = s.drawings.find((d) => d.id === textId);
-      if (from && target && !target.locked) {
-        const lstyle = sanitizeLabelStyle(target.labelStyle);
-        // Starting from where the caption IS: if it has never been dragged, its current default
-        // position becomes the starting offset, so the first drag moves it from where it looks rather
-        // than jumping to the anchor.
-        let base = lstyle.offset;
-        if (!base) {
-          const r = textRectsRef.current.get(textId);
-          const at = r ? toData(r.x, r.y) : null;
-          base = at ? labelOffsetFor(target, at) : { dt: 0, dp: 0 };
-        }
-        s.textDrag = { id: textId, from, base: base || { dt: 0, dp: 0 }, token: gestureToken('text') };
+      // ⚠️ CLICKING THE WORDS SELECTS THE DRAWING THEY BELONG TO. It used to require the drawing to be
+      // selected already, so reaching a caption meant finding and clicking its line first — which is
+      // exactly the thing the caption exists to save you from.
+      onSelect(textId, !!e.shiftKey);
+      if (target && !target.locked) {
+        // ⚠️ NO DELTA ARITHMETIC. The pointer's own data coordinates ARE the new position, so there is
+        // nothing to convert, accumulate or shift — which is where the horizontal axis was lost.
+        s.textDrag = { id: textId, token: gestureToken('text') };
         e.currentTarget.setPointerCapture?.(e.pointerId);
         e.stopPropagation?.();
         e.preventDefault?.();
@@ -825,13 +820,14 @@ function DrawingLayerBase({
     // point each frame rather than accumulated, so there is no per-move drift over a long drag — the
     // same reason the drawing drag measures every step from its original.
     if (s.textDrag) {
+      // ⚠️ THE POINTER'S OWN TIME AND PRICE, STORED VERBATIM. Both axes move because both come from the
+      // same projection the chart uses for everything else — no offset, no delta, no time arithmetic
+      // of our own, which is where the horizontal axis was being silently dropped on daily charts.
       const now = toData(pt.x, pt.y);
       if (!now) return;
-      const dt = timeDeltaSeconds(s.textDrag.from.time, now.time);
-      const dp = now.price - s.textDrag.from.price;
-      const next = { dt: s.textDrag.base.dt + dt, dp: s.textDrag.base.dp + dp };
       onChange(s.drawings.map((d) => (d.id !== s.textDrag.id ? d : {
-        ...d, labelStyle: sanitizeLabelStyle({ ...sanitizeLabelStyle(d.labelStyle), offset: next }),
+        ...d,
+        labelStyle: sanitizeLabelStyle({ ...sanitizeLabelStyle(d.labelStyle), at: { time: now.time, price: now.price } }),
       })), s.textDrag.token);
       paint();
       return;
