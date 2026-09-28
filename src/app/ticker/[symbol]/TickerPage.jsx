@@ -207,8 +207,8 @@ function Hero({ data, earnings }) {
         </div>
         {nextEarnings && (
           <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-            Next earnings <span style={{ fontWeight: 600, color: C.ink }}>{fmtDateLong(nextEarnings)}</span>
-            <span style={{ color: C.dim }}> · estimated from filing history</span>
+            Estimated next earnings <span style={{ fontWeight: 600, color: C.ink }}>{fmtDateLong(nextEarnings)}</span>
+            <span style={{ color: C.dim }}> · projected from SEC filing cadence, not company-confirmed</span>
           </div>
         )}
         <div><ConsensusPanel symbol={data.symbol} /></div>
@@ -879,7 +879,7 @@ function EarningsTab({ symbol, earnings }) {
   const rows = earnings?.earnings || [];
   const hasDerived = rows.some((r) => r.derived);
   const next = estimateNextEarnings(rows);
-  const title = next ? `Earnings history (Next earnings: ${fmtDateLong(next)} · est.)` : 'Earnings history';
+  const title = next ? `Earnings history (Estimated next earnings: ${fmtDateLong(next)})` : 'Earnings history';
   return (
     <Section title={title}>
       {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>

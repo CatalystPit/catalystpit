@@ -55,9 +55,13 @@ function Row({ item, onRemove, removing }) {
           ) : <span style={{ fontSize: 11, color: C.dim }}>—</span>}
       </div>
 
-      {/* NEXT EARNINGS (SEC-cadence estimate, filled lazily) */}
+      {/* ESTIMATED NEXT EARNINGS (SEC filing-cadence projection, filled lazily).
+          ⚠️ THE WORD "EST" CARRIES THE WHOLE CLAIM, so it leads rather than trails. This is not a
+          company-confirmed date and is not even an earnings date in the strict sense — it projects
+          the next 10-Q/10-K FILING, which lands a median of 5 days after the announcement itself.
+          Measured accuracy: right to the day 24.6% of the time, within a week 53.3%. */}
       <div style={{ width: 92, textAlign: 'right', flexShrink: 0 }}>
-        <MiniLabel>NEXT EARN · EST</MiniLabel>
+        <MiniLabel>EST. EARNINGS</MiniLabel>
         {item.nextEarnings === undefined ? <Skel w={58} h={12} mb={0} />
           : item.nextEarnings ? <span className="cp-num" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.text, whiteSpace: 'nowrap' }}>{fmtAdded(item.nextEarnings)}</span>
           : <span style={{ fontSize: 11, color: C.dim }}>—</span>}

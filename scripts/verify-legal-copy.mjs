@@ -331,5 +331,52 @@ L('⚠️ 13F AND ALERT DISCLOSURES RENDER');
     && JSON.parse(read('../vercel.json')).crons.some((c) => c.path === '/api/cron/evidence-alerts' && c.schedule === '*/15 * * * *'));
 }
 
+// ── AN ESTIMATED DATE MUST NEVER READ AS A SCHEDULED ONE ─────────────────────
+//
+// ⚠️ WHAT THIS GUARDS. The "next earnings" date on a ticker page is not a company-confirmed earnings
+// date, and it is not even an earnings date: it projects the next 10-Q/10-K FILING from the median
+// gap between past filings. Measured against real EDGAR history — 2,360 walk-forward predictions —
+// it is right to the day 24.6% of the time and within a week 53.3%, and the announcement itself
+// lands a median of 5 days BEFORE the filing being predicted (p90 24 days). So the wording has to
+// carry the uncertainty; a bare "Next earnings Nov 25" reads as a diary entry.
+//
+// These assertions fail the moment someone shortens the label back.
+L('an estimated earnings date is never presented as a scheduled one');
+{
+  const ticker = code(read('../src/app/ticker/[symbol]/TickerPage.jsx'));
+  const watchlist = code(read('../src/components/WatchlistSection.jsx'));
+  const estimator = read('../src/lib/earnings-estimate.js');
+
+  ok('⚠️ the ticker hero leads with the word Estimated',
+    /Estimated next earnings <span/.test(ticker));
+  ok('⚠️ …and says where the date comes from and that nobody confirmed it',
+    /projected from SEC filing cadence, not company-confirmed/.test(ticker));
+  ok('⚠️ the earnings-history card is labelled an estimate too',
+    /Earnings history \(Estimated next earnings: \$\{fmtDateLong\(next\)\}\)/.test(ticker));
+  ok('⚠️ the watchlist column says EST. before it says earnings',
+    /<MiniLabel>EST\. EARNINGS<\/MiniLabel>/.test(watchlist));
+
+  // The forbidden phrasings, checked against CODE so the explanations above cannot satisfy them.
+  for (const [phrase, re] of [
+    ['a bare "Next earnings"', />\s*Next earnings\b|['"`]Next earnings\b/],
+    ['"Earnings date"', /\bEarnings date\b/],
+    ['"Scheduled earnings"', /\bScheduled earnings\b/i],
+    ['"Confirmed earnings"', /\bConfirmed earnings\b/i],
+  ]) {
+    ok(`${phrase} appears nowhere a customer reads it`, !re.test(ticker) && !re.test(watchlist),
+      'only a real forward calendar source could justify that wording');
+  }
+
+  // ⚠️ AND THE ESTIMATOR ITSELF SAYS WHAT IT RETURNS. The mislabel started here: the function is
+  // named for earnings and returns a filing date, so every caller inherited the wrong noun.
+  ok('⚠️ the estimator states, up front, that it predicts a FILING date',
+    /THIS RETURNS AN ESTIMATED SEC FILING DATE\. IT IS NOT AN ANNOUNCEMENT DATE\./.test(estimator),
+    'the mislabel started here: a function named for earnings that returns a filing date');
+  ok('⚠️ …and records how far apart the two actually are',
+    /MEDIAN OF 5 DAYS BEFORE the filing/.test(estimator));
+  ok('⚠️ …and records the measured accuracy, so nobody has to guess whether it is good enough',
+    /within 7 days 53\.3%/.test(estimator) && /p90 35 days/.test(estimator));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
