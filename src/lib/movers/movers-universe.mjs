@@ -54,6 +54,24 @@ export function moversNoteState(movers) {
   return { kind: 'final', date: (frozen ? (movers.session?.sessionDate || movers.asOf) : movers.asOf) ?? null };
 }
 
+/**
+ * The freshness badge a surface shows for a movers payload.
+ *
+ * ⚠️ THE MAPPING LIVES HERE, WITH THE STATE IT DESCRIBES. The Terminal panel held its own copy —
+ * a private three-way string whose middle branch could never be reached, and whose 'realtime' branch
+ * claimed a live rebuild cadence even when the snapshot was FROZEN after the bell. Two components
+ * describing one feed is how they come to disagree; it is also how a test ends up driving a local
+ * reimplementation of the mapping rather than the mapping the reader sees.
+ *
+ * 'SNAPSHOT · 15 MIN' is the REBUILD CADENCE of the licensed real-time snapshot, not a quote delay.
+ */
+export function moversFreshnessLabel(movers) {
+  const note = moversNoteState(movers);
+  if (!note) return '';
+  if (note.kind === 'updated') return 'SNAPSHOT · 15 MIN';
+  return note.date ? `FINAL · ${note.date}` : 'LAST SESSION';
+}
+
 /** A row is only rankable if BOTH halves of the fraction are trustworthy. */
 export const MOVER_REJECT = Object.freeze({
   NOT_ELIGIBLE: 'not_eligible',     // not a Stock/ADRC per the security master

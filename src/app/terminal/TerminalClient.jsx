@@ -17,6 +17,7 @@ import XTape from '../../components/XTape';
 import { impactOf, IMPACT_STYLE } from '../../lib/impact';
 import { selectTerminalSymbol, onTerminalSymbol } from '../../lib/terminalSymbolBus';
 import { onEvidenceRequest } from '../../lib/terminalEvidenceBus';
+import { moversFreshnessLabel } from '../../lib/movers/movers-universe.mjs';
 import { onNewsRequest, inspectNews, newsInspectorAvailable } from '../../lib/terminalNewsBus';
 import { inspectEvidence } from '../../lib/terminalEvidenceBus';
 import { CHANGE, ago as changeAgo } from '../../lib/terminal/watchlist-changes.mjs';
@@ -48,7 +49,12 @@ const PANELS = [
   { id: 'newswire',  title: 'News Wire',    tag: 'NEWS · PR · 8-K' },
   { id: 'pitscan',   title: 'Pit Scan',        tag: 'PROPRIETARY' },
   { id: 'scanner',   title: 'Custom Scanner',  tag: 'CUSTOM' },
-  { id: 'movers',    title: 'Movers',       tag: 'DELAYED' },
+  // ⚠️ NO TAG. It read 'DELAYED', hardcoded, and contradicted the panel's own badge: a Pro reader
+  // during market hours was told DELAYED in the title while the badge beneath said SNAPSHOT · 15 MIN,
+  // because the rows were coming from the licensed real-time path. A registry string cannot know which
+  // of those is true — it depends on entitlement, market phase and whether a rebuild is running — so
+  // the panel states its own freshness from the data and the title says nothing.
+  { id: 'movers',    title: 'Movers' },
   { id: 'why',       title: 'Why Moving',   tag: 'CATALYST', addable: false },
   // '◆ SMART MONEY' was the old confluence vocabulary. The panel shows public evidence lining up
   // across independent sources, which is what the tag now says.
@@ -461,7 +467,7 @@ function MoversBody({ onPick }) {
   const [data, setData] = useState(null);
   const [configured, setConfigured] = useState(true);
   // What the server says these rows ARE. The panel no longer asserts a delay of its own.
-  const freshness = data?.freshness ?? null;
+  const freshnessLabel = moversFreshnessLabel(data);
   const [ref, w] = useContainerSize();
   useEffect(() => {
     let alive = true;
@@ -490,11 +496,14 @@ function MoversBody({ onPick }) {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
         {tabBtn('gainers', 'Gainers')}{tabBtn('losers', 'Losers')}{tabBtn('active', 'Active')}
-        {/* ⚠️ FROM THE SERVER'S FRESHNESS, NOT A HARDCODED STRING. This read "~15m DELAYED"
-            because that described Polygon's Stocks Starter plan; the source is now the licensed
-            Tiingo snapshot and what a viewer gets depends on their entitlement. */}
+        {/* ⚠️ ONE ANSWER TO "WHAT ARE THESE ROWS", SHARED WITH THE HEATMAP. This was a private
+            three-way string whose middle branch — '15 MIN DELAYED' — could never be reached: the
+            store only ever reports 'realtime' or 'eod'. Worse, 'realtime' was shown as a live
+            cadence even when the snapshot was FROZEN after the bell, so the panel claimed a rebuild
+            that was not happening. moversNoteState already makes that distinction for the heatmap,
+            and two components describing one feed is how they come to disagree. */}
         <span style={{ marginLeft: 'auto', fontSize: 8.5, color: C.dim, letterSpacing: 0.3 }}>
-          {freshness === 'realtime' ? 'SNAPSHOT · 15 MIN' : freshness === 'delayed' ? '15 MIN DELAYED' : 'LAST SESSION'}
+          {freshnessLabel}
         </span>
       </div>
       <div ref={ref} style={{ overflow: 'auto', flex: 1 }}>

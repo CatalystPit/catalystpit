@@ -12,6 +12,8 @@ import {
   findSharedEdge, applyResize, resizeStrips, isResizeHandle,
   movesWest, movesEast, movesNorth, movesSouth,
 } from '../src/lib/terminal/panel-resize.mjs';
+import { readFileSync } from 'node:fs';
+import { moversNoteState, moversFreshnessLabel } from '../src/lib/movers/movers-universe.mjs';
 
 let pass = 0, fail = 0;
 const section = (t) => console.log(`\n${t}`);
@@ -24,6 +26,11 @@ const okTry = (name, fn, extra) => {
   try { v = fn(); } catch (e) { v = false; extra = `threw: ${e.message}`; }
   ok(name, v, extra);
 };
+
+const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+/** Source with comments stripped, so an assertion cannot match its own explanation. */
+const code = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+  .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
 
 const MIN = { minW: 240, minH: 220 };
 const R = (x, y, w, h) => ({ x, y, w, h });
@@ -363,6 +370,74 @@ section('\n=== TERMINAL PANEL ISOLATION ===');
     /const bodyOf = \(def\) => <PanelBoundary id=\{def\.id\}>\{rawBodyOf\(def\)\}<\/PanelBoundary>/.test(code(term)));
   ok('a failed panel says so rather than rendering empty',
     /This panel could not load/.test(term));
+}
+
+
+// ── the Movers panel says what the rows actually are ───────────────────────────────────────────
+console.log('\nthe Movers panel says what the rows actually are');
+
+{
+  const term = code(read('src/app/terminal/TerminalClient.jsx'));
+
+  // ⚠️ THE TAG WAS A HARDCODED LIE, AND IT CONTRADICTED THE PANEL'S OWN BADGE. A Pro reader during
+  // market hours was told DELAYED in the title while the badge beneath said SNAPSHOT · 15 MIN, because
+  // the rows were coming from the licensed real-time path. A registry string cannot know which is
+  // true — it depends on entitlement, market phase and whether a rebuild is running.
+  const registry = /const PANELS = \[([\s\S]*?)\n\];/.exec(term)[1];
+  const moversEntry = /\{ id: 'movers',[^}]*\}/.exec(registry)?.[0] || '';
+  ok('the Movers registry entry was found', !!moversEntry, moversEntry);
+  ok('⚠️ Movers carries no hardcoded DELAYED tag', !/DELAYED/.test(moversEntry), moversEntry);
+  ok('⚠️ ...nor any freshness claim at all in the registry',
+    !/tag:/.test(moversEntry), 'freshness is per-request; a static string cannot state it');
+  // The other panels' tags are descriptive, not freshness claims, and are left alone.
+  ok('other panels keep their descriptive tags', /tag: 'CHAT'/.test(registry) && /tag: 'MARKET'/.test(registry));
+
+  // ⚠️ ONE ANSWER TO "WHAT ARE THESE ROWS", SHARED WITH THE HEATMAP.
+  ok('⚠️ the panel labels itself from the shared helper',
+    /const freshnessLabel = moversFreshnessLabel\(data\);/.test(term));
+  ok('...imported from the movers module',
+    /import \{ moversFreshnessLabel \} from '\.\.\/\.\.\/lib\/movers\/movers-universe\.mjs'/.test(term));
+  // ⚠️ AND IT RENDERS THAT VALUE, NOT A MAPPING OF ITS OWN. A private copy is what let a frozen
+  // snapshot be shown as a live cadence, and it is what let a mutation of that branch pass every
+  // state assertion below — the test was driving its own reimplementation rather than the product.
+  ok('⚠️ ...and renders it verbatim', /\{freshnessLabel\}/.test(term));
+  ok('⚠️ ...with no second mapping left in the component',
+    !/SNAPSHOT · 15 MIN/.test(term) && !/LAST SESSION/.test(term) && !/FINAL ·/.test(term));
+  ok('⚠️ the unreachable "delayed" branch is gone', !/15 MIN DELAYED/.test(term),
+    'the store only ever reports realtime or eod');
+  ok('⚠️ ...and the panel no longer asserts a delay anywhere', !/DELAYED/.test(term));
+
+  // ── THE FOUR STATES THE HELPER CAN PRODUCE ──
+  // ⚠️ THE REAL MAPPING, NOT A COPY OF IT. This was a local reimplementation, so a mutation of the
+  // component's own branch passed every state assertion below — the test was checking itself.
+  const badge = (m) => moversFreshnessLabel(m);
+
+  const open = { freshness: 'realtime', snapshotAt: '2026-09-28T15:12:00Z', session: { phase: 'regular', frozen: false } };
+  ok('⚠️ Pro during the session: the rebuild cadence, not a delay', badge(open) === 'SNAPSHOT · 15 MIN', badge(open));
+
+  // ⚠️ FROZEN IS NOT LIVE. The old badge showed the cadence whenever freshness was 'realtime',
+  // including after the bell when nothing is being rebuilt — claiming a refresh that is not happening.
+  const frozen = { freshness: 'realtime', asOf: '2026-09-28', session: { phase: 'closed', frozen: true, sessionDate: '2026-09-28' } };
+  ok('⚠️ after the bell: the session it froze on, not a live cadence',
+    badge(frozen) === 'FINAL · 2026-09-28', badge(frozen));
+  ok('⚠️ ...and it never claims a snapshot that is not running', badge(frozen) !== 'SNAPSHOT · 15 MIN');
+
+  const eod = { freshness: 'eod', asOf: '2026-09-25', session: { phase: 'regular', frozen: false } };
+  ok('⚠️ Free and logged out: the last completed session', badge(eod) === 'FINAL · 2026-09-25', badge(eod));
+  ok('⚠️ ...and never described as real-time', badge(eod) !== 'SNAPSHOT · 15 MIN');
+
+  ok('nothing loaded yet says nothing', badge(null) === '');
+  void moversNoteState;
+
+  // ⚠️ AND THE ARCHITECTURE IS UNTOUCHED. This was a labelling fix; the feed, cadence, phase logic
+  // and endpoint are the same, and that is asserted so a future "fix" cannot quietly widen it.
+  const store = read('src/lib/movers/movers-store.js');
+  ok('the 15-minute snapshot TTL is unchanged', /SNAPSHOT_TTL_SEC = 15 \* 60/.test(store));
+  ok('the market-phase lifecycle is unchanged', /session\.phase !== 'regular'/.test(store));
+  ok('the endpoint is unchanged', /fetch\('\/api\/movers', \{ cache: 'no-store' \}\)/.test(term));
+  ok('the two freshness values are still the only two',
+    (store.match(/freshness: '(\w+)'/g) || []).sort().join(',') === "freshness: 'eod',freshness: 'realtime'",
+    (store.match(/freshness: '(\w+)'/g) || []).join(', '));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
