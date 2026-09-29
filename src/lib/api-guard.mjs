@@ -88,6 +88,19 @@ export async function apiRateLimit(request, bucket, kind = 'heavy', { userId = n
     const { result } = await kv(`/incr/${encodeURIComponent(key)}`);
     const n = Number(result) || 0;
     if (n === 1) await kv(`/expire/${encodeURIComponent(key)}/${window}`);
+    // ⚠️ A COUNTER WITHOUT A TTL BLOCKS AN IP FOREVER, and setting the expiry only at n === 1 made
+    // that unrecoverable. If that one call is ever lost — a KV blip, or a key created by an earlier
+    // version that did not set it — the counter never expires, n never returns to 1, and so the
+    // expiry is never attempted again. The key climbs past `max` and that IP is 429'd on this route
+    // permanently, with nothing in the product able to heal it.
+    //
+    // Found in production: every rate-limit key in KV had ttl = -1, including one at count=3 that had
+    // never hit its limit. /api/ticker was returning 429 to a real address indefinitely.
+    //
+    // NX sets an expiry only when there is none, so it repairs a stuck key and — verified against
+    // Upstash — REFUSES to extend a window that is already ticking, which would otherwise let steady
+    // traffic keep its own counter alive forever.
+    if (n > max) await kv(`/expire/${encodeURIComponent(key)}/${window}/NX`);
     if (n > max) {
       return Response.json({ error: 'rate_limited' }, {
         status: 429,
