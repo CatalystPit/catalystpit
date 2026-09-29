@@ -12,7 +12,7 @@
 //
 // Run: node scripts/verify-legal-copy.mjs
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -22,6 +22,20 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 // wrong name contains the phrase, and a note about Tiingo's socket lives in cp-shared — so two
 // assertions about USER-FACING copy were satisfied by my own explanations of the fix.
 const code = (src) => src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('{/*')).join('\n');
+
+/** Every source file under src/, so a claim can be checked against the whole app and not one file. */
+function srcFiles(rel = '../src') {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(new URL(dir + '/', import.meta.url), { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      if (e.isDirectory()) walk(`${dir}/${e.name}`);
+      else if (/\.(jsx?|mjs|tsx?)$/.test(e.name)) out.push(`${dir}/${e.name}`);
+    }
+  };
+  walk(rel);
+  return out;
+}
 
 const terms = read('../src/app/terms/TermsClient.jsx');
 const privacy = read('../src/app/privacy/PrivacyClient.jsx');
@@ -89,7 +103,7 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   ok('⚠️ Privacy no longer promises real-time market data outright',
     !/We provide real-time market data/.test(privacy)
     && /freshness of market data shown to you depends on your subscription tier/.test(privacy));
-  ok('the policy was re-dated', /Last updated: September 27, 2026/.test(privacy));
+  ok('the policy was re-dated', /Last updated: September 29, 2026/.test(privacy));
 
   // ── ⚠️ ADVERTISING: THE POLICY HAD TO CATCH UP WITH THE CODE ──────────────────────────────────
   //
@@ -102,10 +116,32 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   ok('…while the analytics half of it, still true, is kept',
     /We do not run an analytics package/.test(privacy));
 
-  ok('⚠️ Google AdSense is disclosed by name', /We use Google AdSense/.test(privacy));
+  // ⚠️ AND THEN IT OVERCORRECTED. Catching up with the loader turned into "We use Google AdSense... on
+  // the Service. Advertising may be displayed to you", which is a claim about tracking we do not
+  // perform: the loader is site VERIFICATION and there is not one ad unit in the repository. A policy
+  // that overstates collection is as wrong as one that understates it. What is pinned now is the
+  // distinction itself — verification shipped, advertising did not.
+  ok('⚠️ the policy does not claim we display advertising today',
+    !/We use Google AdSense, Google's advertising service, on the Service/.test(privacy)
+    && !/Advertising may be displayed to you on Catalyst Pit pages/.test(privacy));
+  ok('⚠️ …it says plainly that no ads are served', /We do not currently display advertising/.test(privacy));
+  ok('…and explains the verification script, so the tag in the HTML is accounted for',
+    /verification script/.test(privacy) && /does not display advertising/.test(privacy));
   ok('…in its own numbered section, so it is findable', /2\.4 Advertising/.test(privacy));
-  ok('…and the cookies bullet points at it rather than contradicting it',
-    /Advertising cookies set by third parties are described in section 2\.4/.test(privacy));
+  // ⚠️ THE ONE PROMISE A SUBSCRIBER CAN HOLD US TO. "No ads for Pro" is the part of the future
+  // advertising model that is a term of sale rather than a disclosure, so it is stated in both
+  // documents and pinned in both.
+  ok('⚠️ Pro subscribers are promised no advertising, in the policy',
+    /Pro subscribers will not be shown advertising/.test(privacy));
+  ok('…and the same promise is in the Terms', /Pro subscribers will not be shown advertising/.test(terms));
+  ok('⚠️ consent is promised before non-essential cookies, not after',
+    /require(?:s)? your consent before advertising/.test(privacy)
+    || /requires consent before non-essential cookies/.test(privacy)
+    || /we will ask for it before those cookies are used/.test(privacy));
+  ok('…and the cookie categories actually in use are named',
+    /Strictly necessary:/.test(privacy) && /Functional:/.test(privacy));
+  ok('…and the reason there is no consent banner today is stated',
+    /we do not ask you for cookie consent/.test(privacy));
   ok('third-party advertising cookies are disclosed',
     /Third-party vendors, including Google, may use cookies or similar technologies/.test(privacy));
   ok('…including that Google may serve ads based on visits to this and other sites',
@@ -117,13 +153,15 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   ok('future advertising vendors are covered',
     /We may in future use other third-party advertising vendors or networks/.test(privacy));
   ok('the advertising vendor appears in the sharing section too',
-    /<strong>Advertising vendors:<\/strong>/.test(privacy) && /<strong>Google AdSense<\/strong>/.test(privacy));
+    /<strong>Advertising vendors:<\/strong>/.test(privacy) && /Google AdSense/.test(privacy));
+  ok('⚠️ …and that section says no vendor receives anything today',
+    /no advertising vendor receives anything about you today/.test(privacy));
 
   // ⚠️ AND IT DOES NOT OVERCLAIM IN EITHER DIRECTION.
   ok('⚠️ the no-sale statement is preserved, not widened',
     /We do not sell your personal information to third parties/.test(privacy));
   ok('…and we do not claim to send advertisers account details',
-    /We do not send Google your account details/.test(privacy)
+    /we would not send Google your account details/.test(privacy)
     && /We do not provide your name, email address or account details to advertising vendors/.test(privacy));
   // The rate-limiting IP statement stays accurate and is not quietly dropped to make room.
   ok('…the IP-for-security statement is still there',
@@ -143,11 +181,11 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   // — so removing the loader and leaving the disclosure in place read as consistent. What makes the
   // policy true is a tag the browser executes, so that is what is detected.
   const adLoaderLive = /<script[^>]*(?:ADSENSE_SRC|googlesyndication\.com)/.test(layoutSrc);
-  ok('⚠️ if the ad loader ships, the policy discloses advertising',
-    !adLoaderLive || /We use Google AdSense/.test(privacy),
-    'the loader is in the layout but the policy does not disclose it');
-  ok('⚠️ …and if it does not ship, the policy does not claim it does',
-    adLoaderLive || !/We use Google AdSense/.test(privacy),
+  ok('⚠️ if the ad loader ships, the policy accounts for it',
+    !adLoaderLive || /verification script/.test(privacy),
+    'the loader is in the layout but the policy does not explain it');
+  ok('⚠️ …and if it does not ship, the policy does not mention AdSense at all',
+    adLoaderLive || !/AdSense/.test(privacy),
     'the policy discloses AdSense but no loader is deployed');
   // Any advertising host reaching the layout has to be a host the policy actually names.
   const AD_HOSTS = [['googlesyndication.com', 'Google AdSense'], ['doubleclick.net', 'Google'],
@@ -158,10 +196,20 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
     ok(`⚠️ the policy names ${vendor}, whose host is in the layout`,
       new RegExp(vendor, 'i').test(privacy), `${host} ships but ${vendor} is not named in the policy`);
   }
-  // And an ad UNIT appearing anywhere would mean ads are actually rendering, not merely verifiable —
-  // at which point "advertising may be displayed" understates it and the policy needs another look.
-  ok('no ad unit exists yet, so "may be displayed" is still the accurate tense',
-    !/className="adsbygoogle"|data-ad-slot/.test(layoutSrc));
+  // ⚠️ THE ASSERTION THAT MAKES "WE DO NOT DISPLAY ADVERTISING" A FACT ABOUT THE REPOSITORY.
+  //
+  // An ad UNIT anywhere means ads really are rendering, not merely verifiable — and on that day the
+  // policy's flat "we do not currently display advertising" becomes false site-wide. Scanning only
+  // layout.jsx was too narrow: the loader lives there, but a slot would be placed on whatever page
+  // shows it. So the whole of src/ is searched, and the two statements are required to disagree.
+  const adUnit = /class(?:Name)?="[^"]*adsbygoogle|data-ad-slot/;
+  const slots = srcFiles().filter((f) => adUnit.test(read(f)));
+  ok('⚠️ no ad unit exists anywhere in src/, which is what makes the no-ads claim true',
+    slots.length === 0, slots.join(', '));
+  ok('⚠️ …and the policy and the code agree about that',
+    (slots.length === 0) === /We do not currently display advertising/.test(privacy),
+    slots.length ? `ad units shipped (${slots.join(', ')}) but the policy still says none are displayed`
+      : 'the policy dropped the no-advertising statement while no ad unit ships');
 }
 
 L('⚠️ TERMS COVER BOTH PLANS, AND RENEWAL IS STATED');
@@ -378,5 +426,64 @@ L('an estimated earnings date is never presented as a scheduled one');
     /within 7 days 53\.3%/.test(estimator) && /p90 35 days/.test(estimator));
 }
 
+
+L('⚠️ THE AFFILIATE PROGRAMME IS NOT DESCRIBED AS RUNNING');
+{
+  // ⚠️ TERMS PUBLISHED BEFORE THE THING THEY GOVERN EXISTS. Nothing in the app issues a referral
+  // code, records attribution or computes commission, so every sentence about how the programme
+  // works is a statement about the future. The failure this guards is the ordinary one: the page
+  // stays as written while the programme quietly opens, or — worse today — the page reads as an
+  // open invitation and someone believes they are earning $5 a month when nothing is tracking them.
+  const aff = read('../src/app/affiliates/AffiliatesClient.jsx');
+  const affMeta = read('../src/app/affiliates/page.jsx');
+
+  ok('the affiliate terms page exists and is a legal document, not a pitch',
+    /Affiliate Program Terms/.test(aff));
+  ok('⚠️ it says on its face that the programme is not open',
+    /is not open yet/.test(aff) && /not accepting affiliates/.test(aff));
+  ok('⚠️ …and that nothing is being tracked or owed',
+    /no referral codes have been issued/.test(aff) && /no commission is being earned or owed/.test(aff));
+  ok('⚠️ …including in the meta description, which is what a search result shows out of context',
+    /not yet open and is not accepting affiliates/.test(affMeta));
+
+  // The commercial terms the owner specified, so a later edit cannot quietly change them.
+  ok('the commission is stated as $5.00 per month, recurring', /\$5\.00 per month, recurring/.test(aff));
+  ok('⚠️ attribution requires the code to actually be used',
+    /only count if the referred customer actually uses the affiliate/.test(aff));
+  ok('⚠️ …and retroactive attachment is refused in terms, not just discouraged',
+    /No retroactive attribution/.test(aff) && /will not add one later on request/.test(aff));
+  ok('self-referral and fraud are disqualifying', /Self-referral/.test(aff) && /Fraud and manipulation/.test(aff));
+  ok('refunds and chargebacks reverse commission',
+    /commission attributable to it will be reversed/.test(aff));
+  ok('cancellation stops commission at the end of the paid period',
+    /commission stops at the end of the period for which they have paid/.test(aff));
+  ok('⚠️ payout mechanics are deferred honestly rather than invented',
+    /will be stated here before the Program opens/.test(aff));
+  ok('affiliates are told they must disclose being compensated',
+    /must clearly and conspicuously disclose that you may receive compensation/.test(aff));
+
+  // ⚠️ THE TWO SENSES OF "AFFILIATE" STAY SEPARATE. Outbound affiliate links can already appear;
+  // our own programme cannot. Collapsing them is how a page ends up disclosing a live commission
+  // and promising a future one in the same sentence.
+  ok('⚠️ compensation Catalyst Pit itself may receive is disclosed as a present fact',
+    /Catalyst Pit may itself receive affiliate commission or referral fees/.test(aff));
+  ok('…and the Terms keep the same separation',
+    /<strong>Affiliate links\.<\/strong>/.test(terms) && /<strong>Referral program\.<\/strong>/.test(terms));
+  ok('⚠️ the Terms say the programme is not open', /is not yet open/.test(terms));
+  ok('…and point at the page that governs it when it is', /href="\/affiliates"/.test(terms));
+
+  // Discoverable, and pointing somewhere real.
+  const shared = read('../src/lib/cp-shared.jsx');
+  ok('the footer links the affiliate terms', /label:"Affiliate Terms", href:"\/affiliates"/.test(shared));
+  ok('…and the route it points at is in the sitemap',
+    /'\/affiliates'/.test(read('../src/lib/seo.js')));
+
+  // ⚠️ AND THE CLAIM IS TIED TO THE CODE, like the advertising one above. The day anything starts
+  // issuing or reading referral codes, "not open" stops being true and this fails.
+  const referralCode = /affiliateCode|referralCode|ref_code|referral_code/;
+  const hits = srcFiles().filter((f) => referralCode.test(code(read(f))));
+  ok('⚠️ nothing in src/ issues or reads a referral code, which is what makes "not open" true',
+    hits.length === 0, hits.join(', '));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

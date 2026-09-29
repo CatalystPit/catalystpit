@@ -1789,6 +1789,11 @@ export function Footer() {
     {label:"Privacy",  href:"/privacy"},
     {label:"Terms",    href:"/terms"},
     {label:"Disclaimer", href:"/disclaimer"},
+    // ⚠️ LINKED NOW EVEN THOUGH THE PROGRAMME IS NOT OPEN, because the disclosure it carries already
+    // applies: outbound affiliate links can appear wherever a partner is configured, and the page is
+    // where we say Catalyst Pit may be compensated for them. The page states in its own first sentence
+    // that the referral programme is not accepting anyone, so linking it cannot imply otherwise.
+    {label:"Affiliate Terms", href:"/affiliates"},
     {label:"Contact",  href:"/contact"},
   ];
   return (

@@ -69,6 +69,7 @@ export const INDEXABLE_ROUTES = [
   { path: '/privacy', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/terms', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/disclaimer', priority: 0.3, changeFrequency: 'yearly' },
+  { path: '/affiliates', priority: 0.3, changeFrequency: 'yearly' },
 ];
 
 /**

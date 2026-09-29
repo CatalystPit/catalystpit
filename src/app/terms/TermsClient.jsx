@@ -23,13 +23,13 @@ export default function TermsClient() {
           Terms of Service
         </h1>
         <p style={{ fontSize: 13, color: C.muted, margin: "0 0 24px", fontWeight: 300 }}>
-          Effective date: May 17, 2026 · Last updated: September 25, 2026
+          Effective date: May 17, 2026 · Last updated: September 29, 2026
         </p>
 
         <div style={{ background: "#FFF8E8", border: "1px solid #E8D49A", borderRadius: 8, padding: "16px 18px", margin: "0 0 40px" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#7A5018", marginBottom: 6 }}>Read this carefully.</div>
           <div style={{ fontSize: 13, lineHeight: 1.6, color: "#5A4010" }}>
-            These Terms include important provisions, including an arbitration agreement and class-action waiver in Section 14, that affect your legal rights. By using CatalystPit, you agree to these Terms.
+            These Terms include important provisions, including an arbitration agreement and class-action waiver in Section 16, that affect your legal rights. By using CatalystPit, you agree to these Terms.
           </div>
         </div>
 
@@ -123,7 +123,33 @@ export default function TermsClient() {
           <p>The Service includes links to and integrations with third-party services, including Clerk (accounts), Stripe (payments), Ably (realtime community messaging), Resend (email delivery), Beehiiv (newsletter), Vercel, Neon and Upstash (infrastructure), and market-data, filing and news providers. Our <a href="/privacy" style={linkStyle}>Privacy Policy</a> lists the providers that handle user information. We are not responsible for the content, accuracy, or practices of third parties. Your use of those services is governed by their own terms and policies.</p>
         </Section>
 
-        <Section title="10. Disclaimers">
+        {/* ⚠️ WRITTEN IN THE CONDITIONAL BECAUSE NO ADS RUN TODAY. The only AdSense code on the site
+            is the site-verification loader in the root layout; there is not one ad slot in the
+            codebase. Saying "we display advertising" would be a term we do not currently perform, and
+            the Pro no-ads promise below is the part a subscriber can hold us to — it must not be
+            written as though it is already being delivered. */}
+        <Section title="10. Advertising">
+          <p><strong>We do not display advertising on the Service at this time.</strong> We intend to introduce advertising, and the site carries Google's AdSense verification script so that Google can confirm ownership of the domain. That script does not serve ads.</p>
+          <p>If and when advertising becomes active:</p>
+          <ul style={list}>
+            <li><strong>Who sees it:</strong> Advertising will be shown to logged-out visitors and to signed-in users on the Free tier.</li>
+            <li><strong>Catalyst Pit Pro:</strong> Pro subscribers will not be shown advertising for as long as their subscription is active. This is part of what a Pro subscription buys.</li>
+            <li><strong>Separation from content:</strong> Advertising is sold and served by third-party networks. Advertisers do not influence our data, rankings, scores, or editorial content, and an advertisement is not a recommendation by us.</li>
+            <li><strong>Cookies and consent:</strong> Advertising vendors may set their own cookies. Where the law requires consent before non-essential cookies are set, we will obtain it first. See our <a href="/privacy" style={linkStyle}>Privacy Policy</a>.</li>
+          </ul>
+        </Section>
+
+        {/* ⚠️ TWO DIFFERENT THINGS CALLED "AFFILIATE", KEPT APART ON PURPOSE. (a) outbound affiliate
+            links to third-party tools, which can already appear where partners are configured and are
+            disclosed at the point of display; (b) OUR OWN referral programme, which does not exist —
+            no code issues referral codes, tracks attribution or calculates commission. Conflating the
+            two would put a live disclosure and a promise of future payouts in the same breath. */}
+        <Section title="11. Affiliate Links and Referral Program">
+          <p><strong>Affiliate links.</strong> Some links on the Service to third-party products or services may be affiliate links, meaning we may receive a commission if you sign up or make a purchase through them, at no additional cost to you. Where such links appear they are labelled as affiliate links at the point of display. Receiving a commission does not influence our data, scores or editorial content, and an affiliate link is not a recommendation or investment advice. See also our <a href="/disclaimer" style={linkStyle}>Financial Disclaimer</a>.</p>
+          <p><strong>Referral program.</strong> Our own referral program — under which a participant can earn a commission for referring paying subscribers — <strong>is not yet open.</strong> It is not currently accepting participants and no commission is being earned or owed. When it opens it will be governed by the <a href="/affiliates" style={linkStyle}>Affiliate Program Terms</a>, which are published in advance so they can be read before anyone enrols. Nothing on the Service today should be read as an offer to participate.</p>
+        </Section>
+
+        <Section title="12. Disclaimers">
           <p style={{ textTransform: "uppercase", fontSize: 13, letterSpacing: "0.3px", fontWeight: 600, color: C.ink }}>
             THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, OR NON-INFRINGEMENT.
           </p>
@@ -131,7 +157,7 @@ export default function TermsClient() {
           <p>See our <a href="/disclaimer" style={linkStyle}>Financial Disclaimer</a> for additional risk warnings specific to financial information.</p>
         </Section>
 
-        <Section title="11. Limitation of Liability">
+        <Section title="13. Limitation of Liability">
           <p style={{ textTransform: "uppercase", fontSize: 13, letterSpacing: "0.3px", fontWeight: 600, color: C.ink }}>
             TO THE MAXIMUM EXTENT PERMITTED BY LAW, CATALYSTPIT AND ITS OPERATORS, AGENTS, AND LICENSORS WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, REVENUE, DATA, USE, GOODWILL, OR OTHER INTANGIBLE LOSSES, ARISING FROM YOUR USE OF OR INABILITY TO USE THE SERVICE, ANY TRADING DECISIONS MADE BASED ON SERVICE CONTENT, OR ANY UNAUTHORIZED ACCESS TO OR ALTERATION OF YOUR DATA.
           </p>
@@ -139,16 +165,16 @@ export default function TermsClient() {
           <p>Some jurisdictions do not allow the exclusion or limitation of certain damages. In those jurisdictions, our liability is limited to the maximum extent permitted by law.</p>
         </Section>
 
-        <Section title="12. Indemnification">
+        <Section title="14. Indemnification">
           <p>You agree to defend, indemnify, and hold harmless CatalystPit, its operators, agents, and licensors from any claims, damages, losses, and expenses (including reasonable attorneys' fees) arising from your violation of these Terms, your use of the Service, or your violation of any rights of a third party.</p>
         </Section>
 
-        <Section title="13. Termination">
+        <Section title="15. Termination">
           <p>You may terminate your account at any time through your account settings. We may suspend or terminate your access at any time, with or without notice, for any reason, including violation of these Terms or risk to the Service or other users.</p>
           <p>Sections that by their nature should survive termination will survive, including intellectual property, disclaimers, limitation of liability, indemnification, and dispute resolution.</p>
         </Section>
 
-        <Section title="14. Dispute Resolution and Arbitration">
+        <Section title="16. Dispute Resolution and Arbitration">
           <p><strong>Please read carefully. This section affects your legal rights.</strong></p>
           <p>Any dispute arising from these Terms or the Service will be resolved through binding individual arbitration administered by the American Arbitration Association under its Consumer Arbitration Rules, except that you may bring claims in small-claims court if eligible.</p>
           <p><strong>Class-action waiver:</strong> You and CatalystPit agree to bring disputes only on an individual basis and waive the right to participate in any class, collective, or representative action.</p>
@@ -156,15 +182,15 @@ export default function TermsClient() {
           <p>This section does not prevent either party from seeking injunctive relief for intellectual property violations in court.</p>
         </Section>
 
-        <Section title="15. Governing Law">
+        <Section title="17. Governing Law">
           <p>These Terms are governed by the laws of the State of Florida and the United States, without regard to conflict-of-law principles. For any matters not subject to arbitration, you agree to the exclusive jurisdiction of courts located in Volusia County, Florida.</p>
         </Section>
 
-        <Section title="16. Changes to These Terms">
+        <Section title="18. Changes to These Terms">
           <p>We may update these Terms from time to time. The "Last updated" date at the top reflects the most recent changes. For material changes, we will notify you by email or through the Service before the changes take effect. Your continued use of the Service after the effective date constitutes acceptance.</p>
         </Section>
 
-        <Section title="17. Miscellaneous">
+        <Section title="19. Miscellaneous">
           <ul style={list}>
             <li><strong>Entire agreement:</strong> These Terms, together with our Privacy Policy and Financial Disclaimer, are the entire agreement between you and CatalystPit.</li>
             <li><strong>Severability:</strong> If any provision is found unenforceable, the remaining provisions will remain in effect.</li>
@@ -174,7 +200,7 @@ export default function TermsClient() {
           </ul>
         </Section>
 
-        <Section title="18. Contact">
+        <Section title="20. Contact">
           <p style={{ margin: "12px 0", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
             Email: <a href="mailto:legal@catalystpit.com" style={linkStyle}>legal@catalystpit.com</a>
           </p>
