@@ -8,6 +8,7 @@ import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mj
 import { deskSelection } from "../lib/impact";
 import HeatMap from "./HeatMap";
 import FearGreedCard from "./FearGreedCard";
+import MarketBreadth from "./MarketBreadth";
 import PlanChoice from "./PlanChoice";
 import CompactChart from "./chart/CompactChart";
 import {
@@ -494,6 +495,10 @@ export default function CatalystPit() {
               ); })}
             </div>
           </div>
+
+          {/* MARKET BREADTH — directly beneath the four index charts. Reads one precomputed snapshot;
+              the market-wide calculation happens in /api/cron/market-breadth, not here. */}
+          <MarketBreadth />
 
           {/* TODAY IN THE PIT */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>

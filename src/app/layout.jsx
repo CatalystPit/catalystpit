@@ -211,6 +211,10 @@ export default function RootLayout({ children }) {
             @media (max-width: 860px) { .bb-cols { flex-direction: column; gap: 20px; } }
             /* Homepage MARKETS: one chart per row on phones — see the comment at the grid itself. */
             @media (max-width: 430px) { .cp-mkt-grid { grid-template-columns: 1fr !important; } }
+            /* Market breadth sizes itself from its CONTAINER via auto-fit (see MarketBreadth.jsx), not
+               from the viewport: the card lives in the main column beside a 300px rail, so the window's
+               width is not the space it has. No media query here on purpose — one would fight the
+               auto-fit and hand four columns to a box too narrow for them. */
             /* TOUCH TARGETS. Only the shared nav controls, which are the ones a phone user must hit
                and which measured 26-32px. Table rows, chips and dense data controls are deliberately
                NOT included: they work today and inflating them would break the tables. */

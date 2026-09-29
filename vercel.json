@@ -89,6 +89,15 @@
       "schedule": "50 8 * * *"
     },
     {
+      "_comment": "Market breadth: after the nightly candle/technicals chain, and again after the US close on weekdays so the new session is reflected the same day. ~3.5s, reads only stored candles.",
+      "path": "/api/cron/market-breadth",
+      "schedule": "10 9 * * *"
+    },
+    {
+      "path": "/api/cron/market-breadth",
+      "schedule": "30 22 * * 1-5"
+    },
+    {
       "path": "/api/cron/alerts",
       "schedule": "*/5 13-21 * * 1-5"
     },
