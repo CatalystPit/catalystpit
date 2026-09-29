@@ -24,7 +24,7 @@ const num = (v) => (v == null ? '—' : Number(v).toLocaleString('en-US'));
 function Bar({ share }) {
   const known = share != null && Number.isFinite(share);
   return (
-    <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: C.border, marginTop: 6 }}>
+    <div style={{ display: 'flex', height: 8, borderRadius: 4, overflow: 'hidden', background: C.border, marginTop: 6 }}>
       {known ? (
         <>
           <div style={{ width: `${Math.max(0, Math.min(100, share))}%`, background: C.green }} />
