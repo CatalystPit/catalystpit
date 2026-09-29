@@ -126,6 +126,9 @@ export const TRACKED_JOBS = Object.freeze([
   // quiet source a broken one. What IS a fault is the endpoint erroring on events it did receive, so
   // this one is judged on consecutive failures alone.
   { name: 'stripe-webhook', label: 'Stripe webhook processing', eventDriven: true },
+  // Same shape, same reason: signups arrive when they arrive. A quiet Tuesday is not an outage, but
+  // an endpoint rejecting the deliveries it does get — or running without its signing secret — is.
+  { name: 'clerk-webhook',  label: 'Clerk signup webhook',      eventDriven: true },
 ]);
 
 /**

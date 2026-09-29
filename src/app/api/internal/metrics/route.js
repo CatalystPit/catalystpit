@@ -1,5 +1,6 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { readBillingFunnel } from '../../../../lib/billing/events';
+import { readSignupFunnel } from '../../../../lib/monitoring/signup-events';
 import { TRACKED_JOBS, readJobHeartbeats } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
@@ -54,6 +55,13 @@ export async function GET(request) {
   try { billing = await readBillingFunnel({ days }); }
   catch (e) { billingError = e.message?.includes('billing_events') ? 'table_missing' : 'query_failed'; }
 
+  // ⚠️ SIGNUPS SIT BESIDE CONVERSIONS BECAUSE THE RATIO IS THE POINT. "42 signups" and "3 upgrades"
+  // are each half of the only number that matters at launch, and putting them on one response means
+  // nobody has to join two dashboards by hand to get it.
+  let signups = null, signupsError = null;
+  try { signups = await readSignupFunnel({ days }); }
+  catch (e) { signupsError = e.message?.includes('signup_events') ? 'table_missing' : 'query_failed'; }
+
   let jobs = [];
   try {
     const beats = await readJobHeartbeats();
@@ -75,6 +83,7 @@ export async function GET(request) {
     basis: 'Counts of Stripe events this deployment processed. Stripe remains authoritative for revenue.',
     windowDays: days,
     billing, billingError,
+    signups, signupsError,
     jobs,
     at: new Date().toISOString(),
   }, { headers: NO_STORE });

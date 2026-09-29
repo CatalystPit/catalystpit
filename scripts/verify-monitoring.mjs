@@ -163,6 +163,114 @@ L('⚠️ nothing sensitive is exposed');
   ok('an empty CRON_SECRET cannot authorise by accident', /!!CRON_SECRET && bearer/.test(metrics));
 }
 
+
+L('⚠️ CLERK SIGNUP WEBHOOK');
+{
+  const { verifyClerkSignature, signupMethod, CLERK_TOLERANCE_SEC } = await import('../src/lib/monitoring/clerk-webhook.mjs');
+  const crypto = await import('node:crypto');
+
+  // A real Svix secret is `whsec_` + base64 key material, and the key is the DECODED bytes.
+  const KEY = crypto.randomBytes(24);
+  const SECRET = 'whsec_' + KEY.toString('base64');
+  const NOW = 1_800_000_000;
+  const sign = (id, ts, body, key = KEY) =>
+    'v1,' + crypto.createHmac('sha256', key).update(`${id}.${ts}.${body}`).digest('base64');
+  const BODY = JSON.stringify({ type: 'user.created', data: { id: 'user_abc', created_at: 1 } });
+  const H = (over = {}) => ({ id: 'msg_1', timestamp: String(NOW), signature: sign('msg_1', NOW, BODY), ...over });
+
+  ok('a correctly signed delivery verifies', verifyClerkSignature(BODY, H(), SECRET, NOW) === true);
+
+  // ⚠️ THE THREE SCHEME DIFFERENCES FROM STRIPE, each asserted, because each fails CLOSED and the
+  // tempting "fix" for a webhook that rejects everything is to stop checking the signature.
+  ok('⚠️ the secret is the DECODED base64, not the literal whsec_ string',
+    verifyClerkSignature(BODY, H(), SECRET, NOW) === true
+    && crypto.createHmac('sha256', SECRET).update(`msg_1.${NOW}.${BODY}`).digest('base64') !== sign('msg_1', NOW, BODY).slice(3));
+  ok('⚠️ the message id is part of the signed payload',
+    verifyClerkSignature(BODY, H({ id: 'msg_2' }), SECRET, NOW) === false);
+  ok('⚠️ a rotated secret still verifies while both are listed',
+    verifyClerkSignature(BODY, H({ signature: sign('msg_1', NOW, BODY, crypto.randomBytes(24)) + ' ' + sign('msg_1', NOW, BODY) }), SECRET, NOW) === true);
+
+  ok('a forged signature is rejected',
+    verifyClerkSignature(BODY, H({ signature: 'v1,' + Buffer.from('nope').toString('base64') }), SECRET, NOW) === false);
+  ok('⚠️ a body altered after signing is rejected',
+    verifyClerkSignature(BODY + ' ', H(), SECRET, NOW) === false);
+  ok('a wrong secret is rejected',
+    verifyClerkSignature(BODY, H(), 'whsec_' + crypto.randomBytes(24).toString('base64'), NOW) === false);
+  ok('missing headers are rejected rather than treated as absent-therefore-fine',
+    verifyClerkSignature(BODY, { id: null, timestamp: null, signature: null }, SECRET, NOW) === false
+    && verifyClerkSignature(BODY, H({ signature: undefined }), SECRET, NOW) === false);
+  ok('an absent secret can never verify', verifyClerkSignature(BODY, H(), '', NOW) === false);
+
+  // ⚠️ REPLAY, BOTH DIRECTIONS. A delivery captured and resent an hour later must not pass, and a
+  // timestamp far in the FUTURE is as untrustworthy as one far in the past.
+  ok('⚠️ a replayed delivery outside the window is rejected',
+    verifyClerkSignature(BODY, H(), SECRET, NOW + CLERK_TOLERANCE_SEC + 1) === false);
+  ok('⚠️ …and one timestamped in the future is too',
+    verifyClerkSignature(BODY, H(), SECRET, NOW - CLERK_TOLERANCE_SEC - 1) === false);
+  ok('…while one just inside the window still passes',
+    verifyClerkSignature(BODY, H(), SECRET, NOW + CLERK_TOLERANCE_SEC - 1) === true);
+  ok('the tolerance matches Svix\'s own default', CLERK_TOLERANCE_SEC === 300);
+
+  // Signup method is derived without reading anything identifying.
+  ok('Google signups are identified as google',
+    signupMethod({ external_accounts: [{ provider: 'oauth_google' }] }) === 'google');
+  ok('…and an email signup as password',
+    signupMethod({ external_accounts: [], password_enabled: true }) === 'password');
+  ok('…with an unknown shape falling back rather than guessing',
+    signupMethod({}) === 'other');
+
+  // ── ⚠️ WHAT IS STORED, WHICH IS THE PRIVACY CLAIM ────────────────────────
+  const store = read('../src/lib/monitoring/signup-events.js');
+  const route = read('../src/app/api/clerk/webhook/route.js');
+  const PERSONAL = /email|first_name|last_name|full_name|avatar|image_url|phone|profile_image/;
+  ok('⚠️ the signup table has no column that could hold personal data',
+    !PERSONAL.test(/create table if not exists signup_events[\s\S]*?\)`/.exec(store)?.[0] || ''));
+  ok('⚠️ …and the route never reads one out of the payload',
+    !PERSONAL.test(route.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')));
+  ok('the migration refuses to leave a personal-data column in place',
+    /REFUSING: signup_events has personal-data columns/.test(read('../scripts/migrate-signup-events.mjs')));
+
+  // ── IDEMPOTENCY ──────────────────────────────────────────────────────────
+  ok('the signup log is keyed on the Svix message id', /event_id\s+text primary key/.test(store));
+  ok('⚠️ a retried delivery cannot be counted twice', /on conflict \(event_id\) do nothing/.test(store));
+  // ⚠️ THE KEY IS THE DELIVERY, NOT THE PERSON. Keying on the Clerk user id would look equivalent —
+  // it also collapses retries — but it would additionally swallow a genuine LATER event about the
+  // same user (a user.deleted after a user.created) by turning it into a conflict.
+  ok('⚠️ …and that key comes from the svix-id header, not from the user',
+    /const eventId = request\.headers\.get\('svix-id'\)/.test(route)
+    && /recordSignupEvent\(\{\s*\n\s*eventId,/.test(route)
+    && /userId: data\?\.id/.test(route));
+  ok('the recorder swallows its own error like every other one here',
+    /catch \(e\) \{[\s\S]*console\.log\(`\[signup_events\]/.test(store));
+
+  // ── ⚠️ IT IS AN OBSERVER ─────────────────────────────────────────────────
+  ok('⚠️ the route grants nothing and touches no session',
+    !/setPlan|updateUser|publicMetadata|signIn|createUser|sessions/.test(route));
+  ok('⚠️ …and does not sit on any authentication path',
+    !/clerkMiddleware|auth\(\)/.test(route));
+  ok('an unconfigured secret fails loudly rather than returning a silent 200',
+    /not_configured.*503|503[\s\S]{0,60}not_configured/.test(route)
+    && /beat\(false, 0, 'CLERK_WEBHOOK_SIGNING_SECRET not set'\)/.test(route));
+  // ⚠️ A REJECTED FORGERY MUST NOT TURN THE DASHBOARD RED, or anyone on the internet could.
+  // ⚠️ THE ROUTE MUST ACTUALLY GATE ON THE VERIFICATION, which testing the pure function does not
+  // prove. Mutation-tested: replacing `if (!okSig)` with `if (false)` — forged deliveries accepted,
+  // anyone able to POST able to write rows — passed every assertion above, because all of them
+  // exercised verifyClerkSignature directly and none of them checked that the caller obeys it.
+  ok('⚠️ the route calls the verifier and refuses on a negative result',
+    /const okSig = verifyClerkSignature\(/.test(route) && /if \(!okSig\) \{/.test(route));
+  ok('⚠️ …and nothing is recorded before that gate',
+    route.indexOf('if (!okSig) {') < route.indexOf('recordSignupEvent(')
+    && route.indexOf('if (!okSig) {') < route.indexOf('JSON.parse(payload)'));
+  ok('⚠️ a bad signature is refused WITHOUT recording a failed run',
+    /bad signature[\s\S]{0,200}status: 400/.test(route)
+    && !/beat\(false[\s\S]{0,80}bad signature/.test(route));
+
+  ok('the webhook is tracked for liveness, event-driven',
+    TRACKED_JOBS.some((j) => j.name === 'clerk-webhook' && j.eventDriven === true && j.maxAgeHours === undefined));
+  ok('the env var is named consistently everywhere',
+    /CLERK_WEBHOOK_SIGNING_SECRET/.test(route)
+    && (read('../src/app/api/internal/metrics/route.js').includes('CLERK_WEBHOOK_SIGNING_SECRET') === false));
+}
 L('production');
 {
   const r = await fetch(`${BASE}/api/health`, { headers: { 'cache-control': 'no-cache' } }).catch(() => null);
