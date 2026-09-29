@@ -157,8 +157,14 @@ export default function MarketBreadth() {
         />
       </div>
       <div style={{ padding: '6px 11px', borderTop: `1px solid ${C.border}`, fontFamily: "'DM Sans',sans-serif", fontSize: 8.5, color: C.dim }}>
-        U.S. common stocks on NYSE, NASDAQ and NYSE American · closing basis · each metric uses only the
-        stocks with the history it needs
+        {/* ⚠️ THE EXCLUSIONS ARE PRINTED, NOT INFERRED. Every denominator above is smaller than the
+            universe, and a reader comparing these numbers against another site has no way to reconcile
+            them without knowing by how much and why. 194 of 5,338 did not print on this session at all;
+            saying so is the difference between a measured reading and an unexplained one. */}
+        {num(b.universe)} U.S. common stocks on NYSE, NASDAQ and NYSE American · closing basis
+        {b.priorSession ? `, ${b.asOfSession} vs ${b.priorSession}` : ''} · {num(b.notTrading)} did not
+        trade that session{b.noPriorClose ? `, ${num(b.noPriorClose)} had no prior-session close` : ''} ·
+        each metric uses only the stocks with the history it needs
       </div>
     </>,
   );

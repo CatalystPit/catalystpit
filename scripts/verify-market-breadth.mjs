@@ -89,7 +89,8 @@ const [snap] = await sql`
          to_char(computed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS computed_at,
          adv, decl, unch, adv_eligible, new_high, new_low, hl_eligible,
          above_sma50, below_sma50, at_sma50, sma50_eligible,
-         above_sma200, below_sma200, at_sma200, sma200_eligible
+         above_sma200, below_sma200, at_sma200, sma200_eligible,
+         prior_session::text AS prior_session, not_trading, no_prior_close
     FROM market_breadth WHERE id = 1`;
 ok('a snapshot row exists', !!snap);
 if (!snap) { console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0); }
@@ -175,58 +176,86 @@ L('⚠️ every metric is recomputed from raw candles, per security');
   ok('the sample actually exercised something', checked >= 8, `${checked} checked, ${agree} agreed`);
 }
 
-L('⚠️ the market-wide counts survive an independent full pass');
+L('⚠️ the snapshot is pinned to ONE market session');
 {
-  // Same universe, same windows, counted by a different query shape — a lateral per-ticker aggregate
-  // instead of one grouped window pass. Agreement on all sixteen numbers is the assertion.
+  // ⚠️ THE DEFECT THIS PINS. The first aggregate anchored every window to each TICKER'S OWN latest
+  // candle, so a security that had not traded for days was still classified — its advance or decline
+  // comparing two older sessions, its averages as of whatever day it last printed — and all of it was
+  // folded into a card headed with a single session date. 192 of 5,336 were in that state. It moved the
+  // totals little (they split 70 up / 71 down / 49 flat); it was wrong regardless, because a snapshot
+  // that mixes sessions cannot be checked against anything.
+  const [s] = await sql`
+    WITH x AS (SELECT DISTINCT date FROM ticker_daily_candles ORDER BY date DESC LIMIT 2)
+    SELECT max(date)::text AS s1, min(date)::text AS s2 FROM x`;
+  ok('the snapshot names the market latest session', payload.asOfSession === s.s1,
+    `${payload.asOfSession} vs ${s.s1}`);
+  ok('⚠️ ...and the session it compares against', payload.priorSession === s.s2,
+    `${payload.priorSession} vs ${s.s2}`);
+  ok('⚠️ securities that did not trade that session are counted, not hidden',
+    payload.notTrading > 0, String(payload.notTrading));
+  ok('⚠️ ...and so are those with no prior-session close',
+    payload.noPriorClose > 0, String(payload.noPriorClose));
+
+  // ⚠️ THE UNIVERSE MUST ACCOUNT FOR ITSELF, from the published fields alone. not_trading was first
+  // counted inside a CTE fed by the candle table, so three universe members with no usable close in the
+  // window — CRD.B, TAP.A, OST — were absent from the count entirely and the shortfall was invisible:
+  // every other number stayed self-consistent. Every security is on exactly one side of this identity.
+  ok('⚠️ traded + did-not-trade accounts for the whole universe',
+    payload.advancing.eligible + payload.noPriorClose + payload.notTrading === payload.universe,
+    `${payload.advancing.eligible} + ${payload.noPriorClose} + ${payload.notTrading} vs ${payload.universe}`);
+
+  // ⚠️ RE-DERIVED BY A DIFFERENT QUERY SHAPE, pinned the same way: closes selected BY SESSION DATE
+  // rather than by row_number offset, so an off-by-one in either would surface as a disagreement.
   const [ind] = await sql`
     WITH u AS (SELECT ticker FROM screener_stocks
                 WHERE asset_type = ${UNIVERSE_ASSET_TYPE} AND exchange = ANY(${UNIVERSE_EXCHANGES})),
     per AS (
-      SELECT u.ticker, x.*
-        FROM u
-        JOIN LATERAL (
-          SELECT
-            (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0 ORDER BY c.date DESC LIMIT 1) last_close,
-            (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0 ORDER BY c.date DESC OFFSET 1 LIMIT 1) prev_close,
-            (SELECT max(date) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0) latest_date,
-            (SELECT min(date) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0) first_date
-        ) x ON true),
-    w AS (
-      SELECT p.*,
-             (SELECT max(close) FROM ticker_daily_candles c WHERE c.ticker=p.ticker AND c.close>0
-               AND c.date > p.latest_date - ${WEEKS_52_DAYS}::int) hi,
-             (SELECT min(close) FROM ticker_daily_candles c WHERE c.ticker=p.ticker AND c.close>0
-               AND c.date > p.latest_date - ${WEEKS_52_DAYS}::int) lo,
-             (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.ticker=p.ticker AND c.close>0
-               AND c.date > p.latest_date - ${WEEKS_52_DAYS}::int ORDER BY c.date DESC LIMIT ${SMA_SHORT}) z) s50,
-             (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.ticker=p.ticker AND c.close>0
-               AND c.date > p.latest_date - ${WEEKS_52_DAYS}::int ORDER BY c.date DESC LIMIT ${SMA_SHORT}) z) n50,
-             (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.ticker=p.ticker AND c.close>0
-               AND c.date > p.latest_date - ${WEEKS_52_DAYS}::int ORDER BY c.date DESC LIMIT ${SMA_LONG}) z) s200,
-             (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.ticker=p.ticker AND c.close>0
-               AND c.date > p.latest_date - ${WEEKS_52_DAYS}::int ORDER BY c.date DESC LIMIT ${SMA_LONG}) z) n200
-        FROM per p)
+      SELECT u.ticker,
+        (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.date=${s.s1}::date AND c.close>0) last_close,
+        (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.date=${s.s2}::date AND c.close>0) prev_close,
+        (SELECT min(date) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0 AND c.date<=${s.s1}::date) first_date,
+        (SELECT max(close) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+          AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int) hi,
+        (SELECT min(close) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+          AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int) lo,
+        (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+          AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
+          ORDER BY c.date DESC LIMIT ${SMA_SHORT}) z) s50,
+        (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+          AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
+          ORDER BY c.date DESC LIMIT ${SMA_SHORT}) z) n50,
+        (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+          AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
+          ORDER BY c.date DESC LIMIT ${SMA_LONG}) z) s200,
+        (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+          AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
+          ORDER BY c.date DESC LIMIT ${SMA_LONG}) z) n200
+        FROM u)
     SELECT
+      count(*) FILTER (WHERE last_close IS NULL)::int not_trading,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND prev_close IS NULL)::int no_prior_close,
       count(*) FILTER (WHERE last_close IS NOT NULL AND prev_close IS NOT NULL)::int adv_eligible,
-      count(*) FILTER (WHERE prev_close IS NOT NULL AND last_close > prev_close)::int adv,
-      count(*) FILTER (WHERE prev_close IS NOT NULL AND last_close < prev_close)::int decl,
-      count(*) FILTER (WHERE prev_close IS NOT NULL AND last_close = prev_close)::int unch,
-      count(*) FILTER (WHERE first_date <= latest_date - ${WEEKS_52_DAYS}::int)::int hl_eligible,
-      count(*) FILTER (WHERE first_date <= latest_date - ${WEEKS_52_DAYS}::int AND last_close = hi)::int new_high,
-      count(*) FILTER (WHERE first_date <= latest_date - ${WEEKS_52_DAYS}::int AND last_close = lo)::int new_low,
-      count(*) FILTER (WHERE n50 >= ${SMA_SHORT})::int sma50_eligible,
-      count(*) FILTER (WHERE n50 >= ${SMA_SHORT} AND last_close > s50)::int above_sma50,
-      count(*) FILTER (WHERE n50 >= ${SMA_SHORT} AND last_close < s50)::int below_sma50,
-      count(*) FILTER (WHERE n200 >= ${SMA_LONG})::int sma200_eligible,
-      count(*) FILTER (WHERE n200 >= ${SMA_LONG} AND last_close > s200)::int above_sma200,
-      count(*) FILTER (WHERE n200 >= ${SMA_LONG} AND last_close < s200)::int below_sma200
-    FROM w`;
-  for (const k of ['adv_eligible', 'adv', 'decl', 'unch', 'hl_eligible', 'new_high', 'new_low',
-    'sma50_eligible', 'above_sma50', 'below_sma50', 'sma200_eligible', 'above_sma200', 'below_sma200']) {
-    ok(`${k} agrees with the independent pass`, Number(snap[k]) === Number(ind[k]), `${snap[k]} vs ${ind[k]}`);
+      count(*) FILTER (WHERE last_close > prev_close)::int adv,
+      count(*) FILTER (WHERE last_close < prev_close)::int decl,
+      count(*) FILTER (WHERE last_close = prev_close)::int unch,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND first_date <= ${s.s1}::date - ${WEEKS_52_DAYS}::int)::int hl_eligible,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND first_date <= ${s.s1}::date - ${WEEKS_52_DAYS}::int AND last_close = hi)::int new_high,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND first_date <= ${s.s1}::date - ${WEEKS_52_DAYS}::int AND last_close = lo)::int new_low,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND n50 >= ${SMA_SHORT})::int sma50_eligible,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND n50 >= ${SMA_SHORT} AND last_close > s50)::int above_sma50,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND n50 >= ${SMA_SHORT} AND last_close < s50)::int below_sma50,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND n200 >= ${SMA_LONG})::int sma200_eligible,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND n200 >= ${SMA_LONG} AND last_close > s200)::int above_sma200,
+      count(*) FILTER (WHERE last_close IS NOT NULL AND n200 >= ${SMA_LONG} AND last_close < s200)::int below_sma200
+    FROM per`;
+  for (const k of ['not_trading', 'no_prior_close', 'adv_eligible', 'adv', 'decl', 'unch',
+    'hl_eligible', 'new_high', 'new_low', 'sma50_eligible', 'above_sma50', 'below_sma50',
+    'sma200_eligible', 'above_sma200', 'below_sma200']) {
+    ok(`${k} agrees with the session-pinned independent pass`,
+      Number(snap[k]) === Number(ind[k]), `${snap[k]} vs ${ind[k]}`);
   }
 }
+
 
 L('⚠️ internal consistency — no side may exceed its own denominator');
 {

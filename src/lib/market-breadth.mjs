@@ -130,6 +130,13 @@ export function buildBreadthPayload(row, { now = Date.now() } = {}) {
   const sma200 = ratio({ up: row.above_sma200, down: row.below_sma200, flat: row.at_sma200, eligible: row.sma200_eligible });
   return {
     universe: Number(row.universe) || 0,
+    // ⚠️ WHY THE UNIVERSE AND THE DENOMINATORS DIFFER, stated rather than left to be inferred. A reader
+    // — or a future maintainer comparing against another site — needs to know that 192 securities did
+    // not trade the session and 58 had no prior-session close, because those are the two reasons a
+    // metric's population is smaller than the universe for reasons other than history length.
+    priorSession: row.prior_session || null,
+    notTrading: Number(row.not_trading) || 0,
+    noPriorClose: Number(row.no_prior_close) || 0,
     advancing,
     highsLows: { ...highs, split: extremeSplit({ up: row.new_high, down: row.new_low }) },
     sma50,
