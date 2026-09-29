@@ -3,6 +3,8 @@ import { canonical, SITE_NAME } from '../../../lib/seo';
 import { normalizeSymbol, tickerPath } from '../../../lib/ticker-symbol.mjs';
 import { tickerTabEnabled } from '../../../lib/feature-availability.mjs';
 import { isKnownSymbol } from '../../../lib/ticker-resolve.server.mjs';
+import { getTickerSeoBundle } from '../../../lib/ticker-seo.server.mjs';
+import { tickerTitle, tickerDescription, tickerStructuredData } from '../../../lib/ticker-seo-meta.mjs';
 import TickerPage from './TickerPage';
 
 // URL AND INDEXING GATE for /ticker/[symbol]. Everything the user sees is still TickerPage, which is
@@ -64,10 +66,23 @@ export async function generateMetadata({ params }) {
     };
   }
 
-  // Verified: we hold first-party data for this symbol. Wording is unchanged from what shipped,
-  // minus the duplicated brand — the full database-driven metadata belongs to the SSR phase.
-  const title = `${sym} · Stock Price, News, Insider & Congress Trades`;
-  const description = `${sym} stock quote, key stats, market news, insider trades, and congressional trades, all on one page.`;
+  // Verified: we hold first-party data for this symbol.
+  //
+  // ⚠️ THE SAME BUNDLE THE PAGE RENDERS FROM. getTickerSeoBundle is cached per symbol, so asking for
+  // it here and again in Page() below is one database read, not two — and, more to the point, the
+  // title, the description and the visible heading are three views of ONE object. They cannot name
+  // different companies, which is a property rather than a thing to keep in sync.
+  //
+  // Vendor-free by construction: the bundle contains no fetch at all, so a crawl of thousands of
+  // ticker URLs cannot become a metered bill or a provider outage.
+  const bundle = await getTickerSeoBundle(sym);
+  const view = bundle?.public || null;
+
+  // Falls back to the symbol-only wording when we cannot name the security — a page that says less
+  // is better than one that says something it cannot support.
+  const title = tickerTitle(view) || `${sym} · Stock Price, News, Insider & Congress Trades`;
+  const description = tickerDescription(view)
+    || `${sym} stock quote, key stats, market news, insider trades, and congressional trades, all on one page.`;
   return {
     ...base,
     title,
@@ -97,5 +112,25 @@ export default async function Page({ params, searchParams }) {
     permanentRedirect(tickerPath(sym, tab));
   }
 
-  return <TickerPage symbol={sym} />;
+  // ⚠️ ONLY `.public` CROSSES THE BOUNDARY. The bundle's other half, `.eligibility`, describes OUR
+  // coverage — which datasets we hold, how many, whether the listing venue is one we verify — and
+  // anything handed to a client component is serialized into the RSC payload and crawled. It stays
+  // here. verify-ticker-seo-bundle.mjs searches the serialized public view recursively for every
+  // field that must never reach markup.
+  const bundle = await getTickerSeoBundle(sym);
+  const view = bundle?.public || null;
+
+  // Structured data only where there is a fact to state and a type that is true — a named common
+  // stock. See tickerStructuredData: no rating, no price, no offer, and nothing at all for an ETF,
+  // a unit or a warrant, because Corporation would be a false claim about what the security is.
+  const ld = tickerStructuredData(view, canonical(`/ticker/${sym}`));
+
+  return (
+    <>
+      {ld ? (
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }} />
+      ) : null}
+      <TickerPage symbol={sym} ssr={view} />
+    </>
+  );
 }

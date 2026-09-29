@@ -194,12 +194,25 @@ function Hero({ data, earnings }) {
     <>
       {/* identity */}
       <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px' }}>
+        {/* ⚠️ h1, AND IT MUST SURVIVE HYDRATION. The server-rendered shell heads the page with an h1
+            naming the security; this block replaces that shell the moment /api/ticker resolves, and
+            as a <div> of spans it left the hydrated page — the version Googlebot actually indexes,
+            because Googlebot runs JavaScript — with no heading element at all. Same element as the
+            shell's, same text, so the heading a crawler sees before and after JS is one heading.
+            Styling is unchanged: h1's own margin and weight are reset, and the sized spans inside
+            are the same spans. */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-            <TickerLogo symbol={data.symbol} size={30} />
-            <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
-          </span>
-          <span style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{data.name}</span>
+          {/* The heading is the security, and ONLY the security. Wrapping the whole row made the
+              buttons part of the heading text — "XOM EXXON MOBIL CORP Alert ☆ Watchlist" is what a
+              crawler would have read. The h1 is a flex item in the same row instead, so the layout
+              is the one that shipped. */}
+          <h1 style={{ margin: 0, fontWeight: 400, display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <TickerLogo symbol={data.symbol} size={30} />
+              <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700, color: C.green }}>{data.symbol}</span>
+            </span>
+            <span style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{data.name}</span>
+          </h1>
           <span style={{ marginLeft: 'auto', alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 10 }}><AlertToggle symbol={data.symbol} variant="button" /><WatchlistStar symbol={data.symbol} /></span>
         </div>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: '0.5px' }}>
@@ -1129,6 +1142,130 @@ function LoadingShell() {
   );
 }
 
+/**
+ * WHAT A CRAWLER — AND A READER ON A SLOW CONNECTION — SEES BEFORE ANY FETCH RESOLVES.
+ *
+ * ⚠️ THIS IS THE SSR PAYLOAD, AND IT IS THE LOADING STATE. Those are the same thing on purpose. The
+ * body of this page has always been client-rendered: the first HTML carried a grey skeleton, and
+ * every fact about the company arrived from /api/ticker after hydration. A crawler that does not
+ * execute JavaScript received a page with a nav, a footer and two grey rectangles.
+ *
+ * It is not a second ticker page. It renders `ssr`, the public view model from ticker-seo.server.mjs,
+ * which is the same object generateMetadata built the title and description from — so the heading,
+ * the meta tags and the JSON-LD cannot name different companies. Every value here comes from our own
+ * database; no vendor is called to produce it.
+ *
+ * ⚠️ NOTHING IS INVENTED TO FILL IT. No description (we store none for any company), no estimate, no
+ * derived claim. A fact we do not hold is simply absent, and a symbol we hold nothing for renders the
+ * old skeleton — an empty card with confident headings would be worse than a loading state.
+ */
+function TickerSeoShell({ symbol, ssr }) {
+  const id = ssr?.identity;
+  if (!id) return <LoadingShell />;
+
+  const facts = [
+    ['Exchange', id.exchange],
+    ['Sector', id.sector],
+    ['Industry', id.industry],
+    ['Market cap', id.marketCap != null ? fmtBig(id.marketCap) : null],
+    ['Country', id.country],
+  ].filter(([, v]) => v != null && v !== '');
+
+  const close = ssr.market;
+  // ⚠️ THE BUNDLE'S FIVE ARE TRANSACTIONS, NOT FILINGS. One Form 4 reporting four separate sales on
+  // one day arrives as four rows, which rendered as four identical crawlable lines — "BERKSHIRE
+  // HATHAWAY INC (10% Owner) · BUY" repeated four times on SIRI. Presentation only: nothing is
+  // filtered from the data, the same line is just not printed twice.
+  const distinct = (rows, key) => {
+    const seen = new Set();
+    return rows.filter((r) => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true; });
+  };
+  const ins = distinct(ssr.insiders?.recent || [], (t) => `${t.filedDate}|${t.person}|${t.action}`);
+  const cng = distinct(ssr.congress?.recent || [], (t) => `${t.transactionDate}|${t.member}|${t.action}|${t.amountRange}`);
+  const news = ssr.news?.recent || [];
+
+  const H = { fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, letterSpacing: '0.5px', marginBottom: 8 };
+  const card = { background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px', marginTop: 14 };
+
+  return (
+    <div>
+      <div style={{ ...card, marginTop: 0 }}>
+        {/* h1, once, and it names the security. The page had no heading element at all before. */}
+        <h1 style={{ margin: 0, display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', fontWeight: 400 }}>
+          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 26, fontWeight: 700, color: C.green }}>{symbol}</span>
+          {id.companyName ? <span style={{ fontSize: 18, fontWeight: 600, color: C.ink }}>{id.companyName}</span> : null}
+        </h1>
+        {facts.length ? (
+          <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, marginTop: 6, letterSpacing: '0.5px' }}>
+            {[id.exchange, id.industry].filter(Boolean).join(' · ') || null}
+          </div>
+        ) : null}
+        {/* Always dated, never presented as a live quote — the live price arrives with the chart. */}
+        {close ? (
+          <div style={{ fontSize: 13, color: C.muted, marginTop: 10 }}>
+            Last close <span style={{ fontWeight: 600, color: C.ink }}>{usd(close.lastClose)}</span>
+            <span style={{ color: C.dim }}> · {close.asOf}</span>
+          </div>
+        ) : null}
+      </div>
+
+      {facts.length ? (
+        <div style={card}>
+          <div style={H}>ABOUT</div>
+          <div style={{ maxWidth: 640 }}>
+            {facts.map(([label, value]) => (
+              <div key={label} style={{ display: 'flex', gap: 12, padding: '5px 0', fontSize: 13, borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ color: C.muted, minWidth: 120 }}>{label}</span>
+                <span style={{ color: C.ink }}>{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {ins.length ? (
+        <div style={card}>
+          <div style={H}>RECENT INSIDER TRADES</div>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, color: C.ink }}>
+            {ins.map((t, i) => (
+              <li key={i} style={{ padding: '5px 0', borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ color: C.muted }}>{t.filedDate}</span>{' · '}{t.person}
+                {t.role ? <span style={{ color: C.muted }}> ({t.role})</span> : null}
+                {t.action ? ` · ${t.action}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {cng.length ? (
+        <div style={card}>
+          <div style={H}>RECENT CONGRESSIONAL TRADES</div>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, color: C.ink }}>
+            {cng.map((t, i) => (
+              <li key={i} style={{ padding: '5px 0', borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ color: C.muted }}>{t.transactionDate}</span>{' · '}{t.member}
+                {t.action ? ` · ${t.action}` : ''}{t.amountRange ? <span style={{ color: C.muted }}> · {t.amountRange}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {news.length ? (
+        <div style={card}>
+          <div style={H}>RECENT NEWS</div>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: 13, color: C.ink }}>
+            {news.map((n, i) => (
+              <li key={i} style={{ padding: '5px 0', borderBottom: `1px solid ${C.border}` }}>{n.headline}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function NotFound({ symbol }) {
   return (
     <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '48px 24px', textAlign: 'center' }}>
@@ -1143,7 +1280,7 @@ function NotFound({ symbol }) {
 }
 
 // Reads ?tab= for URL state (wrapped in Suspense by TickerPage); fetches the aggregator.
-function TickerBody({ symbol }) {
+function TickerBody({ symbol, ssr }) {
   const router = useRouter();
   const params = useSearchParams();
   // A tab id from the URL is only honoured while its feature is available; a link to a disabled
@@ -1199,10 +1336,27 @@ function TickerBody({ symbol }) {
     return () => { alive = false; };
   }, [symbol]);
 
-  if (loading) return <LoadingShell />;
+  // ⚠️ THE FIRST RENDER IS THE SERVER RENDER, and this is what makes the SSR payload reach the HTML.
+  // A client component's initial output is produced on the server; because this branch depends only
+  // on `ssr` — a prop, identical on both sides — the markup a crawler receives and the markup React
+  // hydrates against are the same, so there is no mismatch to reconcile away.
+  if (loading) return <TickerSeoShell symbol={symbol} ssr={ssr} />;
   if (error) return <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8, padding: '40px 16px', textAlign: 'center', color: C.red, fontSize: 13 }}>Failed to load {symbol}: {error}</div>;
-  if (!data?.valid) return <NotFound symbol={data?.symbol || symbol} />;
-  return <ValidView data={data} tab={tab} onTab={onTab} insider={insider} gov={gov} earnings={earnings} short={short} />;
+  // A symbol the vendor cannot price is not necessarily one we know nothing about. If our own data
+  // named it, keep showing that rather than replacing a real company with "No filings yet".
+  if (!data?.valid) return ssr?.identity ? <TickerSeoShell symbol={symbol} ssr={ssr} /> : <NotFound symbol={data?.symbol || symbol} />;
+  // ⚠️ OUR IDENTITY WINS OVER THE VENDOR'S. resolveValidity in /api/ticker falls back to the bare
+  // symbol as the "name" whenever the provider has no profile, so hydration could replace
+  // "Liberty Global Ltd." with "LBTY". The provider is the LAST rank in the identity hierarchy
+  // (security-identity.mjs: form4 > registrant > sec_ticker > provider) and this is that rule applied
+  // at the render — not a second resolver. Exchange and industry likewise, where we hold them.
+  const merged = ssr?.identity ? {
+    ...data,
+    name: ssr.identity.companyName || data.name,
+    exchange: data.exchange || ssr.identity.exchange,
+    industry: data.industry || ssr.identity.industry,
+  } : data;
+  return <ValidView data={merged} tab={tab} onTab={onTab} insider={insider} gov={gov} earnings={earnings} short={short} />;
 }
 
 /**
@@ -1248,7 +1402,7 @@ function FuturesView({ fut }) {
   );
 }
 
-export default function TickerPage({ symbol }) {
+export default function TickerPage({ symbol, ssr = null }) {
   const fut = resolveFutures(symbol);
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -1258,8 +1412,8 @@ export default function TickerPage({ symbol }) {
         {fut ? (
           <FuturesView fut={fut} />
         ) : (
-          <Suspense fallback={<LoadingShell />}>
-            <TickerBody symbol={symbol} />
+          <Suspense fallback={<TickerSeoShell symbol={symbol} ssr={ssr} />}>
+            <TickerBody symbol={symbol} ssr={ssr} />
           </Suspense>
         )}
       </div>

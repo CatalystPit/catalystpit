@@ -50,6 +50,19 @@ const BUNDLE_SQL = `
           from screener_stocks where ticker = $1
       ) r) as identity,
 
+    -- ⚠️ THE SECURITY MASTER, READ DIRECTLY — NOT ONLY ITS DOWNSTREAM COPY.
+    --
+    -- screener-data.js's companyIdentity() reads this table and writes the name into
+    -- screener_stocks.company on the nightly rebuild, so for anything in the screener universe the
+    -- two agree — measured, 15,815 overlapping symbols and ZERO disagreements. What the copy cannot
+    -- carry is a symbol the screener has no row for at all: LBTY has 114 insider filings, is
+    -- isKnownSymbol-true, is in the sitemap, and has no screener_stocks row, so reading only the copy
+    -- renders a page with no company name while we hold "Liberty Global Ltd." from its own Form 4.
+    -- That is 2,816 sitemap-shaped symbols. One more subquery in the same plan, same round trip.
+    (select to_jsonb(r) from (
+        select name, source from security_identity where ticker = $1
+      ) r) as master,
+
     (select coalesce(jsonb_agg(to_jsonb(r)), '[]'::jsonb) from (
         select transaction_date::text as transaction_date,
                filing_date::text      as filing_date,
@@ -161,6 +174,7 @@ async function fetchRaw(symbol) {
   if (!row) return null;
   return {
     identity: row.identity ?? null,
+    master: row.master ?? null,
     insiderRecent: row.insider_recent ?? [],
     insiderSummary: row.insider_summary ?? null,
     insiderWindowDays: INSIDER_WINDOW_DAYS,

@@ -89,8 +89,18 @@ const amountBand = (v) => {
  * The rest of the identity survives regardless — exchange, sector and market cap are still true
  * about the security even when we cannot state who it is.
  */
-function identityOf(row) {
-  if (!row) return null;
+function identityOf(symbol, row, master) {
+  // ⚠️ THE MASTER NAME ALONE IS ENOUGH TO HAVE AN IDENTITY. A symbol we know only through its
+  // filings has no screener_stocks row, so requiring one dropped the name we hold for 2,816
+  // sitemap-shaped symbols. The listing facts are simply null for those — the honest description of
+  // a security we can name but have not classified.
+  const masterName = master ? str(master.name) : null;
+  if (!row) {
+    return masterName
+      ? { symbol, companyName: masterName, exchange: null, sector: null,
+          industry: null, country: null, assetType: null, marketCap: null }
+      : null;
+  }
   // The bug that put an SIC description in the name column wrote the SAME string to `industry`, so a
   // name that is character-for-character another descriptive field on its own row is that class of
   // bug — whichever column the next one comes from. Exact, no vocabulary, nothing to go stale.
@@ -102,13 +112,18 @@ function identityOf(row) {
   // company SHARE a company name; that is what makes them share classes. Keeping the rule cost the
   // name on exactly the pages most likely to be worth indexing, to defend against a condition that no
   // longer exists and that the exact test below already covers.
+  // ⚠️ THE CONTAMINATION TEST APPLIES TO WHICHEVER COLUMN THE NAME CAME FROM. The master is the
+  // source screener_stocks.company is written FROM, so a bad name would arrive through both; running
+  // the test on the chosen name rather than on one column keeps the gate in front of the HTML.
   const describes = [row.industry, row.sector, row.country, row.asset_type];
-  const companyName = row.company != null
-    && describes.some((d) => d != null && String(d) === String(row.company))
-    ? null
-    : str(row.company);
+  const uncontaminated = (v) => (v != null && !describes.some((d) => d != null && String(d) === String(v)))
+    ? str(v) : null;
+  // Master first, the screener's copy second. Not a new hierarchy — it is the one
+  // screener-data.js's companyIdentity() already applies, read at its source instead of one
+  // rebuild later. Measured over the 15,815 symbols carrying both: zero disagreements.
+  const companyName = uncontaminated(masterName) ?? uncontaminated(row.company);
   return {
-    symbol: str(row.ticker),
+    symbol: str(row.ticker) || symbol,
     companyName,
     exchange: str(row.exchange),
     sector: str(row.sector),
@@ -266,7 +281,7 @@ export function buildPublicView(symbol, raw = {}) {
 
   return {
     symbol,
-    identity: identityOf(raw.identity),
+    identity: identityOf(symbol, raw.identity, raw.master),
     market,
     insiders: { recent: insiders, window: insiderWindow(raw.insiderSummary, raw.insiderWindowDays ?? 180) },
     congress: { recent: congress },
