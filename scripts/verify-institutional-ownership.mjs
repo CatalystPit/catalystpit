@@ -73,8 +73,16 @@ section('1. the aggregate applies the proven semantics');
     'without this the bond ETFs are deleted outright');
   ok('an unclassified position is kept, not dropped', /s\.kind IS NULL/.test(fn));
   ok('a blank put_call cannot smuggle a derivative in', /mislabelled_option/.test(fn));
-  ok('amendments do not double-count',
-    /DISTINCT ON \(cik, quarter, cusip\)/.test(fn) && /filed_date DESC NULLS LAST, accession DESC/.test(fn));
+  // ⚠️ THIS ASSERTION USED TO PIN THE DEFECT. It required DISTINCT ON (cik, quarter, cusip) — which
+  // deduped a CUSIP carrying two share classes down to one, deleting a real position whenever the two
+  // classes came from two accessions of the same quarter (3,324 groups in the live corpus). A filer may
+  // use ONE CUSIP for SEVERAL securities: verified against the SEC document, First Trust files cusip
+  // 336917109 thirty-four times in one information table under 31 different titleOfClass values. The
+  // key has to be the table's own: (cik, quarter, cusip, class, put_call), with put_call already pinned
+  // by the scoped CTE.
+  ok('⚠️ amendments do not double-count, and no share class is dropped either',
+    /DISTINCT ON \(cik, quarter, cusip, class\)/.test(fn) && /filed_date DESC NULLS LAST, accession DESC/.test(fn),
+    'deduping on cusip alone drops one of two classes reported by two accessions');
   ok('no hand-written class regex was added', !/~\*/.test(fn));
   // Balanced backticks: a backtick inside this SQL template silently truncates the query.
   ok('the SQL template is not broken by a stray backtick', (fn.match(/`/g) || []).length % 2 === 0);

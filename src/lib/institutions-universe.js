@@ -167,9 +167,23 @@ export async function runOwnershipAggregate() {
   const t0 = Date.now();
   await db.execute(sql`DELETE FROM ticker_institutional_ownership`);
   const res = await db.execute(sql`
+    -- Each fund's latest REPORT PERIOD — never its latest filing date, which would let a manager
+    -- back-filing eight quarters today promote a two-year-old period to "current".
+    --
+    -- ⚠️ AND NEVER A PLACEHOLDER QUARTER. Some managers satisfy the filing requirement with a table
+    -- holding one non-position: CUSIP 000000000, value 0, shares 0. Because this CTE takes the latest
+    -- quarter unconditionally, such a filing became the fund's current portfolio and its real
+    -- disclosure — the quarter before — stopped contributing entirely. Measured: 253 funds were adding
+    -- nothing to institutional ownership on the strength of one of these, a $51B manager among them.
+    -- The ingest now refuses to store them, and this excludes the 680 already on disk without deleting
+    -- a faithful record of what the filer actually submitted.
     WITH latest AS (
       SELECT DISTINCT ON (cik) cik, quarter
-      FROM fund_filings
+      FROM fund_filings f
+      WHERE EXISTS (
+        SELECT 1 FROM fund_holdings h
+         WHERE h.cik = f.cik AND h.quarter = f.quarter AND h.cusip <> '000000000'
+      )
       ORDER BY cik, quarter DESC
     ),
     -- THE SECURITY THE TICKER NAMES, exactly as fund_net_qoq decides it (17421db). This aggregate
@@ -204,7 +218,7 @@ export async function runOwnershipAggregate() {
            > count(*) FILTER (WHERE coalesce(f.put_call, '') = '')
     ),
     scoped AS (
-      SELECT h.ticker, h.cik, h.quarter, h.cusip, h.shares, h.value, h.accession, h.filed_date
+      SELECT h.ticker, h.cik, h.quarter, h.cusip, h.class, h.shares, h.value, h.accession, h.filed_date
         FROM fund_holdings h
         JOIN latest l ON l.cik = h.cik AND l.quarter = h.quarter
         LEFT JOIN primary_cusip p ON p.ticker = h.ticker
@@ -220,30 +234,69 @@ export async function runOwnershipAggregate() {
               OR s.kind NOT IN ('debt', 'option', 'warrant', 'right', 'preferred'))
     ),
     -- AMENDMENTS. A 13F-HR/A restates what it re-lists, so an original and its amendment must not
-    -- both contribute. Latest filing per (cik, quarter, cusip) wins.
+    -- both contribute. Latest filing per POSITION wins.
+    --
+    -- ⚠️ THE KEY IS THE POSITION KEY, AND IT MUST INCLUDE class. This deduped on
+    -- (cik, quarter, cusip) and then kept only rows carrying the winning accession — which silently
+    -- DELETED a legitimate holding whenever one CUSIP carried two share classes reported by two
+    -- different accessions of the same quarter. 3,324 (cik, quarter, cusip) groups in the live corpus
+    -- are in exactly that shape, and every one lost a real position.
+    --
+    -- A filer using ONE CUSIP for SEVERAL securities is not a parser bug, which is why this matters.
+    -- Verified against the SEC document: First Trust (CIK 1586767) files cusip 336917109 thirty-four
+    -- times in its Q3 2025 information table with 31 different titleOfClass values — WTR ETF, FT VEST
+    -- RIS, CAP STRENGTH ETF — and our stored rows match the filing position for position. The table's
+    -- own unique key is (cik, quarter, cusip, class, put_call) for that reason; anything narrower here
+    -- contradicts it. put_call is already pinned to the empty string by the scoped CTE above, so class
+    -- is the part that was missing.
     pick AS (
-      SELECT DISTINCT ON (cik, quarter, cusip) cik, quarter, cusip, accession
-        FROM scoped ORDER BY cik, quarter, cusip, filed_date DESC NULLS LAST, accession DESC
+      SELECT DISTINCT ON (cik, quarter, cusip, class) cik, quarter, cusip, class, accession
+        FROM scoped ORDER BY cik, quarter, cusip, class, filed_date DESC NULLS LAST, accession DESC
     ),
     kept AS (
       SELECT sc.* FROM scoped sc
         JOIN pick pk ON pk.cik = sc.cik AND pk.quarter = sc.quarter
-                    AND pk.cusip = sc.cusip AND pk.accession = sc.accession
+                    AND pk.cusip = sc.cusip AND pk.class = sc.class
+                    AND pk.accession = sc.accession
     ),
     agg AS (
       SELECT kept.ticker,
              SUM(kept.shares)::double precision AS inst_shares,
              SUM(kept.value)::double precision  AS inst_value,
              COUNT(DISTINCT kept.cik)           AS filer_count,
-             MAX(kept.quarter)                  AS as_of
+             MAX(kept.quarter)                  AS as_of,
+             -- ⚠️ THE LARGEST SINGLE FUND'S POSITION, kept only to sanity-check the DENOMINATOR below.
+             -- It is not published.
+             MAX(kept.shares)::double precision AS max_single_position
       FROM kept
       GROUP BY kept.ticker
     )
     INSERT INTO ticker_institutional_ownership
       (ticker, as_of_quarter, inst_shares, inst_value, filer_count, shares_out, ownership_pct, updated_at)
+    -- ⚠️ NO PERCENTAGE WHEN THE DENOMINATOR IS ARITHMETICALLY IMPOSSIBLE.
+    --
+    -- ownership_pct divides a 13F sum by shares outstanding, and the numerator is sound. The
+    -- denominator comes from screener_meta (float fallback ticker_float) and for some tickers it is
+    -- not a share count at all: QNTM was stored with shares_out = 42 while 26 funds reported holding
+    -- 461,546 shares between them, so the page published "1,098,919% of shares outstanding".
+    --
+    -- The test is arithmetic, not a threshold: ONE fund cannot hold more shares than exist. Where a
+    -- single reported position exceeds the outstanding count, one of the two numbers is impossible and
+    -- we cannot say which — so no ratio is published. 161 of 9,631 tickers fail it.
+    --
+    -- Crossing 100% in AGGREGATE is NOT that case and is deliberately still published: two managers
+    -- sharing voting authority over the same shares both report them, so 13F sums legitimately exceed
+    -- the float. 1,770 tickers are over 100% with a denominator that survives this test, and capping
+    -- them would be inventing a number rather than reporting one.
+    --
+    -- inst_shares, inst_value and filer_count are Form 13F facts and are published either way;
+    -- shares_out is withheld with the ratio, because publishing the denominator while suppressing the
+    -- quotient just invites the reader to divide it themselves.
     SELECT a.ticker, a.as_of, a.inst_shares, a.inst_value, a.filer_count,
-           so.shares_out,
-           CASE WHEN so.shares_out > 0 THEN a.inst_shares / so.shares_out * 100 ELSE NULL END,
+           CASE WHEN so.shares_out > 0 AND a.max_single_position <= so.shares_out
+                THEN so.shares_out ELSE NULL END,
+           CASE WHEN so.shares_out > 0 AND a.max_single_position <= so.shares_out
+                THEN a.inst_shares / so.shares_out * 100 ELSE NULL END,
            now()
     FROM agg a
     LEFT JOIN LATERAL (
@@ -605,7 +658,24 @@ export async function ingestFiler(cik, cutoff, { skipUnchanged = false } = {}) {
     // more empty result is how BNP Paribas lost six consecutive quarters: the documents downloaded
     // perfectly, an attribute on <infoTable> defeated the match, zero rows came back, and
     // `if (!rows.length) continue` moved on without a trace. Recorded, not skipped.
-    if (!rows.length) { unresolved.push({ quarter, reason: 'no-positions-parsed' }); continue; }
+    // ⚠️ AND A PLACEHOLDER TABLE IS NOT A PORTFOLIO. Some managers satisfy the filing requirement with
+    // an information table holding exactly one non-position: CUSIP 000000000, nameOfIssuer "NA", value
+    // 0, shares 0. Norges Bank's Q1 2026 is precisely that — 627 bytes, one entry, all zeros. Stored
+    // as a quarter it becomes the filer's LATEST, and because the ownership aggregate reads each fund's
+    // latest quarter, the fund's real disclosure disappears: 253 funds were contributing nothing to
+    // institutional ownership on the strength of one of these, including a $51B manager.
+    //
+    // CUSIP 000000000 is the SEC's own placeholder, so this is the filer's stated "no holdings" rather
+    // than an inference from small numbers — 680 fund-quarters in the corpus consist solely of it, and
+    // every one carries a total value of 0. Note that total_value is NOT the test: 56 substantive
+    // quarters legitimately total 0 and must still be stored.
+    //
+    // Dropping the row and then falling through to the check below routes a placeholder-only table to
+    // the same 'no-positions-parsed' path as an unreadable one: recorded as unresolved, not stored, so
+    // the fund's previous real quarter stays operative. A placeholder mixed in with real positions (84
+    // quarters) simply loses the placeholder line, which held no shares and no value anyway.
+    rows = rows.filter((r) => String(r.cusip || '').replace(/[^0-9A-Za-z]/g, '') !== '000000000');
+    if (!rows.length) { unresolved.push({ quarter, reason: 'placeholder-table' }); continue; }
     const head = parts[parts.length - 1];   // newest accession represents the quarter in fund_filings
     const res = await storeFilingSuperseded(cik, quarter, head.filedDate, head.accession, rows);
     if (res.stored) { stored += res.stored; quarters++; }

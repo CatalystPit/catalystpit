@@ -23,8 +23,14 @@ section('1. the shipped query says what it must');
   ok('aggregates server-side', /with primary_cusip as/.test(q) && /group by ticker`/.test(q));
   ok('does not pull raw holdings into Node', !/select .*from fund_holdings.*\)\s*;?\s*$/m.test(q)
     || /sum\(case when cur/.test(q));
-  ok('amendments: latest filing per (cik,quarter,cusip)',
-    /distinct on \(cik, quarter, cusip\)/.test(q) && /filed_date desc nulls last, accession desc/.test(q));
+  // ⚠️ THIS ASSERTION USED TO PIN THE DEFECT, and this query carried it worse than the ownership
+  // aggregate did: per_security below sums classes together immediately afterwards, so a class dropped
+  // here vanished silently into the net rather than showing up as a missing row. The key must be the
+  // full position key — (cik, quarter, cusip, class) with put_call already pinned by scoped — because a
+  // filer may report one CUSIP under many titleOfClass values.
+  ok('⚠️ amendments: latest filing per POSITION, class included',
+    /distinct on \(cik, quarter, cusip, class\)/.test(q) && /filed_date desc nulls last, accession desc/.test(q),
+    'deduping on cusip alone loses a class into the net without a trace');
   ok('the selected FILING supplies the rows, not a row rank',
     /join latest l on l\.cik = sc\.cik/.test(q));
   ok('manager lines summed at the security level',

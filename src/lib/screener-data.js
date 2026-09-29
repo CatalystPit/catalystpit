@@ -816,7 +816,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
              > count(*) filter (where coalesce(f.put_call, '') = '')
       ),
       scoped as (
-        select h.ticker, h.cik, h.quarter, h.cusip, h.shares, h.accession, h.filed_date
+        select h.ticker, h.cik, h.quarter, h.cusip, h.class, h.shares, h.accession, h.filed_date
           from fund_holdings h
           left join primary_cusip p on p.ticker = h.ticker
           left join security_position_class s
@@ -832,21 +832,30 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
                 or s.kind not in ('debt', 'option', 'warrant', 'right', 'preferred'))
       ),
       -- 2. AMENDMENTS. A 13F-HR/A restates the securities it re-lists, so an original and its
-      --    amendment must not both contribute. Measured on live data, 9 of 13 multi-accession
-      --    filings look like restatements, not additive ones. Per (cik, quarter, cusip) the LATEST
-      --    filing wins — filed_date then accession, both descending, so the answer never depends on
-      --    physical row order. Choosing the FILING and then taking its rows, rather than ranking
-      --    rows, is what keeps a filing whole.
+      --    amendment must not both contribute. The LATEST filing wins — filed_date then accession,
+      --    both descending, so the answer never depends on physical row order. Choosing the FILING and
+      --    then taking its rows, rather than ranking rows, is what keeps a filing whole.
+      --
+      --    ⚠️ PER POSITION, WHICH INCLUDES class. This deduped on (cik, quarter, cusip) and then kept
+      --    only the winning accession's rows, so a CUSIP carrying two share classes reported by two
+      --    accessions of one quarter lost a real position — and since per_security below sums classes
+      --    together, the loss landed silently in the net. 3,324 groups in the live corpus are in that
+      --    shape. A filer using ONE CUSIP for SEVERAL securities is not a parser bug: verified against
+      --    the SEC document, First Trust files cusip 336917109 thirty-four times in one information
+      --    table under 31 different titleOfClass values. fund_holdings is unique on
+      --    (cik, quarter, cusip, class, put_call) for exactly that reason, and put_call is already
+      --    pinned to the empty string by scoped above. Same fix, same reason, as runOwnershipAggregate.
       latest as (
-        select distinct on (cik, quarter, cusip) cik, quarter, cusip, accession
+        select distinct on (cik, quarter, cusip, class) cik, quarter, cusip, class, accession
           from scoped
-         order by cik, quarter, cusip, filed_date desc nulls last, accession desc
+         order by cik, quarter, cusip, class, filed_date desc nulls last, accession desc
       ),
       kept as (
         select sc.ticker, sc.cik, sc.quarter, sc.cusip, sc.shares
           from scoped sc
           join latest l on l.cik = sc.cik and l.quarter = sc.quarter
-                       and l.cusip = sc.cusip and l.accession = sc.accession
+                       and l.cusip = sc.cusip and l.class = sc.class
+                       and l.accession = sc.accession
       ),
       -- 3. MANAGER LINES. 13F lets one filer report a security across several internal managers, one
       --    line each — 10,349 groups do. Those lines ARE one position, and this is the only level
