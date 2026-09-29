@@ -74,7 +74,7 @@ else {
       having count(*) filter (where coalesce(f.put_call,'') <> '')
            > count(*) filter (where coalesce(f.put_call,'') = '')),
     scoped as (
-      select h.ticker,h.cik,h.quarter,h.cusip,h.shares,h.accession,h.filed_date
+      select h.ticker,h.cik,h.quarter,h.cusip,h.class,h.shares,h.accession,h.filed_date
         from fund_holdings h
         left join primary_cusip p on p.ticker=h.ticker
         left join security_position_class s on s.cusip=h.cusip and s.cls=h.class and s.put_call=h.put_call
@@ -82,10 +82,18 @@ else {
        where ${W} and m.cusip is null
          and (h.cusip=p.cusip or s.kind is null
               or s.kind not in ('debt','option','warrant','right','preferred'))),
-    latest as (select distinct on (cik,quarter,cusip) cik,quarter,cusip,accession from scoped
-                order by cik,quarter,cusip,filed_date desc nulls last,accession desc),
+    -- ⚠️ THE KEY INCLUDES class, AND THIS SUITE WAS STILL USING THE OLD ONE. Deduping on
+    -- (cik, quarter, cusip) keeps only the winning accession's rows, so a CUSIP carrying two share
+    -- classes reported by two accessions of one quarter loses a real position — the exact defect the
+    -- 13F audit fixed in screener-data.js. The product was corrected; this comparison query was not,
+    -- so it computed a DIFFERENT net and reported the product as 409 rows stale. fund_holdings is
+    -- unique on (cik, quarter, cusip, class, put_call) precisely because one filer legitimately files
+    -- one CUSIP under many titleOfClass values.
+    latest as (select distinct on (cik,quarter,cusip,class) cik,quarter,cusip,class,accession from scoped
+                order by cik,quarter,cusip,class,filed_date desc nulls last,accession desc),
     kept as (select sc.ticker,sc.cik,sc.quarter,sc.cusip,sc.shares from scoped sc join latest l
-              on l.cik=sc.cik and l.quarter=sc.quarter and l.cusip=sc.cusip and l.accession=sc.accession),
+              on l.cik=sc.cik and l.quarter=sc.quarter and l.cusip=sc.cusip and l.class=sc.class
+             and l.accession=sc.accession),
     per_security as (select ticker,cik,quarter,cusip,sum(shares)::numeric shares from kept group by 1,2,3,4),
     per_filer as (select ticker,cik,coalesce(sum(shares) filter (where quarter='${q0}'),0) cur,
                          coalesce(sum(shares) filter (where quarter='${q1}'),0) prev

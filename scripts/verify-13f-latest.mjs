@@ -101,7 +101,15 @@ L('\n=== A FILING TODAY APPEARS TODAY ===');
 {
   // The rest of the route describes quarterly holdings and is happy on a 1-hour edge cache with a
   // 24-hour stale window. This view answers "what landed today".
-  const block = (routeCode.match(/view === 'latest-filings'[\s\S]{0,400}/) || [''])[0];
+  // ⚠️ READ THE HEADER THE VIEW USES, NOT THE ONE WRITTEN NEXT TO IT. This matched an s-maxage
+  // literal inside the `view === 'latest-filings'` block. The public/Free/Pro split moved that
+  // literal into `freshHeaders` a few lines up — the served values did not change, and production
+  // still answers logged-out with s-maxage=300, stale-while-revalidate=900 — but three assertions
+  // failed because the text was no longer where they looked. Following the variable keeps the
+  // assertion about the cache POLICY rather than about its position in the file.
+  const usesFresh = /view === 'latest-filings'[\s\S]{0,400}headers: freshHeaders/.test(routeCode);
+  const fresh = (routeCode.match(/const freshHeaders[\s\S]{0,260}?;/) || [''])[0];
+  const block = usesFresh ? fresh : (routeCode.match(/view === 'latest-filings'[\s\S]{0,400}/) || [''])[0];
   const m = block.match(/s-maxage=(\d+)/);
   ok('the view sets its own Cache-Control', mut('longttl') ? false : !!m);
   ok('…and it is minutes, not an hour',
@@ -109,9 +117,13 @@ L('\n=== A FILING TODAY APPEARS TODAY ===');
   const swr = block.match(/stale-while-revalidate=(\d+)/);
   ok('…with a stale window under an hour',
     mut('longttl') ? false : swr && Number(swr[1]) <= 3600, swr ? `swr=${swr[1]}` : 'none');
-  // No new vendor: the data comes from the tables the hourly cron already fills.
+  // ⚠️ AND THE POINT IS "NO VENDOR", NOT ONE SPELLING OF THE TABLE. `from fund_filings f` became
+  // `from ${ffRel(cutoff)} f` when the Free EOD cutoff scoped the relation; the route still reads
+  // nothing but the 13F tables the hourly cron fills. What must hold is that it makes no outbound
+  // call, so that is what is asserted, alongside the table appearing in either form.
   ok('it reads the existing 13F tables only',
-    mut('newvendor') ? false : /from fund_filings f/.test(fn) && !/fetch\(/.test(fn));
+    mut('newvendor') ? false
+      : (/from fund_filings f/.test(fn) || /ffRel\(cutoff\)/.test(fn)) && !/fetch\(/.test(fn));
 }
 
 L('\n=== EVERYTHING ELSE ON THE PAGE IS STILL THERE ===');
