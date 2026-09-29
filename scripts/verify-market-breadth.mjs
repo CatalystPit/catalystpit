@@ -307,6 +307,16 @@ L('the API and the cron read the one snapshot');
   const vercel = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
   ok('⚠️ the recompute is scheduled, so the snapshot cannot silently rot',
     (vercel.crons || []).some((c) => c.path === '/api/cron/market-breadth'));
+  // ⚠️ VERCEL CAPS A PROJECT AT 40 CRON JOBS, and exceeding it REJECTS THE DEPLOYMENT while the build
+  // itself succeeds — so the only symptom is an unchanged deployment id and a feature that never
+  // appears. Two breadth schedules took this project to 41 and cost a deploy cycle to diagnose.
+  ok('⚠️ the project stays within Vercel\'s 40-cron limit',
+    (vercel.crons || []).length <= 40, `${(vercel.crons || []).length} crons`);
+  // The nightly refresh rides on screener-technicals for that reason; it must still be wired.
+  const tech = readFileSync(new URL('../src/app/api/cron/screener-technicals/route.js', import.meta.url), 'utf8');
+  ok('⚠️ the nightly refresh is hooked onto the job that reads the same candles',
+    /computeMarketBreadth/.test(tech));
+  ok('...and a breadth failure cannot fail that job', /breadth failed/.test(tech));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

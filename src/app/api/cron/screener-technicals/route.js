@@ -34,7 +34,20 @@ export async function GET(request) {
   try {
     const res = await backfillTechnicals({ days });
     console.log(`[screener-tech] ${JSON.stringify(res)}`);
-    return Response.json({ ok: true, ...res });
+    // ⚠️ MARKET BREADTH RIDES ALONG, AND NOT FOR TIDINESS. Vercel caps a project at 40 cron jobs and
+    // this one already runs 39, so breadth gets one schedule of its own (the post-close run) and takes
+    // its nightly refresh from here. This is the right moment anyway: breadth reads the same daily
+    // candles this job has just finished reading, so it cannot run against a half-updated history.
+    // Non-fatal — a breadth failure must not fail the technicals run that preceded it.
+    let breadth = null;
+    try {
+      const { computeMarketBreadth } = await import('../../../../lib/market-breadth.server.mjs');
+      breadth = await computeMarketBreadth();
+      console.log(`[screener-tech] breadth ${JSON.stringify(breadth)}`);
+    } catch (e) {
+      console.log(`[screener-tech] breadth failed: ${e.message}`);
+    }
+    return Response.json({ ok: true, ...res, breadth });
   } catch (e) {
     console.log(`[screener-tech] failed: ${e.message}`);
     return Response.json({ ok: false, error: e.message }, { status: 500 });
