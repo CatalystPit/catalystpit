@@ -122,5 +122,76 @@ L('⚠️ THE DOWNSTREAM PIPELINE IS UNCHANGED');
     /NOTABLE_BANDS = Object\.freeze\(\['HIGH', 'VERY HIGH', 'EXTREME'\]\)/.test(read('../src/lib/terminal/watchlist-changes.mjs')));
 }
 
+console.log('\n=== ⚠️ a well-formed symbol can still belong to another company ===');
+{
+  // ⚠️ THE DEFECT THIS PINS. issuerTradingSymbol is free text on a Form 4. resolveFilerSymbol already
+  // refuses the unparseable ones ("Z AND ZG", "MOGA/MOGB") — it returns null rather than inventing a
+  // symbol. What it cannot catch is a symbol that IS a valid ticker, for somebody else. Measured on the
+  // live corpus, 8 tickers carried filings from a company the ticker does not name: 8 DoorDash rows on
+  // Fabrinet's FN page, Bank of America rows on an Invesco muni fund, PEDEVCO on Crexendo, Zomedica on
+  // TSS, Riverview Bancorp on Timberland.
+  const A = await import('../src/lib/insider-ticker-authority.mjs');
+  const counts = [
+    { ticker: 'FN', issuerCik: 'FABRINET', n: 50 },      // Fabrinet holds FN
+    { ticker: 'FN', issuerCik: 'DOORDASH', n: 8 },        // DoorDash filed under it by mistake
+    { ticker: 'DASH', issuerCik: 'DOORDASH', n: 695 },    // and has a page of its own
+  ];
+  const auth = A.buildTickerAuthority(counts);
+  ok('⚠️ a row on another company\'s ticker is moved to its own',
+    A.authoritativeTicker({ ticker: 'FN', issuerCik: 'DOORDASH' }, auth) === 'DASH');
+  ok('⚠️ the ticker\'s real holder is left alone',
+    A.authoritativeTicker({ ticker: 'FN', issuerCik: 'FABRINET' }, auth) === null);
+
+  // ⚠️ AND THE RULE MUST BE SILENT ON A SYMBOL CHANGE, which is the opposite failure: after a rename
+  // the old symbol has thousands of rows and the new one has few, and "prefer the issuer's usual
+  // ticker" would file every new filing under the dead symbol. A renamed company's new symbol is not
+  // established by anyone else, so both conditions fail and nothing moves.
+  const renamed = A.buildTickerAuthority([
+    { ticker: 'OLD', issuerCik: 'ACME', n: 900 },
+    { ticker: 'NEW', issuerCik: 'ACME', n: 2 },
+  ]);
+  ok('⚠️ a symbol change is not rewritten to the old symbol',
+    A.authoritativeTicker({ ticker: 'NEW', issuerCik: 'ACME' }, renamed) === null,
+    'this is the regression that would misfile every filing after a rename');
+
+  // A company with no established ticker of its own must be left as filed, not guessed at.
+  const noOwn = A.buildTickerAuthority([
+    { ticker: 'BOX', issuerCik: 'BOX_INC', n: 89 },
+    { ticker: 'BOX', issuerCik: 'BOXABL', n: 1 },
+  ]);
+  ok('⚠️ a company with no page of its own is left unchanged, not guessed',
+    A.authoritativeTicker({ ticker: 'BOX', issuerCik: 'BOXABL' }, noOwn) === null,
+    'preferring unresolved over wrong');
+
+  // A free-text symbol is nobody's authority and is not this rule's job.
+  ok('a malformed symbol is left to resolveFilerSymbol',
+    A.authoritativeTicker({ ticker: 'Z AND ZG', issuerCik: 'ZILLOW' },
+      A.buildTickerAuthority([{ ticker: 'Z AND ZG', issuerCik: 'OTHER', n: 9 }, { ticker: 'Z', issuerCik: 'ZILLOW', n: 9 }])) === null);
+  ok('...and cannot become an authority itself',
+    !A.buildTickerAuthority([{ ticker: 'NYSE: VTEX', issuerCik: 'VTEX', n: 88 }]).dominantCikOf.has('NYSE: VTEX'));
+  // ⚠️ A TIE MUST NOT BE DECIDED BY ROW ORDER, or the same corpus gives different answers on different
+  // runs. Both directions are asserted, because checking one leaves the outcome the same either way.
+  // B is listed FIRST on purpose: without the sort, insertion order would hand T1 to B, so the
+  // assertion only has teeth when the fixture's order disagrees with the deterministic answer.
+  const tie = A.buildTickerAuthority([
+    { ticker: 'T1', issuerCik: 'B', n: 5 }, { ticker: 'T1', issuerCik: 'A', n: 5 },
+    { ticker: 'T3', issuerCik: 'A', n: 9 }, { ticker: 'T2', issuerCik: 'B', n: 9 },
+  ]);
+  ok('ties are broken deterministically — the lower cik holds the ticker',
+    tie.dominantCikOf.get('T1') === 'A');
+  ok('...so the tie loser is relocated', A.authoritativeTicker({ ticker: 'T1', issuerCik: 'B' }, tie) === 'T2');
+  ok('...and the tie winner is left alone', A.authoritativeTicker({ ticker: 'T1', issuerCik: 'A' }, tie) === null);
+
+  // Against the live parser: the guard runs before the insert, or it protects nothing.
+  const route = read('../src/app/api/refresh/route.js');
+  ok('⚠️ the live parser applies the rule before storing', /await relocateMisfiledTickers\(rows\);/.test(route));
+  ok('⚠️ ...and before the placeable filter that writes the rows',
+    route.indexOf('relocateMisfiledTickers(rows)') < route.indexOf('const placeable = rows.filter'));
+  ok('⚠️ ...using the shared decision, not a second copy of it',
+    /authoritativeTicker\(p, buildTickerAuthority\(counts\)\)/.test(route));
+  ok('a lookup failure leaves the filed symbol rather than dropping the filing',
+    /ticker authority check failed/.test(route));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

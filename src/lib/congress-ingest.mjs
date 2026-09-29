@@ -95,7 +95,24 @@ export function canonicalHash({ memberSlug, transactionDate, ticker, action, amo
     // trade arrives as 'Cadence Design Systems Inc' from one feed and 'Cadence Design Systems,
     // Inc. - Common Stock (CDNS)' from another, which must still collapse to one row.
     ticker ? '' : (assetDescription || '').trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 160),
-  ].join('|') + (isOption ? '|OPT' : '');   // option suffix keeps a stock and option sibling separate
+    // ⚠️ isOption IS ACCEPTED AND DELIBERATELY NOT HASHED. It used to append an '|OPT' suffix so a
+    // share buy and an option buy of the same ticker, day and amount stayed separate lines. The
+    // trouble is that it is derived from assetType, a RAW PER-SOURCE FIELD — the one category this
+    // function's own contract excludes — and the sources contradict each other about it. Pelosi's
+    // Bloom Energy trades of 2026-07-24 and 2026-07-28 arrive as 'Stock Option' from one feed and
+    // 'ST' from the House Clerk, so the two reports of ONE trade hashed differently, survived the
+    // dedupe, and showed twice on the most-viewed politician page in the product.
+    //
+    // Measured across all 7,956 rows: exactly 2 groups are identical on every other input while
+    // disagreeing on option-ness, and both are that cross-source duplicate. ZERO are a genuine
+    // stock-and-option pair. So the discriminator was protecting a shape that has never occurred
+    // while creating duplicates that had.
+    //
+    // The trade is stated, not hidden: if a member ever does buy the shares and an option on the
+    // same ticker, same day, in the same amount bracket, and one source reports both lines, they now
+    // collapse to one row. assetType is still stored on every row, so nothing is lost from the record
+    // — only the row's IDENTITY stops depending on a field two sources spell differently.
+  ].join('|');
   return createHash('sha256').update(key).digest('hex');
 }
 

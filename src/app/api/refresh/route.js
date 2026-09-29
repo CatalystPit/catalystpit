@@ -112,6 +112,45 @@ async function throttledBatch(items, concurrency, gapMs, worker) {
  * filed on the date the amendment states — nothing about matching shares, prices or codes, which
  * would be a coincidence promoted to a lineage claim.
  */
+/**
+ * Put freshly parsed rows on the ticker their issuer actually owns.
+ *
+ * ⚠️ TWO INDEXED LOOKUPS PER DISTINCT (ticker, issuerCik), NOT A CORPUS SCAN. The repair script builds
+ * the whole authority table because it is repairing every row; here only the handful of filings in this
+ * run matter, so the same question is asked pointwise against idx_insider_ticker_action_date and
+ * idx_insider_issuer_cik. The DECISION is authoritativeTicker either way — one rule, two callers.
+ */
+async function relocateMisfiledTickers(rows) {
+  const { buildTickerAuthority, authoritativeTicker } = await import('../../../lib/insider-ticker-authority.mjs');
+  const pairs = new Map();
+  for (const r of rows) {
+    if (!r.ticker || !r.issuerCik) continue;
+    pairs.set(`${r.ticker}|${r.issuerCik}`, { ticker: r.ticker, issuerCik: r.issuerCik });
+  }
+  for (const p of pairs.values()) {
+    try {
+      // Who holds this ticker, and does this issuer hold one of its own? Counted, not assumed.
+      const held = await db.execute(sql`
+        SELECT issuer_cik AS cik, count(*)::int AS n FROM insider_trades
+         WHERE ticker = ${p.ticker} AND issuer_cik IS NOT NULL GROUP BY 1`);
+      const own = await db.execute(sql`
+        SELECT ticker, count(*)::int AS n FROM insider_trades
+         WHERE issuer_cik = ${p.issuerCik} AND ticker ~ '^[A-Z][A-Z0-9.-]{0,9}$' GROUP BY 1`);
+      const counts = [
+        ...(held.rows ?? held ?? []).map((x) => ({ ticker: p.ticker, issuerCik: x.cik, n: x.n })),
+        ...(own.rows ?? own ?? []).map((x) => ({ ticker: x.ticker, issuerCik: p.issuerCik, n: x.n })),
+      ];
+      const to = authoritativeTicker(p, buildTickerAuthority(counts));
+      if (!to) continue;
+      for (const r of rows) if (r.ticker === p.ticker && r.issuerCik === p.issuerCik) r.ticker = to;
+      console.log(`[form4] ${p.ticker} belongs to another issuer; ${p.issuerCik} filed under ${to}`);
+    } catch (e) {
+      // The filed symbol is the fallback. A lookup failure must never stop a filing being stored.
+      console.log(`[form4] ticker authority check failed for ${p.ticker}: ${e.message}`);
+    }
+  }
+}
+
 async function resolveLineageForRows(rows) {
   const amendments = new Map();
   for (const r of rows) {
@@ -730,6 +769,18 @@ async function insertInsiderTrades(insiderTrades) {
   // minority rather than a new gap, and it is recoverable: the backfill re-examines them whenever
   // more of the corpus is present. A double count is not recoverable, because nothing downstream
   // can tell which of the two rows is the correction.
+  // ⚠️ A WELL-FORMED SYMBOL CAN STILL BELONG TO SOMEBODY ELSE. issuerTradingSymbol is free text on a
+  // Form 4: resolveFilerSymbol already refuses the unparseable ones ("Z AND ZG", "MOGA/MOGB"), but it
+  // cannot catch a symbol that is a perfectly valid ticker for a DIFFERENT company. Measured on the
+  // corpus, 8 tickers carried filings from a company the ticker does not name — 8 DoorDash rows on
+  // Fabrinet's FN page, Bank of America rows on an Invesco muni fund, PEDEVCO on Crexendo.
+  //
+  // The rule is deliberately narrow and lives in insider-ticker-authority.mjs, which explains why:
+  // a row moves ONLY when the filed ticker is established by another issuer CIK and this filing's CIK
+  // has a ticker of its own. That leaves symbol changes, reorganisations and recased names untouched,
+  // because a new symbol is not established by anyone else.
+  await relocateMisfiledTickers(rows);
+
   // `lineage` was an input to the resolution above, not a column; it goes no further than this.
   const placeable = rows.filter((r) => !r.isAmendment || r.amendsAccession)
     .map(({ lineage, ...row }) => row);

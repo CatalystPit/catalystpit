@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import {
   dayMs, informationDate, transactionDate, withinInformationWindow, disclosureLagDays, WINDOW_DAYS,
 } from '../src/lib/congress-window.mjs';
+import { canonicalHash } from '../src/lib/congress-ingest.mjs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -137,6 +138,51 @@ console.log('\n=== date parsing ===');
   ok('a Date object works', dayMs(new Date(D('2026-09-18'))) === D('2026-09-18'));
   ok('nonsense is null', dayMs('nope') === null && dayMs(null) === null && dayMs(undefined) === null);
   ok('a lag needs both dates', disclosureLagDays({ disclosure_date: '2026-09-18' }) === null);
+}
+
+console.log('\n=== ⚠️ the canonical dedup key is SOURCE-AGNOSTIC ===');
+{
+  // ⚠️ THE DUPLICATE THIS PINS. canonicalHash appended '|OPT' when assetType looked like an option —
+  // a RAW PER-SOURCE field, the one category the key's own contract excludes. The sources contradict
+  // each other: Pelosi's Bloom Energy trades of 2026-07-24 and 2026-07-28 arrived as 'Stock Option'
+  // from one feed and 'ST' from the House Clerk, so one real trade hashed two ways, survived the
+  // hourly dedupe, and appeared twice on the most-viewed politician page in the product.
+  const src = readFileSync(new URL('../src/lib/congress-ingest.mjs', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('export function canonicalHash'), src.indexOf('export const NON_SYMBOL_TOKENS'));
+  const code = body.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  ok('⚠️ the key does not append an option suffix', !/\|OPT/.test(code));
+  ok('⚠️ ...and does not read assetType at all', !/assetType|isOption\s*\?/.test(code));
+
+  // The same real trade, reported by two feeds that disagree about option-ness, must hash identically.
+  const base = { memberSlug: 'P000197', transactionDate: '2026-07-24', ticker: 'BE', action: 'BUY',
+    amountMin: 1000001, amountMax: 5000000, assetDescription: 'Bloom Energy Corporation Class A Common Stock (BE)' };
+  ok('⚠️ an option-flagged and a stock-flagged report of one trade hash the same',
+    canonicalHash({ ...base, isOption: true }) === canonicalHash({ ...base, isOption: false }),
+    'this is exactly the pair that showed twice in production');
+  // The discriminators that must still work.
+  // Each bound on its own, because varying both at once passes even if one is not hashed at all.
+  ok('a different amount floor is a different trade',
+    canonicalHash(base) !== canonicalHash({ ...base, amountMin: 500001 }));
+  ok('a different amount ceiling is a different trade',
+    canonicalHash(base) !== canonicalHash({ ...base, amountMax: 1000000 }));
+  ok('a different day is a different trade', canonicalHash(base) !== canonicalHash({ ...base, transactionDate: '2026-07-28' }));
+  ok('a different member is a different trade', canonicalHash(base) !== canonicalHash({ ...base, memberSlug: 'K000398' }));
+  ok('a different action is a different trade', canonicalHash(base) !== canonicalHash({ ...base, action: 'SELL' }));
+  ok('⚠️ an untickered security is still told apart by its description',
+    canonicalHash({ ...base, ticker: null }) !== canonicalHash({ ...base, ticker: null, assetDescription: 'PENNSYLVANIA ST GO 5% 2031' }));
+  ok('...while a ticker makes description drift irrelevant, so cross-source text differences still collapse',
+    canonicalHash(base) === canonicalHash({ ...base, assetDescription: 'Bloom Energy Corp' }));
+
+  // The safety net must run BEFORE ingest, or a run creates the duplicates it is meant to prevent.
+  const sync = readFileSync(new URL('../src/lib/congress-sync.js', import.meta.url), 'utf8');
+  const run = sync.slice(sync.indexOf('export async function runCongressSync'));
+  // ⚠️ BOTH HALVES. Asserting only the ORDER passes when the call is deleted outright, because
+  // indexOf returns -1 and -1 is less than any real position.
+  const iDedupe = run.indexOf('dedupeCongressCanonical');
+  const iHouse = run.indexOf('ingestHouse');
+  ok('⚠️ the canonical dedupe is called at all', iDedupe >= 0);
+  ok('⚠️ ...and before either chamber is ingested', iDedupe >= 0 && iHouse > iDedupe,
+    'ingesting first creates the duplicates the dedupe exists to prevent');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

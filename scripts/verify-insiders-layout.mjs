@@ -19,7 +19,14 @@ import { INSIDER_TX_COLUMNS, INSIDER_TX_MIN_WIDTH } from '../src/lib/insider-col
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = '') => { if (cond) pass++; else { fail++; console.error(`  FAIL ${name}${detail ? ' — ' + detail : ''}`); } };
 
-const page = readFileSync(new URL('../src/app/insiders/page.jsx', import.meta.url), 'utf8');
+// ⚠️ THE TABLE MOVED, AND THIS SUITE WENT RED WITHOUT ANYTHING BREAKING. The SEO foundation commit
+// split insiders/page.jsx into a 14-line server wrapper (metadata + canonical, which a 'use client'
+// file cannot export) plus InsidersClient.jsx, which is where the colgroup, the scroller, the
+// ResizeObserver and every cell actually live. Reading the wrapper failed all 31 assertions at once —
+// including the regression guards for goTicker, Badges and rule10b5_1, which are plainly still there.
+// A suite that fails while the behaviour it describes is intact is worse than no suite: it trains you
+// to ignore it. The layout fixes it was written for (021c4966, 61049a7a) are unchanged.
+const page = readFileSync(new URL('../src/app/insiders/InsidersClient.jsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../src/app/layout.jsx', import.meta.url), 'utf8');
 
 // ── the layout chain, from the real source ───────────────────────────────────
