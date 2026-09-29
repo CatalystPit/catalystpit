@@ -2,7 +2,8 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, desc, sql, or, ilike } from 'drizzle-orm';
-import { resolveUserTier } from '../../../lib/entitlements';
+import { resolveUserTier, eodCutoffIso } from '../../../lib/entitlements';
+
 import { leaderboardView, photoUrl, LB_WINDOWS, shapeTrade, computeReturn, tradeCols, priceQualityJoin } from '../../../lib/congress-overview';
 
 export const runtime = 'nodejs';
@@ -12,6 +13,14 @@ export const runtime = 'nodejs';
 // the locked rows never leaving the server. Response varies by auth → never CDN-cached.
 const FREE_PREVIEW_ROWS = 10;
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
+
+// ⚠️ FREE IS END-OF-DAY. One predicate, ANDed into every query that reads a disclosure, so a filing
+// processed during today's session cannot reach a Free client through any view. Gated on inserted_at
+// (when WE processed it), never on disclosure_date — congressional filings arrive weeks after the
+// trade, so gating on the source date would hide legitimate historical research while still leaking
+// a disclosure ingested this morning. Source dates are untouched; this is an access rule.
+// undefined for Pro/Elite, which drizzle's and() drops.
+const ctCut = (cutoff) => (cutoff ? sql`${congressTrades.insertedAt} <= ${cutoff}::timestamptz` : undefined);
 
 // bioguide slug -> headshot; name-slug (unmatched member) -> null (initials avatar)
 
@@ -28,7 +37,7 @@ const LIST_ORDER = {
 };
 
 // LIST: one card per member (grouped by slug). Optional chamber/party filters.
-async function listView({ view, chamber, party }) {
+async function listView({ view, chamber, party, cutoff = null }) {
   const conds = [];
   if (chamber === 'senate' || chamber === 'house') conds.push(eq(congressTrades.chamber, chamber));
   if (party) conds.push(eq(congressTrades.party, party));
@@ -46,7 +55,7 @@ async function listView({ view, chamber, party }) {
     sells:       sql`count(*) filter (where ${congressTrades.action} = 'SELL')`.mapWith(Number),
   })
     .from(congressTrades)
-    .where(conds.length ? and(...conds) : undefined)
+    .where(and(...conds, ctCut(cutoff)))
     .groupBy(congressTrades.memberSlug)
     .orderBy(LIST_ORDER[view] || LIST_ORDER.most_active)
     .limit(600);
@@ -64,7 +73,7 @@ async function listView({ view, chamber, party }) {
 
 // AUTOCOMPLETE: member name typeahead → top matches by trade activity. Public (names only),
 // ungated — drives the /politicians search box. Matches full display name + first/last.
-async function searchView(q) {
+async function searchView(q, cutoff = null) {
   const like = `%${q.replace(/[%_\\]/g, '')}%`;
   const rows = await db.select({
     slug:    congressTrades.memberSlug,
@@ -75,11 +84,11 @@ async function searchView(q) {
     trades:  sql`count(*)`.mapWith(Number),
   })
     .from(congressTrades)
-    .where(or(
+    .where(and(ctCut(cutoff), or(
       ilike(congressTrades.representative, like),
       ilike(congressTrades.lastName, like),
       ilike(congressTrades.firstName, like),
-    ))
+    )))
     .groupBy(congressTrades.memberSlug)
     .orderBy(sql`count(*) desc`)
     .limit(8);
@@ -90,7 +99,7 @@ async function searchView(q) {
 // withTrades:false returns ONLY the member header, computed as SQL aggregates. The detail page
 // now pages its trades through /api/congress-trades, so pulling up to 2,000 rows here purely to
 // count them and average a lag was the last place a heavy filer's history hit the server in bulk.
-async function detailView(slug, { withTrades = true } = {}) {
+async function detailView(slug, { withTrades = true, cutoff = null } = {}) {
   if (!withTrades) {
     const [agg] = await db.select({
       name: sql`max(${congressTrades.representative})`,
@@ -102,18 +111,18 @@ async function detailView(slug, { withTrades = true } = {}) {
       lastTraded: sql`max(${congressTrades.transactionDate})`,
       distinctTickers: sql`count(distinct ${congressTrades.ticker})`.mapWith(Number),
       avgFilingLag: sql`round(avg(${congressTrades.filingLagDays}))`.mapWith(Number),
-    }).from(congressTrades).where(eq(congressTrades.memberSlug, slug));
+    }).from(congressTrades).where(and(eq(congressTrades.memberSlug, slug), ctCut(cutoff)));
     if (!agg || !agg.tradeCount) return { view: 'detail', slug, member: null, trades: [] };
     return { view: 'detail', slug, member: { slug, photoUrl: photoUrl(slug), ...agg }, trades: [] };
   }
-  return detailViewFull(slug);
+  return detailViewFull(slug, cutoff);
 }
 
-async function detailViewFull(slug) {
+async function detailViewFull(slug, cutoff = null) {
   const rows = await priceQualityJoin(db.select(tradeCols)
     .from(congressTrades)
     .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker)))
-    .where(eq(congressTrades.memberSlug, slug))
+    .where(and(eq(congressTrades.memberSlug, slug), ctCut(cutoff)))
     .orderBy(desc(congressTrades.transactionDate), desc(congressTrades.id))
     .limit(2000);
 
@@ -137,11 +146,11 @@ async function detailViewFull(slug) {
 }
 
 // TICKER drill-down: every member who traded a given ticker (mirrors /insiders).
-async function tickerView(ticker) {
+async function tickerView(ticker, cutoff = null) {
   const rows = await priceQualityJoin(db.select(tradeCols)
     .from(congressTrades)
     .leftJoin(congressTickerPrices, eq(congressTickerPrices.ticker, congressTrades.ticker)))
-    .where(eq(congressTrades.ticker, ticker))
+    .where(and(eq(congressTrades.ticker, ticker), ctCut(cutoff)))
     .orderBy(desc(congressTrades.disclosureDate), desc(congressTrades.id))
     .limit(500);
   return { view: 'ticker', ticker, count: rows.length, trades: rows.map(shapeTrade) };
@@ -156,7 +165,7 @@ async function tickerView(ticker) {
 // Ordering by transactionDate put a row dated 2026-12-26 — ten months after its own disclosure —
 // at the top of the public homepage. Rows whose dates contradict each other are refused here
 // rather than rendered; the underlying row is left alone.
-async function feedView(limit) {
+async function feedView(limit, cutoff = null) {
   const trades = await db.select({
     id:              congressTrades.id,
     ticker:          congressTrades.ticker,
@@ -184,17 +193,20 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
 
     // AUTOCOMPLETE (public, ungated) — return before auth/tier work for a fast typeahead.
-    const ac = searchParams.get('ac');
-    if (ac != null) {
-      const q = ac.trim();
-      if (q.length < 2) return Response.json({ results: [] }, { headers: NO_STORE });
-      return Response.json({ results: await searchView(q) }, { headers: NO_STORE });
-    }
-
     const { userId } = await auth();
     const loggedIn = !!userId;
     const tier = await resolveUserTier();
     const isPro = tier === 'pro' || tier === 'elite';   // Pro gate (not just sign-in) for feed + list
+    // ⚠️ RESOLVED ONCE, BEFORE ANY VIEW RUNS, including autocomplete — a member who only appears
+    // because of a disclosure we ingested this morning must not surface in Free's search either.
+    const cutoff = eodCutoffIso(tier);
+
+    const ac = searchParams.get('ac');
+    if (ac != null) {
+      const q = ac.trim();
+      if (q.length < 2) return Response.json({ results: [] }, { headers: NO_STORE });
+      return Response.json({ results: await searchView(q, cutoff) }, { headers: NO_STORE });
+    }
 
     const slug    = searchParams.get('slug')?.trim();
     const ticker  = searchParams.get('ticker')?.toUpperCase().trim();
@@ -206,19 +218,19 @@ export async function GET(request) {
     // Member detail — LEFT UNGATED. The /politicians/[slug] page shows a member's
     // full history with no sign-in CTA; capping would silently truncate it. (Flagged.)
     if (slug) {
-      const payload = await detailView(slug, { withTrades: searchParams.get('trades') !== '0' });
+      const payload = await detailView(slug, { withTrades: searchParams.get('trades') !== '0', cutoff });
       console.log(`[politicians_api] detail slug=${slug} trades=${payload.trades.length} loggedIn=${loggedIn}`);
       return Response.json({ ...payload, loggedIn }, { headers: NO_STORE });
     }
     // Ticker drill-down — LEFT UNGATED (shared with the /ticker government tab, no CTA). (Flagged.)
     if (ticker) {
-      const payload = await tickerView(ticker);
+      const payload = await tickerView(ticker, cutoff);
       console.log(`[politicians_api] ticker=${ticker} trades=${payload.count} loggedIn=${loggedIn}`);
       return Response.json({ ...payload, loggedIn }, { headers: NO_STORE });
     }
     // Feed (homepage teaser) — AUTH-GATED. Signed-out capped to the preview.
     if (view === 'feed') {
-      const payload = await feedView(limit);
+      const payload = await feedView(limit, cutoff);
       const trades = isPro ? payload.trades : payload.trades.slice(0, FREE_PREVIEW_ROWS);
       const lockedCount = isPro ? 0 : Math.max(0, payload.trades.length - FREE_PREVIEW_ROWS);
       console.log(`[politicians_api] feed trades=${trades.length} locked=${lockedCount} tier=${tier}`);
@@ -235,7 +247,7 @@ export async function GET(request) {
       return Response.json({ view: 'leaderboard', window, count: shown.length, members: shown, meta, lockedCount, tier, loggedIn }, { headers: NO_STORE });
     }
     // Member list — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
-    const members = await listView({ view, chamber, party });
+    const members = await listView({ view, chamber, party, cutoff });
     const shown = isPro ? members : members.slice(0, FREE_PREVIEW_ROWS);
     const lockedCount = isPro ? 0 : Math.max(0, members.length - FREE_PREVIEW_ROWS);
     console.log(`[politicians_api] list view=${view} members=${shown.length} locked=${lockedCount} tier=${tier}`);

@@ -144,6 +144,32 @@ function congressSection(trades, labeled) {
 
 export default function TickerChart({ ticker, initialRange = '1D', insiderTrades = [], congressTrades = [] }) {
   const [range, setRange] = useState(initialRange);
+
+  // ⚠️ INTRADAY IS PRO ON THIS CHART, AND THE DEFAULT RANGE IS INTRADAY. initialRange is '1D', which
+  // fetches /api/chart-intraday — so without this a Free user's chart opens straight into the
+  // server's 403 and renders an error where a chart should be. null means "not known yet", so the
+  // intraday buttons are never shown to Free and never flash away from Pro.
+  const [pro, setPro] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch('/api/me/plan', { cache: 'no-store' });
+        const j = r.ok ? await r.json() : null;
+        if (alive) setPro(j?.tier === 'pro' || j?.tier === 'elite');
+      } catch { if (alive) setPro(false); }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const visibleTimeframes = pro === true ? TIMEFRAMES : TIMEFRAMES.filter((tf) => !isIntraday(tf));
+
+  // Move off an intraday range once we know the viewer cannot use one. Not a silent substitution of
+  // DATA — the server never answers an intraday request with daily bars — but a control this viewer
+  // does not have should not stay selected.
+  useEffect(() => {
+    if (pro === false && isIntraday(range)) setRange('1M');
+  }, [pro, range]);
   const [chartType, setChartType] = useState('Line');   // 'Line' | 'Candles' — session-only, not in URL
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -344,7 +370,13 @@ export default function TickerChart({ ticker, initialRange = '1D', insiderTrades
       <div style={{ padding: 14 }}>
         {/* controls row: timeframes (left) · divider · chart types (right). Scrolls horizontally on overflow. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 12, overflowX: 'auto' }}>
-          {TIMEFRAMES.map((tf) => btn(tf, tf === range, () => setRange(tf)))}
+          {/* ⚠️ 1D AND 5D ARE THE INTRADAY BUTTONS ON THIS CHART. isIntraday() above treats exactly
+              those two as intraday, and they fetch /api/chart-intraday — so they are the Pro
+              controls here, not '1m'. They are omitted for Free rather than rendered locked: a row
+              of disabled buttons is the upsell spam we said we would not ship, and the server
+              refuses them anyway. Shown only once entitlement is KNOWN, so a Pro user never sees
+              them appear late and a Free user never sees them flash away. */}
+          {visibleTimeframes.map((tf) => btn(tf, tf === range, () => setRange(tf)))}
           <div style={{ width: 1, height: 18, background: 'rgba(0,0,0,0.12)', margin: '0 10px', marginLeft: 'auto', flexShrink: 0 }} />
           {CHART_TYPES.map((ct) => btn(ct, ct === chartType, () => setChartType(ct)))}
         </div>

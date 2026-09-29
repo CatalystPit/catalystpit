@@ -4,7 +4,7 @@ import { convictionCoverage } from '../../../lib/insider/conviction-pipeline.mjs
 import { db } from '../../../lib/db';
 import { insiderTrades } from '../../../lib/schema';
 import { and, or, eq, gt, gte, ilike, inArray, desc, sql } from 'drizzle-orm';
-import { resolveUserTier } from '../../../lib/entitlements';
+import { resolveUserTier, eodCutoffIso } from '../../../lib/entitlements';
 import { ownershipChangePct as ownPctShared } from '../../../lib/insider-format';
 
 export const runtime = 'nodejs';
@@ -460,9 +460,23 @@ export async function GET(request) {
     // A BASE condition, not one more optional filter: no query string can turn it off, and any
     // filter added below inherits it for free.
     conds.push(TICKER_IS_A_SYMBOL);
-    const whereClause = conds.length === 1 ? conds[0] : and(...conds);
+
     const tier = await resolveUserTier();
     const isPro = tier === 'pro' || tier === 'elite';
+
+    // ⚠️ FREE IS END-OF-DAY, ENFORCED HERE RATHER THAN IN THE RESPONSE. This is the one place every
+    // row view and the total count are built from, so a Form 4 processed during today's session
+    // cannot reach a Free client through any view, filter or page — and the count they are shown
+    // matches the rows they can actually reach.
+    //
+    // ⚠️ THE COLUMN IS inserted_at, NOT filing_date. filing_date is the SEC's date and is not a
+    // statement about when we processed anything; gating on it would both hide historical research
+    // (a filing dated today that we ingested last week) and leak (a backfilled old filing ingested
+    // minutes ago). Historical source dates are untouched — this is an access rule, not a mutation.
+    const cutoff = eodCutoffIso(tier);
+    if (cutoff) conds.push(sql`${insiderTrades.insertedAt} <= ${cutoff}::timestamptz`);
+
+    const whereClause = conds.length === 1 ? conds[0] : and(...conds);
 
     // Server-side pagination (Pro). Free tier keeps the 10-row preview + lockedCount (unchanged).
     const pageSize = [25, 50, 100].includes(num('pageSize')) ? num('pageSize') : 50;

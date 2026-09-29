@@ -111,7 +111,11 @@ L('⚠️ admin is Pro everywhere the product gates');
   for (const f of srcFiles('../src/app/api')) {
     const s = read(f);
     if (!/isRealtime\(/.test(s)) continue;
-    if (!/isRealtime\(tier\) && !beta/.test(s)) rtOffenders.push(f);
+    // ⚠️ MATCHED ON THE INVARIANT, NOT ON ONE SPELLING. This required the literal
+    // "isRealtime(tier) && !beta" and failed when the destructuring changed to a.tier / a.beta —
+    // reporting a defect that was a rename. What must hold is that the beta flag negates the
+    // real-time decision, however the variables are named.
+    if (!/isRealtime\(\s*\w+(?:\.\w+)?\s*\)\s*&&\s*!\s*\w+(?:\.\w+)?\b/.test(s)) rtOffenders.push(f);
   }
   ok('⚠️ …enforced at every real-time decision, not just documented',
     rtOffenders.length === 0, rtOffenders.join(', '));

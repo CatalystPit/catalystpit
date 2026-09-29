@@ -1,5 +1,6 @@
 import { db } from '../../../lib/db';
 import { fundHoldings, fundFilings, institutions, tickerInstitutionalOwnership } from '../../../lib/schema';
+import { resolveUserTier, eodCutoffIso } from '../../../lib/entitlements';
 import { INSTITUTIONS, INSTITUTION_BY_SLUG } from '../../../lib/institutions.mjs';
 import { and, eq, ne, inArray, desc, sql, isNotNull, ilike, or } from 'drizzle-orm';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
@@ -12,6 +13,20 @@ const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const HOLDINGS_CAP = 200;   // top positions returned for the detail table (giants have thousands)
 const DIFF_CAP = 1000;      // per-quarter rows loaded for QoQ diff (bounds giants)
+
+// ⚠️ ONE SCOPED RELATION INSTEAD OF A PREDICATE PER QUERY. This route reads fund_filings from
+// thirteen places with different shapes — raw CTEs, DISTINCT ON subqueries, drizzle builders — and
+// ANDing a cutoff into each is how one gets missed. Substituting the TABLE for a filtered subquery
+// of the same name keeps every downstream reference (aliases, window functions, joins) working, and
+// makes the visibility rule impossible to apply to some queries and not others.
+//
+// cutoff === null (Pro) returns the bare table, so Pro pays nothing for the Free rule.
+const ffRel = (cutoff) => (cutoff
+  ? sql`(select * from fund_filings where inserted_at <= ${cutoff}::timestamptz)`
+  : sql`fund_filings`);
+
+/** The same rule for the drizzle builders, which cannot take a relation fragment. */
+const ffCut = (cutoff) => (cutoff ? sql`${fundFilings.insertedAt} <= ${cutoff}::timestamptz` : undefined);
 
 async function kvGet(key) {
   if (!KV_URL || !KV_TOKEN) return null;
@@ -29,7 +44,7 @@ async function cikFor(fund) {
 }
 
 // Latest filing summary (as-of quarter / 13F value / holdings count) for a set of CIKs.
-async function latestFilingByCik(ciks) {
+async function latestFilingByCik(ciks, cutoff) {
   if (!ciks.length) return {};
   try {
     const rows = await db
@@ -38,7 +53,7 @@ async function latestFilingByCik(ciks) {
         totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount,
       })
       .from(fundFilings)
-      .where(inArray(fundFilings.cik, ciks))
+      .where(and(inArray(fundFilings.cik, ciks), ffCut(cutoff)))
       .orderBy(fundFilings.cik, desc(fundFilings.quarter));
     return Object.fromEntries(rows.map((r) => [r.cik, r]));
   } catch (e) {
@@ -86,12 +101,12 @@ const properCase = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCas
 
 // Largest managers by latest 13F value — AUTO-featured (no hand-picked list), with multi-entity firms
 // (Vanguard, etc.) merged into a single family card. BlackRock, State Street… surface as they ingest.
-async function largestManagers(limit = 24) {
+async function largestManagers(limit = 24, cutoff = null) {
   try {
     const res = await db.execute(sql`
       SELECT i.cik, i.name, i.slug, i.featured_label AS "featuredLabel", i.manager,
              l.quarter, l.filed_date AS "filedDate", l.total_value AS "totalValue", l.holdings_count AS "holdingsCount"
-      FROM (SELECT DISTINCT ON (cik) cik, quarter, filed_date, total_value, holdings_count FROM fund_filings ORDER BY cik, quarter DESC) l
+      FROM (SELECT DISTINCT ON (cik) cik, quarter, filed_date, total_value, holdings_count FROM ${ffRel(cutoff)} ff ORDER BY cik, quarter DESC) l
       JOIN institutions i ON i.cik = l.cik
       WHERE l.total_value IS NOT NULL
       ORDER BY l.total_value DESC
@@ -120,12 +135,12 @@ async function largestManagers(limit = 24) {
 
 // Corporate Portfolios: 13F filers whose CIK maps to a listed stock (operating cos + public
 // financials). Each with its latest filing value/positions + sector chip (from screener_meta).
-async function corporatePortfolios(limit = 300) {
+async function corporatePortfolios(limit = 300, cutoff = null) {
   try {
     const res = await db.execute(sql`
       SELECT i.cik, i.name, i.slug, i.stock_ticker AS "ticker", m.sector,
              l.quarter, l.filed_date AS "filedDate", l.total_value AS "totalValue", l.holdings_count AS "holdingsCount"
-      FROM (SELECT DISTINCT ON (cik) cik, quarter, filed_date, total_value, holdings_count FROM fund_filings ORDER BY cik, quarter DESC) l
+      FROM (SELECT DISTINCT ON (cik) cik, quarter, filed_date, total_value, holdings_count FROM ${ffRel(cutoff)} ff ORDER BY cik, quarter DESC) l
       JOIN institutions i ON i.cik = l.cik
       LEFT JOIN screener_meta m ON m.ticker = i.stock_ticker
       WHERE i.stock_ticker IS NOT NULL AND l.total_value IS NOT NULL
@@ -176,7 +191,7 @@ async function corporatePortfolios(limit = 300) {
  * ~600ms cold, behind the route's existing hour-long CDN cache, so it runs once per cache period
  * and never per reader. No N+1, no per-row query, no provider call.
  */
-async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, limit = 60 } = {}) {
+async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, limit = 60, cutoff = null } = {}) {
   // 1. WHICH DISCLOSURES ARE NEW, and what does each one supersede.
   //    DISTINCT ON (cik, filed_date) with quarter DESC: a manager back-filing eight quarters in
   //    one submission has disclosed ONE current position, not eight events.
@@ -184,7 +199,7 @@ async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, 
     with ranked as (
       select cik, quarter, filed_date, accession,
              lag(quarter) over (partition by cik order by quarter) as prev_quarter
-        from fund_filings
+        from ${ffRel(cutoff)} ff
     )
     select distinct on (cik, filed_date) cik, quarter, filed_date, accession, prev_quarter
       from ranked
@@ -193,7 +208,7 @@ async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, 
      -- unknown from a date is ambiguous to Postgres — so the query reads fine, runs fine against
      -- an inlined literal, and throws only on the deployed route. Same shape of trap as the array
      -- binding above: correct-looking SQL that fails only once it is actually bound.
-     where filed_date >= (select max(filed_date) - ${windowDays}::int from fund_filings)
+     where filed_date >= (select max(filed_date) - ${windowDays}::int from ${ffRel(cutoff)} ff2)
        and prev_quarter is not null
      order by cik, filed_date, quarter desc`);
 
@@ -296,11 +311,11 @@ async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, 
   }));
 }
 
-async function latestFilings(limit = 25) {
+async function latestFilings(limit = 25, cutoff = null) {
   const { rows } = await db.execute(sql`
     select f.cik, f.accession, f.filed_date::text as filed_date, f.quarter::text as quarter,
            f.holdings_count, i.name, i.slug
-      from fund_filings f
+      from ${ffRel(cutoff)} f
       join institutions i on i.cik = f.cik
      where f.filed_date is not null
        and i.name is not null and trim(i.name) <> ''
@@ -327,12 +342,12 @@ async function latestFilings(limit = 25) {
 
 // Corporate Buying Activity: market-wide NEW + INCREASED stock positions across corporate filers,
 // newest filings first — "NVIDIA disclosed a new stake in XYZ." Feeds the Pit Consensus board.
-async function corporateActivity(limit = 120) {
+async function corporateActivity(limit = 120, cutoff = null) {
   try {
     const res = await db.execute(sql`
       WITH corp AS (SELECT cik, stock_ticker, name, slug FROM institutions WHERE stock_ticker IS NOT NULL),
       q AS (SELECT cik, quarter, filed_date, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) rn
-            FROM fund_filings WHERE cik IN (SELECT cik FROM corp)),
+            FROM ${ffRel(cutoff)} ff WHERE cik IN (SELECT cik FROM corp)),
       latest AS (SELECT cik, quarter, filed_date FROM q WHERE rn = 1),
       prior  AS (SELECT cik, quarter FROM q WHERE rn = 2),
       cur_h AS (SELECT h.cik, h.cusip, h.ticker, h.issuer, h.shares, h.value FROM fund_holdings h
@@ -359,7 +374,7 @@ async function corporateActivity(limit = 120) {
 // Merged detail for a manager family (e.g. all Vanguard entities): aggregate each entity's LATEST
 // filing into one combined holdings map + total, plus QoQ activity (latest vs prior quarter across
 // the family). Uses row_number per entity so each contributes its own current/prior quarter.
-async function familyDetail(key) {
+async function familyDetail(key, cutoff = null) {
   const k = String(key || '').toUpperCase();
   const meta = { slug: `family--${key}`, label: properCase(k), manager: null, category: 'Largest Managers' };
   const all = await db.select({ cik: institutions.cik, name: institutions.name }).from(institutions).where(ilike(institutions.name, `${k}%`));
@@ -367,7 +382,7 @@ async function familyDetail(key) {
   if (!ciks.length) return { fund: meta, hasData: false };
   meta.manager = `${ciks.length} filing entities`;
   const latest = await db.selectDistinctOn([fundFilings.cik], { cik: fundFilings.cik, quarter: fundFilings.quarter, totalValue: fundFilings.totalValue })
-    .from(fundFilings).where(inArray(fundFilings.cik, ciks)).orderBy(fundFilings.cik, desc(fundFilings.quarter));
+    .from(fundFilings).where(and(inArray(fundFilings.cik, ciks), ffCut(cutoff))).orderBy(fundFilings.cik, desc(fundFilings.quarter));
   if (!latest.length) return { fund: meta, hasData: false };
   const totalValue = latest.reduce((s, l) => s + (l.totalValue || 0), 0);
   const asOf = latest.map((l) => l.quarter).filter(Boolean).sort().pop();
@@ -377,7 +392,7 @@ async function familyDetail(key) {
   const famAgg = async (rn, stockOnly) => {
     const filt = stockOnly ? sql`WHERE coalesce(h.put_call,'') = ''` : sql``;
     const res = await db.execute(sql`
-      WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks})
+      WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM ${ffRel(cutoff)} ff WHERE cik IN ${ciks})
       SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, coalesce(h.put_call,'') AS "putCall",
              sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
       FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = ${rn} ${filt}
@@ -390,7 +405,7 @@ async function familyDetail(key) {
 
   // Family options (puts/calls), aggregated across entities' latest quarter.
   const optRes = await db.execute(sql`
-    WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks})
+    WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM ${ffRel(cutoff)} ff WHERE cik IN ${ciks})
     SELECT h.cusip, max(h.ticker) AS ticker, max(h.issuer) AS issuer, h.put_call AS "putCall",
            sum(h.shares)::double precision AS shares, sum(h.value)::double precision AS value
     FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = 1
@@ -399,7 +414,7 @@ async function familyDetail(key) {
     ORDER BY sum(h.value) DESC NULLS LAST LIMIT 120`);
   const options = (optRes?.rows || []).map((r) => ({ cusip: r.cusip, ticker: r.ticker, issuer: r.issuer, putCall: r.putCall, shares: r.shares, value: r.value }));
   const sumRes = await db.execute(sql`
-    WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks})
+    WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM ${ffRel(cutoff)} ff WHERE cik IN ${ciks})
     SELECT coalesce(sum(h.value) filter (where h.put_call='Call'),0)::double precision AS "callValue",
            coalesce(sum(h.value) filter (where h.put_call='Put'),0)::double precision AS "putValue",
            count(*) filter (where h.put_call='Call')::int AS "callCount",
@@ -417,12 +432,12 @@ async function familyDetail(key) {
     activity.new = activity.new.sort(byVal).slice(0, 20); activity.added = activity.added.sort(byVal).slice(0, 20);
     activity.trimmed = activity.trimmed.sort(byVal).slice(0, 20); activity.exited = activity.exited.sort(byPrev).slice(0, 20);
   }
-  const cnt = (await db.execute(sql`WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM fund_filings WHERE cik IN ${ciks}) SELECT count(DISTINCT h.cusip)::int AS n FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = 1 WHERE coalesce(h.put_call,'') = ''`))?.rows?.[0]?.n || curStock.length;
+  const cnt = (await db.execute(sql`WITH ranked AS (SELECT cik, quarter, row_number() OVER (PARTITION BY cik ORDER BY quarter DESC) AS rn FROM ${ffRel(cutoff)} ff WHERE cik IN ${ciks}) SELECT count(DISTINCT h.cusip)::int AS n FROM fund_holdings h JOIN ranked r ON r.cik = h.cik AND r.quarter = h.quarter AND r.rn = 1 WHERE coalesce(h.put_call,'') = ''`))?.rows?.[0]?.n || curStock.length;
   return { fund: meta, hasData: true, latest: { quarter: asOf, filedDate: null, totalValue, holdingsCount: cnt }, prior: prev.length ? { quarter: null } : null, holdings: curStock.slice(0, HOLDINGS_CAP), holdingsShown: Math.min(curStock.length, HOLDINGS_CAP), totalHoldings: cnt, activity, options, optionsSummary };
 }
 
 // Featured curated funds (top of page) + a searchable, paginated directory of EVERY discovered 13F filer.
-async function listView(q, page, pageSize) {
+async function listView(q, page, pageSize, cutoff = null) {
   // If the registry hasn't been populated yet, fall back to the curated roster so the page still renders.
   let featuredRows = [];
   try {
@@ -449,9 +464,9 @@ async function listView(q, page, pageSize) {
   const [{ total } = { total: 0 }] = await db.select({ total: sql`count(*)`.mapWith(Number) }).from(institutions).where(where);
 
   const ciks = [...new Set([...featuredRows.map((r) => r.cik), ...dirRows.map((r) => r.cik)])];
-  const latest = await latestFilingByCik(ciks);
+  const latest = await latestFilingByCik(ciks, cutoff);
 
-  const largest = q ? [] : await largestManagers();       // auto-featured biggest managers (top of page)
+  const largest = q ? [] : await largestManagers(24, cutoff);       // auto-featured biggest managers (top of page)
   // Don't repeat a manager in the curated categories if it's already shown in Largest Managers
   // (by exact slug, or by family for merged cards like Vanguard).
   const largeSlugs = new Set(largest.map((l) => l.slug));
@@ -467,7 +482,7 @@ async function listView(q, page, pageSize) {
 async function legacyListView() {
   const ciks = await Promise.all(INSTITUTIONS.map(cikFor));
   const bySlug = Object.fromEntries(INSTITUTIONS.map((f, i) => [f.slug, ciks[i]]));
-  const latest = await latestFilingByCik(ciks.filter(Boolean));
+  const latest = await latestFilingByCik(ciks.filter(Boolean), cutoff);
   const featured = INSTITUTIONS.map((f) => {
     const cik = bySlug[f.slug]; const s = cik ? latest[cik] : null;
     return {
@@ -479,8 +494,8 @@ async function legacyListView() {
   return { featured, directory: [], total: 0, page: 0, pageSize: 0 };
 }
 
-async function detailView(slug) {
-  if (slug && slug.startsWith('family--')) return familyDetail(slug.slice(8));
+async function detailView(slug, cutoff = null) {
+  if (slug && slug.startsWith('family--')) return familyDetail(slug.slice(8), cutoff);
   // Resolve from the auto-discovered registry first; fall back to the curated config during backfill.
   let cik = null, meta = null;
   try {
@@ -500,7 +515,7 @@ async function detailView(slug) {
   let quarters = [];
   try {
     quarters = await db.select({ quarter: fundFilings.quarter, filedDate: fundFilings.filedDate, totalValue: fundFilings.totalValue, holdingsCount: fundFilings.holdingsCount })
-      .from(fundFilings).where(eq(fundFilings.cik, cik)).orderBy(desc(fundFilings.quarter)).limit(2);
+      .from(fundFilings).where(and(eq(fundFilings.cik, cik), ffCut(cutoff))).orderBy(desc(fundFilings.quarter)).limit(2);
   } catch (e) {
     console.log(`[institutions_api] detail query failed (migration not run?): ${e.message}`);
     return { fund: meta, hasData: false };
@@ -572,14 +587,14 @@ const HOLDER_CAP = 100;   // holders returned per ticker (mega-caps are held by 
 
 // EVERY 13F filer holding a given ticker (in each fund's LATEST filed quarter), plus the precomputed
 // 13F-reported ownership stat. No longer limited to the curated 57 — reads the full registry.
-async function tickerView(ticker) {
+async function tickerView(ticker, cutoff = null) {
   const holds = await db.select({ cik: fundHoldings.cik, quarter: fundHoldings.quarter, shares: fundHoldings.shares, value: fundHoldings.value, putCall: fundHoldings.putCall })
     .from(fundHoldings).where(eq(fundHoldings.ticker, ticker));
   if (!holds.length) return { ticker, funds: [], count: 0, ownership: null };
 
   const ciks = [...new Set(holds.map((h) => h.cik))];
   const latest = await db.selectDistinctOn([fundFilings.cik], { cik: fundFilings.cik, quarter: fundFilings.quarter, totalValue: fundFilings.totalValue })
-    .from(fundFilings).where(inArray(fundFilings.cik, ciks)).orderBy(fundFilings.cik, desc(fundFilings.quarter));
+    .from(fundFilings).where(and(inArray(fundFilings.cik, ciks), ffCut(cutoff))).orderBy(fundFilings.cik, desc(fundFilings.quarter));
   const latestByCik = Object.fromEntries(latest.map((r) => [r.cik, r]));
 
   const insts = await db.select({ cik: institutions.cik, name: institutions.name, slug: institutions.slug, featuredLabel: institutions.featuredLabel, manager: institutions.manager })
@@ -618,12 +633,28 @@ export async function GET(request) {
   if (_rl) return _rl;
 
   try {
+    // ⚠️ THIS ROUTE IS EDGE-CACHED, SO THE TIER DECIDES THE HEADERS AS WELL AS THE DATA.
+    //
+    // Every other dataset in this task is `no-store`, so a per-user cutoff is simply a WHERE clause.
+    // Here the response is shared by the CDN — which means a Pro response cached at the edge would be
+    // handed to Free users behind it, and a Free response cached first would hold Pro back. So the
+    // SHARED, CACHEABLE answer is the end-of-day one, and Pro gets the fresh answer uncached.
+    //
+    // That also keeps the public/SEO path exactly as fast as it is today: logged-out traffic still
+    // hits the same CDN entry it always did.
+    const tier = await resolveUserTier();
+    const cutoff = eodCutoffIso(tier);          // null for Pro/Elite
+    const headers = cutoff ? CACHE : { 'Cache-Control': 'private, no-store' };
+    const freshHeaders = cutoff
+      ? { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' }
+      : { 'Cache-Control': 'private, no-store' };
+
     const sp = new URL(request.url).searchParams;
     const ac = sp.get('ac');
     if (ac != null) {
       const term = ac.trim();
-      if (term.length < 2) return Response.json({ results: [] }, { headers: CACHE });
-      return Response.json({ results: await searchView(term) }, { headers: CACHE });
+      if (term.length < 2) return Response.json({ results: [] }, { headers });
+      return Response.json({ results: await searchView(term) }, { headers });
     }
     const ticker = sp.get('ticker');
     const slug = sp.get('slug');
@@ -636,21 +667,21 @@ export async function GET(request) {
     // one answers "what landed today", and a filing that appears next week is the one thing it
     // must never do. Five minutes fresh, fifteen stale.
     if (view === 'latest-filings') {
-      return Response.json({ view: 'latest-filings', filings: await latestFilings() },
-        { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' } });
+      return Response.json({ view: 'latest-filings', filings: await latestFilings(25, cutoff) },
+        { headers: freshHeaders });
     }
     // Activity answers the same "what landed today" question as latest-filings and shares its
     // freshness for the same reason: a change disclosed this morning must not surface next week.
     if (view === 'activity') {
-      return Response.json({ view: 'activity', activity: await latestActivity() },
-        { headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' } });
+      return Response.json({ view: 'activity', activity: await latestActivity({ cutoff }) },
+        { headers: freshHeaders });
     }
-    if (view === 'corporate') return Response.json({ view: 'corporate', portfolios: await corporatePortfolios() }, { headers: CACHE });
-    if (view === 'corporate-activity') return Response.json({ view: 'corporate-activity', events: await corporateActivity() }, { headers: CACHE });
-    const payload = ticker ? await tickerView(ticker.toUpperCase().trim())
-      : slug ? await detailView(slug)
-      : await listView(q, page, pageSize);
-    return Response.json(payload, { headers: CACHE });
+    if (view === 'corporate') return Response.json({ view: 'corporate', portfolios: await corporatePortfolios(300, cutoff) }, { headers });
+    if (view === 'corporate-activity') return Response.json({ view: 'corporate-activity', events: await corporateActivity(120, cutoff) }, { headers });
+    const payload = ticker ? await tickerView(ticker.toUpperCase().trim(), cutoff)
+      : slug ? await detailView(slug, cutoff)
+      : await listView(q, page, pageSize, cutoff);
+    return Response.json(payload, { headers });
   } catch (e) {
     console.log(`[institutions_api] failed: ${e.message}`);
     return Response.json({ error: e.message }, { status: 500 });

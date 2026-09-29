@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
+import { resolveUserAccess, isRealtime, isProTier, FREE_CHART_INTERVALS } from '../../../lib/entitlements';
 import { getIntradayBars } from '../../../lib/market/tiingo.mjs';
 import { DELAY_MS } from '../../../lib/market/delayed-store.mjs';
 import { TIMEFRAMES, timeframe, isServable } from '../../../lib/chart/chart-source.mjs';
@@ -129,7 +129,10 @@ export async function GET(request) {
   try {
     const params = new URL(request.url).searchParams;
     ticker = (params.get('ticker') || '').toUpperCase().trim();
-    range  = params.get('range') || DEFAULT_RANGE;
+    // ⚠️ KEEP WHAT WAS ASKED FOR. The coercion below rewrites an unknown range to the default, so
+    // gating on the coerced value would tell a caller who requested "1D" that "5m" is Pro-only.
+    const requestedRange = params.get('range') || DEFAULT_RANGE;
+    range = requestedRange;
     if (!INTRADAY.has(range)) range = DEFAULT_RANGE;
     // 'extended' is the only value that changes anything; anything else means the regular session.
     const session = params.get('session') === 'extended' ? 'extended' : 'regular';
@@ -137,11 +140,38 @@ export async function GET(request) {
 
     // ⚠️ RESOLVED FROM THE SESSION, NEVER FROM THE QUERY. A caller adding ?rt=1 or ?realtime=true
     // changes nothing here; the only parameters this route reads are ticker, range and session.
-    let entitled = false;
+    let entitled = false, tier = 'free';
     try {
       const { userId } = await auth();
-      if (userId) { const { tier, beta } = await resolveUserAccess(); entitled = isRealtime(tier) && !beta; }
+      if (userId) { const a = await resolveUserAccess(); tier = a.tier; entitled = isRealtime(a.tier) && !a.beta; }
     } catch { /* signed out → delayed */ }
+
+    // ⚠️ INTRADAY IS PRO. THE WHOLE ROUTE IS INTRADAY, so this is the gate for every interval it
+    // serves — hiding the buttons in React protects nothing against a hand-written request.
+    //
+    // ⚠️ AND IT REFUSES RATHER THAN SUBSTITUTING. Quietly answering a 5m request with daily candles
+    // would put bars on a chart labelled "5m" that are nothing of the kind, which is worse than a
+    // clear refusal: the caller cannot tell they were downgraded.
+    //
+    // A beta tester keeps intraday — `tier` is 'pro' for them — and the delayed/real-time decision
+    // above still applies, so they get Pro's intervals on the data their licence allows.
+    // ⚠️ THE GATE IS THE TIER, NOT THE RANGE LABEL — and that distinction is the whole bug.
+    //
+    // EVERY response from this route is intraday bars; that is what the route is. But the ticker
+    // page asks for range '1D' and '5D' here (its own isIntraday() treats those two as intraday
+    // views), and neither is an intraday INTERVAL id — '1D' is the daily timeframe. Gating on the
+    // id therefore let '1D' through and served 5-minute bars to a Free user, which is precisely the
+    // access being sold. Anything that reaches this handler is intraday regardless of its label.
+    //
+    // ⚠️ AND IT REFUSES RATHER THAN SUBSTITUTING. Quietly answering with daily candles would put
+    // bars on a chart labelled 5m that are nothing of the kind; the caller could not tell they had
+    // been downgraded. A beta tester passes (tier is 'pro') and still gets delayed bars above.
+    if (!isProTier(tier)) {
+      return Response.json({
+        ticker, range: requestedRange, error: 'pro_required', reason: 'intraday_chart',
+        allowedIntervals: FREE_CHART_INTERVALS,
+      }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } });
+    }
 
     const { barMinutes: mult, sessions: keepN, lookbackDays } = INTRADAY.get(range);
 

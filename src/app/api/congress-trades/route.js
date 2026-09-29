@@ -2,7 +2,7 @@ import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { congressTrades, congressTickerPrices, tickerPriceQuality } from '../../../lib/schema';
 import { and, eq, gte, lte, or, ilike, sql, desc, asc, inArray } from 'drizzle-orm';
-import { resolveUserTier } from '../../../lib/entitlements';
+import { resolveUserTier, eodCutoffIso } from '../../../lib/entitlements';
 import { MAX_HISTORY_DAYS } from '../../../lib/congress-chart.mjs';
 import { shapeTrade } from '../../../lib/congress-overview';
 
@@ -84,6 +84,17 @@ export async function GET(request) {
     // Late under the STOCK Act's 45 day rule. A factual threshold from the statute.
     if (searchParams.get('late') === '1') conds.push(sql`${congressTrades.filingLagDays} > 45`);
 
+    // ⚠️ FREE IS END-OF-DAY. Every filter above feeds this one clause, so a disclosure processed
+    // during today's session cannot reach a Free client through any filter, sort or page — and the
+    // total they are shown counts only rows they can actually reach.
+    //
+    // ⚠️ GATED ON inserted_at, NOT the disclosure or transaction date. Congress filings arrive weeks
+    // after the trade; gating on transaction_date would hide legitimate historical research while
+    // still leaking a disclosure we ingested this morning. Source dates are untouched.
+    const tier = await resolveUserTier();
+    const cutoff = eodCutoffIso(tier);
+    if (cutoff) conds.push(sql`${congressTrades.insertedAt} <= ${cutoff}::timestamptz`);
+
     const where = conds.length === 1 ? conds[0] : and(...conds);
 
     const sortKey = SORTS[p('sort')] ? p('sort') : 'transaction';
@@ -93,7 +104,6 @@ export async function GET(request) {
     const pageSize = PAGE_SIZES.includes(num('pageSize')) ? num('pageSize') : 50;
     const page = Math.max(0, num('page') || 0);
 
-    const tier = await resolveUserTier();
     const { userId } = await auth();
     const loggedIn = !!userId;
 
