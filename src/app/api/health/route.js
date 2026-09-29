@@ -228,10 +228,19 @@ export async function GET(request) {
       });
       const late = out.filter((j) => j.state === 'late');
       const failing = out.filter((j) => j.state === 'failing');
+      // ⚠️ `never` IS BENIGN FOREVER, WHICH IS A HOLE — so it is surfaced rather than buried.
+      //
+      // A job that has not run since its tracking shipped is indistinguishable from one that is
+      // broken and has never run at all, and treating either as an outage would fire on every
+      // deploy. So it stays out of `ok`, but it does NOT stay quiet: a name that is still here a
+      // couple of days after launch is a job that is not running, and that is the one reading of
+      // this list. It should be empty once every cadence has come round once.
+      const neverRan = out.filter((j) => j.state === 'never');
       return {
         ok: late.length === 0 && failing.length === 0,
         late: late.map((j) => j.job),
         failing: failing.map((j) => j.job),
+        neverRan: neverRan.map((j) => j.job),
         jobs: out,
       };
     }),

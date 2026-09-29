@@ -175,6 +175,11 @@ L('production');
     const sample = j?.jobs?.jobs?.[0] || {};
     ok('…with last success, age and its own threshold on every job',
       'lastSuccess' in sample && 'ageHours' in sample && 'maxAgeHours' in sample && 'state' in sample);
+    // ⚠️ A JOB THAT HAS NEVER RUN MUST BE VISIBLE WITHOUT READING ALL 20 ROWS. It is not an outage
+    // (that would fire on every deploy) but it is the shape of a cron that was never scheduled, and
+    // burying it inside the per-job list is how that stays unnoticed for a month.
+    ok('…and names any job that has never run, rather than hiding it in the list',
+      Array.isArray(j?.jobs?.neverRan));
     const states = new Set((j?.jobs?.jobs || []).map((x) => x.state));
     ok('…using a closed set of states', [...states].every((s) => ['ok', 'late', 'never', 'idle_by_design', 'failing'].includes(s)), [...states].join(','));
     // ⚠️ NO SECRETS, NO STACK TRACES, NO VENDOR INTERNALS in a publicly reachable document.
