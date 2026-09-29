@@ -327,12 +327,21 @@ export async function GET(request) {
       return Response.json({ symbol: sym, valid: false, reason: 'format' });
     }
 
+    // ⚠️ SERVER-SIDE STAGE TIMINGS, because the client could only ever see one number. From the
+    // browser this endpoint took 4-7s while every field reported a cache HIT, which rules out the
+    // vendor fan-out and leaves "somewhere between the request arriving and the response leaving".
+    // These are durations in milliseconds only — no keys, no URLs, no configuration.
+    const T = { t0: Date.now() };
+    const mark = (k) => { T[k] = Date.now() - T.t0; };
+    mark('start');
+
     // Every cache key this request can read, fetched in ONE Redis command instead of seven. The
     // negative-cache short-circuit still happens first and still costs nothing extra: its value
     // arrives in the same MGET.
     const KEYS = ['notfound', 'profile', 'quote', 'metric', 'news', 'ma50', 'shortint'];
     const [nf, pProfile, pQuote, pMetric, pNews, pMa50, pShortInt] =
       await kvMGet(KEYS.map((k) => `${PFX}${sym}:${k}`));
+    mark('mget');
 
     // negative cache — recently-confirmed not-found symbols short-circuit here
     if (nf != null) {
@@ -352,7 +361,10 @@ export async function GET(request) {
       cached(`${PFX}${sym}:shortint`, TTL.shortint, () => fetchHeroShortInterest(sym), pShortInt),
     ]);
 
+    mark('fanout');
+
     const v = await resolveValidity(sym, prof.value || {}, quote.value);
+    mark('validity');
     if (!v.valid) {
       // only negative-cache a *confirmed* not-found (we actually reached Finnhub), never a transient blip
       if (prof.value != null || quote.value != null) await kvSet(`${PFX}${sym}:notfound`, '1', TTL.notfound);
@@ -360,7 +372,8 @@ export async function GET(request) {
       return Response.json({ symbol: sym, valid: false, reason: 'not_found' });
     }
 
-    const meta = { cache: { profile: prof.source, quote: quote.source, metric: metric.source, news: news.source, ma50: ma50.source, shortInterest: shortInt.source } };
+    const meta = { cache: { profile: prof.source, quote: quote.source, metric: metric.source, news: news.source, ma50: ma50.source, shortInterest: shortInt.source },
+      timing: { mget: T.mget, fanout: T.fanout, validity: T.validity, total: Date.now() - T.t0 } };
     console.log(`[ticker_api] ${sym} ok · cache=${JSON.stringify(meta.cache)}`);
     return Response.json({
       symbol: sym, valid: true,
