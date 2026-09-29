@@ -143,18 +143,25 @@ L('⚠️ market data is DELAYED for an unauthenticated caller');
   ok('⚠️ …and never claims real-time to a signed-out caller',
     !/"freshness"\s*:\s*"realtime"|"realtime"\s*:\s*true|"access"\s*:\s*"realtime"/.test(marker));
 
-  const c = await get('/api/chart-intraday?ticker=AAPL&range=1D');
-  ok('intraday chart responds', c.status === 200 && !!c.json, `HTTP ${c.status}`);
-  const cm = c.json?.meta || {};
-  ok('⚠️ …with delayed meta, not a real-time feed', cm.delayed === true, JSON.stringify(cm).slice(0, 160));
-  // ⚠️ THE BARS THEMSELVES, NOT JUST THE LABEL. A route can set delayed:true and still ship a bar
-  // stamped thirty seconds ago, which is the licensed data we are not allowed to give away.
-  const bars = Array.isArray(c.json?.bars) ? c.json.bars : [];
-  const newest = bars.length ? new Date(bars[bars.length - 1].t ?? bars[bars.length - 1].time ?? 0).getTime() : 0;
-  const ageMin = newest ? (Date.now() - newest) / 60000 : null;
-  ok('⚠️ …and the newest bar is actually behind the delay window',
-    bars.length === 0 || (ageMin != null && ageMin >= 14),
-    `${bars.length} bars, newest ${ageMin == null ? 'n/a' : ageMin.toFixed(1)} min old`);
+  // ⚠️ THIS ASSERTED THE OLD RULE, that a signed-out caller got DELAYED intraday bars. Intraday is
+  // now Pro-only, so a 200 here would be the defect and the 403 is the pass. Kept rather than
+  // deleted because "intraday is refused, and refused by every label" is the thing worth pinning.
+  for (const r of ['1m', '5m', '15m', '30m', '1h', '4h', '1D', '5D']) {
+    const c = await get(`/api/chart-intraday?ticker=AAPL&range=${r}`);
+    ok(`⚠️ intraday range ${r} is refused without Pro`, c.status === 403, `HTTP ${c.status}`);
+    // ⚠️ REFUSED, NOT SUBSTITUTED. Answering with daily candles would put bars on a chart labelled
+    // 5m that are nothing of the kind, and the caller could not tell they had been downgraded.
+    ok(`…and returns no bars for ${r}`, !Array.isArray(c.json?.bars) || c.json.bars.length === 0);
+  }
+  ok('⚠️ …including 1D and 5D, which are this chart\'s intraday buttons despite the daily-looking id',
+    (await get('/api/chart-intraday?ticker=AAPL&range=1D')).status === 403);
+
+  // The end-of-day timeframes Free is entitled to must still work, and still be EOD.
+  for (const r of ['1M', '1Y', 'all']) {
+    const d = await get(`/api/chart-daily?ticker=AAPL&range=${r}`);
+    ok(`daily range ${r} still serves Free`, d.status === 200 && (d.json?.candles?.length ?? 0) > 0,
+      `HTTP ${d.status} candles=${d.json?.candles?.length}`);
+  }
 }
 
 L('⚠️ Pro-only rows are withheld SERVER-SIDE, not hidden in the page');
