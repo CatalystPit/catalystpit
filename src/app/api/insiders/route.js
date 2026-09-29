@@ -235,17 +235,22 @@ async function notableView(window) {
   const cached = await kvGet(key); if (cached) return cached;
   const since = sinceWindow(window);
   const top = async (cond) => (await db.execute(sql`SELECT ticker, company, executive, title, total_value, shares, shares_owned_after, transaction_date FROM insider_trades WHERE ${cond} AND transaction_date >= ${since} ORDER BY total_value DESC LIMIT 1`)).rows?.[0] || null;
-  const [ceoBuy, cfoBuy, bigBuy] = await Promise.all([
+  // ⚠️ ALL SEVEN AT ONCE. Three of these already ran concurrently and the other four then ran one
+  // after another, each waiting on the last for no reason — they share only `since` and none reads
+  // another's result. On a cache miss that was four serialised round trips to Neon stacked on top of
+  // the parallel three. Same queries, same results, same order of the object below.
+  const one = async (q) => (await db.execute(q)).rows?.[0] || null;
+  const [ceoBuy, cfoBuy, bigBuy, mostBuyers, bigCluster, ownInc, topConv] = await Promise.all([
     top(sql`action='BUY' and (title ilike '%chief executive%' or title ilike '%CEO%')`),
     top(sql`action='BUY' and (title ilike '%chief financial%' or title ilike '%CFO%')`),
     top(sql`action='BUY'`),
+    one(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 2 ORDER BY count(distinct executive) DESC, sum(total_value) DESC LIMIT 1`),
+    one(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3 ORDER BY sum(total_value) DESC LIMIT 1`),
+    one(sql`SELECT ticker, company, executive, title, total_value, (shares / nullif(shares_owned_after - shares, 0)) * 100 pct FROM insider_trades WHERE action='BUY' AND shares_owned_after > shares AND total_value > 25000 AND transaction_date >= ${since} ORDER BY pct DESC LIMIT 1`),
+    // Highest-conviction purchase in the window. Only score, band and approved tags leave
+    // the server — the engine and its inputs stay in lib/conviction.server.js.
+    one(sql`SELECT ticker, company, executive, title, total_value, transaction_date, conviction, conviction_band, conviction_tags FROM insider_trades WHERE conviction IS NOT NULL AND transaction_date >= ${since} ORDER BY conviction DESC, total_value DESC LIMIT 1`),
   ]);
-  const mostBuyers = (await db.execute(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 2 ORDER BY count(distinct executive) DESC, sum(total_value) DESC LIMIT 1`)).rows?.[0] || null;
-  const bigCluster = (await db.execute(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3 ORDER BY sum(total_value) DESC LIMIT 1`)).rows?.[0] || null;
-  const ownInc = (await db.execute(sql`SELECT ticker, company, executive, title, total_value, (shares / nullif(shares_owned_after - shares, 0)) * 100 pct FROM insider_trades WHERE action='BUY' AND shares_owned_after > shares AND total_value > 25000 AND transaction_date >= ${since} ORDER BY pct DESC LIMIT 1`)).rows?.[0] || null;
-  // Highest-conviction purchase in the window. Only score, band and approved tags leave
-  // the server — the engine and its inputs stay in lib/conviction.server.js.
-  const topConv = (await db.execute(sql`SELECT ticker, company, executive, title, total_value, transaction_date, conviction, conviction_band, conviction_tags FROM insider_trades WHERE conviction IS NOT NULL AND transaction_date >= ${since} ORDER BY conviction DESC, total_value DESC LIMIT 1`)).rows?.[0] || null;
   const t = (r, x = {}) => r ? { ticker: r.ticker, company: r.company, executive: r.executive, title: r.title, value: +r.total_value || 0, date: r.transaction_date, ...x } : null;
   const out = { window,
     largestCeoBuy: t(ceoBuy), largestCfoBuy: t(cfoBuy), largestPurchase: t(bigBuy),

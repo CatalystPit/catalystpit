@@ -75,10 +75,28 @@ async function cached(key, ttlSec, fetcher, preloaded) {
   return { value, source: 'live' };
 }
 
+// ⚠️ EVERY THIRD-PARTY CALL ON THIS ROUTE IS BOUNDED, and none of them was.
+//
+// This endpoint fans out to Finnhub, Tiingo and SEC.gov inside a Promise.all, so the response takes
+// as long as the SLOWEST of them and none had a timeout. Measured on production: three consecutive
+// calls returned in 0.33s, 7.30s and 0.21s — the middle one is a vendor having a bad moment, and the
+// page simply waited. A ticker page that usually paints in 200ms and occasionally takes seven
+// seconds is what "feels slow" actually means.
+//
+// ⚠️ A TIMEOUT HERE CHANGES NO DATA. Every fetcher already returns null on a fetch failure, and
+// cached() deliberately does not persist a null — so an aborted call behaves exactly like the
+// failure case that already existed: the field is absent for this request and refetched on the next
+// one. Nothing is fabricated and nothing stale is promoted.
+const VENDOR_TIMEOUT_MS = 3500;
+const fetchBounded = async (url, init = {}, ms = VENDOR_TIMEOUT_MS) => {
+  try { return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) }); }
+  catch { return null; }
+};
+
 // ─── Finnhub ─────────────────────────────────────────────────────────────────
 const fh = async (path) => {
-  const r = await fetch(`https://finnhub.io/api/v1${path}${path.includes('?') ? '&' : '?'}token=${FINNHUB_KEY}`);
-  if (!r.ok) return null;
+  const r = await fetchBounded(`https://finnhub.io/api/v1${path}${path.includes('?') ? '&' : '?'}token=${FINNHUB_KEY}`);
+  if (!r || !r.ok) return null;
   return r.json().catch(() => null);
 };
 
@@ -205,9 +223,9 @@ const fetchTiingoNews = async (sym) => {
   const token = process.env.TIINGO_API_KEY;
   if (!token) return null;
   try {
-    const r = await fetch(`https://api.tiingo.com/tiingo/news?tickers=${encodeURIComponent(String(sym).toLowerCase())}&limit=15&token=${token}`,
+    const r = await fetchBounded(`https://api.tiingo.com/tiingo/news?tickers=${encodeURIComponent(String(sym).toLowerCase())}&limit=15&token=${token}`,
       { headers: { 'Content-Type': 'application/json' }, cache: 'no-store' });
-    if (!r.ok) return null;
+    if (!r || !r.ok) return null;
     const j = await r.json();
     if (!Array.isArray(j)) return null;
     return j
@@ -265,8 +283,10 @@ async function loadSecNames() {
   const hit = await kvGet('catalystpit:sec:ticker_names');
   if (hit != null) { try { SEC_NAMES = JSON.parse(hit); return SEC_NAMES; } catch { /* refetch */ } }
   try {
-    const r = await fetch('https://www.sec.gov/files/company_tickers.json', { headers: SEC_NAME_UA });
-    if (!r.ok) return null;
+    // SEC serves a multi-megabyte file here. It is cached for 7 days and memoised per instance, so
+    // exactly one unlucky request pays for it — and that request must not be able to pay forever.
+    const r = await fetchBounded('https://www.sec.gov/files/company_tickers.json', { headers: SEC_NAME_UA }, 5000);
+    if (!r || !r.ok) return null;
     const data = await r.json();
     const map = {};
     for (const e of Object.values(data)) if (e?.ticker) map[String(e.ticker).toUpperCase()] = e.title || null;

@@ -138,40 +138,80 @@ const ageMs = (snap, now) => (snap?.calculatedAt ? now - Date.parse(snap.calcula
  * gets once the official close has landed. Both ends are settled official closes, so it needs no
  * entitlement and no live feed; the entitled intraday list is a strictly separate path.
  */
+/** How long a completed session's board may sit in KV. It is superseded by key, not by expiry. */
+const EOD_KEEP_SEC = 26 * 60 * 60;
+const eodKey = (sessionDate, limit) => `${PREFIX}:eod:${sessionDate}:${limit}`;
+
 export async function completedSessionMovers({ limit = 10 } = {}) {
+  // ⚠️ THE SESSION DATE IS THE CACHE KEY, NOT A TTL. This board describes one completed session and
+  // does not change again, so a time-based expiry would either serve the previous session after the
+  // nightly candle load or throw the cache away for nothing. Keyed by the session, a new load
+  // produces a new key and the switch is immediate — no staleness window to reason about.
+  const head = await db.execute(sql`select max(date)::text d from ticker_daily_candles`);
+  const sessionDate = (head.rows ?? head)[0]?.d ?? null;
+
+  if (sessionDate) {
+    const hit = await kv(`/get/${encodeURIComponent(eodKey(sessionDate, limit))}`);
+    const raw = hit?.result;
+    if (raw) {
+      try { return typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { /* fall through and rebuild */ }
+    }
+  }
+
   const types = sql`${`{${TRADEABLE_ASSET_TYPES.join(',')}}`}::text[]`;
+  // ⚠️ RANKED IN SQL, NOT IN NODE. This used to select every eligible security — about 5,000 rows —
+  // ship them all to the function, sort the whole array TWICE in JavaScript and slice twenty off the
+  // ends. Measured on production that was 700-1100ms warm and 5.4s cold, on every anonymous request,
+  // to produce twenty rows that had not changed since the previous evening. The ordering is the same
+  // one the JS comparator applied: pct, with ticker ascending as the tiebreak.
   const res = await db.execute(sql`
     with latest as (select max(date) d from ticker_daily_candles),
-         prev   as (select max(date) d from ticker_daily_candles where date < (select d from latest))
-    select c.ticker,
-           c.close::float8  as price,
-           p.close::float8  as prev_close,
-           (select d from latest)::text as as_of,
-           (select d from prev)::text   as baseline_date,
-           ((c.close - p.close) / p.close * 100)::float8 as pct
-      from ticker_daily_candles c
-      join ticker_daily_candles p on p.ticker = c.ticker and p.date = (select d from prev)
-      join screener_meta m on m.ticker = c.ticker
-     where c.date = (select d from latest)
-       and coalesce(m.asset_type, '') = any(${types})
-       and c.close > 0 and p.close > 0`);
-  const rows = (res.rows ?? res).map((r) => ({
+         prev   as (select max(date) d from ticker_daily_candles where date < (select d from latest)),
+    ranked as (
+      select c.ticker,
+             c.close::float8 as price,
+             p.close::float8 as prev_close,
+             ((c.close - p.close) / p.close * 100)::float8 as pct
+        from ticker_daily_candles c
+        join ticker_daily_candles p on p.ticker = c.ticker and p.date = (select d from prev)
+        join screener_meta m on m.ticker = c.ticker
+       where c.date = (select d from latest)
+         and coalesce(m.asset_type, '') = any(${types})
+         and c.close > 0 and p.close > 0
+    )
+    select 'gain' as side, ticker, price, prev_close, pct,
+           (select count(*)::int from ranked) as universe_count,
+           (select d from latest)::text as as_of, (select d from prev)::text as baseline_date
+      from (select * from ranked order by pct desc, ticker asc limit ${limit}) g
+    union all
+    select 'lose', ticker, price, prev_close, pct,
+           (select count(*)::int from ranked),
+           (select d from latest)::text, (select d from prev)::text
+      from (select * from ranked order by pct asc, ticker asc limit ${limit}) l`);
+
+  const all = res.rows ?? res;
+  const asOf = all[0]?.as_of ?? null;
+  const baselineDate = all[0]?.baseline_date ?? null;
+  const shape = (r) => ({
     ticker: String(r.ticker).toUpperCase(), price: Number(r.price),
     prevClose: Number(r.prev_close), pct: Number(r.pct), baselineDate: r.baseline_date,
-  })).filter((r) => Number.isFinite(r.pct));
+  });
+  // SQL already applied the order; preserving row order here is what keeps it.
+  const gainers = all.filter((r) => r.side === 'gain').map(shape).filter((r) => Number.isFinite(r.pct));
+  const losers = all.filter((r) => r.side === 'lose').map(shape).filter((r) => Number.isFinite(r.pct));
 
-  const asOf = (res.rows ?? res)[0]?.as_of ?? null;
-  const baselineDate = (res.rows ?? res)[0]?.baseline_date ?? null;
-  const by = (d) => (a, b) => d * (a.pct - b.pct) || a.ticker.localeCompare(b.ticker);
-  const gainers = [...rows].sort(by(-1)).slice(0, limit);
-  const losers = [...rows].sort(by(1)).slice(0, limit);
   const names = await namesFor([...gainers, ...losers].map((r) => r.ticker));
   const dress = (r) => ({ ...r, company: names.get(r.ticker) ?? null });
-  return {
+  const payload = {
     gainers: gainers.map(dress), losers: losers.map(dress),
-    asOf, baselineDate, freshness: 'eod', universeCount: rows.length,
+    asOf, baselineDate, freshness: 'eod', universeCount: Number(all[0]?.universe_count) || 0,
     snapshotAt: null, session: null,
   };
+
+  // ⚠️ A CACHE WRITE MUST NEVER FAIL THE REQUEST. kv() already swallows, and the key is only written
+  // when we know which session it describes.
+  if (sessionDate) await kv(`/set/${encodeURIComponent(eodKey(sessionDate, limit))}?EX=${EOD_KEEP_SEC}`, payload);
+  return payload;
 }
 
 /**
