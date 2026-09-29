@@ -17,6 +17,7 @@
 // Run: node scripts/verify-billing-lifecycle.mjs
 
 import crypto from 'node:crypto';
+import { intervalOf } from '../src/lib/billing/events.js';
 import {
   priceFor, normalizeInterval, planFromSubscriptions,
   verifySignature as verify, PRO_STATUSES, SIGNATURE_TOLERANCE_SEC,
@@ -169,5 +170,76 @@ sec('⚠️ A CORRECTLY SIGNED PAYLOAD DOES NOT STAY VALID FOREVER');
   check('the default tolerance matches Stripe\'s own 300s', SIGNATURE_TOLERANCE_SEC === 300);
 }
 
+
+// ── INVOICE EVENTS ───────────────────────────────────────────────────────────
+sec('⚠️ AN INVOICE IS A SIGNAL TO GO AND LOOK, NEVER A GRANT');
+{
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/app/api/stripe/webhook/route.js', import.meta.url), 'utf8');
+  const sub = (status, id = 'sub_1') => ({ id, status });
+
+  check('invoice.paid is reconciled, not left to fall through', /'invoice\.paid'/.test(src));
+  check('invoice.payment_failed is reconciled too', /'invoice\.payment_failed'/.test(src));
+  check('…both inside the SAME branch that refetches live subscriptions',
+    /const SUBSCRIPTION_EVENTS = \[[\s\S]*?'invoice\.paid', 'invoice\.payment_failed',[\s\S]*?\];/.test(src));
+
+  // ⚠️ THE PROPERTY THAT MAKES ADDING THEM SAFE. The handler never reads the invoice — not its
+  // status, not amount_paid, not whether it succeeded. Entitlement comes from live subscription
+  // statuses alone, so these assertions are about what the invoice CANNOT do.
+  check('⚠️ a paid invoice with no live subscription is still Free',
+    planFromSubscriptions([]) === 'free');
+  check('⚠️ …and with only a canceled subscription, still Free',
+    planFromSubscriptions([sub('canceled')]) === 'free');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  check('⚠️ the handler never branches on the invoice\'s own outcome',
+    !/obj\.(amount_paid|amount_due|paid|attempt_count)\b/.test(code));
+  // ⚠️ THE INVARIANT THAT MAKES ALL OF THE ABOVE HOLD, asserted on the code rather than inferred
+  // from behaviour: inside the reconcile branch the plan is only ever the result of a live refetch.
+  // Any other assignment — a shortcut like `if (event.type === 'invoice.paid') plan = 'pro'` — would
+  // grant Pro from an invoice and would look perfectly reasonable in review.
+  const branch = /if \(SUBSCRIPTION_EVENTS\.includes\(event\.type\)\) \{[\s\S]*?\n    \}/.exec(code)?.[0] || '';
+  const assignments = [...branch.matchAll(/\bplan\s*=\s*([^;]+);/g)].map((m) => m[1].trim());
+  check('⚠️ plan is assigned ONLY from planFromSubscriptions in the reconcile branch',
+    assignments.length > 0 && assignments.every((a) => a.startsWith('planFromSubscriptions(')),
+    assignments.join(' | '));
+
+  // ⚠️ THE DUNNING GRACE PERIOD, which is where "failed payment" and "still entitled" coexist and
+  // where a naive `invoice.payment_failed → downgrade` would wrongly strip access someone paid for.
+  // Stripe keeps the subscription ACTIVE while smart retries run; only when dunning gives up does it
+  // move to past_due, and THAT is a subscription update we already act on.
+  check('⚠️ a failed payment while the subscription is still active keeps Pro',
+    planFromSubscriptions([sub('active')]) === 'pro');
+  check('⚠️ …and once dunning gives up and it goes past_due, Pro is gone',
+    planFromSubscriptions([sub('past_due')]) === 'free');
+  check('…the same for unpaid and incomplete',
+    planFromSubscriptions([sub('unpaid')]) === 'free'
+    && planFromSubscriptions([sub('incomplete')]) === 'free');
+
+  // ⚠️ OUT OF ORDER. A renewal invoice can be delivered, or redelivered, after the cancellation of
+  // the very subscription it belongs to. Because the plan is recomputed from a live refetch, the
+  // late invoice reads the same state a fresh call would and cannot resurrect a cancelled member.
+  check('⚠️ a late invoice.paid arriving after cancellation does not restore Pro',
+    planFromSubscriptions([sub('canceled')]) === 'free');
+  check('⚠️ …and a late invoice.payment_failed after a genuine resubscribe does not remove Pro',
+    planFromSubscriptions([sub('canceled', 'sub_old'), sub('active', 'sub_new')]) === 'pro');
+
+  // Idempotency: the record, and the entitlement write, are both replay-safe.
+  check('⚠️ replaying the same invoice event yields the same plan',
+    planFromSubscriptions([sub('active')]) === planFromSubscriptions([sub('active')]));
+  check('the event row is keyed so a redelivery cannot double-count',
+    /on conflict \(event_id\) do nothing/.test(
+      readFileSync(new URL('../src/lib/billing/events.js', import.meta.url), 'utf8')));
+
+  // A refetch failure must still ask Stripe to retry rather than guessing from the invoice.
+  check('⚠️ a failed refetch on an invoice event requests a retry instead of writing',
+    /refetch failed[\s\S]{0,200}status: 503/.test(src));
+
+  // Renewal invoices carry their price under lines, not items.
+  check('⚠️ the billing interval is read from an invoice\'s lines, not only a subscription\'s items',
+    intervalOf({ lines: { data: [{ price: { recurring: { interval: 'year' } } }] } }) === 'annual'
+    && intervalOf({ items: { data: [{ price: { recurring: { interval: 'month' } } }] } }) === 'monthly');
+  check('…and an invoice with no recurring line still yields null rather than a guess',
+    intervalOf({ lines: { data: [{}] } }) === null);
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

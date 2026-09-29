@@ -92,7 +92,27 @@ export async function POST(request) {
   try { event = JSON.parse(payload); } catch { return Response.json({ error: 'bad payload' }, { status: 400 }); }
 
   const obj = event.data?.object || {};
-  const SUBSCRIPTION_EVENTS = ['customer.subscription.updated', 'customer.subscription.deleted', 'customer.subscription.created'];
+  // ── ⚠️ WHY INVOICE EVENTS JOIN THE SUBSCRIPTION ONES ────────────────────────
+  //
+  // Entitlement was already correct without them: every transition that matters — active → past_due
+  // when dunning gives up, past_due → active on recovery, → canceled — is itself a subscription
+  // update, and those were handled. The invoice events fell through to "unhandled", recorded but
+  // never reconciled.
+  //
+  // They are added because this handler derives the plan from a LIVE REFETCH rather than from the
+  // event body, which makes an extra trigger free and strictly safer: a subscription event that
+  // Stripe never delivered, or that we 503'd and exhausted retries on, gets corrected the next time
+  // an invoice touches the same customer. The invoice is only ever a signal to go and look.
+  //
+  // ⚠️ AND AN INVOICE CANNOT GRANT PRO. Nothing here reads amount_paid, status, or whether the
+  // invoice succeeded. planFromSubscriptions() sees only live subscription statuses, so "a paid
+  // invoice exists" can never by itself produce Pro, and a failed one can never by itself remove it
+  // — a legitimate payment inside a dunning grace period leaves the subscription active, and the
+  // customer keeps the access they paid for.
+  const SUBSCRIPTION_EVENTS = [
+    'customer.subscription.updated', 'customer.subscription.deleted', 'customer.subscription.created',
+    'invoice.paid', 'invoice.payment_failed',
+  ];
 
   try {
     if (event.type === 'checkout.session.completed') {

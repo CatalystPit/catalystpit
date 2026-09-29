@@ -56,7 +56,11 @@ export async function ensureBillingEventsTable() {
  * defaulting to 'monthly' — an unknown interval must not be counted as the common one.
  */
 export function intervalOf(obj) {
-  const item = obj?.items?.data?.[0];
+  // ⚠️ AN INVOICE KEEPS ITS PRICES SOMEWHERE ELSE. A subscription carries items.data[]; an invoice
+  // carries lines.data[]. Reading only items meant every renewal — which is what invoice.paid is —
+  // recorded a null interval, so the monthly-vs-annual split would have counted first payments only
+  // and quietly under-reported annual renewals forever.
+  const item = obj?.items?.data?.[0] || obj?.lines?.data?.[0];
   const raw = item?.price?.recurring?.interval || item?.plan?.interval || null;
   if (raw === 'month') return 'monthly';
   if (raw === 'year') return 'annual';
