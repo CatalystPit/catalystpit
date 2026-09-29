@@ -31,6 +31,11 @@ export const C = {
   // gets the brand's mid-green at 5.41:1 against its text and 3.42:1 against the page behind it.
   selBg:"var(--cp-selBg,#0C1410)", selFg:"var(--cp-selFg,#FFFFFF)",
   red:"var(--cp-red,#A83030)", redLight:"var(--cp-redLight,#FAEAEA)", gold:"var(--cp-gold,#7A5818)",
+  // ⚠️ BODY TEXT ON A redLight PANEL. redLight flips from a pale pink to a dark maroon between themes,
+  // so text written for one is invisible on the other: the disclaimer's callout hardcoded #5A1A1A and
+  // rendered at 1.15:1 in dark mode — dark red on dark red, measured on the deployed page, and it is
+  // the paragraph telling people the site is not investment advice. Light keeps the old value exactly.
+  redInk:"var(--cp-redInk,#5A1A1A)",
   blue:"var(--cp-blue,#1A3A78)", blueLight:"var(--cp-blueLight,#E8F0FF)",
   navBg:"#1E5C38",
 

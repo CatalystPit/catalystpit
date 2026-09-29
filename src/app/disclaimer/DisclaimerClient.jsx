@@ -30,7 +30,7 @@ export default function DisclaimerClient() {
           <div style={{ fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 8, letterSpacing: "-0.2px" }}>
             ⚠ Read this before using CatalystPit for any trading or investment decision.
           </div>
-          <div style={{ fontSize: 14, lineHeight: 1.6, color: "#5A1A1A" }}>
+          <div style={{ fontSize: 14, lineHeight: 1.6, color: C.redInk }}>
             CatalystPit is an informational and educational service. We are not a registered investment advisor, broker-dealer, or financial planner. Nothing on this site, in our newsletter, or in any related communications is investment advice, financial advice, or a recommendation to buy, sell, or hold any security or asset.
           </div>
         </div>

@@ -519,7 +519,12 @@ export default function MarketHeatmapClient({ initial }) {
         @media (max-width: 1100px) { .cp-hm-cards { grid-template-columns: repeat(${Math.min(2, CARD_COLUMNS)}, minmax(0, 1fr)); } }
         /* Phones: stacked cards. The board still sizes itself — a narrow screen needs MORE height,
            not less, because the same sectors have less width to spread across. */
-        @media (max-width: 720px) { .cp-hm-cards { grid-template-columns: 1fr; } }
+        /* ⚠️ minmax(0, 1fr), NOT 1fr — the same as the two rules above, and for the reason they use it.
+           A grid track defaults to min-width:auto, so it refuses to shrink below its content's
+           min-content width: on a 390px phone this card measured 389px inside a 350px parent and pushed
+           the whole page 19px sideways. The other two breakpoints already had the zero floor; this one
+           was the odd rule out. */
+        @media (max-width: 720px) { .cp-hm-cards { grid-template-columns: minmax(0, 1fr); } }
       `}</style>
     </div>
   );

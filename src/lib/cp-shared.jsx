@@ -167,7 +167,7 @@ export function BrandStyles() {
         --cp-green:#1E5C38;--cp-greenMid:#2A7848;--cp-greenLight:#E8F5EE;--cp-greenBorder:#A8CEB8;
         /* Selected pill/tab. UNCHANGED from what light mode already rendered: 18.70:1. */
         --cp-selBg:#0C1410;--cp-selFg:#FFFFFF;
-        --cp-red:#A83030;--cp-redLight:#FAEAEA;--cp-gold:#7A5818;--cp-blue:#1A3A78;--cp-blueLight:#E8F0FF;
+        --cp-red:#A83030;--cp-redLight:#FAEAEA;--cp-redInk:#5A1A1A;--cp-gold:#7A5818;--cp-blue:#1A3A78;--cp-blueLight:#E8F0FF;
         --cp-conflictBg:#FBF1F0;--cp-conflictBorder:#E3C0BC;--cp-conflictAccent:#A83030;--cp-conflictText:#3C2523;
         --cp-contraryRule:#DCC8C4;--cp-contraryText:#7A6660;
         --cp-negBg:#FBEDED;--cp-warnBg:#FFF6E8;--cp-warnFg:#7A5018;
@@ -190,7 +190,7 @@ export function BrandStyles() {
            white text at 1.12:1 — invisible. The brand mid-green gives 5.41:1 against the label and
            3.42:1 against the page, so the chip reads as selected without becoming a white block. */
         --cp-selBg:#2A7848;--cp-selFg:#FFFFFF;
-        --cp-red:#E06B6B;--cp-redLight:#3A1E1E;--cp-gold:#C79A3C;--cp-blue:#6B8FE0;--cp-blueLight:#1A2540;
+        --cp-red:#E06B6B;--cp-redLight:#3A1E1E;--cp-redInk:#F2C9C9;--cp-gold:#C79A3C;--cp-blue:#6B8FE0;--cp-blueLight:#1A2540;
         /* Burgundy-tinted surface, not a bright panel. The luminance step from the card is small on
            purpose — the left accent bar (#F09490, 7.5:1 against the card) is what makes the block
            read as separate, so the treatment stays restrained instead of alarming. */

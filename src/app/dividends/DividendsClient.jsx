@@ -353,7 +353,12 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
 
             {data?.asOf && (
               <div style={{ fontSize: 11, color: C.dim, marginTop: 10 }}>
-                Announced events only · yield from the last stored close · last synced {new Date(data.asOf).toLocaleString()}.
+                {/* ⚠️ PINNED LOCALE AND TIMEZONE, like fmtDay/fmtLong above. A bare toLocaleString()
+                    formats in the SERVER's locale and UTC during SSR and in the VIEWER's during
+                    hydration, so the two never matched and React threw #418 on every desktop load of
+                    this page. Stating UTC also stops "last synced 2:14 AM" from reading as local time. */}
+                Announced events only · yield from the last stored close · last synced{' '}
+                {new Date(data.asOf).toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'medium', timeStyle: 'short' })} UTC.
               </div>
             )}
           </>
