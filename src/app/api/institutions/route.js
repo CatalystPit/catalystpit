@@ -1,5 +1,6 @@
 import { db } from '../../../lib/db';
 import { fundHoldings, fundFilings, institutions, tickerInstitutionalOwnership } from '../../../lib/schema';
+import { auth } from '@clerk/nextjs/server';
 import { resolveUserTier, eodCutoffIso } from '../../../lib/entitlements';
 import { INSTITUTIONS, INSTITUTION_BY_SLUG } from '../../../lib/institutions.mjs';
 import { and, eq, ne, inArray, desc, sql, isNotNull, ilike, or } from 'drizzle-orm';
