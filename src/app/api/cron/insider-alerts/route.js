@@ -4,6 +4,7 @@ import { and, gt, lte, inArray, asc } from 'drizzle-orm';
 import { clerkClient } from '@clerk/nextjs/server';
 import { recordJobRun } from '../../../../lib/job-heartbeat';
 import { claim, insiderAccessionKey, ensureEvidenceAlertTables } from '../../../../lib/evidence-alerts';
+import { SITE_URL } from '../../../../lib/seo';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -16,7 +17,10 @@ const KV_TOKEN       = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET    = process.env.CRON_SECRET;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM           = process.env.ALERTS_FROM_EMAIL;   // "CatalystPit Alerts <alerts@catalystpit.com>"
-const SITE           = 'https://catalystpit.com';
+// The one canonical origin, not a second copy of it. This file emits absolute /ticker/ links into
+// alert emails, and hardcoding the apex sent every recipient — and every crawler following a shared
+// email — through a 307 to www, against the canonical host those pages declare.
+const SITE           = SITE_URL;
 const KV_BASE        = 'https://powerful-grouper-86116.upstash.io';
 const WATERMARK_KEY  = 'catalystpit:alerts:insider_watermark';
 const MAX_FILINGS    = 800;   // safety cap per run

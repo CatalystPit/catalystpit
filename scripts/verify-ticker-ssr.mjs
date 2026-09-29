@@ -17,6 +17,7 @@
 import { getTickerBundle } from '../src/lib/ticker-seo.mjs';
 import { tickerTitle, tickerDescription, tickerStructuredData, identityLabel } from '../src/lib/ticker-seo-meta.mjs';
 import { buildPublicView } from '../src/lib/ticker-seo-view.mjs';
+import { canonicalSiteUrl } from '../src/lib/seo.js';
 import { readFileSync } from 'node:fs';
 
 let pass = 0, fail = 0;
@@ -214,6 +215,62 @@ if (!LIVE_ONLY) {
     ok('...and both name the symbol', blocks.every((b) => /\{symbol\}|\{data\.symbol\}/.test(b)));
   }
 
+  L('⚠️ the canonical host is enforced, not merely defaulted');
+  {
+    // Production ran with NEXT_PUBLIC_SITE_URL=https://catalystpit.com while the apex 307s to www, so
+    // every canonical, the sitemap, robots Host and every Open Graph url nominated a redirect. The
+    // default here was ALREADY www and its comment already said why; a default is not a guarantee.
+    ok('⚠️ the apex is rewritten to www', canonicalSiteUrl('https://catalystpit.com') === 'https://www.catalystpit.com');
+    ok('⚠️ ...however it is spelled', canonicalSiteUrl('http://catalystpit.com/') === 'https://www.catalystpit.com'
+      && canonicalSiteUrl('https://catalystpit.com/some/path') === 'https://www.catalystpit.com');
+    ok('http on the canonical host is upgraded', canonicalSiteUrl('http://www.catalystpit.com') === 'https://www.catalystpit.com');
+    ok('an unset or unusable value falls back to www',
+      canonicalSiteUrl(undefined) === 'https://www.catalystpit.com' && canonicalSiteUrl('not a url') === 'https://www.catalystpit.com');
+    // ⚠️ AND IT IS NOT A BLANKET "ADD www" RULE. A preview must keep its own identity, or every
+    // preview deploy would claim to be the canonical site.
+    ok('⚠️ localhost is left alone', canonicalSiteUrl('http://localhost:3000') === 'http://localhost:3000');
+    ok('⚠️ a preview host is left alone', canonicalSiteUrl('https://cp-git-x.vercel.app') === 'https://cp-git-x.vercel.app');
+  }
+
+  L('⚠️ the title names only the categories this page has');
+  {
+    // Every ticker used to be titled "· Stock Price, News, Insider & Congress Trades" whether or not
+    // it held one insider filing or one headline.
+    const view = (over) => buildPublicView('TEST', { identity: { ticker: 'TEST', company: 'Test Co' }, ...over });
+    const bare = tickerTitle(view({}));
+    ok('a page with nothing enumerates nothing', bare === 'Test Co (TEST) · Stock Overview', bare);
+    const insOnly = tickerTitle(view({ insiderRecent: [{ executive: 'A', filing_date: '2026-01-01' }] }));
+    ok('⚠️ a page with only insider rows says only Insider Trades',
+      insOnly === 'Test Co (TEST) · Insider Trades', insOnly);
+    ok('⚠️ ...and does NOT claim congress, news or filings',
+      !/Congress|News|SEC Filings/.test(insOnly), insOnly);
+    const withMkt = tickerTitle(view({ candle: { date: '2026-01-02', close: 5 } }));
+    ok('Stock Price appears only where we hold price history',
+      withMkt === 'Test Co (TEST) · Stock Price' && !/Stock Price/.test(bare), withMkt);
+    const all = tickerTitle(view({
+      insiderRecent: [{ executive: 'A' }], congress: [{ representative: 'B' }],
+      institutions: { filer_count: 3 }, news: [{ headline: 'H' }], filings: [{ filing_url: 'https://www.sec.gov/x' }],
+      candle: { date: '2026-01-02', close: 5 },
+    }));
+    ok('⚠️ a full page is capped at three categories so the identity survives truncation',
+      all.split('·')[1].split(',').length === 3 && all.length <= 80, `${all.length}: ${all}`);
+    ok('...and the identity is first', all.startsWith('Test Co (TEST) ·'), all);
+  }
+
+  L('⚠️ institutional ownership reaches the initial HTML, as an aggregate');
+  {
+    const tp = readFileSync(new URL('../src/app/ticker/[symbol]/TickerPage.jsx', import.meta.url), 'utf8');
+    ok('the shell renders the institutional block', /INSTITUTIONAL OWNERSHIP/.test(tp));
+    ok('...from the bundle\'s aggregate', /const inst = ssr\.institutions;/.test(tp));
+    // ⚠️ AGGREGATE ONLY. Per-fund positions come from 9.2M rows of CUSIP-resolved 13F work and must
+    // never reach a crawlable page.
+    const block = (/INSTITUTIONAL OWNERSHIP[\s\S]{0,1800}/.exec(tp) || [''])[0];
+    ok('⚠️ no per-fund position is rendered', !/\b(fund|filer_name|filerName|holdings\.map|positions)\b/.test(block));
+    const v = bundles.get('AAPL');
+    ok('the bundle carries the aggregate for a large cap', (v?.institutions?.holders ?? 0) > 0, JSON.stringify(v?.institutions));
+    ok('...and never a list of funds', !Array.isArray(v?.institutions));
+  }
+
   L('the SSR payload stays small');
   for (const s of ['AAPL', 'XOM', 'LBTY']) {
     const bytes = JSON.stringify(bundles.get(s)).length;
@@ -286,6 +343,23 @@ if (BASE) {
       String(meta(html, /<link rel="canonical" href="([^"]*)"/)));
     // 6 — a known ticker is indexable.
     ok(`${s} is indexable`, !/noindex/.test(meta(html, /<meta name="robots" content="([^"]*)"/) || ''));
+
+    // ⚠️ SETTING openGraph IN A ROUTE DELETES THE FILE-BASED IMAGE. Measured on the running app,
+    // /ticker/ZTS carried no og:image and no twitter:image while still declaring
+    // twitter:card=summary_large_image — the blank card X renders. There is no per-ticker image and
+    // inventing 20,000 of them is not the fix; naming the one brand image is.
+    ok(`${s} carries the brand social image`,
+      /\/opengraph-image/.test(meta(html, /<meta property="og:image" content="([^"]*)"/) || ''),
+      String(meta(html, /<meta property="og:image" content="([^"]*)"/)));
+    ok(`${s} ...and the card that promises one has one`,
+      !/summary_large_image/.test(meta(html, /<meta name="twitter:card" content="([^"]*)"/) || '')
+      || /\/opengraph-image/.test(meta(html, /<meta name="twitter:image" content="([^"]*)"/) || ''));
+    // Social strings must not diverge from the page's own identity.
+    if (!LIVE_ONLY && v?.identity?.companyName) {
+      ok(`${s} og:title and og:url match the page`,
+        (meta(html, /<meta property="og:title" content="([^"]*)"/) || '').includes(v.identity.companyName)
+        && meta(html, /<meta property="og:url" content="([^"]*)"/) === expect(`/ticker/${s}`));
+    }
   }
 
   L('SEO safety, unchanged');

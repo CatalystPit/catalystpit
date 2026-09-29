@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Skel, TopNav, Footer, BrandStyles, TickerLogo } from '../../../lib/cp-shared';
+import TickerLink from '../../../components/TickerLink';
 import {
   fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, actionStyle, fmtReturn, returnColor, ReturnCell,
 } from '../ui';
@@ -160,7 +161,9 @@ export default function PoliticianDetail({ slug }) {
                         <tr key={t.id || i} className={t.ticker ? 'hov' : undefined} onClick={t.ticker ? () => goTicker(t.ticker) : undefined} style={{ borderBottom: i < shown.length - 1 ? `1px solid ${C.surface}` : 'none', borderLeft: `3px solid ${as.fg}` }}>
                           <td className="cp-tkr" style={{ padding: '12px 14px', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: t.ticker ? C.green : C.dim, whiteSpace: 'nowrap' }}>
                             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              {t.ticker ? <><TickerLogo symbol={t.ticker} size={18} />{t.ticker}</> : '—'}
+                              {t.ticker
+                                ? <TickerLink symbol={t.ticker} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={t.ticker} size={18} />{t.ticker}</TickerLink>
+                                : '—'}
                               {t.optionType && <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3, letterSpacing: '0.3px', background: t.optionType === 'Put' ? C.redLight : t.optionType === 'Call' ? C.greenLight : C.surface, color: t.optionType === 'Put' ? C.red : t.optionType === 'Call' ? C.green : C.muted }}>{t.optionType.toUpperCase()}</span>}
                             </span>
                           </td>

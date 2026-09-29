@@ -246,19 +246,35 @@ if (!process.env.DATABASE_URL) {
   ok('no stored company name is an EDGAR industry description', sic.length === 0,
     sic.slice(0, 6).map((r) => r.ticker + '="' + r.company + '"').join(' '));
 
-  section('9. every stored name is an SEC name');
+  section('9. every stored name traces to the security master');
+  // ⚠️ THIS ASSERTION WAS STALE, AND IT WAS FAILING ON CORRECT DATA. It required every
+  // screener_stocks.company to appear verbatim in insider_trades or eightk_filings, which was the
+  // real invariant when the name was derived inline from filings. It is not any more: companyIdentity()
+  // reads the security master, and the master resolves FOUR ranked sources — form4 > registrant >
+  // sec_ticker > provider. 5,312 names come from SEC's own company_tickers.json and 7,506 from a
+  // provider; neither appears in a filing table, so 10,417 correct names were reported "unaccounted"
+  // while nothing was wrong. A test that fails while the behaviour it describes is intact is worse
+  // than no test.
+  //
+  // What must actually hold is that the screener's name column is a COPY of the master and never an
+  // independent derivation — that is what stops a vendor string, or an SIC description, entering the
+  // name by a second route. Measured: 15,815 named rows, 15,815 from the master, 0 unaccounted.
   const [prov] = await sql.query(`
-    with f4 as (select distinct ticker, company from insider_trades where ticker is not null and company is not null and company <> ''),
-         ek as (select distinct ticker, company from eightk_filings where ticker is not null and company is not null and company <> '')
     select count(*)::int named,
-           count(*) filter (where exists (select 1 from f4 where f4.ticker=s.ticker and f4.company=s.company))::int from_f4,
-           count(*) filter (where not exists (select 1 from f4 where f4.ticker=s.ticker and f4.company=s.company)
-                              and exists (select 1 from ek where ek.ticker=s.ticker and ek.company=s.company))::int from_8k,
-           count(*) filter (where not exists (select 1 from f4 where f4.ticker=s.ticker and f4.company=s.company)
-                              and not exists (select 1 from ek where ek.ticker=s.ticker and ek.company=s.company))::int unaccounted
+           count(*) filter (where exists (select 1 from security_identity i
+                                           where i.ticker = s.ticker and i.name = s.company))::int from_master,
+           count(*) filter (where not exists (select 1 from security_identity i
+                                               where i.ticker = s.ticker and i.name = s.company))::int unaccounted
       from screener_stocks s where s.company is not null and s.company <> ''`);
-  console.log('  Form 4 ' + prov.from_f4 + '   8-K ' + prov.from_8k + '   unaccounted ' + prov.unaccounted);
-  ok('every stored name traces to a Form 4 or an 8-K', prov.unaccounted === 0, 'unaccounted ' + prov.unaccounted);
+  console.log('  named ' + prov.named + '   from the master ' + prov.from_master + '   unaccounted ' + prov.unaccounted);
+  ok('⚠️ every stored name is the master\'s name, not a second derivation', prov.unaccounted === 0,
+    'unaccounted ' + prov.unaccounted);
+
+  // And the master's own sources are the four ranked ones — nothing else may write it.
+  const srcs = await sql.query('select distinct source from security_identity order by 1');
+  const allowed = new Set(['form4', 'registrant', 'sec_ticker', 'provider']);
+  const rogue = srcs.map((r) => r.source).filter((x) => !allowed.has(x));
+  ok('⚠️ the master carries no source outside the declared hierarchy', rogue.length === 0, rogue.join(' '));
 
   section('10. representative symbols');
   const syms = ['AAPL','MSFT','ZTS','BRO','SRRK','XOM','ORCL','SIRI','BRK.A','BRK.B','GOOG','GME','ASTS'];

@@ -13,6 +13,9 @@
 // promises data we do not hold is worse than a short one, so the dataset clause is assembled from
 // the coverage counts rather than from a fixed sentence.
 
+// SITE_NAME comes from the one canonical definition beside the canonical() helper, not a second copy.
+import { SITE_NAME } from './seo.js';
+
 const DESC_MAX = 158;      // what Google renders before truncating on desktop; not a hard limit
 const str = (v) => { const s = typeof v === 'string' ? v.trim() : ''; return s || null; };
 
@@ -24,25 +27,45 @@ export function identityLabel(view) {
   return name ? `${name} (${sym})` : sym;
 }
 
+// Which datasets actually carry rows, in the order a reader cares about them. Named for what they
+// are, not for where they came from. The ORDER IS FIXED so a title is stable across rebuilds rather
+// than reshuffling whenever a count changes.
+const DATASETS = [
+  ['insiders', 'insider trades', 'Insider Trades'],
+  ['congress', 'congressional trades', 'Congress Trades'],
+  ['institutions', 'institutional ownership', 'Institutional Holdings'],
+  ['news', 'market news', 'News'],
+  ['filings', 'SEC filings', 'SEC Filings'],
+];
+
+/** The categories this particular page can actually show. */
+const present = (view) => DATASETS.filter(([k]) => (view?.coverage?.[k] ?? 0) > 0);
+
 /**
  * Page title. The brand suffix is NOT added here — the root layout's title template appends it, and
  * adding it too produced "... · CatalystPit · CatalystPit" on the live page once already.
+ *
+ * ⚠️ THE SUFFIX NAMES WHAT THIS PAGE HAS, NOT WHAT THE PRODUCT HAS. Every ticker used to be titled
+ * "· Stock Price, News, Insider & Congress Trades" whether or not it held a single insider filing, a
+ * single congressional trade or one headline — 20,000 titles promising four categories, most of them
+ * on pages carrying one. A reader arriving from a result that names insider trades and finding none is
+ * the concrete harm; the identical boilerplate across the whole corpus is the SEO one.
+ *
+ * Capped at three categories: the identity is what has to survive truncation, and a title listing
+ * five is a keyword list rather than a title.
  */
 export function tickerTitle(view) {
   const label = identityLabel(view);
   if (!label) return null;
-  return `${label} · Stock Price, News, Insider & Congress Trades`;
+  const parts = present(view).map(([, , heading]) => heading);
+  // "Stock Price" only where we hold price history — the page shows a last close and a chart there.
+  if ((view?.coverage?.market ?? 0) > 0) parts.unshift('Stock Price');
+  // Nothing to enumerate: say what the page is, claim nothing about what is on it.
+  if (!parts.length) return `${label} · Stock Overview`;
+  // THREE, TOTAL. Google truncates a title around sixty characters and the identity is what has to
+  // survive that; four categories pushed the common case past ninety.
+  return `${label} · ${parts.slice(0, 3).join(', ')}`;
 }
-
-// Which datasets actually carry rows, in the order a reader cares about them. Named for what they
-// are, not for where they came from.
-const DATASETS = [
-  ['insiders', 'insider trades'],
-  ['congress', 'congressional trades'],
-  ['institutions', 'institutional ownership'],
-  ['filings', 'SEC filings'],
-  ['news', 'market news'],
-];
 
 const oxford = (parts) => (parts.length <= 1 ? (parts[0] || '')
   : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
@@ -59,7 +82,7 @@ export function tickerDescription(view) {
   const id = view.identity || {};
   const where = [str(id.exchange), str(id.sector)].filter(Boolean).join(' · ');
 
-  const have = DATASETS.filter(([k]) => (view.coverage?.[k] ?? 0) > 0).map(([, l]) => l);
+  const have = present(view).map(([, l]) => l);
   // ⚠️ NOT A FIXED SENTENCE. A page with no congressional trades must not advertise congressional
   // trades; with nothing at all, the description stops after the identity rather than promising
   // coverage we cannot show.
@@ -70,7 +93,11 @@ export function tickerDescription(view) {
   // displaces the caller's own fallback. Null hands the decision back.
   if (!str(id.companyName) && !where && !have.length) return null;
 
-  const out = [where ? `${label} on ${where}.` : `${label}.`, holds].filter(Boolean).join(' ');
+  // A named security with no venue and no rows: the identity alone is a 28-character description that
+  // reads like a truncation. It gets one neutral clause saying what the page IS — not a claim that it
+  // holds data, which is exactly what `holds` above refuses to fabricate.
+  const tail = holds || (where ? null : `Symbol overview on ${SITE_NAME}.`);
+  const out = [where ? `${label} on ${where}.` : `${label}.`, tail].filter(Boolean).join(' ');
   return out.length <= DESC_MAX ? out : `${out.slice(0, DESC_MAX - 1).replace(/[\s,·]+\S*$/, '')}…`;
 }
 

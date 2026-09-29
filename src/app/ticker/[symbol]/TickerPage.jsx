@@ -1183,6 +1183,7 @@ function TickerSeoShell({ symbol, ssr }) {
   const ins = distinct(ssr.insiders?.recent || [], (t) => `${t.filedDate}|${t.person}|${t.action}`);
   const cng = distinct(ssr.congress?.recent || [], (t) => `${t.transactionDate}|${t.member}|${t.action}|${t.amountRange}`);
   const news = ssr.news?.recent || [];
+  const inst = ssr.institutions;
 
   const H = { fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, letterSpacing: '0.5px', marginBottom: 8 };
   const card = { background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '20px 22px', marginTop: 14 };
@@ -1235,6 +1236,32 @@ function TickerSeoShell({ symbol, ssr }) {
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {/* ⚠️ AGGREGATE ONLY, AND THAT IS THE SECURITY BOUNDARY, NOT A SIMPLIFICATION. The bundle
+          publishes a holder count, a total and an ownership percentage; individual fund positions
+          come from 9.2M rows of CUSIP-resolved 13F work and putting them on a crawlable page would
+          hand that dataset away. This is also the most widely available dataset we have — 72.7% of
+          the ticker universe — so it is what turns a great many otherwise thin pages into pages
+          carrying a fact. */}
+      {inst ? (
+        <div style={card}>
+          <div style={H}>INSTITUTIONAL OWNERSHIP</div>
+          <div style={{ maxWidth: 640 }}>
+            {[
+              ['Institutional holders', inst.holders != null ? inst.holders.toLocaleString('en-US') : null],
+              ['Shares held', inst.shares != null ? Math.round(inst.shares).toLocaleString('en-US') : null],
+              ['Value', inst.value != null ? fmtBig(inst.value) : null],
+              ['Percent of shares outstanding', inst.ownershipPercent != null ? `${inst.ownershipPercent.toFixed(2)}%` : null],
+              ['As of quarter end', inst.asOfQuarter],
+            ].filter(([, v]) => v != null && v !== '').map(([label, value]) => (
+              <div key={label} style={{ display: 'flex', gap: 12, padding: '5px 0', fontSize: 13, borderBottom: `1px solid ${C.border}` }}>
+                <span style={{ color: C.muted, minWidth: 220 }}>{label}</span>
+                <span style={{ color: C.ink }}>{value}</span>
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
 

@@ -1,5 +1,5 @@
 import { notFound, permanentRedirect } from 'next/navigation';
-import { canonical, SITE_NAME } from '../../../lib/seo';
+import { canonical, SITE_NAME, OG_IMAGE } from '../../../lib/seo';
 import { normalizeSymbol, tickerPath } from '../../../lib/ticker-symbol.mjs';
 import { tickerTabEnabled } from '../../../lib/feature-availability.mjs';
 import { isKnownSymbol } from '../../../lib/ticker-resolve.server.mjs';
@@ -62,7 +62,7 @@ export async function generateMetadata({ params }) {
       title: sym,
       description: `Symbol lookup for ${sym} on ${SITE_NAME}.`,
       robots: { index: false, follow: true },
-      openGraph: { title: `${sym} · ${SITE_NAME}`, description: `Symbol lookup for ${sym}.`, url, siteName: SITE_NAME, type: 'website' },
+      openGraph: { title: `${sym} · ${SITE_NAME}`, description: `Symbol lookup for ${sym}.`, url, siteName: SITE_NAME, type: 'website', images: [OG_IMAGE] },
     };
   }
 
@@ -87,8 +87,8 @@ export async function generateMetadata({ params }) {
     ...base,
     title,
     description,
-    openGraph: { title: `${title} · ${SITE_NAME}`, description, url, siteName: SITE_NAME, type: 'website' },
-    twitter: { card: 'summary_large_image', title: `${title} · ${SITE_NAME}`, description },
+    openGraph: { title: `${title} · ${SITE_NAME}`, description, url, siteName: SITE_NAME, type: 'website', images: [OG_IMAGE] },
+    twitter: { card: 'summary_large_image', title: `${title} · ${SITE_NAME}`, description, images: [OG_IMAGE.url] },
   };
 }
 

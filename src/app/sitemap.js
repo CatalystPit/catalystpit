@@ -1,5 +1,5 @@
 import { INDEXABLE_ROUTES, canonical } from '../lib/seo';
-import { knownSymbols } from '../lib/ticker-resolve.server.mjs';
+import { knownSymbols, tickerLastModified } from '../lib/ticker-resolve.server.mjs';
 import { tickerPath } from '../lib/ticker-symbol.mjs';
 
 // Next serves this at /sitemap.xml. There was no sitemap before, so nothing told a crawler which
@@ -41,16 +41,23 @@ export default async function sitemap() {
     priority,
   }));
 
-  // A sitemap is advisory. If the symbol list cannot be read, the static routes still ship rather
-  // than the whole file failing — knownSymbols already degrades to [] rather than throwing.
-  const symbols = await knownSymbols();
-  const tickers = symbols.map((s) => ({
-    url: canonical(tickerPath(s)),
-    // A ticker page changes when the company files, which is neither daily nor never.
-    changeFrequency: 'weekly',
-    // Below every static route: these are numerous and individually less important than the rooms.
-    priority: 0.5,
-  }));
+  // A sitemap is advisory. If either read fails, the static routes still ship rather than the whole
+  // file failing — both helpers degrade to empty rather than throwing.
+  const [symbols, lastMod] = await Promise.all([knownSymbols(), tickerLastModified()]);
+
+  // ⚠️ NO changeFrequency AND NO priority ON THE TICKER ENTRIES, and dropping them is the point.
+  // Google ignores both outright. `priority: 0.5` was the protocol's own default, so it stated
+  // nothing, and `changeFrequency: 'weekly'` was a guess we had no basis for and could not be held
+  // to. On 20,000-plus entries they were pure bytes — removing them took ~18% off the file. The
+  // twelve static routes keep theirs: their relative priority is a real editorial statement about
+  // twelve rooms, which is the one case where the field carries information.
+  //
+  // lastModified IS emitted, where a real one exists — see tickerLastModified. A symbol with no
+  // filing, disclosure or news on record gets no date rather than a fabricated one.
+  const tickers = symbols.map((s) => {
+    const d = lastMod.get(s);
+    return d ? { url: canonical(tickerPath(s)), lastModified: d } : { url: canonical(tickerPath(s)) };
+  });
 
   return [...routes, ...tickers];
 }

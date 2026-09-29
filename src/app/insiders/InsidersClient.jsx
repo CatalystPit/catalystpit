@@ -3,6 +3,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } fr
 import { createPortal } from "react-dom";
 import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch } from '../../lib/cp-shared';
 import PlanTerms from '../../components/PlanTerms';
+import TickerLink from '../../components/TickerLink';
 import { meaningFor } from '../../lib/insider-meaning';
 import { resolveFilerSymbol } from '../../lib/ticker-symbol.mjs';
 import { ownershipChangePct, fmtOwnershipPct } from '../../lib/insider-format';
@@ -1007,7 +1008,7 @@ export default function InsidersClient() {
               {(data.trending||[]).map((t,i)=>(
                 <div key={i} className="row-hov" onClick={()=>goTicker(t.ticker)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderBottom:i<data.trending.length-1?`1px solid ${C.surface}`:"none"}}>
                   <div style={{display:"flex",gap:12,alignItems:"baseline"}}>
-                    <span style={{display:"inline-flex",alignItems:"center",gap:8,minWidth:64}}><TickerLogo symbol={t.ticker} size={18}/><span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>{t.ticker}</span></span>
+                    <TickerLink symbol={t.ticker} style={{display:"inline-flex",alignItems:"center",gap:8,minWidth:64}}><TickerLogo symbol={t.ticker} size={18}/><span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}>{t.ticker}</span></TickerLink>
                     <span style={{fontSize:12,color:C.muted,maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{decodeEntities(t.company||'')}</span>
                   </div>
                   <div className="cp-num" style={{fontFamily:"'DM Sans',sans-serif",fontSize:12}}>
@@ -1034,7 +1035,7 @@ export default function InsidersClient() {
                   <tr><td colSpan={6} style={{padding:"40px 16px",textAlign:"center",color:C.muted,fontSize:13}}>No clusters (3+ insiders buying the same ticker within 30 days) right now.</td></tr>
                 ) : data.clusters.map((c,i)=>(
                   <tr key={i} className="row-hov" onClick={()=>goTicker(c.ticker)} style={{borderBottom:i<data.clusters.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${C.green}`}}>
-                    <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={c.ticker} size={18}/>{c.ticker}</span></td>
+                    <td className="cp-tkr" style={{padding:"13px 16px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><TickerLink symbol={c.ticker} style={{display:"flex",alignItems:"center",gap:8}}><TickerLogo symbol={c.ticker} size={18}/>{c.ticker}</TickerLink></td>
                     <td style={{padding:"13px 16px",fontSize:13,color:C.text,maxWidth:260,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{decodeEntities(c.company||'')}</td>
                     <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:14,fontWeight:700,color:C.green}}>{c.buyers}</td>
                     <td className="cp-num" style={{padding:"13px 16px",textAlign:"right",fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.text}}>{c.trades}</td>
@@ -1099,7 +1100,7 @@ export default function InsidersClient() {
                       <td className="cp-num" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
                       {/* Logo and gap trimmed with the column: 16 + 6 + five characters fits the
                           64px of content a 78px cell leaves, so a 5-letter symbol never clips. */}
-                      <td className="cp-tkr" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><span style={{display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}><TickerLogo symbol={ins.sym} size={16}/>{ins.sym}</span></td>
+                      <td className="cp-tkr" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><TickerLink symbol={ins.sym} style={{display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}><TickerLogo symbol={ins.sym} size={16}/>{ins.sym}</TickerLink></td>
                       <td title={ins.company} style={{padding:"13px 7px",fontSize:13,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ins.company}</td>
                       <td onClick={(e)=>{ e.stopPropagation(); openInsider(ins); }} style={{padding:"13px 7px",fontSize:13,color:C.text,cursor:"pointer",overflow:"hidden"}}>
                         <div className="ins-name" title={ins.name || ''} style={{fontWeight:500,transition:"color 0.15s",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ins.name || '—'}</div>

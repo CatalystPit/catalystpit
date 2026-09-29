@@ -362,7 +362,17 @@ export default function ScreenerClient() {
                     <tr key={r.ticker} className="row-hov" onClick={() => router.push(`/ticker/${encodeURIComponent(r.ticker)}`)} style={{ borderBottom: `1px solid ${C.surface}`, cursor: 'pointer' }}>
                       <td className="cp-tkr" style={{ padding: '10px 14px', fontSize: 13, fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}
                         {...bindHover(r.ticker)}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}><TickerLogo symbol={r.ticker} size={18} />{r.ticker}</span>
+                        {/* ⚠️ A REAL ANCHOR, INSIDE THE STILL-CLICKABLE ROW. The row's onClick is what
+                            a reader uses and it is unchanged; what it is not is a link, so the
+                            screener — one of twelve pages in the sitemap — handed a crawler no route
+                            to any of the ~21,000 ticker pages it lists. Same destination, so the two
+                            cannot disagree; stopPropagation only prevents the row handler pushing the
+                            same URL a second time. */}
+                        <a href={`/ticker/${encodeURIComponent(r.ticker)}`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'inherit', textDecoration: 'none' }}>
+                          <TickerLogo symbol={r.ticker} size={18} />{r.ticker}
+                        </a>
                       </td>
                       {cols.map((ck) => { const c = COL[ck]; const v = r[ck];
                         const color = c.color && typeof v === 'number' ? (v > 0 ? C.green : v < 0 ? C.red : C.text) : C.text;

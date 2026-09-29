@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, TickerLogo, useLogoBg, LOGO_DARK_BG } from '../../../lib/cp-shared';
 import { resolveFilerSymbol } from '../../../lib/ticker-symbol.mjs';
+import TickerLink from '../../../components/TickerLink';
 
 const fmtB = (n) => {
   if (n == null || isNaN(n)) return '—';
@@ -267,7 +268,7 @@ export default function FundProfile({ slug }) {
                         const put = /put/i.test(o.putCall || '');
                         return (
                           <tr key={i} className={o.ticker ? 'hov' : undefined} onClick={() => go(o.ticker)} style={{ borderBottom: i < d.options.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: o.ticker ? 'pointer' : 'default' }}>
-                            <td style={{ padding: '10px 16px' }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={o.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: o.ticker ? C.green : C.dim }}>{o.ticker || '—'}</span></span></td>
+                            <td style={{ padding: '10px 16px' }}><TickerLink symbol={o.ticker} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={o.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: o.ticker ? C.green : C.dim }}>{o.ticker || '—'}</span></TickerLink></td>
                             <td style={{ padding: '10px 16px' }}><span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: put ? C.redLight : C.greenLight, color: put ? C.red : C.green }}>{(o.putCall || '').toUpperCase()}</span></td>
                             <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.issuer}</td>
                             <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtB(o.value)}</td>
@@ -300,7 +301,7 @@ export default function FundProfile({ slug }) {
                   <tbody>
                     {holdings.map((h, i) => (
                       <tr key={i} className={h.ticker ? 'hov' : undefined} onClick={() => go(h.ticker)} style={{ borderBottom: i < holdings.length - 1 ? `1px solid ${C.surface}` : 'none', cursor: h.ticker ? 'pointer' : 'default' }}>
-                        <td style={{ padding: '10px 16px' }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={h.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: h.ticker ? C.green : C.dim }}>{h.ticker || '—'}</span></span></td>
+                        <td style={{ padding: '10px 16px' }}><TickerLink symbol={h.ticker} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><TickerLogo symbol={h.ticker || ''} size={18} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: h.ticker ? C.green : C.dim }}>{h.ticker || '—'}</span></TickerLink></td>
                         <td style={{ padding: '10px 16px', fontSize: 13, color: C.text, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.issuer}<PC pc={h.putCall} /></td>
                         <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, whiteSpace: 'nowrap' }}>{fmtSh(h.shares)}</td>
                         <td className="cp-num" style={{ padding: '10px 16px', textAlign: 'right', fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap' }}>{fmtB(h.value)}</td>
