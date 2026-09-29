@@ -233,6 +233,28 @@ if (BASE) {
     .replace(/\s+/g, ' ');
   const meta = (h, re) => (re.exec(h) || [])[1] || null;
 
+  // ⚠️ THE ORIGIN IS DERIVED, NOT HARDCODED. It differs by environment — production self-canonicalises
+  // to https://catalystpit.com, a preview and the dev server to something else — and an assertion that
+  // spelled one host in failed against a correct deployment while proving nothing about the property
+  // that matters. What matters is that EVERY page agrees on ONE origin and that each canonical is its
+  // own bare uppercase path; a www/non-www split is exactly what that catches.
+  const probe = await get(`/ticker/${CASES[0]}`);
+  const ORIGIN = (meta(probe.html, /<link rel="canonical" href="(https?:\/\/[^/"]+)/) || '');
+  ok('the site states a canonical origin', /^https:\/\/[^/]+$/.test(ORIGIN), ORIGIN);
+  const expect = (path) => `${ORIGIN}${path}`;
+
+  // ⚠️ A CANONICAL MUST NOT POINT AT A URL THAT REDIRECTS AWAY. Found live: production emits
+  // canonical https://catalystpit.com/... for every page, and the apex 307s to www — so the URL we
+  // nominate as canonical is one Google cannot fetch without a hop, on all ~20,500 ticker URLs plus
+  // the sitemap, robots Host and every Open Graph url. seo.js already defaults to the www host and
+  // says why; NEXT_PUBLIC_SITE_URL is set in the Vercel production environment to the apex and
+  // overrides it. The fix is that variable, not this code — and this assertion is what notices.
+  {
+    const r = await fetch(`${ORIGIN}/ticker/${CASES[0]}`, { redirect: 'manual' });
+    ok('⚠️ the canonical origin serves the page itself, not a redirect to another host',
+      r.status === 200, `${ORIGIN} -> HTTP ${r.status} ${r.headers.get('location') || ''}`);
+  }
+
   for (const s of CASES) {
     const { status, html } = await get(`/ticker/${encodeURIComponent(s)}`);
     ok(`${s} answers 200`, status === 200, String(status));
@@ -260,7 +282,7 @@ if (BASE) {
     }
     // 5 — canonical, uppercase, self.
     ok(`${s} canonical is the bare uppercase URL`,
-      meta(html, /<link rel="canonical" href="([^"]*)"/) === `https://www.catalystpit.com/ticker/${s}`,
+      meta(html, /<link rel="canonical" href="([^"]*)"/) === expect(`/ticker/${s}`),
       String(meta(html, /<link rel="canonical" href="([^"]*)"/)));
     // 6 — a known ticker is indexable.
     ok(`${s} is indexable`, !/noindex/.test(meta(html, /<meta name="robots" content="([^"]*)"/) || ''));
@@ -280,10 +302,11 @@ if (BASE) {
 
     const qp = await get('/ticker/AAPL?ref=twitter');
     ok('⚠️ a query parameter does not create a second canonical',
-      meta(qp.html, /<link rel="canonical" href="([^"]*)"/) === 'https://www.catalystpit.com/ticker/AAPL',
+      meta(qp.html, /<link rel="canonical" href="([^"]*)"/) === expect('/ticker/AAPL'),
       String(meta(qp.html, /<link rel="canonical" href="([^"]*)"/)));
     const tab = await get('/ticker/AAPL?tab=insider');
-    ok('...nor does a tab', meta(tab.html, /<link rel="canonical" href="([^"]*)"/) === 'https://www.catalystpit.com/ticker/AAPL');
+    ok('...nor does a tab', meta(tab.html, /<link rel="canonical" href="([^"]*)"/) === expect('/ticker/AAPL'),
+      String(meta(tab.html, /<link rel="canonical" href="([^"]*)"/)));
 
     const junk = await get('/ticker/.....');
     ok('a malformed segment is still a 404', junk.status === 404, String(junk.status));
