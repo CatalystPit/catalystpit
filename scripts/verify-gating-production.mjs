@@ -271,5 +271,25 @@ L('⚠️ admin surfaces are not readable by an anonymous caller');
   ok('the internal metrics endpoint stays closed', m.status === 401, `HTTP ${m.status}`);
 }
 
+
+L('⚠️ edge-cached responses stay user-independent');
+{
+  const { readFileSync } = await import('node:fs');
+  const read2 = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  // ⚠️ THE RULE THAT MAKES EDGE CACHING SAFE. /api/ticker is served with s-maxage, so ONE response is
+  // shared by every visitor. The moment that route resolves a session, a tier, or a cookie, the first
+  // user's answer is handed to everybody behind the same cache entry — a gating hole created by a
+  // performance change, which is exactly the kind nobody goes looking for.
+  const t = read2('../src/app/api/ticker/route.js');
+  const code = t.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  const shared = /s-maxage/.test(code);
+  ok('the ticker route is edge-cached', shared);
+  ok('⚠️ …and therefore resolves no session, tier or cookie',
+    !/\bauth\(\)/.test(code) && !/resolveUser(Tier|Access)/.test(code)
+    && !/cookies\(\)/.test(code) && !/Set-Cookie/i.test(code));
+  ok('⚠️ …and the entitlement-bearing market endpoints are NOT edge-cached',
+    !/s-maxage/.test(read2('../src/app/api/quotes/route.js'))
+    && !/s-maxage/.test(read2('../src/app/api/chart-intraday/route.js')));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
