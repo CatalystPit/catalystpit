@@ -146,7 +146,10 @@ export async function computeMarketBreadth() {
 /** The stored snapshot as the API payload, or null when there is none. */
 export async function readMarketBreadth() {
   try {
-    await ensureBreadthTable();
+    // ⚠️ NO DDL ON THE READ PATH. This used to call ensureBreadthTable, so every homepage load carried
+    // a CREATE TABLE IF NOT EXISTS — and worse, the route was briefly build-time generated, which put
+    // that statement in the deploy. The cron owns the schema; a missing table simply lands in the catch
+    // below and the card renders "unavailable", which is the honest answer before the first run.
     const [row] = await conn()`
       SELECT universe, as_of_session::text AS as_of_session,
              to_char(computed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS computed_at,
