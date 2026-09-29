@@ -232,6 +232,37 @@ if (!LIVE_ONLY) {
     ok('⚠️ a preview host is left alone', canonicalSiteUrl('https://cp-git-x.vercel.app') === 'https://cp-git-x.vercel.app');
   }
 
+  L('⚠️ a 13F ticker string is not evidence that a page has content');
+  {
+    // fund_holdings.ticker is filer-supplied and carries mutual-fund classes, foreign ordinaries,
+    // warrants, rights, units and currency pairs. Removing the raw table while keeping its AGGREGATE
+    // was the inconsistency this pins: verified on the deployed site, /ticker/ABIOEUR and
+    // /ticker/BYNDEUR were indexable, named nothing, and existed only as a rollup row.
+    const res = readFileSync(new URL('../src/lib/ticker-resolve.server.mjs', import.meta.url), 'utf8');
+    const code = res.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+    ok('⚠️ fund_holdings is not probed', !/fund_holdings/.test(code));
+    ok('⚠️ ...and neither is its rollup, on its own',
+      !/ticker_institutional_ownership/.test(code),
+      'the aggregate inherits the same filer-supplied strings');
+    // The sources that DO count, each because the page prints something from it.
+    for (const t of ['security_identity', 'screener_stocks', 'insider_trades', 'eightk_filings',
+      'congress_trades', 'ticker_daily_candles'])
+      ok(`${t} counts as content`, new RegExp(t).test(code));
+    // The probe and the sitemap must read the SAME sources, or robots and the file disagree.
+    const probeBlock = (/const probe = unstable_cache\([\s\S]*?\n\);/.exec(code) || [''])[0];
+    // Scoped to knownSymbols' OWN body: tickerLastModified declares a `sources` array too, and
+    // matching the first one compared the universe against the lastmod queries.
+    const known = code.slice(code.indexOf('export async function knownSymbols'));
+    const bulkBlock = (/const sources = \[[\s\S]*?\];/.exec(known) || [''])[0];
+    const tables = (b) => [...new Set([...b.matchAll(/FROM (\w+)/g)].map((m) => m[1]))].sort().join(',');
+    ok('⚠️ the per-symbol probe and the sitemap read the same tables',
+      tables(probeBlock) === tables(bulkBlock), `${tables(probeBlock)} vs ${tables(bulkBlock)}`);
+    // The page still RENDERS the institutional aggregate — it is supporting content, not a claim.
+    const tp = readFileSync(new URL('../src/app/ticker/[symbol]/TickerPage.jsx', import.meta.url), 'utf8');
+    ok('⚠️ ...while the page still renders the aggregate as supporting content',
+      /INSTITUTIONAL OWNERSHIP/.test(tp));
+  }
+
   L('⚠️ the title names only the categories this page has');
   {
     // Every ticker used to be titled "· Stock Price, News, Insider & Congress Trades" whether or not

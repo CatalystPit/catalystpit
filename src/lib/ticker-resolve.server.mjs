@@ -26,6 +26,16 @@ import { db } from './db';
 // is not evidence that we have a page's worth of content about it. The reverse-13F product still
 // reads fund_holdings exactly as before; it simply stops being a claim made to Google.
 //
+// ⚠️ AND THAT ARGUMENT APPLIES TO ITS ROLLUP TOO, which a first pass at this rule missed.
+// ticker_institutional_ownership is an aggregate OF fund_holdings, so it inherits the same
+// filer-supplied strings — verified on the deployed site, /ticker/ABIOEUR and /ticker/BYNDEUR were
+// indexable, named nothing, and exist only as a rollup row. Removing the raw table while keeping its
+// aggregate was an inconsistency, not a judgement call. The rollup is excellent SUPPORTING content
+// and the page still renders it; on its own, with no name from either identity source and no other
+// dataset, it establishes only that some filer typed that string. Dropping it removes 1,713 URLs, not
+// one of which carries a company name — 261 currency pairs, 1,127 five-character mutual-fund classes —
+// and takes nameless pages from 11.4% of the universe to 3.6%.
+//
 // ⚠️ AND THE SAME MEASUREMENT FOUND THE OPPOSITE ERROR, LARGER. 2,323 symbols carry a company name —
 // every one of them — and were served noindex and left out of the sitemap, because a name in
 // security_identity was not among the six things asked about. AAGH renders "America Great Health",
@@ -51,8 +61,8 @@ const SCREENER_RENDERS = sql`
 
 const probe = unstable_cache(
   async (symbol) => {
-    // Seven EXISTS in one statement. Every column probed carries a btree index on ticker (two are
-    // primary keys), so each is an index lookup that short-circuits on the first row.
+    // Six EXISTS in one statement. Every column probed carries a btree index on ticker (one is a
+    // primary key), so each is an index lookup that short-circuits on the first row.
     const res = await db.execute(sql`
       SELECT
         EXISTS (SELECT 1 FROM security_identity WHERE ticker = ${symbol}
@@ -60,8 +70,6 @@ const probe = unstable_cache(
         EXISTS (SELECT 1 FROM screener_stocks WHERE ticker = ${symbol}
                   AND (${SCREENER_RENDERS}))                                      AS b,
         EXISTS (SELECT 1 FROM insider_trades WHERE ticker = ${symbol})            AS c,
-        EXISTS (SELECT 1 FROM ticker_institutional_ownership WHERE ticker = ${symbol}
-                  AND filer_count > 0)                                            AS d,
         EXISTS (SELECT 1 FROM eightk_filings WHERE ticker = ${symbol})            AS e,
         EXISTS (SELECT 1 FROM congress_trades WHERE ticker = ${symbol})           AS f,
         EXISTS (SELECT 1 FROM ticker_daily_candles WHERE ticker = ${symbol})      AS g
@@ -149,7 +157,7 @@ export async function tickerLastModified() {
 /**
  * EVERY SYMBOL THAT WOULD BE SERVED index:true — the sitemap's set, by construction.
  *
- * ⚠️ IT IS THE SAME SEVEN SOURCES isKnownSymbol PROBES, asked once in bulk instead of once per symbol.
+ * ⚠️ IT IS THE SAME SIX SOURCES isKnownSymbol PROBES, asked once in bulk instead of once per symbol.
  * The sitemap and the robots directive must not be able to disagree about which ticker URLs are
  * indexable: advertising a URL we then serve noindex wastes a crawl and teaches Google to trust the
  * file less, and omitting one we DO index is the gap this exists to close. Deriving both from one
@@ -167,7 +175,6 @@ export async function knownSymbols({ limit = 50000 } = {}) {
     sql`SELECT ticker FROM security_identity WHERE name IS NOT NULL AND name <> ''`,
     sql`SELECT ticker FROM screener_stocks WHERE ${SCREENER_RENDERS}`,
     sql`SELECT DISTINCT ticker FROM insider_trades`,
-    sql`SELECT ticker FROM ticker_institutional_ownership WHERE filer_count > 0`,
     sql`SELECT DISTINCT ticker FROM eightk_filings`,
     sql`SELECT DISTINCT ticker FROM congress_trades WHERE ticker IS NOT NULL`,
     sql`SELECT DISTINCT ticker FROM ticker_daily_candles`,
