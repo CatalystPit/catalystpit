@@ -114,11 +114,31 @@ const gaps = mismatches.filter((m) => m.startsWith('GAP'));
 const real = mismatches.filter((m) => !m.startsWith('STALE') && !m.startsWith('GAP'));
 console.log(`\narithmetic disagreements: ${real.length}`);
 for (const m of real.slice(0, 10)) console.log(`  ${m}`);
-console.log(`\n⚠️ session problems the aggregate does not currently detect:`);
+// ⚠️ THESE ARE WHAT THE AGGREGATE USED TO MISCLASSIFY, AND NOW EXCLUDES. Each of these securities gets
+// a direction above — the JS pass will happily compare its last two prints — and that is exactly the
+// defect: the comparison is between two older sessions, or across a gap of days, while the card is
+// headed with one session date. They are listed rather than hidden because they are the population the
+// on_session guard removes, and the two assertions below check the guard's premise against the data.
+console.log(`\n⚠️ securities the session guard excludes (they would otherwise be classified):`);
 console.log(`  stale (latest candle is not the market session): ${stale.length}`);
 for (const m of stale.slice(0, 8)) console.log(`    ${m}`);
 console.log(`  gap (previous candle is not the prior market session): ${gaps.length}`);
 for (const m of gaps.slice(0, 8)) console.log(`    ${m}`);
+
+const nameOf = (m) => m.split(' ')[1];
+const staleNames = stale.map(nameOf), gapNames = gaps.map(nameOf);
+if (staleNames.length) {
+  const [r] = await sql`SELECT count(*)::int n FROM ticker_daily_candles
+     WHERE ticker = ANY(${staleNames}) AND date = ${s1}::date AND close > 0`;
+  ok('⚠️ no stale security printed on the market session, so on_session excludes every one',
+    r.n === 0, `${r.n} of ${staleNames.length} did print`);
+}
+if (gapNames.length) {
+  const [r] = await sql`SELECT count(*)::int n FROM ticker_daily_candles
+     WHERE ticker = ANY(${gapNames}) AND date = ${s2}::date AND close > 0`;
+  ok('⚠️ no gap security printed on the prior session, so ok_adv excludes every one',
+    r.n === 0, `${r.n} of ${gapNames.length} did print`);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
