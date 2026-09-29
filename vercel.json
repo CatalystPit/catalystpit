@@ -89,7 +89,6 @@
       "schedule": "50 8 * * *"
     },
     {
-      "_comment": "Market breadth, ONE entry on purpose: Vercel caps a project at 40 cron jobs and this project already runs 39. Two entries took it to 41, the deployment was rejected, and because the build itself is fine the only symptom was an unchanged deployment id. The nightly refresh is hooked onto the end of screener-technicals instead, which runs right after the candles it reads. This is the post-close run that puts the new session on the page the same day.",
       "path": "/api/cron/market-breadth",
       "schedule": "30 22 * * 1-5"
     },

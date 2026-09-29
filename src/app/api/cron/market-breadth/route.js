@@ -12,6 +12,19 @@ import { recordJobRun } from '../../../../lib/job-heartbeat';
 // maintains. So this can run as often as the candles change and no more.
 //
 // Idempotent. Running it twice on the same candles writes the same numbers.
+//
+// ── SCHEDULING, AND TWO THINGS vercel.json WILL NOT TELL YOU ─────────────────
+//
+// ⚠️ vercel.json IS SCHEMA-VALIDATED AND TAKES NO COMMENTS. A `_comment` key inside a crons[] entry
+// makes Vercel REJECT THE DEPLOYMENT BEFORE THE BUILD RUNS, so there are no build logs and no new
+// deployment id — the previous deployment just keeps serving and the feature never appears. That cost
+// three pushes to find, which is why this note lives here instead.
+//
+// ⚠️ AND A PROJECT IS CAPPED AT 40 CRON JOBS. This one already runs 39, so breadth gets exactly one
+// schedule — this post-close run, which puts the new session on the page the same day — and takes its
+// nightly refresh from the end of screener-technicals. That is the better home for it anyway: breadth
+// reads the same daily candles that job has just finished writing, so it cannot run against a
+// half-updated history.
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
