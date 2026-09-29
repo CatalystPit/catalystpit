@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { C, startCheckout } from '../../lib/cp-shared';
+import { C, startCheckout, LockedCta } from '../../lib/cp-shared';
 import { fmtDate, partyStyle, chamberLabel, Chip } from './ui';
 import { formatDisclosureDelay, formatDisclosedAmount, formatSeat, tradeDirection, isLateDisclosure } from '../../lib/disclosure';
 
@@ -194,9 +194,7 @@ export default function CongressTransactions({ ticker, onSelectTicker }) {
             <div style={{ fontSize: 12.5, color: C.text, marginBottom: 8 }}>
               {locked.toLocaleString('en-US')} more transactions. Sign in to see the full record.
             </div>
-            <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', borderRadius: 6, padding: '8px 18px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-              Unlock Pro {'·'} $20/month
-            </button>
+            <LockedCta compact />
           </div>
         )}
 

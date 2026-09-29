@@ -487,7 +487,12 @@ export async function GET(request) {
     let countQ = db.select({ n: sql`count(*)`.mapWith(Number) }).from(insiderTrades);
     if (whereClause) countQ = countQ.where(whereClause);
 
-    if (isPro) {
+    // ⚠️ THE ROW LIMIT IS ABOUT HAVING AN ACCOUNT, NOT ABOUT PAYING. This branched on isPro, so a
+    // signed-in Free user got the same ten-row preview as an anonymous visitor — which made Free
+    // worth nothing over logged-out and contradicted the tier model. Free is the EOD research
+    // product: full history, paginated. What Pro buys is FRESHNESS, and that is the eodCutoffIso
+    // predicate above, not this page size.
+    if (loggedIn) {
       const rows = await base.orderBy(...orderBy).limit(pageSize).offset(page * pageSize);
       const [{ n: total }] = await countQ;
       const trades = await enrichRows(rows);

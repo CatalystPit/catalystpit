@@ -133,8 +133,14 @@ export async function GET() {
     isFull = tier === 'pro' || tier === 'elite' || admin;
   } catch { /* signed-out reads as free */ }
 
-  const rows = isFull ? full : full.slice(0, FREE_ROWS);
-  const lockedCount = isFull ? 0 : Math.max(0, full.length - FREE_ROWS);
+  // ⚠️ PIT CONSENSUS IS PRO-ONLY, SO NON-PRO GETS NO ROWS AT ALL — not a short preview.
+  //
+  // This served the first five rows to everyone, which is a preview of a Pro product rather than a
+  // gate on one: the five most interesting names on the board are most of its value, and they were
+  // reaching logged-out clients in the payload. The count is still returned so the page can render
+  // an honest locked state ("82 names on today's board") without shipping a single one of them.
+  const rows = isFull ? full : [];
+  const lockedCount = isFull ? 0 : full.length;
 
   return Response.json({
     status: readStatus === 'ok' && !full.length ? 'empty' : readStatus,

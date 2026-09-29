@@ -1,6 +1,7 @@
 import { BOARDS, BOARDS_VERSION } from '../../../lib/scan/boards.mjs';
 import { buildScanBoardPayload, buildAllScanBoards, DEFAULT_BOARD, DEFAULT_LIMIT } from '../../../lib/scan/board-payload';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
+import { resolveUserTier, isProTier } from '../../../lib/entitlements';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -40,6 +41,15 @@ export async function GET(request) {
   const t0 = Date.now();
   const rl = await apiRateLimit(request, 'scan-board', 'provider');
   if (rl) return rl;
+
+  // ⚠️ THE SAME PRO GATE AS /api/pitscan, BECAUSE THIS SERVES THE SAME BOARDS. Gating one and not
+  // the other would leave the scanner one URL away; this route had no entitlement check at all and
+  // answered a logged-out request with the full board.
+  const tier = await resolveUserTier();
+  if (!isProTier(tier)) {
+    return Response.json({ error: 'pro_required', reason: 'pit_scan', rows: [], boards: null },
+      { status: 403, headers: { 'Cache-Control': 'private, no-store' } });
+  }
   const tGuard = Date.now();
 
   const sp = new URL(request.url).searchParams;

@@ -8,6 +8,7 @@ import { apiRateLimit } from '../../../lib/api-guard.mjs';
 export const runtime = 'nodejs';
 
 // 13F data is public → CDN-cacheable. Per-quarter data changes at most daily during filing season.
+const PUBLIC_ROWS = 10;
 const CACHE = { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' };
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
@@ -642,12 +643,39 @@ export async function GET(request) {
     //
     // That also keeps the public/SEO path exactly as fast as it is today: logged-out traffic still
     // hits the same CDN entry it always did.
+    // ⚠️ AND THE PUBLIC TIER IS A THIRD ANSWER, WHICH IS WHY SIGNED-IN GOES DYNAMIC.
+    //
+    // Logged-out sees at most PUBLIC_ROWS records; signed-in Free sees the full history at the EOD
+    // cutoff. Those are different payloads, so they cannot share one CDN entry — and the one worth
+    // caching is the public one: it is the SEO path and the overwhelming majority of the traffic.
+    // Signed-in requests become dynamic, which matches every other gated dataset here (insiders,
+    // congress and politicians are already no-store for everyone).
+    const { userId } = await auth();
+    const loggedIn = !!userId;
     const tier = await resolveUserTier();
     const cutoff = eodCutoffIso(tier);          // null for Pro/Elite
-    const headers = cutoff ? CACHE : { 'Cache-Control': 'private, no-store' };
-    const freshHeaders = cutoff
-      ? { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' }
-      : { 'Cache-Control': 'private, no-store' };
+    const headers = loggedIn ? { 'Cache-Control': 'private, no-store' } : CACHE;
+    const freshHeaders = loggedIn
+      ? { 'Cache-Control': 'private, no-store' }
+      : { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' };
+
+    // ⚠️ TRUNCATED BEFORE SERIALISATION, so the browser never receives the rows it cannot show —
+    // the cap is on what leaves the server, not on what a component chooses to render. Applied to
+    // the payload rather than to fourteen queries because it must hold for every view uniformly,
+    // and because each array is already small (tens of rows, not thousands).
+    //
+    // ⚠️ SEO IS PRESERVED: ten real records per surface is still crawlable company content, and the
+    // identity, metadata and internal links are untouched. What is withheld is the depth.
+    const publicCap = (payload) => {
+      if (loggedIn || !payload || typeof payload !== 'object') return payload;
+      const out = { ...payload, publicPreview: true, publicRowLimit: PUBLIC_ROWS };
+      for (const [k, v] of Object.entries(out)) {
+        if (!Array.isArray(v) || v.length <= PUBLIC_ROWS) continue;
+        out[k] = v.slice(0, PUBLIC_ROWS);
+        out[`${k}LockedCount`] = v.length - PUBLIC_ROWS;
+      }
+      return out;
+    };
 
     const sp = new URL(request.url).searchParams;
     const ac = sp.get('ac');
@@ -667,21 +695,21 @@ export async function GET(request) {
     // one answers "what landed today", and a filing that appears next week is the one thing it
     // must never do. Five minutes fresh, fifteen stale.
     if (view === 'latest-filings') {
-      return Response.json({ view: 'latest-filings', filings: await latestFilings(25, cutoff) },
+      return Response.json(publicCap({ view: 'latest-filings', filings: await latestFilings(25, cutoff) }),
         { headers: freshHeaders });
     }
     // Activity answers the same "what landed today" question as latest-filings and shares its
     // freshness for the same reason: a change disclosed this morning must not surface next week.
     if (view === 'activity') {
-      return Response.json({ view: 'activity', activity: await latestActivity({ cutoff }) },
+      return Response.json(publicCap({ view: 'activity', activity: await latestActivity({ cutoff }) }),
         { headers: freshHeaders });
     }
-    if (view === 'corporate') return Response.json({ view: 'corporate', portfolios: await corporatePortfolios(300, cutoff) }, { headers });
-    if (view === 'corporate-activity') return Response.json({ view: 'corporate-activity', events: await corporateActivity(120, cutoff) }, { headers });
+    if (view === 'corporate') return Response.json(publicCap({ view: 'corporate', portfolios: await corporatePortfolios(300, cutoff) }), { headers });
+    if (view === 'corporate-activity') return Response.json(publicCap({ view: 'corporate-activity', events: await corporateActivity(120, cutoff) }), { headers });
     const payload = ticker ? await tickerView(ticker.toUpperCase().trim(), cutoff)
       : slug ? await detailView(slug, cutoff)
       : await listView(q, page, pageSize, cutoff);
-    return Response.json(payload, { headers });
+    return Response.json(publicCap(payload), { headers });
   } catch (e) {
     console.log(`[institutions_api] failed: ${e.message}`);
     return Response.json({ error: e.message }, { status: 500 });

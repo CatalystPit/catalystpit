@@ -1,4 +1,4 @@
-import { auth } from '@clerk/nextjs/server';
+import { resolveUserTier, isProTier } from '../../../lib/entitlements';
 import { scanState } from '../../../lib/scan/runtime';
 import { buildScanBoardPayload, DEFAULT_BOARD } from '../../../lib/scan/board-payload';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
@@ -27,7 +27,18 @@ export async function GET(request) {
   if (_rl) return _rl;
 
   try {
-    await auth();
+    // ⚠️ PIT SCAN IS PRO-ONLY, AND THIS ROUTE WAS OPEN. It called auth() and discarded the answer,
+    // so a logged-out request received the full scanner — the proprietary board, its rows and the
+    // real-time provider readiness — with the Terminal's page-level gate protecting nothing that a
+    // direct request could not walk around. The upgrade wall on the page is not the enforcement.
+    //
+    // The refusal carries the shape the panel already understands, so it can render its locked state
+    // without a single scan row reaching the client.
+    const tier = await resolveUserTier();
+    if (!isProTier(tier)) {
+      return Response.json({ error: 'pro_required', reason: 'pit_scan', rows: [], board: null },
+        { status: 403, headers: NO_STORE });
+    }
     const sp = new URL(request.url).searchParams;
     const preset = sp.get('preset') || null;
     const board = sp.get('board') || DEFAULT_BOARD;

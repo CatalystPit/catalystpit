@@ -302,5 +302,99 @@ L('⚠️ edge-cached responses stay user-independent');
     !/s-maxage/.test(read2('../src/app/api/quotes/route.js'))
     && !/s-maxage/.test(read2('../src/app/api/chart-intraday/route.js')));
 }
+
+L('⚠️ Pro-only products send no data to an anonymous caller');
+{
+  // ⚠️ A LOCKED UI IS NOT A GATE. Each of these had a professional upgrade wall on the page and an
+  // API that answered anyone who asked. What is asserted is the PAYLOAD: refused, and carrying no
+  // rows — not merely that some flag says "locked".
+  const consensus = await get('/api/consensus-board');
+  ok('consensus board still responds', consensus.status === 200 && !!consensus.json, `HTTP ${consensus.status}`);
+  const crows = consensus.json?.rows ?? consensus.json?.board ?? [];
+  ok('⚠️ …with ZERO rows, not a five-row taste of a Pro product',
+    Array.isArray(crows) && crows.length === 0, `${Array.isArray(crows) ? crows.length : '?'} rows`);
+  ok('…while still saying how many are locked, so the page can be honest',
+    Number(consensus.json?.lockedCount) > 0, String(consensus.json?.lockedCount));
+  // The names themselves must not be anywhere in the document.
+  ok('⚠️ …and no ticker leaks through another field',
+    !/"ticker"\s*:/.test(JSON.stringify(consensus.json)));
+
+  for (const [label, path] of [['pit scan', '/api/pitscan'], ['pit scan boards', '/api/scan-board']]) {
+    const r = await get(path);
+    ok(`⚠️ ${label} is refused without Pro`, r.status === 403, `HTTP ${r.status}`);
+    const rows = r.json?.rows ?? [];
+    ok(`…and returns no scan rows`, Array.isArray(rows) && rows.length === 0);
+    ok('…and leaks no provider readiness or board contents',
+      !/"provider"|"providerLabel"|"candidates"\s*:\s*\[/.test(JSON.stringify(r.json || {})));
+  }
+}
+
+L('⚠️ the public tier is capped at ten records per surface');
+{
+  const cases = [
+    ['insiders', '/api/insiders?view=rows&limit=500', 'trades'],
+    ['congress trades', '/api/congress-trades?limit=500', 'trades'],
+    ['politicians', '/api/politicians?limit=500', 'members'],
+  ];
+  for (const [label, path, key] of cases) {
+    const r = await get(path);
+    const rows = r.json?.[key];
+    // ⚠️ ASKING FOR 500 IS THE TEST. A cap that only holds when the client asks nicely is not a cap.
+    ok(`${label} answers`, r.status === 200 && Array.isArray(rows) && rows.length > 0, `HTTP ${r.status}`);
+    ok(`⚠️ …capped at 10 even when 500 are requested`, rows.length <= 10, `${rows.length} rows`);
+    ok('…and discloses the remainder rather than truncating silently',
+      Number(r.json?.lockedCount) > 0, `lockedCount=${r.json?.lockedCount}`);
+  }
+  // Institutions is capped in the payload, across every array it returns.
+  const inst = await get('/api/institutions?limit=500');
+  ok('institutions answers', inst.status === 200 && !!inst.json, `HTTP ${inst.status}`);
+  const arrays = Object.entries(inst.json || {}).filter(([, v]) => Array.isArray(v));
+  ok('⚠️ …with no array over ten records',
+    arrays.every(([, v]) => v.length <= 10), arrays.map(([k, v]) => `${k}=${v.length}`).join(' '));
+  ok('…and marks itself a public preview', inst.json?.publicPreview === true);
+  // ⚠️ AND THE EDGE CACHE SURVIVES, which is the SEO and performance path.
+  ok('⚠️ …while still being cacheable for the public/SEO path',
+    /s-maxage|public/.test(String(inst.headers.get('cache-control') || '')),
+    String(inst.headers.get('cache-control')));
+}
+
+L('⚠️ the public gate sells an account, not a subscription');
+{
+  const { readFileSync } = await import('node:fs');
+  const read3 = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const shared = read3('../src/lib/cp-shared.jsx');
+  ok('the shared locked CTA offers a free account when signed out',
+    /<SignedOut>[\s\S]{0,200}href="\/sign-up"[\s\S]{0,120}Create a free account to continue/.test(shared));
+  ok('⚠️ …and only shows the paid CTA to somebody who already has an account',
+    /<SignedIn>[\s\S]{0,200}startCheckout\(\)[\s\S]{0,200}Unlock Pro/.test(shared));
+  // ⚠️ NO PUBLIC SURFACE MAY ASK A STRANGER FOR $20 TO SEE ROW ELEVEN.
+  for (const f of ['../src/app/insiders/InsidersClient.jsx',
+    '../src/app/politicians/CongressTransactions.jsx',
+    '../src/app/politicians/PoliticiansList.jsx']) {
+    const s = read3(f);
+    ok(`${f.split('/').pop()} routes its locked CTA through LockedCta`,
+      /<LockedCta/.test(s) && !/Unlock Pro · \$20\/month/.test(s));
+  }
+}
+
+L('⚠️ Free keeps the research product it is paying nothing for');
+{
+  // Free is signed-in, which this suite cannot be. What IS assertable without a session is that the
+  // row limit keys off having an account rather than off paying — the bug that made Free identical
+  // to logged-out.
+  const { readFileSync } = await import('node:fs');
+  const read4 = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const ins = read4('../src/app/api/insiders/route.js');
+  ok('⚠️ insider pagination is unlocked by signing in, not by paying',
+    /if \(loggedIn\) \{/.test(ins) && !/if \(isPro\) \{\s*\n\s*const rows = await base/.test(ins));
+  const pol = read4('../src/app/api/politicians/route.js');
+  ok('⚠️ …and so are the politician previews', !/isPro \?/.test(pol));
+  const cong = read4('../src/app/api/congress-trades/route.js');
+  ok('…congress already worked that way', /const take = loggedIn \?/.test(cong));
+  // Freshness stays the Pro line, on all three.
+  for (const [n, s] of [['insiders', ins], ['politicians', pol], ['congress', cong]]) {
+    ok(`${n} still applies the EOD cutoff by tier`, /eodCutoffIso\(tier\)/.test(s));
+  }
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

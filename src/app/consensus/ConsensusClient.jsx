@@ -182,7 +182,11 @@ export default function ConsensusClient() {
             </span>
             {Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)}
           </div>
-        ) : list.length === 0 ? (
+        /* ⚠️ "NOTHING HERE" AND "LOCKED" ARE DIFFERENT ANSWERS. Pit Consensus is Pro-only, so a
+           non-Pro viewer now receives zero rows with a locked count — and this branch would have
+           told them the board is empty, which is false and is the one message that would stop them
+           ever upgrading. An empty board is only empty when nothing is locked either. */
+        ) : (list.length === 0 && locked === 0) ? (
           <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, padding: '40px 20px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
             {all.length === 0
               ? 'No company currently has an active evidence setup. Evidence exists for many tickers — none of it is currently a reason to investigate.'

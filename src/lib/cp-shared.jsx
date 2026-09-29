@@ -1777,6 +1777,39 @@ export function CatalystBriefCard() {
 }
 
 // ─── FOOTER ─────────────────────────────────────────────────────────────────
+/**
+ * The call to action on a locked research row-count.
+ *
+ * ⚠️ THE PUBLIC GATE SELLS AN ACCOUNT, NOT A SUBSCRIPTION. Every one of these cards said
+ * "Unlock Pro · $20/month", including to logged-out visitors who are ten rows into their first
+ * visit — asking a stranger for $20 to see row eleven, when what actually unlocks it is a free
+ * account. The first conversion is public → free; Pro is the second one, and only a signed-in Free
+ * user should be shown it here.
+ *
+ * ⚠️ SignedIn/SignedOut RATHER THAN A FETCHED FLAG. Clerk renders neither until it knows, so a Pro
+ * user never sees an upgrade button appear and then vanish — the entitlement-loading flash this
+ * would otherwise reintroduce on three high-traffic pages.
+ */
+export function LockedCta({ compact = false }) {
+  const pad = compact ? '8px 18px' : '10px 18px';
+  const size = compact ? 12.5 : 13;
+  const base = {
+    background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap',
+    padding: pad, borderRadius: 6, fontSize: size, fontWeight: 600, cursor: 'pointer',
+    fontFamily: "'DM Sans',sans-serif", textDecoration: 'none', display: 'inline-block',
+  };
+  return (
+    <>
+      <SignedOut>
+        <a href="/sign-up" style={base}>Create a free account to continue</a>
+      </SignedOut>
+      <SignedIn>
+        <button onClick={() => startCheckout()} style={base}>Unlock Pro · $20/month</button>
+      </SignedIn>
+    </>
+  );
+}
+
 export function Footer() {
   // Features and Pricing have NO destination — there is no /features or /pricing route and no
   // anchor on the homepage to point at. They were still rendered with cursor:pointer and a hover
