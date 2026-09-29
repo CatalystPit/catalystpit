@@ -115,14 +115,16 @@ export default function MarketBreadth() {
   const { advancing: a, highsLows: hl, sma50: s50, sma200: s200 } = b;
   return shell(
     <>
-      {/* ⚠️ auto-fit AGAINST THE CONTAINER, NOT A VIEWPORT MEDIA QUERY. This card sits in the
-          homepage's main column beside a 300px rail, so its width is not the window's width — and a
-          `max-width: 1100px` query would still hand four columns to a 410px box, squeezing every
-          figure. auto-fit with a 150px floor gives four across when the column is wide, two when it is
-          not, and one on a phone, deciding from the space actually available. minmax(0, …) is what
-          keeps a long count from forcing horizontal overflow. */}
+      {/* ⚠️ THE SAME GRID AS THE FOUR INDEX CHARTS ABOVE, DELIBERATELY. These four cards were asked for
+          directly underneath those charts, so they have to read as one block with them — and an auto-fit
+          track does not. Measured on the deployed page: auto-fit gave four columns where .cp-mkt-grid
+          gave two (a 1,014px column) and two where it gave one (a 390px viewport), so the two grids
+          agreed at exactly one width and looked like unrelated components at every other. Fixed 2-up
+          matching .cp-mkt-grid, collapsing at the same ≤430px breakpoint, declared beside it in
+          layout.jsx. A container query would be the better tool, but correctness here means tracking
+          whatever the charts above do, and they use that breakpoint. */}
       <div className="cp-breadth-grid"
-        style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))', gap: 1, background: C.border }}>
+        style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: C.border }}>
         <Card
           leftLabel="ADVANCING" rightLabel="DECLINING"
           leftPct={a.upPct} leftCount={a.up} rightPct={a.downPct} rightCount={a.down}

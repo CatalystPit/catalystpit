@@ -210,11 +210,14 @@ export default function RootLayout({ children }) {
             .bb-cols { display: flex; gap: 28px; }
             @media (max-width: 860px) { .bb-cols { flex-direction: column; gap: 20px; } }
             /* Homepage MARKETS: one chart per row on phones — see the comment at the grid itself. */
-            @media (max-width: 430px) { .cp-mkt-grid { grid-template-columns: 1fr !important; } }
-            /* Market breadth sizes itself from its CONTAINER via auto-fit (see MarketBreadth.jsx), not
-               from the viewport: the card lives in the main column beside a 300px rail, so the window's
-               width is not the space it has. No media query here on purpose — one would fight the
-               auto-fit and hand four columns to a box too narrow for them. */
+            /* ⚠️ MARKET BREADTH COLLAPSES WITH IT, at the same breakpoint and in the same rule. The four
+               breadth cards sit directly beneath these four charts and are meant to read as one block,
+               so the two grids have to break together; when breadth sized itself from its container
+               instead, the deployed page put four breadth cards under two charts at a wide column and
+               two under one on a phone. Add a column to one selector and the other needs it too. */
+            @media (max-width: 430px) {
+              .cp-mkt-grid, .cp-breadth-grid { grid-template-columns: 1fr !important; }
+            }
             /* TOUCH TARGETS. Only the shared nav controls, which are the ones a phone user must hit
                and which measured 26-32px. Table rows, chips and dense data controls are deliberately
                NOT included: they work today and inflating them would break the tables. */
