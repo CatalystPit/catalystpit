@@ -20,6 +20,27 @@ const PFX = 'catalystpit:ticker:';
 // metric drifts slowly; notfound is a short negative cache so junk symbols
 // don't re-hit Finnhub on every keystroke-typo lookup.
 const TTL = { profile: 86400, quote: 300, metric: 1800, news: 300, newsFallback: 60, notfound: 600, ma50: 86400, shortint: 21600 };
+
+// ⚠️ THE FIX FOR THE 5-10 SECOND TICKER PAGE, and it is not in this handler's code.
+//
+// Measured: the handler body runs in 3-5ms with every field a cache hit, while the request takes
+// 4-7 SECONDS from the browser. The instrumentation starts INSIDE the handler, so a multi-second
+// wall time against total=4ms is time spent before our code exists — Vercel cold-starting the
+// function. The response was `public, max-age=0, must-revalidate`, so X-Vercel-Cache was MISS on
+// every single request and there was no way to avoid paying that boot. On a site with pre-launch
+// traffic the function is cold for most first clicks, and the whole ticker page waits on this one
+// request, which is exactly the partial-page state being reported.
+//
+// ⚠️ SAFE TO SHARE AT THE EDGE because this response is user-independent: no auth() call, no tier
+// resolution, no cookie read, no Set-Cookie. Every visitor gets byte-identical content. (Verified,
+// and asserted in verify-ticker-cache.mjs so it stays true.)
+//
+// ⚠️ AND IT CANNOT WEAKEN FRESHNESS. The quote behind this already has a 300s KV TTL, so the data
+// may ALREADY be five minutes old for everyone. 45s at the edge plus at most 120s of
+// stale-while-revalidate is 165s worst case — strictly fresher than what the endpoint could already
+// serve. Free/Pro real-time rules are untouched: they live on /api/quotes and /api/chart-intraday,
+// which resolve entitlement per user and are NOT edge-cached.
+const TICKER_CDN_CACHE = { 'Cache-Control': 'public, s-maxage=45, stale-while-revalidate=120' };
 // news: 5min on the Polygon-primary path; 60s when Polygon FAILED and we served the Finnhub
 // (Yahoo-heavy) fallback — so a transient Polygon hiccup self-corrects in ~1min, not ~5.
 
@@ -387,7 +408,7 @@ export async function GET(request) {
       shortInterest: shortInt.value,   // { settlementDate, shortIntShares, daysToCover, changePercent, pctFloat } | null
       news: news.value,
       meta,
-    });
+    }, { headers: TICKER_CDN_CACHE });
   } catch (e) {
     console.log(`[ticker_api] failed: ${e.message}`);
     return Response.json({ error: e.message }, { status: 500 });
