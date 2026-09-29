@@ -84,6 +84,17 @@ export async function GET(request) {
     windowDays: days,
     billing, billingError,
     signups, signupsError,
+    // ⚠️ WHETHER, NOT WHAT. A boolean saying the signing secrets exist, never a prefix or a length —
+    // and behind this endpoint's auth rather than on the public health document, because which parts
+    // of the plumbing are wired is configuration detail even when the values stay hidden. This is how
+    // "the Clerk webhook is not set up yet" is visible without an anonymous POST being able to prove
+    // it, which is exactly what made recording that state as a job failure the wrong design.
+    configured: {
+      clerkWebhook: !!process.env.CLERK_WEBHOOK_SIGNING_SECRET,
+      stripeWebhook: !!process.env.STRIPE_WEBHOOK_SECRET,
+      stripeMonthly: !!process.env.STRIPE_PRICE_ID,
+      stripeAnnual: !!process.env.STRIPE_PRICE_ID_ANNUAL,
+    },
     jobs,
     at: new Date().toISOString(),
   }, { headers: NO_STORE });

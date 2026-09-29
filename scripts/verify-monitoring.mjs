@@ -248,9 +248,26 @@ L('⚠️ CLERK SIGNUP WEBHOOK');
     !/setPlan|updateUser|publicMetadata|signIn|createUser|sessions/.test(route));
   ok('⚠️ …and does not sit on any authentication path',
     !/clerkMiddleware|auth\(\)/.test(route));
-  ok('an unconfigured secret fails loudly rather than returning a silent 200',
-    /not_configured.*503|503[\s\S]{0,60}not_configured/.test(route)
-    && /beat\(false, 0, 'CLERK_WEBHOOK_SIGNING_SECRET not set'\)/.test(route));
+  ok('an unconfigured secret refuses rather than returning a silent 200',
+    /not_configured[\s\S]{0,60}503|503[\s\S]{0,60}not_configured/.test(route));
+  // ⚠️ AND IT DOES NOT RECORD A FAILED RUN WHILE DOING SO. This shipped wrong and one probe of the
+  // deployed endpoint proved it: an unconfigured route cannot verify anything, so writing ok:false
+  // let a single anonymous POST set consecutive_failures and push /api/health to `degraded` — a
+  // one-request denial of our own dashboard, available to anybody. Neither branch that a stranger
+  // can reach may touch health state.
+  ok('⚠️ …without letting an anonymous POST drive health state',
+    !/beat\(false[\s\S]{0,120}SIGNING_SECRET not set/.test(route));
+  const cfgIdx = route.indexOf('if (!SIGNING_SECRET)');
+  ok('⚠️ …on either of the two paths reachable without a valid signature',
+    !/beat\(/.test(route.slice(cfgIdx, route.indexOf('let event'))));
+
+  // Configuration state is reported from the server, behind auth, as a boolean.
+  const metrics = read('../src/app/api/internal/metrics/route.js');
+  ok('⚠️ whether the signing secrets exist is reported as a boolean, never a value',
+    /clerkWebhook: !!process\.env\.CLERK_WEBHOOK_SIGNING_SECRET/.test(metrics)
+    && !/process\.env\.CLERK_WEBHOOK_SIGNING_SECRET\)?\.(slice|substring|length)/.test(metrics));
+  ok('…and only on the owner-only endpoint, not the public health document',
+    !/CLERK_WEBHOOK_SIGNING_SECRET|STRIPE_WEBHOOK_SECRET/.test(read('../src/app/api/health/route.js')));
   // ⚠️ A REJECTED FORGERY MUST NOT TURN THE DASHBOARD RED, or anyone on the internet could.
   // ⚠️ THE ROUTE MUST ACTUALLY GATE ON THE VERIFICATION, which testing the pure function does not
   // prove. Mutation-tested: replacing `if (!okSig)` with `if (false)` — forged deliveries accepted,
@@ -267,9 +284,16 @@ L('⚠️ CLERK SIGNUP WEBHOOK');
 
   ok('the webhook is tracked for liveness, event-driven',
     TRACKED_JOBS.some((j) => j.name === 'clerk-webhook' && j.eventDriven === true && j.maxAgeHours === undefined));
-  ok('the env var is named consistently everywhere',
-    /CLERK_WEBHOOK_SIGNING_SECRET/.test(route)
-    && (read('../src/app/api/internal/metrics/route.js').includes('CLERK_WEBHOOK_SIGNING_SECRET') === false));
+  // ⚠️ ONE SPELLING, EVERYWHERE. A webhook secret read as CLERK_WEBHOOK_SECRET in one file and
+  // CLERK_WEBHOOK_SIGNING_SECRET in another is set once in Vercel and still half-missing, and the
+  // symptom is a route that rejects every delivery for no visible reason.
+  const clerkEnvNames = new Set();
+  for (const f of srcFiles()) {
+    for (const m of read(f).matchAll(/process\.env\.(CLERK_WEBHOOK[A-Z_]*)/g)) clerkEnvNames.add(m[1]);
+  }
+  ok('⚠️ the signing secret has exactly one name across the codebase',
+    clerkEnvNames.size === 1 && clerkEnvNames.has('CLERK_WEBHOOK_SIGNING_SECRET'),
+    [...clerkEnvNames].join(', '));
 }
 L('production');
 {

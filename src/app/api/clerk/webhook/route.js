@@ -38,8 +38,18 @@ export async function POST(request) {
   // bytes signed and the bytes verified stop matching and every delivery fails.
   const payload = await request.text();
 
+  // ⚠️ A MISSING SECRET IS A CONFIGURATION STATE, NOT A FAILED RUN — and recording it as one was a
+  // real defect, caught by a single probe of the deployed endpoint. An unconfigured route cannot
+  // verify anything, so it cannot tell Clerk from anyone else on the internet; writing ok:false here
+  // meant one anonymous POST set consecutive_failures and pushed /api/health to `degraded`, which
+  // handed the world a one-request denial of our own dashboard. Same reasoning as the bad-signature
+  // branch below, which already refused to let unauthenticated traffic drive health state.
+  //
+  // Whether the secret is set is a fact about the SERVER, so it is reported from server config on the
+  // owner-only metrics endpoint, and the job simply stays in jobs.neverRan until a real signed
+  // delivery arrives. Neither path can be driven by a stranger.
   if (!SIGNING_SECRET) {
-    await beat(false, 0, 'CLERK_WEBHOOK_SIGNING_SECRET not set');
+    console.log('[clerk_webhook] refused: CLERK_WEBHOOK_SIGNING_SECRET not set');
     return Response.json({ error: 'not_configured' }, { status: 503 });
   }
 
