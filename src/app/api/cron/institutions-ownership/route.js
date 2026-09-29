@@ -1,4 +1,5 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 import { runOwnershipAggregate } from '../../../../lib/institutions-universe';
 
 export const runtime = 'nodejs';
@@ -20,6 +21,14 @@ async function isAdmin() {
   } catch { return false; }
 }
 
+// ⚠️ THE HEARTBEAT IS BOOKKEEPING, NOT THE WORK. It never throws into the job it describes, and
+// a FAILED run is recorded too — that is what keeps the age of an outage readable instead of the
+// clock simply stopping with no reason attached.
+const beat = async (ok, seen, note) => {
+  try { await recordJobRun('institutions-ownership', { ok, seen: Number(seen) || 0, note: note ? String(note).slice(0, 180) : null }); }
+  catch { /* never fail the job on its own telemetry */ }
+};
+
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
   let authorized = isVercelCron || request.headers.get('authorization') === `Bearer ${CRON_SECRET}`;
@@ -29,9 +38,11 @@ export async function GET(request) {
   try {
     const res = await runOwnershipAggregate();
     console.log(`[institutions-ownership] ${JSON.stringify(res)}`);
+    await beat(true, res.rows || res.upserts || 0, JSON.stringify(res).slice(0, 180));
     return Response.json({ ok: true, ...res });
   } catch (e) {
     console.log(`[institutions-ownership] failed: ${e.message}`);
+    await beat(false, 0, e.message);
     return Response.json({ ok: false, error: e.message }, { status: 500 });
   }
 }

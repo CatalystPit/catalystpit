@@ -60,11 +60,22 @@ export default function PrivacyClient() {
               light or dark mode and similar choices. That data stays in your browser, is readable only
               by this site, and is not a tracking mechanism.
               <br />
-              <strong>We do not run an analytics package, and we do not set advertising or
-              cross-site tracking cookies.</strong> Because the storage we use today is limited to the
-              two categories above, we do not ask you for cookie consent. If we add advertising or
-              analytics, we will ask for consent where the law requires it before those cookies are
-              set — see section 2.4.</li>
+              <strong>We do not set advertising or cross-site tracking cookies.</strong> Because the
+              storage we use today is limited to the two categories above, we do not ask you for cookie
+              consent. If we add advertising, we will ask for consent where the law requires it before
+              those cookies are set — see section 2.4.</li>
+            {/* ⚠️ THE POLICY SAID "we do not run an analytics package" UNTIL WE RAN ONE. Web Analytics
+                shipped for launch monitoring, so that sentence had to go the same day — it is the
+                identical failure this section already carries a scar from with the ad loader. What
+                replaces it is specific about which product and, more usefully, about what it does NOT
+                do, because "we use analytics" tells a reader nothing about their exposure. */}
+            <li><strong>Analytics:</strong> We use <strong>Vercel Web Analytics</strong>, provided by our
+              hosting provider, to understand how the Service is used — page views, which pages people
+              land on, the referring site, approximate location at country level, and device and browser
+              type. <strong>It sets no cookies, assigns you no persistent identifier, and does not track
+              you across other websites.</strong> It does not record your name, email address or account
+              details, and we do not use it for advertising. We do not use session replay, fingerprinting
+              or any form of individual behavioural tracking.</li>
           </ul>
 
           <h3 style={subhead}>2.3 Information from third parties</h3>
@@ -128,7 +139,7 @@ export default function PrivacyClient() {
                 <li><strong>Clerk</strong> — authentication, account and user management</li>
                 <li><strong>Stripe</strong> — payment processing and subscription billing, including the customer portal you use to manage or cancel</li>
                 <li><strong>Neon</strong> — the managed PostgreSQL database that stores your watchlists, alert subscriptions and alerts, public profile, community content and saved preferences</li>
-                <li><strong>Vercel</strong> — website hosting and infrastructure, including file storage for uploaded images such as avatars</li>
+                <li><strong>Vercel</strong> — website hosting and infrastructure, including file storage for uploaded images such as avatars, and cookieless Web Analytics as described in section 2.2</li>
                 <li><strong>Upstash</strong> — caching and short-lived operational data</li>
                 <li><strong>Ably</strong> — realtime message delivery for The Pit, so chat and presence reach other users live</li>
                 <li><strong>Resend</strong> — delivery of transactional and alert emails we send to your address</li>

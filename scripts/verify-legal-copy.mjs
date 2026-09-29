@@ -23,6 +23,12 @@ const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 // assertions about USER-FACING copy were satisfied by my own explanations of the fix.
 const code = (src) => src.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('{/*')).join('\n');
 
+// ⚠️ PROSE ASSERTIONS MUST SURVIVE A REFLOW. A sentence in JSX wraps wherever the line got long, so
+// "we do not ask you for cookie consent" became "...cookie\n  consent" the moment a clause was added
+// above it, and a passing assertion started failing over an editor's line break rather than a change
+// in meaning. Anything matched against a SENTENCE is matched against this instead of the raw file.
+const flat = (src) => src.replace(/\s+/g, ' ');
+
 /** Every source file under src/, so a claim can be checked against the whole app and not one file. */
 function srcFiles(rel = '../src') {
   const out = [];
@@ -40,6 +46,7 @@ function srcFiles(rel = '../src') {
 const terms = read('../src/app/terms/TermsClient.jsx');
 const privacy = read('../src/app/privacy/PrivacyClient.jsx');
 const disclaimer = read('../src/app/disclaimer/DisclaimerClient.jsx');
+const privacyText = flat(privacy);
 const planTerms = read('../src/components/PlanTerms.jsx');
 // ⚠️ THE PRICES LIVE IN PlanChoice NOW, not in the homepage file. The homepage renders the choice
 // rather than hard-coding two buttons, so the amounts a buyer sees come from there.
@@ -112,9 +119,26 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   // is the failure mode this whole file exists for, and nothing here was pinning it.
   ok('⚠️ the obsolete "no advertising cookies" claim is gone',
     !/We do not use advertising or third-party tracking cookies/.test(privacy));
-  // ...while the part of that sentence that is STILL TRUE survives. We run no analytics package.
-  ok('…while the analytics half of it, still true, is kept',
-    /We do not run an analytics package/.test(privacy));
+  // ⚠️ AND THEN THE OTHER HALF OF THAT SENTENCE EXPIRED TOO. "We do not run an analytics package"
+  // was true until Web Analytics shipped for launch monitoring. The claim is now tied to the
+  // dependency: ship the package and the policy must disclose it, drop the package and the policy
+  // must stop claiming it. Neither direction can drift without this failing.
+  const analyticsDep = /"@vercel\/analytics"/.test(read('../package.json'));
+  const layoutMounts = /<Analytics\s*\/>/.test(read('../src/app/layout.jsx'));
+  ok('⚠️ the obsolete "no analytics package" claim is gone',
+    !/We do not run an analytics package/.test(privacy));
+  ok('⚠️ analytics is disclosed exactly when it is actually installed and mounted',
+    (analyticsDep && layoutMounts) === /Vercel Web Analytics/.test(privacy),
+    `dep=${analyticsDep} mounted=${layoutMounts}`);
+  ok('…and what it collects is named, not waved at',
+    /page views/.test(privacyText) && /device and browser/.test(privacyText));
+  ok('⚠️ …and so is what it does NOT do, which is the part a reader needs',
+    /sets no cookies/.test(privacyText)
+    && /no persistent identifier/.test(privacyText)
+    && /does not track you across other websites/.test(privacyText));
+  // ⚠️ THE LINE WE SAID WE WOULD NOT CROSS WITHOUT APPROVAL, pinned so it cannot be crossed quietly.
+  ok('⚠️ session replay and fingerprinting are explicitly disclaimed',
+    /We do not use session replay, fingerprinting/.test(privacyText));
 
   // ⚠️ AND THEN IT OVERCORRECTED. Catching up with the loader turned into "We use Google AdSense... on
   // the Service. Advertising may be displayed to you", which is a claim about tracking we do not
@@ -141,7 +165,7 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   ok('…and the cookie categories actually in use are named',
     /Strictly necessary:/.test(privacy) && /Functional:/.test(privacy));
   ok('…and the reason there is no consent banner today is stated',
-    /we do not ask you for cookie consent/.test(privacy));
+    /we do not ask you for cookie consent/.test(privacyText));
   ok('third-party advertising cookies are disclosed',
     /Third-party vendors, including Google, may use cookies or similar technologies/.test(privacy));
   ok('…including that Google may serve ads based on visits to this and other sites',

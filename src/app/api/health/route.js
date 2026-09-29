@@ -40,39 +40,62 @@ async function probe(name, fn) {
 const hoursSince = (d) => (d == null ? null : Math.round((Date.now() - new Date(d).getTime()) / 36e5 * 10) / 10);
 const one = async (q) => (await db.execute(q)).rows?.[0] ?? {};
 
-export async function GET() {
-  const startedAt = Date.now();
+// ⚠️ THE DEEP CHECKS ARE OPT-IN, BECAUSE THIS ENDPOINT WAS TIMING OUT ON ITSELF.
+//
+// Measured in production: completeness.13f_aggregation alone took 5,115ms warm and pushed the whole
+// request past maxDuration cold — three consecutive calls returned 504, 200 at 11.5s, and 200 at
+// 4.2s. A health check that intermittently 504s is worse than none: it cannot be alerted on, because
+// its own failure is indistinguishable from the outage it is supposed to report.
+//
+// The two expensive probes scan fund_filings and fund_holdings across quarters. They answer a real
+// question — whether 13F aggregation silently under-wrote — but that is a question worth asking
+// after the nightly job, not on every poll of "is the site up". Everything left in the default set
+// totals well under a second.
+//
+// ⚠️ AND THE POINT IS LOAD, NOT ONLY LATENCY. Monitoring must not become a meaningful share of the
+// database's work. A 5-second aggregate on every uptime ping is exactly that.
+const DEEP_PROBES = new Set(['completeness.13f_aggregation', 'completeness.13f_empty_filings']);
 
-  const checks = await Promise.all([
+export async function GET(request) {
+  const startedAt = Date.now();
+  const deep = new URL(request.url).searchParams.get('deep') === '1';
+
+  // ⚠️ A SKIPPED PROBE IS REPORTED, NOT OMITTED. Silently dropping it would make the default
+  // response look like a full check that passed, which is how "we monitor that" becomes false.
+  const run = (name, fn) => (DEEP_PROBES.has(name) && !deep
+    ? Promise.resolve({ name, ok: true, skipped: 'deep_only', ms: 0 })
+    : probe(name, fn));
+
+  const all = await Promise.all([
     // ── DATABASE ────────────────────────────────────────────────────────────
-    probe('database', async () => {
+    run('database', async () => {
       const r = await one(sql`select 1 as up`);
       return { ok: r.up === 1 };
     }),
 
     // ── FRESHNESS: is the newest record recent enough for the dataset's cadence ──
-    probe('freshness.insiders', async () => {
+    run('freshness.insiders', async () => {
       const r = await one(sql`select max(filing_date)::text d, count(*)::int n from insider_trades`);
       const age = hoursSince(r.d);
       return { ok: age != null && age < 96, newest: r.d, ageHours: age, rows: r.n };   // Form 4: weekdays
     }),
-    probe('freshness.congress', async () => {
+    run('freshness.congress', async () => {
       const r = await one(sql`select max(disclosure_date)::text d, count(*)::int n from congress_trades`);
       const age = hoursSince(r.d);
       return { ok: age != null && age < 24 * 30, newest: r.d, ageHours: age, rows: r.n };  // disclosure is lumpy
     }),
-    probe('freshness.institutions', async () => {
+    run('freshness.institutions', async () => {
       const r = await one(sql`select max(quarter)::text q, max(filed_date)::text f, count(*)::int n from fund_filings`);
       return { ok: !!r.q, newestQuarter: r.q, newestFiled: r.f, filings: r.n };          // quarterly by nature
     }),
-    probe('freshness.screener', async () => {
+    run('freshness.screener', async () => {
       const r = await one(sql`select max(updated_at)::text d, count(*)::int n from screener_stocks`);
       const age = hoursSince(r.d);
       return { ok: age != null && age < 48, newest: r.d, ageHours: age, rows: r.n };
     }),
 
     // ── COMPLETENESS: the invariants, not the exit codes ────────────────────
-    probe('completeness.13f_aggregation', async () => {
+    run('completeness.13f_aggregation', async () => {
       // Filings whose declared count disagrees with stored rows were written by the pre-aggregation
       // path and carry one sub-account line instead of the security's total.
       //
@@ -88,19 +111,19 @@ export async function GET() {
            and f.holdings_count is distinct from (select count(*) from fund_holdings h where h.cik = f.cik and h.quarter = f.quarter)`);
       return { ok: r.n === 0, underAggregatedRecent: r.n, scope: 'last 2 quarters' };
     }),
-    probe('completeness.13f_empty_filings', async () => {
+    run('completeness.13f_empty_filings', async () => {
       const r = await one(sql`
         select count(*)::int n from fund_filings f
          where not exists (select 1 from fund_holdings h where h.cik = f.cik and h.quarter = f.quarter)`);
       return { ok: r.n === 0, filingsWithNoHoldings: r.n };
     }),
-    probe('completeness.13f_unresolved', async () => {
+    run('completeness.13f_unresolved', async () => {
       const r = await one(sql`select count(*)::int n from institution_backfill_error where attempts >= 3`);
       return { ok: r.n < 25, abandonedFilers: r.n };
     }),
 
     // ── DATA QUALITY: boundaries we have already been burned by ─────────────
-    probe('quality.public_tickers', async () => {
+    run('quality.public_tickers', async () => {
       // "NONE" reached the homepage as a ticker. It is a filing's issuerTradingSymbol for an
       // unlisted issuer, and it must never be promoted to a ticker-facing surface again.
       const r = await one(sql`
@@ -111,7 +134,7 @@ export async function GET() {
                    and filing_date > now() - interval '7 days')::int recent_insiders`);
       return { ok: r.screener === 0, screenerPlaceholders: r.screener, recentInsiderPlaceholders: r.recent_insiders };
     }),
-    probe('quality.classification', async () => {
+    run('quality.classification', async () => {
       // ⚠️ THE DENOMINATOR IS NOW THE UNIVERSE THE HEATMAP ACTUALLY DRAWS, AND THE OLD ONE HID A
       // REAL OUTAGE FOR MONTHS.
       //
@@ -174,7 +197,7 @@ export async function GET() {
     // END of an endpoint that already spends seconds in the 13F completeness probe, and pushed a
     // cold start past maxDuration into a 504 — a health check that goes down under load is worse
     // than none, because it reports an outage it caused. It costs nothing running alongside.
-    probe('jobs.heartbeats', async () => {
+    run('jobs.heartbeats', async () => {
       const beats = await readJobHeartbeats();
       const weekend = [0, 6].includes(new Date().getUTCDay());
       const out = TRACKED_JOBS.map((j) => {
@@ -182,26 +205,42 @@ export async function GET() {
         const age = hoursSince(b?.last_success_at);
         // A weekday-only job is idle by design at the weekend, not late.
         const idleByDesign = !!j.weekdaysOnly && weekend;
+        const failures = Number(b?.consecutive_failures ?? 0);
+        // ⚠️ AN EVENT-DRIVEN JOB IS NEVER LATE, ONLY BROKEN. It has no schedule to miss, so age
+        // carries no information about its health — a quiet week is a quiet market, not an outage.
+        // It is judged on whether the runs it DID have failed.
+        const failing = j.eventDriven && failures > 0;
         return {
           job: j.name, label: j.label,
           lastSuccess: b?.last_success_at ?? null,
-          ageHours: age, maxAgeHours: j.maxAgeHours,
+          ageHours: age, maxAgeHours: j.maxAgeHours ?? null,
+          eventDriven: !!j.eventDriven,
           consecutiveFailures: b?.consecutive_failures ?? null,
           note: b?.note ?? null,
           // `never` is not yet a failure: a heartbeat only exists once the job has run since this
           // shipped, and reporting a brand-new field as an outage would cry wolf on day one.
-          state: b == null ? 'never' : idleByDesign ? 'idle_by_design'
-            : age != null && age <= j.maxAgeHours ? 'ok' : 'late',
+          state: b == null ? 'never'
+            : failing ? 'failing'
+              : j.eventDriven ? 'ok'
+                : idleByDesign ? 'idle_by_design'
+                  : age != null && age <= j.maxAgeHours ? 'ok' : 'late',
         };
       });
       const late = out.filter((j) => j.state === 'late');
-      return { ok: late.length === 0, late: late.map((j) => j.job), jobs: out };
+      const failing = out.filter((j) => j.state === 'failing');
+      return {
+        ok: late.length === 0 && failing.length === 0,
+        late: late.map((j) => j.job),
+        failing: failing.map((j) => j.job),
+        jobs: out,
+      };
     }),
   ]);
 
   // Lifted out to its own top-level key as well as staying in `checks`: a stale heartbeat and a
   // stale dataset are different incidents with different responses, and the per-job detail is
   // what someone actually opens this endpoint to read.
+  const checks = all;
   const jobs = checks.find((c) => c.name === 'jobs.heartbeats') ?? null;
   const failed = checks.filter((c) => !c.ok).map((c) => c.name);
   const slowest = [...checks].sort((a, b) => b.ms - a.ms)[0];
@@ -210,6 +249,11 @@ export async function GET() {
     ok: failed.length === 0,
     status: failed.length === 0 ? 'healthy' : 'degraded',
     failing: failed,
+    // ⚠️ SAID OUT LOUD, so a green response is never mistaken for a complete one. Whoever reads this
+    // at 3am needs to know which questions were not asked, and how to ask them.
+    depth: deep ? 'deep' : 'default',
+    skipped: checks.filter((c) => c.skipped).map((c) => c.name),
+    deepHint: deep ? null : 'add ?deep=1 for the 13F completeness scans (several seconds)',
     dbSlowestProbeMs: slowest?.ms ?? null,
     totalMs: Date.now() - startedAt,
     at: new Date().toISOString(),

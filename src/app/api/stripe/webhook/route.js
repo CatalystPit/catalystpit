@@ -1,5 +1,7 @@
 import { clerkClient } from '@clerk/nextjs/server';
 import { verifySignature, planFromSubscriptions, PRO_STATUSES, SIGNATURE_TOLERANCE_SEC } from '../../../../lib/billing/plan.mjs';
+import { recordBillingEvent } from '../../../../lib/billing/events';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export { PRO_STATUSES, SIGNATURE_TOLERANCE_SEC };
 
@@ -60,6 +62,26 @@ async function userIdFromCustomer(customerId) {
   } catch { return null; }
 }
 
+// ⚠️ OBSERVATION IS NOT HANDLING, AND MUST NOT BEHAVE LIKE IT. Both writes below swallow their own
+// errors, because by the time either runs the plan has already been stamped on the Clerk user. A
+// monitoring failure that turned a processed payment into a non-2xx would put Stripe into a retry
+// loop over a logging problem — the exact inversion this file's refetch handling exists to avoid.
+//
+// The heartbeat records LIVENESS: "an event arrived and we processed it". The event row records WHAT.
+// They are separate because a webhook that is up and dropping every event is a different incident
+// from one that is not being called at all, and only the pair can tell them apart.
+async function observed(event, { userId = null, plan = null, note = null } = {}) {
+  await recordBillingEvent(event, { userId, plan });
+  try { await recordJobRun('stripe-webhook', { ok: true, seen: 1, note: note || event?.type || 'event' }); }
+  catch { /* bookkeeping only */ }
+}
+
+/** A processing failure, recorded so the outage is visible without reading function logs. */
+async function observedFailure(note) {
+  try { await recordJobRun('stripe-webhook', { ok: false, seen: 0, note: String(note).slice(0, 180) }); }
+  catch { /* bookkeeping only */ }
+}
+
 export async function POST(request) {
   if (!WEBHOOK_SECRET) return Response.json({ error: 'not_configured' }, { status: 503 });
   const payload = await request.text();           // RAW body — required for signature verification
@@ -88,31 +110,51 @@ export async function POST(request) {
         try { plan = planFromSubscriptions(await fetchSubscriptions(obj.customer)); }
         catch (e) {
           console.log(`[stripe_webhook] checkout refetch failed (${e.message}) — retry requested`);
+          await observedFailure(`checkout refetch failed: ${e.message}`);
           return Response.json({ error: 'refetch_failed' }, { status: 503 });
         }
       }
       await setPlan(userId, plan, obj.customer);
+      // ⚠️ RECORDED AFTER THE PLAN IS STAMPED, so a row here means the entitlement was actually
+      // granted — not merely that Stripe told us to grant it.
+      await observed(event, { userId, plan });
       return Response.json({ received: true, plan });
     }
 
     if (SUBSCRIPTION_EVENTS.includes(event.type)) {
       const customerId = obj.customer;
-      if (!customerId || !SECRET) return Response.json({ received: true, skipped: 'no_customer' });
+      // ⚠️ A SKIP IS STILL AN OUTCOME, so it is recorded. A run of no_user events is how an unstamped
+      // customer shows up — invisible if only the successes were logged.
+      if (!customerId || !SECRET) {
+        await observed(event, { note: `${event.type} skipped:no_customer` });
+        return Response.json({ received: true, skipped: 'no_customer' });
+      }
       const userId = await userIdFromCustomer(customerId);
-      if (!userId) return Response.json({ received: true, skipped: 'no_user' });
+      if (!userId) {
+        await observed(event, { note: `${event.type} skipped:no_user` });
+        return Response.json({ received: true, skipped: 'no_user' });
+      }
 
       let plan;
       try { plan = planFromSubscriptions(await fetchSubscriptions(customerId)); }
       catch (e) {
         // ⚠️ NO WRITE ON A FAILED READ. 503 tells Stripe to retry rather than leaving us to guess.
         console.log(`[stripe_webhook] ${event.type} refetch failed (${e.message}) — retry requested`);
+        await observedFailure(`${event.type} refetch failed: ${e.message}`);
         return Response.json({ error: 'refetch_failed' }, { status: 503 });
       }
       await setPlan(userId, plan);
+      await observed(event, { userId, plan });
       return Response.json({ received: true, plan });
     }
   } catch (e) {
     console.log(`[stripe_webhook] handler error: ${e.message}`);
+    await observedFailure(`handler error: ${e.message}`);
   }
+  // ⚠️ EVENT TYPES WE DO NOT ACT ON ARE STILL RECORDED. invoice.payment_failed and the rest change
+  // no entitlement here — the subscription events already reconcile that — but they are exactly the
+  // signals worth counting, and recording them means enabling one in the Stripe dashboard is the
+  // only step needed to start seeing it.
+  await observed(event, { note: `${event?.type} unhandled` });
   return Response.json({ received: true });
 }

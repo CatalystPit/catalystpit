@@ -1,5 +1,14 @@
 import { auth, clerkClient } from '@clerk/nextjs/server';
 import { backfillTechnicals } from '../../../../lib/screener-data';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
+
+// ⚠️ TELEMETRY NEVER THROWS INTO THE JOB. Both helpers swallow their own errors: the backfill has
+// already done its work by the time either runs, and losing a timestamp must not turn a successful
+// 118-second run into a 500.
+const beat = async (name, ok, seen, note) => {
+  try { await recordJobRun(name, { ok, seen: Number(seen) || 0, note: note ? String(note).slice(0, 180) : null }); }
+  catch { /* bookkeeping only */ }
+};
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -44,12 +53,20 @@ export async function GET(request) {
       const { computeMarketBreadth } = await import('../../../../lib/market-breadth.server.mjs');
       breadth = await computeMarketBreadth();
       console.log(`[screener-tech] breadth ${JSON.stringify(breadth)}`);
+      // ⚠️ THE RIDE-ALONG TICKS THE BREADTH CLOCK TOO. Its own cron runs weekdays only, so without
+      // this the heartbeat would go quiet every Saturday and a 26h threshold would report a weekend
+      // as an outage — while the refresh that actually ran here went unrecorded. The job is judged on
+      // when it last succeeded, so every path that succeeds has to say so.
+      await beat('market-breadth', true, breadth?.universe, `via screener-technicals · ${breadth?.as_of_session}`);
     } catch (e) {
       console.log(`[screener-tech] breadth failed: ${e.message}`);
+      await beat('market-breadth', false, 0, `via screener-technicals: ${e.message}`);
     }
+    await beat('screener-technicals', true, res?.updated ?? res?.rows, JSON.stringify(res).slice(0, 180));
     return Response.json({ ok: true, ...res, breadth });
   } catch (e) {
     console.log(`[screener-tech] failed: ${e.message}`);
+    await beat('screener-technicals', false, 0, e.message);
     return Response.json({ ok: false, error: e.message }, { status: 500 });
   }
 }

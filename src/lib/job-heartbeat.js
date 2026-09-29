@@ -99,6 +99,33 @@ export const TRACKED_JOBS = Object.freeze([
   // runs every day and simply recomputes the same last completed session at a weekend, which is
   // the cheapest way to keep the clock meaningful seven days a week.
   { name: 'fear-greed',     label: 'Fear & Greed index',     maxAgeHours: 26 },
+
+  // ── ADDED FOR LAUNCH MONITORING ────────────────────────────────────────────
+  //
+  // ⚠️ TWO OF THESE WERE ALREADY WRITING HEARTBEATS NOBODY READ. market-breadth and score-conviction
+  // called recordJobRun from the day they shipped, but were never added here — so the row existed,
+  // /api/health never looked at it, and the job could have been dead for a week silently. A heartbeat
+  // that nothing reads is worse than none: it looks like coverage.
+  //
+  // Daily crons get 26h, which tolerates one late run without flapping. market-breadth is NOT
+  // weekdaysOnly even though its own cron is weekdays-only, because it also runs nightly off the end
+  // of screener-technicals — so it should tick every day, and a weekend of silence is real.
+  { name: 'market-breadth', label: 'Market breadth snapshot', maxAgeHours: 26 },
+  { name: 'score-conviction', label: 'Insider conviction scoring', maxAgeHours: 26 },
+  { name: 'screener',       label: 'Screener rebuild',        maxAgeHours: 26 },
+  { name: 'screener-technicals', label: 'Screener technicals backfill', maxAgeHours: 26 },
+  { name: 'institutions-ownership', label: '13F ownership rollup', maxAgeHours: 26 },
+  { name: 'dividends',      label: 'Dividend calendar',       maxAgeHours: 26 },
+  // Every minute. 2h of silence is ~120 missed runs — late enough to survive a deploy or a cold
+  // start, tight enough that the wire going quiet is visible the same morning.
+  { name: 'primary-sources', label: 'Pit Wire primary sources', maxAgeHours: 2 },
+
+  // ⚠️ EVENT-DRIVEN, SO IT HAS NO CADENCE TO BE LATE AGAINST. The Stripe webhook fires when somebody
+  // subscribes, cancels or is billed — and at launch that may be days apart. Giving it a maxAgeHours
+  // would report "no subscriptions this week" as an outage, which is the precise mistake of calling a
+  // quiet source a broken one. What IS a fault is the endpoint erroring on events it did receive, so
+  // this one is judged on consecutive failures alone.
+  { name: 'stripe-webhook', label: 'Stripe webhook processing', eventDriven: true },
 ]);
 
 /**

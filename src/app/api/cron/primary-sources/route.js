@@ -1,4 +1,5 @@
 import { runPrimarySources, runEnrichment, parkExhausted, adoptClusterWording, applyTrustedFloor } from '../../../../lib/primary-events';
+import { recordJobRun } from '../../../../lib/job-heartbeat';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -16,6 +17,12 @@ export const maxDuration = 120;
 // cannot affect capture: the row is already stored, already deduped and already canonical.
 const CRON_SECRET = process.env.CRON_SECRET;
 const SWEEP_BUDGET_MS = 50_000;   // leaves headroom inside maxDuration for the 8-K projection
+
+// ⚠️ Bookkeeping only — it never throws into the job it describes.
+const beat = async (ok, seen, note) => {
+  try { await recordJobRun('primary-sources', { ok, seen: Number(seen) || 0, note: note ? String(note).slice(0, 180) : null }); }
+  catch { /* never fail the job on its own telemetry */ }
+};
 
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
@@ -45,9 +52,15 @@ export async function GET(request) {
     const floored = await applyTrustedFloor();
 
     console.log(`[primary-sources] ${JSON.stringify({ written: res.written, folded: res.folded, sweeps: res.sweeps, enrich, ms: res.ms })}`);
+    // ⚠️ written: 0 IS A HEALTHY RUN AND MUST STILL TICK THE CLOCK. This is the Pit Wire: most
+    // minutes there is genuinely nothing new to write, and a heartbeat that only fired on a non-empty
+    // run would read as an outage every quiet hour — the exact confusion between "no events" and "not
+    // asking" that this whole mechanism exists to remove.
+    await beat(true, res.written, `written ${res.written} · folded ${res.folded} · ${res.ms}ms`);
     return Response.json({ ok: true, ...res, enrich, parked, adopted, floored }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     console.error('[primary-sources]', e);
+    await beat(false, 0, String(e?.message || e));
     return Response.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 });
   }
 }

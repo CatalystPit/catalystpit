@@ -3,6 +3,7 @@ import { SITE_URL, SITE_NAME } from '../lib/seo';
 import XTapeDock from '../components/XTapeDock';
 import PitDock from '../components/PitDock';
 import WatchlistDock from '../components/WatchlistDock';
+import { Analytics } from '@vercel/analytics/next';
 
 // metadataBase is what makes every relative URL below — and in every page's generateMetadata —
 // resolve against the CANONICAL host. Without it Next emits relative og:image/canonical values that
@@ -248,6 +249,17 @@ export default function RootLayout({ children }) {
           <XTapeDock/>
           <PitDock/>
           <WatchlistDock/>
+          {/* ⚠️ TRAFFIC ANALYTICS, AND DELIBERATELY THE COOKIELESS KIND. Vercel Web Analytics gives
+              page views, referrers, landing pages, device type and country without setting a cookie,
+              without a device or cross-site identifier, and without a new processor — Vercel already
+              hosts the app and is already named in the Privacy Policy. That is what keeps section 2.2
+              of the policy true: functional storage only, still no advertising or tracking cookies.
+              Anything with session replay or fingerprinting would need approval and does not ship here.
+
+              ⚠️ IT NEEDS THE DASHBOARD SWITCH TOO. The script only collects once Web Analytics is
+              enabled for the project in Vercel; until then this renders and reports nothing, which is
+              why the absence of data is not evidence that the code is wrong. */}
+          <Analytics />
         </body>
       </html>
     </ClerkProvider>
