@@ -154,10 +154,15 @@ L('⚠️ 4 — the AdSense loader is permitted by exactly what it needs');
   ok('the directive count is unchanged at nine',
     csp.split(';').map((d) => d.trim()).filter(Boolean).length === 9);
 
-  // The script itself is untouched: it was never the problem, and removing it was never the fix.
-  const layout = read('src/app/layout.jsx');
-  ok('the AdSense loader is still present, exactly once',
-    (layout.match(/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/g) || []).length === 1);
+  // ⚠️ THE LOADER IS STILL SHIPPED — IT JUST MOVED, AND THIS ASSERTION HAD TO MOVE WITH IT. It used to
+  // count the loader URL in layout.jsx, where the tag was unconditional. Pro subscribers were being
+  // served advertising, so the tag became an entitlement-gated injection in AdSenseLoader and the URL
+  // now has one definition in lib/adsense.mjs. Left as it was, this would have failed for the right
+  // reason with entirely the wrong message: "the CSP change broke the loader".
+  ok('the loader URL still has exactly one definition',
+    (read('src/lib/adsense.mjs').match(/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/g) || []).length === 1);
+  ok('…and the gated loader is still mounted in the layout',
+    /<AdSenseLoader \/>/.test(read('src/app/layout.jsx')));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

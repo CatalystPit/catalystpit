@@ -4,6 +4,8 @@ import XTapeDock from '../components/XTapeDock';
 import PitDock from '../components/PitDock';
 import WatchlistDock from '../components/WatchlistDock';
 import { Analytics } from '@vercel/analytics/next';
+import AdSenseLoader from '../components/AdSenseLoader';
+import { ADSENSE_CLIENT } from '../lib/adsense.mjs';
 
 // metadataBase is what makes every relative URL below — and in every page's generateMetadata —
 // resolve against the CANONICAL host. Without it Next emits relative og:image/canonical values that
@@ -53,29 +55,29 @@ export const metadata = {
 // The logo is the wordmark this app already draws (see Logo in cp-shared), rendered by the icon
 // route rather than a new mark.
 /**
- * GOOGLE ADSENSE — SITE VERIFICATION ONLY, AT THIS POINT.
+ * GOOGLE ADSENSE — OWNERSHIP HERE, THE LOADER IN <AdSenseLoader/>.
  *
- * This is the loader Google hands you to prove you own the domain. It is NOT an ad placement: no ad
- * unit is declared anywhere in this codebase, Auto Ads is a setting inside the AdSense account rather
- * than something this tag turns on, and nothing here reserves space or renders a slot.
+ * ⚠️ THIS COMMENT USED TO SAY "SITE VERIFICATION ONLY", and that was the reasoning that let a Pro
+ * subscriber be served the advertising stack. The tag was described as proving domain ownership, on the
+ * grounds that no ad unit was declared anywhere in the codebase — but Auto Ads is an account setting,
+ * so the loader requests placements and injects the slot itself. Measured on production it sets a
+ * .doubleclick.net cookie on a first visit with nothing filled. It was never "verification only".
  *
- * ⚠️ IT IS A PLAIN TAG IN <head>, NOT next/script, AND THAT IS THE POINT. Google's verification
- * crawler reads the SERVED HTML. next/script's afterInteractive strategy injects the tag from the
- * client bundle after hydration, so the document Google fetches would not contain it; beforeInteractive
- * would put it in the HTML but is render-blocking, which this must not be. A plain async tag is both
- * present in the server-rendered head and non-blocking, which is exactly what Google's own snippet is.
- * The ld+json blocks above are in this head for the same reason — a crawler must see them without
- * running JS.
+ * So the two jobs are now separated, because they have different audiences:
  *
- * ⚠️ THE ID IS PUBLIC. A publisher id appears in the markup of every AdSense site by design; it is an
- * account identifier, not a secret, and there is nothing here to keep server-side.
+ *   ownership  — must be provable to Google for EVERY visitor, including the Pro users who will never
+ *                load advertising. Asserted by the meta tag below: no request, no execution, no cookie.
+ *   the loader — only for visitors eligible to see advertising. Created by <AdSenseLoader/> after the
+ *                entitlement is known, and never created at all for Pro or Elite.
  *
- * ⚠️ ONE PLACE ONLY. Declared as a constant and rendered once in the root layout, so a second copy
- * cannot be added to a page without someone noticing the duplication — two loaders on one document is
- * a policy problem as well as a wasted request.
+ * ⚠️ WHY THE LOADER CANNOT STAY IN THIS HEAD. Deciding eligibility here means calling auth() in the
+ * root layout, which opts every page into dynamic rendering and puts a Clerk API round-trip in front of
+ * first byte on every navigation — 142 static pages, ticker SEO and the edge cache all paying for an
+ * advertising decision. Advertising is secondary to the product and does not get to hold the door.
+ *
+ * The publisher id and the loader URL now live in lib/adsense.mjs, because the meta tag here and the
+ * loader there both need the id and two hand-copied copies is how one becomes the wrong account.
  */
-const ADSENSE_CLIENT = 'ca-pub-8341744464373905';
-const ADSENSE_SRC = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`;
 
 const ORG_LD = {
   '@context': 'https://schema.org',
@@ -134,9 +136,16 @@ export default function RootLayout({ children }) {
             dangerouslySetInnerHTML={{ __html: JSON.stringify(ORG_LD) }} />
           <script type="application/ld+json"
             dangerouslySetInnerHTML={{ __html: JSON.stringify(SITE_LD) }} />
-          {/* Google AdSense site verification. Async, so it cannot block first paint; server-rendered,
-              so the verification crawler sees it in the HTML without executing anything. */}
-          <script async src={ADSENSE_SRC} crossOrigin="anonymous" />
+          {/* ⚠️ SITE OWNERSHIP, SERVER-RENDERED FOR EVERY VISITOR — AND DELIBERATELY NOT THE LOADER.
+              The loader used to sit here as an unconditional async script tag, which meant Pro
+              subscribers were served the advertising stack too, against the Terms. It now lives in
+              <AdSenseLoader/> and is created only for visitors eligible to see advertising.
+
+              Ownership still has to be provable to Google for everyone, including the Pro users who
+              will never load the loader — so it is asserted with the meta tag instead. A meta tag
+              makes no request, executes nothing and sets no cookie, so it is safe on a page that must
+              stay entirely free of advertising. */}
+          <meta name="google-adsense-account" content={ADSENSE_CLIENT} />
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
           <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;0,600;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" />
@@ -265,6 +274,10 @@ export default function RootLayout({ children }) {
               enabled for the project in Vercel; until then this renders and reports nothing, which is
               why the absence of data is not evidence that the code is wrong. */}
           <Analytics />
+          {/* ⚠️ RENDERS NOTHING. It decides whether this visitor is eligible for advertising and, only
+              if so, creates the AdSense loader. Placed at the end of <body> with the other
+              after-paint concerns: it must never be in the critical path. */}
+          <AdSenseLoader />
         </body>
       </html>
     </ClerkProvider>

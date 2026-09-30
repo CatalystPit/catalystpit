@@ -242,7 +242,10 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   // the file also matched the ADSENSE_SRC constant, which survives on its own if the <script> is deleted
   // — so removing the loader and leaving the disclosure in place read as consistent. What makes the
   // policy true is a tag the browser executes, so that is what is detected.
-  const adLoaderLive = /<script[^>]*(?:ADSENSE_SRC|googlesyndication\.com)/.test(layoutSrc);
+  // ⚠️ SAME MOVE AS ABOVE: the loader is no longer a tag in this head, so scanning the head for one now
+  // answers "no" forever and every conditional hanging off it would pass vacuously. It is the gated
+  // component being mounted that puts advertising on the page.
+  const adLoaderLive = /<AdSenseLoader \/>/.test(layoutSrc);
   // ⚠️ THIS USED TO REQUIRE THE PHRASE "verification script", which was the honest account of the tag
   // while the CSP blocked it from running. It runs now and requests placements, so calling it a
   // verification script would be the understatement — the loader has to be accounted for as advertising.
@@ -275,16 +278,27 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   // What actually decides whether the Service may display advertising is whether the LOADER ships.
   // That is the dependency the claim is now tied to, in both directions: ship the loader and the
   // documents must say ads may appear; remove it and they must stop saying so.
-  // ⚠️ A RENDERED TAG WITH THE LOADER AS ITS src, NOT THE CONSTANT APPEARING SOMEWHERE. The first
-  // version of this matched the adsbygoogle.js URL anywhere in the file — which is the ADSENSE_SRC
-  // constant, and it survives on its own if the <script> is deleted. Mutation-testing caught it:
-  // replacing src={ADSENSE_SRC} with a dead attribute removed the loader while the suite still reported
-  // it shipping, so the documents would have gone on claiming ads may appear with nothing loading them.
-  // This is the identical hole the assertion below already carries a scar from.
-  const loaderShips = /<script[^>]*\bsrc=\{ADSENSE_SRC\}/.test(layoutSrc)
-    && /const ADSENSE_SRC = `https:\/\/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/.test(layoutSrc);
+  // ⚠️ THE LOADER MOVED OUT OF THE LAYOUT, SO THIS HAD TO FOLLOW IT. It used to require a rendered
+  // `src={ADSENSE_SRC}` tag in layout.jsx — correct while the tag was unconditional, and wrong the
+  // moment it became entitlement-gated. The loader is now created by AdSenseLoader for eligible
+  // visitors only, so what makes "the Service may display advertising" true is that component shipping
+  // AND being mounted. Both are required: an unmounted component loads nothing.
+  //
+  // The earlier scar is kept in force. Matching the adsbygoogle.js URL "anywhere in the file" matched
+  // the ADSENSE_SRC constant, which survives if the tag is deleted — so the element creation itself is
+  // what is detected, not the presence of the URL.
+  // ⚠️ AND IT FOLLOWED THE CODE AGAIN. The injection moved out of the component and into lib/adsense.mjs
+  // when the gate was made executable, so this pointed at a file that no longer creates anything. Three
+  // things must hold for a visitor to be able to receive advertising: the gate can create a script
+  // element, that element points at the real loader, and the component running the gate is mounted. Any
+  // one of them false and both documents must stop saying advertising may appear.
+  const gateSrc = read('../src/lib/adsense.mjs');
+  const loaderShips = /createElement\('script'\)/.test(gateSrc)
+    && /s\.src = ADSENSE_SRC;/.test(gateSrc)
+    && /const ADSENSE_SRC = `https:\/\/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/.test(gateSrc)
+    && /<AdSenseLoader \/>/.test(layoutSrc);
   const mayDisplay = /The Service may display advertising provided by third-party advertising partners/;
-  ok('⚠️ the AdSense loader ships in the layout', loaderShips);
+  ok('⚠️ the gated AdSense loader ships and is mounted', loaderShips);
   ok('⚠️ …and the Privacy Policy says advertising may appear exactly when it does',
     loaderShips === mayDisplay.test(privacy),
     loaderShips ? 'the loader ships but the policy does not say ads may appear'
