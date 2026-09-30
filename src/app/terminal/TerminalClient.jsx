@@ -206,17 +206,27 @@ function useContainerSize() {
 
 function HaltBody({ onPick }) {
   const [halts, setHalts] = useState(null);
+  const [haltsFailed, setHaltsFailed] = useState(false);
   const [ref, w] = useContainerSize();
   const showReason = w >= 300, showTime = w >= 440;
+  // ⚠️ "No halts reported yet today" IS A CLAIM ABOUT EVERY US EXCHANGE. Both branches here collapsed
+  // to setHalts([]), so a 503 or a dropped connection rendered that sentence — on the one panel a
+  // trader watches precisely to learn that something IS halted. A failed refresh also keeps the halts
+  // already on screen rather than clearing a populated panel.
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      try { const r = await fetch('/api/halts', { cache: 'no-store' }); const j = r.ok ? await r.json() : null; if (alive) setHalts(j?.halts || []); }
-      catch { if (alive) setHalts([]); }
+      try {
+        const r = await fetch('/api/halts', { cache: 'no-store' });
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        if (alive) { setHalts(Array.isArray(j?.halts) ? j.halts : []); setHaltsFailed(false); }
+      } catch { if (alive) setHaltsFailed(true); }
     };
     load(); const id = setInterval(load, 45000);
     return () => { alive = false; clearInterval(id); };
   }, []);
+  if (haltsFailed && !halts?.length) return <div style={{ padding: '28px 18px', textAlign: 'center', color: C.gold, fontSize: 12.5, lineHeight: 1.5 }}>The halt feed is unavailable right now.<br />Retrying every 45 seconds.</div>;
   if (halts === null) return <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading halts…</div>;
   if (halts.length === 0) return <div style={{ padding: '28px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>No halts reported yet today. This lights up the moment a stock halts.</div>;
   return (
