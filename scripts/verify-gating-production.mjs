@@ -132,14 +132,41 @@ L('⚠️ market data is DELAYED for an unauthenticated caller');
   // assertion that invents the field name it expects reports the product broken when it is not, and
   // would have been "fixed" by loosening it until it passed.
   const first = Object.values(q.json || {})[0] || {};
-  ok('⚠️ …and declares itself delayed, not real-time',
-    first.freshness === 'delayed', JSON.stringify(first).slice(0, 160));
-  // ⚠️ AND THE NUMBER IS CHECKED, NOT JUST THE LABEL. A quote stamped "delayed" but one second old
-  // is the licensed feed with a sticker on it.
-  ok('⚠️ …by at least the configured delay, verified against the timestamp',
-    Number(first.delayMinutes) >= 15
-    && (Date.now() - new Date(first.asOf).getTime()) / 60000 >= 14,
-    `delayMinutes=${first.delayMinutes} asOf=${first.asOf}`);
+  // ⚠️ AND THERE ARE TWO CORRECT ANSWERS, DEPENDING ON THE CLOCK. This asserted freshness ===
+  // 'delayed' unconditionally and so failed every night against a correct response: once the session
+  // is over there is no 15-minute-delayed quote to serve, and the route says so with 'eod' plus an
+  // asOf of the closing print. Asserting only the intraday label made the product look broken for
+  // most of the day, and the tempting "fix" — dropping the number check — would have removed the only
+  // assertion that can tell a delayed feed from the licensed one wearing a sticker.
+  ok('⚠️ …and declares its freshness, so the claim can be checked at all',
+    first.freshness === 'delayed' || first.freshness === 'eod', JSON.stringify(first).slice(0, 160));
+  if (first.freshness === 'delayed') {
+    // Intraday: the label is not enough — a quote stamped "delayed" but one second old is real-time.
+    ok('⚠️ …and a delayed quote really is delayed, verified against the timestamp',
+      Number(first.delayMinutes) >= 15
+      && (Date.now() - new Date(first.asOf).getTime()) / 60000 >= 14,
+      `delayMinutes=${first.delayMinutes} asOf=${first.asOf}`);
+  } else {
+    // Outside the session: the print must belong to a session that has actually finished. Measured
+    // against the real exchange calendar — lastCompletedSession() walks weekends, holidays and early
+    // closes — not against "older than 24 hours", which is wrong across every long weekend.
+    // ⚠️ THE CLOSE INSTANT, NOT THE CALENDAR DATE. Comparing ET dates accepted a quote stamped with
+    // the live clock: at 01:15 UTC it is still 21:15 ET on the SAME date as the finished session, so a
+    // real-time print relabelled 'eod' passed. The bound has to be the session's own close, and
+    // closeMinute() is what knows an early close is 13:00 rather than 16:00.
+    const { lastCompletedSession, closeMinute } = await import('../src/lib/market/market-session.mjs');
+    const session = lastCompletedSession();                       // 'YYYY-MM-DD'
+    const etParts = (iso) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(iso)).reduce((a, p) => (a[p.type] = p.value, a), {});
+    const p = etParts(first.asOf);
+    const asOfDate = `${p.year}-${p.month}-${p.day}`;
+    const asOfMinute = Number(p.hour) % 24 * 60 + Number(p.minute);
+    ok('⚠️ …and an EOD quote is a closing print from a session that has already ended',
+      !!first.asOf && (asOfDate < session || (asOfDate === session && asOfMinute <= closeMinute(session) + 1)),
+      `asOf=${first.asOf} (ET ${asOfDate} ${p.hour}:${p.minute}) session=${session} close=${closeMinute(session)}min`);
+  }
   ok('⚠️ …and never claims real-time to a signed-out caller',
     !/"freshness"\s*:\s*"realtime"|"realtime"\s*:\s*true|"access"\s*:\s*"realtime"/.test(marker));
 
