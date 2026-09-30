@@ -21,6 +21,17 @@ export const norm = (s) => (s || '')
   .normalize('NFKD').replace(/[̀-ͯ]/g, '')   // strip accents
   .replace(/['".,]/g, '')                               // strip punctuation
   .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, '')              // strip generational suffixes
+  // ⚠️ AND PROFESSIONAL CREDENTIALS, FOR THE SAME REASON THE SUFFIXES GO. Filers write them into the
+  // NAME fields: the House feed delivered lastName "Dunn, MD, FACS", which indexed under the key
+  // "dunn md facs" and matched no roster entry, so Rep. Neal Dunn's disclosures were attributed to an
+  // invented member instead of D000628. Stripped, it is "dunn" — the one Dunn in the House.
+  //
+  // Every token here was checked against all 709 roster entries and matches no real member's name;
+  // `jd` is deliberately absent because it IS one (V000137, James David Vance), and the short
+  // ambiguous ones (do, od, pe, rn, ret) stay out because they are plausible surnames — "Do" in
+  // particular. verify-congress-integrity.mjs re-runs that collision check against the live roster,
+  // so adding a member whose name collides with this list fails the suite rather than losing them.
+  .replace(/\b(md|dds|dvm|dmd|phd|facs|facog|faap|esq|cpa|mba|pharmd|msw)\b/g, '')
   .replace(/\s+/g, ' ')
   .trim();
 

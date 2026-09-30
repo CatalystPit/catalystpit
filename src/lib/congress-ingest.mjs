@@ -6,7 +6,7 @@
 // in the callers. Only pure transforms + provider fetches + node:crypto.
 
 import { createHash } from 'node:crypto';
-import { matchMember } from './congress-match.mjs';
+import { matchMember, norm } from './congress-match.mjs';
 
 // "$1,001 - $15,000" -> { min, max, mid }. Handles open-ended
 // ("Over $50,000,000", "$50,000,001 -") and single values. Nulls if unparseable.
@@ -141,9 +141,32 @@ const cleanTicker = (s) => {
   return isSymbolLike(t) ? t : null;   // null for blank / non-equity / not a symbol at all
 };
 
-const nameSlug = (first, last) =>
-  `${(first || '').trim()}-${(last || '').trim()}`
+// ⚠️ A MEMBER IDENTITY IS NEVER INVENTED FROM A NAME THAT HAS NO SURNAME.
+//
+// The FMP feed sometimes splits a suffixed name so that the SUFFIX lands in lastName:
+// { firstName: 'Angus', lastName: 'Jr.' } and { firstName: 'William', lastName: 'IV' }. norm()
+// correctly reduces those to nothing, so matchMember returns no entry — and this fallback then
+// coined 'angus-jr' and 'william-iv' as though they were people. Both appeared on /politicians as
+// members of Congress, and because member_slug is part of canonicalHash, all 27 of their trades were
+// SECOND COPIES of trades already held under K000383 (Angus King) and H000601 (Bill Hagerty) from the
+// official Senate feed — the dedupe could not see them, since by construction it cannot catch an
+// identity error. Both facts were confirmed by the rows citing the same efdsearch.senate.gov PTR.
+//
+// So: no surname means the record does not identify anybody, and the honest result is null. buildRow
+// turns that into a null txHash and the ingests drop the record.
+//
+// ⚠️ THAT DROP IS NOT FREE, AND IT IS COUNTED. The phantom rows were FMP-era residue (FMP was retired
+// on 2026-09-10, in 00e655b4). The House path is now immune by construction — houseRec takes the name
+// from the ROSTER entry, so a surname always exists — but the Senate path reads eFD's own first/last
+// columns and is the ONLY source for Senate PTRs, with no second feed to fall back on. So a refusal
+// here means a real disclosure we do not show. congress-sync counts these and puts the count in its
+// heartbeat note, where /api/health surfaces it; showing nothing is recoverable, whereas publishing a
+// member of Congress who does not exist is not.
+const nameSlug = (first, last) => {
+  if (!norm(last)) return null;
+  return `${(first || '').trim()}-${(last || '').trim()}`
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || null;
+};
 
 // One FMP feed record + its chamber + a prebuilt roster index -> DB-ready row.
 export function buildRow(rec, chamber, index) {
@@ -159,9 +182,12 @@ export function buildRow(rec, chamber, index) {
   const action = mapAction(rec.type);
   const isOption = isOptionTrade(rec.assetType);
   return {
+    // ⚠️ NO IDENTITY, NO HASH. An unidentifiable record gets a null txHash so the ingests' existing
+    // filters drop it, rather than a row whose NULL hash cannot conflict and therefore duplicates
+    // on every single run. See the note on nameSlug above.
+    txHash: memberSlug ? canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin: min, amountMax: max, isOption, assetDescription: rec.assetDescription }) : null,
     // Canonical, source-agnostic identity: same real trade from FMP / House / Senate collapses to one row.
     // isOption keeps a share buy and an option buy of the same ticker/day/amount as SEPARATE trades.
-    txHash: canonicalHash({ memberSlug, transactionDate, ticker, action, amountMin: min, amountMax: max, isOption, assetDescription: rec.assetDescription }),
     chamber,
     firstName: rec.firstName || null,
     lastName:  rec.lastName  || null,
@@ -197,7 +223,10 @@ export async function fetchCongressRows(fmpKey, index) {
     return Array.isArray(data) ? data.map(rec => buildRow(rec, ch, index)) : [];
   };
   const [sen, hou] = await Promise.all([pull('senate'), pull('house')]);
-  return [...sen, ...hou].filter(r => r.disclosureDate);
+  // ⚠️ AND ONLY RECORDS THAT IDENTIFY A MEMBER. A null txHash means the feed's name fields carried no
+  // surname, so nobody was identified — see nameSlug. Dropping it here is what keeps an invented member
+  // off /politicians and keeps a second copy of an official-feed trade out of the table.
+  return [...sen, ...hou].filter(r => r.disclosureDate && r.txHash);
 }
 
 // Tiingo daily EOD over [from,to]. { ok, status, data }.

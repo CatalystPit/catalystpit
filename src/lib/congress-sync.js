@@ -57,6 +57,9 @@ async function recordFiling(chamber, { docId, year, filerName, filingType, filin
   });
 }
 
+// Records this run refused to attribute to anybody, per chamber. Reset by runCongressSync.
+const UNIDENTIFIED = {};
+
 // Insert one document's transactions (FMP-shaped recs) → congress_trades, deduped on tx_hash.
 async function insertRecs(recs, chamber) {
   if (!recs.length) return 0;
@@ -64,8 +67,18 @@ async function insertRecs(recs, chamber) {
   // window alone still lets old trades in: a 2024 filing can disclose a 2019 purchase, which is
   // how 82 pre-cap rows reached the table. Anything dated before the floor is dropped here.
   const floor = historyFloor();
-  const rows = recs.map((rec) => buildRow(rec, chamber, index))
-    .filter((r) => r.disclosureDate)
+  const built = recs.map((rec) => buildRow(rec, chamber, index)).filter((r) => r.disclosureDate);
+  // ⚠️ A RECORD THAT IDENTIFIES NOBODY IS DROPPED — AND COUNTED, NEVER SILENTLY. A null txHash means
+  // the name fields carried no surname, so buildRow refused to coin a member (see nameSlug). Refusing
+  // is right: the alternative put four invented members on /politicians. But with FMP retired the
+  // chamber feeds are the ONLY source for their own disclosures, so a drop here is a real disclosure we
+  // do not show — which is why the count is returned and written into the job heartbeat note, where
+  // /api/health surfaces it. A non-zero value is a signal to look at the feed's name fields, not noise.
+  const unidentified = built.filter((r) => !r.txHash).length;
+  if (unidentified) console.log(`[congress-sync] ${chamber}: ${unidentified} record(s) dropped — no identifiable member`);
+  UNIDENTIFIED[chamber] = (UNIDENTIFIED[chamber] || 0) + unidentified;
+  const rows = built
+    .filter((r) => r.txHash)
     .filter((r) => !r.transactionDate || r.transactionDate >= floor);
   if (!rows.length) return 0;
   const inserted = await db.insert(congressTrades).values(rows)
@@ -198,6 +211,7 @@ export async function dedupeCongressCanonical({ apply = true } = {}) {
 export async function runCongressSync({ chambers = 'both', ingestCapHouse = 120, ingestCapSenate = 80, timeBudgetMs = 250000, dedupe = true } = {}) {
   await ensureCongressTables();
   const t0 = Date.now();
+  for (const k of Object.keys(UNIDENTIFIED)) delete UNIDENTIFIED[k];
   const out = { backfillYears: BACKFILL_YEARS };
   // Canonicalize existing rows FIRST so newly-ingested official rows collide with (and are
   // skipped against) the same real trades already present from FMP — otherwise this run would
@@ -205,6 +219,10 @@ export async function runCongressSync({ chambers = 'both', ingestCapHouse = 120,
   if (dedupe) out.dedupe = await dedupeCongressCanonical({ apply: true });
   if (chambers === 'both' || chambers === 'house') out.house = await ingestHouse({ ingestCap: ingestCapHouse, t0, timeBudgetMs });
   if (chambers === 'both' || chambers === 'senate') out.senate = await ingestSenate({ ingestCap: ingestCapSenate, t0, timeBudgetMs });
+  // Surfaced so the cron can put it in the heartbeat note — a refusal to invent a member must be
+  // visible somewhere a human looks, not just in a log line.
+  const unidentified = Object.values(UNIDENTIFIED).reduce((a, b) => a + b, 0);
+  if (unidentified) out.unidentified = { total: unidentified, ...UNIDENTIFIED };
   out.ms = Date.now() - t0;
   return out;
 }

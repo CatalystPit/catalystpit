@@ -41,7 +41,15 @@ export async function GET(request) {
     const res = await runCongressSync({ chambers, ingestCapHouse, ingestCapSenate });
     console.log(`[congress-sync] ${JSON.stringify(res)}`);
     // Disclosures arrive in bursts on business days; 0 new is the usual answer and still a tick.
-    await recordJobRun('congress-sync', { ok: true, seen: res?.inserted ?? 0, note: `chambers ${chambers}` });
+    // ⚠️ THE UNIDENTIFIED COUNT RIDES ALONG. A record whose name fields identify no member is refused
+    // rather than attributed to an invented person (see nameSlug in congress-ingest), and since the
+    // chamber feeds are the only source for their own disclosures, that refusal has to be visible.
+    // /api/health shows this note, so a non-zero count is something a human sees.
+    const unidentified = res?.unidentified?.total ?? 0;
+    await recordJobRun('congress-sync', {
+      ok: true, seen: res?.inserted ?? 0,
+      note: `chambers ${chambers}${unidentified ? ` · ${unidentified} unidentified, NOT ingested` : ''}`,
+    });
     return Response.json({ ok: true, ...res });
   } catch (e) {
     console.log(`[congress-sync] failed: ${e.message}`);

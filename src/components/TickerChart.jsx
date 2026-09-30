@@ -134,9 +134,14 @@ function congressSection(trades, labeled) {
       + `<div style="color:${C.dim};font-size:10px;margin-top:1px">${esc(sub)}</div>`
       + `<div style="margin-top:4px;font-size:11px"><span style="color:${col};font-weight:600">${t.action}</span> · ${esc(t.amountRange || fmtVal(t.amountMid))}</div>`;
   }
+  // ⚠️ THE DISCLOSED BAND, NOT THE MIDPOINT — the same precedence the single-trade branch above
+  // already uses. Congress discloses a RANGE ("$15,001 - $50,000"); amount_mid is our own derived
+  // estimate, carried to size markers and to rank. This line printed that estimate on its own, so a
+  // tooltip covering two or more trades read "$32,500" — a precise figure the filer never reported
+  // and that appears nowhere in the source document. amountRange is already in the payload.
   const rows = trades.slice(0, 6).map((t) => {
     const col = t.action === 'BUY' ? GREEN : RED;
-    return `<div style="font-size:10px;margin-top:2px"><span style="color:${col};font-weight:600">${t.action}</span> ${esc(t.representative)} (${partyAbbr(t.party)} ${esc(t.state || '')}) · ${fmtVal(t.amountMid)}</div>`;
+    return `<div style="font-size:10px;margin-top:2px"><span style="color:${col};font-weight:600">${t.action}</span> ${esc(t.representative)} (${partyAbbr(t.party)} ${esc(t.state || '')}) · ${esc(t.amountRange || fmtVal(t.amountMid))}</div>`;
   }).join('');
   const more = trades.length > 6 ? `<div style="font-size:10px;color:${C.dim};margin-top:3px">+${trades.length - 6} more, click for all</div>` : '';
   return head + `<div style="font-weight:600;color:${C.ink};font-size:12px">${trades.length} congress trades</div>${rows}${more}`;
