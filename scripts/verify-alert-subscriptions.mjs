@@ -62,8 +62,12 @@ try {
     // ⚠️ THE ORPHANED WATCHLIST-DRIVEN ENGINE MUST STAY UNCALLED, or watching would silently alert.
     ok('the cron runs the subscription worker, not the watchlist module',
       /lib\/alerts\/evidence-alert-worker\.mjs/.test(code('src/app/api/cron/evidence-alerts/route.js')));
-    ok('…and the watchlist-driven module is still marked orphaned',
-      /⚠️ ORPHANED\./.test(read('src/lib/evidence-alerts.js')));
+    // ⚠️ THE ORPHANED ENGINE IS DELETED, NOT ANNOTATED. This asserted the "ORPHANED" banner, which was
+    // the interim state; the module exported a same-named runEvidenceAlerts, so an import of the wrong
+    // one would have silently restored watchlist-driven, non-Pro-gated alerting. The guarantee now is
+    // that it cannot be imported because it does not exist.
+    ok('…and the watchlist-driven engine no longer exists to be imported',
+      !/export async function runEvidenceAlerts/.test(read('src/lib/evidence-alerts.js')));
   }
 
   L('⚠️ persistence, idempotence and re-add behaviour — exercised against the real store');

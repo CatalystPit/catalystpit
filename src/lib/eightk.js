@@ -197,9 +197,40 @@ export async function ingestEightK() {
 
   let inserted = 0;
   if (rows.length) {
+    // ⚠️ DO NOTHING FROZE AN INCOMPLETE FILING FOREVER.
+    //
+    // EDGAR publishes the filing index before the item codes and primary document are readable. A
+    // sweep that catches a filing inside that window stores it with items null and primaryDocUrl
+    // null — Capital Bancorp's 0001419536-26-000148, filed 12:59:45 and ingested 48 seconds later,
+    // is the measured case. With DO NOTHING no later sweep could ever complete it, so the row stayed
+    // unclassifiable permanently: no material/routine verdict, no document link, and invisible to
+    // every item-based query — including the Item 2.02 lookup the earnings estimate now depends on.
+    //
+    // ⚠️ IT ONLY EVER FILLS A HOLE. `coalesce(existing, incoming)` is the wrong direction here — the
+    // stored value wins whenever it exists, so a later sweep cannot overwrite a good value with a
+    // worse one, and a filing that genuinely has no items stays null. This is a repair of absence,
+    // not a re-import: material is recomputed only when items were missing and have now arrived.
     const res = await db.insert(eightkFilings).values(rows)
-      .onConflictDoNothing({ target: eightkFilings.accession })
+      .onConflictDoUpdate({
+        target: eightkFilings.accession,
+        set: {
+          items: sql`coalesce(${eightkFilings.items}, excluded.items)`,
+          primaryDocUrl: sql`coalesce(${eightkFilings.primaryDocUrl}, excluded.primary_doc_url)`,
+          reportDate: sql`coalesce(${eightkFilings.reportDate}, excluded.report_date)`,
+          company: sql`coalesce(${eightkFilings.company}, excluded.company)`,
+          material: sql`case when ${eightkFilings.items} is null and excluded.items is not null
+                             then excluded.material else ${eightkFilings.material} end`,
+        },
+        setWhere: sql`${eightkFilings.items} is null or ${eightkFilings.primaryDocUrl} is null
+                      or ${eightkFilings.reportDate} is null or ${eightkFilings.company} is null`,
+      })
       .returning({ id: eightkFilings.id, ticker: eightkFilings.ticker });
+    // ⚠️ MEASURED: A REPAIR DOES NOT INFLATE THIS COUNT. Repairing Capital Bancorp reported
+    // inserted: 0 while the row went from items null to "8.01" with its document link — so `inserted`
+    // still means NEW filings, which is what the heartbeat and the log line claim. The consequence is
+    // that the consensus hook below does not fire for a repaired row; the 30-minute board rebuild
+    // reads the table and picks it up regardless, and the filings that arrive incomplete are a handful
+    // of non-material ones caught inside EDGAR index-versus-document race.
     inserted = res.length;
 
     // Mark affected tickers for consensus recomputation. Catalysts are the fastest-moving family,

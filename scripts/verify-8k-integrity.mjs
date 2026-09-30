@@ -29,8 +29,19 @@ L('⚠️ one accession is one filing');
   ok('⚠️ …enforced by a unique index on accession',
     idx.some((i) => /unique/i.test(i.indexdef) && /\(accession\)/.test(i.indexdef)), JSON.stringify(idx.map((i) => i.indexdef)));
   const src = read('../src/lib/eightk.js');
+  // ⚠️ THIS PINNED `onConflictDoNothing`, WHICH WAS THE BUG RATHER THAN THE GUARANTEE. DO NOTHING
+  // froze a filing caught inside EDGAR's index-versus-document race — Capital Bancorp's
+  // 0001419536-26-000148, filed 12:59:45 and ingested 48 seconds later, was stored with items null
+  // and primaryDocUrl null and no later sweep could ever complete it. The property that matters is
+  // idempotence, not the specific clause: the conflict still targets accession, and the update only
+  // ever FILLS A NULL, so re-running cannot change a row that is already complete.
   ok('…and the insert is idempotent at the application level too',
-    /onConflictDoNothing\(\{\s*target:\s*eightkFilings\.accession\s*\}\)/.test(src));
+    /target: eightkFilings\.accession/.test(src)
+    && /items: sql`coalesce\(\$\{eightkFilings\.items\}, excluded\.items\)`/.test(src));
+  ok('⚠️ …and a re-run can only fill a hole, never overwrite a stored value',
+    /setWhere: sql`\$\{eightkFilings\.items\} is null/.test(src));
+  ok('⚠️ …and material is recomputed only when the items actually arrived',
+    /case when \$\{eightkFilings\.items\} is null and excluded\.items is not null/.test(src));
 }
 
 L('⚠️ multi-item filings stay ONE filing');
