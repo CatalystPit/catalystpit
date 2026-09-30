@@ -50,8 +50,10 @@ L('⚠️ an outage is never served as "nothing has happened"');
   ok('…and the same for the evidence half', /if \(j\) \{ setAlerts\(j\.alerts/.test(bell));
   // The subscription client must fail CLOSED, not open.
   const subs = code('src/lib/alerts/alert-subs-client.js');
+  // Matched without the trailing brace, so adding a field to the same object cannot fail an assertion
+  // about denial — a `ready` flag was added to it and did exactly that.
   ok('⚠️ an unconfirmed subscription reads as OFF, never as ON',
-    /if \(!r\.ok\) return \{ pro: false, tickers: new Set\(\) \}/.test(subs));
+    /if \(!r\.ok\) return \{ pro: false, tickers: new Set\(\)/.test(subs));
   // The Terminal panel said "No alerts yet" on a failed load.
   const term = code('src/app/terminal/TerminalClient.jsx');
   ok('⚠️ the Terminal alert panel distinguishes a failed load from an empty list',

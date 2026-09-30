@@ -37,7 +37,11 @@ export async function GET(request) {
       await recordJobRun('evidence-alerts', {
         ok: true,
         seen: out.created,
-        note: `${out.tickers} tickers · ${out.subscriptions} subs · ${out.created} new · ${out.failed} failed · ${out.ms}ms`,
+        // ⚠️ THE SKIP COUNTS ARE IN THE NOTE ON PURPOSE. Entitlement is now checked at delivery, so a
+        // run can legitimately deliver nothing because the subscribers are no longer Pro — which is
+        // correct behaviour and looks identical to a broken feed unless the note says so. `unresolved`
+        // separates "we withheld because Clerk did not answer" from "we withheld because they are Free".
+        note: `${out.tickers} tickers · ${out.subscriptions} pro subs · ${out.skippedNotPro} skipped not-pro · ${out.unresolved} unresolved · ${out.created} new · ${out.failed} failed · ${out.ms}ms`,
       });
     } catch { /* a heartbeat is not delivery; never fail the run on it */ }
     return Response.json({ ok: true, ...out });

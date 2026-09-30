@@ -257,9 +257,13 @@ L('⚠️ THE SURFACES: ONE REQUEST, NOT ONE PER TICKER');
   // version matched `catch {` within 300 characters of a closed return, and an unrelated catch in
   // emit() satisfied it — so a mutation that made the failure path claim `pro: true` survived.
   // What actually matters is that this module never invents entitlement or membership at all.
+  // ⚠️ MATCHED ON THE INVARIANT, NOT ON THE FULL OBJECT LITERAL. This required the exact text
+  // `return { pro: false, tickers: new Set() };` twice, and broke when a `ready` flag was added to the
+  // same objects — the invariant was untouched and the assertion failed anyway. What must hold is that
+  // no failure path invents entitlement or membership, and that both failure paths still deny.
   ok('⚠️ a failed load can never claim Pro, or claim a ticker is subscribed',
     !/pro: true/.test(client) && !/tickers: new Set\(\[/.test(client)
-    && (client.match(/return \{ pro: false, tickers: new Set\(\) \};/g) || []).length === 2);
+    && (client.match(/return \{ pro: false, tickers: new Set\(\)/g) || []).length === 2);
   ok('⚠️ a refused toggle does not leave the control claiming a subscription',
     /const next = await toggleAlert\(sym\);\s*\n\s*setOn\(next\);/.test(toggle) && /catch \(err\)/.test(toggle));
   ok('the server\'s answer is what lands in the set, not an optimistic guess',

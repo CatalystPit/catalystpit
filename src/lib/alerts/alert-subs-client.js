@@ -18,15 +18,25 @@ function emit() { for (const fn of listeners) { try { fn(); } catch { /* a bad l
 async function fetchSubs() {
   try {
     const r = await fetch('/api/evidence-alerts', { cache: 'no-store' });
-    if (!r.ok) return { pro: false, tickers: new Set() };
+    if (!r.ok) return { pro: false, tickers: new Set(), ready: true };
     const j = await r.json();
-    return { pro: !!j.pro, tickers: new Set(j.tickers || []) };
+    return { pro: !!j.pro, tickers: new Set(j.tickers || []), ready: true };
   } catch {
     // ⚠️ A FAILED LOAD READS AS "NOT SUBSCRIBED", NEVER AS SUBSCRIBED. Showing "Alert On" for a
     // subscription we could not confirm would tell someone they are covered when they may not be.
-    return { pro: false, tickers: new Set() };
+    return { pro: false, tickers: new Set(), ready: true };
   }
 }
+
+/**
+ * ⚠️ `ready` EXISTS SO THE CONTROL CAN RENDER NOTHING RATHER THAN THE WRONG THING.
+ *
+ * Before this, AlertToggle started at `on = false` and `pro` was never read at all, so the first paint
+ * was always the off, functional-looking control: a Pro subscriber with the ticker already enabled saw
+ * "Alert" flip to "Alert On", and a Free user saw a button that looked like it worked and then failed
+ * on click with a toast. The entitlement was already in this payload; nothing consumed it.
+ */
+export const UNKNOWN_SUBS = { pro: false, tickers: new Set(), ready: false };
 
 export function loadAlertSubs() {
   if (!cache) cache = fetchSubs();
@@ -66,7 +76,7 @@ export async function toggleAlert(ticker) {
     throw err;
   }
   const current = await loadAlertSubs();
-  const next = { pro: current.pro, tickers: new Set(j.tickers || []) };
+  const next = { pro: current.pro, tickers: new Set(j.tickers || []), ready: true };
   cache = Promise.resolve(next);
   emit();
   return !!j.enabled;

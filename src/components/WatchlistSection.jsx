@@ -4,6 +4,7 @@ import { C, Skel, TickerLogo } from '../lib/cp-shared';
 
 import WatchlistChanges from './WatchlistChanges';
 import AlertToggle from './AlertToggle';
+import AlertSubsOrphans from './AlertSubsOrphans';
 
 const usd = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
 const pct = (n) => (n == null || isNaN(n)) ? null : `${n >= 0 ? '+' : ''}${Number(n).toFixed(2)}%`;
@@ -243,6 +244,10 @@ export default function WatchlistSection() {
           <WatchlistChanges enabled={list.length > 0} />
         </div>
       )}
+      {/* ⚠️ OUTSIDE THE EMPTY/LOADED BRANCH, DELIBERATELY. Placed inside the loaded branch this was
+          invisible to exactly the person who needs it most: someone whose watchlist is empty but who
+          still has alert subscriptions running. It self-hides when there are none. */}
+      <AlertSubsOrphans watched={Array.isArray(list) ? list.map((x) => x.ticker) : []} />
     </div>
   );
 }

@@ -33,6 +33,10 @@ import { tickerEvidence } from '../evidence/resolve.js';
 import { loadBuildContext, chunkTickers, CHUNK } from '../consensus/build-context.mjs';
 import { alertsFor, LOOKBACK_DAYS } from './evidence-alerts.mjs';
 import { activeSubscriptions, insertAlerts, pruneAlerts } from './evidence-alert-store.js';
+import { resolveAccessByIds } from '../entitlements';
+
+// The tiers Evidence Alerts are sold to. Named once, matching /api/evidence-alerts.
+const PRO_TIERS = new Set(['pro', 'elite']);
 
 /** Distinct tickers a single run will resolve. Beyond this the run reports the overflow. */
 export const MAX_TICKERS_PER_RUN = 600;
@@ -41,16 +45,44 @@ export const MAX_TICKERS_PER_RUN = 600;
  * @param budgetMs stop starting new chunks past this, so a slow run ends cleanly inside
  *                 maxDuration instead of being killed mid-chunk with rows half-written.
  */
-export async function runEvidenceAlerts({ now = Date.now(), budgetMs = 45_000, deliver = insertAlerts } = {}) {
+export async function runEvidenceAlerts({
+  now = Date.now(), budgetMs = 45_000, deliver = insertAlerts,
+  // ⚠️ INJECTED SO THE ENTITLEMENT FILTER CAN BE TESTED WITHOUT CLERK, exactly as `deliver` is
+  // injected so delivery can be. A guard that can only be exercised against a live third party is a
+  // guard that gets exercised once, by hand, and then trusted forever.
+  resolveAccess = resolveAccessByIds,
+} = {}) {
   const startedAt = Date.now();
-  const subs = await activeSubscriptions();
+  const allSubs = await activeSubscriptions();
   // ⚠️ THE SAME SHAPE AS A REAL RUN. This omitted `failed` and `ms`, and the cron interpolates both
   // into the heartbeat note — so every quarter-hour with no subscribers recorded
   // "0 tickers · 0 subs · 0 new · undefined failed · undefinedms", which reads as a broken job
   // rather than an idle one. It is currently the ONLY path taken in production, because
   // evidence_alert_subs is empty.
+  if (!allSubs.length) {
+    return { tickers: 0, subscriptions: 0, skippedNotPro: 0, unresolved: 0, overflow: 0, chunks: 0, created: 0, failed: 0, pruned: 0, ms: Date.now() - startedAt };
+  }
+
+  // ⚠️ ENTITLEMENT IS CHECKED HERE, AT DELIVERY, AND NOT ONLY WHERE THE SUBSCRIPTION WAS CREATED.
+  //
+  // A stored row records what somebody once asked for. It is not proof of what they are entitled to
+  // today, and this worker treated it as proof: it read every enabled row and delivered. A subscriber
+  // who cancelled Pro in March would have gone on receiving Pro alerts indefinitely, because the only
+  // tier check in the system ran in the POST that created the row.
+  //
+  // ⚠️ THE ROW IS NOT DELETED, ONLY SKIPPED. Cancelling Pro is frequently temporary, and deleting the
+  // preference would mean a returning subscriber silently receives nothing until they notice and
+  // re-enable forty tickers by hand. Skipping is reversible: reactivate Pro and the next run delivers
+  // again, from the subscriber's original enabled_at watermark rather than from the gap.
+  //
+  // ⚠️ AND enabled_at IS DELIBERATELY NOT MOVED ON REACTIVATION. The watermark means "I asked to hear
+  // about things from this moment". Sliding it to the reactivation date would silently discard evidence
+  // published during the lapse; leaving it is bounded anyway by the run's own lookback floor.
+  const { access, unresolved } = await resolveAccess(allSubs.map((s) => s.userId));
+  const subs = allSubs.filter((s) => PRO_TIERS.has(access.get(s.userId)?.tier));
+  const skippedNotPro = allSubs.length - subs.length;
   if (!subs.length) {
-    return { tickers: 0, subscriptions: 0, overflow: 0, chunks: 0, created: 0, failed: 0, pruned: 0, ms: Date.now() - startedAt };
+    return { tickers: 0, subscriptions: 0, skippedNotPro, unresolved, overflow: 0, chunks: 0, created: 0, failed: 0, pruned: 0, ms: Date.now() - startedAt };
   }
 
   // Who is waiting on each ticker, and since when.
@@ -115,6 +147,8 @@ export async function runEvidenceAlerts({ now = Date.now(), budgetMs = 45_000, d
   return {
     tickers: tickers.length,
     subscriptions: subs.length,
+    skippedNotPro,
+    unresolved,
     overflow: all.length - tickers.length,
     chunks,
     created,

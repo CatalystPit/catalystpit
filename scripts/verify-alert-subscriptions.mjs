@@ -141,7 +141,13 @@ try {
   L('⚠️ nothing is delivered to anyone who did not subscribe');
   {
     const w = code('src/lib/alerts/evidence-alert-worker.mjs');
-    ok('the worker reads subscriptions and nothing else', /const subs = await activeSubscriptions\(\);/.test(w));
+    // Renamed to allSubs when the delivery-time entitlement filter landed: the raw read is now the
+    // input to that filter rather than the final list. The invariant is unchanged — the worker's only
+    // source of recipients is the subscription table.
+    ok('the worker reads subscriptions and nothing else', /const allSubs = await activeSubscriptions\(\);/.test(w));
+    // ⚠️ AND THE FILTERED LIST IS WHAT IT DELIVERS FROM, not the raw read. Without this the rename
+    // above could be satisfied while delivery went back to ignoring entitlement.
+    ok('⚠️ …and delivers only from the entitlement-filtered list', /const subs = allSubs\.filter\(/.test(w));
     ok('…and iterates only the users waiting on that ticker', /for \(const s of waiting\.get\(ticker\) \|\| \[\]\)/.test(w));
     ok('⚠️ each subscriber is gated on their OWN watermark', /Math\.max\(subSince, Date\.parse\(floor\)\)/.test(w));
     ok('…and an unreadable watermark delivers nothing', /if \(!Number\.isFinite\(subSince\)\) continue;/.test(w));
