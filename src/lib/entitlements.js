@@ -8,8 +8,27 @@ export const FREE_BULLSBEARS_VISIBLE = 1;
 
 // The Free/Pro rules live in entitlement-rules.mjs (pure, testable) and are re-exported here so
 // every existing caller keeps importing one module.
+//
+// ⚠️ THE RE-EXPORT LIST MUST NAME EVERY SYMBOL THAT MOVED, AND FOR THREE OF THEM IT DID NOT.
+//
+// 050af15a moved isRealtime, WATCHLIST_LIMIT and WATCHLIST_LISTS_LIMIT into entitlement-rules.mjs
+// and listed only the other six here. Nothing failed at build time — an ES re-export of a name that
+// is not listed is simply absent, and importers get undefined — so the breakage was entirely at
+// runtime and entirely silent:
+//
+//   isRealtime            6 call sites, every one of the shape `isRealtime(tier) && !beta` inside a
+//                         `try { ... } catch { /* signed-out → delayed */ }`. The TypeError went
+//                         into the catch written for anonymous callers, so realtime stayed false and
+//                         PRO AND ELITE USERS WERE SERVED DELAYED DATA THEY HAD PAID NOT TO GET.
+//   WATCHLIST_LIMIT       `WATCHLIST_LIMIT[tier] ?? WATCHLIST_LIMIT.free` — a read off undefined,
+//   WATCHLIST_LISTS_LIMIT so these threw rather than degraded.
+//
+// verify-entitlement-exports.mjs now imports this module and asserts every name is live, because a
+// grep for `isRealtime(tier) && !beta` finds the call site whether or not the function exists — which
+// is exactly why the gating suite's 118 assertions stayed green through all of it.
 export { isProTier, eodCutoffIso, chartIntervalAllowed, isIntradayInterval,
-  FREE_CHART_INTERVALS, INTRADAY_INTERVALS } from './entitlement-rules.mjs';
+  FREE_CHART_INTERVALS, INTRADAY_INTERVALS,
+  isRealtime, marketDataAccess, WATCHLIST_LIMIT, WATCHLIST_LISTS_LIMIT } from './entitlement-rules.mjs';
 
 // Single source of truth for Free/Pro tier resolution, server-side. Reads the
 // Clerk session via the same auth() import the watchlist route uses, and returns
