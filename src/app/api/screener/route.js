@@ -74,7 +74,15 @@ export async function GET(request) {
       return Response.json({
         filters,
         capabilities: {
-          provider: caps.id,
+          // ⚠️ THE INTERNAL PROVIDER ID IS NOT SHIPPED. This endpoint takes no auth, so
+          // `provider: "tiingo-realtime"` was served to anyone who fetched it — a vendor identifier
+          // and an entitlement descriptor, neither of which any client reads (checked: only
+          // CustomScannerPanel consumes this payload, and only `label`). Withheld rather than
+          // renamed, because the honest amount of licensing internals to publish is none.
+          //
+          // `label` stays: it is rendered to the reader as "Current feed: …", and whether our data
+          // vendor must, may, or must not be named to users is an attribution term in the licence,
+          // not something to decide here. Flagged for the owner.
           label: caps.label,
           quoteFreshness: caps.quoteFreshness,
           streaming: caps.streaming,

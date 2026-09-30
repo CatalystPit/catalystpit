@@ -222,6 +222,21 @@ export function BrandStyles() {
       .chip-hov:hover{background:${C.surface2}!important;cursor:pointer}
       input:focus{outline:none;border-color:${C.green}!important;box-shadow:0 0 0 3px ${C.greenLight}!important}
       .cp-brief-email::placeholder{color:rgba(255,255,255,0.55)}
+      /* ── ⚠️ PIT SCAN ROW ACTIONS: A 10.5px LABEL IS NOT A TAP TARGET ────────────────────────────
+         Chart / Evidence / Watch / Alert are 10.5px text with padding:0 and a 12px gap, so the
+         tappable box was about thirteen pixels tall with a twelve-pixel corridor between four
+         adjacent targets — on a board whose whole purpose is being read on a phone during the
+         session. Mis-tapping Watch when you meant Alert subscribes you to the wrong thing.
+
+         The hit area grows with padding and the LAYOUT is held still by an equal negative margin, so
+         desktop density is untouched: same font, same row height, same visual gap. Only the
+         touchable box changes. On narrow screens the box grows again and the gap widens, which is
+         where the extra room actually exists. */
+      .cp-scan-act{padding:9px 5px;margin:-9px -5px;-webkit-tap-highlight-color:transparent}
+      @media (max-width:560px){
+        .cp-scan-act{padding:13px 8px;margin:-13px -8px}
+        .cp-scan-acts{gap:22px!important;margin-top:10px!important}
+      }
       ::-webkit-scrollbar{width:4px;height:4px}
       ::-webkit-scrollbar-track{background:${C.surface}}
       ::-webkit-scrollbar-thumb{background:${C.border2};border-radius:2px}

@@ -93,8 +93,13 @@ export default function AlertToggle({ symbol, variant = 'text', onNotice = null 
 
   // Pit Scan: the same bare text action it already was, beside Watch and Evidence. Enabled state
   // is a colour and a word — the row height does not change.
+  //
+  // ⚠️ `cp-scan-act` CARRIES THE TAP TARGET. At 10.5px with padding:0 the touchable box was about
+  // thirteen pixels tall, twelve pixels from Watch — and a mis-tap here creates a subscription the
+  // reader did not ask for, which is the worst of the four to get wrong. The class grows the hit box
+  // and cancels it with an equal negative margin, so the row height is genuinely unchanged.
   return (
-    <button type="button" onClick={click} disabled={busy} title={title} aria-pressed={on}
+    <button type="button" onClick={click} disabled={busy} title={title} aria-pressed={on} className="cp-scan-act"
       style={{ fontSize: 10.5, fontWeight: 700, color: on ? C.green : C.muted, background: 'none',
         border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', opacity: busy ? 0.5 : 1 }}>
       {label}

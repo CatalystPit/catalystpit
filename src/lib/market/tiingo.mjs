@@ -57,14 +57,59 @@ const BASE = 'https://api.tiingo.com';
 // ── CONFIGURATION ────────────────────────────────────────────────────────────
 // TIINGO_API_KEY is the existing project convention and is read ONLY here, on the server. Nothing in
 // this module is imported by a client component, and the token never appears in a URL we log.
-const TOKEN = process.env.TIINGO_API_KEY || process.env.TIINGO_API_TOKEN || '';
-// Two switches rather than one, because "use Tiingo" and "trust Tiingo for live prices" are
-// different decisions and the second must stay off until the entitlement is real.
-const ENABLED = String(process.env.TIINGO_ENABLED ?? (TOKEN ? 'true' : 'false')).toLowerCase() !== 'false';
-const REALTIME_ENABLED = String(process.env.TIINGO_REALTIME_ENABLED ?? 'false').toLowerCase() === 'true';
+const token = () => process.env.TIINGO_API_KEY || process.env.TIINGO_API_TOKEN || '';
 
-export const tiingoConfigured = () => Boolean(TOKEN) && ENABLED;
-export const tiingoRealtimeEnabled = () => tiingoConfigured() && REALTIME_ENABLED;
+// ── ⚠️ READ AT CALL TIME, NOT AT IMPORT ─────────────────────────────────────
+//
+// These were module-level constants, so `tiingoRealtimeEnabled()` only LOOKED like it asked the
+// current state — it closed over a value captured the first time a serverless instance loaded this
+// module. A licence switch that a function reads once, at a moment nobody chose, is not a switch.
+// Reading process.env per call costs nothing measurable and means the answer is always the running
+// deployment's configuration rather than whatever it happened to be at cold start.
+//
+// Two switches rather than one, because "use Tiingo" and "trust Tiingo for live prices" are
+// different decisions and the second must stay off until the entitlement is real. Both still fail
+// closed: an unset TIINGO_REALTIME_ENABLED is 'false'.
+export const tiingoConfigured = () => {
+  const t = token();
+  return Boolean(t) && String(process.env.TIINGO_ENABLED ?? (t ? 'true' : 'false')).toLowerCase() !== 'false';
+};
+const realtimeFlag = () => String(process.env.TIINGO_REALTIME_ENABLED ?? 'false').toLowerCase() === 'true';
+export const tiingoRealtimeEnabled = () => tiingoConfigured() && realtimeFlag();
+
+// ── ⚠️ AND A STOP ORDER THAT DOES NOT NEED A DEPLOY ─────────────────────────
+//
+// An environment variable is a per-deployment value: flipping it in the dashboard changes nothing for
+// the deployment already running, so the only way to stop redistributing live prices was to ship a
+// build. That is the wrong shape for a licensing instruction, which arrives when it arrives.
+//
+// This KV flag is checked by the one function that can emit a live print. It is additive and
+// one-directional: only an explicit `1` stops live quotes. A KV outage, a missing key or a malformed
+// value all leave the env decision in force — because failing closed on an unrelated infrastructure
+// blip would revoke Pro data nobody asked to revoke, and the licensing question is answered by the
+// flag's PRESENCE, not by our ability to read it.
+//
+// Cached briefly so a per-request quote path does not become a per-request KV round trip.
+export const TIINGO_STOP_KEY = 'market:tiingo:realtime_stop';
+const STOP_TTL_MS = 30_000;
+let _stop = { at: 0, value: false };
+
+export async function tiingoRealtimeStopped() {
+  if (Date.now() - _stop.at < STOP_TTL_MS) return _stop.value;
+  const url = process.env.KV_REST_API_URL, tok = process.env.KV_REST_API_TOKEN;
+  if (!url || !tok) return false;
+  try {
+    const r = await fetch(`${url}/get/${encodeURIComponent(TIINGO_STOP_KEY)}`, {
+      headers: { Authorization: `Bearer ${tok}` }, cache: 'no-store',
+    });
+    if (!r.ok) return _stop.value;                       // keep the last known answer
+    const { result } = await r.json();
+    _stop = { at: Date.now(), value: String(result ?? '').trim() === '1' };
+    return _stop.value;
+  } catch {
+    return _stop.value;
+  }
+}
 
 /**
  * IS THIS PAYLOAD ABOUT NOW?
@@ -319,7 +364,7 @@ async function tiingo(path, { searchParams = {}, timeoutMs = TIINGO_TIMEOUT_MS }
   for (const [k, v] of Object.entries(searchParams)) if (v != null) url.searchParams.set(k, String(v));
   try {
     const r = await fetch(url, {
-      headers: { 'Content-Type': 'application/json', Authorization: `Token ${TOKEN}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Token ${token()}` },
       cache: 'no-store',
       // ⚠️ A TIMEOUT IS A REASON, NOT AN EXCEPTION. AbortSignal.timeout rejects with a TimeoutError
       // the catch below turns into reason:'timeout', so a caller can tell "the vendor was slow"
@@ -478,7 +523,10 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
   // Now the flag is the gate. Unentitled, a payload that DOES carry a live print is refused and
   // the previous close is served instead — because a live last we are not licensed to
   // redistribute must not reach a page, however it is labelled.
-  const entitled = realtime && tiingoRealtimeEnabled();
+  // ⚠️ THE STOP ORDER IS CHECKED HERE, because this is the only function that can put a live print on
+  // a page. Set market:tiingo:realtime_stop to 1 and every surface falls back to the previous close
+  // within 30 seconds, with no deploy — which is what a licensing instruction actually needs.
+  const entitled = realtime && tiingoRealtimeEnabled() && !(await tiingoRealtimeStopped());
   const syms = [...new Set((symbols || []).map((s) => String(s).toUpperCase().trim()).filter(Boolean))];
   if (!syms.length) return { ok: true, quotes: {}, freshness: FRESHNESS.EOD, provider: 'tiingo' };
 

@@ -89,7 +89,11 @@ export const freshnessLabel = (f) => (f in FRESHNESS_LABEL ? FRESHNESS_LABEL[f] 
 export const BOARD_STATUS_LABEL = Object.freeze({
   realtime: 'REAL-TIME',
   near: 'REAL-TIME',
-  mixed: 'REAL-TIME',
+  // ⚠️ PARTIAL, NOT A BARE REAL-TIME. A mixture does not meet the claim "REAL-TIME" on its own, and
+  // the label is what a reader takes in without reading the sentence beside it. The live rows keep
+  // the claim; the board no longer makes it for all of them. Kept identical to ScanBoardRows'
+  // FEED_STATE, because two components describing one feed is how they come to disagree.
+  mixed: 'REAL-TIME · PARTIAL',
   delayed: 'DELAYED',
   eod: 'LAST CLOSE',
   stale: 'LAST KNOWN',

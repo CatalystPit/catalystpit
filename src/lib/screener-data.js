@@ -6,6 +6,7 @@ import { isSicDescription } from './sic-descriptions.mjs';
 import { resolveClassifications } from './market/sec-classification.mjs';
 import { sicToMarketSector } from './market-taxonomy.mjs';
 import { isRenderableTicker } from './security-identity.mjs';
+import { isExchangeTestSymbol } from './ticker-symbol.mjs';
 import { readSecurityIdentity, refreshSecurityIdentity, filerNameMap } from './security-identity';
 import { captureFundamentalSnapshot } from './fundamental-snapshot';
 
@@ -1000,7 +1001,19 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
 
   // Global symbol sanity: only real stock symbols (1–5 letters, optional single-letter class like
   // BRK.B). Drops anything number-leading or malformed regardless of which source added it.
-  const tickers = [...universe].filter((t) => t && /^[A-Z]{1,5}(\.[A-Z])?$/.test(t));
+  //
+  // ⚠️ AND THE EXCHANGES' RESERVED TEST NAMESPACES, which pass every shape test because they are
+  // MEANT to look like symbols. Polygon's grouped-daily feed is market-wide and carries them with
+  // real test quotes, so six were reaching the production Screener — one, ZTEST, at $7,616, which
+  // distorts any price-ordered board. Corroborated against screener_meta rather than taken on the
+  // pattern alone, because `TEST` is a genuine classified ETF: see isExchangeTestSymbol.
+  const testSyms = [];
+  const tickers = [...universe].filter((t) => {
+    if (!t || !/^[A-Z]{1,5}(\.[A-Z])?$/.test(t)) return false;
+    if (isExchangeTestSymbol(t, { classified: metaByT.has(t) })) { testSyms.push(t); return false; }
+    return true;
+  });
+  if (testSyms.length) console.log(`[screener] refused ${testSyms.length} exchange test symbol(s): ${testSyms.join(', ')}`);
 
   // Prices from the shared KV quote cache (persisted from prior runs + ticker-page/watchlist views),
   // for the prioritized set that lacks a candle price. Free, no rate limit — just cache reads.

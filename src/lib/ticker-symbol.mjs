@@ -68,6 +68,36 @@ export function isIngestableSymbol(s) {
 }
 
 /**
+ * The exchanges' RESERVED TEST NAMESPACES — the symbol shapes US venues publish quotes on to exercise
+ * their own systems. They are not securities and nobody can hold them.
+ *
+ *   Z?ZZT    the NASDAQ family: ZAZZT ZBZZT ZCZZT ZJZZT ZVZZT ZWZZT ZXZZT
+ *   ?TEST?   ATEST MTEST NTEST PTEST QTEST ZTEST and siblings
+ *   ZXYZ?    NYSE/Arca test issues
+ *
+ * Six of these were reaching the production Screener, one of them — ZTEST — priced at $7,616, which
+ * distorts any price-ordered board it appears on.
+ *
+ * ⚠️ THE PATTERN ALONE IS NOT ENOUGH, AND THIS IS NOT HYPOTHETICAL. `TEST` is a real, listed,
+ * classified ETF: "YieldMax TSLA Performance & Distribution Target 25 ETF", $36.54, asset_type ETF,
+ * present in both screener_meta and security_identity. A bare pattern blacklist would have deleted it.
+ * So a symbol is refused only when it matches a reserved shape AND our reference data knows nothing
+ * about it — no classification and no name. Every genuine test symbol satisfies both; the real ETF
+ * satisfies neither.
+ *
+ * This is deliberately NOT in TICKER_PLACEHOLDERS: that set is unconditional, and an unconditional
+ * rule here would kill the ETF. The same lesson the list above already records about ALL, GO, NA, ON,
+ * SO and NAN.
+ */
+const RESERVED_TEST_SYMBOL = /^(Z[A-Z]ZZT|[A-Z]?TEST[A-Z]?|ZXYZ[A-Z]?)$/;
+
+export function isExchangeTestSymbol(s, { classified = false, named = false } = {}) {
+  if (typeof s !== 'string') return false;
+  if (classified || named) return false;         // our reference data knows it: it is a real security
+  return RESERVED_TEST_SYMBOL.test(s.trim().toUpperCase());
+}
+
+/**
  * The canonical uppercase form of a raw URL segment, or null if no legitimate symbol can be read
  * from it. Case is the ONLY thing normalised: BRK.B and BRK-B stay distinct URLs because they are
  * distinct strings in our data, and inventing a mapping between them would be a guess.

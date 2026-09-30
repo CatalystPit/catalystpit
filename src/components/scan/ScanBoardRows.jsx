@@ -73,7 +73,16 @@ const FEED_STATE = {
   // had not traded yet. A board drawn from the entitled consolidated feed is real-time. That a
   // particular symbol has no current print is a fact about that symbol, and its own badge says so —
   // which is why the sentence here points at them rather than hiding them.
-  mixed: { label: 'REAL-TIME', text: 'Real-time quotes where available. Each row shows its price status.' },
+  // ⚠️ AND NOW IT SAYS PARTIAL, BECAUSE A BARE "REAL-TIME" OVER A MIXTURE IS A CLAIM THE BOARD DOES
+  // NOT MEET. The reasoning above is still right about what must NOT happen — a working feed reported
+  // as half-broken, or an entitled Pro reader told DELAYED because one ADR of twenty-five has not
+  // traded. It was solved by borrowing the strongest of the two extremes, and the label is the one
+  // thing a reader takes in without reading the sentence under it.
+  //
+  // PARTIAL keeps the real-time claim for the rows that earn it and withholds it for the board as a
+  // whole, which is the accurate answer to "some of these are live and some are not". Genuinely live
+  // boards (realtime, near) are untouched and still read REAL-TIME.
+  mixed: { label: 'REAL-TIME · PARTIAL', text: 'Real-time quotes where available. Each row shows its price status.' },
   delayed: { label: 'DELAYED', text: 'Delayed quotes — not live.' },
   eod: { label: 'LAST CLOSE', text: 'Last completed session — not live quotes.' },
 };
@@ -111,7 +120,7 @@ export function FeedBanner({ freshness, compact = false }) {
  */
 function EvidenceAction({ href }) {
   return (
-    <a href={href}
+    <a href={href} className="cp-scan-act"
       style={{ fontSize: 10.5, fontWeight: 700, color: C.green, textDecoration: 'none' }}>Evidence</a>
   );
 }
@@ -216,8 +225,13 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <a href={`/ticker/${encodeURIComponent(r.ticker)}#chart`}
+      {/* ⚠️ `cp-scan-act` IS THE TAP TARGET, NOT THE TEXT. These are 10.5px labels and were
+          padding:0, so the touchable box was about thirteen pixels tall with four of them twelve
+          pixels apart — and mis-tapping Watch when you meant Alert subscribes you to the wrong
+          thing. The class grows the hit box and cancels it with an equal negative margin, so desktop
+          density is unchanged; the media query widens both on a phone. See cp-shared BrandStyles. */}
+      <div className="cp-scan-acts" style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <a href={`/ticker/${encodeURIComponent(r.ticker)}#chart`} className="cp-scan-act"
           style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, textDecoration: 'none' }}>Chart</a>
         {/* Into the existing evidence experience — Scan never becomes a second evidence viewer.
             ⚠️ AND INSIDE THE TERMINAL IT DOES NOT NAVIGATE. Leaving the workspace to find out why a
@@ -227,7 +241,7 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
             The row asks the bus rather than being told by each of its two callers, so a third
             caller cannot get it wrong by omission. */}
         <EvidenceAction href={r.evidenceUrl || `/ticker/${encodeURIComponent(r.ticker)}`} />
-        <button type="button" onClick={() => onWatch(r.ticker)} disabled={busy === r.ticker}
+        <button type="button" onClick={() => onWatch(r.ticker)} disabled={busy === r.ticker} className="cp-scan-act"
           style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, background: 'none', border: 'none',
             padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>Watch</button>
         {/* ⚠️ THE ACTION NOW MEANS "MONITOR THIS TICKER", NOT "ALERT ME ABOUT THIS ROW". A scan row
