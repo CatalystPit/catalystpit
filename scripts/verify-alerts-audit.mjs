@@ -201,5 +201,29 @@ L('⚠️ exactly one alert engine is live, and the heartbeat says which');
   }
 }
 
+L('⚠️ a public heartbeat note is never an error dump');
+{
+  // ⚠️ FOUND WHILE VERIFYING THE ALERT CRONS' HEARTBEATS. /api/health is unauthenticated and serves
+  // every job's note. The dividends job's note in production was a dumped INSERT statement —
+  // "Failed query: insert into dividend_events (source, source_event_id, ticker, cik, ..." — so a
+  // public endpoint was publishing our table and column names, because one caller passed e.message
+  // where every other caller passes a fixed string.
+  const hb = code('src/lib/job-heartbeat.js');
+  ok('the note is sanitised at the WRITE, so no caller can leak through it', /\$\{safeNote\(note\)\}/.test(hb));
+  ok('…and the contract it enforces is stated', /never an error dump/.test(read('src/lib/job-heartbeat.js')));
+  const { safeNote } = await import('../src/lib/job-heartbeat.js');
+  ok('⚠️ a dumped query is replaced, not truncated',
+    safeNote('Failed query: \n  insert into dividend_events (\n source, ticker') === 'query failed — detail in logs');
+  ok('⚠️ a relation-missing error is replaced', safeNote('relation "evidence_alerts" does not exist') === 'query failed — detail in logs');
+  // ⚠️ AND EVERY REAL NOTE SURVIVES. A sanitiser that ate the legitimate notes would blind the
+  // health check it exists to protect, so these are the exact strings production writes.
+  for (const n of ['no watchers matched', 'checked 2', 'chambers both', 'all keys refreshed',
+    '83 rows / 3324 candidates in 60s', 'scanned 297 8-K, 10 form-25, 105 form-144, 37 sched-13d in 6s',
+    '0 tickers · 0 subs · 0 new · 0 failed · 12ms', 'ingest threw', 'watermark initialised']) {
+    ok(`a real note passes through untouched: "${n.slice(0, 34)}"`, safeNote(n) === n, JSON.stringify(safeNote(n)));
+  }
+  ok('an empty note stays null rather than becoming a blank string', safeNote('  ') === null && safeNote(null) === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

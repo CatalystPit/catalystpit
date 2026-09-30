@@ -35,6 +35,35 @@ import { db } from './db';
 export const jobKey = (name) => `job:${String(name || '').trim()}`;
 
 /**
+ * ⚠️ THE NOTE IS PUBLIC. ENFORCE "NEVER AN ERROR DUMP" HERE, NOT IN EVERY CALLER.
+ *
+ * /api/health serves these notes to anyone, unauthenticated. The contract above already says a note
+ * is "short human note; truncated, and never an error dump" — and it was being violated in
+ * production: the dividends job's note was
+ *
+ *   'Failed query: \n      insert into dividend_events (\n        source, source_event_id, ticker,
+ *    cik,\n        declaration_date, ex_dividend_date, record_date, payment_date,\n        cash'
+ *
+ * i.e. a public endpoint publishing our table and column names, because one caller passed
+ * `e.message` where every other caller passes a fixed string ('ingest threw', 'sync threw').
+ *
+ * A caller cannot be trusted to remember this, so the rule lives at the write. Whitespace is
+ * collapsed — which alone destroys the multi-line query shape — and anything still carrying the
+ * shape of a dumped statement is replaced outright. Every legitimate note in the codebase is a short
+ * human phrase ('no watchers matched', '83 rows / 3324 candidates in 60s') and passes through
+ * untouched.
+ */
+export function safeNote(note) {
+  if (note == null) return null;
+  const flat = String(note).replace(/\s+/g, ' ').trim();
+  if (!flat) return null;
+  if (/failed query|\binsert into\b|\bselect\b[\s\S]*\bfrom\b|\bupdate\b[\s\S]*\bset\b|\bdelete from\b|\brelation\b.*does not exist|\bcolumn\b.*does not exist/i.test(flat)) {
+    return 'query failed — detail in logs';
+  }
+  return flat.slice(0, 200);
+}
+
+/**
  * Record one run of a named job.
  *
  * @param {string} name    stable job name, e.g. 'form4', 'eightk', 'congress-sync'
@@ -50,7 +79,7 @@ export async function recordJobRun(name, { ok = true, seen = 0, note = null } = 
       insert into feed_state (feed_key, last_polled_at, last_success_at, last_status,
         consecutive_failures, events_seen, note)
       values (${key}, now(), ${ok ? sql`now()` : sql`null`}, ${ok ? 200 : 500},
-        ${ok ? 0 : 1}, ${Number(seen) || 0}, ${note ? String(note).slice(0, 200) : null})
+        ${ok ? 0 : 1}, ${Number(seen) || 0}, ${safeNote(note)})
       on conflict (feed_key) do update set
         last_polled_at = now(),
         -- Only a SUCCESSFUL run moves the success clock. A failing job keeps its last good
