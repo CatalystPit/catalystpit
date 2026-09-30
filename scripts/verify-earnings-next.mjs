@@ -150,7 +150,15 @@ L('the API contract the page depends on');
     /`next` IS COMPUTED PER REQUEST, NEVER CACHED/.test(route));
   ok('…and the cache key was versioned so v1 entries cannot serve without announcements',
     /earnings:v2:\$\{ticker\}/.test(route));
-  ok('the raw history is not shipped to the client', /const \{ announcements, periodic, \.\.\.pub \} = payload;/.test(route));
+  ok('the raw history is not shipped to the client',
+    /const \{ announcements: _a, periodic: _p, \.\.\.pub \} = payload;/.test(route));
+  // ⚠️ submissions.recent TRUNCATES FOR HIGH-VOLUME FILERS — JPMorgan files 26,408 in a year, so its
+  // window reaches back twelve months. The XBRL quarters do not truncate, so they join the fallback.
+  ok('⚠️ the XBRL quarters are merged into the fallback series, not just submissions.json',
+    /MERGE THE XBRL QUARTERS INTO THE FALLBACK SERIES/.test(route)
+    && /\.\.\.\(payload\.periodic \|\| \[\]\), \.\.\.fromXbrl/.test(route));
+  ok('…deduplicated on the filing date so one filing is one point',
+    /new Map\(\s*\[\.\.\.\(payload\.periodic \|\| \[\]\), \.\.\.fromXbrl\]/.test(route.replace(/\n\s*/g, ' ')));
   ok('a dormant calendar costs no round trip', /if \(!\(process\.env\.TWELVE_DATA_API_KEY/.test(route));
   ok('the ticker page reads the server decision rather than deriving one',
     /const nextEarnings = earnings\?\.next \|\| null;/.test(read('src/app/ticker/[symbol]/TickerPage.jsx')));

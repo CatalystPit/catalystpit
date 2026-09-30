@@ -105,12 +105,28 @@ async function scheduledFor(ticker) {
 // value cached for 24 hours would be wrong for up to a day, which is the class of bug this whole
 // change exists to remove. The expensive inputs stay cached; the decision is pure arithmetic.
 async function respond(payload, { scheduled = null } = {}) {
+  // ⚠️ MERGE THE XBRL QUARTERS INTO THE FALLBACK SERIES, because submissions.json truncates.
+  //
+  // `filings.recent` holds roughly the last 1,000 filings, which for a normal issuer is a decade —
+  // but JPMorgan files 26,408 in a single year, so `recent` reaches back only to 2025-09-29 and
+  // yields four Item 2.02 events. The XBRL quarters do not have that problem: parseEarnings returns
+  // 12 periods regardless of how much unrelated paper the issuer files. So the periodic fallback is
+  // the union of both, keyed on the filing date.
+  const fromXbrl = (payload.earnings || [])
+    .filter((r) => r.report_date)
+    .map((r) => ({ filed: r.report_date, form: r.form || null, period: r.period_end || null }));
+  const periodic = [...new Map(
+    [...(payload.periodic || []), ...fromXbrl].filter((p) => p?.filed).map((p) => [p.filed, p]),
+  ).values()].sort((a, b) => a.filed.localeCompare(b.filed));
+
   const next = resolveNextEarnings({
     announcements: payload.announcements || [],
-    periodic: payload.periodic || [],
+    periodic,
     scheduled,
   });
-  const { announcements, periodic, ...pub } = payload;
+  // The history is an INPUT to the decision, not part of the response: the page needs `next`, not a
+  // few hundred filing rows it would have to reason about itself.
+  const { announcements: _a, periodic: _p, ...pub } = payload;
   return Response.json({ ...pub, next });
 }
 
