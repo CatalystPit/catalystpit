@@ -250,7 +250,12 @@ export function pickPriceOnOrBefore(series, targetDate) {
     .sort((a, b) => a.date.localeCompare(b.date));
   let pick = null;
   for (const d of sorted) { if (d.date <= target) pick = d; else break; }
-  if (!pick) pick = sorted[0] || null;            // target before earliest point
+  // ⚠️ NO PRICE BEFORE THE TRADE MEANS NO ANCHOR — NOT THE NEXT ONE AFTER IT. This used to fall back
+  // to sorted[0], the earliest point available, which is a price from AFTER the trade whenever the
+  // symbol's history starts later than the trade date. One row reached production that way: FSSL,
+  // bought 2025-02-07, anchored to 2025-11-13 — so "Return Since" was measured from a close nine
+  // months in the trade's future. A missing anchor shows no return, which is the honest answer; the
+  // live enrichment path in refresh-congress already returned null here and was never affected.
   return pick ? { price: pick.close, priceDate: pick.date } : null;
 }
 

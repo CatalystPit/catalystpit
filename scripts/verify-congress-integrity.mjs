@@ -152,6 +152,24 @@ L('⚠️ Congress discloses a RANGE — never a manufactured exact value');
     !/·\s*\$\{fmtVal\(t\.amountMid\)\}/.test(chart));
 }
 
+L('⚠️ "Return Since" is measured from a price the trade could have had');
+{
+  // ⚠️ AN ANCHOR AFTER THE TRADE IS A RETURN MEASURED FROM THE FUTURE. One row reached production
+  // that way: FSSL, bought 2025-02-07, anchored to 2025-11-13, because the symbol's price history
+  // starts later than the trade and the helper fell back to the earliest bar it had.
+  const la = await one(sql`select count(*)::int n from congress_trades
+    where price_at_trade_date is not null and price_at_trade_date > transaction_date`);
+  ok('⚠️ no price anchor post-dates its own trade', la.n === 0, `${la.n} rows`);
+  const bad = await one(sql`select count(*)::int n from congress_trades
+    where price_at_trade is not null and (price_at_trade <= 0 or price_at_trade_date is null)`);
+  ok('every anchor price is positive and dated', bad.n === 0, `${bad.n}`);
+  ok('⚠️ …and no price before the trade yields NO anchor, not the next one after it',
+    /return pick \? \{ price: pick\.close, priceDate: pick\.date \} : null;/.test(read('../src/lib/congress-ingest.mjs'))
+    && !/if \(!pick\) pick = sorted\[0\]/.test(read('../src/lib/congress-ingest.mjs')));
+  ok('…and the live enrichment path was already strict',
+    /if \(b\.date <= target\) hit = b; else break;/.test(read('../src/app/api/refresh-congress/route.js')));
+}
+
 L('⚠️ two clocks: publicTime is when it became knowable');
 {
   const res = read('../src/lib/evidence/resolve.js');
