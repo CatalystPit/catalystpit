@@ -310,6 +310,21 @@ L('⚠️ the vendor is named on the legal pages and nowhere else');
     const c = read(f);
     ok(`${f} contains no API key or token`, !/TIINGO_API_KEY|TIINGO_API_TOKEN|Token \$\{/.test(c));
   }
+
+  // ⚠️ AND NOT ON A QUOTE EITHER. /api/quotes returned `provider: "tiingo"` on every quote — read by
+  // nothing, and checked before removal.
+  const q = code('src/app/api/quotes/route.js');
+  ok('the quotes route strips the provider id at the boundary',
+    /const PUBLIC_QUOTE_OMIT = new Set\(\['provider'\]\);/.test(q));
+  // ⚠️ EVERY PATH, because one unprojected branch is the whole leak: entitled realtime, the Free
+  // delayed snapshot, the snapshot's fall-through, the KV hit and the provider read.
+  const projected = (q.match(/Response\.json\(publicQuotes\(/g) || []).length;
+  ok('⚠️ …on every path that returns quotes', projected === 5, `${projected} of 5`);
+  ok('…and no quote response bypasses it',
+    !/return Response\.json\((quotes|delayed|cached)[,)]/.test(q));
+  ok('the projection is defined before first use',
+    q.indexOf('const publicQuotes') > 0 && q.indexOf('const publicQuotes') < q.indexOf('publicQuotes(quotes)'));
+
   const t = read('src/lib/market/tiingo.mjs');
   ok('the token is read from the environment only', /process\.env\.TIINGO_API_KEY/.test(t));
   ok('⚠️ …and never logged', !/console\.log\([^)]*TIINGO_API_KEY|console\.log\([^)]*token\(\)/.test(t));

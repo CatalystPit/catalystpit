@@ -41,6 +41,29 @@ async function quotesCacheSet(key, value) {
 // Batch quotes for a set of tickers, ENTITLEMENT-AWARE: Pro/Elite get real-time (when the configured
 // provider supports it), Free gets delayed. Provider-agnostic (Polygon now, Twelve Data next) — this
 // route never touches a vendor directly, it goes through lib/market-data.getQuotes().
+// ⚠️ THE VENDOR'S NAME IS NOT PART OF A QUOTE.
+//
+// Every quote carried provider: "tiingo" — read by nothing, client-side or server-side, and checked
+// before removal. The Tiingo agreement's attribution clause is satisfied on the legal pages in the
+// exact wording it requires and does not extend to a market-data payload; a provider id is an
+// implementation detail either way.
+//
+// Stripped HERE, at the response boundary, rather than inside lib/market: the field is a legitimate
+// part of the internal shape and a caching or routing decision may want it one day. What must not
+// happen is it reaching a browser. Applied on EVERY path that returns quotes — entitled realtime, the
+// Free delayed snapshot, the snapshot's fall-through, the KV hit and the provider read — because one
+// unprojected branch is the whole leak.
+const PUBLIC_QUOTE_OMIT = new Set(['provider']);
+const publicQuotes = (quotes) => {
+  if (!quotes || typeof quotes !== 'object') return quotes;
+  const out = {};
+  for (const [sym, q] of Object.entries(quotes)) {
+    if (!q || typeof q !== 'object') { out[sym] = q; continue; }
+    out[sym] = Object.fromEntries(Object.entries(q).filter(([k]) => !PUBLIC_QUOTE_OMIT.has(k)));
+  }
+  return out;
+};
+
 const TICKER_RE = /^[A-Z0-9.\-]{1,10}$/;
 
 export async function GET(request) {
@@ -78,7 +101,7 @@ export async function GET(request) {
 
     if (realtime) {
       const quotes = await coalesce(`quotes:${key}`, () => getQuotes(syms, { realtime }));
-      return Response.json(quotes, { headers: { 'Cache-Control': 'private, no-store' } });
+      return Response.json(publicQuotes(quotes), { headers: { 'Cache-Control': 'private, no-store' } });
     }
 
     // ── FREE: THE SHARED 15-MINUTE DELAYED MARKET SNAPSHOT ────────────────────
@@ -111,25 +134,25 @@ export async function GET(request) {
       // Symbols the snapshot does not cover fall through to completed-session data rather than
       // this inventing a price for them — and they are labelled 'eod', not 'delayed'.
       if (!missing.length) {
-        return Response.json(delayed, { headers: { 'Cache-Control': 'private, no-store' } });
+        return Response.json(publicQuotes(delayed), { headers: { 'Cache-Control': 'private, no-store' } });
       }
       const rest = await coalesce(`quotes:eod:${missing.join(',')}`, async () => {
         const q = await getQuotes(missing, { realtime: false });
         if (q && Object.keys(q).length) await quotesCacheSet(`eod:${missing.join(',')}`, q);
         return q;
       });
-      return Response.json({ ...rest, ...delayed }, { headers: { 'Cache-Control': 'private, no-store' } });
+      return Response.json(publicQuotes({ ...rest, ...delayed }), { headers: { 'Cache-Control': 'private, no-store' } });
     }
 
     const cached = await quotesCacheGet(key);
-    if (cached) return Response.json(cached, { headers: { 'Cache-Control': 'private, no-store' } });
+    if (cached) return Response.json(publicQuotes(cached), { headers: { 'Cache-Control': 'private, no-store' } });
 
     const quotes = await coalesce(`quotes:${key}`, async () => {
       const q = await getQuotes(syms, { realtime: false });
       if (q && Object.keys(q).length) await quotesCacheSet(key, q);
       return q;
     });
-    return Response.json(quotes, { headers: { 'Cache-Control': 'private, no-store' } });
+    return Response.json(publicQuotes(quotes), { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (e) {
     return Response.json({}, { status: 200, headers: { 'Cache-Control': 'private, no-store' } });
   }
