@@ -1,6 +1,6 @@
 import { db } from '../../../../lib/db';
 import { insiderTrades, watchlist } from '../../../../lib/schema';
-import { and, gt, lte, inArray, asc } from 'drizzle-orm';
+import { and, gt, lte, inArray, asc, sql } from 'drizzle-orm';
 import { clerkClient } from '@clerk/nextjs/server';
 import { recordJobRun } from '../../../../lib/job-heartbeat';
 import { claim, insiderAccessionKey, ensureEvidenceAlertTables } from '../../../../lib/evidence-alerts';
@@ -121,6 +121,10 @@ export async function GET(request) {
   }).from(insiderTrades)
     .where(and(
       inArray(insiderTrades.action, ['BUY', 'SELL']),
+      // ⚠️ NEVER ALERT ON A FILING THE FILER HAS RETRACTED. Without this an amended Form 4 emails the
+      // figures the 4/A was filed to correct — and the worst case is not subtle: MYNZ's mistyped
+      // 8.8B purchase sat in this selection window before its correction landed.
+      sql`coalesce(insider_trades.superseded_by, '') = ''`,
       gt(insiderTrades.insertedAt, new Date(watermark)),
       lte(insiderTrades.insertedAt, new Date(runStartIso)),
     ))

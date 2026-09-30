@@ -204,11 +204,27 @@ L('every consumer that reads insider filings excludes the superseded ones');
   // filings marked, a consumer that filters only `is_amendment is not true` now shows precisely the
   // figures a 4/A was filed to correct — the original stays in and its correction is excluded.
   const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+  // ⚠️ THIS LIST WAS THE WHOLE PROBLEM: it named four consumers and there were ten. The six added
+  // below all read transaction rows and none of them filtered supersession, so each was serving or
+  // aggregating the version a 4/A had already replaced. /api/insiders was the worst of them — the
+  // most insider-centric surface in the product, whose `top` view sorts by value descending and
+  // therefore had MYNZ's mistyped, retracted $258,827,700,000 purchase as its headline row.
+  //
+  // A consumer is counted here when it reads insider TRANSACTION rows. Readers that only take a
+  // ticker or a company name from the table (watchlist-materialise, primary-events) are excluded
+  // deliberately: supersession cannot change the answer to "which tickers have filings".
   const CONSUMERS = [
     ['src/lib/ticker-seo.mjs', 2],
     ['src/lib/x-reply-context.mjs', 1],
     ['src/lib/consensus/board.mjs', 1],
     ['src/lib/consensus/setup-board.js', 1],
+    // Added by the Form 4 end-to-end audit.
+    ['src/app/api/insiders/route.js', 10],
+    ['src/app/api/cron/insider-alerts/route.js', 1],
+    ['src/app/api/cron/pit-snapshot/route.js', 2],
+    ['src/app/api/watchlist/signals/route.js', 2],
+    ['src/lib/confluence.js', 1],
+    ['src/lib/screener-data.js', 1],
   ];
   for (const [file, n] of CONSUMERS) {
     const src = read(file);

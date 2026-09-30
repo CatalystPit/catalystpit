@@ -85,7 +85,7 @@ async function computeConfluenceUncached(dir = 'bull', { forceLiveRollup = false
     val: sql`coalesce(sum(${insiderTrades.totalValue}), 0)`.mapWith(Number),
     execs: sql`count(distinct ${insiderTrades.executive})`.mapWith(Number),
   }).from(insiderTrades)
-    .where(and(eq(insiderTrades.action, action), gt(insiderTrades.totalValue, 0), gte(insiderTrades.transactionDate, since)))
+    .where(and(eq(insiderTrades.action, action), gt(insiderTrades.totalValue, 0), gte(insiderTrades.transactionDate, since), sql`coalesce(insider_trades.superseded_by, '') = ''`))
     .groupBy(insiderTrades.ticker);
 
   // ── 2) Congress (STOCK Act) — purchases/sales DISCLOSED in the window ──

@@ -93,7 +93,8 @@ export async function GET(request) {
               select ticker, title, action, total_value, filing_date, filing_url, conviction_band,
                      (conviction_band = any(${NOTABLE_BANDS}::text[])) as notable
                 from insider_trades
-               where ticker = any(${arr}::text[])
+               where coalesce(superseded_by, '') = ''
+                 and ticker = any(${arr}::text[])
                  and filing_date >= now() - make_interval(days => ${WINDOW_DAYS[CHANGE.INSIDER]})
             ) t
            order by ticker, notable, filing_date desc`);
@@ -154,7 +155,8 @@ export async function GET(request) {
         const r = await db.execute(sql`
           select distinct on (ticker) ticker, title, action, total_value, filing_date, filing_url
             from insider_trades
-           where ticker = any(${arr}::text[])
+           where coalesce(superseded_by, '') = ''
+             and ticker = any(${arr}::text[])
              and action in ('BUY', 'SELL')
              and filing_date >= now() - make_interval(days => ${HISTORY_DAYS})
            order by ticker, filing_date desc`);

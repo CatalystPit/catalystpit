@@ -41,7 +41,7 @@ async function buildInsiders() {
     ticker: insiderTrades.ticker, executive: insiderTrades.executive, title: insiderTrades.title,
     action: insiderTrades.action, totalValue: insiderTrades.totalValue, filingDate: insiderTrades.filingDate,
   }).from(insiderTrades)
-    .where(inArray(insiderTrades.action, ['BUY', 'SELL']))
+    .where(and(inArray(insiderTrades.action, ['BUY', 'SELL']), sql`coalesce(insider_trades.superseded_by, '') = ''`))
     .orderBy(desc(insiderTrades.filingDate), desc(insiderTrades.totalValue))
     .limit(40);
   const hi = rows.filter(r => Number(r.totalValue) >= 100000);
@@ -57,7 +57,9 @@ async function buildClusters() {
     totalValue: sql`sum(${insiderTrades.totalValue})`.mapWith(Number),
     lastBuy: sql`max(${insiderTrades.transactionDate})`,
   }).from(insiderTrades)
-    .where(and(eq(insiderTrades.action, 'BUY'), sql`${insiderTrades.transactionDate} >= current_date - interval '30 days'`))
+    // A cluster counts DISTINCT INSIDERS, so a superseded original and its correction are one
+    // person counted twice — it inflates the buyer count as well as the dollar total.
+    .where(and(eq(insiderTrades.action, 'BUY'), sql`${insiderTrades.transactionDate} >= current_date - interval '30 days'`, sql`coalesce(insider_trades.superseded_by, '') = ''`))
     .groupBy(insiderTrades.ticker)
     .having(sql`count(distinct ${insiderTrades.executive}) >= 3`)
     .orderBy(sql`count(distinct ${insiderTrades.executive}) desc`, sql`sum(${insiderTrades.totalValue}) desc`)
