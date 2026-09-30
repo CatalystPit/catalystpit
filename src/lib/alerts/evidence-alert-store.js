@@ -18,6 +18,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../db';
 import { RETENTION_DAYS, UNREAD_RETENTION_DAYS } from './evidence-alerts.mjs';
+import { userError } from '../user-error.mjs';
 
 const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 export const MAX_SUBS_PER_USER = 200;
@@ -94,12 +95,12 @@ export async function listSubscriptions(userId) {
 export async function setSubscription(userId, ticker, enabled) {
   await ensureEvidenceAlertTables();
   const sym = normalizeTicker(ticker);
-  if (!sym) throw new Error('invalid ticker');
+  if (!sym) throw userError('invalid ticker');
   if (enabled) {
     const [{ n }] = (await db.execute(sql`
       select count(*)::int as n from evidence_alert_subs
        where user_id = ${userId} and enabled and ticker <> ${sym}`)).rows;
-    if (n >= MAX_SUBS_PER_USER) throw new Error(`limit of ${MAX_SUBS_PER_USER} alerts reached`);
+    if (n >= MAX_SUBS_PER_USER) throw userError(`limit of ${MAX_SUBS_PER_USER} alerts reached`);
   }
   await db.execute(sql`
     insert into evidence_alert_subs (user_id, ticker, enabled, enabled_at)

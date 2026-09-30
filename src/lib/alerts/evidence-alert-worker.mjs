@@ -44,7 +44,14 @@ export const MAX_TICKERS_PER_RUN = 600;
 export async function runEvidenceAlerts({ now = Date.now(), budgetMs = 45_000, deliver = insertAlerts } = {}) {
   const startedAt = Date.now();
   const subs = await activeSubscriptions();
-  if (!subs.length) return { tickers: 0, subscriptions: 0, created: 0, chunks: 0, pruned: 0, overflow: 0 };
+  // ⚠️ THE SAME SHAPE AS A REAL RUN. This omitted `failed` and `ms`, and the cron interpolates both
+  // into the heartbeat note — so every quarter-hour with no subscribers recorded
+  // "0 tickers · 0 subs · 0 new · undefined failed · undefinedms", which reads as a broken job
+  // rather than an idle one. It is currently the ONLY path taken in production, because
+  // evidence_alert_subs is empty.
+  if (!subs.length) {
+    return { tickers: 0, subscriptions: 0, overflow: 0, chunks: 0, created: 0, failed: 0, pruned: 0, ms: Date.now() - startedAt };
+  }
 
   // Who is waiting on each ticker, and since when.
   const waiting = new Map();

@@ -1,5 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { listAlerts, unreadAlertCount, markRead } from '../../../../lib/alerts/evidence-alert-store';
+import { errorResponse } from '../../../../lib/user-error.mjs';
 
 export const runtime = 'nodejs';
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
@@ -24,7 +25,14 @@ export async function GET() {
     const [alerts, unread] = await Promise.all([listAlerts(userId), unreadAlertCount(userId)]);
     return Response.json({ alerts, unread }, { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ alerts: [], unread: 0, error: e.message }, { headers: NO_STORE });
+    // ⚠️ THE WORST FAILURE MODE A NOTIFICATION SYSTEM HAS. A failed read returned
+    // { alerts: [], unread: 0 } with HTTP 200 — an authoritative "nothing has happened", produced by
+    // our own outage, on the one surface whose entire job is to say that something did.
+    //
+    // The bell in cp-shared reads `r.ok ? await r.json() : null` and applies only a truthy body, so a
+    // 503 leaves the last known count on screen rather than zeroing it.
+    console.log(`[evidence-alerts:inbox] GET ${String(e?.message || e)}`);
+    return Response.json({ error: 'inbox_unavailable' }, { status: 503, headers: NO_STORE });
   }
 }
 
@@ -36,6 +44,10 @@ export async function POST(request) {
     await markRead(userId, { id: b?.id, all: b?.all === true });
     return Response.json({ unread: await unreadAlertCount(userId) }, { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 400, headers: NO_STORE });
+    // Marking read takes no user input that can be invalid, so a throw here is ours, not theirs —
+    // and a 400 would have told the client its own request was malformed.
+    const { body, status } = errorResponse(e, 'inbox_unavailable');
+    if (status !== 400) console.log(`[evidence-alerts:inbox] POST ${String(e?.message || e)}`);
+    return Response.json(body, { status, headers: NO_STORE });
   }
 }

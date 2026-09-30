@@ -182,13 +182,21 @@ export async function GET(request) {
     const ok = await sendEmail(email, subject, html);
     ok ? sent++ : failed++;
 
-    // ⚠️ CLAIM WHAT WE JUST EMAILED, SO IT CANNOT ALSO RING THE BELL.
+    // ⚠️ THIS CLAIM NO LONGER SUPPRESSES ANYTHING. READ BEFORE RELYING ON IT.
     //
-    // The evidence alerter notifies on the same Form 4 accessions this digest covers — its insider
-    // evidence IS these filings. Without a shared key a watcher gets an email and an in-app alert
-    // for one filing. Both paths key on `insider:<accession>`, and whichever runs first owns the
-    // event. Recorded only on a SUCCESSFUL send: claiming a failed email would silence the bell
-    // for a filing nobody was ever told about.
+    // It was written when the in-app evidence alerter was lib/evidence-alerts.js, which reads the
+    // WATCHLIST and dedupes through this same `evidence_alerts_sent` table — so one shared
+    // `insider:<accession>` key genuinely stopped a watcher getting both an email and a bell.
+    //
+    // The live alerter is now lib/alerts/evidence-alert-worker.mjs. It is driven by explicit
+    // per-ticker subscriptions instead of the watchlist, and it dedupes on (user_id, evidence_id) in
+    // a DIFFERENT table. It never reads this key. So a person who both watches a ticker and
+    // subscribes to its evidence alerts will receive an email AND a bell for the same Form 4.
+    //
+    // Left in place rather than "fixed", deliberately: whether an emailed digest should suppress an
+    // explicitly requested in-app alert is a product decision, not a bug, and the two channels now
+    // have different opt-ins and different entitlements. The write is cheap and remains the audit
+    // trail of what was emailed. Recorded only on a SUCCESSFUL send.
     if (ok) {
       for (const f of items) {
         if (!f.accession) continue;

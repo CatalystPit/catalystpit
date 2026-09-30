@@ -595,7 +595,14 @@ function AlertsBody({ symbol }) {
   const [type, setType] = useState('price_above');
   const [thr, setThr] = useState('');
   useEffect(() => { if (symbol) setSym(symbol); }, [symbol]);
-  const load = useCallback(() => fetch('/api/alerts', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => setData(j || { alerts: [], types: [] })).catch(() => setData({ alerts: [], types: [] })), []);
+  // ⚠️ A FAILED LOAD IS NOT AN EMPTY RULE LIST. Both branches resolved to { alerts: [], types: [] },
+  // and the panel answers an empty `alerts` with "No alerts yet" — telling the user their armed rules
+  // are gone while the engine is still evaluating them server-side. `failed` is its own state.
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(() => fetch('/api/alerts', { cache: 'no-store' })
+    .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+    .then((j) => { setData(j); setFailed(false); })
+    .catch(() => setFailed(true)), []);
   useEffect(() => { load(); }, [load]);
   const types = data?.types || [];
   const meta = types.find((t) => t.key === type);
@@ -620,7 +627,8 @@ function AlertsBody({ symbol }) {
         <button onClick={create} style={{ height: 28, background: C.green, color: '#fff', border: 'none', borderRadius: 5, padding: '0 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Add</button>
       </div>
       <div style={{ overflow: 'auto', flex: 1 }}>
-        {data === null ? <div style={{ padding: 18, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading…</div>
+        {failed && !data ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.gold, fontSize: 12.5, lineHeight: 1.5 }}>Could not load your alerts.<br />Any rules you set are still armed — this will retry.</div>
+          : data === null ? <div style={{ padding: 18, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Loading…</div>
           : (data.alerts || []).length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>No alerts yet. Set one above and you&apos;ll get a bell notification when it triggers.</div>
             : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>

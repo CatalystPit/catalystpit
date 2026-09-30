@@ -13,8 +13,12 @@ export async function GET() {
     const [notifications, unread] = await Promise.all([listNotifications(userId), unreadCount(userId)]);
     return Response.json({ notifications, unread, loggedIn: true }, { headers: NO_STORE });
   } catch (e) {
+    // ⚠️ THIS IS THE BELL, AND IT REPORTED AN OUTAGE AS "NOTHING FOR YOU". `unread: 0` with an
+    // explicit HTTP 200 is a positive claim, and the badge believed it: a person with nine unread
+    // notifications watched the count drop to zero because a query failed. The consumer already
+    // leaves its current state alone on a non-ok response, which is the honest outcome.
     console.log(`[notifications] GET failed: ${e.message}`);
-    return Response.json({ notifications: [], unread: 0, loggedIn: !!userId, error: e.message }, { status: 200, headers: NO_STORE });
+    return Response.json({ error: 'notifications_unavailable' }, { status: 503, headers: NO_STORE });
   }
 }
 
@@ -26,7 +30,8 @@ export async function POST() {
     await markAllRead(userId);
     return Response.json({ ok: true }, { headers: NO_STORE });
   } catch (e) {
+    // The 500 was right; the exception text was not.
     console.log(`[notifications] POST failed: ${e.message}`);
-    return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });
+    return Response.json({ error: 'notifications_unavailable' }, { status: 500, headers: NO_STORE });
   }
 }

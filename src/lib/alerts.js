@@ -4,6 +4,7 @@ import { alerts, screenerStocks, eightkFilings, pitNotifications } from './schem
 import { getQuotes } from './market-data';
 import { ensureNotifTables } from './notifications';
 import { buildConds } from './screener-filters';
+import { userError } from './user-error.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Centralized alert engine. Rules live in `alerts` (per user); a cron calls
@@ -62,17 +63,17 @@ const TICKER_RE = /^[A-Z]{1,6}$/;
 export async function createAlert(userId, { symbol, type, threshold, note }) {
   await ensureAlertTables();
   const sym = String(symbol || '').toUpperCase().trim();
-  if (!TICKER_RE.test(sym)) throw new Error('valid symbol required');
-  if (!TYPE_KEYS.has(type)) throw new Error('unknown alert type');
+  if (!TICKER_RE.test(sym)) throw userError('valid symbol required');
+  if (!TYPE_KEYS.has(type)) throw userError('unknown alert type');
   // Enforced here, not only in the picker: a stale client or a direct POST must not be able to
   // store a rule the engine can never fire.
   if (!CREATABLE_KEYS.has(type)) {
     const meta = ALERT_TYPES.find((t) => t.key === type);
-    throw new Error(`${meta?.label || type} alerts are unavailable — ${meta?.unavailable || 'not supported by the current data feed'}`);
+    throw userError(`${meta?.label || type} alerts are unavailable — ${meta?.unavailable || 'not supported by the current data feed'}`);
   }
   const meta = ALERT_TYPES.find((t) => t.key === type);
   const thr = meta.needsThreshold ? Number(threshold) : null;
-  if (meta.needsThreshold && !Number.isFinite(thr)) throw new Error('threshold required');
+  if (meta.needsThreshold && !Number.isFinite(thr)) throw userError('threshold required');
   await db.insert(alerts).values({ userId, symbol: sym, type, threshold: thr, note: note ? String(note).slice(0, 140) : null });
   return listAlerts(userId);
 }
@@ -138,12 +139,30 @@ function evalOne(a, ctx) {
   }
 }
 
+// ⚠️ DISARM ONLY WHAT WAS ACTUALLY DELIVERED.
+//
+// This swallowed the insert failure and then disarmed the rule anyway. So on a failed write the
+// user's one-shot alert was CONSUMED — `active` went false, `last_triggered_at` was stamped, the
+// panel showed "TRIGGERED · re-arm" — and they were never told. They believe they are covered, the
+// rule is off, and nothing anywhere says the notification was lost. This file's own ALERT_TYPES
+// comment states the principle: "an alert that silently never fires is worse than one that was
+// never offered, because the trader believes they are covered and stops watching."
+//
+// Staying armed cannot double-notify: the only path that skips the disarm is the one where no
+// notification was written. The next pass re-evaluates and delivers if the condition still holds.
+// This is the same rule the insider mailer already follows — it claims a filing only on a
+// SUCCESSFUL send, "because claiming a failed email would silence the bell for a filing nobody was
+// ever told about."
 async function fire(a, message) {
   try {
     await ensureNotifTables();
     await db.insert(pitNotifications).values({ userId: a.userId, actorUserId: 'system', actorName: 'Pit Alerts', type: 'alert', excerpt: message });
-  } catch (e) { console.log(`[alerts] notify failed: ${e.message}`); }
+  } catch (e) {
+    console.log(`[alerts] notify failed, rule ${a.id} left ARMED: ${e.message}`);
+    return false;
+  }
   await db.update(alerts).set({ active: false, lastTriggeredAt: new Date() }).where(eq(alerts.id, a.id));
+  return true;
 }
 
 // The engine — evaluate all active alerts against current data, fire + disarm any that trigger.
@@ -183,7 +202,8 @@ export async function evaluateAlerts() {
     if (a.type === 'scan_new') continue;   // handled below (needs the screener query + seen diff)
     let msg = null;
     try { msg = evalOne(a, ctx); } catch { msg = null; }
-    if (msg) { await fire(a, msg); fired++; }
+    // The counter is DELIVERIES, not triggers — the heartbeat note reports it as alerts sent.
+    if (msg && await fire(a, msg)) fired++;
   }
 
   // scan_new — repeatable: fire on NEW tickers entering a saved scan, refresh `seen`, stay armed.
@@ -196,8 +216,7 @@ export async function evaluateAlerts() {
       const fresh = current.filter((t) => !seen.has(t));
       if (fresh.length) {
         const msg = `${fresh.length} new in "${a.note || 'scan'}": ${fresh.slice(0, 6).join(', ')}${fresh.length > 6 ? '…' : ''}`;
-        await fireScan(a, msg, cfg.filters, current);
-        fired++;
+        if (await fireScan(a, msg, cfg.filters, current)) fired++;
       } else if (current.length !== (cfg.seen || []).length) {
         await db.update(alerts).set({ config: JSON.stringify({ filters: cfg.filters, seen: current }) }).where(eq(alerts.id, a.id));
       }
@@ -206,10 +225,20 @@ export async function evaluateAlerts() {
   return { checked: rows.length, fired };
 }
 
+// ⚠️ AND THE SCAN CASE IS WORSE, BECAUSE IT FORGETS PERMANENTLY.
+//
+// A scan_new rule stays armed, so the one-shot problem above does not apply — but `seen` was
+// advanced to `current` even when the notification failed to write. Those newly-matched tickers were
+// then recorded as already-seen, so the next pass found nothing fresh and the match was lost for
+// good, not merely delayed. Leaving `seen` alone means the next pass reports the same new tickers.
 async function fireScan(a, message, filters, current) {
   try {
     await ensureNotifTables();
     await db.insert(pitNotifications).values({ userId: a.userId, actorUserId: 'system', actorName: 'Pit Alerts', type: 'alert', excerpt: message });
-  } catch (e) { console.log(`[alerts] scan notify failed: ${e.message}`); }
+  } catch (e) {
+    console.log(`[alerts] scan notify failed, 'seen' NOT advanced for rule ${a.id}: ${e.message}`);
+    return false;
+  }
   await db.update(alerts).set({ config: JSON.stringify({ filters, seen: current }), lastTriggeredAt: new Date() }).where(eq(alerts.id, a.id));
+  return true;
 }

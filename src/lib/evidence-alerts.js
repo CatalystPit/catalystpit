@@ -16,6 +16,26 @@ export {
   alertKey, insiderAccessionKey, alertBody,
 };
 
+// ⚠️ ORPHANED. runEvidenceAlerts() BELOW IS NO LONGER CALLED BY ANYTHING.
+//
+// /api/cron/evidence-alerts now runs lib/alerts/evidence-alert-worker.mjs, which is driven by
+// explicit per-ticker subscriptions rather than the watchlist. This module's last delivery in
+// production was 2026-09-25 (12 notifications, actor_name 'Pit Evidence'). Only three helpers are
+// still imported from here, by the Form 4 mailer: claim(), insiderAccessionKey() and
+// ensureEvidenceAlertTables().
+//
+// ⚠️ TWO HAZARDS IF YOU ARE READING THIS BEFORE EDITING:
+//
+//   1. It exports `runEvidenceAlerts` under the SAME NAME as the live worker. Importing the wrong
+//      one would quietly restore watchlist-driven, non-Pro-gated alerting.
+//   2. ./evidence-alert-rules.mjs — imported and re-exported below — declares
+//      ALERTABLE_FAMILIES = ['catalyst','insider','congress'] and states "⚠️ 13F IS NOT AN ALERT".
+//      The LIVE path disagrees: lib/alerts/evidence-alerts.mjs includes FAMILY.INSTITUTION. Neither
+//      is "wrong" here; they are two different product answers, and only the live one is in effect.
+//
+// Kept rather than deleted because the claim table it creates is still written on every email run.
+// Whether to retire the rest is an owner decision — see the audit report.
+//
 // EVIDENCE ALERTS — "tell me when something public lands on a name I watch".
 //
 // ── ONE EVENT, ONE ALERT, ENFORCED BY A PRIMARY KEY ─────────────────────────

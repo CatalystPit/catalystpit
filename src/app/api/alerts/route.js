@@ -1,4 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
+import { errorResponse } from '../../../lib/user-error.mjs';
 import { createAlert, createScanAlert, listAlerts, deleteAlert, setAlertActive, CREATABLE_ALERT_TYPES } from '../../../lib/alerts';
 
 export const runtime = 'nodejs';
@@ -15,7 +16,13 @@ export async function GET() {
     const { userId } = await auth();
     if (!userId) return Response.json({ alerts: [], types: CREATABLE_ALERT_TYPES }, { headers: NO_STORE });
     return Response.json({ alerts: await listAlerts(userId), types: CREATABLE_ALERT_TYPES }, { headers: NO_STORE });
-  } catch (e) { return Response.json({ alerts: [], types: CREATABLE_ALERT_TYPES, error: e.message }, { status: 200, headers: NO_STORE }); }
+  } catch (e) {
+    // ⚠️ "No alerts yet" IS WHAT THE PANEL RENDERS FOR AN EMPTY LIST. Returning one with HTTP 200 on
+    // a failed read told a user their armed rules did not exist — the same rules the engine is still
+    // evaluating server-side. A 503 lets the panel say it could not load them.
+    console.log(`[alerts] GET ${String(e?.message || e)}`);
+    return Response.json({ error: 'alerts_unavailable' }, { status: 503, headers: NO_STORE });
+  }
 }
 
 export async function POST(request) {
@@ -28,7 +35,12 @@ export async function POST(request) {
       ? await createScanAlert(userId, b)
       : await createAlert(userId, b);
     return Response.json({ alerts: out }, { headers: NO_STORE });
-  } catch (e) { return Response.json({ error: e.message }, { status: 400 }); }
+  } catch (e) {
+    // A refusal the user can act on keeps its message; our own failure does not become a 400.
+    const { body, status } = errorResponse(e, 'alerts_unavailable');
+    if (status !== 400) console.log(`[alerts] ${String(e?.message || e)}`);
+    return Response.json(body, { status, headers: NO_STORE });
+  }
 }
 
 export async function PATCH(request) {
@@ -39,7 +51,12 @@ export async function PATCH(request) {
     const id = parseInt(b?.id, 10);
     if (!id) return Response.json({ error: 'id required' }, { status: 400 });
     return Response.json({ alerts: await setAlertActive(userId, id, !!b.active) }, { headers: NO_STORE });
-  } catch (e) { return Response.json({ error: e.message }, { status: 400 }); }
+  } catch (e) {
+    // A refusal the user can act on keeps its message; our own failure does not become a 400.
+    const { body, status } = errorResponse(e, 'alerts_unavailable');
+    if (status !== 400) console.log(`[alerts] ${String(e?.message || e)}`);
+    return Response.json(body, { status, headers: NO_STORE });
+  }
 }
 
 export async function DELETE(request) {
@@ -49,5 +66,10 @@ export async function DELETE(request) {
     const id = parseInt(new URL(request.url).searchParams.get('id'), 10);
     if (!id) return Response.json({ error: 'id required' }, { status: 400 });
     return Response.json({ alerts: await deleteAlert(userId, id) }, { headers: NO_STORE });
-  } catch (e) { return Response.json({ error: e.message }, { status: 400 }); }
+  } catch (e) {
+    // A refusal the user can act on keeps its message; our own failure does not become a 400.
+    const { body, status } = errorResponse(e, 'alerts_unavailable');
+    if (status !== 400) console.log(`[alerts] ${String(e?.message || e)}`);
+    return Response.json(body, { status, headers: NO_STORE });
+  }
 }

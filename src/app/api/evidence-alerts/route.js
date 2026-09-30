@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { resolveUserAccess } from '../../../lib/entitlements';
 import { listSubscriptions, setSubscription, normalizeTicker } from '../../../lib/alerts/evidence-alert-store';
+import { errorResponse } from '../../../lib/user-error.mjs';
 
 export const runtime = 'nodejs';
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
@@ -38,7 +39,15 @@ export async function GET() {
     // the rows would look like data loss.
     return Response.json({ pro, tickers: await listSubscriptions(userId) }, { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ pro: false, tickers: [], error: e.message }, { headers: NO_STORE });
+    // ⚠️ THE CATCH CONTRADICTED THE COMMENT FOUR LINES ABOVE IT. "Hiding the rows would look like
+    // data loss" — and then a failed read returned `{ pro: false, tickers: [] }` with HTTP 200,
+    // which is precisely hiding the rows: a Pro subscriber monitoring forty tickers was told they
+    // were not Pro and monitored none. It also handed the caller the exception text.
+    //
+    // 503 is what alert-subs-client already expects; its `if (!r.ok)` branch fails closed to
+    // "not subscribed" WITHOUT asserting that the subscriptions do not exist.
+    console.log(`[evidence-alerts] GET ${String(e?.message || e)}`);
+    return Response.json({ error: 'alerts_unavailable' }, { status: 503, headers: NO_STORE });
   }
 }
 
@@ -55,6 +64,12 @@ export async function POST(request) {
     await setSubscription(gate.userId, ticker, next);
     return Response.json({ ticker, enabled: next, tickers: await listSubscriptions(gate.userId) }, { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 400, headers: NO_STORE });
+    // ⚠️ A REFUSAL AND A FAILURE ARE NOT THE SAME STATUS. This returned 400 with e.message for
+    // both, so a database outage was reported to the user as "you sent something invalid", with
+    // Postgres's own wording as the explanation. The limit message is genuinely written for the
+    // user and still reaches them; everything else is ours and stays ours.
+    const { body, status } = errorResponse(e, 'alerts_unavailable');
+    if (status !== 400) console.log(`[evidence-alerts] POST ${String(e?.message || e)}`);
+    return Response.json(body, { status, headers: NO_STORE });
   }
 }
