@@ -723,7 +723,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     // value>0 SIGNAL window — so a company whose last Form 4 predated the window contributed no name
     // and fell through to an SIC description. See companyIdentity() for the all-history lookup.
     // Widening this query instead would have silently widened every insider signal with it.
-  }).from(insiderTrades).where(and(gte(insiderTrades.transactionDate, since90), sql`${insiderTrades.totalValue} > 0`, sql`coalesce(insider_trades.superseded_by, '') = ''`)).groupBy(insiderTrades.ticker);
+  }).from(insiderTrades).where(and(gte(insiderTrades.transactionDate, since90), sql`${insiderTrades.totalValue} > 0`, sql`insider_trades.superseded_by IS NULL`)).groupBy(insiderTrades.ticker);
 
   const conRows = await db.select({
     ticker: congressTrades.ticker,

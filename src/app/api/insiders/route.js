@@ -52,7 +52,7 @@ const TICKER_IS_A_SYMBOL = sql`${insiderTrades.ticker} is not null
 // too — hiding MYNZ's real $1.03M purchase along with the phantom one. Excluding only superseded
 // rows leaves exactly one version of every filing: the original when it was never amended, the
 // correction when it was. That is the lossless reading of the same canonical rule.
-const NOT_SUPERSEDED = sql`coalesce(insider_trades.superseded_by, '') = ''`;
+const NOT_SUPERSEDED = sql`insider_trades.superseded_by IS NULL`;
 
 // AUTH gate (sign-in, NOT tier — mirrors /api/news): signed-in users of ANY tier
 // get the full set; signed-out get a FREE_PREVIEW_ROWS preview + lockedCount, with
@@ -221,8 +221,8 @@ async function pulseView(window) {
            coalesce(sum(total_value) filter (where action='SELL'),0) sell_val, count(*) filter (where action='SELL') sell_ct,
            count(distinct ticker) filter (where action='BUY') companies_buying,
            count(*) filter (where action='BUY' and (title ilike '%chief executive%' or title ilike '%CEO%' or title ilike '%chief financial%' or title ilike '%CFO%')) ceocfo_buys
-    FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND transaction_date >= ${since}`)).rows?.[0] || {};
-  const clu = (await db.execute(sql`SELECT count(*) n FROM (SELECT ticker FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3) x`)).rows?.[0] || {};
+    FROM insider_trades WHERE superseded_by IS NULL AND transaction_date >= ${since}`)).rows?.[0] || {};
+  const clu = (await db.execute(sql`SELECT count(*) n FROM (SELECT ticker FROM insider_trades WHERE superseded_by IS NULL AND action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3) x`)).rows?.[0] || {};
   const buyVal = +agg.buy_val || 0, sellVal = +agg.sell_val || 0;
   const out = { window, buyValue: buyVal, buyCount: +agg.buy_ct || 0, sellValue: sellVal, sellCount: +agg.sell_ct || 0,
     buySellRatio: sellVal > 0 ? +(buyVal / sellVal).toFixed(2) : null, companiesBuying: +agg.companies_buying || 0,
@@ -243,7 +243,7 @@ async function heatmapView(window, mode) {
         coalesce(sum(t.total_value) filter (where t.action='SELL'),0) sells,
         count(distinct t.executive) insiders, max(t.total_value) largest
       FROM insider_trades t LEFT JOIN screener_meta m ON m.ticker = t.ticker
-      WHERE coalesce(t.superseded_by, '') = '' AND t.action IN ('BUY','SELL') AND t.transaction_date >= ${since} AND t.total_value > 0
+      WHERE t.superseded_by IS NULL AND t.action IN ('BUY','SELL') AND t.transaction_date >= ${since} AND t.total_value > 0
       GROUP BY t.ticker, m.sector HAVING coalesce(sum(t.total_value),0) > 0
       ORDER BY greatest(coalesce(sum(t.total_value) filter (where t.action='BUY'),0), coalesce(sum(t.total_value) filter (where t.action='SELL'),0)) DESC
       LIMIT 250`);
@@ -259,7 +259,7 @@ async function notableView(window) {
   const key = `insider:notable:${window}`;
   const cached = await kvGet(key); if (cached) return cached;
   const since = sinceWindow(window);
-  const top = async (cond) => (await db.execute(sql`SELECT ticker, company, executive, title, total_value, shares, shares_owned_after, transaction_date FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND ${cond} AND transaction_date >= ${since} ORDER BY total_value DESC LIMIT 1`)).rows?.[0] || null;
+  const top = async (cond) => (await db.execute(sql`SELECT ticker, company, executive, title, total_value, shares, shares_owned_after, transaction_date FROM insider_trades WHERE superseded_by IS NULL AND ${cond} AND transaction_date >= ${since} ORDER BY total_value DESC LIMIT 1`)).rows?.[0] || null;
   // ⚠️ ALL SEVEN AT ONCE. Three of these already ran concurrently and the other four then ran one
   // after another, each waiting on the last for no reason — they share only `since` and none reads
   // another's result. On a cache miss that was four serialised round trips to Neon stacked on top of
@@ -269,12 +269,12 @@ async function notableView(window) {
     top(sql`action='BUY' and (title ilike '%chief executive%' or title ilike '%CEO%')`),
     top(sql`action='BUY' and (title ilike '%chief financial%' or title ilike '%CFO%')`),
     top(sql`action='BUY'`),
-    one(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 2 ORDER BY count(distinct executive) DESC, sum(total_value) DESC LIMIT 1`),
-    one(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3 ORDER BY sum(total_value) DESC LIMIT 1`),
-    one(sql`SELECT ticker, company, executive, title, total_value, (shares / nullif(shares_owned_after - shares, 0)) * 100 pct FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND action='BUY' AND shares_owned_after > shares AND total_value > 25000 AND transaction_date >= ${since} ORDER BY pct DESC LIMIT 1`),
+    one(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE superseded_by IS NULL AND action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 2 ORDER BY count(distinct executive) DESC, sum(total_value) DESC LIMIT 1`),
+    one(sql`SELECT ticker, max(company) company, count(distinct executive) insiders, sum(total_value) total FROM insider_trades WHERE superseded_by IS NULL AND action='BUY' AND transaction_date >= ${since} GROUP BY ticker HAVING count(distinct executive) >= 3 ORDER BY sum(total_value) DESC LIMIT 1`),
+    one(sql`SELECT ticker, company, executive, title, total_value, (shares / nullif(shares_owned_after - shares, 0)) * 100 pct FROM insider_trades WHERE superseded_by IS NULL AND action='BUY' AND shares_owned_after > shares AND total_value > 25000 AND transaction_date >= ${since} ORDER BY pct DESC LIMIT 1`),
     // Highest-conviction purchase in the window. Only score, band and approved tags leave
     // the server — the engine and its inputs stay in lib/conviction.server.js.
-    one(sql`SELECT ticker, company, executive, title, total_value, transaction_date, conviction, conviction_band, conviction_tags FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND conviction IS NOT NULL AND transaction_date >= ${since} ORDER BY conviction DESC, total_value DESC LIMIT 1`),
+    one(sql`SELECT ticker, company, executive, title, total_value, transaction_date, conviction, conviction_band, conviction_tags FROM insider_trades WHERE superseded_by IS NULL AND conviction IS NOT NULL AND transaction_date >= ${since} ORDER BY conviction DESC, total_value DESC LIMIT 1`),
   ]);
   const t = (r, x = {}) => r ? { ticker: r.ticker, company: r.company, executive: r.executive, title: r.title, value: +r.total_value || 0, date: r.transaction_date, ...x } : null;
   const out = { window,
@@ -479,10 +479,10 @@ export async function GET(request) {
     // The client sends a flag, not a cutoff. Which bands count as "high conviction" is
     // decided here, so retuning the model cannot strand a hardcoded number in the UI.
     if (searchParams.get('highconv') === '1') conds.push(inArray(insiderTrades.convictionBand, ['HIGH', 'VERY HIGH', 'EXTREME']));
-    if (clusterF) conds.push(sql`${insiderTrades.ticker} IN (SELECT ticker FROM insider_trades WHERE coalesce(superseded_by, '') = '' AND action='BUY' AND transaction_date >= current_date - interval '90 days' GROUP BY ticker HAVING count(distinct executive) >= 3)`);
+    if (clusterF) conds.push(sql`${insiderTrades.ticker} IN (SELECT ticker FROM insider_trades WHERE superseded_by IS NULL AND action='BUY' AND transaction_date >= current_date - interval '90 days' GROUP BY ticker HAVING count(distinct executive) >= 3)`);
     if (minConviction != null && minConviction > 0) conds.push(sql`${insiderTrades.conviction} >= ${minConviction}`);
     if (bandF && CONVICTION_BANDS.includes(bandF)) conds.push(eq(insiderTrades.convictionBand, bandF));
-    if (firstBuyF) conds.push(sql`${insiderTrades.transactionCode} = 'P' AND NOT EXISTS (SELECT 1 FROM insider_trades e WHERE coalesce(e.superseded_by, '') = '' AND e.executive = ${insiderTrades.executive} AND e.ticker = ${insiderTrades.ticker} AND e.transaction_code = 'P' AND e.transaction_date < ${insiderTrades.transactionDate})`);
+    if (firstBuyF) conds.push(sql`${insiderTrades.transactionCode} = 'P' AND NOT EXISTS (SELECT 1 FROM insider_trades e WHERE e.superseded_by IS NULL AND e.executive = ${insiderTrades.executive} AND e.ticker = ${insiderTrades.ticker} AND e.transaction_code = 'P' AND e.transaction_date < ${insiderTrades.transactionDate})`);
 
     // A BASE condition, not one more optional filter: no query string can turn it off, and any
     // filter added below inherits it for free.

@@ -124,7 +124,7 @@ export async function GET(request) {
       // ⚠️ NEVER ALERT ON A FILING THE FILER HAS RETRACTED. Without this an amended Form 4 emails the
       // figures the 4/A was filed to correct — and the worst case is not subtle: MYNZ's mistyped
       // 8.8B purchase sat in this selection window before its correction landed.
-      sql`coalesce(insider_trades.superseded_by, '') = ''`,
+      sql`insider_trades.superseded_by IS NULL`,
       gt(insiderTrades.insertedAt, new Date(watermark)),
       lte(insiderTrades.insertedAt, new Date(runStartIso)),
     ))
