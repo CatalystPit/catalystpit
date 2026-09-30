@@ -146,5 +146,42 @@ L('⚠️ 11 — the What Changed watermark is the feature, not an artifact');
   ok('it is scoped to the user, not to a list', !/listId/.test(code('src/app/api/watchlist/changes/route.js')));
 }
 
+L('⚠️ 12 — health distinguishes FAILED from NEVER-RUN, without faking green');
+{
+  const hb = read('src/lib/job-heartbeat.js');
+  // ⚠️ AN EVENT-DRIVEN JOB THAT HAS NOT FIRED IS NOT A BROKEN ONE, and must not be reported as a
+  // successful run either. Three states, not two.
+  // ⚠️ THE THREE-WAY DISTINCTION LIVES IN THE HEALTH ROUTE, not in the heartbeat writer.
+  const health = read('src/app/api/health/route.js');
+  ok('event-driven jobs are declared as such', /eventDriven: true/.test(hb));
+  ok('…and a never-run job is its own state, distinct from a failing one',
+    /state: b == null \? 'never'/.test(health));
+  ok('⚠️ …and "never" is surfaced rather than buried, because benign-forever is a hole',
+    /IS BENIGN FOREVER, WHICH IS A HOLE/.test(health));
+  ok('a heartbeat records a run that SUCCEEDED, not that we reached a line',
+    /A heartbeat records that the job RAN AND SUCCEEDED/.test(hb));
+  // ⚠️ MATCHED ON A FRAGMENT THAT SITS ON ONE LINE: the sentence wraps after "is a".
+  ok('…and seen: 0 is explicitly healthy', /perfectly healthy Sunday/.test(hb));
+  ok('⚠️ only a successful run moves the success clock',
+    /last_success_at = case when \$\{!!ok\} then now\(\) else feed_state\.last_success_at end/.test(hb));
+  ok('⚠️ and the public note can never be an error dump', /\$\{safeNote\(note\)\}/.test(hb));
+
+  // Production, measured rather than asserted from code.
+  const dividends = await one(sql`select last_success_at, last_status, consecutive_failures, events_seen, note
+    from feed_state where feed_key='job:dividends'`);
+  ok('⚠️ dividends has genuinely succeeded', dividends?.last_success_at != null, JSON.stringify(dividends));
+  ok('…with status 200 and no consecutive failures',
+    Number(dividends?.last_status) === 200 && Number(dividends?.consecutive_failures) === 0);
+  ok('…and a non-zero events_seen, so the counter is real', Number(dividends?.events_seen) > 0, String(dividends?.events_seen));
+  ok('…and its note is not a dumped statement', !/insert into|failed query/i.test(String(dividends?.note)));
+
+  // ⚠️ NOTHING WAS MANUFACTURED TO MAKE THIS GREEN. The two webhooks have still never run, and that
+  // is the correct pre-launch state — no synthetic Stripe or Clerk event exists.
+  for (const k of ['job:stripe-webhook', 'job:clerk-webhook']) {
+    const row = await one(sql`select last_success_at from feed_state where feed_key=${k}`);
+    ok(`${k} has NOT been faked into a successful run`, !row || row.last_success_at == null, JSON.stringify(row));
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
