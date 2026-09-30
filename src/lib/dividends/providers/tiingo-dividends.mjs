@@ -64,18 +64,52 @@ const dayOf = (v) => {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
 };
 
+/**
+ * ⚠️ A TICKER IS NOT A SECURITY. permaTicker IS.
+ *
+ * Tiingo's market-wide endpoint returns EVERY listing that goes ex on a date, worldwide, and two
+ * different securities can share a ticker string. Measured on exDate=2026-08-20:
+ *
+ *   US000000000042  msft  0.91      declared 2026-06-10  paid 2026-09-10   <- Microsoft
+ *   CA000000137368  msft  0.063677  declared 2026-06-12  paid 2026-09-17   <- a Canadian listing
+ *   US000000000134  amat  0.53      ...                                    <- Applied Materials
+ *   CA000000137460  amat  0.058686  ...                                    <- a Canadian listing
+ *
+ * permaTicker is Tiingo's stable per-security identifier and it carries an ISO country prefix, so it
+ * answers both questions this file got wrong.
+ *
+ * ⚠️ AND THE COUNTRY PREFIX IS SAFE TO FILTER ON, which was checked before relying on it rather than
+ * assumed. Every US-listed ADR carries US, including the ones whose issuer is foreign: BABA, TSM,
+ * NVO, SHEL, BP, AZN, SONY, TM, HDB — and RY and TD, the Canadian banks, whose US listings are
+ * US000000007590 and US000000007931. Over 4,111 sampled rows the only non-US prefixes were CH
+ * (Shanghai/Shenzhen A-shares, numeric tickers like 600846) and the CA lines above. So this removes
+ * no security a reader of a US dividend calendar could hold, and it is the provider's own
+ * classification rather than a list we maintain.
+ */
+const US_PERMA = /^US[0-9]+$/;
+
 export function toCanonical(row, { asOf = null } = {}) {
   const ticker = String(row?.ticker || '').toUpperCase().trim();
   const exDividendDate = dayOf(row?.exDate);
   if (!ticker || !exDividendDate) return null;
 
+  const permaTicker = String(row?.permaTicker || '').toUpperCase().trim();
+  // A non-US listing under a US ticker is the defect, not an extra row: keyed correctly it would
+  // simply become a SECOND "MSFT" dividend of six cents sitting beside the real ninety-one.
+  if (permaTicker && !US_PERMA.test(permaTicker)) return null;
+
   const declarationDate = dayOf(row?.declarationDate);
 
-  // ⚠️ THE EVENT ID CARRIES THE EX-DATE, NOT JUST THE TICKER. Tiingo supplies no id of its own, and
-  // the store's uniqueness is (source, source_event_id). Keying on the ticker alone would make
-  // every one of an issuer's dividends the same row; including the ex-date makes one declaration
-  // one row, and re-ingesting the same day updates in place rather than duplicating.
-  const sourceEventId = `${ticker}:${exDividendDate}`;
+  // ⚠️ THE EVENT ID IS THE SECURITY PLUS THE EX-DATE, AND THE SECURITY IS permaTicker.
+  //
+  // This was `${ticker}:${exDividendDate}`, and the store's uniqueness is (source, source_event_id).
+  // Two listings sharing a ticker therefore produced ONE key with two different payloads, which
+  // broke the job outright — a multi-row upsert containing the same conflict key twice raises
+  // "ON CONFLICT DO UPDATE command cannot affect row a second time" (SQLSTATE 21000) — and, worse,
+  // whichever row landed last won: production held Microsoft's dividend as $0.063677 against a real
+  // $0.91. Keyed on permaTicker the same 4,111-row sample yields 0 collisions, and no row in it was
+  // missing a permaTicker. The ticker still travels on the event; it just no longer decides identity.
+  const sourceEventId = `${permaTicker || ticker}:${exDividendDate}`;
 
   return canonicalEvent({
     source: SOURCE_ID,

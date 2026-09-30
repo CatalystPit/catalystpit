@@ -117,7 +117,15 @@ export async function GET(request) {
       asOf: sync.updatedAt, source: 'scheduled-ingest',
     }, { headers: CACHE });
   } catch (e) {
+    // ⚠️ A BROKEN SOURCE IS NOT AN EMPTY CALENDAR. This returned events: [] with HTTP 200, so a failed
+    // read was a successful answer meaning "no dividends are scheduled" — a claim about the market,
+    // produced by our own outage, on a board whose entire content is dates.
+    //
+    // DividendsClient already handles this correctly and has since it was written: it throws on a
+    // non-ok response, sets status 'error', and deliberately leaves the previous answer on screen
+    // "because an empty table and a broken request look identical and mean opposite things". The 200
+    // was the only thing stopping that from working.
     console.log(`[dividend-calendar] ${e.message}`);
-    return Response.json({ enabled: true, events: [], total: 0, error: 'unavailable' }, { status: 200, headers: NO_STORE });
+    return Response.json({ error: 'calendar_unavailable' }, { status: 503, headers: NO_STORE });
   }
 }

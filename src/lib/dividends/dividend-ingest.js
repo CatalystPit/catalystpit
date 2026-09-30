@@ -58,7 +58,7 @@ export async function syncDividends({
     return { ok: false, source: provider.id, from, to, pages, error, written: 0, ms: Date.now() - startedAt };
   }
 
-  const { written, batches } = await upsertDividendEvents(events);
+  const { written, batches, collapsed } = await upsertDividendEvents(events);
   return {
     ok: true,
     source: provider.id,
@@ -69,6 +69,9 @@ export async function syncDividends({
     fetched: events.length,
     written,
     batches,
+    // ⚠️ REPORTED, NOT SWALLOWED. A provider that starts emitting duplicate keys is a change in the
+    // feed, and the run that silently absorbs it is the run nobody investigates. Normally 0.
+    collapsed,
     announced: events.filter((e) => e.announced).length,
     withPaymentDate: events.filter((e) => e.paymentDate).length,
     // A partial page failure still writes what it got, and says so rather than reporting success.

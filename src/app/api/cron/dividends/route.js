@@ -32,11 +32,18 @@ export async function GET(request) {
     // ⚠️ THE SYNC REPORTS ITS OWN VERDICT, so the heartbeat follows out.ok rather than "we reached
     // this line". A 502 from the provider returns here normally with ok:false — recording that as a
     // success would put a green clock on a feed that fetched nothing.
-    await beat(!!out?.ok, out?.upserts ?? out?.rows, JSON.stringify(out).slice(0, 180));
+    // ⚠️ `written` IS THE FIELD THIS FUNCTION RETURNS. It read `out.upserts ?? out.rows`, neither of
+    // which exists, so every run recorded events_seen = 0 — including a run that wrote 22,331 events.
+    // A heartbeat that always says zero cannot distinguish a quiet day from a broken feed.
+    await beat(!!out?.ok, out?.written, JSON.stringify(out).slice(0, 180));
     return Response.json(out, { status: out.ok ? 200 : 502 });
   } catch (e) {
+    // A FIXED STRING, as every other cron in this codebase does. /api/health serves these notes
+    // publicly, and this is the one caller that passed an exception through — which is how a dumped
+    // INSERT statement came to be published. lib/job-heartbeat.js now also sanitises at the write,
+    // but the convention belongs here too.
     console.log(`[dividends] ERROR ${e.message}`);
-    await beat(false, 0, e.message);
-    return Response.json({ ok: false, error: e.message }, { status: 500 });
+    await beat(false, 0, 'sync threw');
+    return Response.json({ ok: false, error: 'sync_failed' }, { status: 500 });
   }
 }

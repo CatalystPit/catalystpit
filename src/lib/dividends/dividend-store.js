@@ -23,8 +23,26 @@ import { UNCLASSIFIED_SECTOR } from './dividend-view.mjs';
  * statements rather than a thousand of them.
  */
 export async function upsertDividendEvents(events, { batchSize = 500 } = {}) {
-  const rows = (events || []).filter(Boolean);
-  if (!rows.length) return { written: 0, batches: 0 };
+  const incoming = (events || []).filter(Boolean);
+  if (!incoming.length) return { written: 0, batches: 0, collapsed: 0 };
+
+  // ⚠️ ONE CONFLICT KEY MAY APPEAR ONCE PER STATEMENT. THIS IS A HARD POSTGRES RULE, NOT A STYLE.
+  //
+  // A multi-row `insert ... on conflict do update` that carries the same (source, source_event_id)
+  // twice fails the WHOLE statement with "ON CONFLICT DO UPDATE command cannot affect row a second
+  // time" (SQLSTATE 21000) — and because the batches before it had already committed, the run died
+  // half-written while reporting a 500. That is exactly how the dividends job came to have
+  // last_success_at = null while the table held 45,475 rows.
+  //
+  // The Tiingo adapter's key is fixed separately, which is the root cause. This is the guarantee the
+  // CONSTRAINT deserves: whatever any present or future provider emits, the statement sent to
+  // Postgres is unique on its own conflict key. Last occurrence wins, matching what the upsert would
+  // have done had the rows arrived in separate statements.
+  const byKey = new Map();
+  for (const e of incoming) byKey.set(`${e.source}\u0000${e.sourceEventId}`, e);
+  const rows = [...byKey.values()];
+  const collapsed = incoming.length - rows.length;
+
   let written = 0, batches = 0;
 
   for (let i = 0; i < rows.length; i += batchSize) {
@@ -61,7 +79,7 @@ export async function upsertDividendEvents(events, { batchSize = 500 } = {}) {
     written += batch.length;
     batches += 1;
   }
-  return { written, batches };
+  return { written, batches, collapsed };
 }
 
 /** Column list shared by the calendar reads, so the two date modes cannot drift apart. */
@@ -141,8 +159,20 @@ export async function calendarRange({ from, to, mode = 'ex', limit = 500, offset
   const off = Math.max(0, Number(offset) || 0);
   const where = calendarConditions({ from, to, dateCol, ...filters });
 
+  // ⚠️ ONE DIVIDEND PER SECURITY PER DATE, EVEN WHEN THE PROVIDER CARRIES THE SECURITY TWICE.
+  //
+  // permaTicker is the right identity for INGESTION — it is what stops two different listings sharing
+  // a ticker from overwriting each other. But Tiingo sometimes holds one security under two
+  // permaTickers, apparently across an identifier migration: ONEOK arrives as both US000000002211 and
+  // US000000145815 with a byte-identical $1.07 on the same dates. Both rows are legitimate events by
+  // the ingestion key and neither is wrong, so this is not an identity bug to fix upstream — it is a
+  // display question, and a calendar shows one dividend. Measured: 5 such pairs in 32,710 rows.
+  //
+  // `distinct on` the fields a reader can see, so two rows that differ in any visible way still both
+  // appear. The distinct key leads with the ordering columns, which is what Postgres requires.
   const res = await db.execute(sql`
-    select ${EVENT_COLUMNS},
+    select distinct on (${dateCol}, d.ticker, d.cash_amount, d.payment_date, d.record_date)
+           ${EVENT_COLUMNS},
            coalesce(s.company, i.name) as company,
            coalesce(s.sector, m.sector) as sector,
            coalesce(s.market_cap, m.market_cap) as market_cap,
@@ -159,7 +189,7 @@ export async function calendarRange({ from, to, mode = 'ex', limit = 500, offset
       left join screener_meta     m on m.ticker = d.ticker
       left join security_identity i on i.ticker = d.ticker
      where ${where}
-     order by ${dateCol} asc, d.ticker asc
+     order by ${dateCol} asc, d.ticker asc, d.cash_amount asc, d.payment_date asc, d.record_date asc
      limit ${lim} offset ${off}`);
 
   return res.rows ?? res;
@@ -172,7 +202,11 @@ export async function calendarCount({ from, to, mode = 'ex', ...filters } = {}) 
   // to be here too even though nothing is selected from them.
   const where = calendarConditions({ from, to, dateCol, ...filters });
   const res = await db.execute(sql`
-    select count(*)::int as n
+    -- ⚠️ COUNTED THE SAME WAY THE ROWS ARE SELECTED. This file already learned this lesson once:
+    -- "When the count had its own narrower conditions the page reported '139 events' above an empty
+    -- table." Adding DISTINCT ON to the rows without matching it here would recreate that
+    -- contradiction in the other direction — a total higher than the rows it describes.
+    select count(distinct (${dateCol}, d.ticker, d.cash_amount, d.payment_date, d.record_date))::int as n
       from dividend_events d
       left join screener_stocks   s on s.ticker = d.ticker
       left join screener_meta     m on m.ticker = d.ticker
@@ -198,7 +232,8 @@ export async function calendarSectorCounts({ from, to, mode = 'ex', ...filters }
   const dateCol = mode === 'payment' ? sql`d.payment_date` : sql`d.ex_dividend_date`;
   const where = calendarConditions({ from, to, dateCol, ...filters, sector: null });
   const res = await db.execute(sql`
-    select coalesce(s.sector, m.sector) as sector, count(*)::int as n
+    -- Same distinct key as the rows, for the same reason.
+    select coalesce(s.sector, m.sector) as sector, count(distinct (${dateCol}, d.ticker, d.cash_amount, d.payment_date, d.record_date))::int as n
       from dividend_events d
       left join screener_stocks   s on s.ticker = d.ticker
       left join screener_meta     m on m.ticker = d.ticker
