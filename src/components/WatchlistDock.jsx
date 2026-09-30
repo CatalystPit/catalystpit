@@ -23,6 +23,7 @@ function Body({ onClose }) {
   const changes = changesState.data;
   const [activeId, setActiveId] = useState(null);
   const [rows, setRows] = useState(null);
+  const [failed, setFailed] = useState(false);
   const [menu, setMenu] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState('');
@@ -64,10 +65,20 @@ function Body({ onClose }) {
   }, []);
   useEffect(() => { loadLists(); }, [loadLists]);
 
+  // ⚠️ A FAILED FETCH IS NOT AN EMPTY WATCHLIST. Both branches here collapsed to `setRows([])`, and
+  // the render answers an empty array with "Your watchlist is empty." So a 500 or a dropped
+  // connection told a paying user their saved list was GONE — the single most alarming thing this
+  // dock can say, and it said it about data that was never touched.
   const loadRows = useCallback(async (id) => {
     if (!id) return;
-    try { const r = await fetch(`/api/watchlist?prices=1&listId=${id}`, { cache: 'no-store' }); const j = r.ok ? await r.json() : null; setRows(Array.isArray(j) ? j : []); }
-    catch { setRows([]); }
+    try {
+      const r = await fetch(`/api/watchlist?prices=1&listId=${id}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      if (!Array.isArray(j)) throw new Error('shape');
+      setRows(j);
+      setFailed(false);
+    } catch { setFailed(true); }
   }, []);
   useEffect(() => {
     if (!activeId) return;
@@ -196,8 +207,13 @@ function Body({ onClose }) {
       )}
 
       <div style={{ overflow: 'auto', flex: 1 }}>
-        {rows === null ? (
+        {rows === null && !failed ? (
           <div style={{ padding: 24, textAlign: 'center', color: C.dim, fontSize: 13 }}>Loading…</div>
+        ) : failed && !rows?.length ? (
+          // ⚠️ NEVER "your watchlist is empty" WHEN WE SIMPLY COULD NOT READ IT.
+          <div style={{ padding: '24px 18px', textAlign: 'center', color: C.gold, fontSize: 12.5, lineHeight: 1.5 }}>
+            Could not load your watchlist just now.<br />Your saved tickers are safe — this will retry.
+          </div>
         ) : rows.length === 0 ? (
           <div style={{ padding: '24px 18px', textAlign: 'center', color: C.muted, fontSize: 12.5, lineHeight: 1.5 }}>
             Your watchlist is empty. Hit <b style={{ color: C.green }}>+</b> above or tap the ★ on any ticker page.

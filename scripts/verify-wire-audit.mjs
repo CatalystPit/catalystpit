@@ -104,5 +104,79 @@ L('the wire API is bounded and leaks nothing');
   ok('its responses are private', /no-store/.test(wire));
 }
 
+L('⚠️ an outage is never rendered as a factual absence');
+{
+  // ⚠️ THE DEFECT CLASS THE AUDIT FOUND FOUR TIMES. Each of these renders answered an empty array
+  // with a CLAIM — about the SEC, about the user's own saved data, about their filters — and every
+  // failure path arrived at that same empty array. A fetch blip made the claim.
+  //
+  // ⚠️ MATCHED ON THE THROW, NOT ON THE WORD "error": every one of these files discusses failure in
+  // prose, so a search for the concept finds the comment explaining the fix.
+
+  // The route was the root: HTTP 200 + {list: []} + a 60s PUBLIC edge cache.
+  const ek = read('src/app/api/eightk/route.js');
+  ok('⚠️ /api/eightk answers a failed read with 503, not an empty list', /status: 503/.test(ek));
+  ok('…and no longer returns a list on the failure path', !/return Response\.json\(\s*\{ list: \[\], error/.test(ek));
+  // ⚠️ SCOPED TO THE RETURNS. The comment above the fix QUOTES the old `{ list: [], error: e.message }`
+  // line to explain it, so a file-wide search for that shape fails against correct code. It did.
+  const ekReturns = (ek.match(/return Response\.json\([\s\S]*?\);/g) || []).join(' ');
+  ok('…and never hands the caller the exception string',
+    !/e\.message|e\?\.message/.test(ekReturns) && /error: 'eightk_unavailable'/.test(ek),
+    (ekReturns.match(/[^;]*message[^;]*/) || [''])[0].slice(0, 80));
+  // ⚠️ THE CACHE WAS THE MULTIPLIER — one failed read served to every visitor for a minute.
+  ok('⚠️ …and a failure is never edge-cached', /\{ status: 503, headers: \{ 'Cache-Control': 'private, no-store' \} \}/.test(ek.replace(/\s+/g, ' ')));
+
+  ok('/api/wire keeps its 500 but not the exception text',
+    /error: 'wire_unavailable'/.test(read('src/app/api/wire/route.js')));
+
+  const CLIENTS = [
+    ['src/components/EightKWire.jsx', 'the 8-K wire',
+      /No \{all \? '' : 'material '\}8-K filings/, /failed && !list\?\.length \? \(/, 'The 8-K wire is unavailable'],
+    ['src/components/WatchlistDock.jsx', 'the watchlist dock',
+      /Your watchlist is empty\./, /failed && !rows\?\.length \? \(/, 'Could not load your watchlist'],
+    ['src/components/scan/CustomScannerPanel.jsx', 'the custom scanner',
+      /No matches\. Widen your filters\./, /\{failed \? \(/, 'The scan could not be completed'],
+  ];
+  for (const [f, label, claim, branch, msg] of CLIENTS) {
+    const src = read(f);
+    ok(`${label} still makes its absence claim for a genuine empty result`, claim.test(src));
+    // ⚠️ THE FIX, AS A CODE SHAPE: a non-ok response THROWS rather than becoming an empty array.
+    ok(`⚠️ ${label} throws on a non-ok response instead of emptying the list`,
+      /if \(!r\.ok\) throw new Error\(String\(r\.status\)\);/.test(src));
+    // ⚠️ THE LIST THAT CARRIES THE CLAIM, not every array in the file. WatchlistDock also empties
+    // its symbol-search suggestions on a failed autocomplete — an empty dropdown asserts nothing
+    // about the market or the user's data, so it is correctly left alone.
+    ok(`⚠️ ${label} no longer collapses a caught failure into an empty array`,
+      !/catch \{ set(Rows|List)\(\[\]\)/.test(src));
+    ok(`${label} holds a distinct failure state`, /const \[failed, setFailed\] = useState\(false\);/.test(src));
+    // ⚠️ THE CONDITION, NOT THE PRESENCE OF THE WORD. The first version of this compared
+    // indexOf('failed') against the claim's position — which the useState declaration satisfies no
+    // matter what the render does. Replacing `{failed ? (` with `{false ? (` left it green.
+    ok(`⚠️ ${label} gates the failure branch on the failure state`, branch.test(src),
+      String(branch));
+    // ⚠️ AND COMPARED WITH THE COMMENTS STRIPPED. This codebase explains each fix directly above it
+    // and QUOTES the sentence being fixed, so the claim's first occurrence in the raw file is the
+    // comment about it — which sits earlier than the render and inverted the comparison. Two of the
+    // three failed that way on correct code.
+    const code = src.replace(/^\s*\/\/.*$/gm, '');
+    ok(`⚠️ …and that branch is reached BEFORE the absence claim`,
+      code.indexOf(msg) > 0 && code.indexOf(msg) < code.search(claim),
+      `msg@${code.indexOf(msg)} claim@${code.search(claim)}`);
+  }
+  // The dock's wording is the one that matters most: it must contradict data loss, not imply it.
+  ok('⚠️ the dock tells the user their saved tickers are safe',
+    /Your saved tickers are safe/.test(read('src/components/WatchlistDock.jsx')));
+  ok('⚠️ the scanner tells the user their filters were not the problem',
+    /Your filters are fine/.test(read('src/components/scan/CustomScannerPanel.jsx')));
+  ok('⚠️ the 8-K wire blames itself rather than the SEC',
+    /The 8-K wire is unavailable right now/.test(read('src/components/EightKWire.jsx')));
+
+  // PitWire was already correct and is asserted so it stays that way.
+  const pw = read('src/components/PitWire.jsx');
+  ok('the Pit Wire reports a failed poll as a connection state', /setConn\('retrying'\)/.test(pw));
+  ok('…and watches the clock as well as the loop, so a silent stall still shows',
+    /Staleness watchdog/.test(pw) && /stale:/.test(pw));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

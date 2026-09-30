@@ -58,13 +58,24 @@ function Row({ f, onPick, bindTicker = null }) {
 export default function EightKWire({ bare = false, limit = 30, onPick = null, bindTicker = null }) {
   const [all, setAll] = useState(false);
   const [list, setList] = useState(null);
+  const [failed, setFailed] = useState(false);
 
+  // ⚠️ A FAILED FETCH IS NOT AN EMPTY SEC. This read `r.ok ? await r.json() : null` and then
+  // `setList(j?.list || [])`, so a 503, a network blip and a malformed body all landed on the same
+  // render as a genuinely quiet week: "No material 8-K filings in the last few days." That is a
+  // factual claim about the SEC, made by our own outage, and a trader acts on it.
+  //
+  // A failed REFRESH also no longer blanks a populated wire — the rows we already hold are real, and
+  // showing them is better than replacing them with a claim.
   const load = useCallback(async () => {
     try {
       const r = await fetch(`/api/eightk?limit=${limit}${all ? '&all=1' : ''}`, { cache: 'no-store' });
-      const j = r.ok ? await r.json() : null;
-      setList(j?.list || []);
-    } catch { setList([]); }
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      if (j?.error) throw new Error(String(j.error));
+      setList(Array.isArray(j?.list) ? j.list : []);
+      setFailed(false);
+    } catch { setFailed(true); }
   }, [all, limit]);
 
   useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
@@ -82,8 +93,13 @@ export default function EightKWire({ bare = false, limit = 30, onPick = null, bi
 
   const body = (
     <div style={{ overflowY: 'auto', flex: bare ? 1 : undefined, maxHeight: bare ? undefined : 420 }}>
-      {list == null ? (
+      {list == null && !failed ? (
         <div style={{ padding: '24px 12px', textAlign: 'center', color: C.muted, fontSize: 12 }}>Loading the wire…</div>
+      ) : failed && !list?.length ? (
+        // ⚠️ SAYS WHOSE FAULT IT IS. The one thing this must not say is that the SEC was quiet.
+        <div style={{ padding: '24px 12px', textAlign: 'center', color: C.gold, fontSize: 12, fontWeight: 300, lineHeight: 1.5 }}>
+          The 8-K wire is unavailable right now.<br />Retrying every minute — nothing will be missed.
+        </div>
       ) : list.length === 0 ? (
         <div style={{ padding: '24px 12px', textAlign: 'center', color: C.muted, fontSize: 12, fontWeight: 300 }}>
           No {all ? '' : 'material '}8-K filings in the last few days.

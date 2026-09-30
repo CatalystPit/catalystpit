@@ -98,7 +98,13 @@ export async function GET(request) {
       { headers: { 'Cache-Control': 'private, no-store' } },
     );
   } catch (e) {
+    // The 500 is right — the wire never answers an outage with an empty event list. But the status is
+    // the message: truncating the exception to 200 characters still handed the client whatever
+    // Postgres said. It belongs in the log.
     console.error('[wire]', e);
-    return Response.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 });
+    return Response.json(
+      { error: 'wire_unavailable' },
+      { status: 500, headers: { 'Cache-Control': 'private, no-store' } },
+    );
   }
 }

@@ -55,6 +55,7 @@ export default function CustomScannerPanel({ onPick }) {
   const [caps, setCaps] = useState(null);
   const [conds, setConds] = useState([]);          // [{ key, cond }] — cond is null until chosen
   const [rows, setRows] = useState(null);
+  const [failed, setFailed] = useState(false);
   const [running, setRunning] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [colsOpen, setColsOpen] = useState(false);
@@ -137,6 +138,7 @@ export default function CustomScannerPanel({ onPick }) {
 
   const run = useCallback(async (list = conds, sortState = sort) => {
     setRunning(true);
+    setFailed(false);   // a re-run is not still the last run's failure
     try {
       const qs = new URLSearchParams({
         filters: JSON.stringify(activeFilters(list)),
@@ -145,9 +147,16 @@ export default function CustomScannerPanel({ onPick }) {
         dir: sortState.dir,
       });
       const r = await fetch(`/api/screener?${qs}`, { cache: 'no-store' });
-      const j = r.ok ? await r.json() : null;
-      setRows(j?.rows || []);
-    } catch { setRows([]); }
+      // ⚠️ A FAILED SCAN IS NOT A SCAN WITH NO MATCHES. This collapsed every failure into `[]`, and
+      // the render answers `[]` with "No matches. Widen your filters." — so a screener outage sent the
+      // user off to loosen filters that were never the problem, and taught them their criteria were
+      // too narrow when they were fine.
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      if (j?.error) throw new Error(String(j.error));
+      setRows(Array.isArray(j?.rows) ? j.rows : []);
+      setFailed(false);
+    } catch { setFailed(true); setRows(null); }
     setRunning(false);
   }, [conds, sort, activeFilters]);
 
@@ -261,7 +270,12 @@ export default function CustomScannerPanel({ onPick }) {
       </div>
 
       <div ref={hostRef} style={{ overflow: 'auto', flex: 1 }}>
-        {rows === null ? (
+        {failed ? (
+          // ⚠️ SAYS THE SCAN FAILED, NOT THAT THE MARKET HELD NOTHING.
+          <div style={{ padding: '20px 16px', textAlign: 'center', color: C.gold, fontSize: 12.5, lineHeight: 1.5 }}>
+            The scan could not be completed.<br />Your filters are fine — run it again.
+          </div>
+        ) : rows === null ? (
           <div style={{ padding: '20px 16px', textAlign: 'center', color: C.dim, fontSize: 12.5 }}>
             Add filters and run the scan.
           </div>

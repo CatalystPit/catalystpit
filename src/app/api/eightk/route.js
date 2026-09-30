@@ -34,7 +34,18 @@ export async function GET(request) {
     const list = await recentEightK({ materialOnly, limit, days, ticker });
     return Response.json({ list, materialOnly, ticker }, { headers: ticker ? PRIVATE : NO_STORE });
   } catch (e) {
-    console.log(`[eightk-api] ${e.message}`);
-    return Response.json({ list: [], error: e.message }, { status: 200, headers: NO_STORE });
+    // ⚠️ AN OUTAGE IS NOT AN EMPTY SEC. This returned `{ list: [], error: e.message }` with HTTP 200
+    // and the NO_STORE header above — which is `public, s-maxage=60`. So a failed read was a
+    // SUCCESSFUL EMPTY ANSWER, edge-cached for a minute and served to every visitor as
+    // "No material 8-K filings in the last few days." Three faults in one line: the status lied, the
+    // exception text went to the client, and the lie was cached.
+    //
+    // 503 is what the consumers were already written for — TickerNews tests `if (!ek && !evi && !pr
+    // && !wr) setState('error')`, which a truthy `{list: []}` defeated.
+    console.log(`[eightk-api] ${String(e?.message || e)}`);
+    return Response.json(
+      { error: 'eightk_unavailable' },
+      { status: 503, headers: { 'Cache-Control': 'private, no-store' } },
+    );
   }
 }
