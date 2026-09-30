@@ -6,7 +6,7 @@
 // idempotence key. This file adds what the final audit checked that it did not: the failure contract
 // on every alert-facing route, the "delivered before disarmed" ordering in the rule engine, and the
 // fact that three separate alert engines exist of which exactly one is live.
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { neon } from '@neondatabase/serverless';
 
 const sql = neon(process.env.DATABASE_URL);
@@ -179,13 +179,51 @@ L('⚠️ exactly one alert engine is live, and the heartbeat says which');
   const cron = code('src/app/api/cron/evidence-alerts/route.js');
   ok('⚠️ the cron runs the subscription worker, not the watchlist module',
     /from '\.\.\/\.\.\/\.\.\/\.\.\/lib\/alerts\/evidence-alert-worker\.mjs'/.test(cron));
-  ok('…and the orphaned module says so at the top of itself',
-    /⚠️ ORPHANED\. runEvidenceAlerts\(\) BELOW IS NO LONGER CALLED BY ANYTHING\./.test(read('src/lib/evidence-alerts.js')));
-  ok('…and records the 13F policy disagreement rather than silently differing',
-    /13F IS NOT AN ALERT/.test(read('src/lib/evidence-alert-rules.mjs'))
-    && /The LIVE path disagrees/.test(read('src/lib/evidence-alerts.js')));
-  ok('⚠️ the stale email/bell suppression guarantee is corrected, not left asserting',
-    /THIS CLAIM NO LONGER SUPPRESSES ANYTHING/.test(read('src/app/api/cron/insider-alerts/route.js')));
+  // ⚠️ THE SECOND ENGINE IS GONE, not annotated. It exported a same-named runEvidenceAlerts, so an
+  // import of the wrong one would have silently restored watchlist-driven, non-Pro-gated alerting.
+  ok('⚠️ the orphaned watchlist-driven engine no longer exists',
+    !/export async function runEvidenceAlerts/.test(read('src/lib/evidence-alerts.js')));
+  ok('…and only one runEvidenceAlerts is defined in the codebase',
+    (['src/lib/evidence-alerts.js', 'src/lib/alerts/evidence-alert-worker.mjs']
+      .map((f) => read(f)).join('\n').match(/export async function runEvidenceAlerts/g) || []).length === 1);
+  ok('…and what remains is described as the email ledger', /THE EMAIL CHANNEL'S DELIVERY LEDGER/.test(read('src/lib/evidence-alerts.js')));
+
+  // ⚠️ ONE POLICY ON 13F, NOT TWO. The deleted module declared "13F IS NOT AN ALERT" while the live
+  // path includes FAMILY.INSTITUTION. The owner's rule is that institutional activity CAN alert when
+  // it qualifies, so the dead policy was removed rather than reconciled.
+  ok('⚠️ the contradicting rules module is deleted', !existsSync(new URL('../src/lib/evidence-alert-rules.mjs', import.meta.url)));
+  // ⚠️ IMPORT STATEMENTS ONLY. The surviving file NAMES the deleted module in the comment that
+  // explains why it was deleted, so a file-wide search finds the explanation rather than a dependency.
+  ok('…nothing imports it any more', !/from '\.[^']*evidence-alert-rules[^']*'/.test(
+    ['src/lib/evidence-alerts.js', 'src/lib/alerts/evidence-alerts.mjs', 'src/lib/alerts/evidence-alert-worker.mjs']
+      .map((f) => code(f)).join('\n')));
+  ok('⚠️ exactly one ALERTABLE_FAMILIES exists, and institution is in it',
+    /FAMILY\.CATALYST, FAMILY\.INSIDER, FAMILY\.INSTITUTION, FAMILY\.CONGRESS/.test(read('src/lib/alerts/evidence-alerts.mjs')));
+  {
+    const { ALERTABLE_FAMILIES } = await import('../src/lib/alerts/evidence-alerts.mjs');
+    ok('…and the live module actually exports it that way', ALERTABLE_FAMILIES.includes('institution'), ALERTABLE_FAMILIES.join(','));
+    ok('…and market is still excluded, which is the only deliberate exclusion', !ALERTABLE_FAMILIES.includes('market'));
+  }
+  // ⚠️ AND IT IS NOT ONE ALERT PER 13F ROW. The engine emits ONE aggregate per quarter per ticker,
+  // judged against that ticker's own breadth history, so admitting the family is not a firehose.
+  ok('⚠️ institution evidence is an aggregate per quarter, not a row per filing',
+    /type: 'institution_breadth_change'/.test(read('src/lib/evidence/resolve.js')));
+  ok('…compared against this ticker\'s own history', /is meaningless until you/.test(read('src/lib/evidence/resolve.js')));
+  ok('…and an implausible breadth change is refused rather than alerted',
+    /implausibleBreadth\(prev\.breadth, latest\.breadth\)/.test(read('src/lib/evidence/resolve.js')));
+
+  // ⚠️ THE CHANNELS ARE INDEPENDENT BY CONSTRUCTION, not by comment.
+  const mailer = code('src/app/api/cron/insider-alerts/route.js');
+  ok('⚠️ the email channel dedupes by READING its ledger before sending',
+    /await alreadySent\(userId, all\.map\(\(f\) => f\.accession\)\.filter\(Boolean\), 'email'\)/.test(mailer));
+  ok('…and the key it checks is channel-scoped', /channelKey\('email', insiderAccessionKey\(f\.accession\)\)/.test(mailer));
+  ok('…so an email key can never equal an in-app key', /export const channelKey = \(channel, key\) => `\$\{channel\}:\$\{key\}`;/.test(read('src/lib/evidence-alerts.js')));
+  ok('⚠️ an unreadable ledger skips the user rather than sending twice',
+    /skipped\+\+;\s*\n\s*continue;/.test(mailer));
+  ok('…and a filing already emailed is dropped, counted, not re-sent', /if \(!items\.length\) \{ deduped\+\+; continue; \}/.test(mailer));
+  ok('…while the claim is still written only on a successful send', /if \(ok\) \{/.test(mailer));
+  ok('the bell keeps its own independent dedupe in its own table',
+    /on conflict \(user_id, evidence_id\) do nothing/.test(read('src/lib/alerts/evidence-alert-store.js')));
   // The heartbeat note must be readable on the path production actually takes.
   ok('⚠️ the zero-subscription return carries the full shape, so the note has no "undefined"',
     /failed: 0, pruned: 0, ms: Date\.now\(\) - startedAt/.test(code('src/lib/alerts/evidence-alert-worker.mjs')));

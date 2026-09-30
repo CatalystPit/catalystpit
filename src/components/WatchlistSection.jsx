@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { C, Skel, TickerLogo } from '../lib/cp-shared';
 
 import WatchlistChanges from './WatchlistChanges';
+import AlertToggle from './AlertToggle';
 
 const usd = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
 const pct = (n) => (n == null || isNaN(n)) ? null : `${n >= 0 ? '+' : ''}${Number(n).toFixed(2)}%`;
@@ -18,7 +19,7 @@ const MiniLabel = ({ children }) => (
   <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 8, color: C.dim, letterSpacing: '0.5px', marginBottom: 3 }}>{children}</div>
 );
 
-function Row({ item, onRemove, removing }) {
+function Row({ item, onRemove, removing, onNotice }) {
   const pending = item.price === undefined;   // price + last Form 4 resolve together (?prices=1)
   const change = pct(item.changePct);
   const up = (item.changePct ?? 0) >= 0;
@@ -84,6 +85,15 @@ function Row({ item, onRemove, removing }) {
         )}
       </div>
 
+      {/* ── ⚠️ WATCHING AND ASKING TO BE TOLD ARE DIFFERENT ACTIONS ───────────────────────────────
+          Evidence Alerts are explicit opt-in and Pro-gated, and adding a ticker here deliberately
+          does NOT subscribe anyone. But this is the page where a reader manages the tickers they
+          care about, and it was the one surface that offered no way to turn alerts on — the control
+          was already on the ticker page, the Terminal watchlist and Pit Scan, so /watchlist was the
+          gap. Same component, same shared subscription set, same server-side refusal: one request
+          answers every row, and a non-Pro click leaves the bell off because the server said no. */}
+      <AlertToggle symbol={item.ticker} variant="icon" onNotice={onNotice} />
+
       <button
         onClick={() => onRemove(item.ticker)}
         disabled={removing}
@@ -107,6 +117,11 @@ export default function WatchlistSection() {
   const [list, setList] = useState(null);   // null = loading; [] = empty; [...] = loaded
   const [error, setError] = useState(false);
   const [removing, setRemoving] = useState({});  // ticker -> true while its DELETE is in flight
+  // ⚠️ THE SERVER'S REFUSAL HAS TO BE READABLE. A non-Pro click on the bell is declined by
+  // /api/evidence-alerts with 403 pro_required; without somewhere to say so the control would
+  // simply not move, which looks like a broken button rather than an entitlement boundary.
+  const [notice, setNotice] = useState(null);
+  useEffect(() => { if (!notice) return; const t = setTimeout(() => setNotice(null), 4000); return () => clearTimeout(t); }, [notice]);
 
   // Two-phase load: bare list first (rows render instantly with the price column
   // in a loading state), then ?prices=1 to resolve each price. A row's price is
@@ -213,8 +228,14 @@ export default function WatchlistSection() {
         </div>
       ) : (
         <div>
+          {notice && (
+            <div role="status" style={{ padding: '7px 16px', background: C.warnBg, color: C.warnFg,
+              borderBottom: `1px solid ${C.border}`, fontSize: 12, fontFamily: "'DM Sans',sans-serif" }}>
+              {notice}
+            </div>
+          )}
           {list.map(item => (
-            <Row key={item.ticker} item={item} onRemove={remove} removing={!!removing[item.ticker]} />
+            <Row key={item.ticker} item={item} onRemove={remove} removing={!!removing[item.ticker]} onNotice={setNotice} />
           ))}
           {/* What became public on these names since the user last looked. Appended below the
               rows rather than woven into them: the list answers "what do I hold", this answers

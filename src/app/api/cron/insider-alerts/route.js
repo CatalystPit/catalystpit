@@ -3,7 +3,7 @@ import { insiderTrades, watchlist } from '../../../../lib/schema';
 import { and, gt, lte, inArray, asc, sql } from 'drizzle-orm';
 import { clerkClient } from '@clerk/nextjs/server';
 import { recordJobRun } from '../../../../lib/job-heartbeat';
-import { claim, insiderAccessionKey, ensureEvidenceAlertTables } from '../../../../lib/evidence-alerts';
+import { claim, alreadySent, channelKey, insiderAccessionKey, ensureEvidenceAlertTables } from '../../../../lib/evidence-alerts';
 import { SITE_URL } from '../../../../lib/seo';
 
 export const runtime = 'nodejs';
@@ -165,7 +165,7 @@ export async function GET(request) {
 
   const client = await clerkClient();
   const users = [...userTickers.entries()].slice(0, MAX_EMAILS);
-  let sent = 0, failed = 0, skipped = 0;
+  let sent = 0, failed = 0, skipped = 0, deduped = 0;
   for (const [userId, tset] of users) {
     let email = null;
     try {
@@ -175,33 +175,45 @@ export async function GET(request) {
     } catch { email = null; }
     if (!email) { skipped++; continue; }
 
-    const items = [];
-    for (const t of tset) for (const f of byTicker.get(t)) items.push(f);
+    const all = [];
+    for (const t of tset) for (const f of byTicker.get(t)) all.push(f);
+
+    // ── ⚠️ PER-CHANNEL DEDUPE, READ BEFORE THE SEND ─────────────────────────────────────────────
+    //
+    // Duplicate emails used to be prevented ONLY by the KV watermark, and that fails open: kvSet
+    // checks neither the response status nor throws, so a failed write leaves the watermark behind
+    // and the next run mails the same filings again. `evidence_alerts_sent` has a primary key for
+    // exactly this, and it was being written after every send and never read — so it deduplicated
+    // nothing. Now it is the guard: a filing this user has already been emailed is dropped here.
+    //
+    // ⚠️ THE KEY IS CHANNEL-SCOPED, WHICH IS WHAT KEEPS THE CHANNELS INDEPENDENT. Email and in-app
+    // are separate deliveries and a user who asked for both gets both; the bell dedupes on
+    // (user_id, evidence_id) in its own table and cannot be silenced from here, because an
+    // `email:` key can never equal a key from anywhere else.
+    let seen = new Set();
+    try {
+      seen = await alreadySent(userId, all.map((f) => f.accession).filter(Boolean), 'email');
+    } catch {
+      // ⚠️ FAILING TO READ THE GUARD MUST NOT MEAN SENDING TWICE. An empty set would send
+      // everything again; an unreadable guard skips this user and the next run retries.
+      skipped++;
+      continue;
+    }
+    const items = all.filter((f) => !f.accession || !seen.has(channelKey('email', insiderAccessionKey(f.accession))));
+    if (!items.length) { deduped++; continue; }
+
     items.sort((a, b) => Number(b.totalValue) - Number(a.totalValue));
-    const { subject, html } = buildEmail(items, [...tset]);
+    const { subject, html } = buildEmail(items, [...new Set(items.map((f) => f.ticker))]);
     const ok = await sendEmail(email, subject, html);
     ok ? sent++ : failed++;
 
-    // ⚠️ THIS CLAIM NO LONGER SUPPRESSES ANYTHING. READ BEFORE RELYING ON IT.
-    //
-    // It was written when the in-app evidence alerter was lib/evidence-alerts.js, which reads the
-    // WATCHLIST and dedupes through this same `evidence_alerts_sent` table — so one shared
-    // `insider:<accession>` key genuinely stopped a watcher getting both an email and a bell.
-    //
-    // The live alerter is now lib/alerts/evidence-alert-worker.mjs. It is driven by explicit
-    // per-ticker subscriptions instead of the watchlist, and it dedupes on (user_id, evidence_id) in
-    // a DIFFERENT table. It never reads this key. So a person who both watches a ticker and
-    // subscribes to its evidence alerts will receive an email AND a bell for the same Form 4.
-    //
-    // Left in place rather than "fixed", deliberately: whether an emailed digest should suppress an
-    // explicitly requested in-app alert is a product decision, not a bug, and the two channels now
-    // have different opt-ins and different entitlements. The write is cheap and remains the audit
-    // trail of what was emailed. Recorded only on a SUCCESSFUL send.
+    // Claimed only on a SUCCESSFUL send: claiming a failed email would silence the next attempt for
+    // a filing nobody was ever told about.
     if (ok) {
       for (const f of items) {
         if (!f.accession) continue;
         try {
-          await claim(userId, insiderAccessionKey(f.accession),
+          await claim(userId, channelKey('email', insiderAccessionKey(f.accession)),
             { ticker: f.ticker, family: 'insider', channel: 'email' });
         } catch { /* bookkeeping must never fail a send that already happened */ }
       }
@@ -209,8 +221,8 @@ export async function GET(request) {
   }
 
   await kvSet(WATERMARK_KEY, runStartIso);
-  const summary = { ok: true, newFilings: filings.length, watchers: userTickers.size, sent, failed, skipped, capped: userTickers.size > MAX_EMAILS };
+  const summary = { ok: true, newFilings: filings.length, watchers: userTickers.size, sent, failed, skipped, deduped, capped: userTickers.size > MAX_EMAILS };
   console.log(`[insider_alerts] ${JSON.stringify(summary)}`);
-  await recordJobRun('insider-alerts', { ok: true, seen: filings.length, note: `sent ${sent}, failed ${failed}` });
+  await recordJobRun('insider-alerts', { ok: true, seen: filings.length, note: `sent ${sent}, failed ${failed}, already-sent ${deduped}` });
   return Response.json(summary);
 }
