@@ -1,4 +1,4 @@
-import { resolveUserTier, isProTier } from '../../../lib/entitlements';
+import { resolveUserTier, isProTier, callerHasRealtime } from '../../../lib/entitlements';
 import { scanState } from '../../../lib/scan/runtime';
 import { buildScanBoardPayload, DEFAULT_BOARD } from '../../../lib/scan/board-payload';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
@@ -43,7 +43,11 @@ export async function GET(request) {
     const preset = sp.get('preset') || null;
     const board = sp.get('board') || DEFAULT_BOARD;
 
-    const state = scanState({ preset });
+    // ⚠️ PRO IS NOT THE SAME AS REAL-TIME-ENTITLED. A beta-flagged tester is Pro-tier and is
+    // deliberately served delayed quotes by /api/quotes, so the feed description has to be resolved
+    // from the same entitlement rather than from the provider descriptor.
+    const realtime = await callerHasRealtime();
+    const state = scanState({ preset, realtime });
 
     // ── ⚠️ THE PANEL WAS BUYING A BOARD IT NEVER RENDERED ────────────────────
     //

@@ -15,7 +15,7 @@ import 'server-only';
 // movement is the most damaging thing this product could ship.
 
 import { TIINGO_EOD_CAPABILITIES, tiingoCapabilities } from '../market/tiingo.mjs';
-import { INTERIM_PROVIDER, NO_PROVIDER, partitionSignals, signalAvailability } from './market-capabilities.mjs';
+import { INTERIM_PROVIDER, NO_PROVIDER, partitionSignals, signalAvailability, callerCapabilities } from './market-capabilities.mjs';
 import { SIGNALS } from './signals.mjs';
 import { createLifecycleStore } from './lifecycle.mjs';
 import { createPulse } from './pulse.mjs';
@@ -107,24 +107,33 @@ const pulse = createPulse();
  * panel can show a trader exactly what the product is and what it is waiting for, rather than an
  * empty table that reads as "nothing is happening".
  */
-export function scanState({ preset = null } = {}) {
+/**
+ * @param {boolean} realtime whether THIS caller is entitled to real-time, resolved server-side by the
+ *   route. Pit Scan is Pro-only, but Pro is not the same as real-time-entitled: a manually flagged
+ *   beta tester is Pro-tier and is deliberately served delayed data by /api/quotes, so describing
+ *   their feed as realtime here would contradict the prices they actually receive.
+ */
+export function scanState({ preset = null, realtime = false } = {}) {
   const caps = activeCapabilities();
+  // ⚠️ READINESS AND SIGNAL PARTITIONING STILL USE THE REAL PROVIDER. What a caller is entitled to
+  // receive changes how the feed is DESCRIBED, never which signals the engine can compute.
   const readiness = scanReadiness(caps);
   const { enabled, disabled } = partitionSignals(SIGNALS, caps);
+  const served = callerCapabilities(caps, { realtime });
 
   return {
     readiness,
     capabilities: {
-      provider: caps.id,
-      label: caps.label,
-      streaming: caps.streaming,
-      quoteFreshness: caps.quoteFreshness,
-      consolidatedVolume: caps.consolidatedVolume,
-      liveVolume: caps.liveVolume,
-      extendedHours: caps.extendedHours,
-      bidAsk: caps.bidAsk,
-      historicalDaily: caps.historicalDaily,
-      intradayVolumeHistory: caps.intradayVolumeHistory,
+      provider: served.id,
+      label: served.label,
+      streaming: served.streaming,
+      quoteFreshness: served.quoteFreshness,
+      consolidatedVolume: served.consolidatedVolume,
+      liveVolume: served.liveVolume,
+      extendedHours: served.extendedHours,
+      bidAsk: served.bidAsk,
+      historicalDaily: served.historicalDaily,
+      intradayVolumeHistory: served.intradayVolumeHistory,
     },
     signals: {
       enabled: enabled.map((s) => ({ id: s.id, label: s.label, category: s.category })),

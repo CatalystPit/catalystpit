@@ -95,8 +95,16 @@ export async function alreadySent(userId, keys, channel) {
   const list = [...new Set((keys || []).filter(Boolean))];
   if (!list.length) return new Set();
   await ensureEvidenceAlertTables();
+  // ⚠️ AN EXPANDED IN-LIST, NOT `= any($n)`. The first version passed the JS array as a single bound
+  // parameter, which Neon serialises as a plain string — Postgres answered `malformed array literal:
+  // "email:insider:0009999-26-000001"` and the whole statement threw. That mattered far more than a
+  // failed query: the mailer treats an unreadable ledger as a reason to SKIP the user, so every
+  // recipient would have been skipped and no insider email would ever have been sent. Caught by
+  // running the function rather than grepping for it.
+  const wanted = list.map((k) => channelKey(channel, insiderAccessionKey(k)));
   const res = await db.execute(sql`
     select alert_key from evidence_alerts_sent
-     where user_id = ${userId} and alert_key = any(${list.map((k) => channelKey(channel, insiderAccessionKey(k)))})`);
+     where user_id = ${userId}
+       and alert_key in (${sql.join(wanted.map((k) => sql`${k}`), sql`, `)})`);
   return new Set((res.rows ?? res).map((r) => String(r.alert_key)));
 }

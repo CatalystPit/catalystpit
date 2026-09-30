@@ -51,6 +51,7 @@
 
 import { VOLUME_METHODOLOGY } from '../scan/provider-contract.mjs';
 import { describeProvider, FRESHNESS } from '../scan/market-capabilities.mjs';
+import { lastSessionCloseIso } from './market-session.mjs';
 
 const BASE = 'https://api.tiingo.com';
 
@@ -556,6 +557,10 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
       const vendorIsLive = live != null && isFreshQuote(q.timestamp);
       const gate = resolveQuoteEntitlement({ entitled, vendorIsLive });
       const price = gate.useLivePrice ? (live ?? prevClose) : prevClose;
+      // ⚠️ DID THE LIVE PRINT ACTUALLY WIN? `useLivePrice` is permission, not outcome: it still falls
+      // back to prevClose when `live` is null, and the timestamp has to follow the price that was
+      // really chosen rather than the one we were allowed to choose.
+      const priceIsLive = gate.useLivePrice && live != null;
       if (price == null) continue;                       // no price is no quote; omit rather than zero
       const changePct = (prevClose != null && prevClose !== 0 && price != null)
         ? ((price - prevClose) / prevClose) * 100 : null;
@@ -579,7 +584,20 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
         // computing a ratio from it would be inventing RVOL out of 0.3% of the market.
         volume: num(q.volume),
         volumeMethodology: num(q.volume) == null ? null : TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED,
-        asOf: q.timestamp || null,
+        // ⚠️ asOf DESCRIBES THE PRICE ABOVE, NOT WHEN WE ASKED FOR IT.
+        //
+        // This was `q.timestamp` unconditionally — the moment Tiingo GENERATED the record. On a
+        // pre-market request the record is minutes old while `price` has degraded to prevClose, the
+        // previous session's settled close. Measured 2026-09-30 09:14 ET: AAPL prevClose 329.40
+        // carried timestamp 2026-09-30T09:14:45-04:00, so anything computing age from asOf concluded
+        // a yesterday price was seconds old. The payload offers no date for prevClose at all —
+        // lastSaleTimestamp and quoteTimestamp are null on every row of this account.
+        //
+        // So the timestamp follows the price that was chosen: the vendor's record time when the live
+        // print is what is being shown, and the session's own close instant when it is not. No
+        // precision is invented — a close has none to report, and lastSessionCloseIso walks the real
+        // exchange calendar rather than assuming 16:00 or a weekday.
+        asOf: priceIsLive ? (q.timestamp || null) : lastSessionCloseIso(),
         // Whether this price is live is a fact about the feed AND about our entitlement. Both
         // have to be true; the vendor alone cannot promote a quote to REALTIME.
         freshness: gate.freshness,
@@ -636,7 +654,10 @@ export async function getAllTickersSnapshot({ consolidated = false } = {}) {
       // answer until there is a constant that actually describes it.
       volume: consolidated ? null : num(q.volume),
       volumeMethodology: consolidated || num(q.volume) == null ? null : TIINGO_VOLUME.PARTICIPATING_VENUES_DELAYED,
-      asOf: q.timestamp || null,
+      // ⚠️ SAME CORRECTION AS getQuotes. `price` above is `live ?? prevClose`, so when the live print
+      // is missing this row describes the previous session's close — and stamping it with the vendor's
+      // record time made a yesterday price look seconds old. The timestamp follows the price.
+      asOf: live != null ? (q.timestamp || null) : lastSessionCloseIso(),
       // Same correction as getQuotes: lastSaleTimestamp is null on every row of this account, so
       // deriving liveness from it reports every quote as stale.
       live: live != null && isFreshQuote(q.timestamp),

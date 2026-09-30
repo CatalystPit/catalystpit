@@ -26,6 +26,7 @@ export const FREE_BULLSBEARS_VISIBLE = 1;
 // verify-entitlement-exports.mjs now imports this module and asserts every name is live, because a
 // grep for `isRealtime(tier) && !beta` finds the call site whether or not the function exists — which
 // is exactly why the gating suite's 118 assertions stayed green through all of it.
+import { isRealtime as isRealtimeRule } from './entitlement-rules.mjs';
 export { isProTier, eodCutoffIso, chartIntervalAllowed, isIntradayInterval,
   FREE_CHART_INTERVALS, INTRADAY_INTERVALS,
   isRealtime, marketDataAccess, WATCHLIST_LIMIT, WATCHLIST_LISTS_LIMIT } from './entitlement-rules.mjs';
@@ -73,5 +74,40 @@ export async function resolveUserAccess() {
     return { tier: 'free', beta: false };
   } catch {
     return { tier: 'free', beta: false };   // Clerk hiccup → fail safe to Free
+  }
+}
+
+/**
+ * IS THIS CALLER ENTITLED TO REAL-TIME MARKET DATA, server-side, for this request.
+ *
+ * ── ⚠️ WHY THIS EXISTS RATHER THAN THREE COPIES OF THE SAME FOUR LINES ──────
+ *
+ * /api/quotes already decided real-time entitlement correctly — `isRealtime(tier) && !beta`, with a
+ * signed-out caller falling through to delayed. But /api/screener and /api/pitscan were each
+ * DESCRIBING the feed to the caller without asking the same question, so the metadata they served
+ * described the ACCOUNT's capability rather than the caller's entitlement: an anonymous request to
+ * /api/screener?meta=1 was told `quoteFreshness: "realtime"` while receiving the 15-minute delayed
+ * snapshot, and a beta-flagged Pro user was told the same while /api/quotes deliberately served them
+ * delayed data.
+ *
+ * Three call sites answering one licensing question is how two of them eventually disagree, so the
+ * answer lives here.
+ *
+ * ⚠️ NOTHING IS READ FROM THE REQUEST. The tier comes from the Clerk session via resolveUserAccess();
+ * no header, cookie, query parameter or body field participates, so a forged `x-tier: pro` cannot
+ * reach this decision. A Clerk failure resolves to Free, which is the safe direction.
+ *
+ * ⚠️ AND BETA IS NOT REAL-TIME. Real-time is licensed per entitled user, so a manually flagged tester
+ * gets every Pro FEATURE on delayed data and is not counted against the provider's entitled-user
+ * terms. That rule is stated once, in resolveUserAccess, and applied once, here.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function callerHasRealtime() {
+  try {
+    const { tier, beta } = await resolveUserAccess();
+    return isRealtimeRule(tier) && !beta;
+  } catch {
+    return false;                 // never grant a licensed entitlement on an error path
   }
 }

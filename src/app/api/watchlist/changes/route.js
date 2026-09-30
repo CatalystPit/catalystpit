@@ -1,7 +1,6 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../../lib/db';
-import { watchlist } from '../../../../lib/schema';
-import { eq, desc, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 import { watchlistChangesFast, DEFAULT_LOOKBACK_MS } from '../../../../lib/watchlist-changes';
 import { apiRateLimit } from '../../../../lib/api-guard.mjs';
 
@@ -54,12 +53,41 @@ async function kvSet(key, value) {
   } catch { /* a lost watermark degrades to the 24h default, never to an error */ }
 }
 
-const listTickers = (userId) => db
-  .select({ ticker: watchlist.ticker })
-  .from(watchlist)
-  .where(eq(watchlist.userId, userId))
-  .orderBy(sql`position asc nulls last`, desc(watchlist.addedAt))
-  .limit(500);
+/**
+ * The tickers this USER watches — once each, however many of their lists carry them.
+ *
+ * ── ⚠️ WHAT CHANGED IS A PER-USER QUESTION, AND THE DEDUPE IS NOW EXPLICIT ──
+ *
+ * A change is a fact about a SECURITY. "NVDA filed an 8-K" happened once, so a reader who keeps NVDA
+ * on both their Semis list and their Core list must be told once — being on two lists is a fact about
+ * their filing, not about the market.
+ *
+ * ⚠️ IT HAPPENS TO BE IMPOSSIBLE TODAY, AND THAT IS EXACTLY WHY THIS IS WRITTEN DOWN. The unique
+ * index is uq_watchlist_user_ticker on (user_id, ticker), so one ticker can sit on only one of a
+ * user's lists — the correct behaviour was inherited from a constraint that exists for a different
+ * reason. `list_id` is already a column, so relaxing that index to (user_id, list_id, ticker) is the
+ * natural way to let a ticker live on several lists, and the day someone does, this query would have
+ * started returning NVDA twice: a duplicated event, and a `watched` count that disagrees with the
+ * list. DISTINCT states the semantic instead of borrowing it.
+ *
+ * ⚠️ AND IT CANNOT COLLAPSE ACROSS USERS. The user_id predicate is inside the same statement, so the
+ * collapsed set is always one person's; two people watching NVDA are two rows in two queries.
+ *
+ * ⚠️ GROUPED RATHER THAN `SELECT DISTINCT`, TO KEEP THE READER'S OWN ORDERING. The 500 cap is
+ * reachable — WATCHLIST_LIMIT.elite is 1000 — so which rows survive it is not academic. DISTINCT
+ * would have forced the ORDER BY into the select list and re-sorted the list alphabetically, quietly
+ * changing WHICH 500 of an Elite user's names get evaluated. Grouping on ticker and ordering by
+ * min(position) collapses duplicates while preserving the order the user arranged.
+ */
+async function listTickers(userId) {
+  const res = await db.execute(sql`
+    select ticker from watchlist
+     where user_id = ${userId}
+     group by ticker
+     order by min(position) asc nulls last, max(added_at) desc
+     limit 500`);
+  return res.rows ?? res;
+}
 
 export async function GET(request) {
   const rl = await apiRateLimit(request, 'watchlist-changes', 'heavy');

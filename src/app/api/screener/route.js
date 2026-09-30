@@ -5,7 +5,8 @@ import { buildConds, SORT_MAP, FILTERS } from '../../../lib/screener-filters';
 import { ensureScreenerTables } from '../../../lib/screener-data';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { liveFieldsWithAvailability } from '../../../lib/scan/scanner-fields.mjs';
-import { signalAvailability } from '../../../lib/scan/market-capabilities.mjs';
+import { signalAvailability, callerCapabilities } from '../../../lib/scan/market-capabilities.mjs';
+import { callerHasRealtime } from '../../../lib/entitlements';
 import { activeCapabilities } from '../../../lib/scan/runtime';
 import { toOptions } from '../../../lib/screener-taxonomy.mjs';
 
@@ -63,6 +64,11 @@ export async function GET(request) {
       // Custom Scanner renders both from one list without needing to know which half a field is
       // from, while buildConds below still only ever sees the daily half.
       const caps = activeCapabilities();
+      // ⚠️ THE METADATA DESCRIBES WHAT THIS CALLER GETS, NOT WHAT THE ACCOUNT CAN DO. This endpoint
+      // takes no auth, so it was telling anyone who asked that the feed was realtime while serving
+      // them the 15-minute delayed snapshot. Resolved from the Clerk session only; no header,
+      // cookie or query parameter participates, so a forged tier cannot reach it.
+      const served = callerCapabilities(caps, { realtime: await callerHasRealtime() });
       const live = liveFieldsWithAvailability(caps, signalAvailability);
       // ⚠️ THE CLASSIFICATION OPTIONS COME FROM THE DATA, NOT FROM A LIST SOMEBODY MAINTAINS.
       // Industry offered 27 hand-written options against 373 industries actually present, and one
@@ -84,12 +90,12 @@ export async function GET(request) {
           // vendor must, may, or must not be named to users is an attribution term in the licence,
           // not something to decide here. Flagged for the owner.
           label: caps.label,
-          quoteFreshness: caps.quoteFreshness,
-          streaming: caps.streaming,
-          liveVolume: caps.liveVolume,
-          consolidatedVolume: caps.consolidatedVolume,
-          bidAsk: caps.bidAsk,
-          extendedHours: caps.extendedHours,
+          quoteFreshness: served.quoteFreshness,
+          streaming: served.streaming,
+          liveVolume: served.liveVolume,
+          consolidatedVolume: served.consolidatedVolume,
+          bidAsk: served.bidAsk,
+          extendedHours: served.extendedHours,
         },
       }, { headers: NO_STORE });
     }

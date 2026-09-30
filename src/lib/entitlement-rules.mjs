@@ -4,7 +4,7 @@
 // runtime, so every assertion about the EOD boundary or the interval gate would have needed a
 // deployed request to run. The rules depend on nothing but the calendar and the timeframe registry;
 // entitlements.js re-exports them, so callers are unchanged and there is still one source of truth.
-import { lastCompletedSession, closeMinute, easternNow } from './market/market-session.mjs';
+import { lastCompletedSession, closeMinute, etInstant } from './market/market-session.mjs';
 import { TIMEFRAMES } from './chart/chart-source.mjs';
 
 // ─── FREE vs PRO: FRESHNESS AND CHART INTERVALS ─────────────────────────────
@@ -30,23 +30,6 @@ export function eodCutoffIso(tier, now = Date.now()) {
   if (isProTier(tier)) return null;
   const session = lastCompletedSession(now);
   return new Date(etInstant(session, closeMinute(session))).toISOString();
-}
-
-/**
- * The UTC instant of a given minute-of-day on a given Eastern date.
- *
- * ⚠️ THE OFFSET IS VERIFIED, NOT ASSUMED. Hard-coding -5 breaks for eight months of the year and
- * -4 breaks for four; picking by month is wrong on the changeover weekends themselves. Each
- * candidate offset is converted back through easternNow and only the one that round-trips is used,
- * so the answer is right on both DST boundaries without a timezone library.
- */
-function etInstant(dateStr, minutes) {
-  for (const off of [4, 5]) {
-    const t = Date.parse(`${dateStr}T00:00:00Z`) + (minutes + off * 60) * 60_000;
-    const back = easternNow(t);
-    if (back.date === dateStr && back.minutes === minutes) return t;
-  }
-  return Date.parse(`${dateStr}T00:00:00Z`) + (minutes + 5 * 60) * 60_000;   // EST fallback
 }
 
 /**

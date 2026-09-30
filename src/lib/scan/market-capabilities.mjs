@@ -31,6 +31,45 @@ export const freshnessAtLeast = (have, need) =>
   (FRESHNESS_RANK[have] ?? -1) >= (FRESHNESS_RANK[need] ?? 99);
 
 /**
+ * WHAT THIS CALLER ACTUALLY RECEIVES, which is not the same question as what the provider can do.
+ *
+ * ── ⚠️ THE DEFECT THIS CLOSES ───────────────────────────────────────────────
+ *
+ * A provider descriptor is a fact about the ACCOUNT: our Tiingo plan is real-time consolidated, so
+ * `quoteFreshness: 'realtime'` is true of the account. It is not true of an anonymous caller, who is
+ * served the 15-minute delayed snapshot — and /api/screener?meta=1 takes no auth and was handing that
+ * descriptor to anyone who asked. A client that labelled its board from this metadata would have
+ * printed REAL-TIME over delayed prices, which is the one thing a market-data label must never do.
+ *
+ * ⚠️ IT ONLY EVER CAPS, NEVER PROMOTES. An unentitled caller is held at DELAYED, but if the provider
+ * itself is weaker — an EOD-only plan — the provider's value still wins, because claiming `delayed`
+ * on a caller receiving settled closes would be the same lie in the other direction.
+ *
+ * ⚠️ AND IT PROJECTS ONLY AT THE SERIALISATION BOUNDARY. The internal descriptor is untouched, so
+ * signal partitioning, readiness and every `requires: { quoteFreshness }` comparison keep deciding
+ * against the real provider — an unentitled caller must not silently switch the engine into a
+ * different mode, only be described honestly.
+ *
+ * @param {object} caps      a provider descriptor from describeProvider()
+ * @param {boolean} realtime is THIS caller entitled to real-time, resolved server-side
+ */
+export function callerCapabilities(caps, { realtime = false } = {}) {
+  if (!caps) return caps;
+  if (realtime) return caps;
+  const capped = freshnessAtLeast(caps.quoteFreshness, FRESHNESS.DELAYED)
+    ? FRESHNESS.DELAYED
+    : caps.quoteFreshness;
+  return {
+    ...caps,
+    quoteFreshness: capped,
+    // A stream and a quote book are the same licensed entitlement as the price itself: an unentitled
+    // caller has neither, so describing them as available would be the same overstatement.
+    streaming: false,
+    bidAsk: false,
+  };
+}
+
+/**
  * The capability vocabulary — every key a provider may declare and a signal may require.
  *
  * Kept as data rather than as loose strings so a typo in a signal's requirements is caught by a test

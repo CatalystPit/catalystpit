@@ -259,3 +259,44 @@ export function marketPhase(now = Date.now()) {
     afterClose: trading && minutes >= close,
   };
 }
+
+/**
+ * The UTC instant of a given minute-of-day on a given Eastern date.
+ *
+ * ⚠️ THE OFFSET IS VERIFIED, NOT ASSUMED. Hard-coding -5 breaks for eight months of the year and -4
+ * breaks for four; picking by month is wrong on the changeover weekends themselves. Each candidate
+ * offset is converted back through easternNow and only the one that round-trips is used, so the answer
+ * is right on both DST boundaries without a timezone library.
+ *
+ * ⚠️ MOVED HERE FROM entitlement-rules.mjs, which defined it privately for eodCutoffIso. It is a
+ * market-calendar fact, it depends only on this module's own easternNow, and a second copy is how the
+ * two eventually disagree about a DST weekend.
+ */
+export function etInstant(dateStr, minutes) {
+  for (const off of [4, 5]) {
+    const t = Date.parse(`${dateStr}T00:00:00Z`) + (minutes + off * 60) * 60_000;
+    const back = easternNow(t);
+    if (back.date === dateStr && back.minutes === minutes) return t;
+  }
+  return Date.parse(`${dateStr}T00:00:00Z`) + (minutes + 5 * 60) * 60_000;   // EST fallback
+}
+
+/**
+ * The ISO instant at which the most recently COMPLETED session closed.
+ *
+ * ⚠️ THIS IS THE TRUTHFUL TIMESTAMP FOR A PREVIOUS-CLOSE PRICE, and the reason it exists.
+ *
+ * Tiingo's /iex/ payload carries `timestamp` — the moment the vendor generated the record — and no
+ * date at all for `prevClose`. So a pre-market request at 09:14 ET returned a prevClose price stamped
+ * 09:14 today, and anything computing age from it concluded the price was seconds old when it was in
+ * fact the previous session's settled close. Measured: AAPL prevClose 329.40 carried
+ * timestamp 2026-09-30T09:14:45-04:00.
+ *
+ * A close has no sub-second truth to report, so none is invented: this returns the session's own close
+ * instant from the real exchange calendar, walking holidays and early closes. It is the safest
+ * truthful representation of "this price is that session's close" rather than a fabricated precision.
+ */
+export function lastSessionCloseIso(now = Date.now()) {
+  const session = lastCompletedSession(now);
+  return new Date(etInstant(session, closeMinute(session))).toISOString();
+}
