@@ -1,6 +1,6 @@
 import { db } from '../../../lib/db';
 import { tickerDailyCandles, shortInterest } from '../../../lib/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
 import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
 import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
@@ -321,19 +321,62 @@ async function secTickerName(sym) {
   return map ? (map[sym] || null) : null;
 }
 
-// validity cascade: profile2 (name) → prefetched /quote c>0 → /search exact → SEC name.
-// Content-based,
-// since Finnhub 200s everything. The quote is fetched in parallel by the caller, so the happy
-// path costs no extra call; /search only fires for the rare profile-less + no-quote ticker.
+/**
+ * OUR OWN SECURITY MASTER — the one source that names an ETF.
+ *
+ * ⚠️ THE TICKER PAGE WAS THE ONLY SURFACE NOT READING IT, and it is the surface where it matters
+ * most. security_identity exists precisely for "any security that files neither a Form 4 nor an 8-K —
+ * closed-end funds, ETFs, ADRs, preferred lines", and screener_meta carries the exchange the vendor
+ * profile omits for exactly those securities. One indexed read on two primary keys.
+ */
+async function masterIdentity(sym) {
+  try {
+    const res = await db.execute(sql`
+      select i.name as name, m.exchange as exchange, m.sector as sector, m.industry as industry,
+             m.asset_type as asset_type, s.company as company
+        from (select ${sym}::text as t) k
+        left join security_identity i on i.ticker = k.t
+        left join screener_meta     m on m.ticker = k.t
+        left join screener_stocks   s on s.ticker = k.t`);
+    const r = (res.rows ?? res)[0] || {};
+    return {
+      name: r.name || r.company || null,
+      exchange: r.exchange || null,
+      sector: r.sector || null,
+      industry: r.industry || null,
+      assetType: r.asset_type || null,
+    };
+  } catch { return { name: null, exchange: null, sector: null, industry: null, assetType: null }; }
+}
+
+// validity cascade: profile2 (name) → OUR SECURITY MASTER → prefetched /quote c>0 → /search exact →
+// SEC name. Content-based, since Finnhub 200s everything. The quote is fetched in parallel by the
+// caller, so the happy path costs no extra call.
+//
+// ── ⚠️ THE ORDER IS THE DEFECT THAT WAS HERE ────────────────────────────────
+//
+// `if (quote && quote.c > 0) return { name: sym }` sat SECOND, so any security the vendor has no
+// profile for — which is every ETF — resolved to its own ticker and short-circuited before any
+// identity lookup ran. Measured in production: /ticker/SPY rendered "SPY" with a null exchange while
+// security_identity held "SPDR S&P 500 ETF TRUST" and screener_meta held NYSE. Same for QQQ, IWM, VOO
+// and DIA, and for 5,472 ETFs with a resolved name in our own table.
+//
+// The SEC fallback below could never have covered them either: company_tickers.json lists SEC
+// registrants, and an ETF trust is not in it. The master is the source that knows.
+//
+// The bare-symbol branch is KEPT as the last resort before /search — a tradeable symbol we cannot
+// name is still a valid page — but it no longer outranks knowing the answer.
 async function resolveValidity(sym, profile, quote) {
-  if (profile.name) return { valid: true, name: profile.name };
-  if (quote && quote.c > 0) return { valid: true, name: sym };
+  if (profile.name) return { valid: true, name: profile.name, master: null };
+  const master = await masterIdentity(sym);
+  if (master.name) return { valid: true, name: master.name, master };
+  if (quote && quote.c > 0) return { valid: true, name: sym, master };
   const se = await fh(`/search?q=${encodeURIComponent(sym)}`);
   const exact = (se?.result || []).find(r => (r.symbol || '').toUpperCase() === sym);
-  if (exact) return { valid: true, name: exact.description || sym };
+  if (exact) return { valid: true, name: exact.description || sym, master };
   const secName = await secTickerName(sym);          // SEC identity fallback — no market-data vendor
-  if (secName) return { valid: true, name: secName };
-  return { valid: false, name: null };
+  if (secName) return { valid: true, name: secName, master };
+  return { valid: false, name: null, master };
 }
 
 export async function GET(request) {
@@ -398,7 +441,13 @@ export async function GET(request) {
     console.log(`[ticker_api] ${sym} ok · cache=${JSON.stringify(meta.cache)}`);
     return Response.json({
       symbol: sym, valid: true,
-      name: v.name, exchange: prof.value?.exchange ?? null, industry: prof.value?.industry ?? null, logo: prof.value?.logo ?? null,
+      // ⚠️ THE EXCHANGE AND SECTOR FALL BACK TO THE MASTER TOO. The vendor profile is null for an ETF,
+      // so the page showed no exchange at all for SPY while screener_meta held NYSE. The provider still
+      // wins when it answers — this only fills what it left empty, and never invents a value.
+      name: v.name,
+      exchange: prof.value?.exchange ?? v.master?.exchange ?? null,
+      industry: prof.value?.industry ?? v.master?.industry ?? v.master?.sector ?? null,
+      logo: prof.value?.logo ?? null,
       country: prof.value?.country ?? null, ipo: prof.value?.ipo ?? null, weburl: prof.value?.weburl ?? null,
       quote: quote.value,
       // shareOutstanding lives on profile2 (not metric); merge it into metric so the UI

@@ -30,7 +30,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import AlertToggle from '../AlertToggle';
-import { C, Badge, TickerLogo } from '../../lib/cp-shared';
+import { C, Badge, TickerLogo, LockedCta } from '../../lib/cp-shared';
 
 const BOARD_TABS = [
   // ⚠️ THE BLURB NO LONGER NAMES A CLOCK, AND THAT IS THE POINT. It used to read "on the last
@@ -289,6 +289,9 @@ export function useScanBoards() {
   const [boards, setBoards] = useState(null);
   const [error, setError] = useState(null);
   const [stale, setStale] = useState(false);
+  // ⚠️ A FOURTH TERMINAL STATE: not entitled. Distinct from an error, because "you have not signed up"
+  // and "the product is broken" are opposite messages and only one of them is true for a visitor.
+  const [locked, setLocked] = useState(false);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -307,12 +310,29 @@ export function useScanBoards() {
         // the catch with no state at all.
         const j = await r.json().catch(() => null);
         if (!alive) return;
+        // ── ⚠️ A REFUSAL IS NOT AN OUTAGE ──────────────────────────────────────────────────────
+        //
+        // /api/scan-board answers an unentitled caller with 403 { error: 'pro_required' }, and this
+        // branch lumped that in with a timed-out function. The result, measured on production: an
+        // anonymous visitor to /scan was told "Pit Scan is unavailable right now. Try again" — three
+        // times, once per board — so the first thing a prospective customer saw was the product
+        // reporting itself broken, when in fact they simply had not signed up.
+        //
+        // Pit Consensus already gets this right and shows "Unlock Pro". Same distinction here.
+        if (r.status === 401 || r.status === 403 || j?.error === 'pro_required') {
+          setLocked(true);
+          setError(null);
+          setStale(false);
+          return;
+        }
         if (!r.ok || !j || !j.boards) {
           // Keep whatever is already on screen; only say so.
           setStale(true);
+          setLocked(false);
           if (!isRefresh) setError(j?.message || 'Pit Scan is unavailable right now.');
           return;
         }
+        setLocked(false);
         setBoards(j.boards);
         setError(null);
         setStale(false);
@@ -388,7 +408,18 @@ export function ScanBoard({ board, data, loading = false, errorText = null, onRe
           Data, a legitimately empty board, or an explicit retryable error. The old version had a
           fourth path that was none of these: a failed response set state to null, and null rendered
           as "Loading Pit Scan…" — forever, and through every subsequent poll. */}
-      {error && !state ? (
+      {locked && !state ? (
+        // ⚠️ THE ENTITLEMENT STATE, WHICH USED TO RENDER AS AN OUTAGE. It says what Pit Scan is and
+        // how to get it, and it does not tell a prospective customer that the product is broken.
+        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
+          padding: '20px 16px', fontSize: 12.5, color: C.muted, lineHeight: 1.55 }}>
+          <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9.5, fontWeight: 700,
+            letterSpacing: '0.8px', color: C.green, marginBottom: 6 }}>PIT PRO</div>
+          Live Pit Scan boards are part of Pit Pro. The signal definitions above are the real ones —
+          this is the board they populate.
+          <div style={{ marginTop: 12 }}><LockedCta compact /></div>
+        </div>
+      ) : error && !state ? (
         // An unavailable board is not a quiet market and must never render as one.
         <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 8,
           padding: '20px 16px', fontSize: 12.5, color: C.muted }}>
