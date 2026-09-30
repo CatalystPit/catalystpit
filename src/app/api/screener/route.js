@@ -134,6 +134,16 @@ export async function GET(request) {
     return Response.json({ rows, total: n, page, pageSize, activeCount }, { headers: NO_STORE });
   } catch (e) {
     console.log(`[screener] ${e.message}`);
-    return Response.json({ rows: [], total: 0, error: e.message }, { status: 200, headers: NO_STORE });
+    // ⚠️ AN OPAQUE FLAG, NOT THE EXCEPTION TEXT. This returned `error: e.message`, so a failing query
+    // handed the client whatever Postgres said — column names, relation names, connection detail. The
+    // message belongs in the log above, where it already is; the client only needs to know that this
+    // is a failure rather than an answer.
+    //
+    // ⚠️ AND THE FLAG IS THE ONLY THING SEPARATING "BROKEN" FROM "NOTHING MATCHED". The status stays
+    // 200 so the client can render its own state, which means an empty `rows` here is indistinguishable
+    // from a legitimate zero-match unless the client reads this field — and it did not, so a database
+    // failure rendered as "No stocks match these filters. Widen them or clear a chip." See the
+    // matching change in ScreenerClient's load().
+    return Response.json({ rows: [], total: 0, error: 'unavailable' }, { status: 200, headers: NO_STORE });
   }
 }

@@ -188,7 +188,13 @@ export default function ScreenerClient() {
     setLoading(true);
     fetch(`/api/screener?${qs}`, { cache: 'no-store' })
       .then((r) => { if (!r.ok) throw new Error('bad status'); return r.json(); })
-      .then((j) => { setData(j); setLoadError(false); setLoading(false); })
+      // ⚠️ A FAILURE ARRIVES AS HTTP 200. The route catches its own errors and answers
+      // { rows: [], total: 0, error: 'unavailable' } with a 200 status so this component can choose how
+      // to say so. Checking only `r.ok` therefore treated a database failure as a successful empty
+      // result, and the render below — which branches on rows.length === 0 — told the reader
+      // "No stocks match these filters. Widen them or clear a chip." The filters were fine; the
+      // screener was down. An empty answer and a broken one must not read the same.
+      .then((j) => { if (j?.error) throw new Error('screener unavailable'); setData(j); setLoadError(false); setLoading(false); })
       .catch(() => { setData({ rows: [], total: 0 }); setLoadError(true); setLoading(false); });
   }, [qs]);
 
