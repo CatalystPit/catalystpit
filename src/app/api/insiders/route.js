@@ -372,14 +372,30 @@ export async function GET(request) {
     const limitRaw = parseInt(searchParams.get('limit') ?? '200', 10);
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 200, 1), 1000);
 
-    // Ticker drill-down — LEFT UNGATED. It's shared with the /ticker insider tab,
+    // Ticker drill-down — the ROW CAP is left ungated. It's shared with the /ticker insider tab,
     // which has no sign-in CTA; capping it there would silently truncate that page.
-    // (Consequence: a signed-out ticker SEARCH on /insiders bypasses the gate. Flagged.)
+    // (Consequence: a signed-out ticker SEARCH on /insiders bypasses the row gate. Flagged.)
+    //
+    // ⚠️ FRESHNESS IS NOT THE ROW CAP, AND IT WAS LEAKING HERE. This branch returned before the
+    // eodCutoffIso predicate further down, so an anonymous caller asking for ?ticker=GOOGL was served
+    // 200 rows including 48 ingested after the Free end-of-day cutoff — the Pro dataset, recoverable
+    // without an account, let alone a subscription. Free is the EOD research product and Pro is
+    // freshness; that line is applied by /api/insiders' main list, /api/politicians and
+    // /api/congress-trades, and this was the one record feed that skipped it.
+    //
+    // The public ticker-page SEO preview is a different thing and stays public: ticker-seo.mjs runs
+    // its own query, bounded to 5 rows, which is a deliberate bounded preview rather than the feed.
     if (ticker) {
+      const tickerTier = await resolveUserTier();
+      const tickerCutoff = eodCutoffIso(tickerTier);
       const trades = await db.select().from(insiderTrades)
         // ⚠️ THIS FEEDS THE /ticker INSIDER TAB TOO, so an unguarded read here put a retracted
         // filing on the ticker page as well as on this list.
-        .where(and(eq(insiderTrades.ticker, ticker), NOT_SUPERSEDED))
+        .where(and(
+          eq(insiderTrades.ticker, ticker),
+          NOT_SUPERSEDED,
+          ...(tickerCutoff ? [sql`${insiderTrades.insertedAt} <= ${tickerCutoff}::timestamptz`] : []),
+        ))
         .orderBy(desc(insiderTrades.filingDate), desc(insiderTrades.transactionDate))
         .limit(limit);
       console.log(`[insiders_api] ticker=${ticker} returned=${trades.length} loggedIn=${loggedIn}`);

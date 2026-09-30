@@ -192,6 +192,20 @@ L('⚠️ a filing the filer retracted reaches NO consumer');
     top && Number(top.total_value) < 100e9, `${top?.ticker} $${Number(top?.total_value).toLocaleString()}`);
 }
 
+L('⚠️ Pro freshness is not recoverable by asking a different endpoint');
+{
+  // ⚠️ THE TICKER DRILL-DOWN RETURNED BEFORE THE CUTOFF WAS APPLIED. An anonymous caller asking for
+  // ?ticker=GOOGL was served 200 rows, 48 of them ingested after the Free end-of-day cutoff — the Pro
+  // dataset, with no account at all. The row cap is deliberately ungated on that branch so the
+  // /ticker insider tab is not truncated; freshness is a different line and is the one Pro buys.
+  const src = read('src/app/api/insiders/route.js');
+  ok('⚠️ the ticker drill-down resolves a tier and applies the EOD cutoff',
+    /const tickerTier = await resolveUserTier\(\);/.test(src) && /tickerCutoff \?/.test(src));
+  ok('…and the main list path still applies it too', /if \(cutoff\) conds\.push\(/.test(src));
+  ok('the cutoff is the canonical session rule, not a local age test',
+    /eodCutoffIso\(/.test(src) && !/24 hours/.test(src));
+}
+
 L('one canonical attention rule, used everywhere');
 {
   const hs = read('src/lib/consensus/high-significance.mjs');
