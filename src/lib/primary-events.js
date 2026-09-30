@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { claimSql, releaseSql, backlogSql, eligibleWhere } from './enrich-claim.mjs';
 import { retryDecision } from './enrich-policy.mjs';
 import { recordUsage, recordModelState, modelCircuit, checkRewriteHealth } from './anthropic-usage';
+import { isIngestableSymbol } from './ticker-symbol.mjs';
 
 // The trusted list as a Postgres array LITERAL with an explicit cast, matching how every other
 // array is bound in this file. Passing the JS array straight into any() leaves the parameter
@@ -469,6 +470,18 @@ export async function projectHalts(halts) {
   if (!halts?.length) return 0;
   const events = halts.slice(0, 300).map((h) => {
     const sym = String(h.symbol || h.sym || '').toUpperCase();
+    // ⚠️ THE EXCHANGE'S SYMBOL FIELD IS NOT ALWAYS A SYMBOL. Nasdaq's halt feed carries when-issued
+    // and other suffixed designations, and this took the field verbatim: production holds
+    // tickers: ["VACI="] and ["TRAD="] with headlines reading "VACI= halted · Halt (M)". A trailing
+    // "=" is not a security — it produces a dead /ticker/VACI%3D link, a malformed headline, and a
+    // malformed candidate on a path that autoposts. The four X candidates those generated were all
+    // suppressed by the editorial gate, so nothing reached the timeline; the gate caught what this
+    // should never have created.
+    //
+    // Validated with the canonical gate rather than a local shape test, and SKIPPED rather than
+    // repaired: stripping the suffix to reach a base symbol would be a guess about which security
+    // the exchange meant, which is the one thing attribution may not do.
+    if (!isIngestableSymbol(sym)) return null;
     const headline = `${sym} halted${h.reason ? ` · ${h.reason}` : ''}`;
     const published = etToIso(h.haltDate, h.haltTime);
     // Keyed on what the feed itself stated, so a date we could not parse still has a stable
@@ -492,7 +505,7 @@ export async function projectHalts(halts) {
       content_hash: contentHash({ source: 'NASDAQ', title: uid, publishedAt: published }),
       raw: { ...h, projected: true },
     };
-  });
+  }).filter(Boolean);
   return insertEvents(events);
 }
 
