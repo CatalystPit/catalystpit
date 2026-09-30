@@ -178,9 +178,33 @@ export default function PoliticiansList() {
   const [chamber, setChamber] = useState('');
   const [party, setParty] = useState('');
   const [lbWindow, setLbWindow] = useState('1y');
-  // Ticker chosen from Most Traded Stocks. Phase 3's chart reads this; until then it simply
-  // highlights the selected row, so the interaction is already wired and testable.
+  // ── ⚠️ TWO DIFFERENT QUESTIONS, WHICH USED TO SHARE ONE PIECE OF STATE ────────────────────────
+  //
+  //   selectedTicker — what the CHART is showing. Always something; the rail defaults to the busiest
+  //                    name so the chart is never an empty frame.
+  //   tickerPinned   — whether the READER chose it. Only then is the page in "ticker mode", and only
+  //                    then does the transactions table filter.
+  //
+  // Collapsing those two made every high-level control look broken. Clicking AAPL filtered the
+  // transactions table, and then clicking Most Recent / Top Volume / a chamber / a party re-sorted
+  // the member grid while the table stayed pinned to AAPL — so the control the reader had just
+  // clicked appeared to do nothing, and the only way out was a small "clear ticker" link they had to
+  // notice first. It also meant the default selection filtered the table on first load, so "All
+  // Transactions" opened showing one company.
   const [selectedTicker, setSelectedTicker] = useState(null);
+  const [tickerPinned, setTickerPinned] = useState(false);
+
+  // A reader's click pins; the chart's own default does not.
+  const selectTicker = useCallback((t, opts) => {
+    setSelectedTicker(t);
+    if (!opts?.auto) setTickerPinned(!!t);
+  }, []);
+
+  // ⚠️ THE NEWEST HIGH-LEVEL ACTION WINS. Sort, chamber and party are navigation: they are a request
+  // to see the whole data set a different way, so they release the ticker filter rather than quietly
+  // competing with it. The chart keeps the name it was showing — nothing about that relationship
+  // changes — but the table below stops contradicting the button just pressed.
+  const navigate = useCallback((setter) => (value) => { setTickerPinned(false); setter(value); }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -243,23 +267,29 @@ export default function PoliticiansList() {
 
       {/* DISCOVERY */}
       <div style={{ maxWidth: 1380, margin: '0 auto', padding: '10px 24px 0' }}>
-        <CongressOverview onSelectTicker={setSelectedTicker} selectedTicker={selectedTicker} />
-        <CongressChartSection ticker={selectedTicker} onSelectTicker={setSelectedTicker} />
+        <CongressOverview onSelectTicker={selectTicker} selectedTicker={selectedTicker} />
+        <CongressChartSection ticker={selectedTicker} onSelectTicker={selectTicker} />
       </div>
 
       {/* CONTROLS */}
       <div style={{ maxWidth: 1380, margin: '0 auto', padding: '16px 24px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <PillGroup label="SORT"    options={SORTS}    value={view}    onChange={setView} />
+        <PillGroup label="SORT"    options={SORTS}    value={view}    onChange={navigate(setView)} />
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
-          <PillGroup label="CHAMBER" options={CHAMBERS} value={chamber} onChange={setChamber} />
-          <PillGroup label="PARTY"   options={PARTIES}  value={party}   onChange={setParty} />
+          <PillGroup label="CHAMBER" options={CHAMBERS} value={chamber} onChange={navigate(setChamber)} />
+          <PillGroup label="PARTY"   options={PARTIES}  value={party}   onChange={navigate(setParty)} />
           {view === 'leaderboard' && <PillGroup label="PERIOD" options={WINDOWS} value={lbWindow} onChange={setLbWindow} />}
         </div>
       </div>
 
       {/* DEEP RESEARCH */}
       <div style={{ maxWidth: 1380, margin: '0 auto', padding: '0 24px' }}>
-        <CongressTransactions ticker={selectedTicker} onSelectTicker={setSelectedTicker} />
+        {/* ⚠️ THE PINNED TICKER, NOT THE CHARTED ONE. The chart always has a name; the table filters
+            only on one the reader actually chose. */}
+        <CongressTransactions
+          ticker={tickerPinned ? selectedTicker : null}
+          onSelectTicker={selectTicker}
+          onClearTicker={() => setTickerPinned(false)}
+        />
       </div>
 
       {/* GRID */}

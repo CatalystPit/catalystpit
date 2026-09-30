@@ -33,7 +33,7 @@ const COLUMNS = [
   { key: 'source', label: 'Source', sort: null },
 ];
 
-export default function CongressTransactions({ ticker, onSelectTicker }) {
+export default function CongressTransactions({ ticker, onSelectTicker, onClearTicker }) {
   const [f, setF] = useState({ q: '', action: '', chamber: '', party: '', owner: '', minValue: '', maxDelay: '', late: false });
   const [sort, setSort] = useState('transaction');
   const [dir, setDir] = useState('desc');
@@ -77,13 +77,34 @@ export default function CongressTransactions({ ticker, onSelectTicker }) {
   return (
     <div style={{ marginTop: 22 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.8px', color: C.dim, textTransform: 'uppercase' }}>
-          All Transactions{ticker ? ` · ${ticker}` : ''}
+        {/* ── ⚠️ TICKER MODE HAS TO BE OBVIOUS, AND IT WAS NOT ────────────────────────────────────
+            "ALL TRANSACTIONS · AAPL" above a count read as a heading, not as an active filter, so a
+            reader could not see why the table disagreed with the control they had just clicked. It is
+            a removable chip now — the same shape the rest of this page uses for state — with the
+            count beside it saying what it is counting. No banner, no extra row. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.8px', color: C.dim, textTransform: 'uppercase' }}>
+            {ticker ? 'Transactions' : 'All Transactions'}
+          </span>
+          {ticker && (
+            <button type="button" onClick={() => (onClearTicker ? onClearTicker() : onSelectTicker?.(null))}
+              title={`Showing ${ticker} only — click to show all transactions`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.4px',
+                color: C.green, background: C.greenLight, border: `1px solid ${C.greenBorder}`,
+                borderRadius: 4, padding: '2px 5px 2px 8px' }}>
+              {ticker}
+              <span aria-hidden style={{ fontSize: 13, lineHeight: 1, color: C.greenMid, fontWeight: 400 }}>×</span>
+              <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>
+                Clear the {ticker} filter
+              </span>
+            </button>
+          )}
         </span>
         <span style={{ fontSize: 11.5, color: C.muted }}>
-          {loading ? 'Loading.' : `${total.toLocaleString('en-US')} ${total === 1 ? 'transaction' : 'transactions'}`}
+          {loading ? 'Loading.' : `${total.toLocaleString('en-US')} ${total === 1 ? 'transaction' : 'transactions'}${ticker ? ` in ${ticker}` : ''}`}
           {ticker && (
-            <button type="button" onClick={() => onSelectTicker?.(null)}
+            <button type="button" onClick={() => (onClearTicker ? onClearTicker() : onSelectTicker?.(null))}
               style={{ marginLeft: 8, border: 'none', background: 'transparent', color: C.green, cursor: 'pointer', fontSize: 11.5, fontFamily: "'DM Sans',sans-serif" }}>
               clear ticker
             </button>

@@ -37,8 +37,14 @@ export default function CongressChartSection({ ticker, onSelectTicker }) {
   }, [sort]);
 
   // Default to the busiest name so the chart is never an empty frame on first load.
+  //
+  // ⚠️ AND IT SAYS IT DID NOT ASK. This default is the chart's own, not the reader's, and the
+  // difference matters downstream: the transactions table filters on a ticker the READER chose, so a
+  // default that looked like a choice meant "All Transactions" was never actually all of them on
+  // first load — it silently showed only the busiest name. `{ auto: true }` keeps the chart populated
+  // without claiming the reader picked anything.
   useEffect(() => {
-    if (!ticker && list?.length) onSelectTicker?.(list[0].ticker);
+    if (!ticker && list?.length) onSelectTicker?.(list[0].ticker, { auto: true });
   }, [list, ticker, onSelectTicker]);
 
   return (
