@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { db } from '../../../lib/db';
 import { watchlist, tickerDailyCandles, insiderTrades } from '../../../lib/schema';
+import { isIngestableSymbol } from '../../../lib/ticker-symbol.mjs';
 import { and, eq, desc, inArray, sql } from 'drizzle-orm';
 import { resolveUserTier, WATCHLIST_LIMIT } from '../../../lib/entitlements';
 import { ensureDefaultList } from '../../../lib/watchlists';
@@ -30,12 +31,32 @@ const QUOTE_TIMEOUT_MS  = 6000;
 // Ticker input guard for v1: NOT a "real symbol" check — just rejects junk so we
 // don't persist garbage. Uppercase + trim, then require 1–10 chars of
 // alphanumeric / dot / dash (covers BRK.B, BF-B, etc.).
-const TICKER_RE = /^[A-Z0-9.-]{1,10}$/;
+// ⚠️ PER-USER, SO NEVER SHARED-CACHEABLE. This route returns one person's tickers and this was
+// the only watchlist route that declared no Cache-Control at all — it inherited Vercel's default,
+// "public, max-age=0, must-revalidate". The must-revalidate meant no intermediary actually served a
+// stale copy to the wrong person, but "public" on an authenticated per-user answer states the
+// opposite of the truth, and the other three watchlist routes all declare private. Declaring the
+// constraint beats relying on every cache in the path revalidating correctly forever.
+//
+// The 500 paths also returned e.message, which is already logged server-side one line above each of
+// them; the client gains nothing from the exception text and a DB error should not describe the
+// schema to it.
+const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
+// ⚠️ THE CANONICAL GATE, NOT A SHAPE TEST WRITTEN HERE.
+//
+// This was `/^[A-Z0-9.-]{1,10}$/`, which is shape-only and therefore admits the filing-form filler
+// the rest of the product spent a week removing: 'NONE', 'NULL', 'N/A', 'TBD', '---', '...' and
+// '1234' all pass it. A watchlist row is a ticker-facing surface — it becomes a /ticker link, a card
+// and a What Changed subject — so storing one of those creates a membership that can never resolve.
+//
+// isIngestableSymbol is the same gate the ingest paths use, and it rejects exactly those while
+// admitting every real security the watchlist can hold, dotted share classes included. Verified
+// against all 16 tickers in production watchlists: every one passes.
 function normalizeTicker(raw) {
   const ticker = String(raw ?? '').toUpperCase().trim();
   if (!ticker) return { ok: false, error: 'ticker is required' };
-  if (!TICKER_RE.test(ticker)) return { ok: false, error: 'invalid ticker' };
+  if (!isIngestableSymbol(ticker)) return { ok: false, error: 'invalid ticker' };
   return { ok: true, ticker };
 }
 
@@ -179,7 +200,7 @@ async function withLastForm4(list) {
 export async function GET(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
 
     const def = await ensureDefaultList(userId);
     const sp = new URL(request.url).searchParams;
@@ -188,10 +209,10 @@ export async function GET(request) {
     const wantPrices = sp.get('prices') === '1';
     const payload = wantPrices ? await withLastForm4(await withPrices(list)) : list;
     console.log(`[watchlist_api] GET user=${userId} count=${list.length}${wantPrices ? ' +prices' : ''}`);
-    return Response.json(payload);
+    return Response.json(payload, { headers: NO_STORE });
   } catch (e) {
     console.log(`[watchlist_api] GET failed: ${e.message}`);
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }
 
@@ -200,17 +221,17 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
 
     let body;
     try {
       body = await request.json();
     } catch {
-      return Response.json({ error: 'invalid JSON body' }, { status: 400 });
+      return Response.json({ error: 'invalid JSON body' }, { status: 400, headers: NO_STORE });
     }
 
     const v = normalizeTicker(body?.ticker);
-    if (!v.ok) return Response.json({ error: v.error }, { status: 400 });
+    if (!v.ok) return Response.json({ error: v.error }, { status: 400, headers: NO_STORE });
 
     const def = await ensureDefaultList(userId);
     const listId = body?.listId ? parseInt(body.listId, 10) : def.id;
@@ -222,7 +243,7 @@ export async function POST(request) {
     const limit = WATCHLIST_LIMIT[tier] ?? WATCHLIST_LIMIT.free;
     const already = current.some(r => r.ticker === v.ticker);
     if (!already && current.length >= limit) {
-      return Response.json({ error: `List full. Your plan allows ${limit} tickers per list.`, limit }, { status: 403 });
+      return Response.json({ error: `List full. Your plan allows ${limit} tickers per list.`, limit }, { status: 403, headers: NO_STORE });
     }
 
     // New/moved tickers land at the TOP of the list (position = current min − 1).
@@ -237,10 +258,10 @@ export async function POST(request) {
 
     const list = await getList(userId, listId);
     console.log(`[watchlist_api] POST user=${userId} ticker=${v.ticker} list=${listId} count=${list.length}`);
-    return Response.json(list);
+    return Response.json(list, { headers: NO_STORE });
   } catch (e) {
     console.log(`[watchlist_api] POST failed: ${e.message}`);
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }
 
@@ -249,7 +270,7 @@ export async function POST(request) {
 export async function PATCH(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
     const body = await request.json().catch(() => ({}));
     const order = Array.isArray(body?.order) ? body.order.map((t) => String(t).toUpperCase()).filter((t) => TICKER_RE.test(t)) : [];
     const def = await ensureDefaultList(userId);
@@ -260,10 +281,10 @@ export async function PATCH(request) {
         WHERE user_id = ${userId} AND list_id = ${listId} AND ticker IN (${sql.join(order.map((t) => sql`${t}`), sql`, `)})`);
     }
     const list = await getList(userId, listId);
-    return Response.json(list);
+    return Response.json(list, { headers: NO_STORE });
   } catch (e) {
     console.log(`[watchlist_api] PATCH failed: ${e.message}`);
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }
 
@@ -275,7 +296,7 @@ export async function PATCH(request) {
 export async function DELETE(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
 
     const sp = new URL(request.url).searchParams;
     let raw = sp.get('ticker');
@@ -301,9 +322,9 @@ export async function DELETE(request) {
     const listId = sp.get('listId') ? parseInt(sp.get('listId'), 10) : def.id;
     const list = await getList(userId, listId);
     console.log(`[watchlist_api] DELETE user=${userId} ticker=${v.ok ? v.ticker : '(none)'} count=${list.length}`);
-    return Response.json(list);
+    return Response.json(list, { headers: NO_STORE });
   } catch (e) {
     console.log(`[watchlist_api] DELETE failed: ${e.message}`);
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }

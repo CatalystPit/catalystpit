@@ -9,10 +9,11 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 export async function GET() {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
     return Response.json(await getLists(userId), { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });
+    console.log(`[watchlist_lists] ${e.message}`);
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }
 
@@ -20,14 +21,15 @@ export async function GET() {
 export async function POST(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
     const body = await request.json().catch(() => ({}));
     const tier = await resolveUserTier();
     const res = await createList(userId, body?.name, tier);
     if (res.error) return Response.json(res, { status: 403, headers: NO_STORE });
     return Response.json(await getLists(userId), { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });
+    console.log(`[watchlist_lists] ${e.message}`);
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }
 
@@ -35,7 +37,7 @@ export async function POST(request) {
 export async function PATCH(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
     const body = await request.json().catch(() => ({}));
     const id = parseInt(body?.id, 10);
     if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: NO_STORE });
@@ -43,7 +45,8 @@ export async function PATCH(request) {
     if (res.error) return Response.json(res, { status: 400, headers: NO_STORE });
     return Response.json(await getLists(userId), { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });
+    console.log(`[watchlist_lists] ${e.message}`);
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }
 
@@ -51,13 +54,14 @@ export async function PATCH(request) {
 export async function DELETE(request) {
   try {
     const { userId } = await auth();
-    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
     const id = parseInt(new URL(request.url).searchParams.get('id'), 10);
     if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: NO_STORE });
     const res = await deleteList(userId, id);
     if (res.error) return Response.json(res, { status: 400, headers: NO_STORE });
     return Response.json(await getLists(userId), { headers: NO_STORE });
   } catch (e) {
-    return Response.json({ error: e.message }, { status: 500, headers: NO_STORE });
+    console.log(`[watchlist_lists] ${e.message}`);
+    return Response.json({ error: 'unavailable' }, { status: 500, headers: NO_STORE });
   }
 }

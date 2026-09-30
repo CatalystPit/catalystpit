@@ -13,7 +13,20 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 // Live status flags for Watchlist tickers so it's an active monitor, not a static price list:
 //   NEWS = a fresh 8-K in the last 24h · HALT = currently halted (Nasdaq feed) · PIT = triggering
 //   Pit Scan (reserved — populated once Pit Scan has a real-time feed). Public data; symbols in → flags.
-const TICKER_RE = /^[A-Z]{1,5}$/;
+// ⚠️ THE CANONICAL GATE, BECAUSE A LOCAL ONE HERE DISAGREED WITH THE ADD PATH.
+//
+// This was `/^[A-Z]{1,5}$/`, which rejects every dotted share class. /api/watchlist accepts BRK.B —
+// it stores it, /ticker/BRK.B renders it, the canonical grammar admits it — and then this endpoint
+// silently dropped it from the symbol list, so a watched BRK.B got no NEWS flag, no HALT flag and no
+// wire headline. Measured before the change: `?symbols=AAPL,BRK.B` came back with changes for AAPL
+// only. Two local regexes answering one question is how the two drift, which is the failure this
+// codebase keeps writing down.
+//
+// isIngestableSymbol is the storage-side gate, so by construction it admits everything the watchlist
+// can hold — BRK.B, BF.B, HEI.A, AXIA3 — while still refusing the filler and the malformed filer
+// strings ('NONE', 'NYSE: VTEX', 'Z AND ZG', '(CALX)'). Verified against all 16 tickers in production
+// watchlists: every one passes, so nothing already stored is orphaned by the change.
+import { isIngestableSymbol } from '../../../../lib/ticker-symbol.mjs';
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 
@@ -29,7 +42,7 @@ async function kvGet(k) {
 
 export async function GET(request) {
   const raw = (new URL(request.url).searchParams.get('symbols') || '').toUpperCase();
-  const syms = [...new Set(raw.split(',').map((s) => s.trim()).filter((s) => TICKER_RE.test(s)))].slice(0, 250);
+  const syms = [...new Set(raw.split(',').map((s) => s.trim()).filter(isIngestableSymbol))].slice(0, 250);
   const empty = { news: [], halt: [], pit: [] };
   if (!syms.length) return Response.json(empty, { headers: NO_STORE });
   const arr = `{${syms.join(',')}}`;

@@ -66,7 +66,7 @@ export async function GET(request) {
   if (rl) return rl;
 
   const { userId } = await auth();
-  if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+  if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
 
   try {
     const rows = await listTickers(userId);
@@ -109,7 +109,7 @@ export async function GET(request) {
 // thing the user opened it to see.
 export async function POST(request) {
   const { userId } = await auth();
-  if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401 });
+  if (!userId) return Response.json({ error: 'unauthorized' }, { status: 401, headers: NO_STORE });
   const at = new Date().toISOString();
   await kvSet(seenKey(userId), at);
   return Response.json({ ok: true, lastSeen: at }, { headers: NO_STORE });
