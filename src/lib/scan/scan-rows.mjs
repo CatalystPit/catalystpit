@@ -50,6 +50,29 @@ export const SCAN_ROWS_VERSION = 'scan_rows_v1';
  * There is no `mixed` here. A single price is never a mixture, and an entry for one would be an
  * invitation to render a board-level summary on a row.
  */
+/**
+ * The same vocabulary in sentence case, for prose rather than a badge.
+ *
+ * ⚠️ IT LIVES BESIDE FRESHNESS_LABEL ON PURPOSE. A sentence needs "delayed", a badge needs "DELAYED",
+ * and the one thing that must not happen is a second vocabulary in another file drifting from this
+ * one — which is how a board came to be summarised with a word no row had said. Same keys, asserted.
+ *
+ * It replaced a provider-specific sentence: the Custom Scanner used to read "Current feed: Tiingo
+ * (real-time consolidated)". The contractual attribution belongs on the legal pages, in the wording
+ * the agreement specifies; what a reader needs beside a filter is how fresh the data is.
+ */
+export const FRESHNESS_PHRASE = Object.freeze({
+  realtime: 'live',
+  near: 'live',
+  delayed: 'delayed',
+  eod: 'end-of-day',
+  stale: 'last known',
+  unpriced: 'unavailable',
+});
+
+/** ⚠️ An unknown provenance is described as the weakest, never as live. */
+export const freshnessPhrase = (f) => FRESHNESS_PHRASE[f] ?? 'end-of-day';
+
 export const FRESHNESS_LABEL = Object.freeze({
   realtime: 'LIVE',
   // Seconds to about a minute behind the tape. Not a delayed feed, and saying so cost a Pro reader

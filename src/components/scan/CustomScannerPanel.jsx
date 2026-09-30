@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { C, TickerLogo } from '../../lib/cp-shared';
+import { freshnessPhrase } from '../../lib/scan/scan-rows.mjs';
 
 // THE CUSTOM SCANNER — Finviz speed on the surface, Catalyst Pit's engine underneath.
 //
@@ -249,7 +250,13 @@ export default function CustomScannerPanel({ onPick }) {
             border: `1px solid ${C.border}`, borderRadius: 5, padding: '5px 8px' }}>
             {pendingLive.length === 1 ? '1 filter is' : `${pendingLive.length} filters are`} waiting on live
             market data and {pendingLive.length === 1 ? 'is' : 'are'} not applied to these results.
-            {caps?.label ? ` Current feed: ${caps.label}.` : ''}
+            {/* ⚠️ THE FRESHNESS, NOT THE VENDOR. This read "Current feed: Tiingo (real-time
+                consolidated)". The Tiingo agreement's attribution requirement is met on the legal
+                pages in the exact wording it specifies and does not extend to every market-data
+                surface — and a plan-tier name is an implementation detail either way. What is useful
+                beside an unapplied live filter is how current the data actually is, which the server
+                has already capped to this caller's entitlement. */}
+            {caps?.quoteFreshness ? ` Market data is currently ${freshnessPhrase(caps.quoteFreshness)}.` : ''}
           </div>
         )}
 

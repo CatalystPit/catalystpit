@@ -43,9 +43,13 @@ L('⚠️ 7 — the anonymous capabilities payload no longer names the vendor in
 {
   const r = code('src/app/api/screener/route.js');
   ok('⚠️ the internal provider id is not shipped', !/provider: caps\.id/.test(r));
-  ok('the human label is kept, because the UI renders it', /label: caps\.label/.test(r));
-  ok('…and the attribution question is flagged rather than decided',
-    /attribution term in the licence/.test(read('src/app/api/screener/route.js')));
+  // ⚠️ THIS ASSERTED THE INTERIM DECISION, AND THE CONTRACT HAS SINCE SETTLED IT. The label was kept
+  // pending the attribution term; the executed agreement requires "Market Data from Tiingo.com" on the
+  // legal/disclaimer pages and does NOT require the vendor beside every market-data surface, so the
+  // per-surface label is gone. The attribution itself is asserted in verify-freshness-entitlement.mjs.
+  ok('⚠️ the provider label is no longer shipped either', !/label: (caps|served)\.label/.test(r));
+  ok('…and the reason points at the legal pages rather than at an open question',
+    /attribution clause is satisfied on the legal pages/.test(read('src/app/api/screener/route.js')));
   // The Screener's own Free/Pro boundary is in the quote path, not the row path — that is correct and
   // is asserted so a tier check is not later bolted onto EOD rows that do not need one.
   ok('the EOD row path resolves no tier (EOD is not Pro-gated)',

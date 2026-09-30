@@ -89,7 +89,15 @@ export async function GET(request) {
           // `label` stays: it is rendered to the reader as "Current feed: …", and whether our data
           // vendor must, may, or must not be named to users is an attribution term in the licence,
           // not something to decide here. Flagged for the owner.
-          label: caps.label,
+          // ⚠️ THE PROVIDER LABEL IS NO LONGER SERVED. It was `caps.label` — "Tiingo (real-time
+          // consolidated)" — and the UI rendered it as "Current feed: …". The Tiingo agreement's
+          // attribution clause is satisfied on the legal pages, in the exact wording it requires, and
+          // does NOT ask for the vendor beside every quote, screener or scan result. A per-surface
+          // feed label is also an implementation detail: it names our plan tier to anyone who fetches
+          // this endpoint, which takes no auth.
+          //
+          // What a reader actually needs here is the FRESHNESS of the data they are being served, and
+          // that is below — already capped to this caller's entitlement.
           quoteFreshness: served.quoteFreshness,
           streaming: served.streaming,
           liveVolume: served.liveVolume,

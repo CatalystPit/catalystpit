@@ -75,8 +75,11 @@ export function scanReadiness(caps = activeCapabilities()) {
   if (caps.quoteFreshness !== 'realtime' && caps.quoteFreshness !== 'near') needs.push('real-time prices');
   return {
     live: needs.length === 0,
-    provider: caps.id,
-    providerLabel: caps.label,
+    // ⚠️ THE VENDOR'S ID AND LABEL USED TO TRAVEL HERE TOO, and this object is returned inside
+    // scanState — so /api/pitscan shipped "Tiingo (real-time consolidated)" and the plan id to every
+    // Pro client. Nothing read either one: the panel uses `live` and `reason` only. Removed rather
+    // than renamed, because the attribution the Tiingo agreement requires is satisfied on the legal
+    // pages and naming the vendor on a scan payload is an implementation detail, not a disclosure.
     needs,
     // Reported separately so the panel can say what is merely ABSENT rather than blocking: these
     // turn signals off, they do not stop the product.
@@ -124,8 +127,11 @@ export function scanState({ preset = null, realtime = false } = {}) {
   return {
     readiness,
     capabilities: {
-      provider: served.id,
-      label: served.label,
+      // ⚠️ NEITHER THE PROVIDER ID NOR ITS LABEL LEAVES THE SERVER. The label was
+      // "Tiingo (real-time consolidated)"; the contractual attribution lives on the legal pages in the
+      // wording the agreement specifies, and naming the vendor — or our plan tier — on a scan payload
+      // is an implementation detail rather than a disclosure anyone needs. `quoteFreshness` below is
+      // what describes the data, and it is already capped to this caller's entitlement.
       streaming: served.streaming,
       quoteFreshness: served.quoteFreshness,
       consolidatedVolume: served.consolidatedVolume,

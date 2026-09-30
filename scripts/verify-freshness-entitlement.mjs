@@ -256,13 +256,55 @@ L('⚠️ email and bell are independent channels, deduped within each');
   ok('…and the claim is still written only on a successful send', /if \(ok\) \{/.test(mailer));
 }
 
-L('⚠️ no Tiingo credential or internal identifier is exposed publicly');
+L('⚠️ the vendor is named on the legal pages and nowhere else');
 {
-  // ⚠️ ATTRIBUTION IS DELIBERATELY UNCHANGED — the label the UI renders stays exactly as it was,
-  // pending the contractual requirement. What is checked here is credentials and internals.
+  // ⚠️ WHAT THE AGREEMENT ACTUALLY REQUIRES: the phrase "Market Data from Tiingo.com" with
+  // Tiingo.com hyperlinked, on the legal/disclaimer page of the product and on the corresponding legal
+  // page of the website. It does NOT require the vendor beside every quote, chart, screener, ticker
+  // page, Terminal panel or scan result — so the per-surface feed label was removed rather than
+  // reworded, and a plan-tier name was an implementation detail either way.
+  const ATTRIBUTED = ['src/app/disclaimer/DisclaimerClient.jsx', 'src/app/terms/TermsClient.jsx'];
+  for (const f of ATTRIBUTED) {
+    const c = read(f);
+    ok(`${f} carries the exact required phrase`, /Market Data from <a href="https:\/\/www\.tiingo\.com"/.test(c));
+    ok(`  …with Tiingo.com as the hyperlink text`, /rel="noopener noreferrer"[^>]*>Tiingo\.com<\/a>/.test(c));
+    ok(`  …opening safely in a new tab`, /target="_blank" rel="noopener noreferrer"/.test(c));
+    ok(`  …and the contractual reason is recorded so it is not reworded away`,
+      /CONTRACTUAL ATTRIBUTION/.test(c));
+  }
+
+  // ⚠️ AND NOWHERE ELSE. The provider-specific label must not reach any client payload or bundle.
+  const { scanState } = await import('../src/lib/scan/runtime.js');
+  for (const rt of [false, true]) {
+    const payload = JSON.stringify(scanState({ realtime: rt }));
+    ok(`the scan payload (realtime: ${rt}) names no vendor`, !/tiingo|polygon/i.test(payload),
+      (payload.match(/.{0,40}(tiingo|polygon).{0,40}/i) || [''])[0]);
+  }
   const screener = code('src/app/api/screener/route.js');
   ok('the internal provider id is not served', !/provider: caps\.id|provider: served\.id/.test(screener));
-  ok('⚠️ the user-facing attribution label is UNCHANGED', /label: caps\.label/.test(screener));
+  ok('⚠️ …and neither is the provider label', !/label: (caps|served)\.label/.test(screener));
+  ok('⚠️ the readiness object no longer carries the vendor id or label',
+    !/provider: caps\.id|providerLabel/.test(code('src/lib/scan/runtime.js')));
+  // The descriptors keep their labels for operational logs; that is server-side only.
+  ok('the descriptors still carry labels internally', /label: 'Tiingo \(real-time consolidated\)'/.test(read('src/lib/market/tiingo.mjs')));
+
+  // ⚠️ THE REPLACEMENT IS A FRESHNESS CLAIM, AND IT MUST STAY ACCURATE.
+  const { freshnessPhrase, FRESHNESS_PHRASE, FRESHNESS_LABEL } = await import('../src/lib/scan/scan-rows.mjs');
+  ok('the scanner sentence describes freshness, not a feed',
+    /Market data is currently \$\{freshnessPhrase\(caps\.quoteFreshness\)\}/.test(code('src/components/scan/CustomScannerPanel.jsx')));
+  ok('…and no longer names the feed', !/Current feed/.test(code('src/components/scan/CustomScannerPanel.jsx')));
+  ok('⚠️ an unknown provenance is described as the weakest, never as live', freshnessPhrase('nonsense') === 'end-of-day');
+  ok('…and so is a missing one', freshnessPhrase(undefined) === 'end-of-day');
+  for (const [f, want] of [['realtime', 'live'], ['near', 'live'], ['delayed', 'delayed'], ['eod', 'end-of-day']]) {
+    ok(`${f} reads as "${want}"`, freshnessPhrase(f) === want, freshnessPhrase(f));
+  }
+  // ⚠️ ONE VOCABULARY, TWO RENDERINGS. A second map in another file is how a board came to be
+  // summarised with a word no row had said, so the two are asserted to cover the same keys.
+  ok('⚠️ the phrase and badge maps cover the same freshness keys',
+    Object.keys(FRESHNESS_PHRASE).sort().join(',') === Object.keys(FRESHNESS_LABEL).sort().join(','),
+    `${Object.keys(FRESHNESS_PHRASE).sort()} vs ${Object.keys(FRESHNESS_LABEL).sort()}`);
+  // The freshness the sentence renders is the entitlement-capped one, not the provider's.
+  ok('the scanner reads the SERVED freshness', /caps\?\.quoteFreshness/.test(code('src/components/scan/CustomScannerPanel.jsx')));
   for (const f of ['src/app/screener/ScreenerClient.jsx', 'src/components/scan/PitScanPanel.jsx',
     'src/components/scan/ScanBoardRows.jsx', 'src/lib/cp-shared.jsx']) {
     const c = read(f);

@@ -121,6 +121,19 @@ export default function TermsClient() {
 
         <Section title="9. Third-Party Services">
           <p>The Service includes links to and integrations with third-party services, including Clerk (accounts), Stripe (payments), Ably (realtime community messaging), Resend (email delivery), Beehiiv (newsletter), Vercel, Neon and Upstash (infrastructure), and market-data, filing and news providers. Our <a href="/privacy" style={linkStyle}>Privacy Policy</a> lists the providers that handle user information. We are not responsible for the content, accuracy, or practices of third parties. Your use of those services is governed by their own terms and policies.</p>
+          {/* ⚠️ CONTRACTUAL ATTRIBUTION — THE EXACT WORDING, NOT A PARAPHRASE. The Tiingo agreement
+              requires the phrase "Market Data from Tiingo.com" with Tiingo.com hyperlinked, on the
+              legal/disclaimer page of the product AND on the corresponding legal page of the website.
+              The Disclaimer carries it in section 4; this is the second surface. It must not be
+              reworded, abbreviated, merged into the sentence above, or reduced to a logo — the
+              sentence above names Tiingo among many providers, which is a different statement from
+              the attribution the agreement asks for.
+
+              It is deliberately NOT repeated beside every quote, chart, screener or scan result: the
+              clause names the legal pages, and a per-surface vendor label was removed for that reason. */}
+          <p style={{ fontWeight: 600 }}>
+            Market Data from <a href="https://www.tiingo.com" target="_blank" rel="noopener noreferrer" style={linkStyle}>Tiingo.com</a>
+          </p>
         </Section>
 
         {/* ⚠️ WRITTEN IN THE CONDITIONAL BECAUSE NO ADS RUN TODAY. The only AdSense code on the site
