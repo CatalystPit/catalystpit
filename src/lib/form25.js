@@ -34,9 +34,25 @@ import { dailyIndexFilings, recentDays } from './sec-daily-index.mjs';
 const PAGES = 2;          // getcurrent pages; Form 25 volume is a fraction of 8-K volume
 const MAX_NEW = 40;
 
-/** '25-NSE' when the exchange filed it, '25' when the issuer did. */
+/**
+ * '25-NSE' when the exchange filed it, '25' when the issuer did, null when the feed handed us
+ * something else entirely.
+ *
+ * ⚠️ browse-edgar's `type=` IS A PREFIX MATCH, NOT AN EXACT ONE. `type=25` returns Form 25 and
+ * 25-NSE — and also 253G1, 253G2, 253G3, which are Regulation A offering circulars and have nothing
+ * to do with delisting. This returned '25' for ANY title that was not 25-NSE, so an offering
+ * circular was stored as "Withdrawal from listing" with material: true. Found in production: PVOZ
+ * and SRGZ, both 253G2, both presented as a company leaving its exchange.
+ *
+ * The form is now read as a whole token off the front of the title and anything that is not exactly
+ * 25 or 25-NSE (with an optional /A) is refused, so a new 25-prefixed form cannot quietly arrive as
+ * a delisting either.
+ */
 export function form25Code(title) {
-  return /25-NSE/i.test(String(title || '')) ? '25-NSE' : '25';
+  const form = String(title || '').trim().match(/^([0-9A-Za-z-]+(?:\/A)?)\s*-\s/)?.[1] || '';
+  if (/^25-NSE(\/A)?$/i.test(form)) return '25-NSE';
+  if (/^25(\/A)?$/i.test(form)) return '25';
+  return null;
 }
 
 /** Days of the complete daily index to reconcile against — see lib/sec-daily-index.mjs. */
@@ -70,6 +86,10 @@ export async function ingestForm25({ days = RECONCILE_DAYS } = {}) {
       // ⚠️ THE FORM TYPE COMES FROM THE FEED'S OWN TITLE, not from the document body. "25-NSE - ACME
       // (0001234567) (Filer)" — the prefix is the form, and it is what decides who filed.
       const code = form25Code(title);
+      // ⚠️ A FORM WE DO NOT RECOGNISE IS SKIPPED, NOT GUESSED. See form25Code: the feed returns
+      // 253G* alongside Form 25, and defaulting those to '25' published a delisting that never
+      // happened. Refusing here is the difference between missing a filing and inventing an event.
+      if (!code) continue;
       const company = title.replace(/^25(-NSE)?(\/A)?\s*-\s*/i, '').replace(/\s*\(\d+\)\s*\(Filer\)\s*$/i, '').trim();
       const filedAt = entry.match(/<updated>(.*?)<\/updated>/)?.[1] || null;
       filings.set(accession, {
