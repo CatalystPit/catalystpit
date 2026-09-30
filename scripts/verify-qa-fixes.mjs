@@ -117,6 +117,18 @@ L('⚠️ 4 — the AdSense loader is permitted by exactly what it needs');
   ok('the zrt_lookup frame is allowed as a frame', /frame-src[^;]*https:\/\/googleads\.g\.doubleclick\.net/.test(csp));
   ok('…and the sodar runner frame', /frame-src[^;]*https:\/\/ep2\.adtrafficquality\.google/.test(csp));
   ok('the sodar config XHR is allowed as a connection', /connect-src[^;]*https:\/\/ep1\.adtrafficquality\.google/.test(csp));
+  // ⚠️ THE ONE THE PRE-SHIP MEASUREMENT MISSED. The footprint sweep filtered candidate hosts through a
+  // regex of ad-network domain names, so www.google.com never appeared in it — and the first production
+  // run came back with exactly one violation: the loader framing Google's reCAPTCHA attestation page.
+  // Blocking adsbygoogle.js at the network layer dropped that violation to zero, which is what proved the
+  // frame was the loader's and not something already on the page.
+  ok('⚠️ the reCAPTCHA attestation frame is allowed', /frame-src[^;]*https:\/\/www\.google\.com\/recaptcha\//.test(csp));
+  // ⚠️ AND SCOPED TO THAT PATH, not to the whole origin. A CSP source expression takes a path prefix, so
+  // this permits the attestation frame and nothing else on www.google.com. Verified against a real
+  // response header with a negative control that blocks: path matching is ignored across redirects, so
+  // whether the tight form works at all was an empirical question, not a spec-reading one.
+  ok('⚠️ …and www.google.com is NOT permitted as a whole origin',
+    !/https:\/\/www\.google\.com(?![/\w])/.test(csp));
   // img-src is already 'https:', so the gen_204 and sodar beacons needed no addition at all.
   ok('img-src already covered the beacons without a change', /img-src 'self' data: blob: https:/.test(csp));
 
