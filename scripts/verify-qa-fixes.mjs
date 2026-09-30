@@ -50,6 +50,23 @@ L('⚠️ 2 — a Pro refusal renders as an entitlement state, never as an outag
   ok('a real failure still says so', /Pit Scan is unavailable right now\./.test(read('src/components/scan/ScanBoardRows.jsx')));
   ok('…and still offers a retry', /onRetry/.test(c));
   ok('…and a successful load clears the locked state', /setLocked\(false\);/.test(c));
+
+  // ⚠️ AND THE STATE MUST LIVE WHERE IT IS RENDERED. The first version of this fix declared `locked`
+  // inside useScanBoards and read it inside ScanBoard — a different function — so /scan threw
+  // `ReferenceError: locked is not defined` during prerender and the Vercel build failed. A client
+  // component is server-rendered first; a free identifier is a build break, not a runtime warning.
+  ok('⚠️ locked is a declared prop of ScanBoard, not a free identifier',
+    /export function ScanBoard\(\{ board, data, loading = false, errorText = null, locked = false,/.test(c));
+  ok('…the hook exposes it', /return \{ boards, error, stale, locked, loading:/.test(c));
+  ok('⚠️ …and a locked board is not also reported as loading',
+    /loading: boards === null && error === null && !locked/.test(c));
+  // ⚠️ BOTH CALL SITES, because /scan renders ScanBoard directly through ScanClient while the Terminal
+  // goes through ScanBoardRows — and it was /scan that broke the build.
+  for (const f of ['src/app/scan/ScanClient.jsx', 'src/components/scan/ScanBoardRows.jsx']) {
+    const cc = code(f);
+    ok(`${f} reads locked from the hook`, /locked[,}]/.test(cc) && /useScanBoards\(\)/.test(cc));
+    ok('  …and passes it down to ScanBoard', /locked=\{locked\}/.test(cc));
+  }
 }
 
 L('⚠️ 3 — the ticker API reads our own security master before naming a ticker after itself');

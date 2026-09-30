@@ -25,7 +25,7 @@ export default function ScanClient() {
   // ⚠️ ONE REQUEST FOR ALL THREE. This page stacks the boards, so it used to make three requests
   // that each resolved the entitlement, read the published board and fetched the same hundred
   // quotes. They are three views of one dataset and they now arrive as one.
-  const { boards, error, loading, retry } = useScanBoards();
+  const { boards, error, loading, locked, retry } = useScanBoards();
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>
@@ -54,7 +54,7 @@ export default function ScanClient() {
               {/* An empty board renders as an empty board with its own explanation — never hidden,
                   and never padded with rows that do not qualify. Divergence is deliberately tight. */}
               <ScanBoard board={b.key} data={boards?.[b.key] || null} loading={loading}
-                errorText={error} onRetry={retry}
+                errorText={error} locked={locked} onRetry={retry}
                 onState={(j) => { if (j?.freshness) setFreshness(j.freshness); }} />
             </section>
           ))}

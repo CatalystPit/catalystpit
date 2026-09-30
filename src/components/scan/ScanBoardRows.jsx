@@ -351,7 +351,12 @@ export function useScanBoards() {
   const retry = useCallback(() => { setError(null); setNonce((n) => n + 1); }, []);
   // Loading is the ONLY state with neither data nor an error, and it can only be reached before the
   // first response. Nothing sets boards back to null.
-  return { boards, error, stale, loading: boards === null && error === null, retry };
+  //
+  // ⚠️ AND A LOCKED BOARD IS NOT LOADING. Without `&& !locked`, an unentitled reader would satisfy
+  // "no data and no error" forever and the board would sit on "Loading Pit Scan…" — the exact state
+  // the comment above the render says must be unreachable once a response has arrived. A 403 IS a
+  // response.
+  return { boards, error, stale, locked, loading: boards === null && error === null && !locked, retry };
 }
 
 /**
@@ -362,7 +367,14 @@ export function useScanBoards() {
  * switch local. A component that fetched per board could not be shown three-up on /scan or behind
  * tabs in the Terminal without paying for the same dataset once per view.
  */
-export function ScanBoard({ board, data, loading = false, errorText = null, onRetry, title, onState, onPick }) {
+// ⚠️ `locked` ARRIVES AS A PROP, LIKE EVERY OTHER PIECE OF STATE THIS COMPONENT RENDERS.
+//
+// It was briefly read as a free identifier here while being declared in useScanBoards — a different
+// function — so `/scan` threw `ReferenceError: locked is not defined` during prerender and the Vercel
+// build failed. This component deliberately owns no fetch state: `data`, `loading` and `errorText` are
+// all props from the hook, and the entitlement state belongs in exactly the same place. It defaults to
+// false so a caller that does not pass it renders precisely as it did before.
+export function ScanBoard({ board, data, loading = false, errorText = null, locked = false, onRetry, title, onState, onPick }) {
   const [busy, setBusy] = useState(null);
   const [toast, setToast] = useState(null);
   const state = data || null;
@@ -478,7 +490,7 @@ export default function ScanBoardRows({ onPick, onFeed } = {}) {
   const [board, setBoard] = useState('catalysts-now');
   // ⚠️ ALL THREE ARRIVE TOGETHER, SO A TAB IS A LOCAL STATE CHANGE. It used to be a fetch, and the
   // fetch repeated every expensive thing the first one had already done.
-  const { boards, error, stale, loading, retry } = useScanBoards();
+  const { boards, error, stale, locked, loading, retry } = useScanBoards();
   const current = boards?.[board] || null;
   // The banner reads the freshness of the board being shown, from the response that carried it.
   const feed = current?.freshness ?? null;
@@ -514,7 +526,7 @@ export default function ScanBoardRows({ onPick, onFeed } = {}) {
         {BOARD_TABS.find((t) => t.key === board)?.blurb}
       </div>
 
-      <ScanBoard board={board} data={current} loading={loading} errorText={error} onRetry={retry} onPick={onPick} />
+      <ScanBoard board={board} data={current} loading={loading} errorText={error} locked={locked} onRetry={retry} onPick={onPick} />
     </div>
   );
 }
