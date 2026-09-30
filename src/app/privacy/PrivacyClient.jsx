@@ -24,7 +24,7 @@ export default function PrivacyClient() {
           Privacy Policy
         </h1>
         <p style={{ fontSize: 13, color: C.muted, margin: "0 0 40px", fontWeight: 300 }}>
-          Effective date: May 17, 2026 · Last updated: September 29, 2026
+          Effective date: May 17, 2026 · Last updated: September 30, 2026
         </p>
 
         <Section title="1. Who We Are">
@@ -50,20 +50,26 @@ export default function PrivacyClient() {
             <li><strong>Usage data:</strong> We may collect technical information such as your IP address, browser type, device type, pages visited, and timestamps via our hosting provider (Vercel).</li>
             <li><strong>IP address for security:</strong> The Service reads the IP address of incoming requests to apply rate limiting and to protect against abuse of our APIs. It is used for that purpose and is not used to build an advertising or tracking profile.</li>
             {/* ⚠️ THE CATEGORIES ARE NAMED because which ones are in use is what decides whether a
-                consent banner is legally required. Today the answer is only strictly-necessary and
-                functional, which is why there is no banner; that changes the day advertising runs. */}
-            <li><strong>Cookies and browser storage:</strong> We use two kinds of browser storage, and
-              only two. <strong>Strictly necessary:</strong> our authentication provider Clerk sets
+                consent banner is legally required — and the answer changed. This said the storage in
+                play was only strictly-necessary and functional, "which is why there is no banner", and
+                reasoned from that to not asking for consent. Measured from a clean profile on live
+                production, two page views now leave a .doubleclick.net "IDE" cookie in the jar with no
+                advertisement filled, so the premise is false and the inference drawn from it with it.
+                What remains true is the narrower claim: WE set only those two kinds. The advertising
+                cookies are the vendors' own, which is section 2.4's subject. */}
+            <li><strong>Cookies and browser storage:</strong> We ourselves set two kinds of browser
+              storage, and only two. <strong>Strictly necessary:</strong> our authentication provider Clerk sets
               cookies to keep you signed in and to protect the sign-in process — without these the
               Service cannot log you in. <strong>Functional:</strong> we store display preferences in
               your browser's local storage — chart settings, indicators, drawings, Terminal layout,
               light or dark mode and similar choices. That data stays in your browser, is readable only
               by this site, and is not a tracking mechanism.
               <br />
-              <strong>We do not set advertising or cross-site tracking cookies.</strong> Because the
-              storage we use today is limited to the two categories above, we do not ask you for cookie
-              consent. If we add advertising, we will ask for consent where the law requires it before
-              those cookies are set — see section 2.4.</li>
+              <strong>We do not set advertising or cross-site tracking cookies ourselves.</strong>{" "}
+              Third-party advertising partners, including Google, may set and read their own cookies or
+              similar technologies in your browser in connection with advertising on the Service. Where
+              the law requires your consent before advertising or similar non-essential cookies are set,
+              we will obtain it — see section 2.4.</li>
             {/* ⚠️ THE POLICY SAID "we do not run an analytics package" UNTIL WE RAN ONE. Web Analytics
                 shipped for launch monitoring, so that sentence had to go the same day — it is the
                 identical failure this section already carries a scar from with the ad loader. What
@@ -82,23 +88,29 @@ export default function PrivacyClient() {
           <p>We do not currently purchase or receive personal data about you from third parties beyond what is necessary to deliver our Service (e.g., Google authentication data when you sign in with Google).</p>
 
           <h3 style={subhead}>2.4 Advertising</h3>
-          {/* ⚠️ THIS SECTION DESCRIBED ADS WE DO NOT SERVE. It opened "We use Google AdSense... on the
-              Service. Advertising may be displayed to you", which was not true: the only AdSense code
-              on the site is the site-verification loader in the root layout, and there is not a single
-              ad slot in the codebase. A privacy policy that overstates tracking is as wrong as one
-              that understates it, and it is the claim a regulator reads first. The section now states
-              today's position first and keeps the vendor detail as what WILL apply once ads run. */}
+          {/* ⚠️ THIS SECTION HAS NOW BEEN WRONG IN BOTH DIRECTIONS, WHICH IS WHY IT IS WORDED THIS WAY.
+              It first overstated ("Advertising may be displayed to you") while only a verification
+              loader shipped. It was corrected to "We do not currently display advertising… no
+              advertising cookies are set by us" — accurate that day, and false once the loader began
+              requesting placements, because Google's auto-ads inject the slot at runtime and a
+              .doubleclick.net cookie is now set on a first visit with nothing filled.
+
+              A privacy policy that overstates tracking is as wrong as one that understates it, and this
+              is the claim a regulator reads first. So the wording no longer turns on whether a
+              particular placement happens to be filled — that is the fact that kept changing underneath
+              it without a deployment. */}
           <p style={{ fontWeight: 600 }}>
-            We do not currently display advertising on Catalyst Pit. No ads are served to you today, and
-            no advertising cookies are set by us.
+            The Service may display advertising provided by third-party advertising partners, including
+            Google AdSense.
           </p>
           <p>
-            We have applied to Google AdSense and the site carries Google's verification script so that
-            Google can confirm ownership of the domain. That script does not display advertising. If and
-            when advertising becomes active, this section will apply and we will update the "last
-            updated" date above before any ads run.
+            Google AdSense is integrated on Catalyst Pit. Whether an advertisement appears in a given
+            placement, at a given time, is determined by Google rather than by us, so you may or may not
+            see advertising on any particular visit. Google and its partners may set and read their own
+            cookies or similar technologies in your browser in connection with advertising on the
+            Service, whether or not an advertisement is displayed to you.
           </p>
-          <p><strong>When advertising is active, it will work as follows:</strong></p>
+          <p><strong>How advertising works on the Service:</strong></p>
           <ul style={list}>
             <li><strong>Who sees ads:</strong> Advertising will be shown to logged-out visitors and to
               signed-in users on the Free tier. <strong>Catalyst Pit Pro subscribers will not be shown
@@ -148,7 +160,7 @@ export default function PrivacyClient() {
               </ul>
             </li>
             <li><strong>Content and market-data vendors:</strong> We obtain market data, filings and news from third parties including Tiingo, Polygon, Finnhub, Financial Modeling Prep, the U.S. Securities and Exchange Commission (SEC EDGAR), CoinGecko and various news and press-release feeds, and we use Anthropic to enrich and summarise that content. <strong>These vendors do not receive your personal information</strong> — we request data about securities and companies, not about you.</li>
-            <li><strong>Advertising vendors:</strong> <strong>We do not currently display advertising</strong>, so no advertising vendor receives anything about you today. If advertising becomes active, Google AdSense is the intended provider; we would not send Google your account details, and Google and its partners may set and read their own cookies in your browser, as described in section 2.4. Pro subscribers will not be shown advertising.</li>
+            <li><strong>Advertising vendors:</strong> <strong>The Service may display advertising provided by third-party advertising partners, including Google AdSense.</strong> We do not send Google your name, email address or account details. Google and its partners may set and read their own cookies in your browser, as described in section 2.4. Pro subscribers will not be shown advertising.</li>
             <li><strong>Legal requirements:</strong> We may disclose information if required by law, subpoena, court order, or similar legal process, or if we believe disclosure is necessary to protect our rights, your safety, or the safety of others.</li>
             <li><strong>Business transfers:</strong> If CatalystPit is acquired, merged, or sells assets, your information may be transferred as part of that transaction. We will notify you before your information becomes subject to a different privacy policy.</li>
           </ul>

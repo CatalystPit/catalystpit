@@ -1,8 +1,10 @@
 // Does allowing the AdSense loader actually put an ad on the page?
 //
-// ⚠️ THIS IS THE QUESTION THAT DECIDES WHETHER THE CSP CHANGE IS SAFE TO SHIP. Terms section 10 says
-// "We do not display advertising on the Service at this time." If unblocking the script causes auto-ads
-// to render, the CSP change makes that sentence false — which is the owner's call, not mine.
+// ⚠️ WRITTEN WHEN THIS DECIDED WHETHER THE CSP CHANGE WAS SAFE TO SHIP. Terms section 10 then said "We
+// do not display advertising on the Service at this time", so auto-ads rendering would have made that
+// sentence false. §10 has since been rewritten to "the Service may display advertising", precisely
+// because a legal claim should not depend on Google's fill rate — so this script no longer gates
+// anything. It is kept as the measurement of whether ads have begun filling.
 //
 // An aswift iframe existing is not the same as an ad being shown: AdSense creates a 0x0 container when
 // nothing fills. So this measures rendered geometry and visibility, not presence.

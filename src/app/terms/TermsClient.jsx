@@ -23,7 +23,7 @@ export default function TermsClient() {
           Terms of Service
         </h1>
         <p style={{ fontSize: 13, color: C.muted, margin: "0 0 24px", fontWeight: 300 }}>
-          Effective date: May 17, 2026 · Last updated: September 29, 2026
+          Effective date: May 17, 2026 · Last updated: September 30, 2026
         </p>
 
         <div style={{ background: "#FFF8E8", border: "1px solid #E8D49A", borderRadius: 8, padding: "16px 18px", margin: "0 0 40px" }}>
@@ -136,14 +136,19 @@ export default function TermsClient() {
           </p>
         </Section>
 
-        {/* ⚠️ WRITTEN IN THE CONDITIONAL BECAUSE NO ADS RUN TODAY. The only AdSense code on the site
-            is the site-verification loader in the root layout; there is not one ad slot in the
-            codebase. Saying "we display advertising" would be a term we do not currently perform, and
-            the Pro no-ads promise below is the part a subscriber can hold us to — it must not be
-            written as though it is already being delivered. */}
+        {/* ⚠️ NO LONGER WRITTEN IN THE CONDITIONAL, BECAUSE THE CONDITION IS NOW MET. This section used
+            to open "We do not display advertising on the Service at this time", on the reasoning that
+            the only AdSense code was a site-verification loader and no ad slot existed in the codebase.
+            Both halves of that reasoning have expired: the loader requests ad placements, and Google's
+            auto-ads inject the slot at runtime rather than needing one committed here. Placements are
+            unfilled today, but an advertisement could begin rendering without another deployment — so
+            "at this time" was a claim with an expiry date nobody would be present for.
+
+            "May display" is the durable form: accurate whether a placement is filled or unfilled, and
+            it does not claim ads are being shown today when they are not. */}
         <Section title="10. Advertising">
-          <p><strong>We do not display advertising on the Service at this time.</strong> We intend to introduce advertising, and the site carries Google's AdSense verification script so that Google can confirm ownership of the domain. That script does not serve ads.</p>
-          <p>If and when advertising becomes active:</p>
+          <p><strong>The Service may display advertising provided by third-party advertising partners, including Google AdSense.</strong> Whether an advertisement appears in a given placement, at a given time, is determined by those partners rather than by us — so you may or may not see advertising on any particular visit.</p>
+          <p>Where advertising appears:</p>
           <ul style={list}>
             <li><strong>Who sees it:</strong> Advertising will be shown to logged-out visitors and to signed-in users on the Free tier.</li>
             <li><strong>Catalyst Pit Pro:</strong> Pro subscribers will not be shown advertising for as long as their subscription is active. This is part of what a Pro subscription buys.</li>

@@ -47,6 +47,14 @@ const terms = read('../src/app/terms/TermsClient.jsx');
 const privacy = read('../src/app/privacy/PrivacyClient.jsx');
 const disclaimer = read('../src/app/disclaimer/DisclaimerClient.jsx');
 const privacyText = flat(privacy);
+// ⚠️ AN ASSERTION THAT A PHRASE IS *GONE* MUST NOT READ THE COMMENT EXPLAINING WHY IT WENT. Every
+// retired claim in these files is documented by quoting it, so "the old wording is absent" checked
+// against the raw source fails on its own changelog — which has now happened repeatedly here. Negative
+// assertions read this view; positive ones keep reading the raw source, where matching a comment cannot
+// manufacture a pass for missing copy.
+const stripComments = (s) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/^\s*\/\/.*$/gm, '');
+const privacyCopy = flat(stripComments(privacy));
+const termsCopy = flat(stripComments(terms));
 const planTerms = read('../src/components/PlanTerms.jsx');
 // ⚠️ THE PRICES LIVE IN PlanChoice NOW, not in the homepage file. The homepage renders the choice
 // rather than hard-coding two buttons, so the amounts a buyer sees come from there.
@@ -110,7 +118,7 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   ok('⚠️ Privacy no longer promises real-time market data outright',
     !/We provide real-time market data/.test(privacy)
     && /freshness of market data shown to you depends on your subscription tier/.test(privacy));
-  ok('the policy was re-dated', /Last updated: September 29, 2026/.test(privacy));
+  ok('the policy was re-dated', /Last updated: September 30, 2026/.test(privacy));
 
   // ── ⚠️ ADVERTISING: THE POLICY HAD TO CATCH UP WITH THE CODE ──────────────────────────────────
   //
@@ -145,13 +153,29 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   // perform: the loader is site VERIFICATION and there is not one ad unit in the repository. A policy
   // that overstates collection is as wrong as one that understates it. What is pinned now is the
   // distinction itself — verification shipped, advertising did not.
-  ok('⚠️ the policy does not claim we display advertising today',
+  // ⚠️ AND THEN THE CORRECTION EXPIRED IN ITS TURN. "We do not currently display advertising" was
+  // accurate while the loader was blocked by the CSP and could not run. Once it ran it began requesting
+  // placements, so an advertisement could start rendering with no deployment in between — a claim whose
+  // truth depended on Google's fill rate. What is pinned now is the durable form: the Service MAY
+  // display advertising, which is accurate filled or unfilled, and still does not assert that ads are
+  // being shown today.
+  ok('⚠️ the policy no longer claims advertising is absent',
+    !/We do not currently display advertising/.test(privacyCopy)
+    && !/No ads are served to you today/.test(privacyCopy));
+  ok('⚠️ …and states the durable position instead',
+    /The Service may display advertising provided by third-party advertising partners, including Google AdSense/.test(privacy));
+  ok('⚠️ …without claiming an ad is being shown right now',
+    /you may or may not see advertising on any particular visit/.test(privacyText));
+  ok('…and it does not revive the old overstatement either',
     !/We use Google AdSense, Google's advertising service, on the Service/.test(privacy)
     && !/Advertising may be displayed to you on Catalyst Pit pages/.test(privacy));
-  ok('⚠️ …it says plainly that no ads are served', /We do not currently display advertising/.test(privacy));
-  ok('…and explains the verification script, so the tag in the HTML is accounted for',
-    /verification script/.test(privacy) && /does not display advertising/.test(privacy));
   ok('…in its own numbered section, so it is findable', /2\.4 Advertising/.test(privacy));
+  // ⚠️ THE MEASURED FACT THAT DROVE THE REST OF THIS CHANGE. A clean profile picks up a
+  // .doubleclick.net cookie after two page views with nothing filled, so the policy has to say vendor
+  // cookies may be set whether or not an ad appears. Without this clause a reader would reasonably
+  // conclude that an empty placement means no tracking.
+  ok('⚠️ vendor cookies are disclosed as possible even with no ad shown',
+    /whether or not an advertisement is displayed to you/.test(privacyText));
   // ⚠️ THE ONE PROMISE A SUBSCRIBER CAN HOLD US TO. "No ads for Pro" is the part of the future
   // advertising model that is a term of sale rather than a disclosure, so it is stated in both
   // documents and pinned in both.
@@ -164,8 +188,22 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
     || /we will ask for it before those cookies are used/.test(privacy));
   ok('…and the cookie categories actually in use are named',
     /Strictly necessary:/.test(privacy) && /Functional:/.test(privacy));
-  ok('…and the reason there is no consent banner today is stated',
-    /we do not ask you for cookie consent/.test(privacyText));
+  // ⚠️ THE "NO BANNER BECAUSE ONLY TWO CATEGORIES" REASONING HAD TO GO, and it must not come back. The
+  // policy inferred from "our storage is only strictly-necessary and functional" that no consent was
+  // needed. An advertising cookie is now in the jar, so the premise is false — and an inference that
+  // reads as a legal conclusion is the last thing that should be left standing on a false premise.
+  ok('⚠️ the no-consent-needed inference is gone',
+    !/we do not ask you for cookie consent/.test(privacyText)
+    && !/Because the storage we use today is limited to the two categories above/.test(privacyText));
+  ok('⚠️ …replaced by the narrower claim that is actually true',
+    /We do not set advertising or cross-site tracking cookies ourselves/.test(privacyText));
+  ok('⚠️ …and section 2.2 itself discloses that vendors may set their own',
+    /Third-party advertising partners, including Google, may set and read their own cookies/.test(privacyText));
+  // ⚠️ AND THE CONSENT COMMITMENT SURVIVES. It is a user protection, not a claim that expired: the fix
+  // for not yet performing it is to perform it, not to delete it from the policy.
+  ok('⚠️ the consent commitment is still made, not dropped',
+    /Where\s+the law requires your consent before advertising or similar non-essential cookies are set,\s+we will obtain it/.test(privacyText.replace(/\s+/g, ' '))
+    || /the law requires your consent before advertising or similar non-essential cookies are set, we will obtain it/.test(privacyText.replace(/\s+/g, ' ')));
   ok('third-party advertising cookies are disclosed',
     /Third-party vendors, including Google, may use cookies or similar technologies/.test(privacy));
   ok('…including that Google may serve ads based on visits to this and other sites',
@@ -178,14 +216,14 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
     /We may in future use other third-party advertising vendors or networks/.test(privacy));
   ok('the advertising vendor appears in the sharing section too',
     /<strong>Advertising vendors:<\/strong>/.test(privacy) && /Google AdSense/.test(privacy));
-  ok('⚠️ …and that section says no vendor receives anything today',
-    /no advertising vendor receives anything about you today/.test(privacy));
+  ok('⚠️ …and that section no longer says no vendor receives anything today',
+    !/no advertising vendor receives anything about you today/.test(privacy));
 
   // ⚠️ AND IT DOES NOT OVERCLAIM IN EITHER DIRECTION.
   ok('⚠️ the no-sale statement is preserved, not widened',
     /We do not sell your personal information to third parties/.test(privacy));
   ok('…and we do not claim to send advertisers account details',
-    /we would not send Google your account details/.test(privacy)
+    /We do not send Google your name, email address or account details/.test(privacy)
     && /We do not provide your name, email address or account details to advertising vendors/.test(privacy));
   // The rate-limiting IP statement stays accurate and is not quietly dropped to make room.
   ok('…the IP-for-security statement is still there',
@@ -205,9 +243,13 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   // — so removing the loader and leaving the disclosure in place read as consistent. What makes the
   // policy true is a tag the browser executes, so that is what is detected.
   const adLoaderLive = /<script[^>]*(?:ADSENSE_SRC|googlesyndication\.com)/.test(layoutSrc);
-  ok('⚠️ if the ad loader ships, the policy accounts for it',
-    !adLoaderLive || /verification script/.test(privacy),
-    'the loader is in the layout but the policy does not explain it');
+  // ⚠️ THIS USED TO REQUIRE THE PHRASE "verification script", which was the honest account of the tag
+  // while the CSP blocked it from running. It runs now and requests placements, so calling it a
+  // verification script would be the understatement — the loader has to be accounted for as advertising.
+  ok('⚠️ if the ad loader ships, the policy accounts for it as advertising',
+    !adLoaderLive || (/Google AdSense is integrated on Catalyst Pit/.test(privacy)
+      && !/verification script/.test(privacyCopy)),
+    'the loader is in the layout but the policy still describes it as verification only');
   ok('⚠️ …and if it does not ship, the policy does not mention AdSense at all',
     adLoaderLive || !/AdSense/.test(privacy),
     'the policy discloses AdSense but no loader is deployed');
@@ -220,20 +262,39 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
     ok(`⚠️ the policy names ${vendor}, whose host is in the layout`,
       new RegExp(vendor, 'i').test(privacy), `${host} ships but ${vendor} is not named in the policy`);
   }
-  // ⚠️ THE ASSERTION THAT MAKES "WE DO NOT DISPLAY ADVERTISING" A FACT ABOUT THE REPOSITORY.
+  // ⚠️ THIS ASSERTION IS WHY THE POLICY WENT STALE WITHOUT THE SUITE NOTICING, AND IT IS THE REAL
+  // LESSON OF THIS CHANGE.
   //
-  // An ad UNIT anywhere means ads really are rendering, not merely verifiable — and on that day the
-  // policy's flat "we do not currently display advertising" becomes false site-wide. Scanning only
-  // layout.jsx was too narrow: the loader lives there, but a slot would be placed on whatever page
-  // shows it. So the whole of src/ is searched, and the two statements are required to disagree.
+  // It tied "we do not currently display advertising" to the absence of a hand-placed ad unit —
+  // class="adsbygoogle" or data-ad-slot — anywhere in src/. The premise was that no slot in the
+  // repository means no ad on the page. Google's auto-ads falsify it: the loader injects
+  // `ins.adsbygoogle` at runtime, so ads can render with src/ containing no ad markup at all. The
+  // assertion passed green the entire time the claim was becoming false, and would have kept passing
+  // on the day an ad first rendered.
+  //
+  // What actually decides whether the Service may display advertising is whether the LOADER ships.
+  // That is the dependency the claim is now tied to, in both directions: ship the loader and the
+  // documents must say ads may appear; remove it and they must stop saying so.
+  // ⚠️ A RENDERED TAG WITH THE LOADER AS ITS src, NOT THE CONSTANT APPEARING SOMEWHERE. The first
+  // version of this matched the adsbygoogle.js URL anywhere in the file — which is the ADSENSE_SRC
+  // constant, and it survives on its own if the <script> is deleted. Mutation-testing caught it:
+  // replacing src={ADSENSE_SRC} with a dead attribute removed the loader while the suite still reported
+  // it shipping, so the documents would have gone on claiming ads may appear with nothing loading them.
+  // This is the identical hole the assertion below already carries a scar from.
+  const loaderShips = /<script[^>]*\bsrc=\{ADSENSE_SRC\}/.test(layoutSrc)
+    && /const ADSENSE_SRC = `https:\/\/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/.test(layoutSrc);
+  const mayDisplay = /The Service may display advertising provided by third-party advertising partners/;
+  ok('⚠️ the AdSense loader ships in the layout', loaderShips);
+  ok('⚠️ …and the Privacy Policy says advertising may appear exactly when it does',
+    loaderShips === mayDisplay.test(privacy),
+    loaderShips ? 'the loader ships but the policy does not say ads may appear'
+      : 'the policy says ads may appear but no loader ships');
+  ok('⚠️ …and so do the Terms', loaderShips === mayDisplay.test(terms));
+  // A hand-placed ad unit is still worth knowing about — it would mean a deliberate slot rather than
+  // auto-placement — but its absence no longer licenses any claim.
   const adUnit = /class(?:Name)?="[^"]*adsbygoogle|data-ad-slot/;
   const slots = srcFiles().filter((f) => adUnit.test(read(f)));
-  ok('⚠️ no ad unit exists anywhere in src/, which is what makes the no-ads claim true',
-    slots.length === 0, slots.join(', '));
-  ok('⚠️ …and the policy and the code agree about that',
-    (slots.length === 0) === /We do not currently display advertising/.test(privacy),
-    slots.length ? `ad units shipped (${slots.join(', ')}) but the policy still says none are displayed`
-      : 'the policy dropped the no-advertising statement while no ad unit ships');
+  console.log(`       (hand-placed ad units in src/: ${slots.length ? slots.join(', ') : 'none — auto-ads only'})`);
 }
 
 L('⚠️ TERMS COVER BOTH PLANS, AND RENEWAL IS STATED');

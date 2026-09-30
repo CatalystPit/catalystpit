@@ -252,9 +252,14 @@ export default function RootLayout({ children }) {
           {/* ⚠️ TRAFFIC ANALYTICS, AND DELIBERATELY THE COOKIELESS KIND. Vercel Web Analytics gives
               page views, referrers, landing pages, device type and country without setting a cookie,
               without a device or cross-site identifier, and without a new processor — Vercel already
-              hosts the app and is already named in the Privacy Policy. That is what keeps section 2.2
-              of the policy true: functional storage only, still no advertising or tracking cookies.
-              Anything with session replay or fingerprinting would need approval and does not ship here.
+              hosts the app and is already named in the Privacy Policy. Anything with session replay or
+              fingerprinting would need approval and does not ship here.
+
+              ⚠️ THIS COMMENT USED TO ADD "still no advertising or tracking cookies", which was a claim
+              about the whole page rather than about Analytics, and the AdSense loader below made it
+              false: a .doubleclick.net cookie is now set on a first visit. Analytics itself is still
+              cookieless — that part is unchanged — but section 2.2 no longer rests on there being no
+              advertising cookies at all, only on us not setting them.
 
               ⚠️ IT NEEDS THE DASHBOARD SWITCH TOO. The script only collects once Web Analytics is
               enabled for the project in Vercel; until then this renders and reports nothing, which is

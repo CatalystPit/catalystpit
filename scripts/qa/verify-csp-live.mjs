@@ -92,14 +92,17 @@ L('the AdSense verification tag now actually runs');
     gotLoader.length >= 1 && gotLoader.every((x) => x.status === 200),
     JSON.stringify(gotLoader.map((x) => x.status)));
 
-  // ⚠️ AND NO AD IS ACTUALLY DISPLAYED, so Terms section 10 ("We do not display advertising on the
-  // Service at this time") stays accurate. This is the check that catches the change turning ads on.
+  // ⚠️ WHAT IS BEING MEASURED HERE IS FILL RATE, NOT COMPLIANCE — AND THAT IS THE POINT.
   //
-  // Note what "not displayed" means here, precisely, because it is not "nothing exists": now that the
-  // loader runs, auto-ads DO create one placement — an ins.adsbygoogle carrying
-  // data-ad-status="unfilled" and a 0x0 aswift iframe. Nothing paints and nothing occupies layout. But
-  // that is the account not filling, not the site declining to ask. If AdSense starts filling, ads WILL
-  // render and that Terms sentence stops being true — an owner decision, flagged rather than assumed.
+  // This block used to assert that no ad renders "so Terms section 10 remains accurate", because §10
+  // then said "We do not display advertising on the Service at this time". Tying a legal claim to
+  // Google's fill rate was the mistake: the claim could go false with no deployment, and no test could
+  // sit in front of it. §10 now says the Service MAY display advertising, which is accurate whether a
+  // placement is filled or not, so nothing legal rides on these numbers any more.
+  //
+  // They are still worth recording. Auto-ads create one placement — an ins.adsbygoogle carrying
+  // data-ad-status="unfilled" and a 0x0 aswift iframe — and knowing when that starts filling is how the
+  // owner learns that ads have gone live, rather than finding out from a visitor.
   const ads = await p.eval(`(() => {
     const f = [...document.querySelectorAll('iframe')].filter((x) => /aswift|google_ads/i.test(x.id + ' ' + (x.name || '') + ' ' + (x.src || '')));
     const big = (e) => { const b = e.getBoundingClientRect(); return b.width > 20 && b.height > 20; };
@@ -110,10 +113,13 @@ L('the AdSense verification tag now actually runs');
       statuses: slots.map((e) => e.getAttribute('data-ad-status'))
     };
   })()`);
-  ok('⚠️ no ad frame is visible', ads.visibleFrames === 0, JSON.stringify(ads));
-  ok('⚠️ no ad slot occupies any layout', ads.visibleSlots === 0, JSON.stringify(ads));
-  ok('⚠️ every placement is unfilled — Terms §10 remains accurate today',
-    ads.statuses.every((s) => s === 'unfilled' || s === null), JSON.stringify(ads.statuses));
+  ok('no ad frame is currently visible', ads.visibleFrames === 0, JSON.stringify(ads));
+  ok('no ad slot currently occupies layout', ads.visibleSlots === 0, JSON.stringify(ads));
+  console.log(`         placement status: ${JSON.stringify(ads.statuses)} — "unfilled" means Google served nothing`);
+  // ⚠️ THE CLAIM THAT MUST HOLD REGARDLESS OF THE THREE LINES ABOVE.
+  const terms = await (await fetch(BASE + '/terms')).text();
+  ok('⚠️ the Terms state the durable position, which does not depend on fill rate',
+    /The Service may display advertising provided by third-party advertising partners, including Google AdSense/.test(terms));
 }
 
 L('the things a CSP edit could have broken on the way past');
