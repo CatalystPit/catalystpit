@@ -103,5 +103,50 @@ L('⚠️ 3 — the ticker API reads our own security master before naming a tic
   ok('⚠️ the gap this closed covers thousands of securities, not a handful', etfs[0].n > 4000, `${etfs[0].n} named ETFs`);
 }
 
+L('⚠️ 4 — the AdSense loader is permitted by exactly what it needs');
+{
+  const csp = JSON.parse(read('vercel.json')).headers
+    .flatMap((h) => h.headers || []).find((h) => /Content-Security-Policy/i.test(h.key)).value;
+
+  // ⚠️ MEASURED, NOT COPIED FROM A RECIPE. The site has ONE AdSense script tag and no ad slots, so the
+  // usual dozen-domain allowlist would be permission it does not use. Each host below was observed being
+  // requested by the loader with Page.setBypassCSP enabled, and placed in the directive matching the
+  // browser's own reported resource type.
+  ok('⚠️ the loader host is allowed as a script', /script-src[^;]*https:\/\/pagead2\.googlesyndication\.com/.test(csp));
+  ok('…and sodar2.js, which the loader pulls in', /script-src[^;]*https:\/\/ep2\.adtrafficquality\.google/.test(csp));
+  ok('the zrt_lookup frame is allowed as a frame', /frame-src[^;]*https:\/\/googleads\.g\.doubleclick\.net/.test(csp));
+  ok('…and the sodar runner frame', /frame-src[^;]*https:\/\/ep2\.adtrafficquality\.google/.test(csp));
+  ok('the sodar config XHR is allowed as a connection', /connect-src[^;]*https:\/\/ep1\.adtrafficquality\.google/.test(csp));
+  // img-src is already 'https:', so the gen_204 and sodar beacons needed no addition at all.
+  ok('img-src already covered the beacons without a change', /img-src 'self' data: blob: https:/.test(csp));
+
+  // ⚠️ AND NOTHING WAS BROADLY WEAKENED, which is the half that matters more than the additions.
+  ok('⚠️ no wildcard ad host was added', !/https:\/\/\*\.(googlesyndication|doubleclick|adtrafficquality|googleadservices)/.test(csp));
+  ok('⚠️ unsafe-eval was not added anywhere new', (csp.match(/'unsafe-eval'/g) || []).length === 1);
+  ok('…and it is still only in script-src', !/(style|connect|frame|img|font)-src[^;]*'unsafe-eval'/.test(csp));
+  // object-src is not declared, so it inherits default-src 'self' — plugins were never permitted and
+  // this change does not permit them. (base-uri is also undeclared, which does NOT inherit; that is
+  // pre-existing and outside this task, noted rather than silently changed.)
+  ok('plugin sources are still restricted by the default-src fallback',
+    !/object-src/.test(csp) && /default-src 'self'/.test(csp));
+  ok('no ad host leaked into default-src', /default-src 'self';/.test(csp.replace(/s*;s*/g, ';')));
+
+  // ⚠️ THE ABLY FIX MUST SURVIVE THIS EDIT. Two CSP changes in a row is exactly how the first one gets
+  // clobbered by the second — section 1 above asserts it too, deliberately, from the other direction.
+  ok('⚠️ the Ably realtime endpoint is still allowed', /wss:\/\/\*\.ably\.net/.test(csp) && /https:\/\/\*\.ably\.net/.test(csp));
+  ok('the Ably SDK CDN is still allowed', /script-src[^;]*https:\/\/cdn\.ably\.com/.test(csp));
+  for (const host of ['platform.twitter.com', 's3.tradingview.com', 'clerk.catalystpit.com',
+    'challenges.cloudflare.com', 'fonts.gstatic.com', 'cdn.syndication.twimg.com']) {
+    ok(`${host} is still permitted`, csp.includes(host));
+  }
+  ok('the directive count is unchanged at nine',
+    csp.split(';').map((d) => d.trim()).filter(Boolean).length === 9);
+
+  // The script itself is untouched: it was never the problem, and removing it was never the fix.
+  const layout = read('src/app/layout.jsx');
+  ok('the AdSense loader is still present, exactly once',
+    (layout.match(/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js/g) || []).length === 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
