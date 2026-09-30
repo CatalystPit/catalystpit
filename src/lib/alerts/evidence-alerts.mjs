@@ -37,6 +37,27 @@ import { FAMILY, changedSince } from '../evidence/model.mjs';
  * CONTEXT — "it never creates evidence, it only enriches it" — so a price reaction is not something
  * that became publicly knowable, it is the market responding to something that did. Alerting on it
  * would be a price alert wearing an evidence costume, which is explicitly a later product.
+ *
+ * ── ⚠️ INSTITUTION IS IN THIS LIST, AND THAT USED TO BE CONTRADICTED ────────
+ *
+ * A deleted module, ./evidence-alert-rules.mjs, declared ALERTABLE_FAMILIES without INSTITUTION under
+ * the heading "13F IS NOT AN ALERT". Two answers to one product question lived in the tree, and the
+ * dead one was importable. It is gone; this is the only policy. The rule it was reaching for was real,
+ * though, and stating it only by omitting a family is what made it look like a contradiction. So it is
+ * written out here, because this list is the first thing anyone reads when they ask the question:
+ *
+ *   13F data IS a supported evidence source.
+ *   A QUALIFYING institutional evidence event MAY alert an explicitly subscribed Pro user.
+ *   A raw 13F filing is NOT automatically an alert.
+ *
+ * ⚠️ THE THIRD CLAUSE IS NOT ENFORCED HERE, AND MUST NOT BE. It is already true structurally, upstream:
+ * institutionEvidence() in evidence/resolve.js never emits one object per filing. It aggregates
+ * count(distinct cik) per QUARTER and emits at most one `institution_breadth_change` per ticker per
+ * quarter — returning nothing when there are fewer than two quarters to compare, when the quarter has
+ * no disclosure date, when the change is implausible enough to be a ticker-resolution artifact, or when
+ * breadth did not move. One fund filing a 13F cannot produce an alert because there is nothing for it
+ * to be. That is also why the note above still holds: adding a threshold HERE to suppress "13F spam"
+ * would be solving, in the wrong layer, a problem the engine has already solved.
  */
 export const ALERTABLE_FAMILIES = Object.freeze([
   FAMILY.CATALYST, FAMILY.INSIDER, FAMILY.INSTITUTION, FAMILY.CONGRESS,
