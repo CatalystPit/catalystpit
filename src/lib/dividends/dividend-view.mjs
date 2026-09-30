@@ -227,6 +227,32 @@ export function sectorOptions(facet) {
   return { options, total: options.reduce((a, o) => a + o.n, 0) };
 }
 
+/** How a stored dividend_type reads in the dropdown. Unknown is labelled, never relabelled. */
+const TYPE_LABELS = Object.freeze({
+  regular: 'Regular', special: 'Special', capital_gain: 'Capital gain',
+  // ⚠️ SHOWN AS "UNCLASSIFIED", NOT AS "REGULAR". The licensed provider does not distinguish a
+  // special distribution from an ordinary one, and the honest label for that is that we do not know —
+  // calling it Regular would mislabel every special dividend it ever returns.
+  unknown: 'Unclassified',
+});
+
+/**
+ * TYPE FACET OPTIONS — mirrors sectorOptions, and exists for the same reason.
+ *
+ * The dropdown used to hard-code Regular / Special / Capital gain. Once the calendar narrowed to the
+ * licensed provider every row became 'unknown', so all three options returned an empty table that read
+ * as a statement about the market. These options are whatever the window holds.
+ */
+export function typeOptions(facet) {
+  if (!Array.isArray(facet) || !facet.length) return { options: [], total: null };
+  const options = facet.map(({ type, n }) => ({
+    value: type || 'unknown',
+    label: TYPE_LABELS[type] || TYPE_LABELS.unknown,
+    n: Number(n) || 0,
+  }));
+  return { options, total: options.reduce((a, o) => a + o.n, 0) };
+}
+
 export function calendarQuery({ from, to, mode = 'ex', limit = 500, filters = EMPTY_FILTERS } = {}) {
   const p = new URLSearchParams({ from, to, mode, limit: String(limit) });
   for (const [k, v] of Object.entries(filters || {})) {

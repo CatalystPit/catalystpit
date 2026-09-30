@@ -8,7 +8,7 @@ import { useTickerHover, TickerHoverPreview } from '../../components/TickerHover
 import InfoTip from '../../components/InfoTip';
 import {
   iso, shiftDays, rangeFor, stepFor, sortEvents, groupByDate, calendarQuery, EMPTY_FILTERS, COLUMN_HELP,
-  sectorOptions,
+  sectorOptions, typeOptions,
 } from '../../lib/dividends/dividend-view.mjs';
 
 // THE DIVIDEND CALENDAR.
@@ -96,6 +96,7 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
   // Recomputed only when the server sends a new facet, so switching sector does not renumber the
   // dropdown under the reader's cursor — the facet ignores the sector filter by design.
   const sectorFacet = useMemo(() => sectorOptions(data?.sectors), [data?.sectors]);
+  const typeFacet = useMemo(() => typeOptions(data?.types), [data?.types]);
 
   const events = data?.events || [];
   const sorted = useMemo(() => (sort.key ? sortEvents(events, sort.key, sort.dir) : events), [events, sort]);
@@ -277,11 +278,17 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
                   ? sectorFacet.options.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.n})`}</option>)
                   : SECTORS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
+              {/* ⚠️ THE OPTIONS ARE WHAT THE WINDOW CONTAINS, not a fixed list of three.
+                  Hard-coded Regular / Special / Capital gain, this control offered filters that
+                  cannot match: the licensed provider's distributions payload carries no type field,
+                  so its rows are 'unknown', and each option produced an empty table that read as
+                  "there are no regular dividends" — a claim about the market made by a dropdown.
+                  Same shape as the sector facet above, including its static fallback. */}
               <select value={filters.type} onChange={(e) => setFilter('type', e.target.value)} style={field}>
-                <option value="">All types</option>
-                <option value="regular">Regular</option>
-                <option value="special">Special</option>
-                <option value="capital_gain">Capital gain</option>
+                <option value="">{typeFacet.total == null ? 'All types' : `All types (${typeFacet.total})`}</option>
+                {typeFacet.options.length
+                  ? typeFacet.options.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.n})`}</option>)
+                  : null}
               </select>
               <select value={filters.frequency} onChange={(e) => setFilter('frequency', e.target.value)} style={field}>
                 <option value="">Any frequency</option>

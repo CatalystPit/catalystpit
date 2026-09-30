@@ -107,7 +107,16 @@ L('⚠️ the calendar shows one dividend per security per date');
     /select distinct on \(\$\{dateCol\}, d\.ticker, d\.cash_amount, d\.payment_date, d\.record_date\)/.test(store));
   // ⚠️ AND THE COUNT MATCHES, or the board contradicts itself in the only two numbers a reader can
   // compare. This file already shipped that bug once in the other direction.
-  ok('⚠️ the count uses the same distinct key', (store.match(/count\(distinct \(\$\{dateCol\}, d\.ticker, d\.cash_amount, d\.payment_date, d\.record_date\)\)/g) || []).length === 2);
+  // ⚠️ EVERY COUNTING QUERY, NOT A FIXED NUMBER OF THEM. This pinned the count at exactly 2
+  // occurrences — calendarCount and the sector facet — and broke the day a third facet was added, for
+  // no reason: the new one used the right key. What matters is that no `count(distinct …)` in this file
+  // uses a DIFFERENT key from the rows, so that is what is asserted, and it stays true however many
+  // facets ride along.
+  const RIGHT_KEY = /count\(distinct \(\$\{dateCol\}, d\.ticker, d\.cash_amount, d\.payment_date, d\.record_date\)\)/g;
+  const allCounts = (store.match(/count\(distinct /g) || []).length;
+  const rightCounts = (store.match(RIGHT_KEY) || []).length;
+  ok('⚠️ every counting query uses the same distinct key as the rows',
+    allCounts > 1 && rightCounts === allCounts, `${rightCounts} of ${allCounts} use the row key`);
   ok('…and the ordering leads with the distinct key, as Postgres requires',
     /order by \$\{dateCol\} asc, d\.ticker asc, d\.cash_amount asc, d\.payment_date asc, d\.record_date asc/.test(store));
 

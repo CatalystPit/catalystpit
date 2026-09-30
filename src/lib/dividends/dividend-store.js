@@ -11,6 +11,8 @@ import { db } from '../db';
 // component, and importing this file to reach a constant would pull the database into the browser
 // bundle. dividend-view.mjs is the piece both sides already share.
 import { UNCLASSIFIED_SECTOR } from './dividend-view.mjs';
+// Which single provider's rows the calendar renders. See calendarConditions for why one, not all.
+import { calendarSource } from './providers/index.mjs';
 
 /**
  * Upsert canonical events. IDEMPOTENT on (source, source_event_id).
@@ -118,7 +120,40 @@ function calendarConditions({
   search = null, sector = null, minYield = null, minAmount = null,
   frequency = null, type = null, minMarketCap = null, covered = true,
 } = {}) {
-  const conds = [sql`d.announced = true`, sql`${dateCol} >= ${from}::date`, sql`${dateCol} <= ${to}::date`];
+  // ⚠️ ONE PROVIDER REACHES THE CALENDAR. THIS IS THE FIX FOR A LIVE DISPLAY BUG.
+  //
+  // Two adapters have written to this table — polygon (the temporary development source) and tiingo
+  // (the licensed one) — and the unique constraint is (source, source_event_id), so ONE corporate
+  // action legitimately becomes TWO rows. The `distinct on` below was written to collapse them, and it
+  // mostly did. What it could not collapse, measured on production:
+  //
+  //   float representation   CMSC 2026-09-30 is 0.36719999999999997 from polygon and 0.3672 from
+  //                          tiingo. Same dividend, same money, two rows — the distinct key contains
+  //                          cash_amount, and a double is not a value you can group on.
+  //   a null from one side   mutual-fund lines (ABALX, ABNDX, …) arrive with payment_date and
+  //                          record_date from one provider and null from the other, and null is a
+  //                          distinct value.
+  //   different granularity  NCDL 2026-09-30 is $0.36 + $0.02 from polygon (regular plus
+  //                          supplemental, both typed regular) and a single $0.38 from tiingo. All
+  //                          three rows rendered, so the same payment appeared twice over.
+  //
+  // Measured on the live public calendar before this change: 11 duplicated (ticker, ex-date) pairs in
+  // the first 500 rows of a 30-day window, NCDL three times, and 1,021 such pairs across the last 30
+  // days plus everything upcoming. Rounding the amount and coalescing the nulls would have fixed the
+  // first two and not the third, and would still have been a board blending two vendors' numbers.
+  //
+  // So the calendar reads the provider that ingestion is actually configured to keep up to date.
+  // Measured: tiingo alone leaves ZERO duplicated pairs; polygon alone still leaves 28, because it
+  // splits regular and supplemental into rows a calendar cannot tell apart.
+  //
+  // ⚠️ IT ALSO SETTLES A RIGHTS QUESTION. providers/index.mjs records that polygon's redistribution
+  // rights are unconfirmed, and DIVIDENDS_PUBLIC_ENABLED is 'true' in production — so uncleared rows
+  // were being published. Reading only the licensed source stops that as a side effect of being
+  // correct, rather than as a separate switch someone has to remember.
+  //
+  // Nothing is deleted. Polygon's rows stay for operational comparison; they are simply not the board.
+  const conds = [sql`d.source = ${calendarSource()}`,
+    sql`d.announced = true`, sql`${dateCol} >= ${from}::date`, sql`${dateCol} <= ${to}::date`];
   // TICKERS WE ACTUALLY COVER, by default.
   //
   // The provider's feed is global — New Zealand lines, foreign OTC tickers and mutual-fund share
@@ -244,12 +279,48 @@ export async function calendarSectorCounts({ from, to, mode = 'ex', ...filters }
   return (res.rows ?? res).map((r) => ({ sector: r.sector || null, n: Number(r.n) || 0 }));
 }
 
+/**
+ * TYPE FACET — and it exists because narrowing the calendar to one provider made the old one dishonest.
+ *
+ * ⚠️ THE DROPDOWN OFFERED THREE OPTIONS THAT CANNOT MATCH. It hard-codes Regular / Special / Capital
+ * gain. Polygon classifies (27,836 regular, 225 special); Tiingo's distributions payload carries no
+ * type field at all, so its adapter records 'unknown' rather than guessing — correctly, because
+ * inventing "regular" would mislabel every special distribution it ever returns. Reading only the
+ * licensed provider therefore left every row 'unknown', and each of those three options would have
+ * produced an empty table reading as "there are no regular dividends", which is a claim about the
+ * market manufactured by a filter.
+ *
+ * So the options are now the values the window actually contains, exactly as the sector dropdown
+ * already works: same builder, same joins, same window, same distinct key, with the type filter itself
+ * dropped so the facet describes the unfiltered set. Nothing classifies anything here either.
+ */
+export async function calendarTypeCounts({ from, to, mode = 'ex', ...filters } = {}) {
+  const dateCol = mode === 'payment' ? sql`d.payment_date` : sql`d.ex_dividend_date`;
+  const where = calendarConditions({ from, to, dateCol, ...filters, type: null });
+  const res = await db.execute(sql`
+    select d.dividend_type as type, count(distinct (${dateCol}, d.ticker, d.cash_amount, d.payment_date, d.record_date))::int as n
+      from dividend_events d
+      left join screener_stocks   s on s.ticker = d.ticker
+      left join screener_meta     m on m.ticker = d.ticker
+      left join security_identity i on i.ticker = d.ticker
+     where ${where}
+     group by 1
+     order by n desc, type asc nulls last`);
+  return (res.rows ?? res).map((r) => ({ type: r.type || 'unknown', n: Number(r.n) || 0 }));
+}
+
 /** Freshness, so the page can say when it last synced rather than implying it is live. */
 export async function dividendSyncState() {
+  // ⚠️ SCOPED TO THE SOURCE THE CALENDAR ACTUALLY SHOWS. Unscoped, this reported max(updated_at) over
+  // every provider's rows — so "as of" could describe a run whose data is not on the board, and the
+  // event counts described a table twice the size of the calendar. The freshness line has to be about
+  // the rows the reader is looking at, or it is a number with no referent. It also feeds the yield
+  // staleness gate, which decides whether a yield is publishable at all.
+  const source = calendarSource();
   const res = await db.execute(sql`
     select max(updated_at) as updated_at, count(*)::int as events,
            count(*) filter (where ex_dividend_date >= current_date)::int as upcoming
-      from dividend_events`);
+      from dividend_events where source = ${source}`);
   const row = (res.rows ?? res)[0] || {};
   return {
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
