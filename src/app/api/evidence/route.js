@@ -65,9 +65,15 @@ export async function GET(request) {
     return Response.json(result, { headers: since ? { 'Cache-Control': 'no-store' } : CACHE });
   } catch (e) {
     // A real status code, not 200-with-nothing. See DEFINITION-OF-DONE §3.
+    //
+    // ⚠️ THE STATUS IS THE MESSAGE; THE EXCEPTION TEXT IS NOT. This returned
+    // `detail: String(e?.message || e)`, so a failing resolver handed the client whatever Postgres or
+    // a provider said — relation names, column names, connection detail. The 503 already tells a
+    // caller everything it can act on, and the detail belongs in the log, where it now goes.
+    console.log(`[evidence] ${String(e?.message || e)}`);
     return Response.json(
-      { error: 'evidence_unavailable', detail: String(e?.message || e) },
-      { status: 503 },
+      { error: 'evidence_unavailable' },
+      { status: 503, headers: { 'Cache-Control': 'private, no-store' } },
     );
   }
 }
