@@ -437,8 +437,15 @@ sec('THE EVIDENCE WINDOW COVERS THE DEFAULT CHART');
 
   check('the default timeframe declares a day span', Number.isFinite(dailyDays), String(dailyDays));
   // Derived, never restated — a literal here is how the two drifted apart in the first place.
+  //
+  // ⚠️ ASSERTED AGAINST THE MODULE THAT NOW OWNS IT. This read TickerPriceChart.jsx, which is 54 lines
+  // and says in its own comment that the window derivation "now lives in useTickerEvidence, because
+  // the Terminal renders the chart too". The logic moved; the assertion did not, so it reported a
+  // correct product as broken. The derivation is what matters, not the file it sits in.
+  const evidenceHook = fs.readFileSync(new URL('../src/lib/chart/use-ticker-evidence.js', import.meta.url), 'utf8');
   check('the window is derived from the timeframe definition',
-    /timeframe\(DEFAULT_TIMEFRAME\)\?\.window\?\.days/.test(host));
+    /timeframe\(DEFAULT_TIMEFRAME\)\?\.window\?\.days/.test(evidenceHook),
+    (evidenceHook.match(/EVIDENCE_WINDOW_DAYS = .*/) || ['not found'])[0]);
   check('…and is not a hardcoded two years',
     !/const EVIDENCE_WINDOW_DAYS = 365 \* 2;/.test(host));
 
