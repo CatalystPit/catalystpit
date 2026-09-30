@@ -3,7 +3,7 @@ import { insiderTrades, watchlist } from '../../../../lib/schema';
 import { and, gt, lte, inArray, asc, sql } from 'drizzle-orm';
 import { clerkClient } from '@clerk/nextjs/server';
 import { recordJobRun } from '../../../../lib/job-heartbeat';
-import { claim, alreadySent, channelKey, insiderAccessionKey, ensureEvidenceAlertTables } from '../../../../lib/evidence-alerts';
+import { claim, alreadySent, insiderAccessionKey, ensureEvidenceAlertTables } from '../../../../lib/evidence-alerts';
 import { SITE_URL } from '../../../../lib/seo';
 
 export const runtime = 'nodejs';
@@ -190,16 +190,20 @@ export async function GET(request) {
     // are separate deliveries and a user who asked for both gets both; the bell dedupes on
     // (user_id, evidence_id) in its own table and cannot be silenced from here, because an
     // `email:` key can never equal a key from anywhere else.
+    // ⚠️ ONE LANGUAGE FOR THE READ, THE FILTER AND THE WRITE: the EVENT KEY. This used to ask with raw
+    // accessions, test membership by rebuilding channelKey('email', insiderAccessionKey(acc)), and claim
+    // with a third hand-built string. Three spellings of one identity, in the one loop where a mismatch
+    // means every filing is emailed on every run forever. The channel is now named once, here.
     let seen = new Set();
     try {
-      seen = await alreadySent(userId, all.map((f) => f.accession).filter(Boolean), 'email');
+      seen = await alreadySent(userId, all.map((f) => (f.accession ? insiderAccessionKey(f.accession) : null)), 'email');
     } catch {
       // ⚠️ FAILING TO READ THE GUARD MUST NOT MEAN SENDING TWICE. An empty set would send
       // everything again; an unreadable guard skips this user and the next run retries.
       skipped++;
       continue;
     }
-    const items = all.filter((f) => !f.accession || !seen.has(channelKey('email', insiderAccessionKey(f.accession))));
+    const items = all.filter((f) => !f.accession || !seen.has(insiderAccessionKey(f.accession)));
     if (!items.length) { deduped++; continue; }
 
     items.sort((a, b) => Number(b.totalValue) - Number(a.totalValue));
@@ -213,7 +217,7 @@ export async function GET(request) {
       for (const f of items) {
         if (!f.accession) continue;
         try {
-          await claim(userId, channelKey('email', insiderAccessionKey(f.accession)),
+          await claim(userId, insiderAccessionKey(f.accession),
             { ticker: f.ticker, family: 'insider', channel: 'email' });
         } catch { /* bookkeeping must never fail a send that already happened */ }
       }

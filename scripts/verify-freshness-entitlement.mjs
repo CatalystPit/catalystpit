@@ -213,7 +213,11 @@ L('⚠️ email and bell are independent channels, deduped within each');
   // contains no reference to evidence_alerts_sent at all.
   ok('⚠️ the bell store never reads the email ledger', !/evidence_alerts_sent|alreadySent|\bclaim\(/.test(store));
   ok('⚠️ the bell worker never reads it either', !/evidence_alerts_sent|alreadySent|\bclaim\(/.test(worker));
-  ok('the email ledger is written only by the mailer', /await claim\(userId, channelKey\('email'/.test(mailer));
+  // ⚠️ THE MAILER NO LONGER BUILDS THE SCOPED KEY. claim and alreadySent now both take the EVENT key and
+  // apply the channel themselves, so a caller can no longer read one key and write another — the failure
+  // that would have emailed every filing on every run forever.
+  ok('the email ledger is written only by the mailer',
+    /await claim\(userId, insiderAccessionKey\(f\.accession\)/.test(mailer) && /channel: 'email'/.test(mailer));
 
   // Per-channel dedupe, exercised.
   const { channelKey, insiderAccessionKey, claim, alreadySent } = await import('../src/lib/evidence-alerts.js');
@@ -225,19 +229,20 @@ L('⚠️ email and bell are independent channels, deduped within each');
   const ACC = '0009999-26-000001';
   try {
     // EMAIL channel: first claim wins, replay is refused.
-    ok('the first email claim succeeds', (await claim(U, channelKey('email', insiderAccessionKey(ACC)), { channel: 'email' })) === true);
+    // ⚠️ THE CONTRACT CHANGED SHAPE, NOT MEANING: both sides now take the event key.
+    ok('the first email claim succeeds', (await claim(U, insiderAccessionKey(ACC), { channel: 'email' })) === true);
     ok('⚠️ a replayed email claim for the same filing is refused',
-      (await claim(U, channelKey('email', insiderAccessionKey(ACC)), { channel: 'email' })) === false);
-    const seen = await alreadySent(U, [ACC], 'email');
-    ok('…and the mailer would now skip it', seen.has(channelKey('email', insiderAccessionKey(ACC))));
+      (await claim(U, insiderAccessionKey(ACC), { channel: 'email' })) === false);
+    const seen = await alreadySent(U, [insiderAccessionKey(ACC)], 'email');
+    ok('…and the mailer would now skip it', seen.has(insiderAccessionKey(ACC)));
 
     // ⚠️ AND THE BELL IS UNAFFECTED BY THAT EMAIL. Same filing, same user, other channel.
     ok('⚠️ the emailed filing is NOT recorded as sent on the in-app channel',
-      !(await alreadySent(U, [ACC], 'in_app')).size);
+      !(await alreadySent(U, [insiderAccessionKey(ACC)], 'in_app')).size);
     ok('⚠️ …so an in-app claim for the same filing still succeeds',
-      (await claim(U, channelKey('in_app', insiderAccessionKey(ACC)), { channel: 'in_app' })) === true);
+      (await claim(U, insiderAccessionKey(ACC), { channel: 'in_app' })) === true);
     ok('…and its replay is refused too, within its own channel',
-      (await claim(U, channelKey('in_app', insiderAccessionKey(ACC)), { channel: 'in_app' })) === false);
+      (await claim(U, insiderAccessionKey(ACC), { channel: 'in_app' })) === false);
     const rows = await one(sql`select count(*)::int n from evidence_alerts_sent where user_id=${U}`);
     ok('⚠️ exactly two deliveries recorded: one per enabled channel', rows.n === 2, `${rows.n}`);
   } finally {

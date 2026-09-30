@@ -216,9 +216,15 @@ L('⚠️ exactly one alert engine is live, and the heartbeat says which');
 
   // ⚠️ THE CHANNELS ARE INDEPENDENT BY CONSTRUCTION, not by comment.
   const mailer = code('src/app/api/cron/insider-alerts/route.js');
+  // ⚠️ THE CHANNEL MOVED INSIDE THE PRIMITIVES, so the mailer no longer builds a scoped key: it asks and
+  // writes with the EVENT key and names the channel once, as an argument. The last assertion is the one
+  // that matters most — a caller that can still hand-build a storage key can still read one and write
+  // another, which is how a filing gets emailed on every run forever.
   ok('⚠️ the email channel dedupes by READING its ledger before sending',
-    /await alreadySent\(userId, all\.map\(\(f\) => f\.accession\)\.filter\(Boolean\), 'email'\)/.test(mailer));
-  ok('…and the key it checks is channel-scoped', /channelKey\('email', insiderAccessionKey\(f\.accession\)\)/.test(mailer));
+    /await alreadySent\(userId, all\.map\(\(f\) => \(f\.accession \? insiderAccessionKey\(f\.accession\) : null\)\), 'email'\)/.test(mailer));
+  ok('…and it filters on the same event key it asked with',
+    /!seen\.has\(insiderAccessionKey\(f\.accession\)\)/.test(mailer));
+  ok('⚠️ …and the mailer never builds a channel-scoped key itself', !/channelKey\(/.test(mailer));
   ok('…so an email key can never equal an in-app key', /export const channelKey = \(channel, key\) => `\$\{channel\}:\$\{key\}`;/.test(read('src/lib/evidence-alerts.js')));
   ok('⚠️ an unreadable ledger skips the user rather than sending twice',
     /skipped\+\+;\s*\n\s*continue;/.test(mailer));

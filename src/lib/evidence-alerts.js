@@ -67,32 +67,65 @@ export const insiderAccessionKey = (accession) => `insider:${accession}`;
 export const channelKey = (channel, key) => `${channel}:${key}`;
 
 /**
- * Claim an event for a user on a channel. Returns true exactly once, ever.
+ * ⚠️ THE CHANNEL IS APPLIED IN HERE, NOT BY THE CALLER — AND THAT IS THE FIX.
  *
- * The INSERT is the claim. The caller notifies only when this returns true, or claims only after a
- * successful delivery — either way a crash between the two loses one delivery rather than repeating
- * it forever, which is the safer side of that trade for something that interrupts a person.
+ * Channel scoping was already correct in effect, but only as a CONVENTION at the one call site: the
+ * mailer passed `channelKey('email', insiderAccessionKey(acc))` and `claim` stored whatever string it
+ * was handed. Two things followed from that.
+ *
+ * ⚠️ FIRST, A CALLER COULD OMIT THE CHANNEL, AND ONE DID. `evidence_alerts_sent` still holds 12 rows
+ * written by the retired watchlist-driven alerter whose keys are UNPREFIXED — `insider:0001921094-26-001050`
+ * — with the channel recorded only in the column. Those are exactly what a channel-less key looks like,
+ * and the moment an in-app Form 4 channel is added, a caller repeating that mistake would write
+ * `insider:<acc>`, collide with a nine-month-old row, and silently suppress a notification. The
+ * historical rows are deliberately left alone (they are the in-app channel's real dedupe history); what
+ * changes is that a new one cannot be written, because the channel is no longer optional.
+ *
+ * ⚠️ SECOND, THE READ AND THE WRITE SPOKE DIFFERENT LANGUAGES. alreadySent took a raw ACCESSION and
+ * applied both prefixes itself; claim took a fully-built STORAGE KEY and applied neither. A caller that
+ * got that asymmetry wrong would read one key and write another — the read would never find the write,
+ * and the same filing would be emailed on every single run, forever. That is the worst failure this
+ * table exists to prevent, and nothing structural stopped it.
+ *
+ * Both now take the same thing: an EVENT KEY (`insider:<accession>`), with the channel as an argument.
+ * The stored string is byte-identical to before — `email:insider:<accession>` — so there is no
+ * migration, no key rewrite, and no possibility of an already-emailed filing being sent again.
+ *
+ * The INSERT is the claim. The caller claims only after a successful delivery, so a crash between the
+ * two loses one delivery rather than repeating it forever, which is the safer side of that trade for
+ * something that interrupts a person.
+ *
+ * @param eventKey the channel-independent identity of the event, e.g. insiderAccessionKey(accession)
+ * @returns true exactly once per (user, event, channel), ever.
  */
-export async function claim(userId, key, { ticker = null, family = null, channel = 'in_app' } = {}) {
+export async function claim(userId, eventKey, { ticker = null, family = null, channel = 'in_app' } = {}) {
+  await ensureEvidenceAlertTables();
+  const stored = channelKey(channel, eventKey);
   const res = await db.execute(sql`
     insert into evidence_alerts_sent (user_id, alert_key, ticker, family, channel)
-    values (${userId}, ${key}, ${ticker}, ${family}, ${channel})
+    values (${userId}, ${stored}, ${ticker}, ${family}, ${channel})
     on conflict (user_id, alert_key) do nothing
     returning alert_key`);
   return (res.rows ?? res).length > 0;
 }
 
 /**
- * Which of these keys this user has ALREADY been sent, on this channel.
+ * Which of these EVENT KEYS this user has already been delivered, on this channel.
  *
  * ⚠️ ONE STATEMENT, AND IT IS READ BEFORE DELIVERY RATHER THAN AFTER. The claim was previously
  * written after each send and never read, so it deduplicated nothing: duplicate emails were prevented
  * only by a KV watermark, and that fails open — kvSet checks neither the response status nor throws,
  * so a failed write leaves the watermark behind and the next run mails the same filings again.
  * Reading the claim first makes the database the guard, which cannot silently fail open.
+ *
+ * ⚠️ IT RETURNS EVENT KEYS, NOT STORAGE KEYS. It used to return the raw `alert_key` strings, so the
+ * caller had to rebuild `channelKey('email', insiderAccessionKey(acc))` to test membership — the same
+ * asymmetry described on claim, in the one place where getting it wrong means mailing every filing on
+ * every run. The caller now asks with event keys and tests with event keys; the channel appears once,
+ * as an argument.
  */
-export async function alreadySent(userId, keys, channel) {
-  const list = [...new Set((keys || []).filter(Boolean))];
+export async function alreadySent(userId, eventKeys, channel) {
+  const list = [...new Set((eventKeys || []).filter(Boolean))];
   if (!list.length) return new Set();
   await ensureEvidenceAlertTables();
   // ⚠️ AN EXPANDED IN-LIST, NOT `= any($n)`. The first version passed the JS array as a single bound
@@ -101,10 +134,15 @@ export async function alreadySent(userId, keys, channel) {
   // failed query: the mailer treats an unreadable ledger as a reason to SKIP the user, so every
   // recipient would have been skipped and no insider email would ever have been sent. Caught by
   // running the function rather than grepping for it.
-  const wanted = list.map((k) => channelKey(channel, insiderAccessionKey(k)));
+  const byStored = new Map(list.map((k) => [channelKey(channel, k), k]));
   const res = await db.execute(sql`
     select alert_key from evidence_alerts_sent
      where user_id = ${userId}
-       and alert_key in (${sql.join(wanted.map((k) => sql`${k}`), sql`, `)})`);
-  return new Set((res.rows ?? res).map((r) => String(r.alert_key)));
+       and alert_key in (${sql.join([...byStored.keys()].map((k) => sql`${k}`), sql`, `)})`);
+  const out = new Set();
+  for (const r of (res.rows ?? res)) {
+    const ev = byStored.get(String(r.alert_key));
+    if (ev) out.add(ev);
+  }
+  return out;
 }
