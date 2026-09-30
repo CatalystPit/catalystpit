@@ -45,6 +45,22 @@ export const UNIVERSE_TTL_SEC = 6 * 60 * 60;
 export const MAX_QUOTE_AGE_MS = 15 * 60 * 1000;
 
 /**
+ * ⚠️ HOW OLD A CACHED SNAPSHOT MAY BE BEFORE IT IS REFETCHED RATHER THAN RE-SERVED.
+ *
+ * The read path returned whatever KV held, computed `ageMs` and never looked at it — so the only
+ * thing standing between a Pro reader and an indefinitely old board was Upstash honouring the 45s
+ * TTL. That is one failure away from the worst outcome this module has: board-payload stamps every
+ * snapshot row `freshness: 'realtime'`, so a snapshot that stopped expiring would keep printing LIVE
+ * over prices from hours ago. And a TTL-less KV key is not hypothetical here — the rate-limit
+ * counters were found in exactly that state and had to be healed with EXPIRE … NX.
+ *
+ * Four times the TTL: far enough above 45s that ordinary jitter, clock skew between instances and a
+ * slow write never trip it, far below the 15 minutes a single print is allowed. A rejected cache is
+ * a miss, which refetches — the same path a cold instance takes.
+ */
+export const MAX_SNAPSHOT_CACHE_AGE_MS = SNAPSHOT_TTL_SEC * 4 * 1000;
+
+/**
  * A tripwire for DATA ERRORS, deliberately far outside the range of a real move.
  *
  * ⚠️ IT IS NOT A CAP ON HOW MUCH A STOCK MAY MOVE. A biotech can legitimately double on a readout,
@@ -114,7 +130,13 @@ export async function movementSnapshot(db, sql, { now = Date.now(), force = fals
   if (!force && kvConfigured()) {
     const cached = await kvGetJson(SNAPSHOT_KEY);
     if (cached?.rows?.length) {
-      return { ...cached, ageMs: now - Date.parse(cached.at), cached: true };
+      // ⚠️ THE AGE IS CHECKED, NOT MERELY REPORTED. This computed ageMs and returned regardless, so
+      // the TTL was the only thing preventing an indefinitely stale board from being served with
+      // every row labelled LIVE. An unparseable `at` is treated as too old for the same reason.
+      const ageMs = now - Date.parse(cached.at);
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= MAX_SNAPSHOT_CACHE_AGE_MS) {
+        return { ...cached, ageMs, cached: true };
+      }
     }
   }
 

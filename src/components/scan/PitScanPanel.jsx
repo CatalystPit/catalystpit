@@ -134,11 +134,12 @@ export default function PitScanPanel({ onPick }) {
           {/* THE FEED STATE IS ALWAYS VISIBLE. A scanner that does not say how fresh it is invites
               the reader to assume the best.
 
-              ⚠️ NEVER "LIVE", AND NO LONGER "AWAITING FEED". Realtime is not entitled, so LIVE
-              would be a false claim about every number below it. "AWAITING FEED" was equally
-              wrong in the other direction — it described the unfed SIGNAL engine while the
-              evidence boards were full — and read as a broken product. What is printed is the
-              freshness the rows actually carry. */}
+              ⚠️ NOT A FIXED WORD IN EITHER DIRECTION. This read "NEVER LIVE — realtime is not
+              entitled", which was true when written and is not now: the consolidated tape is
+              entitled and an entitled reader's rows carry live prints. "AWAITING FEED" was wrong
+              the other way — it described the unfed SIGNAL engine while the evidence boards were
+              full — and read as a broken product. What is printed is neither: it is the freshness
+              the rows ACTUALLY carry, reported by the component that fetched them. */}
           <Badge dot>{feedLabel || 'LAST CLOSE'}</Badge>
         </span>
       </div>

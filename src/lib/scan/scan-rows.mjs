@@ -27,10 +27,18 @@ export const SCAN_ROWS_VERSION = 'scan_rows_v1';
 
 // ── FRESHNESS LABELLING ─────────────────────────────────────────────────────
 //
-// ⚠️ THE MOST IMPORTANT HONESTY RULE IN THIS FILE. Realtime is not entitled: Tiingo returns EOD, so
-// a row's "% change" is the last completed session's close-to-close move — yesterday's move, not
-// today's. A board called "Moving Now" printing that without saying so would be the precise failure
-// the scanner's own header refuses: telling a trader something untrue at the moment they act.
+// ⚠️ THE MOST IMPORTANT HONESTY RULE IN THIS FILE: a row must say what its own number IS.
+//
+// This used to read "Realtime is not entitled: Tiingo returns EOD, so a row's % change is the last
+// completed session's close-to-close move". That was true when it was written and is no longer: the
+// consolidated tape is entitled, an entitled reader's rows carry live prints, and board-payload
+// stamps them 'realtime'. Leaving it stood as a note telling the next reader that LIVE can never be
+// honest here — in the one file that decides whether LIVE is printed.
+//
+// What has not changed is the rule. An unentitled reader still receives the last completed session's
+// move and the row must say LAST CLOSE; an entitled one receives a live print and the row must not
+// call it stale either. A board called "Moving Now" printing either without saying which would be the
+// precise failure the scanner exists to refuse: telling a trader something untrue as they act.
 /**
  * ⚠️ THIS MAP IS FOR A ROW, AND ONLY FOR A ROW.
  *
@@ -106,9 +114,14 @@ export const isLiveEnough = (f) => f === 'realtime' || f === 'near';
  * told "Delayed quotes — not live" because ONE row among twenty-five had no current print.
  *
  * Both readings were pessimistic about data that was actually live. The honest answer to "some of
- * these are live and some are not" is neither of the two extremes: it is "mixed", which is a fourth
- * state the banner renders as PARTLY LIVE. Every row still carries and prints its own freshness,
- * so the board-level word is a summary and never the only disclosure.
+ * these are live and some are not" is neither of the two extremes: it is "mixed", a fourth state the
+ * board-status map answers separately. Every row still carries and prints its own freshness, so the
+ * board-level word is a summary and never the only disclosure.
+ *
+ * ⚠️ THIS SAID THE BANNER RENDERS `mixed` AS "PARTLY LIVE". It does not, and has not since
+ * ScanBoardRows' FEED_STATE was changed: mixed renders REAL-TIME with the sentence "Real-time quotes
+ * where available. Each row shows its price status." The reasoning for that is written where the
+ * decision lives. Recorded here because this comment described a word the product no longer prints.
  *
  * ⚠️ NEAR IS A PROVIDER CAPABILITY, NOT A SUMMARY. It means "seconds behind the tape" — see
  * market-capabilities.mjs — and reusing it to mean "a mixture" is what let a mixture inherit the
