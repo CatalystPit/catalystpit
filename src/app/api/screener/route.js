@@ -1,4 +1,4 @@
-import { and, asc, desc, ilike, sql } from 'drizzle-orm';
+import { and, asc, ilike, sql } from 'drizzle-orm';
 import { db } from '../../../lib/db';
 import { screenerStocks } from '../../../lib/schema';
 import { buildConds, SORT_MAP, FILTERS } from '../../../lib/screener-filters';
@@ -97,7 +97,27 @@ export async function GET(request) {
     // blend of weighted sub-scores that nothing validated, so every unsorted screener view was
     // ranked by it. The column still exists for compatibility; it is no longer what users are shown.
     const sortCol = SORT_MAP[sp.get('sort')] || screenerStocks.insiderNet90d || screenerStocks.ticker;
-    const dirFn = sp.get('dir') === 'asc' ? asc : desc;
+    // ⚠️ NULLS LAST, OR EVERY DESCENDING SORT LEADS WITH THE ROWS THAT HAVE NO VALUE.
+    //
+    // Postgres orders NULLS FIRST on DESC and NULLS LAST on ASC, and drizzle's desc() adds no NULLS
+    // clause — so every descending numeric sort this screener offered returned a first page that was
+    // 100% nulls. Measured in production before this change, page 1 of `dir=desc`:
+    //
+    //   sort=marketCap  50/50 rows NULL, row 1 = AAA      sort=changePct  50/50 NULL
+    //   sort=price      50/50 rows NULL, row 1 = AAAZX     sort=volume     50/50 NULL
+    //   sort=pe         50/50 rows NULL                    (ASC was correct throughout)
+    //
+    // So "sort by market cap" — the first thing anyone does with a screener — showed blank rows
+    // beginning at AAA, and the default view (insider_net_90d desc) buried its own ranking under
+    // 14,828 null rows: the largest disclosed net insider buying in the table, RSG at $1.38B, sat on
+    // page 297 of 361 while the top of the list was alphabetical.
+    //
+    // A null is "we do not know", and an unknown must never outrank a known value in a ranking view.
+    // Stated for BOTH directions rather than relying on the ASC default, so the two cannot diverge if
+    // the default ever changes. The ticker tiebreak stays: it is what keeps pagination stable when a
+    // primary value ties, which after this change is most of the table.
+    const dirSql = sp.get('dir') === 'asc' ? sql`asc` : sql`desc`;
+    const orderPrimary = sql`${sortCol} ${dirSql} nulls last`;
     const pageSize = Math.min(100, Math.max(10, parseInt(sp.get('pageSize') || '50', 10) || 50));
     const page = Math.max(0, parseInt(sp.get('page') || '0', 10) || 0);
 
@@ -106,7 +126,7 @@ export async function GET(request) {
     let cntQ = db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
     if (where) { rowsQ = rowsQ.where(where); cntQ = cntQ.where(where); }
     const [rows, [{ n }]] = await Promise.all([
-      rowsQ.orderBy(dirFn(sortCol), asc(screenerStocks.ticker)).limit(pageSize).offset(page * pageSize),
+      rowsQ.orderBy(orderPrimary, asc(screenerStocks.ticker)).limit(pageSize).offset(page * pageSize),
       cntQ,
     ]);
 

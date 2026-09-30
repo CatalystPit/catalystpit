@@ -89,6 +89,15 @@ export async function ensureScreenerTables() {
 }
 
 // ── Polygon Financials → fundamentals (SEC statements). Price-independent values + raw inputs. ──
+/**
+ * The smallest trailing EPS that can act as a P/E denominator — a tenth of a cent.
+ *
+ * ⚠️ A TRIPWIRE FOR ARITHMETIC RESIDUE, NOT A VIEW ON WHICH COMPANIES DESERVE A P/E. See the comment
+ * at the `pe:` assignment for the measurement: exactly one of 2,179 positive eps_ttm values falls
+ * below this, at 3.47e-18, and the next smallest real value is $0.01.
+ */
+export const MIN_MEANINGFUL_EPS = 0.001;
+
 const fval = (r, stmt, key) => r?.financials?.[stmt]?.[key]?.value ?? null;
 const sumField = (rows, stmt, key) => rows.reduce((s, r) => { const x = fval(r, stmt, key); return x == null ? s : s + x; }, 0);
 const cagr = (end, start, yrs) => (start > 0 && end > 0) ? (Math.pow(end / start, 1 / yrs) - 1) * 100 : null;
@@ -1054,7 +1063,24 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       dividendYield: (m?.annualDividend && px > 0) ? (m.annualDividend / px) * 100 : null,
       volume: vol, avgVol: tk?.avgVol ?? s?.avg ?? null, relVol: tk?.relVol ?? null,
       // fundamentals — price-dependent ratios computed here with fresh price; rest copied from the table
-      pe: (px != null && fd?.epsTtm > 0) ? px / fd.epsTtm : null,
+      // ⚠️ `> 0` IS NOT THE SAME TEST AS "IS A REPORTED EARNINGS FIGURE".
+      //
+      // This read `fd?.epsTtm > 0`, which correctly refuses negative and zero earnings — that is why
+      // no row carries a negative or zero P/E, and why the UI never implies an unavailable P/E is 0.
+      // What it does not refuse is a DENORMAL: ASTX (a 2x leveraged ETF) carried
+      // eps_ttm = 3.469446951953614e-18, the residue of subtracting two nearly-equal doubles, and
+      // 10.29 / 3.47e-18 stored a P/E of 2,965,890,570,601,113,600. Arithmetically derived, and not a
+      // ratio about anything.
+      //
+      // The floor is a tenth of a cent, chosen from the data rather than to taste: across 2,179
+      // positive eps_ttm values exactly ONE sits below $0.001, and the next smallest is $0.01 — four
+      // orders of magnitude of clearance, so nothing a filer could actually report is excluded. It is
+      // a tripwire for arithmetic residue, not a view about which companies deserve a P/E.
+      //
+      // Measured on the other six price-dependent ratios below: revenue bottoms at $438, equity at
+      // $1,252, ebitda at $68,696, and none produces a ratio above 1e6. eps is the only denominator
+      // that reaches a denormal, so it is the only one floored.
+      pe: (px != null && fd?.epsTtm >= MIN_MEANINGFUL_EPS) ? px / fd.epsTtm : null,
       ps: (mcap != null && fd?.revenueTtm > 0) ? mcap / fd.revenueTtm : null,
       pb: (mcap != null && fd?.equity > 0) ? mcap / fd.equity : null,
       pCash: (mcap != null && fd?.cash > 0) ? mcap / fd.cash : null,
@@ -1068,7 +1094,8 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       epsGrowth3y: fd?.epsGrowth3y ?? null, salesGrowth3y: fd?.salesGrowth3y ?? null,
       epsGrowth5y: fd?.epsGrowth5y ?? null, salesGrowth5y: fd?.salesGrowth5y ?? null,
       epsGrowthThisYr: fd?.epsGrowthThisYr ?? null, roic: fd?.roic ?? null,
-      payoutRatio: (m?.annualDividend > 0 && fd?.epsTtm > 0) ? (m.annualDividend / fd.epsTtm) * 100 : null,
+      // Same denominator, same floor — a payout ratio against a denormal eps is the same artifact.
+      payoutRatio: (m?.annualDividend > 0 && fd?.epsTtm >= MIN_MEANINGFUL_EPS) ? (m.annualDividend / fd.epsTtm) * 100 : null,
       floatShares, sharesOut: f?.sharesOut ?? m?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
       // This run's candle-derived value if it has one, else whatever the technicals job last wrote.
