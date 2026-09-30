@@ -201,6 +201,26 @@ L('⚠️ exactly one alert engine is live, and the heartbeat says which');
   }
 }
 
+L('the alert control tells the truth rather than hiding');
+{
+  const t = code('src/components/AlertToggle.jsx');
+  // ⚠️ HIDING A CONTROL IS NOT ENTITLEMENT, and showing "Alert On" for a refused subscription is
+  // worse than either — it tells someone they are covered when they are not.
+  ok('the control is rendered for everyone and refuses at the server', !/if \(!pro\) return null/.test(t));
+  ok('⚠️ a refusal does not move the control', /THE CONTROL DOES NOT MOVE ON A REFUSAL/.test(read('src/components/AlertToggle.jsx')));
+  ok('…and the reason is surfaced to the user', /onNotice\?\.\(err\.message\)/.test(t));
+  ok('the server\'s answer is what lands in the set, not the optimistic guess',
+    /new Set\(j\.tickers \|\| \[\]\)/.test(code('src/lib/alerts/alert-subs-client.js')));
+
+  // The one alert channel that leaves our origin. SEC-derived text is interpolated into HTML.
+  const mail = code('src/app/api/cron/insider-alerts/route.js');
+  for (const f of ['f.ticker', 'f.executive', 'f.filingDate']) {
+    ok(`⚠️ the email escapes ${f} before it reaches HTML`, new RegExp(`esc\\(${f.replace('.', '\\.')}`).test(mail));
+  }
+  ok('…and the ticker is encoded, not interpolated, into the link', /encodeURIComponent\(f\.ticker\)/.test(mail));
+  ok('the email says why it was received and how to stop it', /on your CatalystPit watchlist/.test(read('src/app/api/cron/insider-alerts/route.js')));
+}
+
 L('⚠️ a public heartbeat note is never an error dump');
 {
   // ⚠️ FOUND WHILE VERIFYING THE ALERT CRONS' HEARTBEATS. /api/health is unauthenticated and serves
