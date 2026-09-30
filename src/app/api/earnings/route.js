@@ -1,4 +1,5 @@
 import { parseEarnings } from '../../../lib/sec-earnings.mjs';
+import { resolveNextEarnings } from '../../../lib/earnings-next.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -46,7 +47,72 @@ async function getCikMap() {
 }
 
 const empty = (ticker, cik, error) =>
-  Response.json({ ticker, cik: cik ?? null, count: 0, earnings: [], ...(error ? { error } : {}), meta: { cached: false, source: 'sec-edgar' } });
+  Response.json({ ticker, cik: cik ?? null, count: 0, earnings: [], next: null, ...(error ? { error } : {}), meta: { cached: false, source: 'sec-edgar' } });
+
+// ── ⚠️ THE ANNOUNCEMENT HISTORY, WHICH IS NOT THE FILING HISTORY ─────────────
+//
+// `report_date` on an earnings row is the day the 10-Q/10-K was FILED. An earnings DATE is the day
+// the company announced — an 8-K carrying Item 2.02, "Results of Operations and Financial
+// Condition". Those are different events: measured over 2,472 real pairs the announcement lands a
+// median of 5 days BEFORE the filing (p10 0, p90 24). Predicting "next earnings" from filing dates
+// was predicting the wrong event with the wrong cadence.
+//
+// ⚠️ ONE REQUEST, AND IT RIDES THE SAME 24-HOUR CACHE AS THE FACTS. submissions.json returns both
+// things in a single call — the 8-K rows with an `items` string, and the 10-Q/10-K rows with the
+// filer's declared period-of-report. It is fetched IN PARALLEL with companyfacts, so the route's
+// latency is unchanged, and the ticker page still makes exactly the requests it made before.
+//
+// `reportDate` is preferred over `filingDate` for a 2.02: it is the day the filer states the results
+// were released, which for an after-close announcement is the day the market actually learned.
+async function secFilingHistory(cik) {
+  try {
+    const r = await fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, { headers: SEC_UA, cache: 'no-store' });
+    if (!r.ok) return { announcements: [], periodic: [], fiscalYearEnd: null };
+    const j = await r.json();
+    const b = j.filings?.recent || {};
+    const forms = b.form || [];
+    const announcements = [], periodic = [];
+    for (let i = 0; i < forms.length; i++) {
+      if (forms[i] === '8-K' && String(b.items?.[i] || '').includes('2.02')) {
+        announcements.push({ event: b.reportDate?.[i] || b.filingDate?.[i], filed: b.filingDate?.[i] });
+      } else if (forms[i] === '10-Q' || forms[i] === '10-K') {
+        periodic.push({ filed: b.filingDate?.[i], form: forms[i], period: b.reportDate?.[i] || null });
+      }
+    }
+    const uniq = (arr, k) => [...new Map(arr.filter((x) => k(x)).map((x) => [k(x), x])).values()];
+    return {
+      announcements: uniq(announcements, (x) => x.event).sort((a, c) => a.event.localeCompare(c.event)),
+      periodic: uniq(periodic, (x) => `${x.form}|${x.filed}`).sort((a, c) => a.filed.localeCompare(c.filed)),
+      fiscalYearEnd: j.fiscalYearEnd || null,
+    };
+  } catch { return { announcements: [], periodic: [], fiscalYearEnd: null }; }
+}
+
+// A CONFIRMED schedule, if one is licensed. Dormant until TWELVE_DATA_API_KEY is set, and the env
+// check keeps this free while it is: no KV round trip for a feed that cannot answer.
+async function scheduledFor(ticker) {
+  if (!(process.env.TWELVE_DATA_API_KEY || process.env.TWELVEDATA_API_KEY)) return null;
+  try {
+    const raw = await kvGet('earnings_cal:v1');
+    if (!raw) return null;
+    const rows = JSON.parse(raw);
+    return (Array.isArray(rows) ? rows : []).find((r) => r.ticker === ticker && r.date) || null;
+  } catch { return null; }
+}
+
+// ⚠️ `next` IS COMPUTED PER REQUEST, NEVER CACHED WITH THE PAYLOAD. Two of its fields depend on
+// today's date — `imminent`, and the same-day Item 2.02 that is the only SEC-confirmable case — so a
+// value cached for 24 hours would be wrong for up to a day, which is the class of bug this whole
+// change exists to remove. The expensive inputs stay cached; the decision is pure arithmetic.
+async function respond(payload, { scheduled = null } = {}) {
+  const next = resolveNextEarnings({
+    announcements: payload.announcements || [],
+    periodic: payload.periodic || [],
+    scheduled,
+  });
+  const { announcements, periodic, ...pub } = payload;
+  return Response.json({ ...pub, next });
+}
 
 // FALLBACK: Polygon Financials for tickers SEC XBRL can't serve as us-gaap quarters — i.e. FOREIGN
 // issuers / ADRs (NBIS etc.) that file 20-F/IFRS, not 10-Q/10-K. Maps to the same earnings row shape.
@@ -105,37 +171,47 @@ export async function GET(request) {
     ticker = (new URL(request.url).searchParams.get('ticker') || '').toUpperCase().trim();
     if (!TICKER_RE.test(ticker)) return empty(ticker, null, 'invalid_ticker');
 
-    const key = `earnings:${ticker}`, lastKey = `${key}:last`;
+    // v2: the cached payload now carries the announcement history the estimator needs. A v1 entry
+    // has no `announcements`, so it would silently fall back to filing dates for up to a day.
+    const key = `earnings:v2:${ticker}`, lastKey = `${key}:last`;
+    const scheduled = await scheduledFor(ticker);
     const hit = await kvGet(key);
-    if (hit != null) { try { const v = JSON.parse(hit); return Response.json({ ...v, meta: { ...v.meta, cached: true } }); } catch { /* refetch */ } }
+    if (hit != null) { try { const v = JSON.parse(hit); return await respond({ ...v, meta: { ...v.meta, cached: true } }, { scheduled }); } catch { /* refetch */ } }
 
     const cik = (await getCikMap())[ticker] || null;
     if (!cik) return earningsFallback(ticker, null);   // not in SEC map (foreign/ADR) → try Polygon financials
 
     let facts = null, status = 0;
+    // ⚠️ IN PARALLEL, so adding the announcement history costs no wall-clock on the ticker page.
+    const historyPromise = secFilingHistory(cik);
     try {
       const r = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`, { headers: SEC_UA, cache: 'no-store' });
       status = r.status;
       if (r.ok) facts = await r.json();
     } catch (e) { console.log(`[earnings] ${ticker} SEC fetch threw: ${e.message}`); }
+    const history = await historyPromise;
 
     // 404 = entity has no XBRL financial facts (ETF/trust/foreign) → try Polygon before giving up.
     if (!facts && status === 404) return earningsFallback(ticker, cik);
 
     if (!facts) {                                   // real SEC failure → stale-fallback, else empty (never 503)
       const stale = await kvGet(lastKey);
-      if (stale != null) { try { const v = JSON.parse(stale); return Response.json({ ...v, meta: { ...v.meta, cached: true } }); } catch { /* fall through */ } }
+      if (stale != null) { try { const v = JSON.parse(stale); return await respond({ ...v, meta: { ...v.meta, cached: true } }, { scheduled }); } catch { /* fall through */ } }
       console.log(`[earnings] ${ticker} (${cik}) SEC fetch failed (status ${status}), no stale cache`);
       return empty(ticker, cik, 'data_unavailable');
     }
 
     const earnings = parseEarnings(facts, cik);
     if (!earnings.length) return earningsFallback(ticker, cik);   // foreign/IFRS filer (no us-gaap quarters) → Polygon
-    const payload = { ticker, cik, count: earnings.length, earnings, meta: { cached: false, source: 'sec-edgar' } };
+    const payload = {
+      ticker, cik, count: earnings.length, earnings,
+      announcements: history.announcements, periodic: history.periodic,
+      meta: { cached: false, source: 'sec-edgar', announcements: history.announcements.length },
+    };
     await kvSet(key, JSON.stringify(payload), TTL_EARNINGS);
     await kvSet(lastKey, JSON.stringify(payload), TTL_STALE);
-    console.log(`[earnings] ${ticker} (${cik}) quarters=${earnings.length}`);
-    return Response.json(payload);
+    console.log(`[earnings] ${ticker} (${cik}) quarters=${earnings.length} announcements=${history.announcements.length}`);
+    return await respond(payload, { scheduled });
   } catch (e) {
     console.log(`[earnings] ${ticker} failed: ${e.message}`);
     return empty(ticker, null, 'data_unavailable');

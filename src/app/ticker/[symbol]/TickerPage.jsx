@@ -10,7 +10,6 @@ import { featureEnabled, tickerTabEnabled } from '../../../lib/feature-availabil
 // fails closed (see FuturesView below), so there is nothing on a customer-facing page that can
 // load a vendor-hosted chart. components/TradingViewChart.jsx is kept on disk for the future
 // licensed migration, with no importer.
-import { estimateNextEarnings } from '../../../lib/earnings-estimate';
 import AffiliateStrip from '../../../components/AffiliateStrip';
 import BullsBears from '../../../components/BullsBears';
 import WatchlistStar from '../../../components/WatchlistStar';
@@ -186,10 +185,59 @@ function NewsRow({ n, idx }) {
     : inner;
 }
 
+// ── ⚠️ CONFIRMED AND ESTIMATED ARE NOT THE SAME CLAIM, SO THEY DO NOT SHARE A SENTENCE ─────────
+//
+// `next.basis` is decided server-side in lib/earnings-next.mjs and only two things can set it to
+// 'confirmed': a licensed calendar that actually schedules the event, or an Item 2.02 already filed
+// today. EDGAR is retrospective — it records when a company DID report — so a modelled date is
+// always 'estimated', however good the model gets.
+//
+// The third state is the one whose absence caused the bug. When a projection has passed and no
+// announcement has landed, the report is DUE. The old code read that as "already happened" and
+// added another quarter, printing a date three months late; this says "expected now" instead, which
+// is both true and the more useful thing to tell a trader.
+function NextEarningsLine({ next }) {
+  if (!next?.date) return null;
+  const confirmed = next.basis === 'confirmed';
+  const when = fmtDateLong(next.date);
+  const spread = next.spreadDays != null && next.spreadDays > 0 && !confirmed ? ` ± ${next.spreadDays}d` : '';
+  return (
+    <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+      {confirmed ? (
+        <>
+          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, fontWeight: 700, letterSpacing: '0.7px',
+            color: C.green, background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 3, padding: '1px 5px', marginRight: 7 }}>CONFIRMED</span>
+          Next earnings <span style={{ fontWeight: 600, color: C.ink }}>{when}</span>
+          <span style={{ color: C.dim }}>
+            {next.method === 'sec-8k-item-202' ? ' · reported today — SEC Form 8-K, Item 2.02' : ' · company-scheduled'}
+          </span>
+        </>
+      ) : next.imminent ? (
+        <>
+          Next earnings <span style={{ fontWeight: 600, color: C.gold }}>expected now</span>
+          <span style={{ color: C.dim }}> · due since {when} on this issuer&apos;s own reporting rhythm, not yet announced</span>
+        </>
+      ) : (
+        <>
+          Estimated next earnings <span style={{ fontWeight: 600, color: C.ink }}>{when}{spread}</span>
+          <span style={{ color: C.dim }}>
+            {next.series === 'item-2.02'
+              ? ' · projected from this issuer’s own announcement history, not company-confirmed'
+              : ' · projected from SEC filing cadence, not company-confirmed'}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── HERO (always visible, above tabs): identity + key stats + TradingView chart ──
 function Hero({ data, earnings }) {
   const m = data.metric || {};
-  const nextEarnings = estimateNextEarnings(earnings?.earnings || []);
+  // ⚠️ THE SERVER DECIDES THIS NOW. It is the only place that holds the Item 2.02 announcement
+  // history and the licensed-calendar check; re-deriving it here from filing dates is what produced
+  // a date a quarter late.
+  const nextEarnings = earnings?.next || null;
   return (
     <>
       {/* identity */}
@@ -218,12 +266,7 @@ function Hero({ data, earnings }) {
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: C.dim, marginTop: 4, letterSpacing: '0.5px' }}>
           {data.exchange || '—'}{data.industry ? ` · ${data.industry}` : ''}
         </div>
-        {nextEarnings && (
-          <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
-            Estimated next earnings <span style={{ fontWeight: 600, color: C.ink }}>{fmtDateLong(nextEarnings)}</span>
-            <span style={{ color: C.dim }}> · projected from SEC filing cadence, not company-confirmed</span>
-          </div>
-        )}
+        {nextEarnings && <NextEarningsLine next={nextEarnings} />}
         <div><ConsensusPanel symbol={data.symbol} /></div>
       </div>
 
@@ -490,7 +533,11 @@ function GovernmentTab({ symbol, gov }) {
 
 // Earnings table — SEC EDGAR quarterly history (mirrors the insider/gov table markup).
 function EarningsTable({ rows }) {
-  const headers = [['Quarter', 'left'], ['Report date', 'left'], ['Revenue', 'right'], ['Rev YoY', 'right'],
+  // ⚠️ "FILED", NOT "REPORT DATE". This column is `report_date`, which is XBRL's `filed` — the day the
+  // 10-Q/10-K reached EDGAR. The company ANNOUNCED the quarter earlier, a median of 5 days earlier
+  // over 2,472 measured pairs. Labelling a filing date "Report date" invited exactly the confusion
+  // that the next-earnings estimate was built on, so the column now says what it holds.
+  const headers = [['Quarter', 'left'], ['Filed', 'left'], ['Revenue', 'right'], ['Rev YoY', 'right'],
     ['EPS (basic)', 'right'], ['EPS YoY', 'right'], ['Filing', 'right']];
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -891,8 +938,12 @@ function EarningsTab({ symbol, earnings }) {
   const loading = earnings == null;
   const rows = earnings?.earnings || [];
   const hasDerived = rows.some((r) => r.derived);
-  const next = estimateNextEarnings(rows);
-  const title = next ? `Earnings history (Estimated next earnings: ${fmtDateLong(next)})` : 'Earnings history';
+  const next = earnings?.next || null;
+  // ⚠️ THE HEADING MUST NOT SAY "ESTIMATED" OVER A CONFIRMED DATE, OR PRINT A DUE DATE AS A FUTURE ONE.
+  const title = !next?.date ? 'Earnings history'
+    : next.basis === 'confirmed' ? `Earnings history (Next earnings: ${fmtDateLong(next.date)})`
+    : next.imminent ? 'Earnings history (Next earnings expected now)'
+    : `Earnings history (Estimated next earnings: ${fmtDateLong(next.date)})`;
   return (
     <Section title={title}>
       {loading ? <div>{Array(6).fill(0).map((_, i) => <Skel key={i} h={16} mb={10} />)}</div>
@@ -901,7 +952,9 @@ function EarningsTab({ symbol, earnings }) {
           <>
             <EarningsTable rows={rows} />
             <div style={{ marginTop: 12, fontSize: 11, color: C.dim, fontWeight: 300, lineHeight: 1.5 }}>
-              Reported figures from SEC filings. Analyst estimates and consensus available with Pro.
+              Reported figures from SEC filings. <b style={{ fontWeight: 600 }}>Filed</b> is the date the 10-Q/10-K reached
+              EDGAR, not the date the company announced results — the announcement typically comes a few days earlier.
+              Analyst estimates and consensus available with Pro.
               {hasDerived && <><br />↑ Q4 derived from the annual 10-K (full year minus Q1–Q3).</>}
             </div>
           </>

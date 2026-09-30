@@ -417,20 +417,46 @@ L('an estimated earnings date is never presented as a scheduled one');
 {
   const ticker = code(read('../src/app/ticker/[symbol]/TickerPage.jsx'));
   const watchlist = code(read('../src/components/WatchlistSection.jsx'));
-  const estimator = read('../src/lib/earnings-estimate.js');
+  const estimator = read('../src/lib/earnings-next.mjs');
 
   ok('⚠️ the ticker hero leads with the word Estimated',
     /Estimated next earnings <span/.test(ticker));
   ok('⚠️ …and says where the date comes from and that nobody confirmed it',
-    /projected from SEC filing cadence, not company-confirmed/.test(ticker));
+    /not company-confirmed/.test(ticker));
   ok('⚠️ the earnings-history card is labelled an estimate too',
-    /Earnings history \(Estimated next earnings: \$\{fmtDateLong\(next\)\}\)/.test(ticker));
+    /Earnings history \(Estimated next earnings: \$\{fmtDateLong\(next\.date\)\}\)/.test(ticker));
   ok('⚠️ the watchlist column says EST. before it says earnings',
     /<MiniLabel>EST\. EARNINGS<\/MiniLabel>/.test(watchlist));
 
-  // The forbidden phrasings, checked against CODE so the explanations above cannot satisfy them.
+  // ── ⚠️ "Next earnings" IS NOW PERMITTED, BUT ONLY WHERE IT IS TRUE ─────────────────────────────
+  //
+  // This block used to forbid the bare phrase outright, and said why: "only a real forward calendar
+  // source could justify that wording." That condition can now be met — a licensed calendar entry, or
+  // an Item 2.02 8-K already filed today — so the rule is not relaxed, it is made precise. Every
+  // occurrence of the bare phrase must be licensed by one of:
+  //   · the confirmed branch (basis === 'confirmed'), or
+  //   · the word "expected", which carries the uncertainty itself.
+  {
+    const occurrences = [...ticker.matchAll(/(?:>|['"`])\s*Next earnings\b/g)];
+    const unlicensed = occurrences.filter((m) => {
+      const window = ticker.slice(Math.max(0, m.index - 400), m.index + 160);
+      return !/basis === 'confirmed'|confirmed \?/.test(window) && !/expected/.test(window);
+    });
+    ok('⚠️ every bare "Next earnings" is gated on a genuinely confirmed source',
+      unlicensed.length === 0,
+      unlicensed.map((m) => ticker.slice(m.index, m.index + 60).replace(/\s+/g, ' ')).join(' | '));
+    ok('…and there is a confirmed branch for it to be gated on',
+      /const confirmed = next\.basis === 'confirmed';/.test(ticker));
+    ok('⚠️ …which names the source of the confirmation rather than just asserting it',
+      /SEC Form 8-K, Item 2\.02/.test(ticker) && /company-scheduled/.test(ticker));
+    // ⚠️ AND THE SERVER IS THE ONLY THING THAT MAY SET IT. A client that could label its own guess
+    // "confirmed" would make every assertion here decorative.
+    ok('⚠️ the page never computes `confirmed` itself, it reads the server\'s decision',
+      /const nextEarnings = earnings\?\.next \|\| null;/.test(ticker)
+      && !/estimateNextEarnings/.test(ticker));
+  }
+
   for (const [phrase, re] of [
-    ['a bare "Next earnings"', />\s*Next earnings\b|['"`]Next earnings\b/],
     ['"Earnings date"', /\bEarnings date\b/],
     ['"Scheduled earnings"', /\bScheduled earnings\b/i],
     ['"Confirmed earnings"', /\bConfirmed earnings\b/i],
@@ -439,15 +465,26 @@ L('an estimated earnings date is never presented as a scheduled one');
       'only a real forward calendar source could justify that wording');
   }
 
-  // ⚠️ AND THE ESTIMATOR ITSELF SAYS WHAT IT RETURNS. The mislabel started here: the function is
-  // named for earnings and returns a filing date, so every caller inherited the wrong noun.
-  ok('⚠️ the estimator states, up front, that it predicts a FILING date',
-    /THIS RETURNS AN ESTIMATED SEC FILING DATE\. IT IS NOT AN ANNOUNCEMENT DATE\./.test(estimator),
-    'the mislabel started here: a function named for earnings that returns a filing date');
+  // ⚠️ A PASSED ESTIMATE IS "DUE", NEVER "NEXT QUARTER". This is the MU defect, as copy: the page must
+  // have a state for a projection that has elapsed without an announcement, or it will print a date a
+  // quarter late rather than admit the report is overdue.
+  ok('⚠️ the hero has an imminent state instead of rolling to the next cycle',
+    /next\.imminent \?/.test(ticker) && /expected now/.test(ticker));
+  ok('…and the history card does too', /Next earnings expected now/.test(ticker));
+
+  // ⚠️ AND THE ESTIMATOR ITSELF SAYS WHAT IT RETURNS. The mislabel started here: the old function was
+  // named for earnings and returned a filing date, so every caller inherited the wrong noun.
+  ok('⚠️ the estimator distinguishes the announcement from the filing, up front',
+    /An earnings DATE is the day the company announced|THE ANNOUNCEMENT HISTORY, WHICH IS NOT THE FILING HISTORY/
+      .test(estimator + read('../src/app/api/earnings/route.js')));
   ok('⚠️ …and records how far apart the two actually are',
-    /MEDIAN OF 5 DAYS BEFORE the filing/.test(estimator));
+    /median of 5 days BEFORE the filing/i.test(estimator + read('../src/app/api/earnings/route.js')));
   ok('⚠️ …and records the measured accuracy, so nobody has to guess whether it is good enough',
-    /within 7 days 53\.3%/.test(estimator) && /p90 35 days/.test(estimator));
+    /81\.9%/.test(estimator) && /12,125 predictions/.test(estimator));
+  ok('⚠️ …and states that SEC data can never confirm a FUTURE date',
+    /EDGAR is retrospective/i.test(estimator));
+  ok('⚠️ …and that only two sources may set basis to confirmed',
+    /ONLY TWO THINGS MAY SET IT TO 'confirmed'/.test(estimator));
 }
 
 

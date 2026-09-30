@@ -5,7 +5,7 @@
 // existence — is visible to either model. A backtest that leaks the answer measures nothing.
 import fs from 'node:fs';
 import path from 'node:path';
-import { estimateNext } from './earnings-model-prototype.mjs';
+import { estimateNext } from '../src/lib/earnings-next.mjs';
 import { estimateNextEarnings } from '../src/lib/earnings-estimate.js';
 
 const DIR = path.join(process.cwd(), 'node_modules', '.cache', 'earnings');

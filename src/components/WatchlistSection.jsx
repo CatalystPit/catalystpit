@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { C, Skel, TickerLogo } from '../lib/cp-shared';
-import { estimateNextEarnings } from '../lib/earnings-estimate';
+
 import WatchlistChanges from './WatchlistChanges';
 
 const usd = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -146,7 +146,9 @@ export default function WatchlistSection() {
         try {
           const er = await fetch(`/api/earnings?ticker=${encodeURIComponent(t)}`);
           const ej = er.ok ? await er.json() : null;
-          est = estimateNextEarnings(ej?.earnings || []);
+          // The server decides confirmed-vs-estimated and holds the announcement history; the
+          // watchlist shows the date it returns rather than re-deriving a worse one from filings.
+          est = ej?.next?.date || null;
         } catch { est = null; }
         if (alive) setList(prev => (prev || []).map(x => x.ticker === t ? { ...x, nextEarnings: est } : x));
       }));
