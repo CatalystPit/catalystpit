@@ -133,27 +133,64 @@ L('the things a CSP edit could have broken on the way past');
 
   await p.goto(BASE + '/terminal', { settleMs: 2500, ceilingMs: 35_000 });
   await new Promise((r) => setTimeout(r, 8000));
-  const wire = await p.eval(`(() => {
+  // ⚠️ AN ANONYMOUS VISITOR GETS THE PRO GATE, NOT THE TERMINAL. So the honest checks are that the gate
+  // renders and the live tape behind it is populated. An earlier version of this looked for a timestamp
+  // and failed — the anonymous surface is a gate plus a ticker tape, neither of which carries one. The
+  // dated-content question belongs to /api/wire above, where the data actually is.
+  const term = await p.eval(`(() => {
     const t = document.body.innerText;
     return {
       chars: t.length,
       saysBroken: /unavailable right now|failed to load|something went wrong/i.test(t),
-      hasDated: /\\d{1,2}:\\d{2}|\\bago\\b|[A-Z][a-z]{2} \\d{1,2}/.test(t)
+      gated: /Terminal is a Pro/i.test(t),
+      tapeQuotes: (t.match(/[+-]\\d+\\.\\d{2}%/g) || []).length
     };
   })()`);
-  ok('the Terminal renders', wire.chars > 400, `${wire.chars} chars`);
-  ok('…and nothing on it reports itself broken', wire.saysBroken === false);
-  ok('…and it shows dated content', wire.hasDated === true);
+  ok('the Terminal page renders', term.chars > 400, `${term.chars} chars`);
+  ok('…and nothing on it reports itself broken', term.saysBroken === false);
+  ok('⚠️ …and an anonymous visitor gets the Pro gate', term.gated === true);
+  ok('…with the live tape behind it populated', term.tapeQuotes >= 8, `${term.tapeQuotes} quotes`);
+}
 
-  // Ably: the SDK connects from the chat surface. Confirm nothing was refused.
-  const ablyResponses = p.collected.responses.filter((x) => /ably/.test(x.url));
-  const ablyBlocked = p.collected.failed.filter((x) => /ably/.test(x));
-  ok('⚠️ no Ably request failed', ablyBlocked.length === 0, ablyBlocked.slice(0, 2).join(' | '));
-  const ablyState = await p.eval(`(() => ({
-    sdk: typeof window.Ably,
-    cdn: [...document.querySelectorAll('script')].some((s) => /cdn\\.ably\\.com/.test(s.src))
-  }))()`);
-  console.log(`         ably: ${JSON.stringify(ablyState)}, ably responses: ${ablyResponses.length}`);
+// ⚠️ ABLY DOES NOT CONNECT ON PAGE LOAD, BY DESIGN — PitDock mounts PitChat only while the panel is open,
+// to free the connection slot when collapsed. So counting Ably requests on a freshly loaded page proves
+// nothing; the realtime path has to be exercised the way a customer exercises it. This is the check that
+// would actually catch the previous CSP fix being clobbered by this one.
+L('⚠️ the realtime connection, exercised by opening the dock');
+{
+  await p.viewport(1440, 900, false);
+  await p.goto(BASE + '/', { settleMs: 2200, ceilingMs: 30_000 });
+  await new Promise((r) => setTimeout(r, 3000));
+  const toggle = await p.eval(`(() => {
+    const hit = [...document.querySelectorAll('button, [role="button"], a')]
+      .find((e) => /chat|community/i.test((e.innerText || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.title || '')));
+    if (!hit) return null;
+    hit.scrollIntoView({ block: 'center' });
+    const r = hit.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })()`);
+  ok('the chat dock toggle is present', !!toggle);
+  if (toggle) {
+    await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: toggle.x, y: toggle.y, button: 'left', clickCount: 1 });
+    await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: toggle.x, y: toggle.y, button: 'left', clickCount: 1 });
+    await new Promise((r) => setTimeout(r, 9000));   // CDN, then token, then socket
+
+    const sdk = p.collected.responses.filter((x) => /cdn\.ably\.com/.test(x.url));
+    const token = p.collected.responses.filter((x) => /realtime\.ably\.net.*requestToken/.test(x.url));
+    ok('⚠️ the Ably SDK loads from the allowed CDN', sdk.length > 0 && sdk.every((x) => x.status === 200),
+      JSON.stringify(sdk.map((x) => x.status)));
+    ok('⚠️ …and the realtime token request reaches main.realtime.ably.net',
+      token.some((x) => x.status === 200 || x.status === 201), JSON.stringify(token.map((x) => x.status)));
+    ok('…with no Ably request failing', p.collected.failed.filter((x) => /ably/.test(x)).length === 0,
+      p.collected.failed.filter((x) => /ably/.test(x)).join(' | '));
+    const v = violations(p.collected.consoleErrors);
+    ok('⚠️ …and opening the dock produces no CSP violation', v.length === 0,
+      v.map((x) => `${x.directive}/${x.host}`).join(', '));
+  }
+}
+
+L('and the health endpoint');
+{
 
   const h = await (await fetch(BASE + '/api/health')).json();
   ok('⚠️ /api/health reports healthy', h.ok === true && h.status === 'healthy',
