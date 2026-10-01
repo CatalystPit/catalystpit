@@ -12,7 +12,7 @@
 //
 // And the stop check itself failed OPEN — an unconfigured or unreadable KV returned "not stopped", so a
 // redistribution control that could not be consulted permitted live data.
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
@@ -28,6 +28,22 @@ const code = (p) => read(p)
   .replace(/^\s*\/\/.*$/gm, '')
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+
+/**
+ * Every source file under src/, so a sweep cannot be defeated by a hand-kept list going stale.
+ *
+ * ⚠️ THIS EXISTS BECAUSE A HAND-KEPT LIST DID GO STALE. Six routes were enumerated as the places that
+ * decide real-time entitlement; chart-intraday was a seventh, and no assertion could see it because no
+ * assertion looked anywhere but at the six.
+ */
+function allSourceFiles(dir = 'src', out = []) {
+  for (const e of readdirSync(new URL(`../${dir}`, import.meta.url), { withFileTypes: true })) {
+    const p = `${dir}/${e.name}`;
+    if (e.isDirectory()) allSourceFiles(p, out);
+    else if (/\.(js|jsx|mjs|ts|tsx)$/.test(e.name)) out.push(p);
+  }
+  return out;
+}
 
 L('⚠️ #8 — the freshness label describes the ROWS, never the entitlement');
 {
@@ -138,17 +154,29 @@ L('⚠️ #10 — the stop order is part of the ONE answer, and it fails closed'
     /value: String\(result \?\? ''\)\.trim\(\) === '1'/.test(t));
 
   // The single answer now includes it.
-  ok('⚠️ callerHasRealtime consults the stop order', /return !\(await tiingoRealtimeStopped\(\)\);/.test(e));
+  //
+  // ⚠️ THE ANSWER MOVED, AND THE RULE DID NOT. callerHasRealtime is now a one-line projection of
+  // callerRealtimeAccess, which returns { tier, beta, realtime } from ONE Clerk round trip — added
+  // because /api/chart-intraday needs both halves and was otherwise paying for two identity lookups,
+  // or, worse, tempted to re-inline the rule. So the assertions below read the function that now holds
+  // the rule, and a new one pins the projection, because "callerHasRealtime still answers the licensing
+  // question" is only true while it keeps delegating.
+  ok('⚠️ callerHasRealtime is a projection of the one rule, not a second copy',
+    /export async function callerHasRealtime\(\) \{\s*return \(await callerRealtimeAccess\(\)\)\.realtime;\s*\}/.test(e),
+    e.slice(e.indexOf('export async function callerHasRealtime'), e.indexOf('export async function callerHasRealtime') + 120));
+  ok('⚠️ …and the rule it projects consults the stop order',
+    /return \{ tier, beta, realtime: !\(await tiingoRealtimeStopped\(\)\) \};/.test(e));
   // ⚠️ PRESENCE *THEN* ORDER. Asserted as an indexOf comparison alone, DELETING the tier guard passed —
   // indexOf returns -1 and -1 precedes any real index. That mutation is a privilege escalation, not a
   // style regression: without the guard, callerHasRealtime returns true for a FREE user whenever no stop
   // is in force. It survived a mutation run, which is exactly what mutation testing is for.
-  ok('⚠️ the tier guard exists', /if \(!isRealtimeRule\(tier\) \|\| beta\) return false;/.test(e),
+  const TIER_GUARD = 'if (!isRealtimeRule(tier) || beta) return { tier, beta, realtime: false };';
+  ok('⚠️ the tier guard exists', e.includes(TIER_GUARD),
     'without it a Free caller is granted real-time');
   ok('⚠️ …and precedes the stop check, so a non-Pro caller costs no KV read',
-    e.includes('if (!isRealtimeRule(tier) || beta) return false;')
+    e.includes(TIER_GUARD)
     && e.includes('tiingoRealtimeStopped()')
-    && e.indexOf('if (!isRealtimeRule(tier) || beta) return false;') < e.indexOf('tiingoRealtimeStopped()'));
+    && e.indexOf(TIER_GUARD) < e.indexOf('tiingoRealtimeStopped()'));
   // ⚠️ THE SYMBOL MUST BE IMPORTED, AND THIS ASSERTION EXISTS BECAUSE IT WAS NOT.
   //
   // I added the stop check to callerHasRealtime and forgot the import. A free identifier is a runtime
@@ -170,19 +198,38 @@ L('⚠️ #10 — the stop order is part of the ONE answer, and it fails closed'
     ok(`  ${JSON.stringify(tier)} is not a real-time tier`, isRealtime(tier) === false);
   }
   ok('  pro and elite are', isRealtime('pro') === true && isRealtime('elite') === true);
-  ok('…and the whole thing still fails closed on any error', /return false;                 \/\/ never grant/.test(read('src/lib/entitlements.js')));
+  // ⚠️ EXERCISED IN verify-freshness-entitlement, NOT MATCHED HERE. This asserted the exact text of the
+  // catch, down to its column alignment, which is a reformatting away from red and says nothing about
+  // behaviour. That suite now provokes both failure modes — the identity provider throwing and the user
+  // lookup throwing — against a PRO identity, so a denial can only come from the error path.
+  ok('…and the catch returns a shape that grants nothing',
+    /return \{ tier: 'free', beta: false, realtime: false \};/.test(read('src/lib/entitlements.js')));
 
-  // ⚠️ AND EVERY SITE USES THAT ONE ANSWER. Seven determinations, five of them copies.
+  // ⚠️ AND EVERY SITE USES THAT ONE ANSWER. Eight determinations, seven of them copies.
+  //
+  // ⚠️ chart-intraday WAS THE ONE THIS LIST MISSED, and listing six sites is what let it hide: the
+  // consolidation enumerated the routes that SERVE QUOTES, and the intraday chart serves bars. Its
+  // `entitled` flag chooses between the untruncated tail of today's bars and a delay-truncated set, and
+  // labels the response `freshness: 'realtime'` — so with the stop order thrown it went on serving live
+  // intraday prints under a withdrawn licence, to a hand-written request as readily as to the chart.
+  // It is in the list now, and the no-inline sweep below is what would catch a ninth.
   const SITES = ['src/app/api/heatmap/performance/route.js', 'src/app/api/market-movers/route.js',
     'src/app/api/movers/route.js', 'src/app/api/quotes/route.js', 'src/app/api/pitscan/route.js',
-    'src/lib/scan/board-payload.js'];
+    'src/lib/scan/board-payload.js', 'src/app/api/chart-intraday/route.js'];
   for (const f of SITES) {
     const src = code(f);
-    ok(`${f} uses callerHasRealtime`, /await callerHasRealtime\(\)/.test(src));
-    ok(`  …and no longer inlines the tier check`, !/realtime = isRealtime\(tier\) && !beta/.test(src));
+    ok(`${f} asks the one answer`, /await callerHasRealtime\(\)|await callerRealtimeAccess\(\)/.test(src));
+    ok(`  …and no longer inlines the tier check`,
+      !/isRealtime\([a-z]\.?tier\) && !\.?[a-z]?\.?beta/.test(src) && !/isRealtime\(tier\) && !beta/.test(src));
   }
-  ok('⚠️ no inlined realtime determination survives anywhere',
-    SITES.every((f) => !/isRealtime\(tier\) && !beta/.test(code(f))));
+  // ⚠️ THE SWEEP IS WHAT FINDS THE NEXT ONE — every route and lib under src, not a hand-kept list. The
+  // inlined form is spelled both as `isRealtime(tier) && !beta` and as `isRealtime(a.tier) && !a.beta`,
+  // and the second is how chart-intraday read for a week while a regex looking for the first said the
+  // codebase was clean.
+  const INLINE = /isRealtime\(\s*[A-Za-z_$][\w$]*(\.[\w$]+)?\s*\)\s*&&\s*![A-Za-z_$][\w$]*(\.[\w$]+)?/;
+  const offenders = allSourceFiles().filter((f) => f !== 'src/lib/entitlements.js' && INLINE.test(code(f)));
+  ok('⚠️ no inlined realtime determination survives anywhere under src/',
+    offenders.length === 0, offenders.join(', '));
 
   // The data path keeps its own gate — belt and braces, since it is the only thing that can emit a print.
   ok('⚠️ getQuotes still checks the stop itself',

@@ -244,7 +244,18 @@ L('F/J. read state is per account, and new events after it return');
   const route = code(read('../src/app/api/watchlist/changes/route.js'));
   ok('⚠️ J. the watermark key is per user', /seenKey = \(userId\) =>/.test(route)
     && /catalystpit:watchlist:seen:\$\{userId\}/.test(route));
-  ok('⚠️ ...and the watched list is the signed-in user\'s own', /eq\(watchlist\.userId, userId\)/.test(route));
+  // ⚠️ THE SCOPING IS RAW SQL, NOT DRIZZLE, AND IT IS NO WEAKER FOR IT. This required
+  // `eq(watchlist.userId, userId)`; the route reads `where user_id = ${userId}` in a tagged template,
+  // which is parameterised the same way and scopes the same column. Asserting one spelling made a correct
+  // per-user query read as a leak. Either form satisfies it now — and crucially the assertion still fails
+  // if the scoping disappears, which is the thing worth catching.
+  ok('⚠️ ...and the watched list is the signed-in user\'s own',
+    /eq\(watchlist\.userId, userId\)/.test(route) || /where user_id = \$\{userId\}/.test(route));
+  // ⚠️ AND NOTHING READS THE LIST UNSCOPED. A second query without the predicate is how the first one
+  // stops mattering.
+  ok('⚠️ ...and no read of the watchlist omits the user',
+    (route.match(/from watchlist/g) || []).length === (route.match(/from watchlist[\s\S]{0,120}user_id = \$\{userId\}/g) || []).length,
+    `${(route.match(/from watchlist/g) || []).length} reads`);
   ok('⚠️ ...and the answer is never shared-cached', /private, no-store/.test(route));
   ok('⚠️ F. "since" is a moving watermark, so a later event returns again',
     /DEFAULT_LOOKBACK_MS/.test(route) && /last_seen/.test(route),

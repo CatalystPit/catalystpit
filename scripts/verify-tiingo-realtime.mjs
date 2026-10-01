@@ -134,10 +134,16 @@ L('\n=== FREE AND PRO CANNOT SHARE A CACHE OBJECT ===');
   ok('only the delayed tier is stored', /quotesCacheSet\(key/.test(code.slice(code.indexOf('const cached'))));
 
   // Entitlement is decided on the server from the session, never from the request.
-  ok('entitlement comes from auth(), not from a query parameter',
-    /const \{ userId \} = await auth\(\)/.test(code) && /resolveUserAccess\(\)/.test(code));
-  ok('…and a signed-out reader defaults to delayed',
-    /realtime = isRealtime\(tier\)/.test(code) && /catch \{/.test(route));
+  // ⚠️ THE DECISION MOVED OUT OF THIS ROUTE, AND THAT IS THE FIX, NOT A REGRESSION. This required the
+  // route to contain `const { userId } = await auth()` and `realtime = isRealtime(tier)` — the inlined
+  // copy that five routes each carried and that was silent about the Tiingo licensing stop order. It is
+  // now one call to callerHasRealtime(), which asks the tier, excludes beta AND consults the stop, and
+  // fails closed on any error. Asserting the old spelling would demand the licence-blind form back.
+  ok('⚠️ entitlement comes from the session through the one answer',
+    /const realtime = await callerHasRealtime\(\);/.test(code));
+  ok('⚠️ …and nothing on the wire can reach that decision',
+    !/searchParams\.get\(['"](realtime|rt|tier|pro|entitled)['"]\)/.test(code)
+    && !/req(uest)?\.headers/.test(code));
   ok('no quote response is ever publicly cacheable',
     (code.match(/'private, no-store'/g) || []).length >= 3);
 }

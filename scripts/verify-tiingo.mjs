@@ -85,7 +85,12 @@ console.log('\n=== THE TOKEN MUST NEVER REACH A BROWSER ===');
   const src = readFileSync('src/lib/market/tiingo.mjs', 'utf8');
   // In the Authorization header, never the query string — a token in a URL leaks through logs,
   // referrers and any error that echoes the request.
-  ok('token is sent as an Authorization header', /Authorization:\s*`Token \$\{TOKEN\}`/.test(src));
+  // ⚠️ THE TOKEN BECAME A FUNCTION CALL, NOT A CONSTANT, and that was a fix: a module-level `const TOKEN`
+  // is read once at import, so `tiingoRealtimeEnabled()` and friends only LOOKED like they asked the
+  // environment. What this assertion is about is unchanged — the credential travels in the header — so it
+  // accepts either spelling and the companion check below still forbids the query string.
+  ok('token is sent as an Authorization header',
+    /Authorization:\s*`Token \$\{(TOKEN|token\(\))\}`/.test(src));
   ok('token is never appended to the query string', !/token=\$\{TOKEN\}|searchParams\.set\('token'/.test(src));
   ok('no NEXT_PUBLIC_ prefix on the key', !/NEXT_PUBLIC_[A-Z_]*TIINGO/.test(src));
   ok('the module is not marked use client', !/^['"]use client['"]/m.test(src));
@@ -177,8 +182,11 @@ console.log('\n=== the entitlement gate, exercised directly ===');
   const src = readFileSync(new URL('../src/lib/market/tiingo.mjs', import.meta.url), 'utf8');
   ok('getQuotes accepts the entitlement option it is passed',
     /export async function getQuotes\(symbols, \{ realtime = false \} = \{\}\)/.test(src));
-  ok('…and both halves must agree before a quote is live',
-    /const entitled = realtime && tiingoRealtimeEnabled\(\);/.test(src));
+  // ⚠️ THERE ARE THREE HALVES NOW, AND DEMANDING TWO WOULD DEMAND THE KILL SWITCH BACK OUT. The licensing
+  // stop order was added as a third term: entitlement, the build-time realtime flag, and the live stop.
+  // An assertion that insisted on the exact two-term form could only pass again if the stop were removed.
+  ok('…and all three must agree before a quote is live',
+    /const entitled = realtime && tiingoRealtimeEnabled\(\) && !\(await tiingoRealtimeStopped\(\)\);/.test(src));
   // No production subscribe may exist until the flag is real.
   ok('no WebSocket subscribe is implemented', !/new WebSocket|wss:\/\/api\.tiingo/.test(src.replace(/\/\/.*$/gm, '')));
 }

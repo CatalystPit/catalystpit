@@ -24,7 +24,7 @@ const one = async (q) => (await q)[0];
 
 const clerk = await import('../scripts/lib/clerk-stub.mjs');
 const { FRESHNESS, callerCapabilities, FULL_PROVIDER, INTERIM_PROVIDER } = await import('../src/lib/scan/market-capabilities.mjs');
-const { callerHasRealtime } = await import('../src/lib/entitlements.js');
+const { callerHasRealtime, callerRealtimeAccess } = await import('../src/lib/entitlements.js');
 
 const IDENTITIES = {
   anonymous: { userId: null },
@@ -90,7 +90,27 @@ L('⚠️ entitlement is resolved from the session, and nothing else can reach i
   const resolver = ent.slice(ent.indexOf('export async function callerHasRealtime'));
   ok('⚠️ …and its body reads no request, header or cookie',
     !/request|headers|cookies|searchParams|req\b/i.test(resolver), resolver.slice(0, 120));
-  ok('…and a resolution error denies rather than grants', /return false;/.test(resolver));
+  // ⚠️ EXERCISED, NOT MATCHED. This asserted /return false;/ against the source of callerHasRealtime,
+  // which proves only that the characters exist somewhere in the slice — it passed when the function
+  // was a four-line body and it would pass again if the catch returned false for the wrong reason. It
+  // then went red when the body moved into callerRealtimeAccess, even though the fail-closed behaviour
+  // was unchanged, which is the giveaway that it was measuring spelling.
+  //
+  // Both failure modes are now provoked for real, on a PRO identity so that a denial can only come
+  // from the error path and not from the tier:
+  for (const [label, id] of [
+    ['the identity provider itself throws', { userId: 'u_pro', publicMetadata: { plan: 'pro' }, authThrows: true }],
+    ['the user lookup throws', { userId: 'u_pro', publicMetadata: { plan: 'pro' }, getUserThrows: true }],
+  ]) {
+    clerk.__setIdentity(id);
+    ok(`⚠️ …and a Pro caller is DENIED real-time when ${label}`, (await callerHasRealtime()) === false);
+    const a = await callerRealtimeAccess();
+    ok(`   …with the combined shape denying too, and claiming no tier it could not read`,
+      a.realtime === false && a.tier === 'free', JSON.stringify(a));
+  }
+  // Restore a known identity so a later case cannot inherit a throwing provider.
+  clerk.__setIdentity(IDENTITIES.pro);
+  ok('⚠️ …and the throwing identity did not leak into the next case', (await callerHasRealtime()) === true);
   // The two serving routes must pass the RESOLVED value, never something off the wire.
   for (const f of ['src/app/api/screener/route.js', 'src/app/api/pitscan/route.js']) {
     const c = code(f);

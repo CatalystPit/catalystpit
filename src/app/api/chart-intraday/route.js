@@ -1,5 +1,4 @@
-import { auth } from '@clerk/nextjs/server';
-import { resolveUserAccess, isRealtime, isProTier, FREE_CHART_INTERVALS } from '../../../lib/entitlements';
+import { isProTier, callerRealtimeAccess, FREE_CHART_INTERVALS } from '../../../lib/entitlements';
 import { getIntradayBars } from '../../../lib/market/tiingo.mjs';
 import { DELAY_MS } from '../../../lib/market/delayed-store.mjs';
 import { TIMEFRAMES, timeframe, isServable } from '../../../lib/chart/chart-source.mjs';
@@ -140,11 +139,25 @@ export async function GET(request) {
 
     // ⚠️ RESOLVED FROM THE SESSION, NEVER FROM THE QUERY. A caller adding ?rt=1 or ?realtime=true
     // changes nothing here; the only parameters this route reads are ticker, range and session.
+    // ⚠️ THE SEVENTH SITE, AND THE ONE THE CONSOLIDATION MISSED.
+    //
+    // Six routes had `isRealtime(tier) && !beta` replaced by callerHasRealtime() so that the Tiingo
+    // licensing stop order reaches every surface that can emit a live price. This one was not in that
+    // list, and it is the surface where the omission mattered most: `entitled` decides whether the
+    // caller receives the UNTRUNCATED tail of today's bars (line ~188) and whether the response calls
+    // itself `freshness: 'realtime'`. With the stop order thrown, a Pro caller still received live
+    // intraday prints here, labelled real-time, from a licence that had been withdrawn — including
+    // from a hand-written request, which is exactly the bypass the brief forbids.
+    //
+    // callerRealtimeAccess() is the single answer: tier, the beta exclusion AND the stop order, failing
+    // closed on any error, in ONE Clerk round trip because this route needs both halves. The Pro gate
+    // below is untouched — intraday ACCESS is a tier question and stays a tier question; this is only
+    // the live-vs-delayed decision.
     let entitled = false, tier = 'free';
     try {
-      const { userId } = await auth();
-      if (userId) { const a = await resolveUserAccess(); tier = a.tier; entitled = isRealtime(a.tier) && !a.beta; }
-    } catch { /* signed out → delayed */ }
+      const a = await callerRealtimeAccess();
+      tier = a.tier; entitled = a.realtime;
+    } catch { /* signed out, or anything unresolvable → delayed */ }
 
     // ⚠️ INTRADAY IS PRO. THE WHOLE ROUTE IS INTRADAY, so this is the gate for every interval it
     // serves — hiding the buttons in React protects nothing against a hand-written request.

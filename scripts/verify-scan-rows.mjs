@@ -6,7 +6,7 @@
 //
 // Run: node scripts/verify-scan-rows.mjs [--mutate=<mode>]
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import {
   toScanRow, toScanRows, evidenceLine, joinLine, structureTags, levelsToStructure,
   supportingFacts, freshnessLabel, boardStatusLabel, FRESHNESS_LABEL, isLiveEnough, aggregateFreshness,
@@ -83,8 +83,14 @@ L('=== FRESHNESS IS ALWAYS STATED ===');
   // word where a price's provenance belongs. A single price has one source; the mixture is a fact
   // about the board and is labelled by the board's own map.
   ok('⚠️ the ROW map has no entry for a mixture at all', !('mixed' in FRESHNESS_LABEL));
-  ok('⚠️ and a board that is partly live is REAL-TIME, not half-broken',
-    boardStatusLabel('mixed') === 'REAL-TIME');
+  // ⚠️ "REAL-TIME" FOR A MIXTURE WAS THE DEFECT, AND THIS ASSERTION WAS PINNING IT. The point it was
+  // written to make is still right — a partly-live board must not be called half-broken, so it is never
+  // DELAYED or LAST CLOSE. But a bare REAL-TIME is a claim about every row, and on a mixed board some
+  // rows are last-close prints. The label now qualifies itself rather than overstating.
+  ok('⚠️ a board that is partly live says so, instead of claiming REAL-TIME outright',
+    boardStatusLabel('mixed') === 'REAL-TIME · PARTIAL');
+  ok('⚠️ …and is still not called half-broken',
+    boardStatusLabel('mixed') !== 'DELAYED' && boardStatusLabel('mixed') !== 'LAST CLOSE');
   ok('an unknown freshness is treated as the weakest, not the strongest',
     mut('assumelive') ? false : freshnessLabel(undefined) === 'LAST CLOSE');
   ok('only realtime or near counts as live',
@@ -554,7 +560,11 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   ok('…the wrapper accepts it', /export default function ScanBoardRows\(\{ onPick, onFeed \} = \{\}\)/.test(rows));
   // ⚠️ THE BOARD TAKES ITS DATA AS A PROP AND FETCHES NOTHING. That is what makes a tab switch a
   // local state change rather than another round trip for a dataset the client already has.
-  ok('…the board accepts it', /export function ScanBoard\(\{ board, data, loading = false, errorText = null, onRetry, title, onState, onPick \}\)/.test(rows));
+  // ⚠️ THE SIGNATURE GAINED `locked`, the Pro gate the board renders against. Pinning the exact parameter
+  // list makes every legitimate prop addition read as a regression, so this now requires the props the
+  // assertion is actually about — data arrives as a prop, and onPick is threaded — and tolerates the rest.
+  ok('…the board accepts it',
+    /export function ScanBoard\(\{[^}]*\bboard\b[^}]*\bdata\b[^}]*\bonPick\b[^}]*\}\)/.test(rows));
   ok('⚠️ …and the board no longer fetches for itself',
     !/fetch\(`\/api\/scan-board\?board=\$\{board\}`/.test(rows));
   ok('…and the row receives it', /<Row [^>]*onPick=\{onPick\}/.test(rows));
@@ -646,10 +656,15 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
     !/freshness\s*=\s*['"]realtime['"]/.test(page));
 
   // ⚠️ ENTITLEMENT. `realtime` may only ever narrow what is served.
-  ok('the route resolves entitlement server-side',
-    /resolveUserAccess\(\)/.test(routeSrc) && /isRealtime\(tier\) && !beta/.test(routeSrc));
+  // ⚠️ ONE ANSWER, AND IT KNOWS ABOUT THE LICENCE. These required the inlined
+  // `resolveUserAccess() … isRealtime(tier) && !beta` pair plus its `let realtime = false` default. That
+  // copy was correct about the tier and silent about the Tiingo licensing stop order, so with the switch
+  // thrown the board still described previous-close prices as live. callerHasRealtime() answers tier,
+  // beta AND the stop, and fails closed on any error — the same default, decided in one place.
+  ok('the route resolves entitlement server-side, through the one answer',
+    /const realtime = await callerHasRealtime\(\);/.test(routeSrc));
   ok('…defaulting to delayed when it cannot be resolved',
-    /let realtime = false;/.test(routeSrc));
+    /callerHasRealtime/.test(routeSrc) && !/searchParams\.get\(['"](realtime|rt|tier)['"]\)/.test(routeSrc));
   ok('…and passes it to getQuotes rather than assuming',
     /getQuotes\(symbols, \{ realtime \}\)/.test(routeSrc));
   ok('the response is never shared-cacheable',
@@ -669,12 +684,28 @@ L('\n=== THE TERMINAL SCAN PANEL ===');
   ok('the page does not loosen any threshold', !/THRESHOLDS|minAbsChangePct|deadZone/i.test(page));
 
   // ⚠️ EVERY EXISTING TAB SURVIVES. Adding Scan must not quietly drop a room.
+  // ⚠️ "IN THE TOP ROW" IS NOT THE SAME AS "REACHABLE", and this asserted the first while meaning the
+  // second. Since it was written, Dividends, Heatmap and Fear & Greed moved into the More menu
+  // (MENU_ONLY), and Scan and Feed were deliberately hidden from the bar entirely — Scan because it is a
+  // Terminal instrument rather than a destination, both with their routes and components untouched. The
+  // guarantee worth keeping is that adding Scan dropped no ROOM: every destination is still reachable
+  // from the navigation, whether from the bar or the menu, and still has a route behind it.
   const navLine = shared.split('\n').find((l) => l.includes('const links = [') && l.includes('Terminal'));
-  for (const tab of ['Terminal', 'Pit Consensus', 'Feed', 'News', 'Screener', 'Heatmap',
-    'Dividends', 'Insiders', 'Politicians', 'Institutions']) {
+  const menuLine = shared.split('\n').find((l) => l.includes('const MENU_ONLY = ['));
+  const reachable = (tab) => navLine.includes(`"${tab}"`) || (menuLine || '').includes(`"${tab}"`);
+  for (const tab of ['Terminal', 'Pit Consensus', 'News', 'Screener', 'Insiders',
+    'Politicians', 'Institutions']) {
     ok(`nav still contains ${tab}`, mut('droptab') ? false : navLine.includes(`"${tab}"`));
   }
-  ok('…and Scan was added', navLine.includes('"Scan"'));
+  for (const tab of ['Heatmap', 'Dividends']) {
+    ok(`${tab} is still reachable, from the More menu`, reachable(tab) && !navLine.includes(`"${tab}"`));
+  }
+  // ⚠️ HIDDEN, NOT REMOVED — asserted against the ROUTES, because that is the difference. A link can be
+  // moved; a deleted page cannot be reached from anywhere.
+  for (const [label, dir] of [['Scan', '../src/app/scan'], ['Feed', '../src/app/feed']]) {
+    ok(`${label} is out of the bar by choice, and its route still serves`,
+      !navLine.includes(`"${label}"`) && existsSync(new URL(dir, import.meta.url)));
+  }
   ok('the nav route resolves to /scan', /\/\$\{l\.toLowerCase\(\)\}/.test(shared));
 
   // The row's actions point at surfaces that already exist.
@@ -715,8 +746,8 @@ L('=== ⚠️ ONE FRESHNESS FOR A BOARD OF MANY PROVENANCES ===');
     agg(['realtime', 'realtime', 'realtime', 'eod']) !== 'eod');
   ok('it is reported as the mixture it is',
     agg(['realtime', 'realtime', 'realtime', 'eod']) === 'mixed');
-  ok('…and a mixture still reports the market-data path as real-time',
-    boardStatusLabel(agg(['realtime', 'eod'])) === 'REAL-TIME');
+  ok('…and a mixture reports the live path WITHOUT claiming every row is live',
+    boardStatusLabel(agg(['realtime', 'eod'])) === 'REAL-TIME · PARTIAL');
 
   ok('⚠️ a live board is never labelled DELAYED, at any mixture of live flavours',
     ['realtime', 'near'].every((a) => ['realtime', 'near'].every((b) =>
@@ -764,7 +795,8 @@ L('=== ⚠️ AN ENTITLED BOARD IS NEVER LESS COMPLETE THAN A FREE ONE ===');
     payload.includes('freshnessLabel: boardStatusLabel(freshness)'));
   ok('⚠️ …and the row map is not used for it', !/freshnessLabel\(freshness\)/.test(payload));
   ok('⚠️ entitlement is still resolved server-side, before any price is fetched',
-    /resolveUserAccess\(\)/.test(payload) && /isRealtime\(tier\) && !beta/.test(payload));
+    /const realtime = await callerHasRealtime\(\);/.test(payload)
+    && payload.indexOf('await callerHasRealtime()') < payload.indexOf('getQuotes(symbols'));
   ok('⚠️ and the snapshot is still read ONLY for an entitled viewer',
     /if \(realtime\) \{[\s\S]{0,400}movementSnapshot\(db, sql\)/.test(payload));
   ok('the entitlement itself is never put in the response',
@@ -793,8 +825,15 @@ L('=== ⚠️ THE BOARD DESCRIBES THE SERVICE; A ROW DESCRIBES ITS PRICE ===');
     freshnessLabel('unpriced') === null);
   ok('a delayed print still says DELAYED on its row', freshnessLabel('delayed') === 'DELAYED');
 
-  ok('the board calls any live-bearing path REAL-TIME',
-    ['realtime', 'near', 'mixed'].every((f) => boardStatusLabel(f) === 'REAL-TIME'));
+  // ⚠️ LIVE-BEARING IS NOT THE SAME AS ALL-LIVE, which is what the single label used to blur. A fully
+  // live board earns the bare claim; a mixture earns the qualified one; neither is ever downgraded to a
+  // delayed or last-close word.
+  ok('a fully live board is REAL-TIME',
+    ['realtime', 'near'].every((f) => boardStatusLabel(f) === 'REAL-TIME'));
+  ok('⚠️ …and a mixed one is qualified rather than promoted',
+    boardStatusLabel('mixed') === 'REAL-TIME · PARTIAL');
+  ok('⚠️ …and every live-bearing board still SAYS real-time in some form',
+    ['realtime', 'near', 'mixed'].every((f) => boardStatusLabel(f).startsWith('REAL-TIME')));
   ok('⚠️ FREE STAYS DELAYED — the word a free reader sees is unchanged',
     boardStatusLabel('delayed') === 'DELAYED' && freshnessLabel('delayed') === 'DELAYED');
   ok('⚠️ a board with no live price anywhere is NOT called real-time',
@@ -827,8 +866,11 @@ L('=== ⚠️ THREE VIEWS OF ONE DATASET, LOADED ONCE ===');
     /export async function buildAllScanBoards[\s\S]{0,420}await loadScanContext\(\)[\s\S]{0,200}BOARDS\.map\(\(b\) => buildOneBoard\(ctx, b, limit\)\)/.test(payload));
   ok('⚠️ there is exactly one board builder, not a fast path and a slow one',
     (payload.match(/export async function buildOneBoard/g) || []).length === 1);
+  // ⚠️ THE CALL MOVED INSIDE callerHasRealtime, SO COUNTING resolveUserAccess NOW COUNTS ZERO — and zero
+  // satisfies "not more than once" while proving the opposite of what this asserts. Count the call that
+  // is actually here, and require that there IS one.
   ok('the entitlement is resolved once, in the shared half',
-    (payload.match(/resolveUserAccess\(\)/g) || []).length === 1);
+    (payload.match(/await callerHasRealtime\(\)/g) || []).length === 1);
   // ⚠️ THE CALL, NOT THE IMPORT. Counting every mention found two and reported a second read that
   // does not exist — a false alarm is how an assertion gets loosened until it stops meaning anything.
   ok('the published board is read once, in the shared half',

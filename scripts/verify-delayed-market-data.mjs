@@ -46,8 +46,12 @@ L('=== 1-5. WHO GETS WHAT, DECIDED SERVER-SIDE ===');
   // ⚠️ NO CLIENT-SUPPLIED VALUE CAN REACH THE ENTITLEMENT DECISION.
   const route = (await readFile(new URL('../src/app/api/quotes/route.js', import.meta.url), 'utf8'))
     .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  // ⚠️ THE SESSION HALF IS NOW ONE CALL, AND IT CHECKS MORE THAN THE TIER. `isRealtime(tier) && !beta`
+  // was correct about the tier and silent about the licence; callerHasRealtime() adds the Tiingo stop
+  // order and fails closed. The half this assertion really guards — that nothing off the wire reaches
+  // the decision — is unchanged and still checked.
   ok('⚠️ entitlement comes from the session, never from a query parameter',
-    /realtime = isRealtime\(tier\) && !beta/.test(route)
+    /const realtime = await callerHasRealtime\(\);/.test(route)
     && !/searchParams\.get\(['"](realtime|tier|pro|rt)['"]\)/.test(route));
   ok('…and the only parameter read is the symbol list',
     (route.match(/searchParams\.get\(/g) || []).length === 1 && /get\('symbols'\)/.test(route));
@@ -227,8 +231,22 @@ L('\n=== ⚠️ INTRADAY CHARTS: THE FREE CUTOFF IS SERVER-SIDE AND CUTS ON BAR 
   const code = routeSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   ok('⚠️ the chart source is Tiingo, not Polygon',
     mut('keeppolygon') ? false : !/polygon/i.test(code) && /getIntradayBars/.test(code));
+  // ⚠️ THIS ASSERTION FOUND A REAL LEAK, BY FAILING FOR THE WRONG REASON. It went red because the route
+  // spells the inlined form `isRealtime(a.tier) && !a.beta`, not `isRealtime(tier) && !beta` — and
+  // chasing that spelling is what exposed the substance: chart-intraday was never added to the six
+  // routes consolidated onto callerHasRealtime(), so its `entitled` flag knew the tier and not the
+  // licensing stop order. That flag decides whether the caller gets the UNTRUNCATED tail of today's
+  // bars and whether the response calls itself freshness:'realtime', so with the switch thrown this
+  // route served live intraday prints under a withdrawn licence — to a hand-written request as readily
+  // as to the chart. It now asks callerRealtimeAccess(), which returns the tier and the licence answer
+  // from one Clerk round trip, because this route needs both: the tier still gates intraday ACCESS.
   ok('⚠️ entitlement is resolved from the session, not a query parameter',
-    /isRealtime\(tier\) && !beta/.test(code) && !/get\(['"](rt|realtime|tier)['"]\)/.test(code));
+    /const a = await callerRealtimeAccess\(\);/.test(code)
+    && !/get\(['"](rt|realtime|tier)['"]\)/.test(code));
+  ok('⚠️ …and the licence, not just the tier, decides whether bars arrive untruncated',
+    /entitled = a\.realtime;/.test(code) && /const bars = entitled \? full : truncateForDelay/.test(code));
+  ok('⚠️ …while the Pro gate stays a TIER question, so a stop order does not revoke intraday access',
+    /if \(!isProTier\(tier\)\)/.test(code) && /tier = a\.tier;/.test(code));
   // ⚠️ NAME THE THREE PATHS RATHER THAN COUNTING CALLS. A count is satisfied by any four uses and
   // says nothing about WHICH exits are covered; these are the three ways a bar set can leave the
   // handler, and every one of them must go through the truncating builder.

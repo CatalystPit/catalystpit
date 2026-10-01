@@ -73,7 +73,17 @@ L('=== EVERY TRACKED JOB IS ACTUALLY WIRED ===');
   for (const j of JOBS) {
     // A job in the table with no call site is a heartbeat that will read "never" forever and be
     // quietly explained away as "that one just hasn't run yet".
-    const wired = new RegExp(`recordJobRun\\(\\s*['"\`]${j.name}['"\`]`).test(ALL_API_SRC);
+    // ⚠️ THE NAME MAY REACH recordJobRun THROUGH A WRAPPER, AND ONE DOES. screener-technicals routes both
+    // its own beat and market-breadth's through a local `beat()` helper whose entire purpose is that
+    // telemetry must never throw into a 118-second job — so matching `recordJobRun('screener-technicals'`
+    // reported an unwired job that has been reporting ok every night. Production showed
+    // {"days":260,"tickers":13135} while this said it had no call site.
+    //
+    // So: the name must appear as a quoted first argument to SOME heartbeat call, in a file that actually
+    // imports recordJobRun. That keeps the assertion honest — a bare mention in a comment or a string
+    // elsewhere still does not count — without insisting the call be unwrapped.
+    const beatCall = new RegExp(`(recordJobRun|beat|heartbeat|recordRun)\\(\\s*['"\`]${j.name}['"\`]`);
+    const wired = API.some((f) => f.s.includes('recordJobRun') && beatCall.test(f.s));
     ok(`${j.name} records a heartbeat somewhere`, mut('unwired') ? false : wired);
   }
   // And the reverse: a call site naming a job that is not tracked never gets read.
@@ -88,6 +98,17 @@ L('\n=== EVERY TRACKED JOB HAS A CRON THAT COULD TICK IT ===');
 {
   const paths = (vercel.crons || []).map((c) => c.path);
   // job name → the cron path(s) that drive it. A job with no schedule cannot have a heartbeat.
+  //
+  // ⚠️ THIS MAP WENT STALE SILENTLY, WHICH IS THE WORST BEHAVIOUR A HAND-KEPT LIST CAN HAVE. It listed
+  // eleven jobs; TRACKED_JOBS has grown to twenty-four. Every job added since — fear-greed,
+  // market-breadth, score-conviction, screener, screener-technicals, institutions-ownership, dividends,
+  // primary-sources, halts and the two webhooks — fell through to `want = []` and reported "is not on the
+  // cron schedule" about jobs that have run on schedule for weeks. Thirteen false alarms, and a suite
+  // nobody can read is a suite nobody runs.
+  //
+  // So the shape changed: a job must be driven by a cron OR declared event-driven, and the LIST is now
+  // checked for completeness against TRACKED_JOBS, so the next addition fails loudly here instead of
+  // quietly joining the pile.
   const DRIVEN_BY = {
     form4: ['/api/refresh?form4=1'],
     eightk: ['/api/cron/eightk'],
@@ -100,18 +121,58 @@ L('\n=== EVERY TRACKED JOB HAS A CRON THAT COULD TICK IT ===');
     'evidence-alerts': ['/api/cron/evidence-alerts'],
     'refresh-content': ['/api/refresh-content'],
     'heatmap-gate': ['/api/cron/heatmap-gate'],
+    'fear-greed': ['/api/cron/fear-greed'],
+    'market-breadth': ['/api/cron/market-breadth'],
+    'score-conviction': ['/api/cron/score-conviction'],
+    screener: ['/api/cron/screener'],
+    'screener-technicals': ['/api/cron/screener-technicals'],
+    'institutions-ownership': ['/api/cron/institutions-ownership'],
+    dividends: ['/api/cron/dividends'],
+    'primary-sources': ['/api/cron/primary-sources'],
+    // ⚠️ HALTS HAVE NO CRON OF THEIR OWN, BY DESIGN AND BY NECESSITY. vercel.json sits at the Vercel Pro
+    // cap of 40, so the halt sweep rides the every-minute wire job while keeping its OWN heartbeat —
+    // a shared schedule with a separate health signal. Asserting it must appear in the cron list would
+    // demand a 41st cron; asserting it is driven by the wire's path states what is actually true.
+    halts: ['/api/cron/primary-sources'],
   };
+  // ⚠️ NO CADENCE TO BE LATE AGAINST, so demanding a cron for these is demanding the wrong thing. They
+  // fire when a human subscribes or signs up, which at launch may be days apart.
+  const EVENT_DRIVEN = new Set(['stripe-webhook', 'clerk-webhook']);
+
   for (const j of JOBS) {
+    if (EVENT_DRIVEN.has(j.name)) {
+      ok(`${j.name} is event-driven, and says so in its own definition`,
+        j.eventDriven === true, JSON.stringify(j));
+      ok(`  …and declares no silence budget it could not meet`, j.maxAgeHours == null,
+        String(j.maxAgeHours));
+      continue;
+    }
     const want = DRIVEN_BY[j.name] || [];
     ok(`${j.name} is on the cron schedule`,
       mut('nocron') ? false : want.length > 0 && want.some((w) => paths.includes(w)),
-      want.join(','));
+      want.length ? want.join(',') : 'not listed in DRIVEN_BY — add it');
   }
+  // ⚠️ THE COMPLETENESS CHECK IS THE POINT. Without it the map decays again the next time a job is added.
+  const unaccounted = JOBS.filter((j) => !EVENT_DRIVEN.has(j.name) && !DRIVEN_BY[j.name]).map((j) => j.name);
+  ok('⚠️ every tracked job is accounted for as cron-driven or event-driven',
+    unaccounted.length === 0, unaccounted.join(', '));
+  // …and nothing is claimed that does not exist: a path in the map must be a real cron.
+  const phantom = Object.entries(DRIVEN_BY).filter(([, ps]) => !ps.some((p) => paths.includes(p)));
+  ok('⚠️ …and no job claims a cron path that is not in vercel.json',
+    phantom.length === 0, phantom.map(([n]) => n).join(', '));
 }
 
 L('\n=== THE SILENCE BUDGETS ARE SANE ===');
 {
+  // ⚠️ AN EVENT-DRIVEN JOB MUST *NOT* DECLARE ONE, so this demanded the opposite of the design for two of
+  // them. A silence budget on the Stripe webhook would report a quiet signup week as an outage — calling a
+  // quiet source a broken one, which is the mistake this whole file exists to catch elsewhere. They are
+  // judged on consecutive failures instead, and that is asserted above.
   for (const j of JOBS) {
+    if (j.eventDriven) {
+      ok(`${j.name} declares NO window, because it has no cadence`, j.maxAgeHours == null);
+      continue;
+    }
     ok(`${j.name} declares a positive window`, Number.isFinite(j.maxAgeHours) && j.maxAgeHours > 0);
   }
   // ⚠️ A WINDOW MUST BE LONGER THAN THE CRON INTERVAL, or the job is "late" between every run.
@@ -313,11 +374,27 @@ L('\n=== THE CLASSIFICATION ALARM MEASURES WHAT IT CLAIMS ===');
   // this assertion exists to prevent; the fix was the denominator, not the standard.
   ok('the 8% threshold is unchanged',
     mut('raisedbar') ? false : /ok: pctWeight < 8,/.test(health));
-  ok('ADRs and funds are excluded from the denominator, by asset class',
-    mut('nodenominator') ? false : /'ADRC','FUND','ETF','ETV','WARRANT'/.test(health));
-  ok('…and the excluded population is still reported',
-    mut('hidesadrs') ? false : /excludedNoSic/.test(health));
-  ok('…and the scope is stated in the response', /scope: 'operating companies/.test(health));
+  // ⚠️ THE EXCLUSION THIS ASSERTED WAS ITSELF THE BUG, AND IT WAS REVERSED ON PURPOSE. ADRC was kept out
+  // of the denominator on the reasoning that a depositary receipt is not an operating company with a SIC
+  // — wrong on the facts (foreign issuers file 20-F and EDGAR assigns them a SIC) and in direct
+  // contradiction with the board the probe protects, since TRADEABLE_ASSET_TYPES is ['Stock','ADRC'].
+  // The consequence was an alarm that could not ring: 113 of the Top 500 rendered as "Other" — TSM,
+  // HSBC, BABA, SAP, BP, NVS, SONY, UBS, ING, BHP — while the probe stayed green, because every one of
+  // them was outside its denominator by construction. Demanding that exclusion back would be demanding a
+  // decorative check.
+  //
+  // What must hold now: the denominator is the population the heatmap actually draws, and that
+  // population is not hand-listed in the probe but read from the board's own constant, so the two cannot
+  // diverge again.
+  ok('⚠️ the denominator is the population the board actually draws',
+    mut('nodenominator') ? false
+      : /coalesce\(m\.asset_type, ''\) = any\(\$\{sql`\$\{`\{\$\{TRADEABLE_ASSET_TYPES\.join\(','\)\}\}`\}::text\[\]`\}\)/.test(health)
+        && /import \{ TRADEABLE_ASSET_TYPES \} from '\.\.\/\.\.\/\.\.\/lib\/heatmap\/heatmap-universe\.mjs';/.test(health));
+  ok('⚠️ …so ADRs are INSIDE it, not excluded from the alarm that covers them',
+    /is_adr/.test(health) && !/'ADRC','FUND','ETF','ETV','WARRANT'/.test(health));
+  ok('…and the ADR population is still reported as itself, not averaged away',
+    mut('hidesadrs') ? false : /adrs: \{ total: r\.adrs, unclassified: r\.adrs_unclassified \}/.test(health));
+  ok('…and the scope is stated in the response', /scope: `heatmap-eligible securities \(/.test(health));
   // No SIC code may be invented for a security that structurally lacks one.
   ok('no SIC code is fabricated',
     !/sector\s*=\s*'|coalesce\(sector,\s*'[A-Za-z]/.test(health));

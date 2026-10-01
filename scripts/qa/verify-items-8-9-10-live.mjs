@@ -44,10 +44,22 @@ L('#8 — the freshness claim an anonymous visitor is served');
     !/tiingo|provider/i.test(JSON.stringify(m.capabilities || {})), JSON.stringify(m.capabilities));
   console.log(`         anonymous quoteFreshness → ${f}`);
   // The quotes API must label what it serves the same way.
-  const q = await (await fetch(`${BASE}/api/quotes?symbols=AAPL`)).json();
-  ok('⚠️ /api/quotes does not claim realtime for an anonymous caller',
-    q.freshness !== 'realtime', String(q.freshness));
-  console.log(`         anonymous /api/quotes freshness → ${q.freshness}`);
+  //
+  // ⚠️ FRESHNESS IS PER SYMBOL, NOT TOP-LEVEL — AND THE FIRST VERSION OF THIS CHECK READ THE WRONG ONE.
+  // It asserted `q.freshness !== 'realtime'` on a response shaped { AAPL: {...}, MSFT: {...} }, so the
+  // left-hand side was always undefined: the assertion could not fail, and a route that really did
+  // claim realtime to an anonymous caller would have sailed through it. Read the quotes themselves,
+  // and require that there IS a freshness to read before judging what it says.
+  const q = await (await fetch(`${BASE}/api/quotes?symbols=AAPL,MSFT`)).json();
+  const syms = Object.values(q);
+  ok('/api/quotes answers with both quotes', syms.length === 2, `${syms.length}`);
+  ok('⚠️ every quote states its own freshness', syms.length > 0 && syms.every((s) => !!s.freshness),
+    JSON.stringify(syms.map((s) => s.freshness)));
+  ok('⚠️ …and none of them claims realtime for an anonymous caller',
+    syms.length > 0 && syms.every((s) => s.freshness !== 'realtime'),
+    JSON.stringify(syms.map((s) => s.freshness)));
+  ok('⚠️ no vendor id rides along on a quote', syms.every((s) => !('provider' in s)));
+  console.log(`         anonymous /api/quotes freshness → ${syms.map((s) => s.freshness).join(', ')}`);
 }
 
 for (const w of [390, 360]) {

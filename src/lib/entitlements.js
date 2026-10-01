@@ -170,9 +170,27 @@ export async function resolveAccessByIds(userIds) {
  * @returns {Promise<boolean>}
  */
 export async function callerHasRealtime() {
+  return (await callerRealtimeAccess()).realtime;
+}
+
+/**
+ * The same answer, WITH the tier that produced it — one Clerk round trip, not two.
+ *
+ * ⚠️ WHY THIS EXISTS AT ALL. Almost every caller needs only the boolean, and callerHasRealtime is the
+ * right shape for them. /api/chart-intraday needs BOTH: the tier decides whether intraday is served at
+ * all (a Pro feature, and a 403 naming the allowed intervals when it is not), while the licence decides
+ * whether the bars arrive untruncated and may be called real-time. Asking twice meant two
+ * clerkClient().users.getUser() calls on a route that runs on every chart load, and writing the rule a
+ * second time inside the route is exactly the drift this module exists to prevent.
+ *
+ * So the rule lives here once and both shapes read it: callerHasRealtime is now a projection of this.
+ *
+ * @returns {Promise<{ tier: 'free'|'pro'|'elite', beta: boolean, realtime: boolean }>}
+ */
+export async function callerRealtimeAccess() {
   try {
     const { tier, beta } = await resolveUserAccess();
-    if (!isRealtimeRule(tier) || beta) return false;
+    if (!isRealtimeRule(tier) || beta) return { tier, beta, realtime: false };
     // ⚠️ THE LICENSING STOP ORDER IS PART OF THE ANSWER, AND THAT WAS THE GAP.
     //
     // market:tiingo:realtime_stop was consulted in exactly ONE place — getQuotes() in market/tiingo.mjs
@@ -185,11 +203,18 @@ export async function callerHasRealtime() {
     // Licensing had been withdrawn for the data and left standing for the assertion about the data,
     // which is the half a reader actually acts on.
     //
-    // Resolved here because this is the single answer to that question — see the five call sites that
+    // Resolved here because this is the single answer to that question — see the SEVEN call sites that
     // used to inline `isRealtime(tier) && !beta` and now call this instead. The KV read is cached for
     // 30s inside tiingoRealtimeStopped, and it fails CLOSED: an unreadable stop key reads as stopped.
-    return !(await tiingoRealtimeStopped());
+    //
+    // ⚠️ THE SEVENTH WAS FOUND BY THE FINAL VERIFICATION PASS, NOT BY THE CONSOLIDATION. Six routes were
+    // enumerated and fixed; /api/chart-intraday was not among them, and it is the one where `entitled`
+    // chooses between the untruncated tail of today's bars and a delay-truncated set. It surfaced only
+    // because an assertion in verify-delayed-market-data still pointed at the inlined form there.
+    return { tier, beta, realtime: !(await tiingoRealtimeStopped()) };
   } catch {
-    return false;                 // never grant a licensed entitlement on an error path
+    // ⚠️ NEVER GRANT A LICENSED ENTITLEMENT ON AN ERROR PATH, and do not invent a tier either: an
+    // unresolvable caller is Free, which is the safe direction for both decisions.
+    return { tier: 'free', beta: false, realtime: false };
   }
 }

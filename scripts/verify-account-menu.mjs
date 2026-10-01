@@ -67,7 +67,16 @@ ok('⚠️ no Alerts entry, because no /alerts page exists',
   !/>Alerts</.test(menu) && !(await exists('../src/app/alerts')));
 ok('Billing uses the real Stripe portal', /\/api\/stripe\/portal/.test(menu) && await exists('../src/app/api/stripe/portal'));
 ok('⚠️ Pro is never shown an upgrade CTA', /isPro\s*\?\s*<Item onClick=\{portal\}/.test(menu));
-ok('…and Free is never shown Billing', /:\s*<Item onClick=\{\(\) => \{ close\(\); startCheckout\(\); \}\}/.test(menu));
+// ⚠️ THE FREE BRANCH NO LONGER PICKS A PLAN, AND THAT WAS DELIBERATE. It used to call startCheckout()
+// inline, which silently chose monthly from a button whose label — "Upgrade to Pit Pro" — names no price,
+// while every other CTA in the product says "$20/month" and buys exactly that. It now opens the billing
+// card, where both plans are offered. What this assertion is actually guarding is the branch itself:
+// Billing belongs to Pro and the upgrade belongs to Free, and neither may be shown the other's.
+const branch = menu.slice(menu.indexOf('{tier !== null && (isPro'), menu.indexOf('{tier !== null && (isPro') + 700);
+ok('…and Free is never shown Billing',
+  /isPro\s*\?\s*<Item onClick=\{portal\}>Billing<\/Item>/.test(branch)
+  && /:\s*<Item href="\/account">Upgrade to Pit Pro<\/Item>\)\}/.test(branch)
+  && (branch.match(/>Billing</g) || []).length === 1);
 ok('neither is shown before the tier is known', /tier !== null && \(isPro/.test(menu));
 
 L('\n=== INTERACTION AND A11Y ===');

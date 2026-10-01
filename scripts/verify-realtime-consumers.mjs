@@ -123,8 +123,13 @@ L('\n=== FREE CANNOT REACH A REALTIME VALUE THROUGH EITHER CONSUMER ===');
     mut('clientflag') ? false
       : /fetch\(`\/api\/quotes\?symbols=\$\{encodeURIComponent\(key\)\}`/.test(sharedCode)
         && !/realtime=|tier=|pro=/.test(sharedCode));
-  ok('the route derives entitlement from the session',
-    /const \{ userId \} = await auth\(\)/.test(routeCode) && /resolveUserAccess\(\)/.test(routeCode));
+  // ⚠️ THROUGH callerHasRealtime, WHICH IS THE POINT. This required the inlined `await auth()` +
+  // resolveUserAccess() pair that the route used to carry; that copy knew the tier and not the Tiingo
+  // licensing stop order, so with the switch thrown it still called previous-close prices real-time. The
+  // route now asks one function that answers all three questions and fails closed. What matters to THIS
+  // suite is unchanged and still asserted: the consumers send only symbols, and the server decides.
+  ok('the route derives entitlement from the session, through the one answer',
+    /const realtime = await callerHasRealtime\(\);/.test(routeCode));
   // Scoped to the entitled branch itself — slicing to `const cached` now spans the Free delayed
   // path, whose EOD fallback legitimately writes to the shared cache.
   ok('…and realtime is never written to the shared cache', (() => {

@@ -95,12 +95,35 @@ ok('nothing here touches Stripe', !/stripe/i.test(code));
 const quotes = readFileSync(new URL('../src/app/api/quotes/route.js', import.meta.url), 'utf8');
 ok('the quotes route withholds realtime from beta', /isRealtime\(tier\) && !beta/.test(quotes));
 // The restated helpers above must match the module they stand in for.
+// ⚠️ THESE WERE READING THE WRONG FILE, AND THE VALUES WERE NEVER WRONG. 050af15a moved isRealtime,
+// marketDataAccess, WATCHLIST_LIMIT and WATCHLIST_LISTS_LIMIT into entitlement-rules.mjs, which
+// entitlements.js re-exports — so scraping entitlements.js for their definitions found nothing while all
+// three were present, correct and live. Point them at the module that now defines them.
+//
+// ⚠️ AND IMPORT THEM RATHER THAN MATCHING THEM, because that is the failure this family of assertions was
+// written for: an ES re-export of a name that is not listed is simply absent, importers get undefined,
+// and the breakage is entirely at runtime. A regex over the source cannot tell a live export from a dead
+// one; `import` can. The text match stays as well, so a VALUE change is still caught, not just an absence.
+const rules = readFileSync(new URL('../src/lib/entitlement-rules.mjs', import.meta.url), 'utf8');
+const R = await import('../src/lib/entitlement-rules.mjs');
 ok('marketDataAccess mirrors the source',
-  /tier === 'pro' \|\| tier === 'elite' \? 'realtime' : 'delayed'/.test(src));
+  /tier === 'pro' \|\| tier === 'elite' \? 'realtime' : 'delayed'/.test(rules));
+ok('…and is a live export, not a dead re-export',
+  R.marketDataAccess('pro') === 'realtime' && R.marketDataAccess('free') === 'delayed');
 ok('WATCHLIST_LIMIT mirrors the source',
-  /WATCHLIST_LIMIT = \{ free: 15, pro: 250, elite: 1000 \}/.test(src));
+  /WATCHLIST_LIMIT = \{ free: 15, pro: 250, elite: 1000 \}/.test(rules));
+ok('…and its values are reachable at runtime',
+  R.WATCHLIST_LIMIT?.free === 15 && R.WATCHLIST_LIMIT?.pro === 250 && R.WATCHLIST_LIMIT?.elite === 1000);
 ok('WATCHLIST_LISTS_LIMIT mirrors the source',
-  /WATCHLIST_LISTS_LIMIT = \{ free: 1, pro: 10, elite: 25 \}/.test(src));
+  /WATCHLIST_LISTS_LIMIT = \{ free: 1, pro: 10, elite: 25 \}/.test(rules));
+ok('…and its values are reachable at runtime',
+  R.WATCHLIST_LISTS_LIMIT?.free === 1 && R.WATCHLIST_LISTS_LIMIT?.pro === 10 && R.WATCHLIST_LISTS_LIMIT?.elite === 25);
+// ⚠️ AND entitlements.js STILL HANDS THEM ON, which is the half that broke in 050af15a: the names were
+// moved out and not all of them were listed in the re-export, so importers silently got undefined.
+const E = await import('../src/lib/entitlements.js');
+for (const n of ['isRealtime', 'marketDataAccess', 'WATCHLIST_LIMIT', 'WATCHLIST_LISTS_LIMIT']) {
+  ok(`⚠️ entitlements.js still re-exports ${n} as a live binding`, E[n] !== undefined);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
