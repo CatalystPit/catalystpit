@@ -149,6 +149,18 @@ export const TRACKED_JOBS = Object.freeze([
   // start, tight enough that the wire going quiet is visible the same morning.
   { name: 'primary-sources', label: 'Pit Wire primary sources', maxAgeHours: 2 },
 
+  // ⚠️ TRACKED SEPARATELY THOUGH IT SHARES primary-sources' CRON, AND THAT IS THE POINT. Halts have
+  // no cron of their own — vercel.json is at the Vercel Pro cap of 40 — so the sweep rides the
+  // every-minute wire job. A shared SCHEDULE is fine; a shared HEARTBEAT hid the subtask completely:
+  // the halt outcome went into the HTTP response and nowhere else, so a halt feed erroring every minute
+  // for a week still read as green here, because the wire beside it was genuinely fine.
+  //
+  // Same cadence as its host, so the same 2h tolerance: late enough to survive a deploy or a cold
+  // start, tight enough that a dead halt feed is visible the same morning. An empty feed is a SUCCESS —
+  // most minutes nothing is halted — so this goes red on a fetch or parse failure, never on a quiet
+  // market.
+  { name: 'halts', label: 'Trading halts', maxAgeHours: 2 },
+
   // ⚠️ EVENT-DRIVEN, SO IT HAS NO CADENCE TO BE LATE AGAINST. The Stripe webhook fires when somebody
   // subscribes, cancels or is billed — and at launch that may be days apart. Giving it a maxAgeHours
   // would report "no subscriptions this week" as an outage, which is the precise mistake of calling a

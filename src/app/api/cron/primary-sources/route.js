@@ -25,6 +25,66 @@ const beat = async (ok, seen, note) => {
   catch { /* never fail the job on its own telemetry */ }
 };
 
+/**
+ * THE HALT SWEEP, AS ITS OWN SUBTASK WITH ITS OWN HEARTBEAT.
+ *
+ * ── ⚠️ WHY IT IS A SEPARATE FUNCTION AND A SEPARATE HEARTBEAT ───────────────
+ *
+ * Halts ride this cron because vercel.json holds exactly 40 entries — the Vercel Pro cap — and
+ * deleting a production job to make room is not a trade worth making. Before that, projectHalts() was
+ * reachable only from /api/halts and the Terminal was that route's only caller, so halts entered the
+ * durable wire ONLY while somebody had the Terminal open; on 29 Sep production captured zero.
+ *
+ * Sharing a cron is fine. Sharing a HEARTBEAT was not, and that was the remaining defect: the halt
+ * outcome was reported in the HTTP response and nowhere else, while the monitored heartbeat carried
+ * only wire counters. A halt feed erroring every minute for a week would have left /api/health
+ * completely green — the response nobody reads said "error", and the thing we actually watch said
+ * "written 0 · folded 0", which is a healthy quiet minute. That is exactly the "giant opaque
+ * heartbeat" this codebase keeps having to take apart.
+ *
+ * So the halt subtask now records `job:halts` itself: its own last-attempted and last-successful
+ * clocks, its own events_seen, its own consecutive_failures. A halt-source outage marks HALTS failing
+ * and leaves the wire green, and a wire failure leaves the halt clock alone.
+ *
+ * ⚠️ AND AN EMPTY FEED IS A SUCCESS. Most minutes nothing is halted. Recording that as a failure would
+ * be the same confusion between "no events" and "not asking" that the wire's own comment warns about —
+ * only a fetch or parse error is a failure here.
+ *
+ * ⚠️ IT ALSO CANNOT BE SKIPPED BY THE WIRE FAILING. This used to sit inside the same try as
+ * runPrimarySources, so a wire throw returned 500 before the halt sweep was reached — one subtask's
+ * failure silently suppressing the other, for the one pipeline whose whole point is that it does not
+ * depend on anything else running. It is now called on both paths.
+ */
+async function sweepHalts() {
+  const out = { fetched: 0, projected: 0, error: null };
+  try {
+    const res = await fetchHalts();
+    if (res.error || !res.halts) {
+      out.error = res.error || 'no halts returned';
+    } else {
+      out.fetched = res.halts.length;
+      const detected = mergeDetected(res.halts, await detectedHalts().catch(() => []));
+      await kvSetHalts({
+        halts: [...detected, ...res.halts].sort((a, b) => haltKey(b) - haltKey(a)),
+        asOf: new Date().toISOString(),
+      });
+      out.projected = await projectHalts(res.halts);
+    }
+  } catch (e) {
+    out.error = String(e?.message || 'halt sweep failed').slice(0, 120);
+  }
+  try {
+    await recordJobRun('halts', {
+      ok: !out.error,
+      seen: out.projected,
+      note: out.error
+        ? `halt source failed · ${out.error}`
+        : `fetched ${out.fetched} · projected ${out.projected}`,
+    });
+  } catch { /* never fail the sweep on its own telemetry */ }
+  return out;
+}
+
 export async function GET(request) {
   const isVercelCron = request.headers.get('x-vercel-cron') === '1';
   if (!isVercelCron && request.headers.get('authorization') !== `Bearer ${CRON_SECRET}`) {
@@ -52,40 +112,12 @@ export async function GET(request) {
     const adopted = await adoptClusterWording();
     const floored = await applyTrustedFloor();
 
-    // ── ⚠️ HALTS RIDE THIS CRON, BECAUSE THERE IS NO ROOM FOR THEIR OWN ─────────────────────────
-    //
-    // projectHalts() was reachable only from /api/halts, and the Terminal was that route's only
-    // caller — so halts entered the durable wire ONLY while somebody had the Terminal open. On 29 Sep
-    // production captured zero. A dedicated cron was the obvious fix and there is no room for one:
-    // vercel.json holds exactly 40 entries, the Vercel Pro cap, and deleting a production job to make
-    // space is not a trade worth making.
-    //
-    // This job is the right host rather than a convenient one: it already fires every minute, already
-    // writes to primary_events, and already projects another pipeline (SEC 8-K) into the same stream.
-    // The 45-second KV cache means once-a-minute costs one upstream request per minute and a reader
-    // opening the Terminal inside that window is served the cached copy.
-    //
-    // ⚠️ AND IT CANNOT TAKE THE WIRE DOWN WITH IT. The sweep above has already committed its rows by
-    // the time this runs; a halt-feed outage is recorded in the response and changes nothing else.
-    const halts = { fetched: 0, projected: 0, error: null };
-    try {
-      const res = await fetchHalts();
-      if (res.error || !res.halts) {
-        halts.error = res.error || 'no halts returned';
-      } else {
-        halts.fetched = res.halts.length;
-        const detected = mergeDetected(res.halts, await detectedHalts().catch(() => []));
-        await kvSetHalts({
-          halts: [...detected, ...res.halts].sort((a, b) => haltKey(b) - haltKey(a)),
-          asOf: new Date().toISOString(),
-        });
-        halts.projected = await projectHalts(res.halts);
-      }
-    } catch (e) {
-      halts.error = String(e?.message || 'halt sweep failed').slice(0, 120);
-    }
+    // ⚠️ HALTS RIDE THIS CRON BECAUSE THERE IS NO ROOM FOR THEIR OWN — see sweepHalts() for why this
+    // job is the right host rather than merely a convenient one, and why the subtask keeps its own
+    // heartbeat. It runs AFTER the wire has committed its rows, so it can never take the wire with it.
+    const halts = await sweepHalts();
 
-    console.log(`[primary-sources] ${JSON.stringify({ written: res.written, folded: res.folded, sweeps: res.sweeps, enrich, ms: res.ms })}`);
+    console.log(`[primary-sources] ${JSON.stringify({ written: res.written, folded: res.folded, sweeps: res.sweeps, enrich, halts, ms: res.ms })}`);
     // ⚠️ written: 0 IS A HEALTHY RUN AND MUST STILL TICK THE CLOCK. This is the Pit Wire: most
     // minutes there is genuinely nothing new to write, and a heartbeat that only fired on a non-empty
     // run would read as an outage every quiet hour — the exact confusion between "no events" and "not
@@ -95,6 +127,11 @@ export async function GET(request) {
   } catch (e) {
     console.error('[primary-sources]', e);
     await beat(false, 0, 'sweep threw');
-    return Response.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 });
+    // ⚠️ THE HALT SWEEP STILL RUNS. It used to sit inside the try above, so a wire throw returned 500
+    // having never touched the halt feed — the wire failing silently suppressed the one pipeline whose
+    // entire purpose is to be independent of whether anything else is working. Halts do not need the
+    // wire to have succeeded; they need a minute to have passed.
+    const halts = await sweepHalts();
+    return Response.json({ error: String(e?.message || e).slice(0, 200), halts }, { status: 500 });
   }
 }
