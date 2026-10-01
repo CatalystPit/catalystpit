@@ -27,6 +27,14 @@ export const FREE_BULLSBEARS_VISIBLE = 1;
 // grep for `isRealtime(tier) && !beta` finds the call site whether or not the function exists — which
 // is exactly why the gating suite's 118 assertions stayed green through all of it.
 import { isRealtime as isRealtimeRule } from './entitlement-rules.mjs';
+// ⚠️ THIS IMPORT WAS MISSING, AND THE CATCH HID IT. callerHasRealtime calls tiingoRealtimeStopped inside a
+// try whose catch returns false — so an unimported symbol threw a ReferenceError that was swallowed, and
+// EVERY Pro and Elite caller silently lost real-time. The build passed because a free identifier is a
+// runtime fault, not a compile one. This is the identical failure this file already documents above about
+// the isRealtime re-export: "the TypeError went into the catch written for anonymous callers, so realtime
+// stayed false and PRO AND ELITE USERS WERE SERVED DELAYED DATA THEY HAD PAID NOT TO GET."
+// verify-freshness-entitlement caught it, which is what that suite exists for.
+import { tiingoRealtimeStopped } from './market/tiingo.mjs';
 export { isProTier, eodCutoffIso, chartIntervalAllowed, isIntradayInterval,
   FREE_CHART_INTERVALS, INTRADAY_INTERVALS,
   isRealtime, marketDataAccess, WATCHLIST_LIMIT, WATCHLIST_LISTS_LIMIT } from './entitlement-rules.mjs';
@@ -164,7 +172,23 @@ export async function resolveAccessByIds(userIds) {
 export async function callerHasRealtime() {
   try {
     const { tier, beta } = await resolveUserAccess();
-    return isRealtimeRule(tier) && !beta;
+    if (!isRealtimeRule(tier) || beta) return false;
+    // ⚠️ THE LICENSING STOP ORDER IS PART OF THE ANSWER, AND THAT WAS THE GAP.
+    //
+    // market:tiingo:realtime_stop was consulted in exactly ONE place — getQuotes() in market/tiingo.mjs
+    // — which is enough to stop a live PRICE reaching a page. It was not enough to stop the CLAIM: every
+    // caller that asked "is this reader entitled to real-time?" answered yes from tier alone, and that
+    // flag is what selects the freshness label, the capability descriptor served to the client, and in
+    // board-payload whether the realtime snapshot path is read at all.
+    //
+    // So with the switch thrown, a Pro subscriber received previous-close prices described as real-time.
+    // Licensing had been withdrawn for the data and left standing for the assertion about the data,
+    // which is the half a reader actually acts on.
+    //
+    // Resolved here because this is the single answer to that question — see the five call sites that
+    // used to inline `isRealtime(tier) && !beta` and now call this instead. The KV read is cached for
+    // 30s inside tiingoRealtimeStopped, and it fails CLOSED: an unreadable stop key reads as stopped.
+    return !(await tiingoRealtimeStopped());
   } catch {
     return false;                 // never grant a licensed entitlement on an error path
   }

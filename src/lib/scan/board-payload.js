@@ -3,7 +3,7 @@ import { toScanRows, servedRow, boardStatusLabel, aggregateFreshness, JOIN_LINE,
 import { MAJOR_MOVE_PCT } from './mover-catalyst.mjs';
 import { readPublishedBoard } from '../consensus/refresh';
 import { scanReadiness, activeCapabilities } from './runtime';
-import { resolveUserAccess, isRealtime } from '../entitlements';
+import { callerHasRealtime } from '../entitlements';
 
 // THE ONE PLACE A SCAN BOARD IS BUILT.
 //
@@ -70,11 +70,11 @@ export async function loadScanContext() {
   //    which label to print. The consolidated feed IS entitled, so this flag is now the boundary
   //    between a live price and a delayed one, and it is resolved server-side before any price is
   //    fetched rather than applied to a payload that already contains one.
-  let realtime = false;
-  try {
-    const { tier, beta } = await resolveUserAccess();
-    realtime = isRealtime(tier) && !beta;
-  } catch { /* signed-out reads as delayed */ }
+  // ⚠️ ONE ANSWER TO "IS THIS CALLER REALTIME?", AND IT INCLUDES THE LICENSING STOP ORDER. This inlined
+  // `isRealtime(tier) && !beta` — correct about tier, silent about licence. It matters more here than
+  // anywhere else: this flag decides whether the realtime SNAPSHOT path is read at all, so under a stop
+  // order this route would have gone on reading a live snapshot and labelling it live.
+  const realtime = await callerHasRealtime();
 
   // 2. THE PUBLISHED CONSENSUS BOARD — read, never rebuilt.
   const { payload, status } = await readPublishedBoard();

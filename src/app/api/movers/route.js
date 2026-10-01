@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
+import { callerHasRealtime } from '../../../lib/entitlements';
 import { marketMovers } from '../../../lib/movers/movers-store';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 
@@ -37,11 +37,12 @@ export async function GET(request) {
   try {
     // Entitlement from the session ONLY. Pro sees the current shared snapshot, everyone else the
     // completed session; no query parameter reaches this decision.
-    let realtime = false;
-    try {
-      const { userId } = await auth();
-      if (userId) { const { tier, beta } = await resolveUserAccess(); realtime = isRealtime(tier) && !beta; }
-    } catch { /* signed out → completed session */ }
+    // ⚠️ ONE ANSWER TO "IS THIS CALLER REALTIME?", AND IT INCLUDES THE LICENSING STOP ORDER.
+    // This inlined `isRealtime(tier) && !beta`, which is correct about TIER and silent about licence:
+    // market:tiingo:realtime_stop was consulted only inside getQuotes, so with the switch thrown this
+    // still reported realtime and the surface described previous-close prices as live. Five routes
+    // carried this same two-line copy; callerHasRealtime is now the single answer for all of them.
+    const realtime = await callerHasRealtime();
 
     const m = await marketMovers({ realtime, limit: LIMIT });
     const row = (r) => ({ ticker: r.ticker, company: r.company ?? null, price: r.price, changePct: r.pct, volume: null });

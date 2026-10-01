@@ -121,8 +121,25 @@ L('⚠️ 10 — the Tiingo licence switch is read when it is asked, and can be 
   ok('the stop order is checked in the one function that can emit a live print',
     /const entitled = realtime && tiingoRealtimeEnabled\(\) && !\(await tiingoRealtimeStopped\(\)\);/.test(t));
   ok('…and it is one-directional', /String\(result \?\? ''\)\.trim\(\) === '1'/.test(t));
-  ok('⚠️ …and a KV outage leaves the env decision in force rather than revoking Pro data',
-    /keep the last known answer/.test(read('src/lib/market/tiingo.mjs')));
+  // ⚠️ THIS ASSERTION HAS BEEN REVERSED ON THE OWNER'S INSTRUCTION, AND THE REVERSAL IS THE POINT.
+  //
+  // It required that "a KV outage leaves the env decision in force rather than revoking Pro data" —
+  // failing OPEN, on the reasoning that the licensing question is answered by the flag's PRESENCE and not
+  // by our ability to read it, and that an infrastructure blip should not revoke data nobody asked to
+  // revoke. That argument is sound for one of the two states it covered and wrong for the other.
+  //
+  // A SUCCESSFUL read finding no key really is "no stop issued" — the steady state, nothing revoked, and
+  // that is still asserted below. A read we could not PERFORM means we do not know, and a redistribution
+  // control that cannot be consulted is not a control. The rule is now that an unknown licensing state
+  // fails in the safe direction, so the two states are separated rather than collapsed.
+  const tiingoSrc = read('src/lib/market/tiingo.mjs');
+  ok('⚠️ a successful read finding no key does NOT revoke anything',
+    /value: String\(result \?\? ''\)\.trim\(\) === '1'/.test(tiingoSrc));
+  ok('⚠️ …but an unreadable or unconfigured control now fails CLOSED',
+    /if \(!url \|\| !tok\) return true;/.test(tiingoSrc)
+    && /const stoppedUnlessKnownOtherwise = \(\) => _stop\.value !== false;/.test(tiingoSrc));
+  ok('…and a recent known answer still carries a brief blip', /STOP_TTL_MS/.test(tiingoSrc)
+    && /_stop\.value !== null/.test(tiingoSrc));
   ok('…cached so the quote path is not a KV round trip per request', /STOP_TTL_MS = 30_000/.test(t));
 
   // Exercised: only the exact literal enables it, everything else fails closed.

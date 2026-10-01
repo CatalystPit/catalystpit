@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { resolveUserAccess, isRealtime } from '../../../../lib/entitlements';
+import { callerHasRealtime } from '../../../../lib/entitlements';
 import { heatmapBoard, compactRows } from '../../../../lib/heatmap/heatmap-store';
 import { isTimeframe, DEFAULT_TIMEFRAME, TIMEFRAMES } from '../../../../lib/heatmap/heatmap-window.mjs';
 import { universeLimit, DEFAULT_UNIVERSE, UNIVERSES } from '../../../../lib/heatmap/heatmap-universe.mjs';
@@ -63,11 +63,12 @@ export async function GET(request) {
     // Resolved server-side from the session, and now ACTED ON for the 1D window. Free and signed-out
     // readers keep the completed-session board and its public cache; nothing a client sends can
     // change this value.
-    let realtime = false;
-    try {
-      const { userId } = await auth();
-      if (userId) { const { tier, beta } = await resolveUserAccess(); realtime = isRealtime(tier) && !beta; }
-    } catch { /* signed out → delayed entitlement, same EOD board today */ }
+    // ⚠️ ONE ANSWER TO "IS THIS CALLER REALTIME?", AND IT INCLUDES THE LICENSING STOP ORDER.
+    // This inlined `isRealtime(tier) && !beta`, which is correct about TIER and silent about licence:
+    // market:tiingo:realtime_stop was consulted only inside getQuotes, so with the switch thrown this
+    // still reported realtime and the surface described previous-close prices as live. Five routes
+    // carried this same two-line copy; callerHasRealtime is now the single answer for all of them.
+    const realtime = await callerHasRealtime();
 
     // ⚠️ TWO LAYERS OF SHARING, AND THEY DEFEND AGAINST DIFFERENT THINGS.
     //

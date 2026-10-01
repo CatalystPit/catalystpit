@@ -437,7 +437,7 @@ export function ScanBoard({ board, data, loading = false, errorText = null, lock
           padding: '20px 16px', fontSize: 12.5, color: C.muted }}>
           {typeof error === 'string' ? error : 'Pit Scan is unavailable right now. This is not a statement that nothing is happening.'}
           {onRetry && (
-            <button type="button" onClick={onRetry}
+            <button type="button" onClick={onRetry} className="cp-tap-pill"
               style={{ display: 'block', marginTop: 10, fontSize: 11, fontWeight: 700, cursor: 'pointer',
                 padding: '4px 12px', borderRadius: 999, fontFamily: 'inherit',
                 border: `1px solid ${C.border2}`, background: C.white, color: C.text }}>Try again</button>
@@ -451,7 +451,7 @@ export function ScanBoard({ board, data, loading = false, errorText = null, lock
           padding: '20px 16px', fontSize: 12.5, color: C.muted }}>
           Pit Scan is unavailable right now.
           {onRetry && (
-            <button type="button" onClick={onRetry}
+            <button type="button" onClick={onRetry} className="cp-tap-pill"
               style={{ display: 'block', marginTop: 10, fontSize: 11, fontWeight: 700, cursor: 'pointer',
                 padding: '4px 12px', borderRadius: 999, fontFamily: 'inherit',
                 border: `1px solid ${C.border2}`, background: C.white, color: C.text }}>Try again</button>
@@ -512,7 +512,7 @@ export default function ScanBoardRows({ onPick, onFeed } = {}) {
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
         {BOARD_TABS.map((t) => (
-          <button key={t.key} type="button" onClick={() => setBoard(t.key)}
+          <button key={t.key} type="button" onClick={() => setBoard(t.key)} className="cp-tap-pill"
             style={{ fontSize: 11, fontWeight: board === t.key ? 700 : 500, cursor: 'pointer',
               padding: '4px 10px', borderRadius: 999, fontFamily: 'inherit',
               border: `1px solid ${board === t.key ? C.green : C.border}`,

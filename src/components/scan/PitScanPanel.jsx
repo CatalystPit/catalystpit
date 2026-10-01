@@ -112,7 +112,7 @@ export default function PitScanPanel({ onPick }) {
   }, [state]);
 
   const tabBtn = (id, label) => (
-    <button key={id} onClick={() => setTab(id)}
+    <button key={id} onClick={() => setTab(id)} className="cp-tap-pill"
       style={{
         fontSize: 10.5, fontWeight: 700, padding: '3px 10px', borderRadius: 5, cursor: 'pointer',
         border: 'none', background: tab === id ? C.selBg : 'transparent', color: tab === id ? C.selFg : C.muted,
@@ -227,7 +227,7 @@ export default function PitScanPanel({ onPick }) {
               </div>  
             ))}  
             {(state.signals?.disabled?.length || 0) > 4 && (  
-              <button onClick={() => setShowDark((v) => !v)}  
+              <button onClick={() => setShowDark((v) => !v)} className="cp-tap-pill"  
                 style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 4,  
                   cursor: 'pointer', padding: '3px 10px', fontSize: 10.5, color: C.muted }}>  
                 {showDark ? 'Show less' : 'Show every signal'}  

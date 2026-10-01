@@ -84,31 +84,52 @@ export const tiingoRealtimeEnabled = () => tiingoConfigured() && realtimeFlag();
 // the deployment already running, so the only way to stop redistributing live prices was to ship a
 // build. That is the wrong shape for a licensing instruction, which arrives when it arrives.
 //
-// This KV flag is checked by the one function that can emit a live print. It is additive and
-// one-directional: only an explicit `1` stops live quotes. A KV outage, a missing key or a malformed
-// value all leave the env decision in force — because failing closed on an unrelated infrastructure
-// blip would revoke Pro data nobody asked to revoke, and the licensing question is answered by the
-// flag's PRESENCE, not by our ability to read it.
+// ── ⚠️ AN ABSENT FLAG AND AN UNREADABLE ONE ARE DIFFERENT ANSWERS ───────────
 //
-// Cached briefly so a per-request quote path does not become a per-request KV round trip.
+// This previously failed OPEN, deliberately, on the reasoning that "a KV outage, a missing key or a
+// malformed value all leave the env decision in force, because the licensing question is answered by
+// the flag's PRESENCE, not by our ability to read it" — the alternative being that an unrelated
+// infrastructure blip revokes Pro data nobody asked to revoke.
+//
+// That reasoning conflated two states, and the conflation is the bug. A SUCCESSFUL read that finds no
+// key really does mean "no stop has been issued" — the steady state, and the old argument holds for it
+// exactly. A read we could not perform means we do not know whether a stop is in force, and a
+// redistribution control that cannot be consulted is not a control. The owner's rule is that an unknown
+// licensing state fails in the safe direction, so the two are now separated:
+//
+//   read ok, key absent or not '1'   → NOT stopped. Nothing is revoked in the steady state.
+//   read ok, key is '1'              → stopped.
+//   KV unconfigured                  → stopped. The switch cannot be thrown, so it cannot be trusted.
+//   read failed, no recent answer    → stopped.
+//   read failed, recent answer       → that answer. A blip rides on the last known state for 30s.
+//
+// The cost is stated rather than hidden: a sustained KV outage, or a cold start during one, withdraws
+// real-time until KV recovers. That is recoverable and self-healing; serving prices we may not be
+// licensed to redistribute is neither.
 export const TIINGO_STOP_KEY = 'market:tiingo:realtime_stop';
 const STOP_TTL_MS = 30_000;
-let _stop = { at: 0, value: false };
+// `null` is UNKNOWN, and it is the starting value on purpose: before any successful read there is no
+// licensing answer to rely on.
+let _stop = { at: 0, value: null };
+const stoppedUnlessKnownOtherwise = () => _stop.value !== false;
 
 export async function tiingoRealtimeStopped() {
-  if (Date.now() - _stop.at < STOP_TTL_MS) return _stop.value;
+  if (Date.now() - _stop.at < STOP_TTL_MS && _stop.value !== null) return _stop.value;
   const url = process.env.KV_REST_API_URL, tok = process.env.KV_REST_API_TOKEN;
-  if (!url || !tok) return false;
+  // ⚠️ NO BACKEND MEANS NO KILL SWITCH, which is not the same as no stop order.
+  if (!url || !tok) return true;
   try {
     const r = await fetch(`${url}/get/${encodeURIComponent(TIINGO_STOP_KEY)}`, {
       headers: { Authorization: `Bearer ${tok}` }, cache: 'no-store',
     });
-    if (!r.ok) return _stop.value;                       // keep the last known answer
+    if (!r.ok) return stoppedUnlessKnownOtherwise();
     const { result } = await r.json();
+    // Only an explicit '1' stops. Anything else — absent, empty, malformed — is a successful read
+    // finding no stop order, which is the steady state.
     _stop = { at: Date.now(), value: String(result ?? '').trim() === '1' };
     return _stop.value;
   } catch {
-    return _stop.value;
+    return stoppedUnlessKnownOtherwise();
   }
 }
 

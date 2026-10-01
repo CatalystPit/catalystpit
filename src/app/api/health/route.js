@@ -73,6 +73,41 @@ export async function GET(request) {
       return { ok: r.up === 1 };
     }),
 
+    // ⚠️ LICENSING STATE: INTENTIONALLY DISABLED IS NOT BROKEN.
+    //
+    // The Tiingo real-time stop order is a licensing control the owner can throw without a deploy, so
+    // monitoring has to distinguish "we switched this off on purpose" from "the provider is down".
+    // Reporting a deliberate stop as a failure would make this endpoint permanently red and therefore
+    // useless to alert on; reporting a dead provider as healthy would be worse. So this probe is always
+    // ok ABOUT THE STOP — a stop is a valid chosen state — and names which state is in force.
+    //
+    // ⚠️ AND IT PUBLISHES NO SECRET. No key, no token, no KV URL, no plan tier, no contract term — only
+    // whether a capability is currently offered, which is a fact about the product rather than about the
+    // agreement. /api/health is world-readable.
+    run('licensing.realtime', async () => {
+      const t = await import('../../../lib/market/tiingo.mjs');
+      const configured = t.tiingoConfigured();
+      const enabledByConfig = t.tiingoRealtimeEnabled();
+      const stopped = await t.tiingoRealtimeStopped();
+      //   live         configured, enabled, no stop in force
+      //   stopped      a stop order is in force, OR the control cannot be consulted (it fails closed)
+      //   off          real-time was never enabled for this deployment
+      //   unconfigured no credential; the end-of-day product stands and real-time does not apply
+      const state = !configured ? 'unconfigured'
+        : !enabledByConfig ? 'off'
+          : stopped ? 'stopped' : 'live';
+      return {
+        ok: true,
+        state,
+        realtimeOffered: state === 'live',
+        note: state === 'stopped'
+          ? 'real-time withheld by licensing control — intentional, not a provider failure'
+          : state === 'unconfigured' ? 'no real-time credential; end-of-day product unaffected'
+            : state === 'off' ? 'real-time not enabled for this deployment'
+              : 'real-time offered to entitled subscribers',
+      };
+    }),
+
     // ── FRESHNESS: is the newest record recent enough for the dataset's cadence ──
     run('freshness.insiders', async () => {
       const r = await one(sql`select max(filing_date)::text d, count(*)::int n from insider_trades`);

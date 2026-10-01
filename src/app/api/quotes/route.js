@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
+import { callerHasRealtime } from '../../../lib/entitlements';
 import { getQuotes } from '../../../lib/market-data';
 import { coalesce } from '../../../lib/market/refresh-policy.mjs';
 import { readDelayed, delayedQuotesFor } from '../../../lib/market/delayed-store.mjs';
@@ -74,11 +74,12 @@ export async function GET(request) {
   // Real-time is a LICENSED entitlement, so it follows the subscription rather than the tier alone:
   // a manually flagged beta tester gets every Pro feature on delayed data, and is not counted
   // against the provider's entitled-user terms.
-  let realtime = false;
-  try {
-    const { userId } = await auth();
-    if (userId) { const { tier, beta } = await resolveUserAccess(); realtime = isRealtime(tier) && !beta; }
-  } catch { /* signed-out → delayed */ }
+  // ⚠️ ONE ANSWER TO "IS THIS CALLER REALTIME?", AND IT INCLUDES THE LICENSING STOP ORDER.
+  // This inlined `isRealtime(tier) && !beta`, which is correct about TIER and silent about licence:
+  // market:tiingo:realtime_stop was consulted only inside getQuotes, so with the switch thrown this
+  // still reported realtime and the response described previous-close prices as live. Five routes
+  // carried this same two-line copy; callerHasRealtime is now the single answer for all of them.
+  const realtime = await callerHasRealtime();
 
   try {
     // ── WHY THERE IS A CACHE HERE AT ALL ──

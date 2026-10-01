@@ -233,9 +233,24 @@ export function BrandStyles() {
          touchable box changes. On narrow screens the box grows again and the gap widens, which is
          where the extra room actually exists. */
       .cp-scan-act{padding:9px 5px;margin:-9px -5px;-webkit-tap-highlight-color:transparent}
+      /* ⚠️ A SECOND TAP RULE, BECAUSE THE PILLS CANNOT USE THE FIRST ONE.
+         cp-scan-act grows a bare text label's hit box with padding and cancels it with an equal
+         negative margin, so the row height never moves. That trick only works when nothing is drawn
+         around the text. Pit Scan's board tabs, its retry button and the panel's tab strip and
+         "Show every signal" toggle are BORDERED PILLS — the padding is the visible box, so growing it
+         changes what the reader sees and negative margin would overlap the neighbour.
+         Measured at 390px before this: the board tabs were 11px type with 4px of vertical padding, a
+         touch target about 21px tall; the panel's tabs and toggle about 19px. All well under a
+         comfortable thumb.
+         So the pills get a mobile MIN-HEIGHT with their content centred. The visible pill grows
+         vertically and not horizontally, the chip rows stay one line each, and desktop is untouched
+         because the rule is inside the query. !important on display/align only — those are set inline
+         by the components and inline wins otherwise; min-height is not, so it needs no override. */
+      .cp-tap-pill{-webkit-tap-highlight-color:transparent}
       @media (max-width:560px){
         .cp-scan-act{padding:13px 8px;margin:-13px -8px}
         .cp-scan-acts{gap:22px!important;margin-top:10px!important}
+        .cp-tap-pill{min-height:38px;display:inline-flex!important;align-items:center!important;justify-content:center}
       }
       ::-webkit-scrollbar{width:4px;height:4px}
       ::-webkit-scrollbar-track{background:${C.surface}}

@@ -1,5 +1,5 @@
 import { auth } from '@clerk/nextjs/server';
-import { resolveUserAccess, isRealtime } from '../../../lib/entitlements';
+import { callerHasRealtime } from '../../../lib/entitlements';
 import { marketMovers } from '../../../lib/movers/movers-store';
 import { coalesce } from '../../../lib/market/refresh-policy.mjs';
 
@@ -29,11 +29,12 @@ export async function GET(request) {
     const wantsRealtime = sp.get('rt') === '1';
     const limit = Math.max(1, Math.min(25, Number(sp.get('limit')) || 10));
 
-    let realtime = false;
-    try {
-      const { userId } = await auth();
-      if (userId) { const { tier, beta } = await resolveUserAccess(); realtime = isRealtime(tier) && !beta; }
-    } catch { /* signed out → the completed-session list */ }
+    // ⚠️ ONE ANSWER TO "IS THIS CALLER REALTIME?", AND IT INCLUDES THE LICENSING STOP ORDER.
+    // This inlined `isRealtime(tier) && !beta`, which is correct about TIER and silent about licence:
+    // market:tiingo:realtime_stop was consulted only inside getQuotes, so with the switch thrown this
+    // still reported realtime and the surface described previous-close prices as live. Five routes
+    // carried this same two-line copy; callerHasRealtime is now the single answer for all of them.
+    const realtime = await callerHasRealtime();
 
     // ⚠️ ONE REBUILD SERVES EVERY VIEWER. coalesce() collapses concurrent requests inside this
     // instance; the 15-minute KV snapshot inside marketMovers() shares the provider work ACROSS
