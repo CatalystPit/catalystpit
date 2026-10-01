@@ -2,7 +2,7 @@
 import ErrorState from '../../components/ErrorState';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
+import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../lib/cp-shared';
 import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
 
 // Stock Screener — composable filters over our screener_stocks universe (/api/screener). Proprietary
@@ -69,6 +69,17 @@ const VIEWS = {
   Financial:   ['roe', 'grossMargin', 'netMargin', 'sector'],
   News:        ['hasMaterial8k', 'insiderBuy90d', 'changePct'],
 };
+
+// ⚠️ DERIVED FROM THE COLUMNS, NOT A SECOND LIST TO KEEP IN STEP. A view is Pro-only exactly when it
+// renders a Pro aggregate column, so adding such a column to a view gates that view automatically —
+// the opposite of how these eight fields came to be published in the first place. The names mirror
+// PRO_AGGREGATE_FIELDS in lib/screener-entitlement.mjs, which is the server's authority; a suite
+// asserts the two cannot drift.
+const PRO_AGGREGATE_COLS = new Set([
+  'insiderNet90d', 'insiderBuyers90d', 'insiderBuy90d', 'insiderSell90d',
+  'congressNet90d', 'congressBuy90d', 'fundNetQoq', 'consensusScore',
+]);
+const viewIsProOnly = (v) => (VIEWS[v] || []).some((c) => PRO_AGGREGATE_COLS.has(c));
 
 // Preset filter combos (all use available-now columns).
 const PRESETS = {
@@ -140,6 +151,8 @@ export default function ScreenerClient() {
   const [ticker, setTicker] = useState('');
   const [page, setPage] = useState(0);
   const [view, setView] = useState('Overview');
+  // null = entitlement not yet resolved. Deliberately a third state: it is never rendered as either.
+  const [pro, setPro] = useState(null);
   const [activeCat, setActiveCat] = useState('Descriptive');
   const [showFilters, setShowFilters] = useState(true);
   // COLLAPSED BY DEFAULT ON PHONES. The panel is ~22 stacked dropdowns; open, it filled the entire
@@ -166,7 +179,12 @@ export default function ScreenerClient() {
 
   // Load registry + saved + initial state from URL.
   useEffect(() => {
-    fetch('/api/screener?meta=1').then((r) => r.json()).then((j) => setMeta(j.filters || {})).catch(() => setMeta({}));
+    // ⚠️ THE TIER ARRIVES WITH THE FILTER REGISTRY, resolved server-side from the Clerk session. One
+    // request, no client-side tier inference, and `pro === null` means NOT YET KNOWN — a third state the
+    // gated view has to respect rather than collapsing into "not Pro".
+    fetch('/api/screener?meta=1').then((r) => r.json())
+      .then((j) => { setMeta(j.filters || {}); setPro(j.pro === true); })
+      .catch(() => { setMeta({}); setPro(false); });
     fetch('/api/screener/saved').then((r) => r.json()).then((j) => setSaved(j.saved || [])).catch(() => {});
     try {
       const f = search.get('f'); if (f) setFilters(JSON.parse(decodeURIComponent(f)) || {});
@@ -337,9 +355,28 @@ export default function ScreenerClient() {
 
       {/* VIEW TABS */}
       <div style={{ maxWidth: 1760, margin: '0 auto', padding: '7px 20px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {Object.keys(VIEWS).map((v) => (
-          <button key={v} onClick={() => setView(v)} style={{ fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 5, cursor: 'pointer', border: 'none', background: view === v ? C.green : 'transparent', color: view === v ? '#fff' : C.muted }}>{v}</button>
-        ))}
+        {Object.keys(VIEWS).map((v) => {
+          const gated = viewIsProOnly(v);
+          // ⚠️ UNKNOWN IS HANDLED PER TAB, WHICH IS WHAT PREVENTS BOTH FLASHES. While `pro` is null the
+          // gated tab is not selectable and carries no "· Pro" label — so a Pro reader never sees an
+          // upgrade mark appear and then vanish on their own tab, and a Free reader never gets a brief
+          // window in which the gated view is selectable. Every ungated tab is untouched, so the basic
+          // Screener never waits on entitlement.
+          const resolved = pro !== null;
+          const locked = gated && pro !== true;
+          return (
+            <button key={v} type="button"
+              onClick={() => { if (!locked) setView(v); else if (resolved) startCheckout(); }}
+              title={locked && resolved ? 'Ownership signals are part of Pit Pro' : undefined}
+              style={{ fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 5,
+                cursor: 'pointer', border: 'none',
+                background: view === v ? C.green : 'transparent',
+                color: view === v ? '#fff' : (locked ? C.dim : C.muted),
+                opacity: locked ? 0.65 : 1 }}>
+              {v}{locked && resolved ? ' · Pro' : ''}
+            </button>
+          );
+        })}
       </div>
 
       {/* RESULTS */}

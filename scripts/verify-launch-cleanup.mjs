@@ -50,10 +50,19 @@ L('⚠️ 7 — the anonymous capabilities payload no longer names the vendor in
   ok('⚠️ the provider label is no longer shipped either', !/label: (caps|served)\.label/.test(r));
   ok('…and the reason points at the legal pages rather than at an open question',
     /attribution clause is satisfied on the legal pages/.test(read('src/app/api/screener/route.js')));
-  // The Screener's own Free/Pro boundary is in the quote path, not the row path — that is correct and
-  // is asserted so a tier check is not later bolted onto EOD rows that do not need one.
-  ok('the EOD row path resolves no tier (EOD is not Pro-gated)',
-    !/resolveUserTier|resolveUserAccess|isProTier/.test(r));
+  // ⚠️ THIS ASSERTION WAS WRONG, AND IT WAS PINNING THE BUG IN PLACE. It read "the EOD row path resolves
+  // no tier (EOD is not Pro-gated)", on the reasoning that end-of-day prices need no entitlement check.
+  // That reasoning is sound about PRICES and was applied to the whole row — and the row also carried
+  // eight derived aggregates (insiderNet90d, congressNet90d, fundNetQoq, consensusScore and siblings)
+  // over datasets gated to ten records elsewhere. Freshness was never the only thing in the payload.
+  //
+  // The row path now resolves a tier. What must stay true is the narrower thing this was reaching for:
+  // the EOD PRICE is not gated, so the Screener remains usable for Free and logged-out visitors.
+  ok('⚠️ the row path resolves a tier, because the row carries the Pro aggregate',
+    /isProTier\(\(await resolveUserAccess\(\)\)\.tier\)/.test(r));
+  ok('⚠️ …and EOD prices are still NOT gated — the Screener stays usable for everyone',
+    !/price.*proOnly|stripProAggregate.*price/.test(r)
+    && !/PRO_AGGREGATE_FIELDS.*'price'/.test(read('src/lib/screener-entitlement.mjs')));
   ok('…and the live freshening goes through the entitlement-aware quotes API',
     /\/api\/quotes\?symbols=/.test(code('src/app/screener/ScreenerClient.jsx')));
 }

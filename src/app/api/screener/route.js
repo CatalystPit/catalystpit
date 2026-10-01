@@ -6,13 +6,26 @@ import { ensureScreenerTables } from '../../../lib/screener-data';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { liveFieldsWithAvailability } from '../../../lib/scan/scanner-fields.mjs';
 import { signalAvailability, callerCapabilities } from '../../../lib/scan/market-capabilities.mjs';
-import { callerHasRealtime } from '../../../lib/entitlements';
+import { callerHasRealtime, resolveUserAccess, isProTier } from '../../../lib/entitlements';
+import { PRO_AGGREGATE_FIELDS, isProAggregateField, stripProAggregate, sanitizeFilters, sanitizeSort } from '../../../lib/screener-entitlement.mjs';
 import { activeCapabilities } from '../../../lib/scan/runtime';
 import { toOptions } from '../../../lib/screener-taxonomy.mjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
-const NO_STORE = { 'Cache-Control': 'public, max-age=30' };
+// ⚠️ TWO POLICIES, BECAUSE THE RESPONSE NOW VARIES BY ENTITLEMENT.
+//
+// This was one constant named NO_STORE whose value was `public, max-age=30` — publicly cacheable,
+// despite the name. That was survivable while every caller got an identical payload. It is not
+// survivable now: the rows carry the Pro aggregate for a Pro caller and not for anyone else, so a
+// shared cache would hand one tier's payload to another, in both directions. A Free user getting a
+// cached Pro page is the leak this whole task is about; a Pro user getting a cached Free page is the
+// downgrade bug item 9 asks about. The meta endpoint already varied by entitlement (quoteFreshness) and
+// had the same hazard.
+//
+// Every response this route produces now depends on who is asking, so there is no public variant left
+// to keep — a second constant would only be an invitation to reach for the wrong one.
+const PRIVATE_NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 // Distinct sectors and industries actually present in the visible universe.
 //
@@ -63,6 +76,11 @@ export async function GET(request) {
       // live ones are computed from market state and cannot. They are merged for DISPLAY only — the
       // Custom Scanner renders both from one list without needing to know which half a field is
       // from, while buildConds below still only ever sees the daily half.
+      // ⚠️ RESOLVED ONCE, SERVER-SIDE, FROM THE CLERK SESSION. No header, cookie or query parameter
+      // participates, and a lookup failure falls to Free — the same fail-closed shape every other
+      // gated route in this codebase uses.
+      let pro = false;
+      try { pro = isProTier((await resolveUserAccess()).tier); } catch { pro = false; }
       const caps = activeCapabilities();
       // ⚠️ THE METADATA DESCRIBES WHAT THIS CALLER GETS, NOT WHAT THE ACCOUNT CAN DO. This endpoint
       // takes no auth, so it was telling anyone who asked that the feed was realtime while serving
@@ -75,10 +93,23 @@ export async function GET(request) {
       // of them matched zero rows. See lib/screener-taxonomy.mjs.
       const taxonomy = await classificationOptions();
       const filters = { ...FILTERS, ...live };
+      // ⚠️ A CONTROL THAT CANNOT WORK MUST NOT BE OFFERED AS WORKING. The Pro aggregate filters are
+      // refused server-side for a non-Pro caller, so leaving them `available: true` would render a
+      // dropdown that silently returns the unfiltered set — the "functional control that fails" pattern.
+      // Marked unavailable with the same `available` flag the UI already honours for live fields, and
+      // carrying a reason so the UI can say why rather than just greying it out.
+      if (!pro) {
+        for (const k of PRO_AGGREGATE_FIELDS) {
+          if (filters[k]) filters[k] = { ...filters[k], available: false, proOnly: true, unavailable: 'Pit Pro' };
+        }
+      }
       if (taxonomy.industries.length) filters.industry = { ...filters.industry, opts: taxonomy.industries };
       if (taxonomy.sectors.length) filters.sector = { ...filters.sector, options: taxonomy.sectors.map((o) => o.value) };
       return Response.json({
         filters,
+        // The client needs this to render the right control without a second request or a tier guess.
+        pro,
+        proAggregateFields: PRO_AGGREGATE_FIELDS,
         capabilities: {
           // ⚠️ THE INTERNAL PROVIDER ID IS NOT SHIPPED. This endpoint takes no auth, so
           // `provider: "tiingo-realtime"` was served to anyone who fetched it — a vendor identifier
@@ -105,11 +136,19 @@ export async function GET(request) {
           bidAsk: served.bidAsk,
           extendedHours: served.extendedHours,
         },
-      }, { headers: NO_STORE });
+      }, { headers: PRIVATE_NO_STORE });
     }
 
     let active = {};
     try { active = JSON.parse(sp.get('filters') || '{}') || {}; } catch { active = {}; }
+    // ⚠️ ENTITLEMENT IS RESOLVED BEFORE THE QUERY IS BUILT, not after the rows come back. Filtering and
+    // ordering by a gated column leak it just as surely as returning it: a filter answers "which of the
+    // 18,036 have insider buying", and a sort publishes that ranking in order. So the gate reaches the
+    // SQL, not only the payload.
+    let pro = false;
+    try { pro = isProTier((await resolveUserAccess()).tier); } catch { pro = false; }
+    const { filters: allowed, dropped } = sanitizeFilters(active, { pro });
+    active = allowed;
     const conds = buildConds(active);
     const ticker = (sp.get('ticker') || '').toUpperCase().trim();
     if (ticker) conds.push(ilike(screenerStocks.ticker, `${ticker}%`));
@@ -118,7 +157,13 @@ export async function GET(request) {
     // Default ordering is a measured quantity. It used to fall back to consensus_score, a 0-100
     // blend of weighted sub-scores that nothing validated, so every unsorted screener view was
     // ranked by it. The column still exists for compatibility; it is no longer what users are shown.
-    const sortCol = SORT_MAP[sp.get('sort')] || screenerStocks.insiderNet90d || screenerStocks.ticker;
+    // ⚠️ THE DEFAULT ORDERING WAS ITSELF A GATED FIELD. insiderNet90d ranked every unsorted request,
+    // including an anonymous one — so stripping the cell alone would have left the Pro ranking fully
+    // readable through the row order. A non-Pro caller is re-pointed at market cap.
+    const { sort: sortKey, refused: sortRefused } = sanitizeSort(sp.get('sort'), { pro });
+    const sortCol = SORT_MAP[sortKey]
+      || (pro ? screenerStocks.insiderNet90d : screenerStocks.marketCap)
+      || screenerStocks.ticker;
     // ⚠️ NULLS LAST, OR EVERY DESCENDING SORT LEADS WITH THE ROWS THAT HAVE NO VALUE.
     //
     // Postgres orders NULLS FIRST on DESC and NULLS LAST on ASC, and drizzle's desc() adds no NULLS
@@ -153,7 +198,18 @@ export async function GET(request) {
     ]);
 
     const activeCount = Object.keys(active).filter((k) => FILTERS[k]?.available && active[k] && Object.keys(active[k]).length).length;
-    return Response.json({ rows, total: n, page, pageSize, activeCount }, { headers: NO_STORE });
+    // ⚠️ THE LAST GATE, AND THE ONE THAT CANNOT BE REASONED AROUND. db.select() returns the whole row,
+    // so every new column lands here automatically — which is exactly how these eight came to be
+    // published. Stripping on the way out means a column added to screener_stocks tomorrow is exposed
+    // only if somebody also adds it to the non-gated set, rather than by default.
+    const safeRows = pro ? rows : rows.map(stripProAggregate);
+    return Response.json({
+      rows: safeRows, total: n, page, pageSize, activeCount, pro,
+      // Told, not silently substituted: the caller asked for something they cannot have, and a client
+      // that quietly showed unfiltered results as if they were filtered would be the worse failure.
+      ...(dropped.length ? { droppedFilters: dropped } : {}),
+      ...(sortRefused ? { sortRefused: true } : {}),
+    }, { headers: PRIVATE_NO_STORE });
   } catch (e) {
     console.log(`[screener] ${e.message}`);
     // ⚠️ AN OPAQUE FLAG, NOT THE EXCEPTION TEXT. This returned `error: e.message`, so a failing query
@@ -166,6 +222,6 @@ export async function GET(request) {
     // from a legitimate zero-match unless the client reads this field — and it did not, so a database
     // failure rendered as "No stocks match these filters. Widen them or clear a chip." See the
     // matching change in ScreenerClient's load().
-    return Response.json({ rows: [], total: 0, error: 'unavailable' }, { status: 200, headers: NO_STORE });
+    return Response.json({ rows: [], total: 0, error: 'unavailable' }, { status: 200, headers: PRIVATE_NO_STORE });
   }
 }

@@ -111,7 +111,12 @@ L('⚠️ filters compare numbers, and a NULL is not a match');
   ok('a bool filter requires a real boolean, not a truthy string', /typeof cond\.eq === 'boolean'/.test(src));
   ok('⚠️ a LIVE field can never reach the SQL builder', /if \(f\.live\) continue;/.test(src));
   ok('an unknown or unavailable filter key is skipped', /if \(!f \|\| !f\.available \|\| !cond\) continue;/.test(src));
-  ok('the sort column is allowlisted through SORT_MAP', /SORT_MAP\[sp\.get\('sort'\)\]/.test(read('src/app/api/screener/route.js')));
+  // The requested sort now passes through sanitizeSort first — a non-Pro caller may not order by a gated
+  // column, because the ordering publishes the ranking it hides — and the result is still allowlisted
+  // through SORT_MAP. Both properties matter, so both are asserted.
+  ok('the sort column is allowlisted through SORT_MAP', /SORT_MAP\[sortKey\]/.test(read('src/app/api/screener/route.js')));
+  ok('⚠️ …after the gated columns have been refused',
+    /sanitizeSort\(sp\.get\('sort'\), \{ pro \}\)/.test(read('src/app/api/screener/route.js')));
 
   // Production semantics: inclusive bounds, and NULLs excluded by the range itself.
   const inRange = await one(sql`select count(*)::int n from screener_stocks where price >= 1 and price <= 1`);
@@ -164,14 +169,31 @@ L('⚠️ entitlement: the screener is tier-independent, which is what makes its
     ok(`lib/entitlements.js exports a callable ${n}`, typeof ent[n] === 'function');
   }
   const route = read('src/app/api/screener/route.js');
-  // The rows are the nightly batch, identical for everyone; the live price overlay is fetched by the
-  // CLIENT from /api/quotes, which is where the entitlement lives. So this route has no tier to leak.
-  ok('⚠️ the route resolves no tier, so no tier-specific data can enter its cache',
-    !/resolveUserTier|resolveUserAccess|isProTier|isRealtime/.test(route));
+  // ⚠️ THE PREMISE OF THIS ASSERTION WAS FALSE, AND IT HELD THE LEAK OPEN. It read "the route resolves no
+  // tier, so no tier-specific data can enter its cache", on the reasoning that the rows are the nightly
+  // batch and therefore identical for everyone. The rows were NOT identical in what they should have
+  // been allowed to contain: eight of the columns are derived aggregates over datasets gated to ten
+  // records on their own boards. The response was `public, max-age=30`, so it was also cacheable.
+  //
+  // The correct invariant is the COUPLING rather than the absence: the route may resolve a tier, and if
+  // it does, nothing it returns may be publicly cached. Asserted in that form so neither half can change
+  // without the other.
+  const resolvesTier = /resolveUserAccess|isProTier/.test(route);
+  ok('⚠️ the route resolves a tier, because the rows carry the Pro aggregate', resolvesTier);
+  ok('⚠️ …and therefore nothing it returns is publicly cacheable',
+    !resolvesTier || (!/'public, max-age/.test(route) && /'private, no-store'/.test(route)));
   ok('…and the price overlay goes through the entitlement-aware quotes API',
     /\/api\/quotes\?symbols=/.test(read('src/app/screener/ScreenerClient.jsx')));
-  ok('the cached answer varies only by query string, which the CDN keys on',
-    /public, max-age=30/.test(route));
+  // ⚠️ AND THIS ONE WAS PASSING ON A COMMENT. It asserted `public, max-age=30` is present — which stopped
+  // being the policy when the response began varying by entitlement, and remained "true" only because
+  // the replacement comment QUOTES the old value while explaining why it went. A quotation is not a rule;
+  // that is the fourth time that distinction has cost an assertion in this codebase. Matched on the
+  // actual header constant now, and inverted to the policy that is genuinely in force.
+  const headerDecl = (route.match(/const [A-Z_0-9]+ = \{ 'Cache-Control': '[^']+' \}/g) || []);
+  ok('⚠️ the only cache policy declared is private and uncached',
+    headerDecl.length === 1 && /'private, no-store'/.test(headerDecl[0]), JSON.stringify(headerDecl));
+  ok('…so a per-tier answer can never be served from a shared cache',
+    !headerDecl.some((d) => /public/.test(d)));
 }
 
 L('the table is indexed for the columns it filters on');
