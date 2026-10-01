@@ -73,8 +73,21 @@ L('⚠️ #9 — the Pit Scan tap targets, including the ones the first fix miss
 {
   const shared = read('src/lib/cp-shared.jsx');
   // The bare-text actions: padding grows the hit box, equal negative margin keeps the row height.
-  ok('bare text actions carry a grown hit box', /\.cp-scan-act\{padding:9px 5px;margin:-9px -5px/.test(shared));
-  ok('⚠️ …and it grows further on a narrow screen', /\.cp-scan-act\{padding:13px 8px;margin:-13px -8px\}/.test(shared));
+  ok('bare text actions carry a grown hit box',
+    /\.cp-scan-act\{padding:9px 5px!important;margin:-9px -5px!important/.test(shared));
+  ok('⚠️ …and it grows further on a narrow screen',
+    /\.cp-scan-act\{padding:13px 8px!important;margin:-13px -8px!important\}/.test(shared));
+  // ⚠️ !important BECAUSE AN INLINE RESET SILENTLY DEFEATED THE WHOLE RULE. Three controls — the Watch
+  // button and both Alert controls, the ticker and row actions — each set `padding: 0` in their own style
+  // object, and an inline declaration beats a stylesheet one. Measured on production at 390px: 12px tall,
+  // while the class claimed to have grown them. The inline resets are gone AND the rule is !important, so
+  // a future one cannot do it again.
+  for (const f of ['src/components/scan/ScanBoardRows.jsx', 'src/components/AlertToggle.jsx']) {
+    const src = read(f);
+    const offenders = [...src.matchAll(/className="cp-scan-act"[\s\S]{0,280}?\}\}/g)]
+      .filter((m) => /padding: 0,/.test(m[0]));
+    ok(`⚠️ ${f} sets no inline padding on a tap target`, offenders.length === 0, `${offenders.length} found`);
+  }
   ok('…with the row gap widened so neighbours cannot be mis-tapped',
     /\.cp-scan-acts\{gap:22px!important/.test(shared));
   // ⚠️ THE PILLS COULD NOT USE THAT TRICK, AND WERE LEFT BEHIND. Measured at 390px: board tabs 11px type

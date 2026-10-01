@@ -243,7 +243,7 @@ function Row({ r, onWatch, onAlert, busy, onPick }) {
         <EvidenceAction href={r.evidenceUrl || `/ticker/${encodeURIComponent(r.ticker)}`} />
         <button type="button" onClick={() => onWatch(r.ticker)} disabled={busy === r.ticker} className="cp-scan-act"
           style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, background: 'none', border: 'none',
-            padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>Watch</button>
+            cursor: 'pointer', fontFamily: 'inherit' }}>Watch</button>
         {/* ⚠️ THE ACTION NOW MEANS "MONITOR THIS TICKER", NOT "ALERT ME ABOUT THIS ROW". A scan row
             is a moment; the subscription outlives it. Same text, same weight, same row height —
             enabled state is a colour and one extra word. */}

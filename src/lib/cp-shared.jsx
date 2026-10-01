@@ -232,7 +232,14 @@ export function BrandStyles() {
          desktop density is untouched: same font, same row height, same visual gap. Only the
          touchable box changes. On narrow screens the box grows again and the gap widens, which is
          where the extra room actually exists. */
-      .cp-scan-act{padding:9px 5px;margin:-9px -5px;-webkit-tap-highlight-color:transparent}
+      /* ⚠️ !important BECAUSE THREE CONTROLS SET padding:0 INLINE AND SILENTLY WON.
+         This rule is the tap target for the bare-text row actions, and the Watch button plus both
+         Alert controls each carry a padding:0 of their own to reset the button default.
+         An inline declaration beats a stylesheet one, so on those three — the ticker and row actions,
+         the ones most worth hitting — the grown box never applied at all. Measured on production at
+         390px: 12px tall, against the 38px the pills now get. The class claims to own the padding, so
+         it says so; the inline resets were removed as well, and this makes a future one harmless. */
+      .cp-scan-act{padding:9px 5px!important;margin:-9px -5px!important;-webkit-tap-highlight-color:transparent}
       /* ⚠️ A SECOND TAP RULE, BECAUSE THE PILLS CANNOT USE THE FIRST ONE.
          cp-scan-act grows a bare text label's hit box with padding and cancels it with an equal
          negative margin, so the row height never moves. That trick only works when nothing is drawn
@@ -248,7 +255,7 @@ export function BrandStyles() {
          by the components and inline wins otherwise; min-height is not, so it needs no override. */
       .cp-tap-pill{-webkit-tap-highlight-color:transparent}
       @media (max-width:560px){
-        .cp-scan-act{padding:13px 8px;margin:-13px -8px}
+        .cp-scan-act{padding:13px 8px!important;margin:-13px -8px!important}
         .cp-scan-acts{gap:22px!important;margin-top:10px!important}
         .cp-tap-pill{min-height:38px;display:inline-flex!important;align-items:center!important;justify-content:center}
       }

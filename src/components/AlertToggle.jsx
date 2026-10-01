@@ -123,7 +123,7 @@ ${caveat}`;
     return (
       <button type="button" onClick={go} title={proTitle} className="cp-scan-act"
         style={{ fontSize: 10.5, fontWeight: 700, color: C.dim, background: 'none', border: 'none',
-          padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
+          cursor: 'pointer', fontFamily: 'inherit' }}>
         Alert · Pro
       </button>
     );
@@ -174,7 +174,7 @@ ${caveat}`;
   return (
     <button type="button" onClick={click} disabled={busy} title={title} aria-pressed={on} className="cp-scan-act"
       style={{ fontSize: 10.5, fontWeight: 700, color: on ? C.green : C.muted, background: 'none',
-        border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', opacity: busy ? 0.5 : 1 }}>
+        border: 'none', cursor: 'pointer', fontFamily: 'inherit', opacity: busy ? 0.5 : 1 }}>
       {label}
     </button>
   );
