@@ -20,6 +20,13 @@ export default function robots() {
           '/sign-in',         // auth surfaces have no search value
           '/sign-up',
           '/u/',              // member profiles — personal, not search landing pages
+          // ⚠️ /go IS A REDIRECT ENDPOINT, NOT A SET OF PAGES. Each path answers 302 with no body, so a
+          // crawler that followed them would index a family of thin duplicates that rank for nothing and
+          // dilute the paths that should. The route sends X-Robots-Tag: noindex as well, because a
+          // disallow is a request not to crawl while the header is an instruction not to index, and the
+          // two cover different cases: a URL discovered from an external link is never fetched under the
+          // first rule but would still be indexable under none.
+          '/go/',
         ],
       },
     ],

@@ -194,9 +194,25 @@ ok('AffiliateStrip.jsx is still on disk', stripExists);
 // Guarded: a deleted component must be reported as the one failing assertion it is, not crash the
 // suite on the next read and take every assertion after it down with it.
 const strip = stripExists ? read('src/components/AffiliateStrip.jsx') : '';
-ok('...with all three partner slots still configured',
-  ['NEXT_PUBLIC_AFF_TRADINGVIEW', 'NEXT_PUBLIC_AFF_BROKER', 'NEXT_PUBLIC_AFF_UNUSUAL_WHALES']
-    .every((k) => strip.includes(k)));
+// ⚠️ RE-POINTED, NOT WEAKENED — see the note in scripts/verify-affiliates.mjs. This used to require
+// NEXT_PUBLIC_AFF_TRADINGVIEW / _BROKER / _UNUSUAL_WHALES to be present in the component. The intent was
+// 'the flag hides the placement without deleting the capability', which still holds; the mechanism it
+// pinned does not. Those three slots named three companies we had no relationship with, and the
+// NEXT_PUBLIC_ prefix compiled each affiliate id into the bundle every visitor downloads. Both are gone.
+//
+// The capability now lives in a server-side registry plus a /go redirect, so that is what gets asserted —
+// and the absence of the old named slots is asserted too, which the previous version could not do: it
+// would have passed happily on a file that had reintroduced three invented partnerships.
+ok('...with the affiliate capability still present, gated rather than deleted',
+  fs.existsSync(path.join(ROOT, 'src/lib/affiliates/partners.mjs'))
+  && fs.existsSync(path.join(ROOT, 'src/app/go/[partner]/route.js')));
+ok('...and the placement asks the server which offers exist',
+  /\/api\/affiliates\/placements/.test(strip));
+// Against the CODE, not the comments: the component documents what the three old slots were and why
+// they went, and an assertion that forbade naming them would delete that explanation.
+const stripCode = strip.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+ok('...with no company-named partner slot left in the component code',
+  !/NEXT_PUBLIC_AFF|tradingview|unusual_?whales/i.test(stripCode));
 ok('...and its FTC disclosure still intact', /affiliate/i.test(strip));
 ok('...and the ticker page still imports it', /import AffiliateStrip from/.test(page));
 
