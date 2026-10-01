@@ -626,9 +626,24 @@ export const screenerMeta = pgTable('screener_meta', {
   sharesOut: doublePrecision('shares_out'),
   annualDividend: doublePrecision('annual_dividend'),
   ipoDate:   date('ipo_date', { mode: 'string' }),
-  // The vendor's own security name, returned by ticker-details on every call and previously thrown
-  // away. It is the only source that names ETFs. Feeds security_identity at the LOWEST precedence.
+  // The security's own name. It is the only source here that names ETFs, and it feeds
+  // security_identity at the LOWEST precedence — a name its owner filed always outranks it.
   name:      text('name'),
+  /**
+   * WHERE THIS ROW'S VALUES CAME FROM.
+   *
+   * ⚠️ NULLABLE WITH NO DEFAULT, AND THAT IS THE DESIGN. 15,947 rows predate the provenance audit and
+   * record nothing; every one of them was Polygon. A default would stamp them with an origin nobody
+   * verified, which is precisely the fake provenance that makes a second audit impossible. NULL means
+   * UNKNOWN, stays UNKNOWN, and is not servable — see servableMetaSource in lib/licensing/providers.mjs.
+   *
+   * ⚠️ AND IT MUST BE DECLARED HERE, NOT ONLY IN THE DATABASE. The column was added by an ALTER in
+   * ensureScreenerTables and left out of this definition, so drizzle silently dropped it from the insert
+   * column list: 896 rows were written by the SEC pipeline and every one landed with a NULL source,
+   * which the read gate then correctly refused to serve. The job reported success, the data was right,
+   * and the field the whole gate depends on was quietly absent.
+   */
+  source:    text('source'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

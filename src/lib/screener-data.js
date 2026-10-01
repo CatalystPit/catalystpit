@@ -394,9 +394,28 @@ async function fetchDetail(t, { index = null } = {}) {
       }
     } catch { /* an absent cover-page fact is an absent field, not a failure */ }
 
+    // ⚠️ A SHARE COUNT AND A PRICE MUST DESCRIBE THE SAME INSTRUMENT, AND FOR AN ADR THEY DO NOT.
+    //
+    // This produced a market capitalisation of $11.8 TRILLION for TSM — roughly twice the largest company
+    // that has ever existed, and comfortably the most confident-looking wrong number in this whole change.
+    // The cause is structural rather than arithmetic: SEC's dei:EntityCommonStockSharesOutstanding reports
+    // the registrant's ORDINARY shares, while the US-listed line is an American Depositary Share
+    // representing some multiple of them (five, for TSM). Multiplying ordinary shares by the ADS price
+    // overstates the result by exactly the depositary ratio, and that ratio appears nowhere in SEC data.
+    //
+    // A foreign private issuer files 20-F or 40-F rather than 10-K/10-Q, and the form list is already in
+    // the submissions payload fetched above — so the guard costs no extra request. Their market cap is
+    // left NULL, which the Screener and the ticker page already render as an em dash.
+    //
+    // ⚠️ AND IT IS A WHITELIST ON THE DOMESTIC FORMS, not a blacklist on the foreign ones. A registrant
+    // that files neither is an unknown shape, and an unknown shape should not get a number.
+    const recentForms = new Set(j?.filings?.recent?.form || []);
+    const filesDomestic = recentForms.has('10-K') || recentForms.has('10-Q');
+    const filesForeign = recentForms.has('20-F') || recentForms.has('40-F');
+
     // Market cap from the last LICENSED close. A Polygon row still on disk must not sneak in here.
     let marketCap = null;
-    if (sharesOut > 0) {
+    if (sharesOut > 0 && filesDomestic && !filesForeign) {
       const px = await db.execute(sql`
         select close from ticker_daily_candles
          where ticker = ${t} and source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)})
