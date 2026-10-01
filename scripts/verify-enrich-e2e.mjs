@@ -9,6 +9,28 @@
 
 import postgres from 'postgres';
 
+// ⚠️ PROVE WE HAVE THE DATABASE DOUBLE BEFORE WRITING A SINGLE ROW.
+//
+// This suite runs the REAL ingestion and publishing code. With its own register that code talks to an
+// isolated scratch schema; with any other loader it talks to PRODUCTION, and the synthetic event it
+// inserts is indistinguishable to the pipeline from real news — on 2026-09-30 exactly that happened and
+// a test story was published to the live Facebook Page and the live X account.
+//
+// The check is first, before the scratch schema, before any insert, and it exits non-zero with the
+// command that works. A suite that can be run two ways, one of which posts to a public account, needs a
+// guard rather than a convention.
+{
+  const dbMod = await import('../src/lib/db.js');
+  if (!dbMod.IS_TEST_DOUBLE) {
+    console.error('\n  REFUSING TO RUN: src/lib/db is the REAL client, not the scratch-schema double.');
+    console.error('  This suite inserts synthetic events through the real publishing path. Run it as:\n');
+    console.error('    node --env-file=.env.local --import ./scripts/verify-enrich-e2e-register.mjs \\');
+    console.error('         scripts/verify-enrich-e2e.mjs\n');
+    process.exit(1);
+  }
+}
+
+
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) pass++; else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
 const section = (s) => console.log(`\n=== ${s} ===`);

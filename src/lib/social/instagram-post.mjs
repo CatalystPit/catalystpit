@@ -136,6 +136,13 @@ export function instagramConfig(env = process.env) {
   return {
     enabled: String(env.INSTAGRAM_AUTO_POST_ENABLED ?? '') === 'true',
     igUserId: env.INSTAGRAM_BUSINESS_ACCOUNT_ID || null,
+    // ⚠️ THE PAGE ID, WHICH IS NOT THE INSTAGRAM ACCOUNT ID AND CANNOT SUBSTITUTE FOR IT. A Page
+    // access token is obtained by asking the Graph API for the PAGE's access_token field; an Instagram
+    // user id has no such field, so an exchange addressed to it fails with a message about the field
+    // rather than about the id, which sends the reader looking in the wrong place. Needed only in
+    // system_user mode — a directly configured Page token needs no exchange — so it is reported in
+    // readiness but deliberately NOT part of `ready`.
+    pageId: env.FACEBOOK_PAGE_ID || null,
     // Reuses the Facebook credential deliberately: the Instagram professional account hangs off the
     // same Page, in the same Business portfolio, reachable with the same System User token.
     systemUserToken: env.FACEBOOK_SYSTEM_USER_TOKEN || null,
@@ -150,6 +157,11 @@ export function instagramReadiness(cfg) {
     hasIgUserId: !!cfg.igUserId,
     credentialMode: cfg.systemUserToken ? 'system_user' : (cfg.pageToken ? 'page_token' : 'none'),
     graphVersion: cfg.graphVersion,
+    hasPageId: !!cfg.pageId,
+    // system_user mode cannot exchange a token without the Page id, so it is reported as its own
+    // condition. `ready` keeps its original meaning — an account and some credential — so that what
+    // this function has always promised does not change underneath its callers.
+    canExchange: !cfg.systemUserToken || !!cfg.pageId,
     ready: !!(cfg.igUserId && (cfg.systemUserToken || cfg.pageToken)),
   };
 }
