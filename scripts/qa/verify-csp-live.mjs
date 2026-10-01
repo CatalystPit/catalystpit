@@ -183,7 +183,13 @@ L('⚠️ the realtime connection, exercised by opening the dock');
 
     const sdk = p.collected.responses.filter((x) => /cdn\.ably\.com/.test(x.url));
     const token = p.collected.responses.filter((x) => /realtime\.ably\.net.*requestToken/.test(x.url));
-    ok('⚠️ the Ably SDK loads from the allowed CDN', sdk.length > 0 && sdk.every((x) => x.status === 200),
+    // ⚠️ 304 IS A SUCCESSFUL LOAD, AND REQUIRING 200 MADE A WARM CACHE LOOK LIKE A CSP BLOCK. This went
+    // red on [304, 304] after the QA browser had been up long enough to cache the SDK — which proves the
+    // opposite of a block: a request refused by Content-Security-Policy produces no response at all, so it
+    // would show up as an empty `sdk` list and in `failed`, both of which are still asserted. What must not
+    // be accepted is a 4xx or 5xx.
+    ok('⚠️ the Ably SDK loads from the allowed CDN',
+      sdk.length > 0 && sdk.every((x) => x.status === 200 || x.status === 304),
       JSON.stringify(sdk.map((x) => x.status)));
     ok('⚠️ …and the realtime token request reaches main.realtime.ably.net',
       token.some((x) => x.status === 200 || x.status === 201), JSON.stringify(token.map((x) => x.status)));
