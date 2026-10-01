@@ -91,10 +91,19 @@ L('⚠️ 8 — a mixed board does not claim REAL-TIME');
 L('⚠️ 9 — Pit Scan row actions are tappable');
 {
   const css = read('src/lib/cp-shared.jsx');
-  ok('a tap-target class exists', /\.cp-scan-act\{padding:9px 5px;margin:-9px -5px/.test(css));
+  // ⚠️ BOTH DECLARATIONS NOW CARRY !important, AND THAT IS NOT COSMETIC. Three controls — the Watch button
+  // and both Alert controls — set `padding: 0` inline to reset the button default, and an inline
+  // declaration beats a stylesheet one, so this rule was fully overridden on exactly the row actions it
+  // was written for. Measured on production at 390px: 12px tall. The inline resets are gone and the rule
+  // is now !important so a future one cannot silently defeat it again.
+  ok('a tap-target class exists', /\.cp-scan-act\{padding:9px 5px!important;margin:-9px -5px!important/.test(css));
   ok('⚠️ …and the negative margin cancels it, so desktop density is unchanged',
-    /margin:-9px -5px/.test(css));
-  ok('…and it grows further on a phone', /@media \(max-width:560px\)\{[\s\S]*?\.cp-scan-act\{padding:13px 8px;margin:-13px -8px\}/.test(css));
+    /margin:-9px -5px!important/.test(css));
+  ok('…and it grows further on a phone',
+    /@media \(max-width:560px\)\{[\s\S]*?\.cp-scan-act\{padding:13px 8px!important;margin:-13px -8px!important\}/.test(css));
+  // The bordered pills could not use the negative-margin trick at all — the padding is the visible box.
+  ok('⚠️ …and the bordered pills get a mobile minimum height instead',
+    /\.cp-tap-pill\{min-height:38px;display:inline-flex!important/.test(css));
   ok('…where the gap between targets widens too', /\.cp-scan-acts\{gap:22px!important/.test(css));
   ok('the tap highlight is suppressed so the grown box is invisible', /-webkit-tap-highlight-color:transparent/.test(css));
   // ⚠️ ALL FOUR ACTIONS, not three: the one that was easiest to miss is the one that creates a
