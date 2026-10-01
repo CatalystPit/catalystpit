@@ -1,7 +1,7 @@
 import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
-import { LICENSED_CANDLE_SOURCES_SQL } from './licensing/providers.mjs';
+import { LICENSED_CANDLE_SOURCES_SQL, servableMetaSource } from './licensing/providers.mjs';
 
 /**
  * A Postgres text[] literal from a list of code-generated values.
@@ -1152,7 +1152,20 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   const nameByT = await companyIdentity();
 
   // Persistent descriptive meta (market cap / sector / exchange / asset type) from Polygon details.
-  const metaByT = new Map((await db.select().from(screenerMeta)).map((r) => [r.ticker, r]));
+  // ⚠️ screener_stocks IS DERIVED, AND DERIVED DATA INHERITS ITS INPUTS' PROVENANCE. This copied sector,
+  // industry, exchange, country, asset type, market cap, shares outstanding and the annual dividend
+  // straight out of screener_meta — and 14,535 of those rows are pre-audit rows that record no origin,
+  // every one of them Polygon reference data. Copying them into a table with no provenance column at all
+  // would launder exactly the exposure this change removes: the Screener would serve the same vendor
+  // values one hop further from their source, where no gate could see them.
+  //
+  // So the reference columns are taken ONLY from rows whose provenance is approved. A ticker whose meta
+  // row is still unknown keeps its own identity fields (company name, price, volume, technicals — all
+  // from licensed inputs) and shows an em dash for sector and market cap until backfillMeta rewrites it
+  // from SEC. Fewer filled cells, no laundered ones.
+  const metaRows = await db.select().from(screenerMeta);
+  const metaByT = new Map(metaRows.filter((r) => servableMetaSource(r.source)).map((r) => [r.ticker, r]));
+  const metaWithheld = metaRows.length - metaByT.size;
 
   // INSTITUTIONAL OWNERSHIP %, which the screener has always OFFERED as a filter ("Inst Own %") and
   // never populated: the column was declared in the schema, wired into screener-filters, and left
@@ -1452,5 +1465,5 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // ⚠️ THE FIELDS WERE NAMED AFTER THE VENDOR, and a job result that says `polygon: 13390` is exactly
   // the kind of thing the next audit will read as a live Polygon dependency. They now describe what they
   // measure: how many securities the licensed end-of-day read covered, and which session it came from.
-  return { universe: tickers.length, technicals: tech.size, licensedEod: poly ? poly.map.size : 0, eodSession: poly?.date || null, quoted, tableCount: n, snapshot };
+  return { universe: tickers.length, technicals: tech.size, metaWithheld, licensedEod: poly ? poly.map.size : 0, eodSession: poly?.date || null, quoted, tableCount: n, snapshot };
 }
