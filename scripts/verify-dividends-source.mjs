@@ -52,11 +52,21 @@ L('⚠️ 1 — the calendar reads exactly one source, and it is the licensed on
   ok('⚠️ …and an empty string', calendarSource({ DIVIDEND_PROVIDER: '' }) === LICENSED_DIVIDEND_SOURCE);
   ok('the licensed source is Tiingo, the commercially licensed provider', LICENSED_DIVIDEND_SOURCE === 'tiingo');
   ok('…and it is a registered provider', !!PROVIDERS[LICENSED_DIVIDEND_SOURCE]);
-  ok('a recognised provider IS honoured, so a swap needs no code change',
-    calendarSource({ DIVIDEND_PROVIDER: 'polygon' }) === 'polygon'
-    && calendarSource({ DIVIDEND_PROVIDER: 'TIINGO' }) === 'tiingo');
-  // ⚠️ NO NEW VENDOR. The registry is exactly the two adapters that already existed.
-  ok('⚠️ no data vendor was added', Object.keys(PROVIDERS).sort().join(',') === 'polygon,tiingo');
+  // ⚠️ "A SWAP NEEDS NO CODE CHANGE" WAS THE DEFECT, NOT THE FEATURE. This asserted that
+  // DIVIDEND_PROVIDER=polygon selected the Polygon adapter — i.e. that an environment variable could
+  // point INGESTION at a provider whose redistribution rights were never established, with no code change
+  // and no review. The adapter is deleted and the registry has one entry, so the only thing left to
+  // assert is that case-insensitivity still works for the licensed one and that nothing else resolves.
+  ok('the licensed provider is honoured case-insensitively',
+    calendarSource({ DIVIDEND_PROVIDER: 'TIINGO' }) === 'tiingo'
+    && calendarSource({ DIVIDEND_PROVIDER: 'tiingo' }) === 'tiingo');
+  ok(`⚠️ …and a retired vendor name resolves to the licensed source rather than selecting anything`,
+    calendarSource({ DIVIDEND_PROVIDER: 'polygon' }) === LICENSED_DIVIDEND_SOURCE);
+  // ⚠️ ONE ADAPTER, AND NO NEW VENDOR. This required exactly 'polygon,tiingo' — which pinned the
+  // Polygon adapter in place as surely as it prevented a new one being added. The invariant worth having
+  // is that the registry contains the licensed provider and nothing else.
+  ok('⚠️ the registry contains only the licensed provider',
+    Object.keys(PROVIDERS).join(',') === 'tiingo', Object.keys(PROVIDERS).join(','));
   ok('…and no unlicensed vendor appears in the dividends code',
     !/twelvedata|twelve_data|finnhub|fmp|financialmodeling/i.test(
       read('src/lib/dividends/dividend-store.js') + read('src/lib/dividends/providers/index.mjs')));

@@ -10,11 +10,21 @@
 // Adding the licensed feed later is: write the adapter, add it here, point DIVIDEND_PROVIDER at it.
 // No table, no API, no page and no test of the calendar itself changes.
 
-import { polygonDividendProvider } from './polygon-dividends.mjs';
 import { tiingoDividendProvider } from './tiingo-dividends.mjs';
 
+/**
+ * The adapters ingestion may use.
+ *
+ * ⚠️ THE POLYGON ADAPTER IS DELETED, AND THE REGISTRY IS WHY IT HAD TO BE. The display side already
+ * defaulted to the licensed feed, so the published calendar was safe — but `PROVIDERS[id]` is keyed off
+ * DIVIDEND_PROVIDER, so setting DIVIDEND_PROVIDER=polygon selected an unapproved provider for INGESTION
+ * with no code change and no review. That is the same shape as the Twelve Data hole in market-data.js: a
+ * provider list plus an environment variable is a configuration-sized licensing decision.
+ *
+ * With one entry there is nothing to select, and an unrecognised DIVIDEND_PROVIDER resolves to the
+ * licensed adapter in both functions below — so a typo cannot produce an unlicensed write either.
+ */
 export const PROVIDERS = {
-  [polygonDividendProvider.id]: polygonDividendProvider,
   [tiingoDividendProvider.id]: tiingoDividendProvider,
 };
 
@@ -93,12 +103,12 @@ export const dividendsVisible = (env = process.env) => dividendsDisplayMode(env)
  * DISPLAY FOLLOWS INGESTION, deliberately: the provider being kept up to date is the only one whose
  * rows should be shown, so there is one configuration value rather than two that can disagree.
  *
- * ⚠️ AND THE FALLBACK IS THE LICENSED SOURCE, WHICH IS NOT activeDividendProvider's DEFAULT.
- * activeDividendProvider falls back to polygon for ingestion-compatibility reasons that predate the
- * licence. For DISPLAY that default is the wrong way round: polygon's redistribution rights are
- * recorded above as unconfirmed, and this value decides what gets published. So an unset or
- * unrecognised DIVIDEND_PROVIDER resolves to the licensed feed here, and publishing uncleared rows
- * cannot be caused by a missing environment variable.
+ * ⚠️ BOTH SIDES NOW RESOLVE TO THE LICENSED SOURCE, which they did not always. activeDividendProvider
+ * used to fall back to polygon for ingestion-compatibility reasons that predated the licence, while this
+ * value fell back to the licensed feed — so an unset DIVIDEND_PROVIDER made ingestion write polygon rows
+ * the calendar would never display, and the board would quietly stop advancing while every job run
+ * reported success. There is now one adapter, so the two cannot disagree and a missing environment
+ * variable cannot cause an unlicensed write or a silent freeze.
  */
 export const LICENSED_DIVIDEND_SOURCE = tiingoDividendProvider.id;
 

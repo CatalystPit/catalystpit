@@ -123,33 +123,11 @@ export async function fetchLicensedDaily(ticker, from, to) {
 // adjusted=true so splits do not create artificial gaps, matching how the Tiingo path stores
 // adjusted OHLC under the same column names. Mixing adjusted and raw in one table would make a
 // trade marker sit at the wrong height on the price line.
-export async function fetchPolygonDaily(ticker, from, to, apiKey = process.env.POLYGON_API_KEY) {
-  if (!apiKey) return { ok: false, reason: 'POLYGON_API_KEY not set', bars: [] };
-  const url = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${from}/${to}`
-    + `?adjusted=true&sort=asc&limit=50000&apiKey=${apiKey}`;
-  let res;
-  try { res = await fetch(url, { cache: 'no-store' }); }
-  catch (e) { return { ok: false, reason: e.message, bars: [] }; }
-  if (!res.ok) return { ok: false, reason: `HTTP ${res.status}`, bars: [] };
-  const j = await res.json().catch(() => null);
-  const bars = (j?.results || [])
-    .map((b) => ({
-      date: new Date(b.t).toISOString().slice(0, 10),
-      open: b.o, high: b.h, low: b.l, close: b.c,
-      volume: Number.isFinite(b.v) ? b.v : 0,
-    }))
-    .filter((b) => b.date && [b.open, b.high, b.low, b.close].every(Number.isFinite));
-  return { ok: true, bars };
-}
+// ⚠️ fetchPolygonDaily IS DELETED. It was preserved, uncalled, beside the licensed fetcher above —
+// and "preserved, uncalled" is how the Twelve Data branch in market-data.js started. The congressional
+// chart has read fetchLicensedDaily for some time; this was the previous implementation, kept for
+// comfort. Reviving an unlicensed provider should require writing it again, deliberately.
 
-/**
- * Decide the single span to fetch, given what is already cached. Mirrors the logic in
- * /api/chart-daily so both paths treat the cache the same way.
- *   cold            -> whole requested range
- *   head missing    -> whole range (covers head and tail in one call)
- *   tail missing    -> only newer days
- *   fully covered   -> nothing
- */
 export function spanToFetch({ minStored, maxStored, startDate, endDate, headToleranceDays = 5 }) {
   if (!minStored) return startDate;
   const gapDays = (new Date(minStored) - new Date(startDate)) / 86400000;

@@ -99,49 +99,35 @@ export const chunk = (arr, n) => {
   return out;
 };
 
-// FMP /stable/shares-float — SEC-sourced free float. floatShares is the correct
-// denominator for "% of float" (excludes restricted/insider shares). Returns null
-// on fetch failure; { floatShares:0 } for instruments FMP doesn't float (e.g. ETFs).
-export async function fetchFloat(ticker, fmpKey) {
-  if (!fmpKey) return null;
-  try {
-    const r = await fetch(
-      `https://financialmodelingprep.com/stable/shares-float?symbol=${encodeURIComponent(ticker)}&apikey=${fmpKey}`,
-      { signal: AbortSignal.timeout(12000) },
-    );
-    if (!r.ok) return null;
-    const arr = await r.json();
-    const row = Array.isArray(arr) ? arr[0] : arr;
-    if (!row || row['Error Message'] || row.floatShares == null) return null;
-    return {
-      floatShares:       numOrNull(row.floatShares),
-      outstandingShares: numOrNull(row.outstandingShares),
-      freeFloatPct:      numOrNull(row.freeFloat),
-    };
-  } catch { return null; }
-}
-
-// SINGLE SOURCE OF TRUTH for free float, used by BOTH /api/short-interest (tab) and
-// /api/ticker (hero). Reads ticker_float; if missing/>30d-stale, fetches FMP once and
-// upserts. Returns { float_shares, outstanding_shares, free_float_pct } (snake_case, the
-// shape the Short Interest tab already consumes) or null. Never throws — a float failure
-// must not break either caller. Because both routes share this, the hero's % of float and
-// the tab's % of float can never diverge for the same ticker.
-export async function resolveFloat(ticker) {
-  const FMP_API_KEY = process.env.FMP_API_KEY;
-  try {
-    const [row] = await db.select().from(tickerFloat).where(eq(tickerFloat.ticker, ticker)).limit(1);
-    const fresh = row && row.updatedAt && (Date.now() - new Date(row.updatedAt).getTime() < FLOAT_MAX_AGE_MS);
-    const fromRow = (r) => ({ float_shares: r.floatShares, outstanding_shares: r.outstandingShares, free_float_pct: r.freeFloatPct });
-    if (fresh) return fromRow(row);
-    const f = await fetchFloat(ticker, FMP_API_KEY);
-    if (!f) return row ? fromRow(row) : null;            // FMP failed → serve stale row if any, else null
-    await db.insert(tickerFloat)
-      .values({ ticker, floatShares: f.floatShares, outstandingShares: f.outstandingShares, freeFloatPct: f.freeFloatPct, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: tickerFloat.ticker,
-        set: { floatShares: f.floatShares, outstandingShares: f.outstandingShares, freeFloatPct: f.freeFloatPct, updatedAt: new Date() },
-      });
-    return { float_shares: f.floatShares, outstanding_shares: f.outstandingShares, free_float_pct: f.freeFloatPct };
-  } catch { return null; }
+/**
+ * FREE FLOAT HAS NO APPROVED SOURCE, SO IT IS NOT SERVED.
+ *
+ * ── ⚠️ WHAT WAS WRONG ────────────────────────────────────────────────────────
+ *
+ * This fetched FMP `/stable/shares-float` and cached it in ticker_float (114 rows, all
+ * `source = 'fmp'`). The value was the DENOMINATOR of "short interest % of float", which the ticker
+ * page hero and the Short Interest tab both display — so an unapproved vendor's number was the
+ * difference between "0.88% of float" and nothing at all. The FINRA numerator was always fine; the
+ * denominator never was.
+ *
+ * ── ⚠️ WHY NOTHING REPLACES IT ───────────────────────────────────────────────
+ *
+ * FREE float is not shares outstanding. It is shares outstanding minus restricted and closely-held
+ * stock, and SEC does not publish it as a single reported fact — the cover-page figure
+ * (dei:EntityCommonStockSharesOutstanding) is the TOTAL, which is what screener_meta now carries.
+ * Substituting total shares for free float would silently change the meaning of the ratio and make
+ * every "% of float" smaller than the truth, on a figure short sellers read closely. That is a
+ * fabrication with a plausible face, which is the worst kind.
+ *
+ * So `% of float` is withheld, `daysToCover` and the raw FINRA share count are unaffected, and the two
+ * surfaces still agree with each other — they now agree on "unavailable".
+ *
+ * ⚠️ THE 114 STORED ROWS ARE NOT DELETED. They stay for the provenance inventory, and this function no
+ * longer reads them: serving a cached FMP value would be the same exposure one step removed.
+ *
+ * Re-enabling means an approved source that publishes FREE float, not a near-neighbour that publishes
+ * something else.
+ */
+export async function resolveFloat() {
+  return null;
 }

@@ -441,20 +441,10 @@ export const FEEDS = [
   // Paused automatically until the key exists, so a missing key is never a failing poll. Cadence is
   // sized to the free daily allowance, NOT to how fast we would like the data: at 100 calls/day a
   // 15-minute cadence is 96 calls, which fits with headroom for retries.
-  feed({ key: 'marketaux', source: 'MARKETAUX', sourceName: 'Marketaux', type: 'article',
-    adapter: 'json', everySec: 900, category: 'MARKETS', tickerable: true,
-    requiresEnv: 'MARKETAUX_API_KEY', quotaPerDay: 100,
-    url: 'https://api.marketaux.com/v1/news/all?filter_entities=true&language=en&limit=50',
-    authQuery: { api_token: 'MARKETAUX_API_KEY' },
-    map: { items: 'data', title: 'title', url: 'url', uid: 'uuid',
-           publishedAt: 'published_at', summary: 'description', tickers: 'entities' } }),
-  feed({ key: 'stockdata', source: 'STOCKDATA', sourceName: 'StockData.org', type: 'article',
-    adapter: 'json', everySec: 900, category: 'MARKETS', tickerable: true,
-    requiresEnv: 'STOCKDATA_API_KEY', quotaPerDay: 100,
-    url: 'https://api.stockdata.org/v1/news/all?filter_entities=true&language=en&limit=50',
-    authQuery: { api_token: 'STOCKDATA_API_KEY' },
-    map: { items: 'data', title: 'title', url: 'url', uid: 'uuid',
-           publishedAt: 'published_at', summary: 'description', tickers: 'entities' } }),
+  // ⚠️ MARKETAUX AND STOCKDATA.ORG ARE REMOVED. Both were commercial news-aggregator APIs gated on an
+  // env key that was never set, so neither ever ingested a row — confirmed against canonical_events,
+  // which has no rows from either. They were dormant rather than harmless: a key appearing in an
+  // environment would have started redistributing aggregated publisher content with no licence review.
 ];
 
 export const activeFeeds = () => FEEDS.filter((f) => !f.requiresEnv || process.env[f.requiresEnv]);

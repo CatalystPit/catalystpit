@@ -21,6 +21,11 @@ let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
 const L = (s) => console.log(`\n=== ${s} ===`);
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+// ⚠️ LINE COMMENTS FIRST, THEN BLOCK COMMENTS. This codebase contains `/*` inside line comments, and
+// stripping blocks first treats one as an opener and deletes everything to the next `*/`.
+const stripComments = (s) => s
+  .replace(/^\s*\/\/.*$/gm, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '');
 const one = async (q) => (await q)[0];
 
 const roster = JSON.parse(read('../src/lib/congress-roster.json'));
@@ -107,8 +112,18 @@ L('⚠️ a name with no surname identifies nobody');
   ok('⚠️ no stripped token is a real member\'s name', collide.length === 0,
     collide.map((c) => c + ' -> ' + roster.filter((e) => [e.nLast, e.nFirst, e.nNick].some((f) => String(f || '').split(' ').includes(c))).map((e) => e.bioguide).join('/')).join('; '));
 
-  // And the ingests must actually drop what buildRow refused.
-  ok('⚠️ the retired-FMP ingest drops a record with no identity', /filter\(r => r\.disclosureDate && r\.txHash\)/.test(read('../src/lib/congress-ingest.mjs')));
+  // ⚠️ THE FMP INGEST IS DELETED, SO THERE IS NO LONGER AN FMP PATH TO DROP ANYTHING. This asserted
+  // that fetchCongressRows filtered out records with no identity — a good rule about a client that pulled
+  // both chambers from financialmodelingprep.com. Congressional trades come from the official House Clerk
+  // and Senate eFD sources, and the identity rule that matters now is the one in the OFFICIAL path.
+  // ⚠️ AGAINST THE CODE, NOT THE COMMENT RECORDING THE DELETION. congress-ingest.mjs explains what
+  // fetchCongressRows was and where it pulled from, so a raw match on the vendor name fires on the very
+  // note that documents its removal.
+  const ingestCode = stripComments(read('../src/lib/congress-ingest.mjs'));
+  ok('⚠️ the FMP congressional client is gone',
+    !/financialmodelingprep/.test(ingestCode) && !/export async function fetchCongressRows/.test(ingestCode));
+  ok('⚠️ …and the official ingest still refuses a record that identifies nobody',
+    /txHash/.test(read('../src/lib/congress-sync.js')) || /nameSlug/.test(read('../src/lib/congress-sync.js')));
   const syncSrc = read('../src/lib/congress-sync.js');
   ok('…and so does the official-source sync', /\.filter\(\(r\) => r\.txHash\)/.test(syncSrc));
   // ⚠️ AND THE DROP IS VISIBLE. The Senate feed is the only source for its own disclosures, so a

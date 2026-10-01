@@ -73,7 +73,7 @@ export default function DisclaimerClient() {
           <p style={{ fontWeight: 600 }}>
             Market Data from <a href="https://www.tiingo.com" target="_blank" rel="noopener noreferrer" style={linkStyle}>Tiingo.com</a>
           </p>
-          <p>CatalystPit aggregates data from third-party sources including <a href="https://www.tiingo.com" target="_blank" rel="noopener noreferrer" style={linkStyle}>Tiingo</a>, Finnhub, the U.S. Securities and Exchange Commission (SEC EDGAR), CoinGecko, news feeds from The Wall Street Journal, MarketWatch and Bloomberg, and others. While we make reasonable efforts to present accurate and timely information, we do not guarantee that any data is accurate, complete, current, or free from errors or omissions.</p>
+          <p>CatalystPit aggregates data from third-party sources including <a href="https://www.tiingo.com" target="_blank" rel="noopener noreferrer" style={linkStyle}>Tiingo</a>, the U.S. Securities and Exchange Commission (SEC EDGAR), FINRA, Nasdaq Trader, official congressional disclosure sources, news feeds from The Wall Street Journal, MarketWatch and Bloomberg, and others. While we make reasonable efforts to present accurate and timely information, we do not guarantee that any data is accurate, complete, current, or free from errors or omissions.</p>
           <ul style={list}>
             <li><strong>Delayed data:</strong> Market prices may be delayed by up to 15 minutes or more depending on the data feed and tier in use.</li>
             <li><strong>Third-party errors:</strong> Errors in third-party data are outside our control.</li>

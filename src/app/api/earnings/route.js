@@ -88,16 +88,19 @@ async function secFilingHistory(cik) {
   } catch { return { announcements: [], periodic: [], fiscalYearEnd: null }; }
 }
 
-// A CONFIRMED schedule, if one is licensed. Dormant until TWELVE_DATA_API_KEY is set, and the env
-// check keeps this free while it is: no KV round trip for a feed that cannot answer.
-async function scheduledFor(ticker) {
-  if (!(process.env.TWELVE_DATA_API_KEY || process.env.TWELVEDATA_API_KEY)) return null;
-  try {
-    const raw = await kvGet('earnings_cal:v1');
-    if (!raw) return null;
-    const rows = JSON.parse(raw);
-    return (Array.isArray(rows) ? rows : []).find((r) => r.ticker === ticker && r.date) || null;
-  } catch { return null; }
+// A CONFIRMED FORWARD SCHEDULE HAS NO LICENSED SOURCE, SO THERE IS NEVER ONE TO MERGE.
+//
+// ⚠️ THIS READ THE TWELVE DATA EARNINGS CALENDAR out of KV, gated on TWELVE_DATA_API_KEY. The key is
+// not set in production, so no unlicensed date has reached a reader through it — but the gate was the
+// KEY rather than the LICENCE, and that same key would have flipped lib/market-data.js onto Twelve Data
+// for every quote in the product. Both halves are gone now.
+//
+// ⚠️ AND THE CALLER IS ALREADY CORRECT WITHOUT IT. `next` falls back to the estimate derived from this
+// issuer's own filing cadence, which the response labels as an estimate rather than a confirmed date.
+// Returning null keeps that path and claims nothing it cannot support: an invented earnings date is the
+// one thing worse than an absent one.
+async function scheduledFor() {
+  return null;
 }
 
 // ⚠️ `next` IS COMPUTED PER REQUEST, NEVER CACHED WITH THE PAYLOAD. Two of its fields depend on
@@ -130,53 +133,11 @@ async function respond(payload, { scheduled = null } = {}) {
   return Response.json({ ...pub, next });
 }
 
-// FALLBACK: Polygon Financials for tickers SEC XBRL can't serve as us-gaap quarters — i.e. FOREIGN
-// issuers / ADRs (NBIS etc.) that file 20-F/IFRS, not 10-Q/10-K. Maps to the same earnings row shape.
-const POLY_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
-async function polygonEarnings(ticker) {
-  if (!POLY_KEY) return [];
-  try {
-    const r = await fetch(`https://api.polygon.io/vX/reference/financials?ticker=${encodeURIComponent(ticker)}&timeframe=quarterly&order=desc&limit=12&apiKey=${POLY_KEY}`, { cache: 'no-store' });
-    if (!r.ok) return [];
-    const j = await r.json();
-    const results = Array.isArray(j.results) ? j.results : [];
-    const rows = results.map((res) => {
-      const inc = res.financials?.income_statement || {};
-      const rev = inc.revenues?.value ?? null;
-      const eps = inc.diluted_earnings_per_share?.value ?? inc.basic_earnings_per_share?.value ?? null;
-      return {
-        quarter: `${res.fiscal_period || ''} ${res.fiscal_year || ''}`.trim(),
-        report_date: res.filing_date || res.end_date || null,
-        period_end: res.end_date || null,
-        revenue: rev,
-        eps_basic: eps != null ? Math.round(eps * 100) / 100 : null,
-        form: null, derived: false,
-        filing_url: res.source_filing_url || null,
-        _rev: rev, _eps: eps, _fp: res.fiscal_period, _fy: Number(res.fiscal_year),
-      };
-    });
-    const byKey = {};
-    rows.forEach((x) => { byKey[`${x._fp}-${x._fy}`] = x; });
-    const yoy = (c, p) => (c != null && p != null && p !== 0) ? Math.round(((c - p) / Math.abs(p)) * 1000) / 10 : null;
-    for (const x of rows) { const prior = byKey[`${x._fp}-${x._fy - 1}`]; x.revenue_yoy_pct = yoy(x._rev, prior?._rev ?? null); x.eps_yoy_pct = yoy(x._eps, prior?._eps ?? null); }
-    return rows.filter((x) => x.revenue != null || x.eps_basic != null).map(({ _rev, _eps, _fp, _fy, ...r }) => r);
-  } catch { return []; }
-}
-// When SEC XBRL has no earnings, try Polygon; cache + return whichever we get (empty if neither).
-// ⚠️ FAILS CLOSED. This fell back to Polygon financials for foreign issuers and ADRs that file
-// 20-F/IFRS rather than us-gaap quarters, which SEC XBRL cannot serve — on a provider whose
-// redistribution rights we never established.
-//
-// Tiingo is NOT a replacement here, measured rather than assumed:
-// /tiingo/fundamentals/statements answers 200 for AAPL and 400 for NBIS with "Free and Power
-// plans are limited to the DOW 30". The Dow is precisely the set that already has clean SEC XBRL,
-// so the entitlement covers exactly the tickers that never needed a fallback and none of the ones
-// that did.
-//
-// The honest outcome is no earnings for those issuers rather than earnings from an unlicensed
-// source. What must NOT happen is substituting something semantically different — SEC actuals
-// presented as estimates, or a sibling issuer's figures — to keep a table populated.
-// polygonEarnings() above is preserved, uncalled, for a future licensed use.
+// ⚠️ THE POLYGON EARNINGS FALLBACK IS DELETED. It covered foreign issuers that file 20-F/IFRS rather
+// than us-gaap quarters, which SEC XBRL cannot express as quarterly rows — a real gap, and the honest
+// consequence is that those issuers show fewer quarters rather than vendor-sourced ones. It was already
+// uncalled; leaving ~45 lines of vendor client in place needs only one future caller to undo that.
+
 async function earningsFallback(ticker, cik) {
   return empty(ticker, cik);
 }

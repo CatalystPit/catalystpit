@@ -1,9 +1,10 @@
 import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
+import { LICENSED_CANDLE_SOURCES } from './licensing/providers.mjs';
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
-import { resolveClassifications } from './market/sec-classification.mjs';
+import { resolveClassifications, secTickerIndex } from './market/sec-classification.mjs';
 import { sicToMarketSector } from './market-taxonomy.mjs';
 import { isRenderableTicker } from './security-identity.mjs';
 import { isExchangeTestSymbol } from './ticker-symbol.mjs';
@@ -76,6 +77,19 @@ export async function ensureScreenerTables() {
   await db.execute(sql`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ`);
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS annual_dividend DOUBLE PRECISION`);
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS ipo_date DATE`);
+  // ⚠️ PROVENANCE, AND IT IS DELIBERATELY NULLABLE WITH NO DEFAULT.
+  //
+  // The audit could not establish where 15,944 screener_meta rows and 4,477 screener_fundamentals rows
+  // came from, because neither table ever recorded it — the answer had to be reconstructed from
+  // ingestion code. Both were Polygon.
+  //
+  // A DEFAULT here would be the worst possible choice: it would stamp every pre-existing row with a
+  // provenance nobody verified, which is exactly the "fake provenance for old records" that makes an
+  // audit impossible a second time. NULL means UNKNOWN and stays UNKNOWN, and the read gate treats
+  // unknown as not-servable. A row earns a source by being written by a pipeline that knows one.
+  await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS source TEXT`);
+  await db.execute(sql`ALTER TABLE screener_fundamentals ADD COLUMN IF NOT EXISTS source TEXT`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_screener_meta_source ON screener_meta (source)`);
   // The vendor's security name, previously fetched and discarded on every ticker-details call.
   await db.execute(sql`ALTER TABLE screener_meta ADD COLUMN IF NOT EXISTS name TEXT`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS security_identity (
@@ -104,14 +118,12 @@ const sumField = (rows, stmt, key) => rows.reduce((s, r) => { const x = fval(r, 
 const cagr = (end, start, yrs) => (start > 0 && end > 0) ? (Math.pow(end / start, 1 / yrs) - 1) * 100 : null;
 const growth = (cur, prev) => (prev != null && prev !== 0 && cur != null) ? ((cur - prev) / Math.abs(prev)) * 100 : null;
 
-async function fetchFinancials(t) {
+// ⚠️ THIS FETCHER IS RETIRED AND UNREACHABLE. See backfillFundamentals below for why the Screener's
+// fundamentals are unavailable rather than re-sourced, and what it would take to restore them. The
+// arithmetic is preserved verbatim because it is the specification a SEC-backed replacement must meet;
+// nothing calls it, and the licensing sweep asserts that stays true.
+async function fetchFinancialsRetiredPolygonShape(t, q = [], a = []) {
   try {
-    const [qR, aR] = await Promise.all([
-      fetch(`https://api.polygon.io/vX/reference/financials?ticker=${encodeURIComponent(t)}&timeframe=quarterly&order=desc&limit=8&apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
-      fetch(`https://api.polygon.io/vX/reference/financials?ticker=${encodeURIComponent(t)}&timeframe=annual&order=desc&limit=6&apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
-    ]);
-    const q = qR.ok ? ((await qR.json())?.results || []) : [];
-    const a = aR.ok ? ((await aR.json())?.results || []) : [];
     if (q.length < 1 && a.length < 1) return null;
 
     const last4 = q.slice(0, 4), prev4 = q.slice(4, 8);
@@ -159,10 +171,41 @@ async function fetchFinancials(t) {
   } catch { return null; }
 }
 
-// Populate screener_fundamentals from Polygon Financials. Bounded, prioritized by volume, accumulates.
+/**
+ * STOOD DOWN — THE SCREENER'S FUNDAMENTALS HAD NO LICENSED SOURCE.
+ *
+ * ⚠️ WHAT THIS DID. Two Polygon `vX/reference/financials` calls per ticker produced every fundamental
+ * column the Screener offers: EPS TTM, revenue TTM, equity, debt, the margins, ROE/ROA/ROIC, the
+ * liquidity and leverage ratios and the growth series. 4,477 rows, served to Free and Pro.
+ *
+ * ⚠️ WHY IT IS NOT SIMPLY REPOINTED AT SEC, which is the honest part. SEC XBRL companyfacts does carry
+ * these concepts, and /api/financials already reads them for the ticker page's statements — so the
+ * DATA is available to us and users have not lost access to it. What is not available in the same
+ * change is a *verified* market-wide extractor: companyfacts needs fiscal-period alignment, Q4
+ * derivation, restatement handling and per-issuer tag selection, and this repository already documents
+ * one of those traps by name ("the AAPL stale-`Revenues` trap", /api/financials). An extractor written
+ * alongside a licensing removal and shipped unverified would produce plausible, wrong P/E ratios for
+ * 18,000 securities — fabrication by bug, which is worse than a blank, and the rule here is explicit
+ * that unavailable beats invented.
+ *
+ * So the ingest stops, nothing is written, and the read gate stops serving the Polygon-derived rows
+ * that remain on disk. The Screener's fundamental columns read "—" until a SEC extractor is built and
+ * verified on its own. That work is scoped, not vague: extract the concept maps and period logic from
+ * src/app/api/financials/route.js into a shared module, prove it against the ticker pages that already
+ * render those statements, then write with source 'sec'.
+ *
+ * ⚠️ AND THE ROWS ARE NOT DELETED. They stay for the inventory, auditable, and unreachable.
+ */
+export const FUNDAMENTALS_INGEST_ENABLED = false;
+
 export async function backfillFundamentals({ cap = 3000, concurrency = 6, staleDays = 30, force = false } = {}) {
   await ensureScreenerTables();
-  if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
+  if (!FUNDAMENTALS_INGEST_ENABLED) {
+    return {
+      disabled: true, saved: 0,
+      reason: 'screener fundamentals have no licensed source; Polygon Financials was retired and a verified SEC XBRL extractor is not yet built',
+    };
+  }
   const uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
   const have = new Map((await db.select({
     t: screenerFundamentals.ticker, u: screenerFundamentals.updatedAt,
@@ -260,54 +303,132 @@ const EXCH_MAP = { XNAS: 'NASDAQ', XNGS: 'NASDAQ', XNCM: 'NASDAQ', XNMS: 'NASDAQ
 // Industrials, PG in Basic Materials and PLD in Financial Services. Sector derivation now has ONE
 // definition, shared by the screener, the heatmap, ticker pages and research.
 
-async function fetchDetail(t) {
+/**
+ * ONE SECURITY'S REFERENCE DATA, FROM SEC AND FROM PRICES WE ARE LICENSED TO HOLD.
+ *
+ * ⚠️ THIS WAS TWO POLYGON REFERENCE CALLS, AND IT SUPPLIED THE SCREENER'S ENTIRE IDENTITY LAYER for
+ * 15,944 securities: market cap, sector, industry, exchange, asset type, country, shares outstanding,
+ * the annual dividend and the issuer name. Every one of those reached Free and Pro users on the
+ * Screener and, through screener_meta, on the ticker page. Polygon's redistribution rights for public
+ * commercial display were never established, so none of it could stay.
+ *
+ * ⚠️ WHAT IS GENUINELY SOURCED, AND WHAT IS NOW ABSENT. Honesty about the difference is the point:
+ *
+ *   sic / sector / industry   SEC's own submissions record, through the SAME sicToMarketSector()
+ *                             taxonomy the rest of the product uses. No change in meaning.
+ *   name                      SEC's registrant name.
+ *   exchange                  SEC's `exchanges` array.
+ *   sharesOut                 SEC XBRL dei:EntityCommonStockSharesOutstanding.
+ *   marketCap                 DERIVED: sharesOut x the last licensed close. Both inputs approved, so
+ *                             the product is too — and it is now a derivation rather than a figure
+ *                             taken on trust, which is strictly more auditable.
+ *   annualDividend            Tiingo corporate actions, the licensed provider, already used by the
+ *                             ticker page's Dividends tab.
+ *   country / ipoDate /       NOT SOURCED. SEC's state-of-incorporation is not the same fact as a
+ *   assetType                 vendor's `locale`, a registrant record carries no listing date, and
+ *                             `type` was a vendor taxonomy. These return null, the columns keep
+ *                             whatever an approved source wrote, and the UI shows the em dash it
+ *                             already shows for unknowns. Substituting a near-neighbour fact would be
+ *                             the same mistake as substituting a vendor.
+ */
+const SEC_META_UA = { 'User-Agent': 'CatalystPit Research bcoghill88@gmail.com' };
+
+/**
+ * The provenance stamped on every screener_meta row this pipeline writes.
+ *
+ * ⚠️ IT NAMES BOTH INPUTS, because the row is a join of two: SEC's registrant record and the licensed
+ * close that turns shares outstanding into a market cap. A value of 'polygon' can never appear here
+ * again, and a row with NO source is a pre-audit row of unestablished origin — which the read gate
+ * treats as unservable rather than guessing on its behalf.
+ */
+export const SCREENER_META_SOURCE = 'sec+tiingo';
+
+async function fetchDetail(t, { index = null } = {}) {
   try {
-    const [dR, divR] = await Promise.all([
-      fetch(`https://api.polygon.io/v3/reference/tickers/${encodeURIComponent(t)}?apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
-      fetch(`https://api.polygon.io/v3/reference/dividends?ticker=${encodeURIComponent(t)}&limit=4&order=desc&sort=ex_dividend_date&apiKey=${POLYGON_KEY}`, { cache: 'no-store' }),
+    const idx = index || await secTickerIndex();
+    const cik = idx?.get(String(t).toUpperCase());
+    if (!cik) return null;                       // not an SEC registrant — nothing approved to say
+    const pad = String(cik).padStart(10, '0');
+
+    const [subR, shR] = await Promise.all([
+      fetch(`https://data.sec.gov/submissions/CIK${pad}.json`, { headers: SEC_META_UA, cache: 'no-store' }),
+      fetch(`https://data.sec.gov/api/xbrl/companyconcept/CIK${pad}/dei/EntityCommonStockSharesOutstanding.json`,
+        { headers: SEC_META_UA, cache: 'no-store' }),
     ]);
-    if (!dR.ok) return null;
-    const d = (await dR.json())?.results;
-    if (!d) return null;
-    // Annual dividend = sum of the last 4 cash payouts (approximates trailing annual for quarterly payers).
+    if (!subR.ok) return null;
+    const j = await subR.json();
+
+    const sic = parseInt(String(j?.sic ?? ''), 10);
+    const sicCode = Number.isFinite(sic) && sic > 0 ? sic : null;
+
+    // Shares outstanding: the most recently reported cover-page figure.
+    let sharesOut = null;
+    try {
+      if (shR.ok) {
+        const units = (await shR.json())?.units || {};
+        const arr = units.shares || Object.values(units)[0] || [];
+        const newest = arr.filter((x) => Number.isFinite(x?.val) && x.val > 0)
+          .sort((a, b) => String(a.end || '').localeCompare(String(b.end || '')))
+          .pop();
+        sharesOut = newest ? newest.val : null;
+      }
+    } catch { /* an absent cover-page fact is an absent field, not a failure */ }
+
+    // Market cap from the last LICENSED close. A Polygon row still on disk must not sneak in here.
+    let marketCap = null;
+    if (sharesOut > 0) {
+      const px = await db.execute(sql`
+        select close from ticker_daily_candles
+         where ticker = ${t} and source = any(${LICENSED_CANDLE_SOURCES})
+         order by date desc limit 1`);
+      const close = Number((px.rows ?? px)[0]?.close);
+      if (Number.isFinite(close) && close > 0) marketCap = sharesOut * close;
+    }
+
+    // Trailing annual dividend from the licensed provider's corporate actions.
     let annualDividend = null;
-    try { const divs = divR.ok ? ((await divR.json())?.results || []) : []; if (divs.length) annualDividend = divs.reduce((s, x) => s + (x.cash_amount || 0), 0); } catch { /* ignore */ }
+    try {
+      const { getCorporateActions } = await import('./market/tiingo.mjs');
+      const to = new Date().toISOString().slice(0, 10);
+      const from = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+      const ca = await getCorporateActions(t, { from, to });
+      if (ca?.ok) {
+        const paid = (ca.dividends || []).filter((d) => Number(d.amount) > 0);
+        if (paid.length) annualDividend = +paid.reduce((s, d) => s + Number(d.amount), 0).toFixed(6);
+      }
+    } catch { /* no licensed dividend history → null, never a guess */ }
+
+    const exchange = Array.isArray(j?.exchanges) && j.exchanges.length ? String(j.exchanges[0]).toUpperCase() : null;
+
     return {
       ticker: t,
-      marketCap: d.market_cap ?? null,
-      // ⚠️ THE CODE IS RETAINED, NOT JUST THE DERIVED SECTOR.
-      //
-      // This used to store `sicToSector(d.sic_code)` and `d.sic_description` and throw the CODE
-      // away. The classification was decided once at ingest and its source discarded, so when the
-      // mapping turned out to be wrong — TSLA in Industrials, PG in Basic Materials, PLD in
-      // Financial Services — there was nothing left to reclassify FROM, and correcting it would have
-      // meant re-fetching the whole universe from the vendor.
-      //
-      // Keeping sic_code makes the sector a DERIVATION rather than a decision: the taxonomy can be
-      // improved and replayed over existing rows in seconds.
-      sicCode: Number.isFinite(parseInt(d.sic_code, 10)) ? parseInt(d.sic_code, 10) : null,
-      sector: sicToMarketSector(d.sic_code),
-      industry: d.sic_description || null,
-      exchange: EXCH_MAP[d.primary_exchange] || null,
-      assetType: d.type === 'ETF' ? 'ETF' : d.type === 'CS' ? 'Stock' : (d.type || null),
-      country: d.locale === 'us' ? 'USA' : (d.locale ? d.locale.toUpperCase() : null),
-      sharesOut: d.weighted_shares_outstanding ?? d.share_class_shares_outstanding ?? null,
+      marketCap,
+      // ⚠️ THE CODE IS RETAINED, NOT JUST THE DERIVED SECTOR. The classification used to be decided
+      // once at ingest with its source discarded, so when the mapping turned out to be wrong — TSLA in
+      // Industrials, PG in Basic Materials, PLD in Financial Services — there was nothing left to
+      // reclassify FROM. Keeping sic_code makes the sector a DERIVATION that can be replayed.
+      sicCode,
+      sector: sicCode ? sicToMarketSector(sicCode) : null,
+      industry: j?.sicDescription || null,
+      exchange,
+      assetType: null,
+      country: null,
+      sharesOut,
       annualDividend,
-      ipoDate: d.list_date || null,
-      // The vendor names every security it returns, including the ETFs and fund lines that file no
-      // Form 4 and appear in no SEC ticker file. We were discarding it on every one of these calls.
-      // Stored here, at the provider boundary, and consumed by security_identity at the LOWEST
-      // precedence — a vendor's name never outranks a name its owner filed.
-      name: typeof d.name === 'string' && d.name.trim() ? d.name.trim() : null,
+      ipoDate: null,
+      name: typeof j?.name === 'string' && j.name.trim() ? j.name.trim() : null,
     };
   } catch { return null; }
 }
 
-// Populate screener_meta from Polygon ticker-details. Bounded per run, prioritized by volume, skips
-// rows refreshed within staleDays — so it accumulates full coverage over a few runs and refreshes.
-export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14, force = false, only = null } = {}) {
+// Populate screener_meta from SEC registrant data plus licensed prices. Bounded per run, prioritized
+// by volume, skips rows refreshed within staleDays — so it accumulates full coverage over a few runs.
+//
+// ⚠️ SEC RATE-LIMITS TO 10 REQUESTS A SECOND and asks for an identifying agent, so the concurrency
+// that was sized for a vendor with no published limit is lowered here. fetchDetail makes two SEC
+// requests per ticker, so 4 in flight is ~8/s at worst.
+export async function backfillMeta({ cap = 6000, concurrency = 4, staleDays = 14, force = false, only = null } = {}) {
   await ensureScreenerTables();
-  if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   let uni = await db.select({ t: screenerStocks.ticker, vol: screenerStocks.volume }).from(screenerStocks);
   // `only` narrows the run to named tickers. Added for the security-master backfill: the vendor's
   // name field is the only source that knows ETFs, and we had been discarding it, so the rows that
@@ -325,17 +446,27 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
     : uni.filter((r) => { const u = have.get(r.t); return !u || new Date(u).getTime() < cutoff; }).sort((a, b) => (b.vol || 0) - (a.vol || 0))
   ).slice(0, cap).map((r) => r.t);
 
+  // ⚠️ SEC UNREACHABLE MEANS WRITE NOTHING, NOT WRITE NULLS. Without the ticker→CIK index every
+  // fetchDetail would return null and the run would blank the reference data for the whole universe —
+  // a transient outage turning into a wave of "unknown" sectors. Bail instead.
+  const secIndex = await secTickerIndex();
+  if (!secIndex) return { error: 'SEC ticker index unavailable — nothing written' };
+
   const rows = [];
   for (let i = 0; i < need.length; i += concurrency) {
-    const got = await Promise.all(need.slice(i, i + concurrency).map(fetchDetail));
-    got.forEach((d) => { if (d) rows.push({ ...d, updatedAt: new Date() }); });
+    // ⚠️ THE SEC TICKER INDEX IS RESOLVED ONCE AND PASSED IN. .map(fetchDetail) handed the array
+    // INDEX to the second parameter, which was harmless only because the helper memoises the index
+    // internally. Being explicit costs nothing and removes the trap.
+    const got = await Promise.all(need.slice(i, i + concurrency).map((t) => fetchDetail(t, { index: secIndex })));
+    // Every row written here is SEC-sourced plus a licensed close, so it earns a provenance.
+    got.forEach((d) => { if (d) rows.push({ ...d, source: SCREENER_META_SOURCE, updatedAt: new Date() }); });
   }
   let saved = 0;
   for (let i = 0; i < rows.length; i += 300) {
     const batch = rows.slice(i, i + 300);
     await db.insert(screenerMeta).values(batch).onConflictDoUpdate({
       target: screenerMeta.ticker,
-      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, sicCode: sql`excluded.sic_code`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, ipoDate: sql`excluded.ipo_date`, name: sql`coalesce(excluded.name, screener_meta.name)`, updatedAt: sql`now()` },
+      set: { marketCap: sql`excluded.market_cap`, sector: sql`excluded.sector`, industry: sql`excluded.industry`, sicCode: sql`excluded.sic_code`, exchange: sql`excluded.exchange`, assetType: sql`excluded.asset_type`, country: sql`excluded.country`, sharesOut: sql`excluded.shares_out`, annualDividend: sql`excluded.annual_dividend`, ipoDate: sql`excluded.ipo_date`, name: sql`coalesce(excluded.name, screener_meta.name)`, source: sql`excluded.source`, updatedAt: sql`now()` },
     });
     saved += batch.length;
   }
@@ -384,12 +515,20 @@ export async function backfillMeta({ cap = 6000, concurrency = 8, staleDays = 14
   return { requested: need.length, fetched: rows.length, saved, secResolved };
 }
 
-// Backfill technicals market-wide from Polygon grouped-daily history (Stocks Starter = unlimited
-// calls). Pulls `days` trading days, computes RSI/SMA/52w/ATR/perf in memory (universe tickers only),
-// writes the technical columns to screener_stocks. Idempotent; run after the main rebuild.
+// Backfill technicals market-wide from our own LICENSED daily candles. Pulls `days` trading days,
+// computes RSI/SMA/52w/ATR/perf in memory (universe tickers only), writes the technical columns to
+// screener_stocks. Idempotent; run after the main rebuild.
+//
+// ⚠️ EVERY ONE OF THESE INDICATORS WAS POLYGON-DERIVED, AND THAT IS THE POINT OF THIS SECTION. The
+// inputs came from ~260 Polygon grouped-daily calls plus two more for the 3y/5y anchors, so RSI, the
+// moving averages, the 52-week range, ATR, every performance column, volatility, beta, the
+// distance-from-high figures and the candlestick/pattern labels were all restatements of unlicensed
+// data. A metric is not licensing-safe because we calculated it; it inherits its inputs.
+//
+// The arithmetic below is UNCHANGED. Only the source of the bars changed: ticker_daily_candles,
+// filtered to licensed rows. That also removes ~262 vendor requests per run.
 export async function backfillTechnicals({ days = 260 } = {}) {
   await ensureScreenerTables();
-  if (!POLYGON_KEY) return { error: 'no POLYGON_KEY' };
   const uni = new Set((await db.select({ t: screenerStocks.ticker }).from(screenerStocks)).map((r) => r.t));
   if (!uni.size) return { error: 'empty universe. Run the main rebuild first' };
 
@@ -407,34 +546,65 @@ export async function backfillTechnicals({ days = 260 } = {}) {
   // holiday clusters. This costs nothing when the data is there, because the loop stops the moment
   // gotDays reaches days — it only spends the extra iterations when a window really is sparse.
   const calendarBudget = Math.ceil(days * 1.5) + 10;
-  for (let i = 1; gotDays < days && i <= calendarBudget; i++) {
-    const d = new Date(now); d.setUTCDate(now.getUTCDate() - i);
-    const ds = ymd(d);
-    const res = await fetchGrouped(ds);
-    if (!res) continue;
-    gotDays++;
-    for (const x of res) {
-      if (x.T === 'SPY' && x.c != null) spy.unshift(x.c);   // newest→oldest fetch; unshift = chronological
-      if (!uni.has(x.T) || x.c == null) continue;
-      const a = series.get(x.T) || [];
-      a.push({ open: x.o, close: x.c, high: x.h, low: x.l, date: ds });
-      series.set(x.T, a);
+  // ⚠️ READ IN TICKER CHUNKS, NOT IN ONE STATEMENT. The window is ~260 sessions across an 18,000-name
+  // universe, which is a couple of million rows; materialising that in one result set is how a 300s
+  // function runs out of memory instead of finishing. Chunking keeps each result a few hundred
+  // thousand rows and costs ~36 indexed queries.
+  const windowFrom = ymd(new Date(now.getTime() - calendarBudget * 86400000));
+  const unis = [...uni];
+  const CHUNK = 500;
+  for (let i = 0; i < unis.length; i += CHUNK) {
+    const part = unis.slice(i, i + CHUNK);
+    const res = await db.execute(sql`
+      select ticker, date::text as date, open, high, low, close
+        from ticker_daily_candles
+       where source = any(${LICENSED_CANDLE_SOURCES})
+         and ticker = any(${part})
+         and date >= ${windowFrom}::date
+       order by ticker, date desc`);
+    for (const r of (res.rows ?? res)) {
+      if (r.close == null) continue;
+      const a = series.get(r.ticker) || [];
+      // Newest→oldest, matching what the compute below expects before it reverses.
+      a.push({ open: Number(r.open), close: Number(r.close), high: Number(r.high), low: Number(r.low), date: r.date });
+      series.set(r.ticker, a);
     }
   }
+  // SPY is the market proxy for beta and is fetched on its own because it need not be in the universe.
+  {
+    const res = await db.execute(sql`
+      select date::text as date, close from ticker_daily_candles
+       where source = any(${LICENSED_CANDLE_SOURCES}) and ticker = 'SPY' and date >= ${windowFrom}::date
+       order by date asc`);
+    for (const r of (res.rows ?? res)) if (r.close != null) spy.push(Number(r.close));   // chronological
+  }
+  gotDays = spy.length;
+
   // SPY daily returns (chronological) for beta.
   const spyRet = [];
   for (let i = 1; i < spy.length; i++) if (spy[i - 1] > 0) spyRet.push(spy[i] / spy[i - 1] - 1);
   const spyVar = variance(spyRet);
   const yearStart = `${now.getUTCFullYear()}-01-01`;
 
-  // Perf 3Y/5Y: one grouped snapshot ~3y and ~5y ago gives every ticker's close then (cheap — 2 calls).
+  // Perf 3Y/5Y anchors: the first licensed close on or after the anniversary, per ticker. This was two
+  // Polygon grouped snapshots; it is now one indexed query over history we already hold, which also
+  // fixes a smaller problem — a grouped snapshot on a single historical date missed any security that
+  // did not trade that day, and `distinct on` picks the nearest available session instead.
   async function closesAgo(yearsBack) {
-    for (let off = 0; off < 8; off++) {
-      const d = new Date(now); d.setUTCFullYear(now.getUTCFullYear() - yearsBack); d.setUTCDate(d.getUTCDate() - off);
-      const res = await fetchGrouped(ymd(d));
-      if (res) return new Map(res.map((x) => [x.T, x.c]));
+    const anchor = new Date(now); anchor.setUTCFullYear(now.getUTCFullYear() - yearsBack);
+    const from = ymd(anchor);
+    const to = ymd(new Date(anchor.getTime() + 10 * 86400000));
+    const out = new Map();
+    for (let i = 0; i < unis.length; i += CHUNK) {
+      const part = unis.slice(i, i + CHUNK);
+      const res = await db.execute(sql`
+        select distinct on (ticker) ticker, close from ticker_daily_candles
+         where source = any(${LICENSED_CANDLE_SOURCES}) and ticker = any(${part})
+           and date >= ${from}::date and date <= ${to}::date
+         order by ticker, date asc`);
+      for (const r of (res.rows ?? res)) if (r.close != null) out.set(r.ticker, Number(r.close));
     }
-    return new Map();
+    return out;
   }
   const close3y = await closesAgo(3);
   const close5y = await closesAgo(5);
@@ -581,7 +751,9 @@ function detectPattern(arr) {
 }
 
 const WINDOW = 90;
-const FINNHUB_KEY = process.env.FINNHUB_KEY;
+// ⚠️ THE FINNHUB KEY BINDING IS GONE WITH THE FALLBACK IT POWERED. See step 5 in rebuildScreener
+// for what that fallback did and why chaining two unlicensed providers was the worst shape it could
+// have taken.
 const MAX_QUOTES = 180;                        // live-quote fetches/run (stay under Finnhub 60/min)
 const KV_READ_CAP = 3000;                      // how many prioritized tickers to price from the KV cache
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -607,40 +779,61 @@ async function kvSetQuote(t, q) {
   try { await fetch(`${KV_URL}/set/${encodeURIComponent(qKey(t))}?ex=86400`, { method: 'POST', headers: { Authorization: `Bearer ${KV_TOKEN}`, 'Content-Type': 'text/plain' }, body: JSON.stringify(q) }); } catch { /* non-fatal */ }
 }
 
-// ── Polygon grouped-daily: EOD OHLCV for the WHOLE US market in one call (delayed/EOD, all tiers). ──
-const POLYGON_KEY = process.env.POLYGON_KEY || process.env.POLYGON_API_KEY;
+// ── LICENSED EOD: the last two sessions, read from our own candle table. ────────────────────────
+//
+// ⚠️ THIS WAS POLYGON'S GROUPED-DAILY ENDPOINT, AND IT WAS THE PRODUCT'S LARGEST LICENSING EXPOSURE.
+// One call returned OHLCV for the whole US market, which is why it was used — and Polygon's
+// redistribution rights for public commercial display were never established. It supplied the
+// Screener's price, volume and change columns for 18,052 securities, discovered the universe itself,
+// and wrote 2.8 million rows into ticker_daily_candles that forty other files then read.
+//
+// It is replaced by a read, not by another vendor. ticker_daily_candles is now rebuilt from Tiingo
+// (scripts/backfill-licensed-candles.mjs), so the last two sessions already hold everything this
+// function needs: close, open, volume and the previous close. The nightly rebuild therefore makes NO
+// market-data vendor request at all, which is both licensing-safe and strictly cheaper.
+//
+// ⚠️ AND IT READS ONLY LICENSED ROWS. The source filter is the whole point: a Polygon row still on
+// disk must not re-enter the Screener through the back door while it waits to be replaced.
 const ymd = (d) => d.toISOString().slice(0, 10);
-async function fetchGrouped(dateStr) {
-  try {
-    const r = await fetch(`https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/${dateStr}?adjusted=true&apiKey=${POLYGON_KEY}`, { cache: 'no-store' });
-    if (!r.ok) return null;
-    const j = await r.json();
-    return Array.isArray(j.results) && j.results.length ? j.results : null;   // [{T,o,h,l,c,v}]
-  } catch { return null; }
-}
-// Latest two trading days (walk back over weekends/holidays) → price/volume + change% per ticker.
-async function polygonEod() {
-  if (!POLYGON_KEY) return null;
-  const now = new Date();
-  const found = [];
-  for (let i = 1; i <= 6 && found.length < 2; i++) {
-    const d = new Date(now); d.setUTCDate(now.getUTCDate() - i);
-    const res = await fetchGrouped(ymd(d));
-    if (res) found.push({ date: ymd(d), res });
+
+async function licensedEod() {
+  // The two most recent sessions that exist in licensed candles — walking the calendar is
+  // unnecessary when the table knows which days it has.
+  const ds = await db.execute(sql`
+    select distinct date::text as date from ticker_daily_candles
+     where source = any(${LICENSED_CANDLE_SOURCES}) order by date desc limit 2`);
+  const dates = (ds.rows ?? ds).map((r) => r.date);
+  if (!dates.length) return null;
+
+  const rows = await db.execute(sql`
+    select ticker, date::text as date, open, high, low, close, volume
+      from ticker_daily_candles
+     where source = any(${LICENSED_CANDLE_SOURCES}) and date::text = any(${dates})`);
+
+  const latest = dates[0], prev = dates[1] || null;
+  const prevClose = new Map();
+  const today = new Map();
+  for (const r of (rows.rows ?? rows)) {
+    if (r.date === prev) prevClose.set(r.ticker, Number(r.close));
+    else if (r.date === latest) today.set(r.ticker, r);
   }
-  if (!found.length) return null;
-  const prevClose = new Map((found[1]?.res || []).map((x) => [x.T, x.c]));
+  if (!today.size) return null;
+
   const map = new Map();
-  for (const x of found[0].res) {
-    const pc = prevClose.get(x.T);
-    map.set(x.T, {
-      price: x.c, open: x.o, volume: x.v,
-      changePct: (pc && pc > 0) ? ((x.c - pc) / pc) * 100 : null,
-      changeFromOpen: (x.o && x.o > 0 && x.c != null) ? ((x.c - x.o) / x.o) * 100 : null,
-      gap: (pc && pc > 0 && x.o != null) ? ((x.o - pc) / pc) * 100 : null,
+  for (const [t, x] of today) {
+    const c = Number(x.close), o = Number(x.open), v = Number(x.volume);
+    const pc = prevClose.get(t);
+    map.set(t, {
+      price: c, open: o, volume: v,
+      changePct: (pc && pc > 0) ? ((c - pc) / pc) * 100 : null,
+      changeFromOpen: (o && o > 0 && c != null) ? ((c - o) / o) * 100 : null,
+      gap: (pc && pc > 0 && o != null) ? ((o - pc) / pc) * 100 : null,
     });
   }
-  return { date: found[0].date, map, res: found[0].res };
+  // ⚠️ NO `res`. That field existed only so the rebuild could write today's vendor bars into
+  // ticker_daily_candles; the candle table is now the INPUT here rather than the output, and the
+  // Tiingo rebuild owns the writes. Returning it would invite a writer back.
+  return { date: latest, map };
 }
 
 // 8-K item code → screener News Category (mirrors eightk.js ITEM_MAP groupings). First match wins.
@@ -965,7 +1158,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   si.forEach((r) => { if (r.ticker && CLEAN_SYM.test(r.ticker) && (r.avg || 0) >= MIN_LIQUID_VOL) addTicker(r.ticker); });
 
   // Polygon grouped-daily → market-wide EOD price/volume/change (the real universe + prices).
-  const poly = await polygonEod();
+  const poly = await licensedEod();
   if (poly) poly.map.forEach((_, t) => { if (CLEAN_SYM.test(t)) addTicker(t); });
   const insByT = new Map(insRows.map((r) => [r.ticker, r]));
   const conByT = new Map(conRows.map((r) => [r.ticker, r]));
@@ -1177,38 +1370,26 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     upserts += batch.length;
   }
 
-  // 4b) Store today's Polygon bars into ticker_daily_candles so technicals (RSI/SMA/52w/perf)
-  // accumulate market-wide over time (the existing candle compute picks them up next runs).
-  if (poly) {
-    const candleRows = poly.res.filter((x) => CLEAN_SYM.test(x.T) && x.c != null)
-      .map((x) => ({ ticker: x.T, date: poly.date, open: x.o, high: x.h, low: x.l, close: x.c, volume: x.v ?? 0, source: 'polygon' }));
-    for (let i = 0; i < candleRows.length; i += 500) {
-      try { await db.insert(tickerDailyCandles).values(candleRows.slice(i, i + 500)).onConflictDoNothing(); } catch { /* skip */ }
-    }
-  }
+  // 4b) REMOVED — THE CANDLE TABLE IS NOW AN INPUT HERE, NOT AN OUTPUT.
+  //
+  // ⚠️ THIS BLOCK WROTE 2.8 MILLION UNLICENSED ROWS, about 7,400 a session, each tagged
+  // `source: 'polygon'`. It was added for an entirely reasonable reason — so market-wide technicals
+  // could accumulate over time — and the `source` column it set was read by nobody as a licence
+  // signal, so forty files went on to serve those rows as ordinary history. Daily bars now arrive
+  // from Tiingo (scripts/backfill-licensed-candles.mjs and the gap-fill in market/daily-series.mjs),
+  // and this rebuild READS them above in licensedEod(). A writer here would put the exposure back.
 
-  // 5) Delayed prices — ONLY when Polygon didn't cover the universe (fallback). Candles gave EOD for
-  // the warmed set; pull a throttled Finnhub quote for the top unpriced names + write-through to KV.
-  let quoted = 0;
-  if (FINNHUB_KEY && !poly) {
-    // Only names still missing a price (no candle, not in KV cache) — fetch fresh + write-through to
-    // KV so they persist and reuse next run / on ticker pages.
-    const need = tickers.filter((t) => !tech.has(t) && !priceMap.has(t)).sort(prioritize);
-    for (const t of need.slice(0, MAX_QUOTES)) {
-      try {
-        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_KEY}`, { cache: 'no-store' });
-        if (r.ok) {
-          const q = await r.json();
-          if (q && q.c) {
-            await db.update(screenerStocks).set({ price: q.c, changePct: q.dp ?? null }).where(eq(screenerStocks.ticker, t));
-            await kvSetQuote(t, { c: q.c, d: q.d ?? null, dp: q.dp ?? null, h: q.h ?? null, l: q.l ?? null, o: q.o ?? null, pc: q.pc ?? null });
-            quoted++;
-          }
-        }
-      } catch { /* skip */ }
-      await sleep(1100);
-    }
-  }
+  // 5) REMOVED — THE FALLBACK THAT CHAINED TWO UNAPPROVED PROVIDERS TOGETHER.
+  //
+  // ⚠️ `if (FINNHUB_KEY && !poly)` was "Polygon did not cover the universe, so quote the gaps from
+  // Finnhub" — one unlicensed vendor failing over to another, writing prices into screener_stocks AND
+  // through to the KV quote cache that the ticker pages read. It fired only during a Polygon outage,
+  // which is the worst possible moment to discover a licensing problem.
+  //
+  // There is no replacement fallback, deliberately. If a security has no licensed candle it has no
+  // price here, the column is null, and the UI renders the em dash it already renders for unknown
+  // values. An absent price is visible and recoverable; an unlicensed one is neither.
+  const quoted = 0;
 
   const [{ n }] = await db.select({ n: sql`count(*)`.mapWith(Number) }).from(screenerStocks);
   // POINT-IN-TIME CAPTURE, last and wrapped.

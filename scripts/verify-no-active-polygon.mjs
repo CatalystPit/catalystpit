@@ -1,137 +1,88 @@
-// ZERO ACTIVE PRODUCTION DEPENDENCE ON POLYGON.
+// ZERO POLYGON, FULL STOP — SUPERSEDED BY THE GENERAL LICENSING GUARD.
 //
-//   node scripts/verify-no-active-polygon.mjs [--mutate=<mode>]
+//   node scripts/verify-no-active-polygon.mjs
 //
-// ⚠️ SUCCESS IS NOT "grep finds no 'polygon'". SVG <polygon> is unrelated, and preserved adapters,
-// comments and migration history may legitimately remain. What must be zero is a Polygon URL a
-// CUSTOMER REQUEST can reach.
+// ⚠️ THIS SUITE'S ORIGINAL JOB IS DONE, AND ITS SHAPE IS WHY IT HAD TO CHANGE. It maintained a DECLARED
+// INVENTORY of the files that still contained a Polygon URL, each annotated `customerFacing: false`, and
+// failed if a file appeared undeclared or a declaration went stale. That was the right design while
+// Polygon was being wound down from a dozen places: it tolerated dormant adapters and migration history
+// while forbidding a live customer path.
 //
-// ⚠️ AND THIS DOES NOT PRETEND TO DO CALL-GRAPH ANALYSIS. A first version tried to infer which
-// function owned each Polygon URL and flagged `sleep()`, `ymd()` and `fval()` as live Polygon
-// dependencies — a heuristic confident enough to be believed and wrong enough to be useless.
-// Instead every file that still contains a Polygon URL in NON-COMMENT code is listed against a
-// declared inventory. A file that appears without a declaration fails; a declaration whose file
-// no longer has a Polygon URL also fails, so the inventory cannot rot.
-
+// It also encoded an assumption that turned out to be false. "Dormant, preserved for a future licensed
+// use" was recorded for lib/polygon-intraday.mjs, congress-chart's fetchPolygonDaily, market-data's
+// polygonQuotes, the Polygon dividend adapter and the option pricer — and a provenance audit then found
+// Polygon supplying 85% of the stored daily candle history, the Screener's prices, its fundamentals, its
+// company metadata and every technical indicator, through paths this inventory did not cover because they
+// were never URLs this file looked for. An inventory of exceptions is a list of things somebody decided
+// were fine.
+//
+// So the exceptions are gone, along with the files that held them, and the assertion is now the simple
+// one: NO file under src/ contains a Polygon URL in executable code. Not "none that are customer-facing",
+// not "none undeclared" — none.
+//
+// ⚠️ AND THE GENERAL VERSION LIVES IN scripts/verify-commercial-licensing.mjs, which does this for every
+// unapproved provider at once, sweeps for vendor key reads and provider-selection strings, and exercises
+// the runtime refusal. This file is kept as the Polygon-specific canary because Polygon was the largest
+// exposure and a regression here deserves its own name in a test report.
 import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 
-const L = (s = '') => console.log(s);
-const MUT = (process.argv.find((a) => a.startsWith('--mutate')) || '').split('=')[1]
-  || (process.argv.includes('--mutate') ? 'all' : '');
-const mut = (m) => MUT === m || MUT === 'all';
 let pass = 0, fail = 0;
-const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail++; L(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
+const ok = (n, c, d = '') => { if (c) { pass++; console.log('  ok   ' + n); } else { fail++; console.error(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
+const MUT = (process.argv.find((a) => a.startsWith('--mutate=')) || '').split('=')[1] || '';
 
-// Strips block comments, whole-line // comments, and trailing // comments (avoiding URLs' `://`).
+// ⚠️ LINE COMMENTS FIRST. market/tiingo.mjs contains `// /realtime/*, /consolidated/* all 404`, and
+// stripping block comments first treats that as an opener and deletes 30KB of real code.
 const strip = (s) => s
+  .replace(/^\s*\/\/.*$/gm, '')
   .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^[ \t]*\/\/.*$/gm, '')
-  .replace(/([^:'"`])\/\/.*$/gm, '$1');
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
 
-// ── THE DECLARED INVENTORY ───────────────────────────────────────────────────
-// customerFacing:true here would be a failure. Everything listed is either dormant (preserved,
-// no caller) or backend-only ingest that Tiingo measurably cannot replace.
-const INVENTORY = {
-  'lib/screener-data.js': {
-    customerFacing: false,
-    why: 'BACKEND INGEST. Supplies asset_type, exchange, sector, industry, sic_code, country and '
-       + 'grouped EOD into screener_meta/screener_stocks. Tiingo CANNOT replace it, measured: '
-       + '/tiingo/fundamentals/meta returns 20,319 rows but sector, industry, sicCode, sicSector, '
-       + 'sicIndustry, location and companyWebsite are "Field not available" on 20,289 of them — '
-       + 'usable for exactly 30 (the Dow). Migrating would delete the sector taxonomy the heatmap '
-       + 'is built on. Tiingo DOES supply ticker, name, isActive and isADR for all 20,319.',
-  },
-  'lib/polygon-intraday.mjs': { customerFacing: false, why: 'Dormant adapter; chart-intraday now uses Tiingo.' },
-  'lib/dividends/providers/polygon-dividends.mjs': { customerFacing: false, why: 'Dormant provider; dividends use Tiingo corporate actions.' },
-  'lib/congress-chart.mjs': { customerFacing: false, why: 'fetchPolygonDaily preserved, uncalled; the route uses fetchLicensedDaily.' },
-  'lib/congress-options.mjs': { customerFacing: false, why: 'Options pricing disabled at the cron; no licensed options feed exists to migrate to.' },
-  'lib/market-data.js': { customerFacing: false, why: 'polygonQuotes preserved, uncalled; getQuotes returns {} rather than falling back.' },
-  'app/api/earnings/route.js': { customerFacing: false, why: 'polygonEarnings preserved, uncalled; the fallback fails closed.' },
-};
-
-async function walk(dir, out = []) {
+const files = [];
+const walk = async (dir) => {
   for (const e of await readdir(dir, { withFileTypes: true })) {
-    const p = `${dir}/${e.name}`;
-    if (e.isDirectory()) await walk(p, out);
-    else if (/\.(js|jsx|mjs)$/.test(e.name)) out.push(p);
+    if (['node_modules', '.next', '.git'].includes(e.name)) continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) await walk(p);
+    else if (/\.(js|jsx|mjs|cjs|ts|tsx)$/.test(e.name)) files.push(p);
   }
-  return out;
-}
+};
+await walk('src');
 
-const files = await walk('src');
-const found = [];
-for (const f of files) {
-  if (/api\.polygon\.io/.test(strip(await readFile(f, 'utf8')))) found.push(f.replace(/^src\//, ''));
-}
-
-L('=== FILES WITH A POLYGON URL IN LIVE CODE ===');
-for (const f of found) {
-  const d = INVENTORY[f];
-  L(`  ${d ? (d.customerFacing ? '⚠️ CUSTOMER-FACING' : 'declared          ') : '⚠️ UNDECLARED     '} ${f}`);
-}
-
-L('\n=== ASSERTIONS ===');
-const undeclared = found.filter((f) => !INVENTORY[f]);
-ok('⚠️ every remaining Polygon URL is declared and accounted for',
-  mut('undeclared') ? false : undeclared.length === 0, undeclared.join(', '));
-ok('⚠️ NONE of them is customer-facing',
-  found.every((f) => INVENTORY[f] && INVENTORY[f].customerFacing !== true),
-  found.filter((f) => INVENTORY[f]?.customerFacing).join(', '));
-const stale = Object.keys(INVENTORY).filter((f) => !found.includes(f));
-ok('…and the inventory has not rotted (no declaration for a file that is now clean)',
-  stale.length === 0, stale.join(', '));
-
-// ── THE PATHS MIGRATED, ASSERTED BY NAME so a regression is legible ──
-L('');
-const migrated = [
-  ['app/api/chart-intraday/route.js', 'intraday chart candles'],
-  ['app/api/movers/route.js', 'Terminal movers'],
-  ['app/api/congress-chart/route.js', 'congress price line'],
-  ['app/api/refresh-congress/route.js', 'congress price enrichment'],
-  ['app/api/cron/enrich-insider-perf/route.js', 'insider performance'],
-  ['app/api/ticker/route.js', 'ticker news'],
-  ['app/api/dividends/route.js', 'dividend events + yield basis'],
-];
-for (const [file, what] of migrated) {
-  const code = strip(await readFile(`src/${file}`, 'utf8'));
-  ok(`${what}: no Polygon URL`, mut('revive') ? false : !/api\.polygon\.io/.test(code), file);
-}
-
-// ── FAIL-CLOSED PATHS: the code stays, the call does not happen ──
-L('');
+console.log(`\n=== NO POLYGON URL IN EXECUTABLE CODE UNDER src/ (${files.length} files) ===`);
 {
-  const earnings = strip(await readFile('src/app/api/earnings/route.js', 'utf8'));
-  ok('⚠️ earnings fails closed rather than calling Polygon',
-    mut('revive') ? false : /async function earningsFallback\s*\([^)]*\)\s*\{\s*return empty\(/.test(earnings),
-    'Tiingo fundamentals is capped to the Dow 30 — exactly the set that never needed a fallback');
-  ok('…and the adapter is preserved for a future licensed use', /async function polygonEarnings/.test(earnings));
+  // The hostname, not the word: `<polygon points=...>` is an SVG element and has nothing to do with a
+  // data vendor. The first version of the general guard flagged five files for exactly that.
+  const URL_RE = /https?:\/\/[a-z0-9.-]*polygon\.io/i;
+  const hits = [];
+  for (const f of files) {
+    let code = strip(await readFile(f, 'utf8'));
+    if (MUT === 'reintroduce' && f.endsWith('market-data.js')) code += '\nfetch("https://api.polygon.io/v2/x");\n';
+    if (URL_RE.test(code)) hits.push(f.replace(/\\/g, '/'));
+  }
+  ok('⚠️ zero files reach a Polygon URL', hits.length === 0, hits.join(', '));
 
-  const opts = strip(await readFile('src/app/api/cron/enrich-options/route.js', 'utf8'));
-  ok('⚠️ options pricing is disabled, not substituted with equity data',
-    mut('revive') ? false : /OPTIONS_PRICING_ENABLED = false/.test(opts) && /if \(!OPTIONS_PRICING_ENABLED\)/.test(opts));
-  ok('…and the options implementation is preserved intact',
-    /export async function priceOption/.test(await readFile('src/lib/congress-options.mjs', 'utf8')));
+  // The key is the other half: a key read is an intent to call, and one survived in four files after the
+  // URLs were removed — /api/dividends, /api/ticker, refresh-congress and screener-data.
+  const keyHits = [];
+  for (const f of files) {
+    const code = strip(await readFile(f, 'utf8'));
+    if (/process\.env\.POLYGON[A-Z_]*/.test(code)) keyHits.push(f.replace(/\\/g, '/'));
+  }
+  ok('⚠️ …and none reads a Polygon API key', keyHits.length === 0, keyHits.join(', '));
 
-  // ⚠️ NO SILENT FALLBACK. A Tiingo failure must not reach Polygon.
-  const md = strip(await readFile('src/lib/market-data.js', 'utf8'));
-  ok('⚠️ a quote failure returns empty rather than falling back to Polygon',
-    mut('revive') ? false : !/return polygonQuotes\(/.test(md));
-  ok('…and polygonQuotes is preserved, uncalled', /async function polygonQuotes/.test(md));
+  // The files the old inventory declared as dormant are gone rather than dormant.
+  for (const gone of ['src/lib/polygon-intraday.mjs', 'src/lib/congress-options.mjs',
+    'src/lib/dividends/providers/polygon-dividends.mjs']) {
+    ok(`${gone} no longer exists`, !files.some((f) => f.replace(/\\/g, '/') === gone));
+  }
+
+  // And the candle write contract refuses the source by name, so storage cannot refill either.
+  const { CANDLE_SOURCE, UNLICENSED_SOURCES } = await import('../src/lib/market/candles.mjs');
+  ok('⚠️ polygon is not a writable candle source', !Object.values(CANDLE_SOURCE).includes('polygon'));
+  ok('⚠️ …and is explicitly named unlicensed', UNLICENSED_SOURCES.includes('polygon'));
 }
 
-// ── THE REPLACEMENTS ARE THE LICENSED ONES ──
-L('');
-for (const [file, needle, what] of [
-  ['app/api/chart-intraday/route.js', 'getIntradayBars', 'charts read Tiingo intraday'],
-  ['app/api/dividends/route.js', 'getCorporateActions', 'dividends read Tiingo corporate actions'],
-  ['app/api/dividends/route.js', 'dailyCloses', 'the yield basis is our stored close'],
-  ['app/api/refresh-congress/route.js', 'dailyCloses', 'congress prices read stored candles first'],
-  ['app/api/cron/enrich-insider-perf/route.js', 'dailyCloses', 'insider performance reads stored candles first'],
-  ['app/api/ticker/route.js', 'fetchTiingoNews', 'ticker news reads Tiingo'],
-  ['app/api/movers/route.js', 'marketMovers', 'movers reuse the shared licensed snapshot'],
-]) {
-  ok(what, new RegExp(needle).test(await readFile(`src/${file}`, 'utf8')), `${needle} in ${file}`);
-}
-
-L(`\n${pass} passed, ${fail} failed`);
+console.log(`\n${pass} passed, ${fail} failed`);
+console.log('(the all-vendor version of this check is scripts/verify-commercial-licensing.mjs)');
 process.exit(fail ? 1 : 0);

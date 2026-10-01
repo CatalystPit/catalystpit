@@ -54,13 +54,31 @@ export const CANDLE_CONVENTION = CONVENTION.SPLIT_ADJUSTED;
  * canonical. Keeping the retired value distinct is what makes the contaminated rows identifiable
  * rather than guessable, and it is the same marker the repair already used.
  */
+/**
+ * The sources a row may be WRITTEN with.
+ *
+ * ⚠️ 'polygon' WAS IN HERE, AND THAT IS WHY 2.8 MILLION UNLICENSED ROWS PASSED THE WRITE CONTRACT. This
+ * set exists to stop a writer emitting the retired total-return basis, so it was a CONVENTION check —
+ * and Polygon's bars were split-adjusted, therefore canonical, therefore allowed. The guard did its job
+ * perfectly and was asking the wrong question.
+ *
+ * It now asks both: a row must be on the canonical basis AND from a provider we may redistribute. There
+ * is one such provider, so there is one entry.
+ */
 export const CANDLE_SOURCE = Object.freeze({
   TIINGO: 'tiingo_split_adj',
-  POLYGON: 'polygon',
 });
 
-/** Written by the pre-fix writers. Total return. Never produced by this module. */
+/**
+ * Sources that exist in storage and may no longer be written.
+ *
+ * 'tiingo'  the pre-fix total-return basis — a CONVENTION problem.
+ * 'polygon' split-adjusted and perfectly good data from a provider we hold no redistribution rights
+ *           for — a LICENSING problem. Both are refused at the write boundary, for different reasons,
+ *           and assertCanonicalCandles says which so the next person is not left guessing.
+ */
 export const RETIRED_SOURCES = Object.freeze(['tiingo']);
+export const UNLICENSED_SOURCES = Object.freeze(['polygon']);
 
 export class CandleContractViolation extends Error {
   constructor(message, detail = {}) {
@@ -156,7 +174,12 @@ export function assertCanonicalCandles(rows, { ticker = null } = {}) {
       throw new CandleContractViolation(
         RETIRED_SOURCES.includes(r.source)
           ? `source '${r.source}' is the retired TOTAL RETURN basis; convert with tiingoDailyToCanonical() and write '${CANDLE_SOURCE.TIINGO}'`
-          : `unknown source '${r.source}'`,
+          : UNLICENSED_SOURCES.includes(r.source)
+            // ⚠️ A LICENSING REFUSAL, NOT A CONVENTION ONE, and the message has to say so — a reader who
+            // sees "unknown source" will reasonably try to make it known. This data may be perfectly
+            // well-formed and still must not be stored: Tiingo is the only provider we may redistribute.
+            ? `source '${r.source}' is an UNLICENSED provider; Catalyst Pit may only store and serve market data from the approved provider. See src/lib/licensing/providers.mjs`
+            : `unknown source '${r.source}'`,
         { ticker: r.ticker, date: r.date, source: r.source });
     }
     if (ticker && r.ticker !== ticker) {

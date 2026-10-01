@@ -47,9 +47,16 @@ export function activeCapabilities() {
   if (process.env.TIINGO_API_KEY && String(process.env.TIINGO_ENABLED ?? 'true').toLowerCase() !== 'false') {
     return tiingoCapabilities();
   }
-  const hasPolygon = !!(process.env.POLYGON_KEY || process.env.POLYGON_API_KEY);
-  if (!hasPolygon) return NO_PROVIDER;
-  return INTERIM_PROVIDER;
+  // ⚠️ THERE IS NO SECOND PROVIDER TO FALL BACK TO, AND THERE USED TO BE. This read POLYGON_KEY and,
+  // when it was present, described the scanner's capabilities as Polygon Stocks Starter — a provider
+  // whose redistribution rights were never established. No market data flowed through this particular
+  // function, but it is a provider SELECTION driven entirely by an environment variable, which is the
+  // exact shape the licensing rule forbids: a key appearing in an environment must not be able to put an
+  // unapproved provider back into the product, not even as a claim about what the product can do.
+  //
+  // Without the licensed feed there is no feed. NO_PROVIDER is what the UI already renders honestly as
+  // "the scanner needs a market-data feed" rather than an empty table that reads as "nothing is moving".
+  return NO_PROVIDER;
 }
 
 /**

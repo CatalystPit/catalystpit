@@ -103,6 +103,10 @@ section('6. the logo proxy is budgeted as an image, not as a provider call');
   const code = route.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   ok('a logo bucket exists, distinct from provider', !!LIMITS.logo);
+  // ⚠️ THE ROUTE NO LONGER FETCHES ANYTHING, and the bucket is still right. /api/logo called logo.dev
+  // and FMP for company images; both are unapproved commercial providers, so it now always answers 404
+  // and <TickerLogo> draws our own initials badge. The rate limit stays because the endpoint is still
+  // public and still cheap to hammer.
   ok('…and /api/logo actually uses it',
     /apiRateLimit\(\s*request\s*,\s*['"]logo['"]\s*,\s*['"]logo['"]/.test(code),
     code.match(/apiRateLimit\([^)]*\)/)?.[0]);

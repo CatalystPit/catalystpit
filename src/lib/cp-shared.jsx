@@ -1891,7 +1891,12 @@ export function Footer() {
       </div>
       <div style={{display:"flex", alignItems:"center", gap:6,
         fontFamily:"'DM Sans',sans-serif", fontSize:10, color:"rgba(255,255,255,0.5)"}}>
-        2026 CATALYSTPIT · NOT FINANCIAL ADVICE · DELAYED FILINGS · <a href="https://logo.dev" target="_blank" rel="noopener noreferrer" style={{color:"rgba(255,255,255,0.5)", textDecoration:"none"}}>LOGOS BY LOGO.DEV</a>
+        {/* ⚠️ THE "LOGOS BY LOGO.DEV" ATTRIBUTION IS REMOVED BECAUSE IT STOPPED BEING TRUE. It was
+            required by logo.dev's free tier, and /api/logo no longer calls them — company logos now
+            come from our own initials renderer. An attribution for a provider we do not use is a false
+            statement in the footer of every page, and the wrong one to leave behind while removing a
+            provider. If logo.dev is ever licensed, the credit comes back with it. */}
+        2026 CATALYSTPIT · NOT FINANCIAL ADVICE · DELAYED FILINGS
       </div>
     </div>
   );

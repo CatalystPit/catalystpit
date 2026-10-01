@@ -14,7 +14,7 @@ import { cusipMap, securityReviewQueue } from './schema';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const US_EXCH = new Set(['US', 'UN', 'UW', 'UQ', 'UA', 'UR', 'UP', 'UV', 'UF', 'UD']);
-const OPENFIGI_KEY = process.env.OPENFIGI_API_KEY;
+// ⚠️ THE OPENFIGI KEY BINDING IS GONE WITH THE CLIENT. See the note above resolveCusips.
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -84,34 +84,32 @@ function pickTicker(data) {
   return pick ? pick.t : null;
 }
 
-// Batch OpenFIGI CUSIP→ticker (US-listed equity preferred). Returns Map(cusip → ticker) for matches only.
-async function openfigi(cusips) {
-  const out = new Map();
-  const batchSize = OPENFIGI_KEY ? 100 : 10;
-  for (let i = 0; i < cusips.length; i += batchSize) {
-    const batch = cusips.slice(i, i + batchSize);
-    try {
-      const r = await fetch('https://api.openfigi.com/v3/mapping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(OPENFIGI_KEY ? { 'X-OPENFIGI-APIKEY': OPENFIGI_KEY } : {}) },
-        body: JSON.stringify(batch.map((c) => ({ idType: 'ID_CUSIP', idValue: c }))),
-      });
-      if (r.ok) {
-        const arr = await r.json();
-        arr.forEach((res, j) => {
-          const t = pickTicker(res.data);
-          if (t) out.set(batch[j], t);
-        });
-      }
-    } catch { /* skip batch */ }
-    await sleep(OPENFIGI_KEY ? 300 : 2600);
-  }
-  return out;
+// ⚠️ OPENFIGI CUSIP→TICKER RESOLUTION IS REMOVED.
+//
+// OpenFIGI is a commercial mapping service whose redistribution terms we have not established, and the
+// thing it maps FROM — a CUSIP — is itself a licensed identifier. 44,409 of the 51,532 rows in cusip_map
+// were resolved this way. Keeping a free-tier mapping call because it is free is the same reasoning that
+// put four unapproved market-data vendors in front of users.
+//
+// ⚠️ WHAT REPLACES IT, AND WHAT IS GENUINELY LOST. The approved path already exists and already has
+// 6,267 rows: SEC publishes its own ticker list, and lib/institutions-universe.js matches the 13F
+// issuer NAME against it (cusip_map source 'sec-name', confidence 'medium'). That is a weaker key than a
+// CUSIP — two issuers with similar names are a real risk, which is exactly why it records medium
+// confidence — so some newly-filed holdings will resolve more slowly and some will not resolve at all.
+//
+// An unresolved holding is recorded as unresolved and excluded from the ticker-level rollups. The 13F
+// dollar values, the fund pages and the quarter-over-quarter breadth are unaffected: they key on CIK and
+// CUSIP, not on our ticker mapping. Only the convenience of a ticker label is affected.
+//
+// The 44,409 existing mappings are NOT deleted. They are the inventory, and re-deriving them is a
+// separate decision for the owner.
+//
+// The function is kept as an empty resolver rather than deleted, because two callers and a re-resolution
+// path depend on its shape; an empty Map is exactly "nothing matched", which both already handle.
+async function openfigi() {
+  return new Map();
 }
 
-// Resolve a set of CUSIPs → Map(cusip → ticker) for the ones we can map. Order of resolution:
-//   cusip_map (DB) → old KV cache (promote in) → OpenFIGI (persist hits, queue misses).
-// Known-unresolved CUSIPs are skipped (not re-queried) to stay bounded. `maxLookups` caps OpenFIGI.
 export async function resolveCusips(cusips, { maxLookups = 500 } = {}) {
   await ensureSecurityTables();
   const uniq = [...new Set((cusips || []).filter(Boolean).map((c) => String(c).toUpperCase()))];

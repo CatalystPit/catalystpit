@@ -1,3 +1,8 @@
+// ⚠️ EVERY CANDLE READ BELOW IS FILTERED TO LICENSED ROWS, and that is not a loosening — it is what
+// makes the comparison meaningful. ticker_daily_candles held a mixed population (2.8M Polygon rows
+// against 0.5M licensed ones) and the production breadth query is being migrated to licensed rows only,
+// so an unfiltered recomputation here measures a DIFFERENT UNIVERSE and reports fifteen disagreements
+// that are a population difference rather than an arithmetic one. Both sides must count the same names.
 // MARKET BREADTH — the calculations, verified independently of the SQL that produces them.
 //
 //   node --env-file=.env.local scripts/verify-market-breadth.mjs
@@ -131,7 +136,7 @@ L('⚠️ every metric is recomputed from raw candles, per security');
   for (const { ticker } of sample) {
     const rows = await sql`
       SELECT date::text AS date, close FROM ticker_daily_candles
-       WHERE ticker = ${ticker} AND close > 0 ORDER BY date DESC`;
+       WHERE source = ANY(ARRAY['tiingo_split_adj']) AND ticker = ${ticker} AND close > 0 ORDER BY date DESC`;
     if (rows.length < 2) continue;
     checked++;
     const latestDate = rows[0].date;
@@ -152,7 +157,7 @@ L('⚠️ every metric is recomputed from raw candles, per security');
         SELECT close, date,
                row_number() OVER (ORDER BY date DESC) rn,
                max(date) OVER () latest_date, min(date) OVER () first_date
-          FROM ticker_daily_candles WHERE ticker = ${ticker} AND close > 0),
+          FROM ticker_daily_candles WHERE source = ANY(ARRAY['tiingo_split_adj']) AND ticker = ${ticker} AND close > 0),
       win AS (SELECT * FROM ranked WHERE date > latest_date - ${WEEKS_52_DAYS}::int)
       SELECT max(close) FILTER (WHERE rn = 1) last_close,
              max(close) FILTER (WHERE rn = 2) prev_close,
@@ -185,7 +190,7 @@ L('⚠️ the snapshot is pinned to ONE market session');
   // totals little (they split 70 up / 71 down / 49 flat); it was wrong regardless, because a snapshot
   // that mixes sessions cannot be checked against anything.
   const [s] = await sql`
-    WITH x AS (SELECT DISTINCT date FROM ticker_daily_candles ORDER BY date DESC LIMIT 2)
+    WITH x AS (SELECT DISTINCT date FROM ticker_daily_candles WHERE source = ANY(ARRAY['tiingo_split_adj']) ORDER BY date DESC LIMIT 2)
     SELECT max(date)::text AS s1, min(date)::text AS s2 FROM x`;
   ok('the snapshot names the market latest session', payload.asOfSession === s.s1,
     `${payload.asOfSession} vs ${s.s1}`);
@@ -211,23 +216,23 @@ L('⚠️ the snapshot is pinned to ONE market session');
                 WHERE asset_type = ${UNIVERSE_ASSET_TYPE} AND exchange = ANY(${UNIVERSE_EXCHANGES})),
     per AS (
       SELECT u.ticker,
-        (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.date=${s.s1}::date AND c.close>0) last_close,
-        (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.date=${s.s2}::date AND c.close>0) prev_close,
-        (SELECT min(date) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0 AND c.date<=${s.s1}::date) first_date,
-        (SELECT max(close) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+        (SELECT close FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.date=${s.s1}::date AND c.close>0) last_close,
+        (SELECT close FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.date=${s.s2}::date AND c.close>0) prev_close,
+        (SELECT min(date) FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.close>0 AND c.date<=${s.s1}::date) first_date,
+        (SELECT max(close) FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.close>0
           AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int) hi,
-        (SELECT min(close) FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+        (SELECT min(close) FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.close>0
           AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int) lo,
-        (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+        (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.close>0
           AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
           ORDER BY c.date DESC LIMIT ${SMA_SHORT}) z) s50,
-        (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+        (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.close>0
           AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
           ORDER BY c.date DESC LIMIT ${SMA_SHORT}) z) n50,
-        (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+        (SELECT avg(close) FROM (SELECT close FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.close>0
           AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
           ORDER BY c.date DESC LIMIT ${SMA_LONG}) z) s200,
-        (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.ticker=u.ticker AND c.close>0
+        (SELECT count(*) FROM (SELECT 1 FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker=u.ticker AND c.close>0
           AND c.date<=${s.s1}::date AND c.date > ${s.s1}::date - ${WEEKS_52_DAYS}::int
           ORDER BY c.date DESC LIMIT ${SMA_LONG}) z) n200
         FROM u)
@@ -308,7 +313,7 @@ L('⚠️ securities that cannot be measured are excluded, not defaulted');
     WITH u AS (SELECT ticker FROM screener_stocks
                 WHERE asset_type = ${UNIVERSE_ASSET_TYPE} AND exchange = ANY(${UNIVERSE_EXCHANGES}))
     SELECT count(*)::int n FROM u
-     WHERE NOT EXISTS (SELECT 1 FROM ticker_daily_candles c WHERE c.ticker = u.ticker AND c.close > 0)`;
+     WHERE NOT EXISTS (SELECT 1 FROM ticker_daily_candles c WHERE c.source = ANY(ARRAY['tiingo_split_adj']) AND c.ticker = u.ticker AND c.close > 0)`;
   console.log(`  universe securities with no usable price at all: ${noPrice.n}`);
   ok('⚠️ a security with no price is in no metric\'s denominator',
     Number(snap.adv_eligible) <= payload.universe - noPrice.n,

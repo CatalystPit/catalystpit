@@ -16,7 +16,9 @@ export const maxDuration = 300;
 // already in fund_filings is skipped, so multiple runs progressively fill the slate.
 const KV_TOKEN    = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
-const OPENFIGI_KEY = process.env.OPENFIGI_API_KEY;   // optional — higher OpenFIGI rate/batch
+// ⚠️ THE OPENFIGI KEY BINDING IS GONE WITH THE CLIENT ABOVE. It only ever raised the batch size and
+// rate limit, so it looked harmless — but a key read is an intent to call, and leaving one behind is how
+// a removed integration reads as scaffolding somebody meant to finish.
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;         // enables the in-app admin import trigger
 
 // True when the signed-in user is the configured admin (for manual imports without the cron secret).
@@ -174,36 +176,34 @@ async function storeFiling(cik, quarter, filedDate, accession, rows) {
     .onConflictDoNothing();
 }
 
-// OpenFIGI CUSIP→ticker, batched + KV-cached. Returns Map(cusip→ticker|'').
-const US_EXCH = new Set(['US', 'UN', 'UW', 'UQ', 'UA', 'UR', 'UP', 'UV', 'UF', 'UD']);
+// ⚠️ OPENFIGI CUSIP→TICKER RESOLUTION IS REMOVED.
+//
+// OpenFIGI is a commercial mapping service whose redistribution terms we have not established, and the
+// thing it maps FROM — a CUSIP — is itself a licensed identifier. 44,409 of the 51,532 rows in cusip_map
+// were resolved this way. Keeping a free-tier mapping call because it is free is the same reasoning that
+// put four unapproved market-data vendors in front of users.
+//
+// ⚠️ WHAT REPLACES IT, AND WHAT IS GENUINELY LOST. The approved path already exists and already has
+// 6,267 rows: SEC publishes its own ticker list, and lib/institutions-universe.js matches the 13F
+// issuer NAME against it (cusip_map source 'sec-name', confidence 'medium'). That is a weaker key than a
+// CUSIP — two issuers with similar names are a real risk, which is exactly why it records medium
+// confidence — so some newly-filed holdings will resolve more slowly and some will not resolve at all.
+//
+// An unresolved holding is recorded as unresolved and excluded from the ticker-level rollups. The 13F
+// dollar values, the fund pages and the quarter-over-quarter breadth are unaffected: they key on CIK and
+// CUSIP, not on our ticker mapping. This cron had its OWN copy of the client, which is how one removal can miss one.
+//
+// The 44,409 existing mappings are NOT deleted. They are the inventory, and re-deriving them is a
+// separate decision for the owner.
+//
+// The KV cache is still READ: those entries were resolved before this change and are already stored in
+// cusip_map, so re-deriving them would change nothing while refusing to read them would drop mappings the
+// product already relies on. Nothing new is written here.
 async function resolveTickers(cusips) {
   const out = new Map();
-  const need = [];
   for (const c of cusips) {
     const hit = await kvGet(`catalystpit:cusip:${c}`);
-    if (hit != null) out.set(c, hit); else need.push(c);
-  }
-  const batchSize = OPENFIGI_KEY ? 100 : 10;
-  for (let i = 0; i < need.length; i += batchSize) {
-    const batch = need.slice(i, i + batchSize);
-    try {
-      const r = await fetch('https://api.openfigi.com/v3/mapping', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(OPENFIGI_KEY ? { 'X-OPENFIGI-APIKEY': OPENFIGI_KEY } : {}) },
-        body: JSON.stringify(batch.map((c) => ({ idType: 'ID_CUSIP', idValue: c }))),
-      });
-      if (r.ok) {
-        const arr = await r.json();
-        arr.forEach((res, j) => {
-          const c = batch[j];
-          const pick = (res.data || []).find((d) => US_EXCH.has(d.exchCode)) || (res.data || [])[0];
-          const t = pick?.ticker ? String(pick.ticker).toUpperCase() : '';
-          out.set(c, t);
-          if (t) kvSet(`catalystpit:cusip:${c}`, t, 90 * 24 * 3600);   // cache positives 90d
-        });
-      }
-    } catch { /* skip batch */ }
-    await sleep(OPENFIGI_KEY ? 300 : 2600);   // respect rate limits (250/min keyed, ~25/min anon)
+    if (hit != null) out.set(c, hit);
   }
   return out;
 }

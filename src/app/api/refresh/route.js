@@ -15,7 +15,6 @@ const SEC_HEADERS = { 'User-Agent': 'CatalystPit contact@catalystpit.com' };
 
 const KV_TOKEN     = process.env.KV_REST_API_TOKEN;
 const CRON_SECRET  = process.env.CRON_SECRET;
-const FINNHUB_KEY  = process.env.FINNHUB_KEY;
 
 const NEWS_TICKERS = ['AAPL','MSFT','NVDA','TSLA','AMZN','META','GOOGL','AMD','NFLX','GOOG','JPM','BAC','XOM','WMT','COIN','PLTR','BA','DIS','UBER','SHOP'];
 
@@ -39,30 +38,55 @@ async function kvGet(key) {
   } catch { return null; }
 }
 
+/**
+ * THE TICKER TAPE, PRICED FROM THE LICENSED PROVIDER.
+ *
+ * ⚠️ THIS WAS FOURTEEN FINNHUB QUOTES EVERY FIVE MINUTES, AND IT WAS THE MOST PUBLIC EXPOSURE IN THE
+ * PRODUCT. The results were written to catalystpit:ticker_tape and catalystpit:market_snapshot, which
+ * are read by the homepage (CatalystPit.jsx), the Terminal and NewsFeed.jsx — and NewsFeed's own
+ * comment records that the tape stays on the public path for SIGNED-OUT visitors. /api/market serves
+ * the same keys with no authentication at all. So an unlicensed vendor's prices were the first thing
+ * an anonymous visitor saw.
+ *
+ * One getQuotes() call now covers the whole set — fewer requests than the throttled per-symbol loop it
+ * replaces — and there is no second provider behind it. If Tiingo cannot answer, this returns {} and
+ * the caller's existing guard refuses to overwrite the last good tape, which is the correct failure:
+ * a slightly stale tape rather than an unlicensed one.
+ */
 async function fetchStockPrices(tickers) {
-  const results = await throttledBatch(tickers, 5, 200, async (sym) => {
-    try {
-      const res = await fetch(
-        `https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`
-      );
-      if (!res.ok) return [sym, null];
-      const data = await res.json();
-      if (!data || !data.c) return [sym, null];
-      const price = +data.c.toFixed(2);
-      const change = +(data.d ?? 0).toFixed(2);
-      const changePct = +(data.dp ?? 0).toFixed(2);
-      return [sym, { price, change, changePct }];
-    } catch { return [sym, null]; }
-  });
-  return Object.fromEntries(results.filter(([, v]) => v && v.price > 0));
+  try {
+    const { getQuotes } = await import('../../../lib/market-data');
+    // realtime:false — the tape is a single shared KV value served to everyone, including signed-out
+    // readers, so it must never contain an entitled real-time print.
+    const quotes = await getQuotes(tickers, { realtime: false });
+    const out = {};
+    for (const [sym, q] of Object.entries(quotes || {})) {
+      const price = Number(q?.price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const pc = Number(q?.prevClose);
+      const changePct = Number.isFinite(Number(q?.changePct)) ? Number(q.changePct)
+        : (pc > 0 ? ((price - pc) / pc) * 100 : 0);
+      out[sym] = {
+        price: +price.toFixed(2),
+        change: Number.isFinite(pc) ? +(price - pc).toFixed(2) : 0,
+        changePct: +changePct.toFixed(2),
+      };
+    }
+    return out;
+  } catch { return {}; }
 }
 
+/**
+ * BTC IS NO LONGER PRICED. CoinGecko is a commercial provider whose redistribution rights we have not
+ * established, and there is no approved crypto source to move to — Tiingo's entitlement here is
+ * equities. Substituting another commercial crypto API would be the same error with a different name.
+ *
+ * ⚠️ RETURNS {} RATHER THAN A ZERO. A price of 0 renders as a real number on a tape; an absent symbol
+ * simply does not appear, because every consumer already filters on `price > 0`. The BTC-USD entry
+ * drops out of the tape and the snapshot, and nothing claims a value it does not have.
+ */
 async function fetchCrypto() {
-  const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true');
-  const data = await res.json();
-  return {
-    'BTC-USD': { price:+(data.bitcoin?.usd||0).toFixed(2), change:0, changePct:+(data.bitcoin?.usd_24h_change||0).toFixed(2) },
-  };
+  return {};
 }
 
 // ─── Form 4 helpers ─────────────────────────────────────────────────────────
@@ -575,64 +599,24 @@ async function fetchWire(url, sourceName) {
   }
 }
 
-async function fetchFinnhubPerTicker() {
-  if (!FINNHUB_KEY) return [];
-  const to = new Date();
-  const from = new Date(to.getTime() - 3 * 24 * 60 * 60 * 1000);
-  const fmt = d => d.toISOString().split('T')[0];
-  try {
-    const results = await Promise.all(
-      NEWS_TICKERS.map(async ticker => {
-        try {
-          const res = await fetch(
-            `https://finnhub.io/api/v1/company-news?symbol=${ticker}&from=${fmt(from)}&to=${fmt(to)}&token=${FINNHUB_KEY}`
-          );
-          if (!res.ok) return [];
-          const data = await res.json();
-          return (data || []).slice(0, 3).map(a => ({
-            title: a.headline,
-            source: a.source || 'Finnhub',
-            url: a.url,
-            image_url: isPlaceholderImage(a.image) ? null : a.image,
-            published: new Date(a.datetime * 1000).toISOString(),
-            ticker,
-            _provider: 'finnhub-ticker',
-            _rank: 1,
-          })).filter(a => a.title && a.url);
-        } catch { return []; }
-      })
-    );
-    return results.flat();
-  } catch (e) {
-    console.log(`❌ Finnhub per-ticker: ${e.message}`);
-    return [];
-  }
-}
-
-async function fetchFinnhubMarket() {
-  if (!FINNHUB_KEY) return [];
-  try {
-    const res = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_KEY}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data || [])
-      .filter(a => a.headline && a.url)
-      .slice(0, 30)
-      .map(a => ({
-        title: a.headline,
-        source: a.source || 'Finnhub',
-        url: a.url,
-        image_url: isPlaceholderImage(a.image) ? null : a.image,
-        published: new Date(a.datetime * 1000).toISOString(),
-        ticker: null,
-        _provider: 'finnhub-market',
-        _rank: 2,
-      }));
-  } catch (e) {
-    console.log(`❌ Finnhub market: ${e.message}`);
-    return [];
-  }
-}
+/**
+ * THE TWO FINNHUB NEWS FEEDS ARE GONE.
+ *
+ * ⚠️ WHAT THEY WERE. fetchFinnhubPerTicker() pulled /company-news for a fixed ticker list and
+ * fetchFinnhubMarket() pulled /news?category=general; both were merged into catalystpit:_raw_news and
+ * catalystpit:wire_news, which the public news feed renders. Their content was largely syndicated from
+ * publishers Finnhub aggregates, so the licence question was never ours to answer in the first place.
+ *
+ * ⚠️ AND NOTHING REPLACES THEM, BECAUSE NOTHING NEEDS TO. The same handler already fetches WSJ,
+ * MarketWatch and Bloomberg RSS directly, and the Pit Wire's own 87-feed pipeline
+ * (lib/primary-sources.mjs) is the product's real news ingest. Removing these two narrows the wire's
+ * breadth slightly; it does not leave it empty, and the merge below handles a missing source already.
+ *
+ * Returning [] rather than deleting the call sites keeps the merge arithmetic and the log line honest
+ * about how many sources contributed.
+ */
+async function fetchFinnhubPerTicker() { return []; }
+async function fetchFinnhubMarket() { return []; }
 
 const HARD_BLOCK = [
   'ufc','mma','nfl','nba','nhl','mlb','wnba','ncaa','espn','fight night',

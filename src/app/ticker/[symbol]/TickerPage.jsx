@@ -25,7 +25,7 @@ const usd      = (n) => (n == null || isNaN(n)) ? '—' : `$${Number(n).toFixed(
 const fmtNum   = (n) => (n == null || isNaN(n)) ? '—' : Number(n).toFixed(2);
 const fmtPct   = (n) => (n == null || isNaN(n)) ? '—' : `${Number(n).toFixed(2)}%`;
 const fmtVolM  = (n) => (n == null || isNaN(n)) ? '—' : `${Number(n).toFixed(1)}M`;
-const fmtMktCap = (m) => {                 // Finnhub marketCapitalization is in millions
+const fmtMktCap = (m) => {                 // market cap arrives in millions
   if (m == null || isNaN(m)) return '—';
   if (m >= 1e6) return `$${(m / 1e6).toFixed(2)}T`;
   if (m >= 1e3) return `$${(m / 1e3).toFixed(2)}B`;
@@ -149,7 +149,7 @@ const newsTime = (iso) => {
   return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
-// Yahoo-via-Finnhub always returns this one generic placeholder (no real Yahoo thumbnails
+// The retired news aggregator always returned this one generic placeholder (no real Yahoo thumbnails
 // exist in our feed) → treat it as "no image" so we fall back to the gradient, not a y!fi wall.
 const isYfiPlaceholder = (url) => /\/yahoo_finance_[a-z-]+_h_p_finance/i.test(url || '');
 

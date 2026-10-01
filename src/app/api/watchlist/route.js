@@ -11,7 +11,6 @@ export const maxDuration = 30;          // we may fan out a bounded set of Finnh
 
 const KV_URL       = process.env.KV_REST_API_URL;
 const KV_TOKEN     = process.env.KV_REST_API_TOKEN;
-const FINNHUB_KEY  = process.env.FINNHUB_KEY;
 
 // Shared quote cache — SAME key + TTL + value shape as /api/ticker, so the ticker
 // page and the watchlist read/write one cache (warming either warms both).
@@ -105,21 +104,37 @@ async function readCachedQuote(sym) {
   try { const q = JSON.parse(hit); return validQuote(q) ? q : null; } catch { return null; }
 }
 
-// Live Finnhub /quote on a cache MISS, then write-through to the SHARED cache (same
-// key/shape /api/ticker uses) so it's warm next time and both surfaces agree.
+// A LICENSED quote on a cache MISS, then write-through to the SHARED cache (same key/shape
+// /api/ticker uses) so it's warm next time and both surfaces agree.
 // Returns the quote | null (fetch failed, or empty/invalid → caller shows "—").
+//
+// ⚠️ THIS WAS A LIVE FINNHUB CALL, AND THE SHARED CACHE IS WHY IT MATTERED TWICE. A watchlist miss
+// fetched an unlicensed quote and then wrote it into the very key the ticker page reads, so one
+// surface's cache miss served unlicensed prices to the other. Both now read the same licensed
+// provider through getQuotes(), and the shared key finally lives up to its comment.
+//
+// ⚠️ AND THERE IS NO SECOND PROVIDER BEHIND IT. getQuotes() returns {} when Tiingo cannot answer; this
+// returns null, and the caller already has a durable last-close fallback from our own candles followed
+// by an em dash. That chain is entirely licensed, end to end.
 async function fetchAndCacheQuote(sym) {
-  if (!FINNHUB_KEY) return null;
   try {
-    const r = await fetch(
-      `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${FINNHUB_KEY}`,
-      { cache: 'no-store', signal: AbortSignal.timeout(QUOTE_TIMEOUT_MS) },
-    );
-    if (!r.ok) return null;
-    const q = await r.json().catch(() => null);
-    if (!validQuote(q)) return null;                         // empty/invalid → no cache write
-    const quote = { c: q.c ?? null, d: q.d ?? null, dp: q.dp ?? null,
-                    h: q.h ?? null, l: q.l ?? null, o: q.o ?? null, pc: q.pc ?? null };
+    const { getQuotes } = await import('../../../lib/market-data');
+    // realtime:false — this cache is shared between viewers, so it must never hold an entitled print.
+    const got = await getQuotes([sym], { realtime: false });
+    const g = got?.[sym];
+    if (!g || !Number.isFinite(Number(g.price))) return null;
+    const c = Number(g.price);
+    const pc = Number.isFinite(Number(g.prevClose)) ? Number(g.prevClose) : null;
+    const quote = {
+      c,
+      d:  pc != null ? +(c - pc).toFixed(4) : null,
+      dp: Number.isFinite(Number(g.changePct)) ? Number(g.changePct) : (pc > 0 ? +(((c - pc) / pc) * 100).toFixed(4) : null),
+      h:  Number.isFinite(Number(g.high)) ? Number(g.high) : null,
+      l:  Number.isFinite(Number(g.low)) ? Number(g.low) : null,
+      o:  Number.isFinite(Number(g.open)) ? Number(g.open) : null,
+      pc,
+    };
+    if (!validQuote(quote)) return null;                     // empty/invalid → no cache write
     await kvSet(quoteKey(sym), JSON.stringify(quote), QUOTE_TTL);
     return quote;
   } catch { return null; }

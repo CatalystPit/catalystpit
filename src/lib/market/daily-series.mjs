@@ -21,7 +21,8 @@
 
 import { db } from '../db';
 import { tickerDailyCandles } from '../schema';
-import { and, eq, gte, lte, asc } from 'drizzle-orm';
+import { LICENSED_CANDLE_SOURCES } from '../licensing/providers.mjs';
+import { and, eq, gte, lte, asc, inArray } from 'drizzle-orm';
 
 /**
  * @returns [{ date: 'YYYY-MM-DD', close: number }] ascending, or [] when nothing is available.
@@ -32,11 +33,23 @@ export async function dailyCloses(ticker, from, to, { fetchMissing = true } = {}
   const sym = String(ticker || '').toUpperCase().trim();
   if (!sym || !from || !to) return [];
 
+  // ⚠️ THE LICENCE GATE, AND IT BELONGS HERE BECAUSE THIS IS THE CHOKE POINT.
+  //
+  // ticker_daily_candles held 2,813,069 Polygon rows against 509,851 licensed ones, and `source` was a
+  // CONVENTION discriminator — which split-adjusted basis a row used — not a licence signal. So forty
+  // readers took Polygon rows as ordinary history: charts, the Screener, breadth, the heatmap, movers,
+  // Fear & Greed, Consensus, Evidence, the congressional leaderboard and the server-rendered ticker
+  // pages. Gating each of those forty callers would have been forty chances to miss one.
+  //
+  // Almost all of them read their daily closes through this function, so the filter goes here. A
+  // Polygon row stays on disk, stays auditable, and stops reaching anybody — and because the gap now
+  // looks like missing history, the Tiingo gap-fill below repairs it on demand as a side effect.
   const read = async () => {
     const rows = await db
       .select({ date: tickerDailyCandles.date, close: tickerDailyCandles.close })
       .from(tickerDailyCandles)
       .where(and(eq(tickerDailyCandles.ticker, sym),
+        inArray(tickerDailyCandles.source, LICENSED_CANDLE_SOURCES),
         gte(tickerDailyCandles.date, from), lte(tickerDailyCandles.date, to)))
       .orderBy(asc(tickerDailyCandles.date));
     return rows

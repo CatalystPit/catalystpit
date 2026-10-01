@@ -5,12 +5,11 @@ import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
 import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { tiingoDailyToCanonical, assertCanonicalCandles } from '../../../lib/market/candles.mjs';
+import { LICENSED_CANDLE_SOURCES, servableMetaSource } from '../../../lib/licensing/providers.mjs';
 import { claimRefreshAttempt, coalesce } from '../../../lib/market/refresh-policy.mjs';
 
 export const runtime = 'nodejs';
 
-const FINNHUB_KEY    = process.env.FINNHUB_KEY;
-const POLYGON_API_KEY = process.env.POLYGON_API_KEY || process.env.POLYGON_KEY;  // Vercel uses POLYGON_KEY, local .env.local uses POLYGON_API_KEY
 const TIINGO_API_KEY = process.env.TIINGO_API_KEY;
 const KV_URL         = process.env.KV_REST_API_URL;
 const KV_TOKEN       = process.env.KV_REST_API_TOKEN;
@@ -114,43 +113,123 @@ const fetchBounded = async (url, init = {}, ms = VENDOR_TIMEOUT_MS) => {
   catch { return null; }
 };
 
-// ─── Finnhub ─────────────────────────────────────────────────────────────────
-const fh = async (path) => {
-  const r = await fetchBounded(`https://finnhub.io/api/v1${path}${path.includes('?') ? '&' : '?'}token=${FINNHUB_KEY}`);
-  if (!r || !r.ok) return null;
-  return r.json().catch(() => null);
+// ─── LICENSED SOURCES ONLY ───────────────────────────────────────────────────
+//
+// ⚠️ THIS ROUTE WAS A FINNHUB PROXY, AND IT WAS THE PRODUCT'S WORST LICENSING EXPOSURE. Five Finnhub
+// endpoints — /stock/profile2, /quote, /stock/metric, /company-news and /search — answered on every
+// ticker page, to ANONYMOUS visitors, with a live vendor request per page view (meta.cache.quote was
+// literally "live"). The profile's `logo` was a hotlink to static2.finnhub.io, so the reader's own
+// browser fetched an image from a vendor we hold no agreement with.
+//
+// Everything below now comes from Tiingo, from SEC, or from our own tables — and where there is no
+// approved source the field is NULL and the page renders the em dash it already renders for unknowns.
+// Nothing is substituted from a near-neighbour vendor and nothing is estimated.
+//
+//   name / exchange / industry   our security master (security_identity + screener_meta) and SEC
+//   quote                        Tiingo, through the same getQuotes() the rest of the product uses
+//   52-week high / low           our licensed daily candles
+//   average volume (10d)         our licensed daily candles
+//   market cap / shares out      screener_meta, and only rows whose provenance is approved
+//   beta                         screener_stocks, recomputed from licensed candles
+//   dividend yield               screener_meta.annual_dividend over the licensed last close
+//   P/E, EPS TTM                 NULL — see backfillFundamentals in lib/screener-data.js
+//   logo / country / IPO / url   NULL — no approved source; the UI draws its own initials mark
+
+/** The quote shape the ticker page has always consumed, built from the licensed provider. */
+const fetchQuote = async (sym) => {
+  try {
+    const { getQuotes } = await import('../../../lib/market-data');
+    // ⚠️ realtime:false DELIBERATELY. This response is shared at the CDN and is user-independent, so it
+    // must never carry an entitled real-time print. Pro's live quote arrives through /api/quotes, which
+    // resolves entitlement per caller and is never shared-cached.
+    const q = (await getQuotes([sym], { realtime: false }))[sym];
+    if (!q || !Number.isFinite(Number(q.price))) return null;
+    const c = Number(q.price);
+    const pc = Number.isFinite(Number(q.prevClose)) ? Number(q.prevClose) : null;
+    return {
+      c,
+      d:  pc != null ? +(c - pc).toFixed(4) : null,
+      dp: Number.isFinite(Number(q.changePct)) ? Number(q.changePct) : (pc > 0 ? +(((c - pc) / pc) * 100).toFixed(4) : null),
+      h:  Number.isFinite(Number(q.high)) ? Number(q.high) : null,
+      l:  Number.isFinite(Number(q.low)) ? Number(q.low) : null,
+      o:  Number.isFinite(Number(q.open)) ? Number(q.open) : null,
+      pc,
+    };
+  } catch { return null; }
 };
 
-// Each fetcher returns null on a *fetch failure* (so cached() won't persist it
-// and it retries next request); a successful-but-empty result is a real value
-// (e.g. no-news → []) and is cacheable.
+/**
+ * Identity from our own master. No vendor profile call.
+ *
+ * ⚠️ RETURNS null ONLY WHEN THE LOOKUP ITSELF FAILED, so a transient DB error is retried rather than
+ * cached as "this company has no name" — the same contract the vendor fetchers had.
+ */
 const fetchProfile = async (sym) => {
-  const p = await fh(`/stock/profile2?symbol=${encodeURIComponent(sym)}`);
-  if (p == null) return null;
-  return { name: p.name || null, exchange: p.exchange || null, ticker: p.ticker || sym,
-           industry: p.finnhubIndustry || null, logo: p.logo || null,
-           country: p.country || null, ipo: p.ipo || null, weburl: p.weburl || null,
-           shareOutstanding: p.shareOutstanding ?? null };   // millions — powers short-interest % of float
+  try {
+    const m = await masterIdentity(sym);
+    const name = m.name || (await secTickerName(sym));
+    return {
+      ticker: sym,
+      name: name || null,
+      exchange: m.exchange || null,
+      industry: m.industry || m.sector || null,
+      // No approved source supplies these. Null, not a substitute.
+      logo: null, country: null, ipo: null, weburl: null,
+      shareOutstanding: m.sharesOut ?? null,     // already gated on provenance inside masterIdentity
+    };
+  } catch { return null; }
 };
-const fetchQuote = async (sym) => {
-  const q = await fh(`/quote?symbol=${encodeURIComponent(sym)}`);
-  if (q == null) return null;
-  return { c: q.c ?? null, d: q.d ?? null, dp: q.dp ?? null, h: q.h ?? null, l: q.l ?? null, o: q.o ?? null, pc: q.pc ?? null };
-};
+
+/**
+ * The metrics block, computed from licensed inputs.
+ *
+ * ⚠️ 52-WEEK AND AVERAGE VOLUME ARE COMPUTED, NOT COPIED, and that is a real improvement: the vendor's
+ * figures were opaque numbers we could not reproduce or audit. These are one indexed query over the
+ * candles the charts already draw, so the hero and the chart cannot disagree.
+ *
+ * ⚠️ P/E AND EPS ARE NULL ON PURPOSE. They were Finnhub's peTTM/epsTTM. We have no licensed market-data
+ * source for them and no verified SEC extractor yet, and an invented ratio on a stock page is worse
+ * than a blank one.
+ */
 const fetchMetric = async (sym) => {
-  const r = await fh(`/stock/metric?symbol=${encodeURIComponent(sym)}&metric=all`);
-  if (r == null) return null;
-  const m = r.metric || {};
-  return {
-    high52:    m['52WeekHigh'] ?? null,
-    low52:     m['52WeekLow'] ?? null,
-    marketCap: m.marketCapitalization ?? null,           // millions USD
-    peTTM:     m.peTTM ?? null,
-    epsTTM:    m.epsTTM ?? null,                          // free rider on this call → inherits metric TTL
-    beta:      m.beta ?? null,
-    divYield:  m.dividendYieldIndicatedAnnual ?? null,   // can be absent → null → "—"
-    avgVol10d: m['10DayAverageTradingVolume'] ?? null,   // millions
-  };
+  try {
+    const res = await db.execute(sql`
+      with lic as (
+        select close, volume, date
+          from ticker_daily_candles
+         where ticker = ${sym} and source = any(${LICENSED_CANDLE_SOURCES})
+           and date >= current_date - 400
+      )
+      select
+        (select max(close) from (select close from lic order by date desc limit 252) w)      as high52,
+        (select min(close) from (select close from lic order by date desc limit 252) w)      as low52,
+        (select avg(volume) from (select volume from lic order by date desc limit 10) v)     as avg_vol_10d,
+        (select close from lic order by date desc limit 1)                                   as last_close`);
+    const r = (res.rows ?? res)[0] || {};
+
+    const meta = await db.execute(sql`
+      select market_cap, shares_out, annual_dividend, source from screener_meta where ticker = ${sym}`);
+    const m = (meta.rows ?? meta)[0] || {};
+    const metaOk = servableMetaSource(m.source);
+
+    const beta = await db.execute(sql`select beta from screener_stocks where ticker = ${sym}`);
+    const b = Number((beta.rows ?? beta)[0]?.beta);
+
+    const lastClose = Number(r.last_close);
+    const annual = metaOk ? Number(m.annual_dividend) : NaN;
+
+    return {
+      high52:    Number.isFinite(Number(r.high52)) ? +Number(r.high52).toFixed(4) : null,
+      low52:     Number.isFinite(Number(r.low52)) ? +Number(r.low52).toFixed(4) : null,
+      // Millions, matching the unit the page already formats.
+      marketCap: metaOk && Number(m.market_cap) > 0 ? +(Number(m.market_cap) / 1e6).toFixed(2) : null,
+      peTTM:     null,
+      epsTTM:    null,
+      beta:      Number.isFinite(b) ? +b.toFixed(3) : null,
+      divYield:  (Number.isFinite(annual) && annual > 0 && lastClose > 0) ? +((annual / lastClose) * 100).toFixed(2) : null,
+      avgVol10d: Number.isFinite(Number(r.avg_vol_10d)) ? +(Number(r.avg_vol_10d) / 1e6).toFixed(4) : null,
+    };
+  } catch { return null; }
 };
 
 // 50-day SMA of adjusted closes from ticker_daily_candles. Lazy: if <50 candles stored,
@@ -213,21 +292,10 @@ async function fetchHeroShortInterest(sym) {
 // Normalized news item: { headline, source, url, datetime (ISO string | null), image }.
 // Each source-fetcher returns null on fetch failure (don't cache; retry next request),
 // or an array (possibly empty) on success.
-const fetchFinnhubNews = async (sym) => {
-  const to = new Date(), from = new Date(to.getTime() - 14 * 86_400_000);
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  const arr = await fh(`/company-news?symbol=${encodeURIComponent(sym)}&from=${fmt(from)}&to=${fmt(to)}`);
-  if (!Array.isArray(arr)) return null;                  // fetch failed → null; genuine no-news → []
-  return arr
-    .filter(a => a.headline && a.url)
-    .map(a => ({
-      headline: a.headline,
-      source:   a.source || 'Finnhub',
-      url:      a.url,
-      datetime: a.datetime ? new Date(a.datetime * 1000).toISOString() : null,
-      image:    a.image || null,
-    }));
-};
+// ⚠️ THE FINNHUB NEWS FETCHER IS GONE. It was the fallback whenever Tiingo returned fewer than six
+// articles, and its contents were largely Yahoo Finance syndication — so the quiet case was licensed
+// and the thin case silently was not. A short news list is a visible, honest degrade; topping it up
+// from an unlicensed aggregator is not a degrade at all, it is a different problem wearing its clothes.
 // TIINGO NEWS — per-ticker, diverse publishers, under our own licence.
 //
 // ⚠️ MIGRATED OFF POLYGON (/v2/reference/news), whose redistribution rights for public commercial
@@ -262,26 +330,14 @@ const fetchTiingoNews = async (sym) => {
 };
 
 const NEWS_CAP = 15;
-const PRIMARY_ENOUGH = 6;   // licensed-primary: only fall back to Finnhub (Yahoo-heavy) when it is this thin
 const newsTs = (n) => (n.datetime ? (Date.parse(n.datetime) || 0) : 0);
 
-// Licensed-primary (Tiingo), Finnhub fallback. Both fetched in parallel; Finnhub results are only
-// merged in when the primary returns too few (keeps Yahoo out of the common case).
-// Returns { items, degraded }. degraded = the licensed fetch FAILED so we leaned on the
-// Finnhub/Yahoo fallback — the caller caches that briefly so it self-heals. items == null only
-// when BOTH sources fail (caller won't persist a transient double-failure).
+// Licensed only. `degraded` is retained because the caller uses it to pick a SHORT cache TTL when the
+// licensed fetch failed, so an outage self-heals in a minute instead of being cached for five.
 const fetchNews = async (sym) => {
-  const [primary, fin] = await Promise.all([fetchTiingoNews(sym), fetchFinnhubNews(sym)]);
-  if (primary == null && fin == null) return { items: null, degraded: false };
-  const primaryArr = primary || [], finArr = fin || [];
-  let items;
-  if (primaryArr.length >= PRIMARY_ENOUGH) {
-    items = primaryArr;                                  // enough diverse coverage — licensed only
-  } else {
-    const seen = new Set(primaryArr.map(a => a.url));    // fallback: top up with Finnhub, dedupe by URL
-    items = [...primaryArr, ...finArr.filter(a => !seen.has(a.url))];
-  }
-  return { items: items.sort((a, b) => newsTs(b) - newsTs(a)).slice(0, NEWS_CAP), degraded: primary == null };
+  const primary = await fetchTiingoNews(sym);
+  if (primary == null) return { items: null, degraded: true };
+  return { items: primary.sort((a, b) => newsTs(b) - newsTs(a)).slice(0, NEWS_CAP), degraded: false };
 };
 
 // News cache with dynamic TTL (Polygon-fail fallback caches briefly). Mirrors cached()'s shape.
@@ -333,20 +389,29 @@ async function masterIdentity(sym) {
   try {
     const res = await db.execute(sql`
       select i.name as name, m.exchange as exchange, m.sector as sector, m.industry as industry,
-             m.asset_type as asset_type, s.company as company
+             m.asset_type as asset_type, m.shares_out as shares_out, m.source as meta_source,
+             s.company as company
         from (select ${sym}::text as t) k
         left join security_identity i on i.ticker = k.t
         left join screener_meta     m on m.ticker = k.t
         left join screener_stocks   s on s.ticker = k.t`);
     const r = (res.rows ?? res)[0] || {};
+    // ⚠️ THE REFERENCE COLUMNS ARE GATED ON PROVENANCE; THE NAME IS NOT, AND THE DIFFERENCE IS
+    // DELIBERATE. security_identity.name comes from SEC filings and our own resolution, so it is
+    // approved wherever it exists. screener_meta's exchange, sector, industry, asset type and share
+    // count were Polygon reference data on every pre-audit row, and those rows record no source — so
+    // they are withheld until backfillMeta rewrites them from SEC. Withholding a sector shows an em
+    // dash; serving it would publish a vendor's reference data we may not redistribute.
+    const metaOk = servableMetaSource(r.meta_source);
     return {
       name: r.name || r.company || null,
-      exchange: r.exchange || null,
-      sector: r.sector || null,
-      industry: r.industry || null,
-      assetType: r.asset_type || null,
+      exchange: metaOk ? (r.exchange || null) : null,
+      sector: metaOk ? (r.sector || null) : null,
+      industry: metaOk ? (r.industry || null) : null,
+      assetType: metaOk ? (r.asset_type || null) : null,
+      sharesOut: metaOk && Number(r.shares_out) > 0 ? Number(r.shares_out) : null,
     };
-  } catch { return { name: null, exchange: null, sector: null, industry: null, assetType: null }; }
+  } catch { return { name: null, exchange: null, sector: null, industry: null, assetType: null, sharesOut: null }; }
 }
 
 // validity cascade: profile2 (name) → OUR SECURITY MASTER → prefetched /quote c>0 → /search exact →
@@ -371,9 +436,9 @@ async function resolveValidity(sym, profile, quote) {
   const master = await masterIdentity(sym);
   if (master.name) return { valid: true, name: master.name, master };
   if (quote && quote.c > 0) return { valid: true, name: sym, master };
-  const se = await fh(`/search?q=${encodeURIComponent(sym)}`);
-  const exact = (se?.result || []).find(r => (r.symbol || '').toUpperCase() === sym);
-  if (exact) return { valid: true, name: exact.description || sym, master };
+  // ⚠️ THE VENDOR SYMBOL SEARCH IS GONE. It was Finnhub /search, used to name a security our own master
+  // and SEC both failed to name — the rarest branch of the cascade, and not worth an unlicensed call.
+  // The SEC fallback below already covers every registrant; what it cannot name stays unnamed.
   const secName = await secTickerName(sym);          // SEC identity fallback — no market-data vendor
   if (secName) return { valid: true, name: secName, master };
   return { valid: false, name: null, master };

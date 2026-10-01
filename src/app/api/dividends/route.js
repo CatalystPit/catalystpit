@@ -1,4 +1,4 @@
-// Dividends — history + TTM yield from POLYGON (/v3/reference/dividends + /v2 prev close). Polygon is
+// Dividends — history from TIINGO corporate actions + TTM yield against our own stored closes. Tiingo is
 // unlimited on our plan and covers ETFs (VOO/SPY/…) which SEC/Tiingo miss, and gives explicit
 // frequency + pay dates. (Was Tiingo, whose free 50/hour limit — shared with congress enrichment —
 // kept 429ing and, worse, the empty result got cached for 24h, so "no dividend" stuck for everything.)
@@ -6,7 +6,10 @@
 export const runtime = 'nodejs';
 export const maxDuration = 15;
 
-const POLYGON_KEY = process.env.POLYGON_KEY;
+// ⚠️ THE POLYGON KEY BINDING IS GONE. It was read here and used by nothing: the events come from
+// Tiingo corporate actions and the yield basis from our own stored closes (see the notes below). A stale
+// binding plus a stale header is how an audit reaches the wrong conclusion in either direction — this
+// route was already clean and read as though it were not.
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 

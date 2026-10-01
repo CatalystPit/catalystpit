@@ -215,21 +215,7 @@ export function buildRow(rec, chamber, index) {
 }
 
 // FMP both-chambers pull. Returns rows with a disclosureDate (NOT NULL column).
-export async function fetchCongressRows(fmpKey, index) {
-  const pull = async (ch) => {
-    const r = await fetch(`https://financialmodelingprep.com/stable/${ch}-latest?page=0&apikey=${fmpKey}`);
-    if (!r.ok) throw new Error(`FMP ${ch}: HTTP ${r.status}`);
-    const data = await r.json();
-    return Array.isArray(data) ? data.map(rec => buildRow(rec, ch, index)) : [];
-  };
-  const [sen, hou] = await Promise.all([pull('senate'), pull('house')]);
-  // ⚠️ AND ONLY RECORDS THAT IDENTIFY A MEMBER. A null txHash means the feed's name fields carried no
-  // surname, so nobody was identified — see nameSlug. Dropping it here is what keeps an invented member
-  // off /politicians and keeps a second copy of an official-feed trade out of the table.
-  return [...sen, ...hou].filter(r => r.disclosureDate && r.txHash);
-}
-
-// Tiingo daily EOD over [from,to]. { ok, status, data }.
+// ⚠️ fetchCongressRows IS DELETED. It pulled both chambers from financialmodelingprep.com. Congressional trade ingest moved to the OFFICIAL House Clerk and Senate eFD sources (lib/congress-sync.js) some time ago and FMP was described as retired — but the client was still here, still exported, and scripts/seed-congress.mjs still called it. The official sources are the better data anyway: they are the filings themselves.
 export async function fetchTiingoDaily(ticker, from, to, token) {
   const url = `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(ticker)}/prices`
     + `?startDate=${from}&endDate=${to}&token=${token}`;
@@ -260,15 +246,7 @@ export function pickPriceOnOrBefore(series, targetDate) {
 }
 
 // Finnhub real-time quote -> { price, asOf } | null (null when symbol unknown / c<=0).
-export async function fetchFinnhubQuote(ticker, token) {
-  const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${token}`);
-  if (!r.ok) return null;
-  const d = await r.json();
-  if (!d || !Number.isFinite(d.c) || d.c <= 0) return null;
-  return { price: +d.c.toFixed(2), asOf: d.t ? new Date(d.t * 1000).toISOString().slice(0, 10) : null };
-}
-
-// Simple concurrency+gap throttler (mirrors /api/refresh throttledBatch).
+// ⚠️ fetchFinnhubQuote IS DELETED for the same reason. Congressional price enrichment reads our own licensed daily closes (see /api/cron/refresh-congress), so this had no production caller — only a seeding script, which is exactly how a retired vendor path survives an audit.
 export async function throttle(items, perBatch, gapMs, worker) {
   const out = [];
   for (let i = 0; i < items.length; i += perBatch) {

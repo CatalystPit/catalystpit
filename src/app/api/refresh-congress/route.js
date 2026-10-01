@@ -13,7 +13,9 @@ export const maxDuration = 60;
 // BOTH price_at_trade and current_price — no more Tiingo 30/night throttle, no
 // raw-vs-adjusted split mismatch.
 const CRON_SECRET     = process.env.CRON_SECRET;
-const POLYGON_API_KEY = process.env.POLYGON_API_KEY;
+// ⚠️ THE POLYGON KEY BINDING IS GONE. It was read here and used nowhere — the enrichment moved to
+// stored candles plus Tiingo for the gap, but the binding and the header above it still said Polygon.
+// A stale reference is how an audit reaches the wrong conclusion in either direction.
 
 // Polygon is unlimited for stocks, so caps are bounded only by maxDuration.
 const PRICE_TICKER_CAP    = 150; // new tickers priced per tick

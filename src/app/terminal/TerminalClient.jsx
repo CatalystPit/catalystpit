@@ -286,7 +286,7 @@ function ScanBody({ mode, onPick }) {
   const results = (
     rows === null ? <div style={{ padding: 20, textAlign: 'center', color: C.dim, fontSize: 12.5 }}>Scanning…</div>
       : scanError ? <div style={{ padding: '14px 12px' }}><ErrorState compact title="Scan didn't run" message="The scanner didn't come back. Your filters are still set." onRetry={run} /></div>
-      : !configured ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Scanner needs a market-data feed. Add <b>FMP_API_KEY</b> to enable live movers.</div>
+      : !configured ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12, lineHeight: 1.5 }}>Scanner needs a live market-data feed. Movers are unavailable until one is configured.</div>
       : rows.length === 0 ? <div style={{ padding: '20px 16px', textAlign: 'center', color: C.muted, fontSize: 12.5 }}>{mode === 'custom' ? 'No matches. Adjust your filters and Run.' : 'No results.'}</div>
       : (
         <div style={{ overflow: 'auto', flex: 1 }}>
@@ -465,7 +465,7 @@ function CustomScannerBody({ onPick }) {
   );
 }
 
-// ── MOVERS — top gainers / losers / most-active from Polygon (delayed). Clicking a ticker sets the
+// ── MOVERS — top gainers / losers / most-active from our own licensed daily history. Clicking a ticker sets the
 // Terminal symbol; columns react to panel width. ──
 function MoversBody({ onPick }) {
   const [tab, setTab] = useState('gainers');
@@ -784,8 +784,9 @@ function HeatMapBody({ onPick }) {
   return <div style={{ flex: 1, minHeight: 0, display: 'flex' }}><HeatMap onPick={onPick} /></div>;
 }
 
-// ── EARNINGS — forward earnings calendar (grouped by date). Needs a calendar feed (Twelve Data);
-// shows a "connect data" state until then. Click a ticker to set the Terminal symbol. ──
+// ── EARNINGS — forward earnings calendar (grouped by date). There is no licensed source for CONFIRMED
+// forward earnings dates, so this shows its "awaiting a data feed" state and says nothing it cannot
+// support. Click a ticker to set the Terminal symbol. ──
 function EarningsBody({ onPick }) {
   const [data, setData] = useState(null);
   useEffect(() => {

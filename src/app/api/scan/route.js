@@ -10,12 +10,11 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 //                   All scoring runs server-side in lib/pitscan.js; this route returns ONLY the
 //                   approved output fields (no weights/thresholds/sub-scores). Needs a real-time
 //                   feed — reports configured:false until one is wired.
-//   ?mode=custom  → CUSTOM SCANNER: user-defined screen via FMP's stock-screener (transparent
-//                   price/volume/mktcap/sector filters). Dormant until FMP_API_KEY is set.
+//   (?mode=custom was an FMP stock-screener proxy and has been removed — see the note in the handler.)
 // Custom results cached ~45s in KV per query.
 
-const FMP = 'https://financialmodelingprep.com/api/v3';
-const KEY = process.env.FMP_API_KEY;
+// ⚠️ THE FMP BASE URL AND KEY BINDING ARE GONE WITH THE MODE THEY SERVED. A dangling vendor
+// constant is how a removed integration comes back: it reads as scaffolding somebody meant to use.
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 const TTL = 45;
@@ -58,24 +57,16 @@ export async function GET(request) {
       return Response.json({ mode: 'pit', direction, ...out }, { headers: NO_STORE });
     }
 
-    // ── CUSTOM SCANNER — FMP stock-screener (transparent user filters). ──
-    if (!KEY) return Response.json({ configured: false, rows: [] }, { headers: NO_STORE });
-    const p = new URLSearchParams({ isActivelyTrading: 'true', exchange: 'NASDAQ,NYSE,AMEX', limit: '50', apikey: KEY });
-    const map = { priceMin: 'priceMoreThan', priceMax: 'priceLowerThan', volumeMin: 'volumeMoreThan', mktCapMin: 'marketCapMoreThan', mktCapMax: 'marketCapLowerThan' };
-    for (const [q, fmp] of Object.entries(map)) { const v = searchParams.get(q); if (v) p.set(fmp, v); }
-    const sector = searchParams.get('sector'); if (sector) p.set('sector', sector);
-    const url = `${FMP}/stock-screener?${p.toString()}`;
-
-    const cacheKey = `scan:custom:${url.replace(KEY, 'K')}`;
-    const cached = await kvGet(cacheKey);
-    if (cached) return Response.json({ configured: true, rows: cached, cached: true }, { headers: NO_STORE });
-
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`FMP HTTP ${r.status}`);
-    const data = await r.json();
-    const rows = Array.isArray(data) ? data.map(shape).filter((x) => x.symbol).slice(0, 50) : [];
-    await kvSet(cacheKey, rows, TTL);
-    return Response.json({ configured: true, rows, cached: false }, { headers: NO_STORE });
+    // ⚠️ THE FMP CUSTOM SCANNER IS REMOVED.
+    //
+    // ?mode=custom proxied financialmodelingprep.com/api/v3/stock-screener. FMP_API_KEY IS set in
+    // production, so this answered `configured: true` and returned "FMP HTTP 403" — the key exists and
+    // the entitlement does not. Nothing in the UI called it, which is the only reason no user ever
+    // received FMP rows; an undocumented endpoint that would serve unlicensed data the moment the
+    // entitlement changed is not a safe thing to leave reachable.
+    //
+    // The Screener at /screener covers this need from our own tables. Any other mode is a 400.
+    return Response.json({ error: 'unknown mode' }, { status: 400, headers: NO_STORE });
   } catch (e) {
     console.log(`[scan] ${e.message}`);
     return Response.json({ configured: !!KEY, rows: [], error: e.message }, { status: 200, headers: NO_STORE });

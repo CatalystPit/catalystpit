@@ -1,63 +1,44 @@
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 export const runtime = 'nodejs';
 
-// Ticker logo proxy. Resolves a per-ticker logo server-side and streams it back.
-// Source order: logo.dev (if LOGODEV_TOKEN set — reliable, covers ETFs) → FMP (legacy/keyless,
-// spotty) → 404, so <TickerLogo> falls back to an initials badge.
+// TICKER LOGOS COME FROM OUR OWN RENDERER, NOT FROM A VENDOR.
 //
-// Cache is deliberately NOT immutable: upstreams are spotty, so a bad/missing result should
-// self-heal, not freeze for a week. Good logos cache 1 day (served stale up to a week while
-// revalidating); misses cache just 1 hour so they recover fast without hammering upstream.
-const FMP_API_KEY = process.env.FMP_API_KEY;
-const LOGODEV_TOKEN = process.env.LOGODEV_TOKEN;
+// ── ⚠️ WHAT THIS WAS ─────────────────────────────────────────────────────────
+//
+// A server-side proxy that resolved a per-ticker logo from logo.dev (when LOGODEV_TOKEN was set) and
+// then from financialmodelingprep.com/image-stock, streaming the image back to the browser. Separately,
+// /api/ticker was handing the client a hotlinked static2.finnhub.io URL, so a third vendor's CDN was
+// being called by the reader's own browser.
+//
+// Three commercial providers for a decorative asset, none of them with established redistribution
+// rights. A logo is not market data, which is exactly why it was never scrutinised — and why it ended up
+// as the one place where an unapproved vendor was contacted directly by the user's device.
+//
+// ── ⚠️ WHY NOTHING REPLACES IT ───────────────────────────────────────────────
+//
+// <TickerLogo> already renders an initials badge in the app's own styling whenever this route 404s, and
+// has done since it was written. That fallback is not a degraded state anybody needs to apologise for:
+// it is consistent, instant, needs no network request, and cannot break. So the route keeps its contract
+// — a 404 means "draw the badge" — and now always answers that way.
+//
+// ⚠️ IT IS RETAINED RATHER THAN DELETED because <TickerLogo> fetches it; removing the route would turn a
+// quiet, handled 404 into a stream of console noise on every ticker page.
+//
+// ⚠️ AND THE MISS IS CACHED SHORT, NOT LONG. A one-hour miss cache was sized for a spotty upstream that
+// might recover. There is no upstream now, but the short TTL stays: if an approved logo source is ever
+// licensed, nothing has to wait a week for the CDN to forget.
 const TICKER_RE = /^[A-Z0-9.\-]{1,10}$/;
-const HIT_CACHE  = 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800';
 const MISS_CACHE = 'public, max-age=3600, s-maxage=3600';
 const miss = () => new Response(null, { status: 404, headers: { 'Cache-Control': MISS_CACHE } });
 
-// Fetch one candidate; return {buf, ct} on a real image, else null.
-async function tryLogo(url) {
-  try {
-    const r = await fetch(url, { cache: 'no-store' });
-    const ct = r.headers.get('content-type') || '';
-    if (!r.ok || !ct.startsWith('image/')) return null;
-    const buf = await r.arrayBuffer();
-    if (buf.byteLength < 200) return null;   // filter tiny placeholder images
-    return { buf, ct };
-  } catch {
-    return null;
-  }
-}
-
 export async function GET(request) {
-  // ⚠️ THE 'logo' BUCKET, NOT 'provider'. See LIMITS in api-guard: on provider (40/60s) this
-  // endpoint returned 19 × 429 out of 59 distinct tickers in one window, and every 429 became an
-  // initials badge on the page.
-  //
-  // ⚠️ AND DELIBERATELY NO auth() HERE, even though passing a userId would exempt signed-in users
-  // from the IP limit. A logo is a public image and this response is CDN-cached for a day
-  // (X-Vercel-Cache: HIT in production) — that cache is what actually makes a 200-row holdings
-  // table cost nothing on every visit after the first. Reading the session would make the route
-  // per-user and risk turning those hits into misses, trading the thing that scales for the thing
-  // that merely rations. The raised bucket solves the shared-IP case without touching the cache.
   const _rl = await apiRateLimit(request, 'logo', 'logo');
   if (_rl) return _rl;
 
+  // The format gate is kept so a junk symbol is still cheap to refuse, and so the route's shape is
+  // unchanged for anything that inspects it.
   const t = (new URL(request.url).searchParams.get('ticker') || '').toUpperCase().trim();
-  if (!TICKER_RE.test(t)) return new Response(null, { status: 404 });
+  if (!TICKER_RE.test(t)) return miss();
 
-  const sources = [];
-  // logo.dev by ticker — fallback=404 so it only returns a real logo (we render our own initials
-  // badge for the rest, keeping the fallback consistent with the app's styling).
-  if (LOGODEV_TOKEN) {
-    sources.push(`https://img.logo.dev/ticker/${encodeURIComponent(t)}?token=${LOGODEV_TOKEN}&format=png&size=128&retina=true&fallback=404`);
-  }
-  // FMP as a secondary (only real help when a paid key is set; keyless is unreliable).
-  sources.push(`https://financialmodelingprep.com/image-stock/${encodeURIComponent(t)}.png${FMP_API_KEY ? `?apikey=${FMP_API_KEY}` : ''}`);
-
-  for (const src of sources) {
-    const hit = await tryLogo(src);
-    if (hit) return new Response(hit.buf, { status: 200, headers: { 'Content-Type': hit.ct, 'Cache-Control': HIT_CACHE } });
-  }
   return miss();
 }
