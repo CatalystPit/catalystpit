@@ -1,6 +1,6 @@
 import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
-import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
+import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
 import { LICENSED_CANDLE_SOURCES_SQL, servableMetaSource } from './licensing/providers.mjs';
 
 /**
@@ -1144,8 +1144,20 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   const si = await db.selectDistinctOn([shortInterest.ticker], { ticker: shortInterest.ticker, shares: shortInterest.shortIntShares, dtc: shortInterest.daysToCover, avg: shortInterest.avgDailyVolume })
     .from(shortInterest).orderBy(shortInterest.ticker, desc(shortInterest.settlementDate));
   const siByT = new Map(si.map((r) => [r.ticker, r]));
-  const fl = await db.select({ ticker: tickerFloat.ticker, floatShares: tickerFloat.floatShares, sharesOut: tickerFloat.outstandingShares }).from(tickerFloat);
-  const flByT = new Map(fl.map((r) => [r.ticker, r]));
+  // ⚠️ ticker_float IS NOT READ ANY MORE, AND THAT IS THE POINT. Every one of its 114 rows carries
+  // source = 'fmp'. The ticker page stopped publishing "% of float" when the fetcher was removed, but the
+  // Screener kept reading the same table from here, so 114 float_shares and 101 short_float values went on
+  // being served to users for weeks after the provider was retired — found by checking the live Screener
+  // payload rather than the code, because the code looked finished.
+  //
+  // Removing a fetcher stops new copies; the rows it already wrote are still the provider's data, and a
+  // table nobody refreshes is the easiest place for that to go unnoticed.
+  //
+  // Free float has no approved source. The SEC publishes shares OUTSTANDING, which is a different quantity
+  // (it includes restricted and closely-held shares), so substituting it would understate every "% of
+  // float" on a figure short sellers read closely. So float fails closed: null, not a near-neighbour.
+  // The FINRA numerator — short_int_shares, days to cover — is unaffected and still served.
+  const flByT = new Map();
 
   // Canonical company names. Separate query, separate concern: nothing about it is scoped to a
   // signal window, and nothing in the signal aggregates supplies a name.
@@ -1324,7 +1336,7 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // pass is slow/times out.
   const rowsOut = tickers.map((t) => {
     const i = insByT.get(t), c = conByT.get(t), tk = tech.get(t), s = siByT.get(t), f = flByT.get(t), pg = poly?.map.get(t), m = metaByT.get(t), fd = fundByT.get(t), pv = prevTech.get(t);
-    const floatShares = f?.floatShares ?? null;
+    const floatShares = f?.floatShares ?? null;   // always null: see the ticker_float note above
     const vol = tk?.volume ?? pg?.volume ?? s?.avg ?? null;
     const px = tk?.price ?? pg?.price ?? priceMap.get(t)?.price ?? null;
     const mcap = m?.marketCap ?? null;
@@ -1372,7 +1384,12 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
       epsGrowthThisYr: fd?.epsGrowthThisYr ?? null, roic: fd?.roic ?? null,
       // Same denominator, same floor — a payout ratio against a denormal eps is the same artifact.
       payoutRatio: (m?.annualDividend > 0 && fd?.epsTtm >= MIN_MEANINGFUL_EPS) ? (m.annualDividend / fd.epsTtm) * 100 : null,
-      floatShares, sharesOut: f?.sharesOut ?? m?.sharesOut ?? null,
+      floatShares,
+      // ⚠️ THE SEC COUNT, NOT THE PROVIDER'S. This used to read `f?.sharesOut ?? m?.sharesOut` — the
+      // retired provider's outstanding-share count took precedence over the SEC figure for exactly the
+      // 114 tickers it covered, which were the largest names on the site. AAPL served 14,687,356,000
+      // where the filing says 14,594,180,000.
+      sharesOut: m?.sharesOut ?? null,
       shortFloat: (s?.shares && floatShares) ? (s.shares / floatShares) * 100 : null, daysToCover: s?.dtc ?? null,
       // This run's candle-derived value if it has one, else whatever the technicals job last wrote.
       // pv supplies the twenty-two columns outright where this run computes nothing.

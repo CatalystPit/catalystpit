@@ -37,13 +37,31 @@ L('⚠️ a NULL never outranks a value');
     /asc\(screenerStocks\.ticker\)/.test(route));
 
   // Production: every sortable numeric column must put its values before its nulls.
+  // ⚠️ short_float LEFT THIS LIST, AND IS ASSERTED EMPTY INSTEAD. "Sorting by it leads with values"
+  // presumes the column can be populated. It cannot: its denominator is FREE float, which no approved
+  // source publishes, and the near-neighbour the SEC does publish — shares OUTSTANDING — is a different
+  // quantity that would understate every ratio. So an empty short_float is the correct state, and a sort
+  // check against it was asserting the presence of data we are not entitled to serve.
+  //
+  // Dropping it from the list would quietly stop testing the column, so the assertions after this loop
+  // replace it with the stronger claim: it must be ENTIRELY null. If a float ever reappears from an
+  // unapproved source that trips — which the old assertion would have greeted as a pass.
   const SORTABLE = ['price', 'change_pct', 'volume', 'rel_vol', 'market_cap', 'rsi14',
-    'insider_net_90d', 'perf_1m', 'perf_3m', 'short_float', 'pe'];
+    'insider_net_90d', 'perf_1m', 'perf_3m', 'pe'];
   for (const col of SORTABLE) {
     const r = await sql.query(
       `select count(*)::int n from (select ${col} v from screener_stocks order by ${col} desc nulls last, ticker asc limit 50) z where v is null`);
     ok(`${col} desc leads with values, not nulls`, r[0].n === 0, `${r[0].n}/50 null`);
   }
+
+  // ⚠️ THE FLOAT COLUMNS MUST BE EMPTY, which is a claim about licensing rather than coverage. Every
+  // row of ticker_float carried source = 'fmp', and the Screener went on joining to it for weeks after the
+  // provider was retired — 114 float_shares and 101 short_float values served to users the whole time,
+  // while the suite that checked the FETCHER was green. These two read the table users are served from.
+  const flt = (await sql.query(
+    `select count(float_shares)::int f, count(short_float)::int sf from screener_stocks`))[0];
+  ok('⚠️ no float share count is served', flt.f === 0, `${flt.f} rows carry one`);
+  ok('⚠️ …and no % of float derived from one is served', flt.sf === 0, `${flt.sf} rows carry one`);
 }
 
 L('⚠️ a ratio is not a ratio when its denominator is arithmetic residue');

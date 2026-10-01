@@ -296,6 +296,20 @@ L('8. THE REMOVED SURFACES DO WHAT THEY NOW CLAIM');
   const { resolveFloat } = await import('../src/lib/finra-short-interest.mjs');
   ok('⚠️ …exercised: it resolves to null', (await resolveFloat('AAPL')) === null);
 
+  // ⚠️ REGRESSION — A DEAD FETCHER IS NOT A CLOSED GATE. The three assertions above were green while the
+  // live Screener served 114 float_shares and 101 short_float values read straight out of ticker_float,
+  // whose every row carries source = 'fmp'. They only ever tested the WRITE path. Found by reading the
+  // production Screener payload, not the code; the code looked finished.
+  const sd2 = strip(readFileSync('src/lib/screener-data.js', 'utf8'));
+  ok('⚠️ the Screener does not read ticker_float at all', !/tickerFloat/.test(sd2),
+    'the table is entirely FMP — a join to it is a leak however null-safe the arithmetic is');
+  ok('⚠️ …so its float column cannot carry a vendor value', /const flByT = new Map\(\);/.test(sd2));
+  // AND THE SHARE COUNT, which is the half that nearly got away: the same join supplied sharesOut with the
+  // vendor FIRST, so for those 114 tickers — the largest names on the site — the Screener published FMP's
+  // count over the SEC one it already had. AAPL: 14,687,356,000 served against 14,594,180,000 filed.
+  ok('⚠️ …and shares outstanding comes only from the provenance-gated meta',
+    /sharesOut: m\?\.sharesOut \?\? null/.test(sd2) && !/sharesOut: f\?\.sharesOut/.test(sd2));
+
   const ec = strip(readFileSync('src/app/api/earnings-calendar/route.js', 'utf8'));
   ok('the earnings calendar always reports unconfigured', /configured: false/.test(ec) && !/fetch\(/.test(ec));
 
