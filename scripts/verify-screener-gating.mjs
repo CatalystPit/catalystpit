@@ -168,8 +168,19 @@ L('⚠️ 7 — the UI gates the matching view, without an entitlement flash');
   const c = code('src/app/screener/ScreenerClient.jsx');
   // ⚠️ DERIVED FROM THE COLUMNS so a new gated column gates its view automatically.
   ok('the client knows which views carry the aggregate', /const viewIsProOnly = \(v\) =>/.test(c));
-  ok('⚠️ …derived from the column list, not a hand-kept view list',
-    /VIEWS\[v\] \|\| \[\]\)\.some\(\(c\) => PRO_AGGREGATE_COLS\.has\(c\)\)/.test(c));
+  // ⚠️ LOCKED ONLY WHEN *EVERY* COLUMN IS GATED, and production QA is what caught the alternative. With
+  // `.some()`, the News view — [hasMaterial8k, insiderBuy90d, changePct] — was locked entirely because one
+  // of its three columns is gated, denying Free readers two columns they are meant to have. That is this
+  // task's own bug in reverse, and it shipped to a browser before a test noticed.
+  ok('⚠️ …derived from the columns, and locking only when ALL of them are gated',
+    /cs\.length > 0 && cs\.every\(\(c\) => PRO_AGGREGATE_COLS\.has\(c\)\)/.test(c));
+  ok('⚠️ …and a partially-gated view drops the gated COLUMN instead of locking the view',
+    /const visibleCols = \(v, isPro\) =>/.test(c)
+    && /\.filter\(\(c\) => isPro === true \|\| !PRO_AGGREGATE_COLS\.has\(c\)\)/.test(c));
+  ok('⚠️ …and the rendered columns come from that filter, not from VIEWS directly',
+    /const cols = visibleCols\(view, pro\);/.test(c) && !/const cols = VIEWS\[view\]/.test(c));
+  ok('⚠️ unknown entitlement yields the non-Pro column set, which is fail-closed',
+    /isPro === true/.test(c), 'a null tier must not satisfy the Pro branch');
   // ⚠️ THE CLIENT LIST MUST MATCH THE SERVER'S AUTHORITY, or a view stops being gated while the data
   // still is — a dead tab — or worse, the reverse.
   const clientSet = [...c.matchAll(/'(insider[A-Za-z0-9]+|congress[A-Za-z0-9]+|fundNetQoq|consensusScore)'/g)]

@@ -79,7 +79,21 @@ const PRO_AGGREGATE_COLS = new Set([
   'insiderNet90d', 'insiderBuyers90d', 'insiderBuy90d', 'insiderSell90d',
   'congressNet90d', 'congressBuy90d', 'fundNetQoq', 'consensusScore',
 ]);
-const viewIsProOnly = (v) => (VIEWS[v] || []).some((c) => PRO_AGGREGATE_COLS.has(c));
+// ⚠️ A VIEW IS LOCKED ONLY IF *EVERY* COLUMN IN IT IS GATED. Written as `.some()` this over-reached and
+// production QA caught it: the News view is [hasMaterial8k, insiderBuy90d, changePct], so one gated
+// column locked a view whose other two are ordinary open data — denying Free readers something they are
+// meant to have, which is the mirror image of the bug this task is about. Ownership is entirely gated
+// columns, so it still locks.
+const viewIsProOnly = (v) => {
+  const cs = VIEWS[v] || [];
+  return cs.length > 0 && cs.every((c) => PRO_AGGREGATE_COLS.has(c));
+};
+
+// ⚠️ AND A PARTIALLY-GATED VIEW SIMPLY DROPS THE GATED COLUMNS. The server already strips those keys from
+// every row, so rendering the header would produce a permanently empty column — a worse answer than not
+// offering it, because an empty cell reads as "no insider buying" rather than "not your tier".
+const visibleCols = (v, isPro) => (VIEWS[v] || VIEWS.Overview)
+  .filter((c) => isPro === true || !PRO_AGGREGATE_COLS.has(c));
 
 // Preset filter combos (all use available-now columns).
 const PRESETS = {
@@ -259,7 +273,10 @@ export default function ScreenerClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
   const activeChips = Object.entries(filters).filter(([k]) => meta?.[k]?.available);
-  const cols = VIEWS[view] || VIEWS.Overview;
+  // ⚠️ THE COLUMNS A NON-PRO READER SEES, with the gated ones dropped rather than rendered empty. While
+  // `pro` is null this yields the non-Pro set, which is the fail-closed direction: a gated column must
+  // never appear before entitlement is known.
+  const cols = visibleCols(view, pro);
   const groupsToShow = activeCat === 'All' ? REAL_CATS : [activeCat];
 
   const chipLabel = (key, cond) => {
