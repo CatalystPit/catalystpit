@@ -1182,7 +1182,16 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     .filter((r) => r.pct != null && r.pct > 0 && r.pct <= 100)
     .map((r) => [r.ticker, r.pct]));
   // Persistent fundamentals (price-independent computed values + raw inputs) from Polygon Financials.
-  const fundByT = new Map((await db.select().from(screenerFundamentals)).map((r) => [r.ticker, r]));
+  // ⚠️ GATED ON PROVENANCE, FOR THE SAME REASON screener_meta IS. 4,477 rows in this table predate the
+  // licensing work and were derived from Polygon Financials with a NULL source. They are the rows that
+  // produced the Screener's P/E, EPS and revenue columns, so reading them here would put the removed
+  // provider's fundamentals back on the board — one hop from their source, in a table that records none.
+  //
+  // 'sec' is the only servable value, written by scripts/ingest-sec-fundamentals.mjs and enforced by a
+  // CHECK constraint on the column so nothing else can appear there.
+  const fundRows = await db.select().from(screenerFundamentals);
+  const fundByT = new Map(fundRows.filter((r) => r.source === 'sec').map((r) => [r.ticker, r]));
+  const fundWithheld = fundRows.length - fundByT.size;
 
   // 2) Universe = union of all tickers we have any signal/candle for.
   //
@@ -1255,7 +1264,16 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   const testSyms = [];
   const tickers = [...universe].filter((t) => {
     if (!t || !/^[A-Z]{1,5}(\.[A-Z])?$/.test(t)) return false;
-    if (isExchangeTestSymbol(t, { classified: metaByT.has(t) })) { testSyms.push(t); return false; }
+    // ⚠️ "DO WE KNOW THIS SECURITY" IS AN IDENTITY QUESTION, NOT A PROVENANCE ONE, and conflating the two
+    // dropped a real ETF out of the Screener. `classified` used to be metaByT.has(t) — but metaByT is now
+    // filtered to rows whose vendor-derived reference COLUMNS may be served, so TEST (the YieldMax ETF,
+    // whose meta row predates the provenance work and carries a NULL source) stopped counting as known and
+    // was refused as an exchange test symbol. Measured: TEST vanished from screener_stocks entirely.
+    //
+    // Whether we may publish a sector is a different question from whether the symbol denotes a real
+    // company, and the security master answers the second one on its own terms — a name there comes from
+    // SEC filings and our own resolution, not from a retired vendor. So the name decides.
+    if (isExchangeTestSymbol(t, { classified: metaByT.has(t), named: !!nameByT.get(t) })) { testSyms.push(t); return false; }
     return true;
   });
   if (testSyms.length) console.log(`[screener] refused ${testSyms.length} exchange test symbol(s): ${testSyms.join(', ')}`);
@@ -1465,5 +1483,5 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
   // ⚠️ THE FIELDS WERE NAMED AFTER THE VENDOR, and a job result that says `polygon: 13390` is exactly
   // the kind of thing the next audit will read as a live Polygon dependency. They now describe what they
   // measure: how many securities the licensed end-of-day read covered, and which session it came from.
-  return { universe: tickers.length, technicals: tech.size, metaWithheld, licensedEod: poly ? poly.map.size : 0, eodSession: poly?.date || null, quoted, tableCount: n, snapshot };
+  return { universe: tickers.length, technicals: tech.size, metaWithheld, fundWithheld, licensedEod: poly ? poly.map.size : 0, eodSession: poly?.date || null, quoted, tableCount: n, snapshot };
 }

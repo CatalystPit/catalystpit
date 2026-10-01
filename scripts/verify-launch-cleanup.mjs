@@ -27,8 +27,14 @@ L('⚠️ 6 — exchange test symbols, refused by a rule that keeps the real TES
   for (const t of ['CBOE', 'CBON', 'LBO', 'LBOX', 'CBOT', 'ZTS', 'ZM', 'TESLA']) {
     ok(`${t} is not treated as a test symbol`, isExchangeTestSymbol(t) === false);
   }
+  // ⚠️ THE CALL GAINED A `named` ARGUMENT, and the reason belongs in the test. `classified: metaByT.has(t)`
+  // was the whole test for "our reference data knows this symbol" — but metaByT is now filtered to rows
+  // whose vendor-derived columns may be SERVED, so TEST (the real YieldMax ETF, whose meta row predates the
+  // provenance work and carries a NULL source) stopped counting as known, was refused as an exchange test
+  // symbol, and vanished from screener_stocks entirely. Whether we may publish a sector is a different
+  // question from whether a symbol denotes a real security, so the security master's name decides too.
   ok('the rebuild applies it at the single universe entry point',
-    /isExchangeTestSymbol\(t, \{ classified: metaByT\.has\(t\) \}\)/.test(code('src/lib/screener-data.js')));
+    /isExchangeTestSymbol\(t, \{ classified: metaByT\.has\(t\), named: !!nameByT\.get\(t\) \}\)/.test(code('src/lib/screener-data.js')));
   ok('…and logs what it refused rather than dropping it silently',
     /refused \$\{testSyms\.length\} exchange test symbol/.test(read('src/lib/screener-data.js')));
   // Production.

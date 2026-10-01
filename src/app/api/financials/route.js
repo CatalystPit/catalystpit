@@ -16,6 +16,11 @@ const CIK_MAP_KEY = 'sec:cik_map';        // shared with /api/earnings
 const TTL = 24 * 3600;                    // 24h — filings change quarterly at most
 const TTL_STALE = 7 * 24 * 3600;
 const MS_DAY = 86_400_000;
+
+// The one authoritative set of period rules. See src/lib/sec/xbrl-facts.mjs.
+import {
+  spanDays as sharedSpanDays, isQuarterSpan, isAnnualSpan, fiscalOf as sharedFiscalOf,
+} from '../../../lib/sec/xbrl-facts.mjs';
 const N_PERIODS = 5;
 
 async function kvGet(key) {
@@ -73,19 +78,25 @@ const CASHFLOW = [
   { label: 'Financing cash flow', tags: ['NetCashProvidedByUsedInFinancingActivities'] },
 ];
 
-const spanDays = (e) => (Date.parse(e.end) - Date.parse(e.start)) / MS_DAY;
+// ⚠️ THE PERIOD RULES COME FROM THE SHARED LAYER, so this route and the fundamentals ingestion cannot
+// disagree about what a quarter is. They used to: this file carried its own 340-380 and 80-100 day windows
+// and its own fiscalOf, lib/sec-earnings.mjs carried a third set, and the fundamentals pipeline would have
+// been a fourth. Four implementations of "is this three months" is four chances for one of them to admit a
+// year-to-date fact.
+//
+// ⚠️ WHAT STAYS HERE ON PURPOSE. This route answers a DIFFERENT question from the ingestion: it renders
+// one company's full statements from companyfacts, with every period it has ever reported, cached per
+// ticker. The ingestion answers "one concept across the whole market" from the frames endpoint. Same rules,
+// different query shape — so the primitives are shared and the assembly is not.
+const spanDays = (e) => sharedSpanDays(e.start, e.end);
 const dedupeByEnd = (rows) => { const m = new Map(); for (const e of rows) if (e.end) m.set(e.end, e); return [...m.values()]; };
 
 // XBRL `fy`/`fp` are FILING-relative (a 10-K tags its comparative years with the filing's fy), so
 // labels are derived from the END DATE + the company's fiscal-year-end month instead — deterministic
 // and filing-independent. Apple FYE = Sept (9); calendar filers = Dec (12).
-function fiscalOf(end, fye) {
-  const y = +end.slice(0, 4), m = +end.slice(5, 7);
-  const fy = m <= fye ? y : y + 1;                  // a quarter ending after FYE belongs to the next FY
-  const startM = (fye % 12) + 1;
-  const q = Math.floor((((m - startM) + 12) % 12) / 3) + 1;
-  return { fy, q };
-}
+// ⚠️ fiscalOf NOW COMES FROM THE SHARED LAYER. The duplicate here was identical, which is exactly why it
+// was dangerous: two identical functions diverge silently the first time one of them is fixed.
+const fiscalOf = sharedFiscalOf;
 const annualLabel = (end, fye) => `FY${fiscalOf(end, fye).fy}`;
 const qLabel = (end, fye) => { const { fy, q } = fiscalOf(end, fye); return `Q${q} FY${String(fy).slice(-2)}`; };
 
@@ -110,13 +121,13 @@ function periodsFor(node, mode, fye) {
 
   // ── DURATION concepts (income, cash flow) ──
   if (mode === 'annual') {
-    return dedupeByEnd(series.filter((e) => e.start && spanDays(e) >= 340 && spanDays(e) <= 380))
+    return dedupeByEnd(series.filter((e) => e.start && isAnnualSpan(spanDays(e))))
       .sort((a, b) => b.end.localeCompare(a.end))
       .map((e) => ({ end: e.end, val: e.val, label: annualLabel(e.end, fye) }));
   }
   // quarterly per-share (EPS): NOT additive — use discrete 3-month facts directly, never difference.
   if (isPerShare) {
-    return dedupeByEnd(series.filter((e) => e.start && spanDays(e) >= 80 && spanDays(e) <= 100))
+    return dedupeByEnd(series.filter((e) => e.start && isQuarterSpan(spanDays(e))))
       .sort((a, b) => b.end.localeCompare(a.end))
       .map((e) => ({ end: e.end, val: e.val, label: qLabel(e.end, fye) }));
   }

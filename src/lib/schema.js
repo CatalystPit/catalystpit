@@ -694,6 +694,22 @@ export const screenerFundamentals = pgTable('screener_fundamentals', {
   salesGrowth5y: doublePrecision('sales_growth_5y'),
   epsGrowthThisYr: doublePrecision('eps_growth_this_yr'),
   roic:          doublePrecision('roic'),
+  /**
+   * WHERE THIS ROW'S VALUES CAME FROM.
+   *
+   * ⚠️ DECLARED HERE AS WELL AS IN THE DATABASE, because the omission has already cost this codebase a
+   * day. screener_meta.source was added by an ALTER and left out of its drizzle definition, so drizzle
+   * silently dropped it from the insert column list: 896 rows were written by a pipeline that set it, every
+   * one landed NULL, and the read gate then correctly refused to serve all of them. The job reported
+   * success and the values were right. A provenance column the application cannot write is worse than no
+   * column, because the gate reading it looks like it is working.
+   *
+   * ⚠️ AND NULLABLE WITH NO DEFAULT. 4,477 rows predate this work and were Polygon-derived; they keep a
+   * NULL source, are not servable, and are not stamped with an origin nobody verified.
+   */
+  source:        text('source'),
+  /** The period end of the trailing-twelve-month window these values describe. */
+  ttmEndDate:    date('ttm_end_date', { mode: 'string' }),
   updatedAt:     timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -269,8 +269,14 @@ L('⚠️ the things these three changes must not have broken');
   ok('Screener aggregate gating still enforced',
     /pro \? rows : rows\.map\(stripProAggregate\)/.test(code('src/app/api/screener/route.js')));
   ok('Screener responses still private', /'private, no-store'/.test(read('src/app/api/screener/route.js')));
+  // ⚠️ THE CALL GAINED A `named` ARGUMENT. `classified: metaByT.has(t)` was the whole test
+  // for "our reference data knows this symbol", but metaByT is now filtered to rows whose vendor-derived
+  // columns may be SERVED, so TEST (the real YieldMax ETF, whose meta row carries a NULL source) stopped
+  // counting as known and was refused as an exchange test symbol — it left the universe entirely. Whether we
+  // may publish a sector is a different question from whether the symbol denotes a real security, so the
+  // security master's name decides too.
   ok('test-symbol exclusion still applied',
-    /isExchangeTestSymbol\(t, \{ classified: metaByT\.has\(t\) \}\)/.test(code('src/lib/screener-data.js')));
+    /isExchangeTestSymbol\(t, \{ classified: metaByT\.has\(t\), named: !!nameByT\.get\(t\) \}\)/.test(code('src/lib/screener-data.js')));
   ok('Evidence Alert delivery-time entitlement still enforced',
     /PRO_TIERS\.has\(access\.get\(s\.userId\)\?\.tier\)/.test(code('src/lib/alerts/evidence-alert-worker.mjs')));
   ok('Form 4 channel scoping still structural',

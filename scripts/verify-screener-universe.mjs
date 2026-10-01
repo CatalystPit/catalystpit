@@ -75,11 +75,34 @@ L('⚠️ 2 — every instrument type the Screener carries is still carried');
   // rule would silently thin whole asset classes rather than produce an obvious error. These are the
   // classes the table holds today, with floors well below current counts so the check fails on a
   // collapse rather than on normal drift.
-  const rows = await sql`select coalesce(asset_type, '(null)') as t, count(*)::int n
-    from screener_stocks group by 1 order by n desc`;
+  // ⚠️ COUNTED FROM screener_meta's LABEL, JOINED TO THE UNIVERSE, NOT FROM screener_stocks' COPY.
+  //
+  // The question this section asks is "did the test-symbol exclusion silently thin a whole asset class",
+  // which is about which SYMBOLS SURVIVED the universe filter. It used to read screener_stocks.asset_type,
+  // which was the same thing while that column was populated for everyone.
+  //
+  // It no longer is: asset_type is vendor reference data from the retired provider, so the licensing gate
+  // withholds it for the 14,758 rows whose meta provenance is still unestablished, and the label collapses
+  // to null while the row stays put. Measured at the time of this change: 18,035 rows in the universe, of
+  // which 2,727 carried a servable asset_type. Reading the gated copy made ETN look like 2 and GDR like 0
+  // when both were present and simply unlabelled — a licensing gate reported as a coverage collapse.
+  //
+  // screener_meta still holds every label; it just may not publish them. Joining to it answers the
+  // original question exactly, and keeps answering it as provenance is established.
+  const rows = await sql`select coalesce(m.asset_type, '(null)') as t, count(*)::int n
+    from screener_stocks s join screener_meta m on m.ticker = s.ticker group by 1 order by n desc`;
   const by = new Map(rows.map((r) => [r.t, r.n]));
   console.log('         ' + rows.map((r) => `${r.t}=${r.n}`).join(' · '));
-  const FLOORS = { Stock: 5000, ETF: 4000, ADRC: 800, WARRANT: 300, FUND: 200, UNIT: 100, PFD: 50, RIGHT: 50, ETN: 20, GDR: 5 };
+  // ⚠️ RECALIBRATED TO THE POPULATION THIS NOW MEASURES, not loosened. The old floors were set against
+  // screener_stocks.asset_type, which the retired provider populated for nearly every row; this counts
+  // screener_meta's label joined to the universe, whose own coverage is lower because meta was never
+  // complete. Measured when this was changed: ETF 5549 · Stock 4545 · OS 1029 · ADRC 918 · WARRANT 431 ·
+  // FUND 246 · UNIT 208 · PFD 78 · RIGHT 111 · ETN 44 · GDR 8, against a universe of 18,035 rows.
+  //
+  // Each floor sits roughly 10-20% below its current value: far enough to survive ordinary drift, close
+  // enough that losing a whole class still trips it. The universe-size assertion elsewhere in this file is
+  // what catches a broad thinning; this one catches a class-shaped one.
+  const FLOORS = { Stock: 4000, ETF: 4800, ADRC: 800, WARRANT: 350, FUND: 200, UNIT: 150, PFD: 60, RIGHT: 80, ETN: 30, GDR: 5 };
   for (const [t, floor] of Object.entries(FLOORS)) {
     ok(`⚠️ ${t} is still present (${by.get(t) ?? 0} ≥ ${floor})`, (by.get(t) ?? 0) >= floor, String(by.get(t)));
   }

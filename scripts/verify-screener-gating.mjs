@@ -213,8 +213,14 @@ L('⚠️ 7 — the UI gates the matching view, without an entitlement flash');
 L('⚠️ 8 — nothing from the test-symbol work was touched');
 {
   const sd = code('src/lib/screener-data.js');
+  // ⚠️ THE CALL GAINED A `named` ARGUMENT, and the reason belongs in the test. `classified: metaByT.has(t)`
+  // was the whole test for "our reference data knows this symbol" — but metaByT is now filtered to rows
+  // whose vendor-derived columns may be SERVED, so TEST (the real YieldMax ETF, whose meta row predates the
+  // provenance work and carries a NULL source) stopped counting as known, was refused as an exchange test
+  // symbol, and vanished from screener_stocks entirely. Whether we may publish a sector is a different
+  // question from whether a symbol denotes a real security, so the security master's name decides too.
   ok('the universe filter still refuses exchange test symbols',
-    /isExchangeTestSymbol\(t, \{ classified: metaByT\.has\(t\) \}\)/.test(sd));
+    /isExchangeTestSymbol\(t, \{ classified: metaByT\.has\(t\), named: !!nameByT\.get\(t\) \}\)/.test(sd));
   const r = code('src/app/api/screener/route.js');
   ok('⚠️ and this route did not touch the universe or the filters module',
     !/isExchangeTestSymbol/.test(r) && /buildConds/.test(r));

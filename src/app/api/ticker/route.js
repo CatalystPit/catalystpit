@@ -6,6 +6,7 @@ import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { tiingoDailyToCanonical, assertCanonicalCandles } from '../../../lib/market/candles.mjs';
 import { LICENSED_CANDLE_SOURCES_SQL, servableMetaSource } from '../../../lib/licensing/providers.mjs';
+import { computePe } from '../../../lib/sec/xbrl-facts.mjs';
 import { claimRefreshAttempt, coalesce } from '../../../lib/market/refresh-policy.mjs';
 
 export const runtime = 'nodejs';
@@ -234,13 +235,48 @@ const fetchMetric = async (sym) => {
     const lastClose = Number(r.last_close);
     const annual = metaOk ? Number(m.annual_dividend) : NaN;
 
+    // ── SEC-DERIVED FUNDAMENTALS ────────────────────────────────────────────
+    //
+    // ⚠️ READ FROM OUR OWN TABLE, NOT FROM SEC. This route is on the ticker page's critical path and was
+    // the subject of a measured performance fix; an SEC request here would undo it. The fundamentals are
+    // ingested ahead of time by scripts/ingest-sec-fundamentals.mjs — one frames request per concept for
+    // the whole market — and this is one indexed read of the result.
+    //
+    // ⚠️ AND IT IS GATED ON PROVENANCE, like every other stored value this page serves. 4,477 rows in this
+    // table predate the licensing work and were Polygon-derived with a NULL source; they are not servable,
+    // and `source = 'sec'` is the only value that is.
+    const fund = await db.execute(sql`
+      select eps_diluted_ttm, eps_basic_ttm, revenue_ttm_sec, net_income_ttm, free_cash_flow,
+             pe_basis, ttm_end_date::text as ttm_end_date, source
+        from screener_fundamentals where ticker = ${sym} and source = 'sec'`);
+    const fx = (fund.rows ?? fund)[0] || {};
+    const epsTtm = Number(fx.eps_diluted_ttm);
+    const haveEps = Number.isFinite(epsTtm) && fx.eps_diluted_ttm !== null;
+
+    // ⚠️ P/E IS COMPUTED HERE FROM THE LICENSED LAST CLOSE RATHER THAN STORED, because the stored value
+    // ages with the price while the EPS does not. The EPS is the slow-moving SEC fact; the price is ours
+    // and current. computePe owns the rules — positive denominator, stated basis — so this cannot quietly
+    // publish a P/E on a loss.
+    const pe = computePe({ price: lastClose, epsTtm: haveEps ? epsTtm : null });
+
     return {
       high52:    haveYear && Number.isFinite(Number(r.high52)) ? +Number(r.high52).toFixed(4) : null,
       low52:     haveYear && Number.isFinite(Number(r.low52)) ? +Number(r.low52).toFixed(4) : null,
       // Millions, matching the unit the page already formats.
       marketCap: metaOk && Number(m.market_cap) > 0 ? +(Number(m.market_cap) / 1e6).toFixed(2) : null,
-      peTTM:     null,
-      epsTTM:    null,
+      peTTM:     pe.ok ? +pe.value.toFixed(4) : null,
+      // ⚠️ THE BASIS TRAVELS WITH THE NUMBER. A P/E with no stated basis is the thing that lets a quarterly
+      // EPS be presented as an annual multiple; the ticker page can label it because it is told.
+      peBasis:   pe.ok ? pe.basis : null,
+      epsTTM:    haveEps ? +epsTtm.toFixed(4) : null,
+      epsBasicTTM: Number.isFinite(Number(fx.eps_basic_ttm)) && fx.eps_basic_ttm !== null ? +Number(fx.eps_basic_ttm).toFixed(4) : null,
+      revenueTTM: Number.isFinite(Number(fx.revenue_ttm_sec)) && fx.revenue_ttm_sec !== null ? Number(fx.revenue_ttm_sec) : null,
+      netIncomeTTM: Number.isFinite(Number(fx.net_income_ttm)) && fx.net_income_ttm !== null ? Number(fx.net_income_ttm) : null,
+      freeCashFlow: Number.isFinite(Number(fx.free_cash_flow)) && fx.free_cash_flow !== null ? Number(fx.free_cash_flow) : null,
+      // ⚠️ THE TTM WINDOW'S END DATE, so a reader can see HOW CURRENT these are. A fundamental is as of a
+      // filing, not as of now, and a page that implies otherwise is showing stale revenue as current
+      // revenue — which the brief names explicitly as something this page must never do.
+      ttmAsOf:   fx.ttm_end_date || null,
       beta:      Number.isFinite(b) ? +b.toFixed(3) : null,
       divYield:  (Number.isFinite(annual) && annual > 0 && lastClose > 0) ? +((annual / lastClose) * 100).toFixed(2) : null,
       avgVol10d: haveVol && Number.isFinite(Number(r.avg_vol_10d)) ? +(Number(r.avg_vol_10d) / 1e6).toFixed(4) : null,
