@@ -141,6 +141,22 @@ export const LICENSED_CANDLE_SOURCES = Object.freeze(['tiingo_split_adj']);
 /** Candle sources that exist in storage but may not be served. */
 export const UNLICENSED_CANDLE_SOURCES = Object.freeze(['polygon']);
 
+/**
+ * The same list as a SQL array LITERAL, for raw query templates.
+ *
+ * ⚠️ BECAUSE BINDING AN ARRAY PARAMETER SILENTLY BREAKS ON THIS DRIVER, and it broke in production. A
+ * raw `source = any(${LICENSED_CANDLE_SOURCES})` renders through drizzle's neon-http driver as
+ * `any(($2))`, which Postgres rejects — so the query threw, the caller's catch turned it into null, and
+ * /api/ticker served a metrics block of nothing while reporting success. Measured on the live site: the
+ * whole 52-week and average-volume section came back empty with no error anywhere.
+ *
+ * A literal built from this frozen, code-owned list is safe — there is no user input anywhere near it —
+ * and it works identically in every query shape. Where a drizzle column object is in hand, `inArray()`
+ * is better still and renders scalar parameters correctly; this is for raw templates.
+ */
+export const LICENSED_CANDLE_SOURCES_SQL =
+  `ARRAY[${LICENSED_CANDLE_SOURCES.map((s) => `'${s}'`).join(',')}]::text[]`;
+
 /** The licensed dividend source, used to scope the public calendar. */
 export const LICENSED_DIVIDEND_SOURCES = Object.freeze(['tiingo']);
 

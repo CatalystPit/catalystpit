@@ -204,8 +204,16 @@ export async function captureFundamentalSnapshot({ asOf = null, source = 'screen
   await db.execute(sql`
     insert into security_snapshot_run (as_of, captured_at, considered, written, source)
     values (${day}::date, now(), ${considered}, ${written ?? 0}, ${source})
-    // A re-run REPLACES the day's counts rather than accumulating them: the log answers "what did
-    // the last capture for this day do", not "how many times was it retried".
+    -- ⚠️ THIS COMMENT USED A JAVASCRIPT SLASH-SLASH, WHICH IS NOT A SQL COMMENT, AND THE STATEMENT HAS
+    -- ALWAYS THROWN. Postgres accepts a double dash; a double slash is a syntax error at the first one.
+    -- The data insert above runs first and succeeded, so security_fundamental_snapshot filled up
+    -- normally (46,285 rows) while security_snapshot_run never got past its first row and the function
+    -- reported failure to every caller — rebuildScreener has been logging a null snapshot on an
+    -- otherwise successful capture. Found while exercising the rebuild on licensed inputs; the bug
+    -- itself is unrelated to licensing.
+    --
+    -- A re-run REPLACES the day's counts rather than accumulating them: the log answers "what did the
+    -- last capture for this day do", not "how many times was it retried".
     on conflict (as_of) do update set
       captured_at = now(), considered = excluded.considered,
       written = excluded.written, source = excluded.source`);

@@ -1,7 +1,27 @@
 import { sql, and, eq, gte, inArray, desc, isNotNull } from 'drizzle-orm';
 import { db } from './db';
 import { insiderTrades, congressTrades, fundHoldings, fundFilings, eightkFilings, shortInterest, tickerFloat, tickerDailyCandles, screenerStocks, screenerMeta, screenerFundamentals, tickerInstitutionalOwnership } from './schema';
-import { LICENSED_CANDLE_SOURCES } from './licensing/providers.mjs';
+import { LICENSED_CANDLE_SOURCES_SQL } from './licensing/providers.mjs';
+
+/**
+ * A Postgres text[] literal from a list of code-generated values.
+ *
+ * ⚠️ BECAUSE A BOUND ARRAY PARAMETER DOES NOT WORK ON THIS DRIVER. `any(${jsArray})` renders through
+ * drizzle's neon-http driver as `any(($2))`, which Postgres rejects — the query throws, a caller's catch
+ * turns it into an empty result, and the surface reports success while serving nothing. That is exactly
+ * how /api/ticker shipped an empty metrics block.
+ *
+ * ⚠️ AND EVERY VALUE IS WHITELISTED BY SHAPE, NOT ESCAPED. These lists are tickers and ISO dates this
+ * module generated itself, never user input — but building SQL text from a list deserves a guard that
+ * does not depend on that staying true, so anything that is not a plain symbol or date is dropped rather
+ * than quoted. A dropped value narrows a result; an injected one does something else entirely.
+ */
+function textArrayLiteral(values) {
+  const safe = (values || [])
+    .map((v) => String(v))
+    .filter((v) => /^[A-Za-z0-9.\-]{1,24}$/.test(v));
+  return safe.length ? `ARRAY[${safe.map((v) => `'${v}'`).join(',')}]::text[]` : `ARRAY[]::text[]`;
+}
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
 import { resolveClassifications, secTickerIndex } from './market/sec-classification.mjs';
@@ -379,7 +399,7 @@ async function fetchDetail(t, { index = null } = {}) {
     if (sharesOut > 0) {
       const px = await db.execute(sql`
         select close from ticker_daily_candles
-         where ticker = ${t} and source = any(${LICENSED_CANDLE_SOURCES})
+         where ticker = ${t} and source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)})
          order by date desc limit 1`);
       const close = Number((px.rows ?? px)[0]?.close);
       if (Number.isFinite(close) && close > 0) marketCap = sharesOut * close;
@@ -558,8 +578,8 @@ export async function backfillTechnicals({ days = 260 } = {}) {
     const res = await db.execute(sql`
       select ticker, date::text as date, open, high, low, close
         from ticker_daily_candles
-       where source = any(${LICENSED_CANDLE_SOURCES})
-         and ticker = any(${part})
+       where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)})
+         and ticker = any(${sql.raw(textArrayLiteral(part))})
          and date >= ${windowFrom}::date
        order by ticker, date desc`);
     for (const r of (res.rows ?? res)) {
@@ -574,7 +594,7 @@ export async function backfillTechnicals({ days = 260 } = {}) {
   {
     const res = await db.execute(sql`
       select date::text as date, close from ticker_daily_candles
-       where source = any(${LICENSED_CANDLE_SOURCES}) and ticker = 'SPY' and date >= ${windowFrom}::date
+       where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)}) and ticker = 'SPY' and date >= ${windowFrom}::date
        order by date asc`);
     for (const r of (res.rows ?? res)) if (r.close != null) spy.push(Number(r.close));   // chronological
   }
@@ -599,7 +619,7 @@ export async function backfillTechnicals({ days = 260 } = {}) {
       const part = unis.slice(i, i + CHUNK);
       const res = await db.execute(sql`
         select distinct on (ticker) ticker, close from ticker_daily_candles
-         where source = any(${LICENSED_CANDLE_SOURCES}) and ticker = any(${part})
+         where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)}) and ticker = any(${sql.raw(textArrayLiteral(part))})
            and date >= ${from}::date and date <= ${to}::date
          order by ticker, date asc`);
       for (const r of (res.rows ?? res)) if (r.close != null) out.set(r.ticker, Number(r.close));
@@ -801,14 +821,14 @@ async function licensedEod() {
   // unnecessary when the table knows which days it has.
   const ds = await db.execute(sql`
     select distinct date::text as date from ticker_daily_candles
-     where source = any(${LICENSED_CANDLE_SOURCES}) order by date desc limit 2`);
+     where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)}) order by date desc limit 2`);
   const dates = (ds.rows ?? ds).map((r) => r.date);
   if (!dates.length) return null;
 
   const rows = await db.execute(sql`
     select ticker, date::text as date, open, high, low, close, volume
       from ticker_daily_candles
-     where source = any(${LICENSED_CANDLE_SOURCES}) and date::text = any(${dates})`);
+     where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)}) and date::text = any(${sql.raw(textArrayLiteral(dates))})`);
 
   const latest = dates[0], prev = dates[1] || null;
   const prevClose = new Map();
@@ -1410,5 +1430,8 @@ export async function rebuildScreener({ maxCandleTickers = 2500 } = {}) {
     console.log(`[screener] fundamental snapshot failed (non-fatal): ${e.message}`);
   }
 
-  return { universe: tickers.length, technicals: tech.size, polygon: poly ? poly.map.size : 0, polygonDate: poly?.date || null, quoted, tableCount: n, snapshot };
+  // ⚠️ THE FIELDS WERE NAMED AFTER THE VENDOR, and a job result that says `polygon: 13390` is exactly
+  // the kind of thing the next audit will read as a live Polygon dependency. They now describe what they
+  // measure: how many securities the licensed end-of-day read covered, and which session it came from.
+  return { universe: tickers.length, technicals: tech.size, licensedEod: poly ? poly.map.size : 0, eodSession: poly?.date || null, quoted, tableCount: n, snapshot };
 }

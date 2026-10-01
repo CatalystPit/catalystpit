@@ -5,7 +5,7 @@ import { fetchTiingoDaily } from '../../../lib/congress-ingest.mjs';
 import { resolveFloat } from '../../../lib/finra-short-interest.mjs';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { tiingoDailyToCanonical, assertCanonicalCandles } from '../../../lib/market/candles.mjs';
-import { LICENSED_CANDLE_SOURCES, servableMetaSource } from '../../../lib/licensing/providers.mjs';
+import { LICENSED_CANDLE_SOURCES_SQL, servableMetaSource } from '../../../lib/licensing/providers.mjs';
 import { claimRefreshAttempt, coalesce } from '../../../lib/market/refresh-policy.mjs';
 
 export const runtime = 'nodejs';
@@ -197,7 +197,7 @@ const fetchMetric = async (sym) => {
       with lic as (
         select close, volume, date
           from ticker_daily_candles
-         where ticker = ${sym} and source = any(${LICENSED_CANDLE_SOURCES})
+         where ticker = ${sym} and source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)})
            and date >= current_date - 400
       )
       select
