@@ -23,7 +23,14 @@ L('#10 — the licensing probe, and no secret in a world-readable endpoint');
   const s = JSON.stringify(lic);
   ok('⚠️ no credential, token or URL is published', !/[A-Za-z0-9_-]{25,}/.test(s) && !/http/.test(s), s);
   const all = JSON.stringify(h);
-  ok('⚠️ …nor anywhere else in the payload', !/TIINGO|KV_REST|Bearer|api[_-]?key/i.test(all));
+  // ⚠️ THE VENDOR NAME IS NOT A SECRET, AND FORBIDDING IT WAS WRONG. This matched /TIINGO/i anywhere in
+  // the payload and fired on the dividends job heartbeat note — {"ok":true,"source":"tiingo",...} —
+  // which is an operational record of which provider ingested, not a credential. The vendor identity is
+  // published on the legal pages by contractual requirement; what must never appear is a key, a token,
+  // an authenticated URL, a plan tier or a contract term.
+  const SECRETISH = /KV_REST|Bearer |[A-Za-z0-9]{32,}|upstash\.io|sk_[a-z]+_|pk_[a-z]+_|invoice|contract|plan_/i;
+  ok('⚠️ no credential, token, authenticated URL, plan or contract term anywhere in the payload',
+    !SECRETISH.test(all), (all.match(SECRETISH) || [])[0] || '');
   console.log(`         licensing.realtime → ${lic.state} · ${lic.note}`);
 }
 
