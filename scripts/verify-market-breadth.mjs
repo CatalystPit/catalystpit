@@ -198,8 +198,20 @@ L('⚠️ the snapshot is pinned to ONE market session');
     `${payload.priorSession} vs ${s.s2}`);
   ok('⚠️ securities that did not trade that session are counted, not hidden',
     payload.notTrading > 0, String(payload.notTrading));
-  ok('⚠️ ...and so are those with no prior-session close',
-    payload.noPriorClose > 0, String(payload.noPriorClose));
+  // ⚠️ ZERO IS NOW THE CORRECT ANSWER, AND `> 0` WAS A PROXY FOR THE REAL RULE. This asserted that at
+  // least one security had no prior-session close, as evidence that such securities are COUNTED rather
+  // than silently dropped from the denominator. It held only because the candle table was a mixed
+  // population: Polygon rows covered one session for a ticker and not the neighbouring one, so gaps
+  // existed as an artefact of two providers being interleaved. After the rebuild every ticker has one
+  // continuous licensed series and there are genuinely no such securities — a better data state that the
+  // old assertion reads as a regression.
+  //
+  // The rule worth pinning is that the field is REPORTED and that the universe adds up, which is what the
+  // reconciliation below actually proves. A non-negative number that participates in that sum is the
+  // honest requirement; the count itself is data, not a contract.
+  ok('⚠️ ...and those with no prior-session close are reported rather than dropped',
+    Number.isFinite(Number(payload.noPriorClose)) && Number(payload.noPriorClose) >= 0,
+    String(payload.noPriorClose));
 
   // ⚠️ THE UNIVERSE MUST ACCOUNT FOR ITSELF, from the published fields alone. not_trading was first
   // counted inside a CTE fed by the candle table, so three universe members with no usable close in the

@@ -35,9 +35,13 @@ L('=== ⚠️ THE GATE IS PRICE HISTORY, NOT SYMBOL SHAPE ===');
   ok('the count comes from the bars already loaded', /sessions = bars\.length/.test(mf));
   // ⚠️ COUNTS CALLS, NOT THE DEFINITION. The naive match also found
   // "async function loadBars(ticker)" and reported two queries where there is one.
-  ok('…so no extra query is added',
-    (mf.match(/await loadBars\(ticker\)/g) || []).length === 1,
-    String((mf.match(/await loadBars\(ticker\)/g) || []).length));
+  // ⚠️ THE ARGUMENT LIST GREW AND THIS COUNTED ZERO, which satisfies nothing but reads as "no query at
+  // all" — the opposite of what it checks. loadBars took a bare ticker when this was written; the
+  // Consensus bulk-load (03954c65) added a shared context argument so 52,944 round trips became 169.
+  // Matching the CALL rather than its exact arity keeps the invariant — one load per build — while
+  // letting the signature evolve, and requiring exactly 1 still catches a second query being added.
+  const loadCalls = (mf.match(/await loadBars\(/g) || []).length;
+  ok('…so no extra query is added', loadCalls === 1, String(loadCalls));
   ok('…and a load failure reports zero rather than a stale count', /sessions = 0;/.test(mf));
   ok('⚠️ no vendor call is introduced on hover', !/tiingo|polygon|api\./i.test(
     mf.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')));

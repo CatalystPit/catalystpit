@@ -203,9 +203,25 @@ const fetchMetric = async (sym) => {
       select
         (select max(close) from (select close from lic order by date desc limit 252) w)      as high52,
         (select min(close) from (select close from lic order by date desc limit 252) w)      as low52,
+        (select count(*)  from (select close from lic order by date desc limit 252) w)       as n52,
         (select avg(volume) from (select volume from lic order by date desc limit 10) v)     as avg_vol_10d,
+        (select count(volume) from (select volume from lic order by date desc limit 10) v)   as n_vol,
         (select close from lic order by date desc limit 1)                                   as last_close`);
     const r = (res.rows ?? res)[0] || {};
+
+    // ⚠️ A RANGE IS ONLY A 52-WEEK RANGE IF THERE IS A YEAR BEHIND IT, and this guard exists because the
+    // first version of this query did not have one. Measured on SPY while the licensed rebuild was still
+    // in flight: high 773.38, low 762.63, last 762.63 — a 1.4% "52-week range", computed from the handful
+    // of sessions that happened to be present. Every number was arithmetically correct and the label was
+    // a lie, which is the exact failure mode this whole change exists to remove. Min/max over a short
+    // window degrades silently; a count does not.
+    //
+    // 150 sessions is ~60% of a trading year: enough that the extremes are meaningful, loose enough to
+    // cover a recent listing's genuinely shorter history rather than demanding data that cannot exist.
+    const n52 = Number(r.n52) || 0;
+    const nVol = Number(r.n_vol) || 0;
+    const haveYear = n52 >= 150;
+    const haveVol = nVol >= 10;
 
     const meta = await db.execute(sql`
       select market_cap, shares_out, annual_dividend, source from screener_meta where ticker = ${sym}`);
@@ -219,15 +235,15 @@ const fetchMetric = async (sym) => {
     const annual = metaOk ? Number(m.annual_dividend) : NaN;
 
     return {
-      high52:    Number.isFinite(Number(r.high52)) ? +Number(r.high52).toFixed(4) : null,
-      low52:     Number.isFinite(Number(r.low52)) ? +Number(r.low52).toFixed(4) : null,
+      high52:    haveYear && Number.isFinite(Number(r.high52)) ? +Number(r.high52).toFixed(4) : null,
+      low52:     haveYear && Number.isFinite(Number(r.low52)) ? +Number(r.low52).toFixed(4) : null,
       // Millions, matching the unit the page already formats.
       marketCap: metaOk && Number(m.market_cap) > 0 ? +(Number(m.market_cap) / 1e6).toFixed(2) : null,
       peTTM:     null,
       epsTTM:    null,
       beta:      Number.isFinite(b) ? +b.toFixed(3) : null,
       divYield:  (Number.isFinite(annual) && annual > 0 && lastClose > 0) ? +((annual / lastClose) * 100).toFixed(2) : null,
-      avgVol10d: Number.isFinite(Number(r.avg_vol_10d)) ? +(Number(r.avg_vol_10d) / 1e6).toFixed(4) : null,
+      avgVol10d: haveVol && Number.isFinite(Number(r.avg_vol_10d)) ? +(Number(r.avg_vol_10d) / 1e6).toFixed(4) : null,
     };
   } catch { return null; }
 };
