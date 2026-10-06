@@ -1,0 +1,5 @@
+# Catalyst Pit LLC authorized digital sellers - IAB Tech Lab ads.txt
+# Google AdSense, account ca-pub-8341744464373905, sold DIRECT by Catalyst Pit LLC.
+# Deliberately ASCII-only: this file is parsed by third-party crawlers, and there is no
+# reason for a comment to be the thing that makes one of them behave oddly.
+google.com, pub-8341744464373905, DIRECT, f08c47fec0942fa0
