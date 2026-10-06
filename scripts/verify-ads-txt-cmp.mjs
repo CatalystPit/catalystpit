@@ -98,12 +98,28 @@ L('\n=== 2. THE CSP ADMITS THE CONSENT MESSAGE, AND NOTHING MORE ===');
   ok('⚠️ *.googleapis.com and *.gstatic.com were not added either',
     !scriptSrc.includes('https://*.googleapis.com') && !scriptSrc.includes('https://*.gstatic.com'));
 
-  // ⚠️ LEAST PRIVILEGE MEANS THE OTHER DIRECTIVES WERE LEFT ALONE. Nothing observed required a
-  // connect-src or frame-src entry for the CMP, so none was added — and if the now-unblocked script
-  // turns out to need one, that will appear as a fresh violation with its own evidence.
-  ok('connect-src did not gain the funding-choices origin', !directive('connect-src').includes(CMP_ORIGIN),
-    'not observed as needed; add it only when a probe shows it blocked');
-  ok('frame-src did not gain it either', !directive('frame-src').includes(CMP_ORIGIN));
+  // ⚠️ LEAST PRIVILEGE, MEASURED TWICE. The first probe could only see the blocked SCRIPT, because the
+  // code that makes the requests below had never run. Allowing the script let the message initialise and
+  // revealed 13 XHRs to the same host, all refused by connect-src — so connect-src gained that one host,
+  // on evidence rather than in anticipation.
+  ok('⚠️ connect-src admits the funding-choices origin', directive('connect-src').includes(CMP_ORIGIN),
+    'the consent message makes XHRs to /el/ once it is running; 13 were observed blocked');
+  ok('⚠️ …and it is the SAME host already trusted for script, not a new party',
+    directive('script-src').includes(CMP_ORIGIN) && directive('connect-src').includes(CMP_ORIGIN));
+  // frame-src is still asserted ABSENT: nothing was blocked as a frame in either probe. The message UI
+  // renders into about:blank iframes, which inherit the embedding origin and need no allowance.
+  ok('⚠️ frame-src did NOT gain it — no frame was ever blocked',
+    !directive('frame-src').includes(CMP_ORIGIN),
+    'adding it would be pre-authorising something never observed as needed');
+  ok('⚠️ connect-src gained nothing else', (() => {
+    const expected = new Set(["'self'", 'https://ep1.adtrafficquality.google', CMP_ORIGIN,
+      'https://cdn.syndication.twimg.com', 'https://api.anthropic.com', 'https://upstash.io',
+      'https://powerful-grouper-86116.upstash.io', 'https://*.clerk.accounts.dev', 'https://*.clerk.com',
+      'https://clerk.catalystpit.com', 'https://challenges.cloudflare.com', 'https://rest.ably.io',
+      'https://*.ably.io', 'wss://*.ably.io', 'https://*.ably-realtime.com', 'wss://*.ably-realtime.com',
+      'https://*.ably.net', 'wss://*.ably.net']);
+    return directive('connect-src').every((x) => expected.has(x));
+  })(), directive('connect-src').join(' '));
 
   // The pre-existing ad stack must be intact.
   ok('the AdSense script origin is still present', scriptSrc.includes('https://pagead2.googlesyndication.com'));
