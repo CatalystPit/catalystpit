@@ -1,0 +1,100 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+
+    <schemaVersion>X0609</schemaVersion>
+
+    <documentType>4</documentType>
+
+    <periodOfReport>2026-09-29</periodOfReport>
+
+    <notSubjectToSection16>0</notSubjectToSection16>
+
+    <issuer>
+        <issuerCik>0002070534</issuerCik>
+        <issuerName>SL Science Holding Ltd</issuerName>
+        <issuerTradingSymbol>SLBT</issuerTradingSymbol>
+        <issuerForeignTradingSymbol></issuerForeignTradingSymbol>
+    </issuer>
+
+    <reportingOwner>
+        <reportingOwnerId>
+            <rptOwnerCik>0002124675</rptOwnerCik>
+            <rptOwnerName>Wang Ching-Dong</rptOwnerName>
+        </reportingOwnerId>
+        <reportingOwnerAddress>
+            <rptOwnerNonUSAddressFlag>true</rptOwnerNonUSAddressFlag>
+            <rptOwnerStreet1>C/O 11TH FLOOR, NO. 479 CHONGYANG ROAD,</rptOwnerStreet1>
+            <rptOwnerStreet2>NANGANG DISTRICT</rptOwnerStreet2>
+            <rptOwnerCity>TAIPEI</rptOwnerCity>
+            <rptOwnerNonUSStateTerritory></rptOwnerNonUSStateTerritory>
+            <rptOwnerCountry>F5</rptOwnerCountry>
+            <rptOwnerZipCode>115010</rptOwnerZipCode>
+            <rptOwnerStateDescription>TAIWAN</rptOwnerStateDescription>
+        </reportingOwnerAddress>
+        <reportingOwnerRelationship>
+            <isDirector>1</isDirector>
+            <isOfficer>1</isOfficer>
+            <isTenPercentOwner>1</isTenPercentOwner>
+            <isOther>0</isOther>
+            <officerTitle>Chief Executive Officer</officerTitle>
+            <otherText></otherText>
+        </reportingOwnerRelationship>
+    </reportingOwner>
+
+    <aff10b5One>0</aff10b5One>
+
+    <nonDerivativeTable>
+        <nonDerivativeTransaction>
+            <securityTitle>
+                <value>Ordinary Shares</value>
+            </securityTitle>
+            <transactionDate>
+                <value>2026-09-29</value>
+            </transactionDate>
+            <deemedExecutionDate></deemedExecutionDate>
+            <transactionCoding>
+                <transactionFormType>4</transactionFormType>
+                <transactionCode>P</transactionCode>
+                <equitySwapInvolved>0</equitySwapInvolved>
+            </transactionCoding>
+            <transactionTimeliness></transactionTimeliness>
+            <transactionAmounts>
+                <transactionShares>
+                    <value>4545306</value>
+                    <footnoteId id="F2"/>
+                </transactionShares>
+                <transactionPricePerShare>
+                    <value>2272653</value>
+                </transactionPricePerShare>
+                <transactionAcquiredDisposedCode>
+                    <value>A</value>
+                </transactionAcquiredDisposedCode>
+            </transactionAmounts>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>333832129</value>
+                    <footnoteId id="F1"/>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>See footnote</value>
+                    <footnoteId id="F1"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeTransaction>
+    </nonDerivativeTable>
+
+    <footnotes>
+        <footnote id="F1">Represents 333,832,129 ordinary shares, par value of $0.00001 per share (the &quot;Ordinary Shares&quot;), of SL Science Holding Limited (the &quot;Issuer&quot;), beneficially owned by Ching-Dong Wang, including (i) 329,286,823 Ordinary Shares held by SL Link Holding Ltd., and (ii) 4,545,306 Ordinary Shares directly held by Ching-Dong Wang. SL Link Holding Ltd. is a company incorporated in the Cayman Islands which is owned equally by Mr. Wang and his spouse, and Mr. Wang is the sole director of SL Link Holding Ltd. As a result, Mr. Wang is deemed to have voting and dispositive power over the securities of the Issuer held by SL Link Holding Ltd.</footnote>
+        <footnote id="F2">On September 29, 2026, SL Link Co., Ltd. sold and transferred 4,545,306 Ordinary Shares to Ching-Dong Wang for an aggregate purchase price of US$2,272,653 (the &quot;Share Transfer&quot;). SL Link Co., Ltd. is a company incorporated in Taiwan. Ching-Dong Wang owns a 50.73% equity interest in SL Link Co., Ltd., and is the Chairman of the Board and Chief Executive Officer of SL Link Co., Ltd. As a result, Ching-Dong Wang is deemed to have voting and dispositive power over the securities of the Issuer held by SL Link Co., Ltd. The aggregate number of Ordinary Shares beneficially owned by Ching-Dong Wang remained 333,832,129 following the Share Transfer.</footnote>
+    </footnotes>
+
+    <ownerSignature>
+        <signatureName>/s/ Ching-Dong Wang</signatureName>
+        <signatureDate>2026-10-01</signatureDate>
+    </ownerSignature>
+</ownershipDocument>

@@ -191,7 +191,12 @@ L('the parsers no longer read a field that does not exist');
   ok('⚠️ ...and looks the named filing up even when it was filed on another date',
     /OR accession = ANY\(\$\{named\}\)/.test(live));
   ok('⚠️ ...and strips the lineage inputs before the insert, since they are not columns',
-    /\.map\(\(\{ lineage, \.\.\.row \}\) => row\)/.test(live));
+    /\.map\(\(\{ lineage,[^}]*\.\.\.row \}\) => row\)/.test(live));
+  // ⚠️ AND THE VALIDATOR INPUTS ALONGSIDE IT. The price fix made the parser carry rawShares, rawPrice
+  // and priceDisclosed to the write so validateRow can distinguish a disclosed $0 from a footnoted
+  // price. They are inputs to a gate, not columns, and must not reach the insert either.
+  ok('⚠️ ...and strips the price-validator inputs too, for the same reason',
+    /\.map\(\(\{ lineage, rawShares, rawPrice, priceDisclosed, \.\.\.row \}\) => row\)/.test(live));
   ok('⚠️ ...and refuses to store an amendment it cannot place',
     /rows\.filter\(\(r\) => !r\.isAmendment \|\| r\.amendsAccession\)/.test(live),
     'storing an unplaceable amendment puts the correction beside the thing it corrects');

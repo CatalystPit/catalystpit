@@ -330,6 +330,13 @@ function parseForm4(xml, filing) {
     const securityTitle   = decodeEntities(extractFormValue(txn, 'securityTitle') || '');
     const rawSOA          = extractFormValue(txn, 'sharesOwnedFollowingTransaction');
     const sharesOwnedAfter = rawSOA ? parseFloat(rawSOA) : null;
+    // ⚠️ THE RAW STRINGS, CARRIED FORWARD FOR THE VALIDATOR AT THE WRITE. validateRow in
+    // lib/form4.mjs needs them for two things that cannot be recovered after the fact: a failure
+    // detail naming what the filer actually wrote, and the distinction between a price the filer
+    // DISCLOSED as zero (a data error) and one they footnoted instead (a real transaction whose price
+    // we simply do not hold as a number). Both land as 0 here, and only the first should be refused.
+    const rawSharesStr = extractFormValue(txn, 'transactionShares');
+    const rawPriceStr  = extractFormValue(txn, 'transactionPricePerShare');
 
     let action;
     if      (transactionCode === 'P') action = 'BUY';
@@ -354,6 +361,9 @@ function parseForm4(xml, filing) {
       transactionCode, action,
       shares, pricePerShare,
       totalValue: shares * pricePerShare,
+      // Validator inputs, stripped before the insert alongside `lineage` — not columns.
+      rawShares: rawSharesStr, rawPrice: rawPriceStr,
+      priceDisclosed: rawPriceStr != null && rawPriceStr !== '',
       sharesOwnedAfter,
       securityTitle,
       transactionDate,
@@ -731,10 +741,62 @@ async function insertInsiderTrades(insiderTrades) {
   // first — the original defect was precisely that every gate sat downstream of the write, at
   // render time. Counted rather than silent, so a parser regression shows up as a number instead
   // of as a slow drift in how many rows nobody can click.
-  const rows = mapped.filter(r => isIngestableTicker(r.ticker));
-  const rejected = mapped.length - rows.length;
+  const tickered = mapped.filter(r => isIngestableTicker(r.ticker));
+  const rejected = mapped.length - tickered.length;
   if (rejected) console.log(`[form4] rejected ${rejected} row(s) with an unusable ticker`);
   lastInsiderReject = rejected;
+  if (!tickered.length) return 0;
+
+  // ── ⚠️ THE NUMERIC VALIDATOR, AT THE SAME DOOR, AND THE DEFECT THAT PUT IT HERE ──────────
+  //
+  // On 2026-10-01 a Form 4 for SLBT was stored with price_per_share = 2,272,653 against 4,545,306
+  // shares, producing a $10,329,903,316,818 transaction that became the largest insider purchase on
+  // record and was served, ranked and scored for conviction.
+  //
+  // THE PARSER WAS NOT WRONG. The SEC document really does say
+  // <transactionPricePerShare><value>2272653</value></transactionPricePerShare>: the filer put the
+  // AGGREGATE consideration in the per-share field, as their own footnote states plainly
+  // ("4,545,306 Ordinary Shares ... for an aggregate purchase price of US$2,272,653", i.e. $0.50 a
+  // share). There is no node to re-map and no field shift to correct. The input was bad.
+  //
+  // THE DEFECT WAS THAT NOTHING CHECKED IT. lib/form4.mjs has carried validateRow and its documented
+  // bounds all along — MAX_PRICE sits just above BRK.A so a real filing never trips it, MAX_VALUE at
+  // $500B is beyond any real single transaction — and this filing breaches BOTH. But that validator
+  // was only ever reached by the backfill scripts. This route carries its own copy of the parser, as
+  // the comment above parseForm4 says out loud, and that copy validated nothing numeric at all: a
+  // `parseFloat(...) || 0` and a multiplication, straight into the insert.
+  //
+  // So the two paths now agree, at the place this function already calls the last gate. The bounds are
+  // not re-litigated here and are not lowered: a $500,000 share price and a $400B transaction both
+  // still pass, because legitimate extremes exist and refusing them would be a worse bug than this one.
+  const { validateRow } = await import('../../../lib/form4.mjs');
+  const rows = [];
+  const invalid = [];
+  for (const r of tickered) {
+    const bad = validateRow(r);
+    if (bad) invalid.push({ row: r, bad }); else rows.push(r);
+  }
+  if (invalid.length) {
+    // QUARANTINED, NOT DROPPED. insider_quarantine exists for exactly this and already holds the
+    // parsed row and its source URL, so a refusal is something a human can open the filing and judge —
+    // which matters when the cause is the filer rather than us, because the row is evidence of a real
+    // event whose price we cannot trust. Best effort, and one statement per row: a quarantine write
+    // that fails must not take the good rows down with it.
+    console.log(`[form4] quarantined ${invalid.length} row(s): `
+      + invalid.map(({ row, bad }) => `${row.ticker} ${bad.reason}`).join(', '));
+    for (const { row, bad } of invalid) {
+      try {
+        await db.execute(sql`insert into insider_quarantine
+          (accession, issuer_cik, owner_cik, ticker, filing_date, reason, detail, parsed, raw_url)
+          values (${row.accession ?? null}, ${row.issuerCik ?? null}, ${row.ownerCik ?? null},
+                  ${row.ticker ?? null}, ${row.filingDate ?? null}, ${bad.reason},
+                  ${String(bad.detail ?? "").slice(0, 500)},
+                  ${JSON.stringify(row)}::jsonb, ${row.filingUrl ?? null})`);
+      } catch (e) {
+        console.error(`[form4] quarantine write failed: ${String(e?.message || e).slice(0, 160)}`);
+      }
+    }
+  }
   if (!rows.length) return 0;
   // ── ⚠️ AMENDMENT LINEAGE, RESOLVED BEFORE THE WRITE ────────────────────────
   //
@@ -767,7 +829,7 @@ async function insertInsiderTrades(insiderTrades) {
 
   // `lineage` was an input to the resolution above, not a column; it goes no further than this.
   const placeable = rows.filter((r) => !r.isAmendment || r.amendsAccession)
-    .map(({ lineage, ...row }) => row);
+    .map(({ lineage, rawShares, rawPrice, priceDisclosed, ...row }) => row);
   const droppedAmendments = rows.length - placeable.length;
   if (droppedAmendments) console.log(`[form4] held back ${droppedAmendments} row(s) from unresolvable amendments`);
   if (!placeable.length) return 0;
