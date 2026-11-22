@@ -623,7 +623,7 @@ export default function CatalystPit() {
                       See all breaking news →
                     </a>
                     <span style={{fontSize:12, color:C.muted, fontWeight:300, marginLeft:8}}>
-                      Pro unlocks the full feed, updated every minute
+                      Explore more market news for free
                     </span>
                   </div>
                   <button onClick={() => startCheckout()} style={{background:C.green, border:"none", color:"#fff",
@@ -631,7 +631,7 @@ export default function CatalystPit() {
                     cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
                     onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
                     onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Unlock Pro · $20/month
+                    Go ad-free · $9.99/month
                   </button>
                 </div>
                 </FreeOnly>
@@ -821,7 +821,7 @@ export default function CatalystPit() {
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,
             borderRadius:8, padding:"16px"}}>
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
-              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO</div>
+              letterSpacing:"1.5px", marginBottom:8}}>GO AD-FREE</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
               {/* ⚠️ THIS LIST IS A PROMISE. Each line is something a paying user receives today.
                   "Options flow & dark pool" was removed because it is a product we do not have and
@@ -840,10 +840,7 @@ export default function CatalystPit() {
                   every quote on every surface is real-time. Freshness is per-surface and each one
                   labels itself (LIVE / DELAYED / LAST CLOSE). Do not generalise this to "real-time
                   market data" across the product. */}
-              {["Full market news feed","Every insider filing, minutes after it lands",
-                "Full screener · 12 filters","Charts · all timeframes, intraday and daily",
-                "Evidence alerts on your watchlist",
-                "Daily 6 AM catalyst brief"].map(f => (
+              {["All market intelligence remains free", "Browse research with fewer distractions", "No ads while your membership is active"].map(f => (
                 <li key={f} style={{fontSize:12, color:C.green, display:"flex", gap:7,
                   alignItems:"center", fontWeight:400}}>
                   <span style={{fontWeight:700, fontSize:10, color:C.green}}>✓</span>{f}
@@ -854,7 +851,7 @@ export default function CatalystPit() {
                 only route to the annual price anywhere in the product, and it read as an afterthought
                 next to a full-width primary button. Both plans are published in the Terms, so both get
                 equal standing at the point of decision. */}
-            <PlanChoice align="center" cta="Start Pro" />
+            <PlanChoice align="center" cta="Go ad-free" />
           </div>
           </FreeOnly>
 
