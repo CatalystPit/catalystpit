@@ -98,8 +98,79 @@ function FreeOnly({ children }) {
   return children;
 }
 
-function HomeTeaserGate({ children }) {
-  return <>{children}</>; // Free and paid visitors see the same research.
+/**
+ * THE HOMEPAGE TEASER, AND WHO SEES THE BLUR.
+ *
+ * ⚠️ IT WAS RETURNING ITS CHILDREN UNCONDITIONALLY. Every visitor got three hardcoded placeholder
+ * rows blurred at 4px — including signed-in members, who were being shown an imitation of data they
+ * are entitled to read in full. Both call sites were already passing the props for both states
+ * (anonTitle, anonSub, proTitle, proSub, href, proCta) and nothing consumed any of them.
+ *
+ * ⚠️ THE TEST IS CLERK'S AUTH STATE, NOT ENTITLEMENT, AND THAT DISTINCTION IS THE POINT.
+ *
+ * This is a sign-up prompt, not a paywall. The research APIs are free and stay free, so
+ * useProEntitlement is deliberately NOT used here: a paying Ad-Free subscriber and a free
+ * registered member are the same viewer for this decision, and routing it through entitlement would
+ * quietly turn a homepage presentation choice into a second research paywall.
+ *
+ * ⚠️ NOTHING RENDERS WHILE isLoaded IS FALSE. Both wrong guesses are worse than a blank strip for a
+ * frame: defaulting to signed-out flashes a "sign in" pitch at somebody already signed in, and
+ * defaulting to signed-in shows an anonymous visitor the member view and then takes it away.
+ */
+export function HomeTeaserGate({ children, href, anonTitle, anonSub, proTitle, proSub, proCta }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return null;
+
+  // ⚠️ A SIGNED-IN MEMBER NEVER SEES A PLACEHOLDER. The table above already carries more real
+  // filings for them, so what belongs here is the way through to the full history — not a blurred
+  // imitation of it.
+  if (isSignedIn) {
+    return (
+      <a href={href} style={{
+        display:"flex", alignItems:"center", justifyContent:"space-between", gap:12,
+        padding:"12px 16px", borderTop:`1px solid ${C.surface}`, textDecoration:"none",
+        background:C.white,
+      }}>
+        <span style={{minWidth:0}}>
+          <span style={{display:"block", fontFamily:"'DM Sans',sans-serif", fontSize:13,
+            fontWeight:600, color:C.text}}>{proTitle}</span>
+          <span style={{display:"block", fontSize:11, color:C.muted, marginTop:2}}>{proSub}</span>
+        </span>
+        <span style={{flexShrink:0, fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:700,
+          color:C.green, whiteSpace:"nowrap"}}>{proCta} →</span>
+      </a>
+    );
+  }
+
+  // ⚠️ SIGNED OUT: the blurred teaser stays, with the prompt centred OVER it.
+  //
+  // redirect_url is what brings them back to this section's own research page rather than to the
+  // homepage — the whole reason each call site passes a different href.
+  return (
+    <div style={{position:"relative"}}>
+      {children}
+      {/* A scrim between the blur and the prompt. Without it the button competes with the blurred
+          text behind it and "clearly visible" stops being true. pointerEvents:none so it cannot
+          intercept the click it exists to make readable. */}
+      <div style={{position:"absolute", inset:0, background:C.white, opacity:0.55,
+        pointerEvents:"none"}} />
+      <div style={{position:"absolute", inset:0, display:"flex", flexDirection:"column",
+        alignItems:"center", justifyContent:"center", gap:6, padding:"8px 16px",
+        textAlign:"center"}}>
+        <a href={`/sign-in?redirect_url=${encodeURIComponent(href)}`} style={{
+          display:"inline-block", padding:"9px 18px", borderRadius:6, background:C.green,
+          color:C.white, textDecoration:"none", fontFamily:"'DM Sans',sans-serif",
+          fontSize:13, fontWeight:700, whiteSpace:"nowrap",
+          boxShadow:"0 1px 3px rgba(0,0,0,.18)",
+        }}>
+          Sign In to See More
+        </a>
+        <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600,
+          color:C.text}}>{anonTitle}</span>
+        <span style={{fontSize:11, color:C.muted}}>{anonSub}</span>
+      </div>
+    </div>
+  );
 }
 
 // Insider trades come from Postgres via /api/insiders (not KV). Homepage shows
@@ -375,6 +446,11 @@ export default function CatalystPit() {
   // anyway — a snapshot has a 24h TTL, so one written before that deploy outlives it, and the
   // front door should not show yesterday's ordering for a day. rankByImpact is stable, so
   // re-ranking an already-ranked list changes nothing.
+  // Clerk's auth state, read once here for the member row count below. The teaser gate reads it
+  // again through the same provider — Clerk's hooks share one context, so this is not a second
+  // source of truth and costs no additional request.
+  const { isLoaded: authLoaded, isSignedIn: authSignedIn } = useAuth();
+
   const rawNews = data?.news || [];
   const filingCards = data?.filingCards || [];
 
@@ -388,7 +464,20 @@ export default function CatalystPit() {
   // Liberty Mutual filing that reached the card sits in this list, so without the gate the feed would
   // print "NONE" and link to a page that cannot exist. Filtered BEFORE the slice, so excluding a row
   // promotes the next real filing rather than leaving a short list.
-  const insidersShown = insiders.filter((i) => isRenderableTicker(i?.sym)).slice(0, 10);
+  // ⚠️ A SIGNED-IN MEMBER GETS THE ROWS THE BLUR WAS IMITATING, from data ALREADY FETCHED.
+  //
+  // /api/insiders is requested with limit=25 and /api/politicians with limit=24, and the homepage
+  // renders 10 and 6 of them. The three blurred placeholder rows under each section were therefore
+  // standing in front of real filings sitting unused in memory — so for a member the honest swap is
+  // to draw them, not to describe them. No extra request, no fabricated record, and nothing here
+  // invents a row that the filing feed did not return.
+  //
+  // Gated on authLoaded as well as isSignedIn so the widened slice lands in the SAME frame as the
+  // teaser below it. Keyed off isSignedIn alone, the table would render 10 rows, then grow to 13 a
+  // moment later — the flicker the gate itself is careful to avoid.
+  const moreForMembers = authLoaded && authSignedIn;
+  const insidersShown = insiders.filter((i) => isRenderableTicker(i?.sym))
+    .slice(0, moreForMembers ? 13 : 10);
   const politicians = data?.politicians || [];
   const catalysts = data?.catalysts || [];
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"}) : "--:--";
@@ -693,7 +782,7 @@ export default function CatalystPit() {
                     six-row table makes the whole right-hand column jump on load. */}
                 {loading ? Array(6).fill(0).map((_, i) => (
                   <tr key={i}><td colSpan={6} style={{padding:"12px 16px"}}><Skel h={14} mb={0}/></td></tr>
-                )) : politicians.filter((p) => isRenderableTicker(p?.sym)).slice(0, 6).map((p, i, arr) => (
+                )) : politicians.filter((p) => isRenderableTicker(p?.sym)).slice(0, moreForMembers ? 9 : 6).map((p, i, arr) => (
                   <tr key={i} className={p.slug ? "hov" : undefined} onClick={p.slug ? () => goPolitician(p.slug) : undefined}
                     style={{borderBottom:i < arr.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
