@@ -26,6 +26,10 @@ const LIST_URL = process.env.NEXT_PUBLIC_X_LIST_URL || 'https://x.com/i/lists/20
 const LIST_ID = (LIST_URL.match(/lists\/(\d+)/) || [])[1] || null;
 const WIDGETS_SRC = 'https://platform.twitter.com/widgets.js';
 const RETRY_DELAYS = [3000, 8000, 20000]; // backoff for transient 429s / slow syndication
+// How long a FIRST build may sit on the loading message before the fallback takes over. Comfortably
+// past a healthy build (seconds) and past the first retry, while staying far short of the retry
+// ladder's full ~71s worst case, which is what visitors were actually sitting through.
+const FIRST_PAINT_CEILING = 24000;
 const CREATE_TIMEOUT = 15000;             // createTimeline must settle or we treat it as a failure
 
 // X's widget renders a SNAPSHOT at creation time and never polls for new posts, so the only way to
@@ -94,10 +98,31 @@ const withDeadline = (p, ms) => new Promise((resolve, reject) => {
 const MIN_RENDERED_PX = 120;
 const PAINT_TIMEOUT = 10000;
 const PAINT_POLL_MS = 80;
+// ⚠️ THE VISIBILITY TEST READS THE IFRAME'S OWN INLINE STYLE, NOT THE COMPUTED VALUE.
+//
+// This was a deadlock, and it is why the panel sat on "Loading tape from X…" on production while a
+// perfectly good tape was sitting in the DOM behind it.
+//
+// The staging slot is created `visibility:hidden` on purpose — laid out so the widget measures a
+// real width, invisible so a half-built tape is never shown. `visibility` INHERITS, so the computed
+// visibility of an iframe inside that slot is `hidden` no matter what X does to the frame itself.
+// Readiness therefore required a condition that staging made impossible: waitPainted could only ever
+// time out, four times, and the first build took ~71s to fall through to its fallback.
+//
+// Measured on production: syndication.twitter.com returned 200, twttr.widgets was present, two
+// Twitter iframes existed — and status was still 'loading'.
+//
+// The signal the original comment was reaching for is X's own makeVisible(), which mutates the
+// IFRAME's inline style from { position:absolute, visibility:hidden } to { position:static,
+// visibility:visible }. That is an own-element property, so reading it directly distinguishes
+// exactly the gap this is meant to catch — X has sized the frame but not yet revealed it — without
+// inheriting the slot's deliberate hiding. display and opacity are own-element too and stay on the
+// computed read.
 const isOnScreen = (frame) => {
   if (!frame || frame.offsetHeight < MIN_RENDERED_PX || frame.offsetWidth < 40) return false;
+  if (frame.style.visibility === 'hidden') return false;   // X has not called makeVisible() yet
   const cs = window.getComputedStyle(frame);
-  return cs.visibility === 'visible' && cs.display !== 'none' && Number(cs.opacity || '1') > 0.99;
+  return cs.display !== 'none' && Number(cs.opacity || '1') > 0.99;
 };
 const waitPainted = (slot, isCancelled) => new Promise((resolve, reject) => {
   const started = Date.now();
@@ -227,6 +252,25 @@ export default function XTape({ height = 620, onClose, bare = false }) {
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     return () => obs.disconnect();
   }, []);
+
+  // ⚠️ A CEILING ON THE LOADING MESSAGE, INDEPENDENT OF WHY THE BUILD IS SLOW.
+  //
+  // The deadlock above is fixed at its cause, but "a visitor must never be left staring at a
+  // loading message" is a promise about the WORST case, and the retry ladder's own worst case is
+  // already 3+8+20s of backoff plus four paint timeouts. Anything that makes a build hang — a
+  // future regression here, X changing its embed lifecycle again, a hostile network that stalls
+  // widgets.js without failing it — arrives at the same place, and this is the backstop that turns
+  // all of them into the fallback panel instead of a spinner nobody ever gets past.
+  //
+  // It is safe to force 'error' here precisely BECAUSE status is only 'loading' during a first
+  // build: a refresh over an existing tape leaves the status alone, so there is never a painted
+  // tape on screen for this to contradict. And 'error' is not a dead end — it carries the List link
+  // and the Retry button.
+  useEffect(() => {
+    if (status !== 'loading') return undefined;
+    const t = setTimeout(() => setStatus((s) => (s === 'loading' ? 'error' : s)), FIRST_PAINT_CEILING);
+    return () => clearTimeout(t);
+  }, [status, nonce]);
 
   useEffect(() => {
     if (!LIST_ID) { setStatus('error'); return; }
@@ -490,11 +534,23 @@ export default function XTape({ height = 620, onClose, bare = false }) {
       )}
       {status === 'error' && (
         <div style={{ padding: '16px 14px', fontSize: 12, color: C.muted, lineHeight: 1.5 }}>
-          X is rate-limiting the live embed right now.{' '}
+          The live embed from X is unavailable right now.{' '}
           <a href={LIST_URL} target="_blank" rel="noopener noreferrer"
             style={{ color: C.green, fontWeight: 600, textDecoration: 'none' }}>
             Open Pit Wire on X ↗
           </a>
+          {/* ⚠️ RETRY WAS ALREADY BUILT AND HAD NO TRIGGER. `nonce` is a dependency of the build
+              effect, so bumping it re-runs exactly the same path a scheduled refresh takes — no
+              second code path to keep correct, and no page reload, which would cost the visitor the
+              whole rest of the page to retry one panel. */}
+          <button type="button" onClick={() => { setStatus('loading'); setNonce((n) => n + 1); }}
+            style={{
+              display: 'block', marginTop: 10, padding: '6px 12px', borderRadius: 5,
+              border: `1px solid ${C.border}`, background: C.surface, color: C.text,
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}>
+            Retry
+          </button>
         </div>
       )}
     </div>
