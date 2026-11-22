@@ -319,23 +319,9 @@ async function generate(origin, ticker) {
 // hidden counts are returned so the UI can show a lock state. `extra` carries the
 // per-path flags (cached, and refreshed_recently on the throttle path).
 async function gateResponse(payload, extra) {
-  if (!payload || payload.error) return { ...payload, ...extra };   // errors pass through unchanged
-
-  const tier = await resolveUserTier();
-  if (tier !== 'free') return { ...payload, tier, ...extra };       // Pro/Elite → full object + tier
-
-  const bulls = payload.bulls || [];
-  const bears = payload.bears || [];
-  return {                                                          // Free → truncate; drop _dropped + generatedAt
-    ticker: payload.ticker,
-    summary_line: payload.summary_line ?? null,
-    bulls: bulls.slice(0, FREE_BULLSBEARS_VISIBLE),
-    bears: bears.slice(0, FREE_BULLSBEARS_VISIBLE),
-    lockedBullCount: Math.max(0, bulls.length - FREE_BULLSBEARS_VISIBLE),
-    lockedBearCount: Math.max(0, bears.length - FREE_BULLSBEARS_VISIBLE),
-    tier: 'free',
-    ...extra,
-  };
+  // All first-party research is free under the ad-supported model.
+  if (!payload || payload.error) return { ...payload, ...extra };
+  return { ...payload, tier: 'free', lockedBullCount: 0, lockedBearCount: 0, ...extra };
 }
 
 export async function GET(request) {
