@@ -42,6 +42,7 @@ export async function POST(request) {
   if (!ok || interval !== 'monthly') return Response.json({ error: 'bad_interval' }, { status: 400 });
 
   const PRICE_ID = resolvePrice(interval);
+  // A separate Stripe price is required. Never reuse the legacy research subscription price.
   // ⚠️ THE INTERVAL IS ECHOED so a 503 says WHICH plan is unsellable rather than "billing is off".
   if (!SECRET || !PRICE_ID) return Response.json({ error: 'not_configured', interval }, { status: 503 });
 
