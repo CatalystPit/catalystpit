@@ -692,7 +692,7 @@ export default function CatalystPit() {
             <HomeTeaserGate
               anonTitle="Sign in to explore all insider trades"
               anonSub="Free account · SEC Form 4 filings"
-              proTitle="More insider trades with Pro"
+              proTitle="More insider research"
               proSub="Full Form 4 history, filters and pagination"
               href="/insiders" proCta="Open Insiders">
               {[1,2,3].map(i => (
@@ -776,7 +776,7 @@ export default function CatalystPit() {
             <HomeTeaserGate
               anonTitle="Sign in to explore all politician trades"
               anonSub="Free account · STOCK Act disclosures"
-              proTitle="More politician trades with Pro"
+              proTitle="More congressional disclosures"
               proSub="Full STOCK Act history, by member and by ticker"
               href="/politicians" proCta="Open Politicians">
               {[1,2,3].map(i => (
