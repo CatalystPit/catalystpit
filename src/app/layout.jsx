@@ -5,6 +5,7 @@ import PitDock from '../components/PitDock';
 import WatchlistDock from '../components/WatchlistDock';
 import { Analytics } from '@vercel/analytics/next';
 import AdSenseLoader from '../components/AdSenseLoader';
+import AdSlot from '../components/ads/AdSlot';
 import { ADSENSE_CLIENT } from '../lib/adsense.mjs';
 
 // metadataBase is what makes every relative URL below — and in every page's generateMetadata —
@@ -253,7 +254,23 @@ export default function RootLayout({ children }) {
               scroll) and shifts the sticky nav/ticker with it. The dock renders OUTSIDE the
               shell, so it stays pinned at the left edge. */}
           <div id="cp-shell">
+            {/* ⚠️ SITEWIDE PLACEMENTS, IN THE SHELL RATHER THAN IN TWENTY-THREE PAGES.
+                Every page is a thin server wrapper around its own client component, so placing the
+                slots here covers all of them — homepage, news, Pit Scan, Consensus, screener, ticker
+                research, insiders, politicians, institutions, markets, heatmap, Fear & Greed,
+                dividends, feed, leaderboard — with ONE edit and without opening a single research
+                component. Nothing about how research renders changes.
+
+                They sit OUTSIDE {children}, above and below it, in normal document flow with no
+                position and no z-index. That is what makes "never over a chart, a table, the
+                navigation or a control" a structural property rather than a promise: a sibling of
+                the page content cannot overlap it.
+
+                Both render nothing at all until two things are true — the visitor is eligible, and
+                the placement has a real ad unit id from the dashboard. See AdSlot. */}
+            <AdSlot placement="top" minHeight={90} />
             {children}
+            <AdSlot placement="bottom" minHeight={90} />
           </div>
           <XTapeDock/>
           <PitDock/>
