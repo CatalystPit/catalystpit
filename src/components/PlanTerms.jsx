@@ -32,11 +32,7 @@ const link = { color: C.muted, textDecoration: 'underline' };
  * @param align    'center' on a narrow rail, 'left' inside a wider card.
  */
 export default function PlanTerms({ interval = 'both', align = 'center' }) {
-  const renewal = interval === 'annual'
-    ? '$200/year. Renews annually until cancelled.'
-    : interval === 'monthly'
-      ? '$20/month. Renews monthly until cancelled.'
-      : '$20/month renews monthly · $200/year renews annually — until cancelled.';
+  const renewal = '$9.99/month. Renews monthly until cancelled.';
 
   return (
     <div style={{ textAlign: align, marginTop: 6 }}>
