@@ -373,23 +373,23 @@ export default function ScreenerClient() {
       {/* VIEW TABS */}
       <div style={{ maxWidth: 1760, margin: '0 auto', padding: '7px 20px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {Object.keys(VIEWS).map((v) => {
-          const gated = viewIsProOnly(v);
-          // ⚠️ UNKNOWN IS HANDLED PER TAB, WHICH IS WHAT PREVENTS BOTH FLASHES. While `pro` is null the
-          // gated tab is not selectable and carries no "· Pro" label — so a Pro reader never sees an
-          // upgrade mark appear and then vanish on their own tab, and a Free reader never gets a brief
-          // window in which the gated view is selectable. Every ungated tab is untouched, so the basic
-          // Screener never waits on entitlement.
-          const resolved = pro !== null;
-          const locked = gated && pro !== true;
+          // ⚠️ THE LOCK IS GONE, NOT DISABLED — AND THAT MATTERS BECAUSE THE BRANCH LEFT IT HALF-DONE.
+          // Every view is public under the ad-supported model, so the server stopped gating them. But
+          // the tab kept `locked` driving C.dim and opacity 0.65, and kept an onClick whose two
+          // branches had become identical — so the ownership views WORKED while rendering greyed out
+          // and un-clickable-looking. A control that functions but reads as disabled is worse than one
+          // that is honestly absent: nobody clicks it, so the feature is free and invisible.
+          //
+          // No entitlement is consulted, so there is also nothing left to flash: the old per-tab
+          // null-handling existed only to avoid showing and then withdrawing a "· Pro" mark.
           return (
             <button key={v} type="button"
-              onClick={() => { if (!locked) setView(v); else if (resolved) setView(v); }}
-              title={undefined}
+              onClick={() => setView(v)}
               style={{ fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 5,
                 cursor: 'pointer', border: 'none',
                 background: view === v ? C.green : 'transparent',
-                color: view === v ? '#fff' : (locked ? C.dim : C.muted),
-                opacity: locked ? 0.65 : 1 }}>
+                color: view === v ? '#fff' : C.muted,
+                opacity: 1 }}>
               {v}
             </button>
           );

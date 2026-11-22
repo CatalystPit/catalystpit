@@ -865,7 +865,13 @@ export function NotificationBell() {
     : n.type === 'like' ? 'liked your post'
     : n.type === 'comment' ? 'commented on your post'
     : n.type === 'alert' ? 'triggered an alert' : 'sent you an update';
-  const href = (n) => (n.type === 'follow' && n.actorHandle) ? `/u/${n.actorHandle}` : n.type === 'alert' ? '/terminal' : '/feed';
+  // ⚠️ /terminal IS RETIRED, so an alert notification pointed at a redirect. It now goes to the
+  // ticker the alert is about when one is known, and to Pit Wire otherwise — which is where the
+  // evidence behind an alert actually lives. Sending it to /markets (where /terminal now redirects)
+  // would have been a working link to the wrong place.
+  const href = (n) => (n.type === 'follow' && n.actorHandle) ? `/u/${n.actorHandle}`
+    : n.type === 'alert' ? (n.ticker ? `/ticker/${n.ticker}` : '/news')
+    : '/feed';
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
@@ -1842,7 +1848,18 @@ export function LockedCta({ compact = false }) {
         <a href="/sign-up" style={base}>Create a free account to continue</a>
       </SignedOut>
       <SignedIn>
-        <button onClick={() => startCheckout()} style={base}>Unlock Pro · $20/month</button>
+        {/* ⚠️ A SIGNED-IN MEMBER IS NOT SOLD ANYTHING HERE, AND THE REASON IS THE PRICE LIST.
+            This button said "Unlock Pro · $20/month" and called checkout from a card about LOCKED
+            RESEARCH. Under the ad-supported model the membership removes ADVERTISING and unlocks no
+            research at all, so selling it from a research lock would be a false claim about what the
+            money buys — and at a price that no longer exists. The research is already theirs.
+
+            Kept as a rendered element rather than removed so the surrounding card keeps its layout;
+            every caller of LockedCta is itself unreachable now that lockedCount is always 0, and
+            removing those cards is a separate, larger edit. */}
+        <span style={{ ...base, background: C.surface, color: C.muted, cursor: 'default' }}>
+          Included with your free account
+        </span>
       </SignedIn>
     </>
   );

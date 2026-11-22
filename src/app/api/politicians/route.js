@@ -11,7 +11,7 @@ export const runtime = 'nodejs';
 // AUTH gate (sign-in, NOT tier — mirrors /api/news): signed-in users of ANY tier
 // get the full set; signed-out get a FREE_PREVIEW_ROWS preview + lockedCount, with
 // the locked rows never leaving the server. Response varies by auth → never CDN-cached.
-const FREE_PREVIEW_ROWS = 10;
+// FREE_PREVIEW_ROWS is gone: congressional disclosure is public research, served in full.
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
 // ⚠️ FREE IS END-OF-DAY. One predicate, ANDed into every query that reads a disclosure, so a filing

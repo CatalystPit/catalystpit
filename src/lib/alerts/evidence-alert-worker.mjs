@@ -79,8 +79,18 @@ export async function runEvidenceAlerts({
   // about things from this moment". Sliding it to the reactivation date would silently discard evidence
   // published during the lapse; leaving it is bounded anyway by the run's own lookback floor.
   const { access, unresolved } = await resolveAccess(allSubs.map((s) => s.userId));
-  const subs = allSubs.filter((s) => access.has(s.userId)); // Free memberships may receive evidence alerts.
-  const skippedNotPro = allSubs.length - subs.length; // unresolved identities only
+  // Every member with a subscription is eligible; the tier filter is retired along with the
+  // research tier. What remains is an IDENTITY check — a subscription whose user cannot be resolved
+  // is skipped, because delivering to an account we cannot confirm is not a thing to guess at.
+  const subs = allSubs.filter((s) => access.has(s.userId));
+  // ⚠️ THE NAME IS NOW LEGACY AND IS KEPT ON PURPOSE. skippedNotPro counted TIER refusals; with the
+  // research tier retired it counts subscriptions whose identity could not be resolved, which is a
+  // different thing wearing an old label. It is not renamed because the field is a contract: the
+  // alerts cron prints it in its heartbeat note and two verification suites assert on it, and a
+  // rename here is a cosmetic gain bought with a broken consumer.
+  //
+  // Read it as "subscriptions skipped", and note it overlaps `unresolved` by construction now.
+  const skippedNotPro = allSubs.length - subs.length;
   if (!subs.length) {
     return { tickers: 0, subscriptions: 0, skippedNotPro, unresolved, overflow: 0, chunks: 0, created: 0, failed: 0, pruned: 0, ms: Date.now() - startedAt };
   }

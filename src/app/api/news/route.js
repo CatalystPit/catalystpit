@@ -27,7 +27,7 @@ const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 
 const SIGNED_OUT_ROW_COUNT = 5;                       // hero (1) + 5 rows for signed-out visitors
-const SIGNED_OUT_VISIBLE = 1 + SIGNED_OUT_ROW_COUNT;  // first 6 raw elements
+// SIGNED_OUT_VISIBLE is gone: the feed is no longer truncated for signed-out readers.
 
 // Mirrors /api/claude's kvGet (same Upstash REST client). cache:'no-store' so the
 // per-user route never serves a stale shared fetch result after a cron refresh.

@@ -6,8 +6,16 @@ import { ensureScreenerTables } from '../../../lib/screener-data';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
 import { liveFieldsWithAvailability } from '../../../lib/scan/scanner-fields.mjs';
 import { signalAvailability, callerCapabilities } from '../../../lib/scan/market-capabilities.mjs';
-import { callerHasRealtime, resolveUserAccess, isProTier } from '../../../lib/entitlements';
-import { PRO_AGGREGATE_FIELDS, isProAggregateField, stripProAggregate, sanitizeFilters, sanitizeSort } from '../../../lib/screener-entitlement.mjs';
+// callerHasRealtime stays: market-data FRESHNESS is a licensing constraint, resolved per caller.
+// resolveUserAccess and isProTier are gone because the research tier they gated no longer exists.
+import { callerHasRealtime } from '../../../lib/entitlements';
+import { PRO_AGGREGATE_FIELDS, isProAggregateField, sanitizeFilters, sanitizeSort } from '../../../lib/screener-entitlement.mjs';
+
+// ⚠️ THE RESEARCH TIER IS RETIRED. Every screener analytic is public under the ad-supported model;
+// the optional membership removes advertising only. Kept as one named constant so the two places
+// that used to resolve an entitlement now say WHY they do not, and so restoring a research gate
+// would be one deliberate edit rather than a hunt for scattered `true`s.
+const RESEARCH_IS_PUBLIC = true;
 import { activeCapabilities } from '../../../lib/scan/runtime';
 import { toOptions } from '../../../lib/screener-taxonomy.mjs';
 
@@ -79,8 +87,16 @@ export async function GET(request) {
       // ⚠️ RESOLVED ONCE, SERVER-SIDE, FROM THE CLERK SESSION. No header, cookie or query parameter
       // participates, and a lookup failure falls to Free — the same fail-closed shape every other
       // gated route in this codebase uses.
-      let pro = false;
-      pro = true; // All proprietary screener analytics are now free (no paid research tier).
+      // ⚠️ NOT "EVERYONE IS PRO" — THERE IS NOTHING LEFT HERE TO GATE. Under the ad-supported
+      // model the paid membership removes ADVERTISING and buys no research, so the aggregate fields
+      // that used to be Pit Pro are public. Written as a named constant rather than a resolved
+      // entitlement because resolving one would imply an answer that could differ per caller, and
+      // `pro = true` over a discarded lookup reads as a bypass somebody forgot to remove.
+      //
+      // ⚠️ MARKET-DATA FRESHNESS IS A SEPARATE QUESTION AND IS STILL RESOLVED PER CALLER, below, by
+      // callerHasRealtime(). That one is a licensing constraint rather than a pricing choice, so it
+      // does not move when the price list does.
+      const pro = RESEARCH_IS_PUBLIC;
       const caps = activeCapabilities();
       // ⚠️ THE METADATA DESCRIBES WHAT THIS CALLER GETS, NOT WHAT THE ACCOUNT CAN DO. This endpoint
       // takes no auth, so it was telling anyone who asked that the feed was realtime while serving
@@ -98,11 +114,9 @@ export async function GET(request) {
       // dropdown that silently returns the unfiltered set — the "functional control that fails" pattern.
       // Marked unavailable with the same `available` flag the UI already honours for live fields, and
       // carrying a reason so the UI can say why rather than just greying it out.
-      if (!pro) {
-        for (const k of PRO_AGGREGATE_FIELDS) {
-          if (filters[k]) filters[k] = { ...filters[k], available: false, proOnly: true, unavailable: 'Pit Pro' };
-        }
-      }
+      // ⚠️ THE "unavailable: Pit Pro" MARKING IS GONE, NOT DISABLED. With the aggregates public it
+      // could never fire, and a dead branch that mentions a retired product is how stale vocabulary
+      // survives a pricing change. The fields now ship available, which is what they are.
       if (taxonomy.industries.length) filters.industry = { ...filters.industry, opts: taxonomy.industries };
       if (taxonomy.sectors.length) filters.sector = { ...filters.sector, options: taxonomy.sectors.map((o) => o.value) };
       return Response.json({
@@ -145,8 +159,8 @@ export async function GET(request) {
     // ordering by a gated column leak it just as surely as returning it: a filter answers "which of the
     // 18,036 have insider buying", and a sort publishes that ranking in order. So the gate reaches the
     // SQL, not only the payload.
-    let pro = false;
-    pro = true; // All proprietary screener analytics are now free (no paid research tier).
+    // Public research: see the note on RESEARCH_IS_PUBLIC. Freshness is still per-caller.
+    const pro = RESEARCH_IS_PUBLIC;
     const { filters: allowed, dropped } = sanitizeFilters(active, { pro });
     active = allowed;
     const conds = buildConds(active);
@@ -202,7 +216,8 @@ export async function GET(request) {
     // so every new column lands here automatically — which is exactly how these eight came to be
     // published. Stripping on the way out means a column added to screener_stocks tomorrow is exposed
     // only if somebody also adds it to the non-gated set, rather than by default.
-    const safeRows = pro ? rows : rows.map(stripProAggregate);
+    // Nothing is stripped: the aggregate fields are part of the public research product now.
+    const safeRows = rows;
     return Response.json({
       rows: safeRows, total: n, page, pageSize, activeCount, pro,
       // Told, not silently substituted: the caller asked for something they cannot have, and a client

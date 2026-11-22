@@ -1,11 +1,8 @@
 import { after } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { familyLean } from '../../../lib/consensus/synthesis.mjs';
 import { readPublishedBoard } from '../../../lib/consensus/refresh';
 import { MATERIALIZATION_VERSION } from '../../../lib/consensus/materialization.mjs';
 import { claimRefreshAttempt } from '../../../lib/market/refresh-policy.mjs';
-import { resolveUserTier } from '../../../lib/entitlements';
-import { isAdminUser } from '../../../lib/pit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
