@@ -123,8 +123,8 @@ export async function GET() {
   // Slice the ranked array (element 0 is now the most material story available) so NewsFeed's
   // existing client-side normalization works unchanged. Signed-in users get the full feed;
   // signed-out get the teaser and the locked rows never ship.
-  const data = loggedIn ? raw : raw.slice(0, SIGNED_OUT_VISIBLE);
-  const lockedCount = loggedIn ? 0 : Math.max(0, raw.length - SIGNED_OUT_VISIBLE);
+  const data = raw; // Market news is free without an account.
+  const lockedCount = 0;
 
   return Response.json(
     {
