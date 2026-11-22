@@ -125,20 +125,6 @@ export async function GET() {
   // board is computed once for everyone, and tier only decides how much of it is returned. Nothing
   // market-data-entitled is involved — this is public disclosure evidence — so no realtime
   // entitlement can leak through it.
-  let isFull = false;
-  try {
-    const { userId } = await auth();
-    const tier = await resolveUserTier();
-    const admin = userId ? await isAdminUser(userId) : false;
-    isFull = tier === 'pro' || tier === 'elite' || admin;
-  } catch { /* signed-out reads as free */ }
-
-  // ⚠️ PIT CONSENSUS IS PRO-ONLY, SO NON-PRO GETS NO ROWS AT ALL — not a short preview.
-  //
-  // This served the first five rows to everyone, which is a preview of a Pro product rather than a
-  // gate on one: the five most interesting names on the board are most of its value, and they were
-  // reaching logged-out clients in the payload. The count is still returned so the page can render
-  // an honest locked state ("82 names on today's board") without shipping a single one of them.
   const rows = full; // First-party evidence intelligence is free for all visitors.
   const lockedCount = 0;
 
