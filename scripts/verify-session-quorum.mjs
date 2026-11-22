@@ -11,7 +11,10 @@
 //
 //   node --import ./scripts/lib/server-stub-hook.mjs --env-file=.env.local scripts/verify-session-quorum.mjs
 
-import { pickSessionDates } from '../src/lib/screener-data.js';
+// ⚠️ IMPORTED FROM THE SHARED MODULE, NOT THROUGH THE APP. The rule has two consumers — the Screener
+// rebuild and the nightly coverage alarm — and the alarm runs on a bare CI runner with no database
+// client. Asserting the shared module is what proves both of them agree.
+import { pickSessionDates } from '../src/lib/market/session-quorum.mjs';
 
 let pass = 0, fail = 0;
 const ok = (label, cond, detail = '') => {
@@ -112,14 +115,31 @@ L('⚠️ 4 — the yardstick is robust to the outlier it exists to reject');
 
 L('⚠️ 5 — the rule is generalized, not a symbol list');
 {
-  const src = (await import('node:fs')).readFileSync('src/lib/screener-data.js', 'utf8');
-  const fn = src.slice(src.indexOf('export function pickSessionDates'),
-    src.indexOf('async function licensedEod'));
+  const { readFileSync } = await import('node:fs');
+  const mod = readFileSync('src/lib/market/session-quorum.mjs', 'utf8');
+  const fn = mod.slice(mod.indexOf('export function pickSessionDates'));
   ok('⚠️ no ticker symbol appears in the selection rule',
-    !/UNIU/.test(fn) && !/\b(?:EXCLUDE|IGNORE|SKIP)_(?:TICKERS|SYMBOLS)\b/.test(fn));
+    !/\bUNIU\b/.test(fn) && !/\b(?:EXCLUDE|IGNORE|SKIP)_(?:TICKERS|SYMBOLS)\b/.test(fn));
   ok('…and the threshold is relative, not a hardcoded universe size',
     /median \* SESSION_QUORUM_FRACTION/.test(fn));
-  ok('…and the fallback cannot be removed silently — it is asserted above', true);
+
+  // ⚠️ THE MODULE MUST STAY IMPORT-FREE. The coverage alarm runs on a bare CI runner; one app-shaped
+  // import here would make it load a database client it has no use for, and the likely "fix" for that
+  // is a second copy of the rule — which is how this bug reached the alarm in the first place.
+  ok('⚠️ the shared rule imports nothing', !/^\s*import\s/m.test(mod));
+
+  // ⚠️ AND BOTH CONSUMERS MUST USE IT. A green rule that one caller ignores is the actual failure
+  // mode here: the Screener and the alarm disagreed about what "latest session" meant.
+  const screener = readFileSync('src/lib/screener-data.js', 'utf8');
+  const alarm = readFileSync('scripts/report-eod-coverage.mjs', 'utf8');
+  ok('⚠️ the Screener rebuild uses the shared rule',
+    /import \{ pickSessionDates \} from '\.\/market\/session-quorum\.mjs'/.test(screener)
+    && /pickSessionDates\(counted\)/.test(screener));
+  ok('⚠️ the coverage alarm uses the shared rule',
+    /pickSessionDates\(counted, 1\)/.test(alarm));
+  ok('⚠️ …and neither picks the newest date on its own any more',
+    !/order by date desc limit 1`/.test(alarm)
+    && !/select distinct date::text as date/.test(screener));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
