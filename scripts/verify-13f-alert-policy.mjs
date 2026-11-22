@@ -237,13 +237,16 @@ try {
       access: new Map(ids.map((id) => [id, { tier: map[id] || 'free', beta: false }])), unresolved: 0,
     });
 
-    // ⚠️ FREE WITH A SUBSCRIPTION ROW RECEIVES NOTHING. The row is a preference, never proof of
-    // entitlement — this is the delivery-time check from the Evidence Alerts task, re-asserted here
-    // because institutional evidence must not be the family that slips past it.
+    // ⚠️ INVERTED, NOT DELETED. This asserted that a Free user with a subscription row received
+    // NOTHING, because a row was a preference and entitlement was a tier. Under the ad-supported model
+    // the subscription row IS the whole requirement — evidence alerts are free — so the same scenario
+    // must now produce the opposite result. The claim that survives unchanged is the one below it: a
+    // row is still required, so nothing auto-subscribes anybody.
     seen.length = 0;
     const freeRun = await runEvidenceAlerts({ deliver, resolveAccess: tiers({}), budgetMs: 8000 });
-    ok('⚠️ a Free user with a subscription row receives nothing', seen.length === 0 && freeRun.created === 0);
-    ok('…and the run reports them as skipped, not as absent', freeRun.skippedNotPro >= 2, JSON.stringify(freeRun));
+    ok('⚠️ a Free user with a subscription row IS processed',
+      freeRun.subscriptions >= 2, JSON.stringify(freeRun));
+    ok('…and nobody is skipped for a tier', freeRun.skippedNotPro === 0, JSON.stringify(freeRun));
 
     // ⚠️ ENTITLEMENT LOOKUP FAILURE FAILS CLOSED.
     seen.length = 0;
@@ -259,20 +262,29 @@ try {
     const proRun = await runEvidenceAlerts({
       deliver, budgetMs: 20_000, resolveAccess: tiers({ [U1]: 'pro' }),
     });
-    ok('⚠️ a Pro subscriber IS processed', proRun.subscriptions >= 1 && proRun.skippedNotPro >= 1,
-      JSON.stringify(proRun));
+    // ⚠️ STILL THE POSITIVE CONTROL, but the tier is now incidental: it proves the worker runs, not
+    // that a tier unlocks it. skippedNotPro must be ZERO — under the old model this run deliberately
+    // skipped the Free user, and a non-zero value here would mean a tier gate had come back.
+    ok('⚠️ a subscriber with any tier IS processed',
+      proRun.subscriptions >= 1 && proRun.skippedNotPro === 0, JSON.stringify(proRun));
     ok('…and the subscribed ticker was resolved', proRun.tickers >= 1, JSON.stringify(proRun));
-    ok('⚠️ …and nothing was delivered to the Free user in the same run',
-      !seen.some((x) => x.userId === U2));
+    // ⚠️ THE OLD ASSERTION HERE REQUIRED THE FREE USER TO BE EXCLUDED. They are now included, so the
+    // meaningful claim is the opposite: a run must reach every subscriber it resolved, not a subset.
+    ok('⚠️ …and the other subscriber was not excluded for their tier',
+      proRun.skippedNotPro === 0, JSON.stringify(proRun));
 
     // ⚠️ UNSUBSCRIBED PRO RECEIVES NOTHING. Turning the subscription off must end delivery even though
     // the user is fully entitled — entitlement is not a subscription.
     await setSubscription(U1, 'AAPL', false);
     seen.length = 0;
     const unsub = await runEvidenceAlerts({ deliver, resolveAccess: tiers({ [U1]: 'pro' }), budgetMs: 8000 });
-    ok('⚠️ an unsubscribed Pro user receives nothing', seen.length === 0 && unsub.created === 0,
+    // ⚠️ THIS ONE IS UNCHANGED IN SUBSTANCE AND IS THE IMPORTANT SURVIVOR: opening alerts to every
+    // member must NOT mean subscribing them. A row is still required, so an unsubscribed user receives
+    // nothing however entitled they are. U2 still holds a row, so the count is one, not zero.
+    ok('⚠️ an unsubscribed user receives nothing from their own removed row',
+      !seen.some((x) => x.userId === U1), JSON.stringify(unsub));
+    ok('…and the worker counts only the rows that still exist', unsub.subscriptions === 1,
       JSON.stringify(unsub));
-    ok('…and the worker sees no subscription for them', unsub.subscriptions === 0);
   }
 
   L('⚠️ 6 — the institutional path is wired end to end, against real data');
@@ -325,11 +337,19 @@ try {
   {
     const w = code('src/lib/alerts/evidence-alert-worker.mjs');
     const r = code('src/app/api/evidence-alerts/route.js');
-    ok('⚠️ delivery-time entitlement is still enforced',
-      /const subs = allSubs\.filter\(\(s\) => PRO_TIERS\.has\(access\.get\(s\.userId\)\?\.tier\)\)/.test(w));
+    // ⚠️ DELIVERY-TIME RESOLUTION IS STILL ENFORCED — what changed is WHAT it checks. It was a tier;
+    // it is now identity. The property worth protecting is unchanged: the worker must decide at
+    // DELIVERY time from the shared resolver, never trust the stored row alone.
+    ok('⚠️ delivery-time identity resolution is still enforced',
+      /const subs = allSubs\.filter\(\(s\) => access\.has\(s\.userId\)\)/.test(w)
+      && /resolveAccess\(allSubs\.map\(\(s\) => s\.userId\)\)/.test(w));
     ok('…via the shared resolver', /resolveAccess = resolveAccessByIds,/.test(w));
-    ok('⚠️ the route still refuses non-Pro server-side', /return \{ error: 'pro_required', status: 403/.test(r));
-    ok('…and still fails closed on a lookup error', /catch \{ tier = 'free'; \}/.test(r));
+    // ⚠️ THE ROUTE STILL REFUSES, just not on a tier: an anonymous POST is still rejected before
+    // anything is written, which was always the security property. The tier refusal is asserted ABSENT
+    // so a paywall cannot quietly return to a free feature.
+    ok('⚠️ the route still refuses an anonymous write server-side',
+      /return \{ error: 'unauthorized', status: 401 \}/.test(r));
+    ok('⚠️ …and no tier refusal has returned', !/pro_required/.test(r) && !/PRO_TIERS/.test(r));
     ok('⚠️ subscriptions are still explicit — nothing auto-subscribes from the watchlist',
       !/setSubscription/.test(code('src/app/api/watchlist/route.js')));
     ok('the bell still dedupes on (user_id, evidence_id)',

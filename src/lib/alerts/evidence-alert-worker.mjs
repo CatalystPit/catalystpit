@@ -36,7 +36,6 @@ import { activeSubscriptions, insertAlerts, pruneAlerts } from './evidence-alert
 import { resolveAccessByIds } from '../entitlements';
 
 // The tiers Evidence Alerts are sold to. Named once, matching /api/evidence-alerts.
-const PRO_TIERS = new Set(['pro', 'elite']);
 
 /** Distinct tickers a single run will resolve. Beyond this the run reports the overflow. */
 export const MAX_TICKERS_PER_RUN = 600;

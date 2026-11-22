@@ -138,16 +138,25 @@ try {
     // ⚠️ COMPARED AGAINST THE CALL, NOT THE IMPORT. The first version compared indexOf('setSubscription'),
     // which matches the import on line 3 — so the assertion failed against entirely correct code, which
     // is the most expensive kind of test failure.
-    ok('⚠️ POST is gated before anything is written', /const gate = await requirePro\(\);/.test(r)
-      && r.indexOf('const gate = await requirePro();') < r.indexOf('await setSubscription(gate.userId'));
+    // ⚠️ THE GATE IS SIGN-IN, NOT A TIER. Evidence alerts are free; they need an account because
+    // they are delivered to one. The ORDERING claim is untouched and is the half that matters: the
+    // refusal must precede the write, or an unauthenticated POST leaves a row behind.
+    ok('⚠️ POST is gated before anything is written', /const gate = await requireMember\(\);/.test(r)
+      && r.indexOf('const gate = await requireMember();') < r.indexOf('await setSubscription(gate.userId'));
     ok('⚠️ signed out is 401', /return \{ error: 'unauthorized', status: 401 \}/.test(r));
-    ok('⚠️ non-Pro is 403 pro_required', /return \{ error: 'pro_required', status: 403/.test(r));
-    ok('⚠️ an entitlement lookup failure fails CLOSED',
-      /catch \{ tier = 'free'; \}/.test(r));
+    // ⚠️ THERE IS NO TIER REFUSAL LEFT, and asserting its absence is the stronger claim: a 403
+    // pro_required on a free feature would be the regression now.
+    ok('⚠️ no tier refusal survives on the write path',
+      !/pro_required/.test(r) && !/PRO_TIERS/.test(r));
+    // ⚠️ NO ENTITLEMENT LOOKUP REMAINS ON THE WRITE PATH to fail open or closed — which removes the
+    // failure mode the old assertion guarded rather than relaxing it.
+    ok('⚠️ no tier is resolved to decide the write',
+      !/tier = '(pro|elite)'/.test(r) && !/isProTier/.test(r));
     ok('…and it uses the shared resolver, not a second Pro check',
       /resolveUserAccess/.test(r) && !/publicMetadata/.test(r));
-    ok('the tier set matches the worker\'s', /const PRO_TIERS = new Set\(\['pro', 'elite'\]\)/.test(r)
-      && /const PRO_TIERS = new Set\(\['pro', 'elite'\]\)/.test(code('src/lib/alerts/evidence-alert-worker.mjs')));
+    ok('⚠️ neither the route nor the worker defines its own paid-tier set',
+      !/PRO_TIERS/.test(r) && !/PRO_TIERS/.test(code('src/lib/alerts/evidence-alert-worker.mjs')),
+      'a tier set regrowing in the background job is the drift this section exists to catch');
   }
 
   L('⚠️ 4 — DELIVERY-TIME entitlement: a downgrade stops alerts');
@@ -164,8 +173,13 @@ try {
       && /import \{ resolveAccessByIds \} from '\.\.\/entitlements'/.test(w));
     ok('⚠️ …and the worker never reads Clerk or plan metadata itself',
       !/clerkClient/.test(w) && !/publicMetadata/.test(w) && !/getUser/.test(w));
-    ok('⚠️ …and filters to entitled tiers before delivering',
-      /const subs = allSubs\.filter\(\(s\) => PRO_TIERS\.has\(access\.get\(s\.userId\)\?\.tier\)\)/.test(w));
+    // ⚠️ THE FILTER IS NOW AN IDENTITY CHECK, NOT A TIER CHECK. A subscription whose user cannot be
+    // resolved is still skipped — delivering to an account we cannot confirm is not something to guess
+    // at — but a free member is eligible, which is the whole point of the new model.
+    ok('⚠️ …and filters on resolvable identity before delivering',
+      /const subs = allSubs\.filter\(\(s\) => access\.has\(s\.userId\)\)/.test(w));
+    ok('⚠️ …and no tier can exclude a subscriber',
+      !/PRO_TIERS\.has\(access/.test(w) && !/isProTier/.test(w));
     ok('⚠️ …and the filter precedes the delivery loop',
       w.indexOf('allSubs.filter') < w.indexOf('deliver(rows)'));
     ok('the run reports what it withheld, so a quiet day is distinguishable',
@@ -184,11 +198,15 @@ try {
       access: new Map(ids.map((id) => [id, { tier: map[id] || 'free', beta: false }])), unresolved: 0,
     });
 
+    // ⚠️ THE SCENARIO IS INVERTED, NOT DELETED, AND THAT IS THE REAL TEST OF THIS CHANGE. It used to
+    // assert that two Free subscribers received nothing. Under the ad-supported model they must receive
+    // everything — so the same two users, the same stubbed resolver, the opposite expectation. Deleting
+    // the case would have left the free-delivery path with no executed coverage at all.
     seen.length = 0;
-    const noneProRun = await runEvidenceAlerts({ deliver, resolveAccess: tiers({}), budgetMs: 8000 });
-    ok('⚠️ every subscriber Free → nothing is delivered', seen.length === 0 && noneProRun.created === 0);
-    ok('⚠️ …and the run says why', noneProRun.skippedNotPro >= 2, JSON.stringify(noneProRun));
-    ok('…and it resolved no tickers at all, so no work was wasted', noneProRun.tickers === 0);
+    const allFreeRun = await runEvidenceAlerts({ deliver, resolveAccess: tiers({}), budgetMs: 8000 });
+    ok('⚠️ every subscriber Free → the work is DONE, not withheld',
+      allFreeRun.subscriptions >= 2 && allFreeRun.tickers >= 1, JSON.stringify(allFreeRun));
+    ok('⚠️ …and nobody is skipped for a tier', allFreeRun.skippedNotPro === 0, JSON.stringify(allFreeRun));
 
     seen.length = 0;
     const unresolvedRun = await runEvidenceAlerts({
