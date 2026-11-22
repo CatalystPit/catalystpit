@@ -25,8 +25,8 @@ const SITE   = process.env.NEXT_PUBLIC_SITE_URL || 'https://catalystpit.com';
 
 /** Each interval bound to its own price. The no-substitution rule lives in lib/billing/plan.mjs. */
 export const PRICE_BY_INTERVAL = Object.freeze({
-  monthly: process.env.STRIPE_PRICE_ID,
-  annual: process.env.STRIPE_PRICE_ID_ANNUAL,
+  monthly: process.env.STRIPE_ADFREE_MONTHLY_PRICE_ID,
+  annual: null, // Retired: do not sell the old annual research plan.
 });
 
 /** Bound to the live env mapping; the rule itself is asserted directly in the suite. */
@@ -39,7 +39,7 @@ export async function POST(request) {
   let body = null;
   try { body = await request.json(); } catch { /* no body → monthly */ }
   const { interval, ok } = normalizeInterval(body?.interval);
-  if (!ok) return Response.json({ error: 'bad_interval' }, { status: 400 });
+  if (!ok || interval !== 'monthly') return Response.json({ error: 'bad_interval' }, { status: 400 });
 
   const PRICE_ID = resolvePrice(interval);
   // ⚠️ THE INTERVAL IS ECHOED so a 503 says WHICH plan is unsellable rather than "billing is off".
