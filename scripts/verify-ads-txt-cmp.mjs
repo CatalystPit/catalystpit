@@ -172,8 +172,15 @@ L('\n=== 3. PRO AD-FREE IS STRUCTURALLY INTACT ===');
     'aborted, offline, 5xx or malformed JSON must all mean no advertising');
   ok('⚠️ an unresolved identity waits rather than loading',
     /if \(!isLoaded\) return \{ decision: Promise\.resolve\('wait'\)/.test(gate));
+  // ⚠️ IDEMPOTENT, AND NOW DEDUPED BY src RATHER THAN BY A MARKER ATTRIBUTE. The marker was
+  // `data-cp-adsense="1"` on our own script tag, and AdSense warned about it in the live console on
+  // production — "AdSense head tag doesn't support data-cp-adsense attribute" — because the loader
+  // validates its own element's attributes. It was the only site-side complaint Google made about
+  // this integration. The src is already unique and already ours to match on.
   ok('⚠️ the loader is idempotent, so two tags cannot coexist',
-    /if \(doc\.querySelector\(`script\[\$\{ADS_MARK\}\]`\)\) return false;/.test(src));
+    /if \(doc\.querySelector\(ADS_LOADER_SELECTOR\)\) return false;/.test(src));
+  ok('⚠️ …and it no longer puts an unsupported attribute on the AdSense tag',
+    !/data-cp-adsense/.test(src) && !/setAttribute\(ADS_MARK/.test(src));
   // ⚠️ THE CLAIM IS ABOUT THE URL, so it is tested on the URL rather than on the prose around it. An
   // earlier version searched a slice of the file for the word "tier" and tripped on the comment that
   // explains the tier allow-list.
