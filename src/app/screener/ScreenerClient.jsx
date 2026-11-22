@@ -383,8 +383,8 @@ export default function ScreenerClient() {
           const locked = gated && pro !== true;
           return (
             <button key={v} type="button"
-              onClick={() => { if (!locked) setView(v); else if (resolved) startCheckout(); }}
-              title={locked && resolved ? 'Ownership signals are part of Pit Pro' : undefined}
+              onClick={() => { if (!locked) setView(v); else if (resolved) setView(v); }}
+              title={undefined}
               style={{ fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 5,
                 cursor: 'pointer', border: 'none',
                 background: view === v ? C.green : 'transparent',
