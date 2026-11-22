@@ -80,7 +80,7 @@ export async function GET(request) {
       // participates, and a lookup failure falls to Free — the same fail-closed shape every other
       // gated route in this codebase uses.
       let pro = false;
-      try { pro = isProTier((await resolveUserAccess()).tier); } catch { pro = false; }
+      pro = true; // All proprietary screener analytics are now free (no paid research tier).
       const caps = activeCapabilities();
       // ⚠️ THE METADATA DESCRIBES WHAT THIS CALLER GETS, NOT WHAT THE ACCOUNT CAN DO. This endpoint
       // takes no auth, so it was telling anyone who asked that the feed was realtime while serving
@@ -146,7 +146,7 @@ export async function GET(request) {
     // 18,036 have insider buying", and a sort publishes that ranking in order. So the gate reaches the
     // SQL, not only the payload.
     let pro = false;
-    try { pro = isProTier((await resolveUserAccess()).tier); } catch { pro = false; }
+    pro = true; // All proprietary screener analytics are now free (no paid research tier).
     const { filters: allowed, dropped } = sanitizeFilters(active, { pro });
     active = allowed;
     const conds = buildConds(active);
