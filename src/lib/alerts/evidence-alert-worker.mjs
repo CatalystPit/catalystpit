@@ -79,8 +79,8 @@ export async function runEvidenceAlerts({
   // about things from this moment". Sliding it to the reactivation date would silently discard evidence
   // published during the lapse; leaving it is bounded anyway by the run's own lookback floor.
   const { access, unresolved } = await resolveAccess(allSubs.map((s) => s.userId));
-  const subs = allSubs.filter((s) => PRO_TIERS.has(access.get(s.userId)?.tier));
-  const skippedNotPro = allSubs.length - subs.length;
+  const subs = allSubs.filter((s) => access.has(s.userId)); // Free memberships may receive evidence alerts.
+  const skippedNotPro = allSubs.length - subs.length; // unresolved identities only
   if (!subs.length) {
     return { tickers: 0, subscriptions: 0, skippedNotPro, unresolved, overflow: 0, chunks: 0, created: 0, failed: 0, pruned: 0, ms: Date.now() - startedAt };
   }
