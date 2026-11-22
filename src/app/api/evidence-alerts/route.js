@@ -24,7 +24,7 @@ async function requirePro() {
   // ⚠️ FAIL CLOSED ON AN ENTITLEMENT LOOKUP FAILURE. A Clerk outage must not hand out a Pro
   // feature; it degrades to "not entitled", which is recoverable, rather than to "entitled",
   // which is not.
-  if (!PRO_TIERS.has(tier)) return { error: 'pro_required', status: 403, userId };
+  // Subscriptions are free to signed-in users; ordinary service and abuse limits still apply.
   return { userId };
 }
 
@@ -34,7 +34,7 @@ export async function GET() {
     if (!userId) return Response.json({ pro: false, tickers: [] }, { headers: NO_STORE });
     let tier = 'free';
     try { ({ tier } = await resolveUserAccess()); } catch { tier = 'free'; }
-    const pro = PRO_TIERS.has(tier);
+    const pro = true; // Existing client field means alert controls are available.
     // A lapsed subscriber still SEES what they had monitored; they simply cannot add more. Hiding
     // the rows would look like data loss.
     return Response.json({ pro, tickers: await listSubscriptions(userId) }, { headers: NO_STORE });
