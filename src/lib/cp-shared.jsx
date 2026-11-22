@@ -150,7 +150,7 @@ export async function startCheckout(interval) {
     if (r.status === 401) { window.location.href = '/sign-in'; return; }
     const j = await r.json().catch(() => ({}));
     if (j.url) { window.location.href = j.url; return; }
-    alert(j.error === 'not_configured' ? 'Pro isn’t available just yet. Check back soon.' : 'Could not start checkout. Please try again.');
+    alert(j.error === 'not_configured' ? 'Ad-free checkout is not configured yet. Please check back soon.' : 'Could not start checkout. Please try again.');
   } catch {
     alert('Could not start checkout. Please try again.');
   }
@@ -1027,7 +1027,7 @@ export function TopNav({ active }) {
   //
   // Pit CONSENSUS stays, and the two are not interchangeable: Consensus is a standalone board with
   // its own page, its own URL people share, and its own answer. Scan is the instrument you use.
-  const links = ["Terminal", "Pit Consensus", "Insiders", "Politicians", "Institutions", "News", "Screener"];
+  const links = ["Pit Scan", "Pit Consensus", "Insiders", "Politicians", "Institutions", "News", "Screener"];
 
   /**
    * ⚠️ DESTINATIONS THAT LIVE ONLY IN "MORE", NEVER IN THE TOP ROW.
@@ -1818,7 +1818,7 @@ export function CatalystBriefCard() {
  * The call to action on a locked research row-count.
  *
  * ⚠️ THE PUBLIC GATE SELLS AN ACCOUNT, NOT A SUBSCRIPTION. Every one of these cards said
- * "Unlock Pro · $20/month", including to logged-out visitors who are ten rows into their first
+ * "Go ad-free · $9.99/month", including to logged-out visitors who are ten rows into their first
  * visit — asking a stranger for $20 to see row eleven, when what actually unlocks it is a free
  * account. The first conversion is public → free; Pro is the second one, and only a signed-in Free
  * user should be shown it here.
