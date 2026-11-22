@@ -390,7 +390,7 @@ export default function ScreenerClient() {
                 background: view === v ? C.green : 'transparent',
                 color: view === v ? '#fff' : (locked ? C.dim : C.muted),
                 opacity: locked ? 0.65 : 1 }}>
-              {v}{locked && resolved ? ' · Pro' : ''}
+              {v}
             </button>
           );
         })}
