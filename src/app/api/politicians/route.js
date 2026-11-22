@@ -235,8 +235,8 @@ export async function GET(request) {
     // Feed (homepage teaser) — AUTH-GATED. Signed-out capped to the preview.
     if (view === 'feed') {
       const payload = await feedView(limit, cutoff);
-      const trades = loggedIn ? payload.trades : payload.trades.slice(0, FREE_PREVIEW_ROWS);
-      const lockedCount = loggedIn ? 0 : Math.max(0, payload.trades.length - FREE_PREVIEW_ROWS);
+      const trades = payload.trades;
+      const lockedCount = 0;
       console.log(`[politicians_api] feed trades=${trades.length} locked=${lockedCount} tier=${tier}`);
       return Response.json({ view: 'feed', count: trades.length, trades, lockedCount, tier, loggedIn }, { headers: NO_STORE });
     }
@@ -245,15 +245,15 @@ export async function GET(request) {
       const min = Math.min(Math.max(parseInt(searchParams.get('min') ?? '5', 10) || 5, 1), 50);
       const window = searchParams.get('window') || '1y';
       const { list, meta } = await leaderboardView({ chamber, party, min, window });
-      const shown = loggedIn ? list : list.slice(0, FREE_PREVIEW_ROWS);
-      const lockedCount = loggedIn ? 0 : Math.max(0, list.length - FREE_PREVIEW_ROWS);
+      const shown = list;
+      const lockedCount = 0;
       console.log(`[politicians_api] leaderboard members=${shown.length} window=${window} locked=${lockedCount} tier=${tier}`);
       return Response.json({ view: 'leaderboard', window, count: shown.length, members: shown, meta, lockedCount, tier, loggedIn }, { headers: NO_STORE });
     }
     // Member list — AUTH-GATED. Signed-in: full. Signed-out: first 10 + lockedCount.
     const members = await listView({ view, chamber, party, cutoff });
-    const shown = loggedIn ? members : members.slice(0, FREE_PREVIEW_ROWS);
-    const lockedCount = loggedIn ? 0 : Math.max(0, members.length - FREE_PREVIEW_ROWS);
+    const shown = members;
+    const lockedCount = 0;
     console.log(`[politicians_api] list view=${view} members=${shown.length} locked=${lockedCount} tier=${tier}`);
     return Response.json({ view, count: shown.length, members: shown, lockedCount, tier, loggedIn }, { headers: NO_STORE });
   } catch (e) {
