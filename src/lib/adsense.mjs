@@ -15,8 +15,75 @@ export const ADSENSE_CLIENT = 'ca-pub-8341744464373905';
 
 export const ADSENSE_SRC = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`;
 
-/** Marks the tag we created, so a second mount cannot add a second loader. */
-export const ADS_MARK = 'data-cp-adsense';
+/**
+ * ⚠️ DEDUPE BY src, NOT BY A CUSTOM ATTRIBUTE ON THE ADSENSE TAG.
+ *
+ * The first version marked our tag with `data-cp-adsense="1"` so a second mount could recognise it.
+ * AdSense objected, in the live console on production:
+ *
+ *     AdSense head tag doesn't support data-cp-adsense attribute.
+ *
+ * The loader validates the attributes on its own script element and warns about ones it does not
+ * recognise. It is the only site-side complaint Google makes about this integration, and it was
+ * self-inflicted — so the marker is gone. The src is already unique and already ours to match on,
+ * which makes the dedupe both standard and one fewer thing for the loader to object to.
+ */
+export const ADS_LOADER_SELECTOR = `script[src="${ADSENSE_SRC}"]`;
+
+/**
+ * ⚠️ PAGES WHERE ADVERTISING IS NOT APPROPRIATE, AND THE CHECK IS A PREFIX MATCH ON PURPOSE.
+ *
+ * Account management, authentication and anything that could become a payment flow. Two separate
+ * reasons, and both matter:
+ *
+ *   Policy — Google's own guidance is against advertising on pages whose purpose is a transaction or
+ *   a credential entry, and an ad beside a password field is the kind of thing that reads as
+ *   deceptive placement whatever the intent.
+ *
+ *   Ours — these pages are where a member manages the subscription that removes advertising. Showing
+ *   them an ad while they are on the cancel screen is the worst possible moment for it.
+ *
+ * A PREFIX match, because `/account` has sub-routes and a denylist that only matched exact paths
+ * would quietly fail on `/account/billing` — the single most important page in the list.
+ */
+export const AD_EXCLUDED_PREFIXES = Object.freeze([
+  '/account', '/sign-in', '/sign-up', '/checkout', '/billing', '/api',
+]);
+
+/** Is advertising allowed on this path at all, before entitlement is even considered? */
+export function adsAllowedOnPath(pathname) {
+  if (typeof pathname !== 'string' || !pathname) return false;
+  const p = pathname.toLowerCase();
+  return !AD_EXCLUDED_PREFIXES.some((x) => p === x || p.startsWith(`${x}/`));
+}
+
+/**
+ * ⚠️ AD UNIT IDS COME FROM THE ADSENSE DASHBOARD, AND THERE IS NO WAY TO INVENT ONE.
+ *
+ * A manual display unit needs a `data-ad-slot` that exists in the account. A made-up number does not
+ * fail loudly — it renders an empty `ins` that never fills, which is indistinguishable from the
+ * problem we are already trying to diagnose, and an empty unit is itself a policy smell.
+ *
+ * So each placement is configured, and a placement with no id RENDERS NOTHING. The layout is
+ * therefore correct in both states: today, with no ids set, the markup is absent entirely; the moment
+ * real ids are added to the environment, the same components start serving with no code change.
+ *
+ * Auto ads need no id and are unaffected by any of this — they are enabled per site in the dashboard
+ * and placed by Google.
+ */
+export const AD_SLOT_IDS = Object.freeze({
+  top: process.env.NEXT_PUBLIC_ADSENSE_SLOT_TOP || '',
+  bottom: process.env.NEXT_PUBLIC_ADSENSE_SLOT_BOTTOM || '',
+  inContent: process.env.NEXT_PUBLIC_ADSENSE_SLOT_IN_CONTENT || '',
+  inFeed: process.env.NEXT_PUBLIC_ADSENSE_SLOT_IN_FEED || '',
+  sidebar: process.env.NEXT_PUBLIC_ADSENSE_SLOT_SIDEBAR || '',
+});
+
+/** The configured unit id for a placement, or '' when the owner has not created that unit yet. */
+export function adSlotId(placement) {
+  const v = AD_SLOT_IDS[placement];
+  return typeof v === 'string' ? v.trim() : '';
+}
 
 /** How long to wait for the plan endpoint before giving up on advertising for this page view. */
 export const ADS_PLAN_TIMEOUT_MS = 8000;
@@ -35,12 +102,11 @@ export function adsEligibleTier(tier) {
 
 /** Create the loader tag. Idempotent — two loaders on one document is an AdSense policy problem. */
 export function injectAdsLoader(doc) {
-  if (doc.querySelector(`script[${ADS_MARK}]`)) return false;
+  if (doc.querySelector(ADS_LOADER_SELECTOR)) return false;
   const s = doc.createElement('script');
   s.async = true;
   s.src = ADSENSE_SRC;
   s.crossOrigin = 'anonymous';
-  s.setAttribute(ADS_MARK, '1');
   doc.head.appendChild(s);
   return true;
 }

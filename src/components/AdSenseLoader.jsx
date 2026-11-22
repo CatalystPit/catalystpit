@@ -2,7 +2,9 @@
 
 import { useEffect } from 'react';
 import { useAuth } from '@clerk/nextjs';
-import { runAdsGate } from '../lib/adsense.mjs';
+import { usePathname } from 'next/navigation';
+import { runAdsGate, adsAllowedOnPath } from '../lib/adsense.mjs';
+import { setAdsEligible } from '../lib/ads-eligibility.mjs';
 
 /**
  * THE ADSENSE LOADER, GATED ON ENTITLEMENT.
@@ -33,20 +35,54 @@ import { runAdsGate } from '../lib/adsense.mjs';
  */
 export default function AdSenseLoader() {
   const { isLoaded, isSignedIn, userId } = useAuth();
+  const pathname = usePathname();
 
   useEffect(() => {
-    const { cancel } = runAdsGate({
+    // ⚠️ THE PAGE IS CHECKED BEFORE THE VISITOR, because an excluded page is excluded for everyone
+    // and the cheapest correct answer costs no request at all. Account management, authentication
+    // and anything that could become a payment flow — see AD_EXCLUDED_PREFIXES for both reasons.
+    //
+    // It must also publish FALSE rather than simply doing nothing: slots read the shared store, and
+    // leaving a previous page's "eligible" in place while navigating to /account is precisely how an
+    // advertisement would appear on the page where someone cancels their ad-free subscription.
+    if (!adsAllowedOnPath(pathname)) {
+      setAdsEligible(false);
+      return undefined;
+    }
+
+    // ⚠️ RESET TO UNKNOWN FIRST. On an identity change the previous visitor's verdict must stop
+    // applying immediately, not linger until the new lookup returns.
+    setAdsEligible(null);
+
+    // ⚠️ THIS RUN'S OWN LIVENESS FLAG, AND IT CLOSES A REAL RACE. cancel() makes the gate resolve
+    // 'deny' — correct for the run being torn down, and a bug if that late answer is still allowed
+    // to publish. Navigating from an eligible page to another eligible page would then be: new run
+    // publishes true, old run's cancelled promise lands and publishes false, and advertising is off
+    // for the rest of the session with nothing in the page to explain why. A superseded run must
+    // publish nothing at all.
+    let active = true;
+    const { decision, cancel } = runAdsGate({
       isLoaded,
       isSignedIn,
       doc: document,
       fetchImpl: (...a) => fetch(...a),
     });
-    return cancel;
+    // 'allow' → slots may render. 'deny' → they must not. 'wait' → still unknown, so leave it null
+    // and let the next run (a changed isLoaded) answer it.
+    decision.then((d) => {
+      if (!active) return;
+      if (d === 'allow') setAdsEligible(true);
+      else if (d === 'deny') setAdsEligible(false);
+    }).catch(() => { if (active) setAdsEligible(false); });
+    return () => { active = false; cancel(); };
     // ⚠️ userId IS IN THE DEPENDENCIES ON PURPOSE, though the gate no longer takes it. It is what makes
     // an identity change re-run the decision: sign in, sign out or switch account and the previous run
     // is cancelled and re-asked. Without it, a session that changed under us would keep the entitlement
     // answer from whoever was signed in before.
-  }, [isLoaded, isSignedIn, userId]);
+    // ⚠️ pathname IS A DEPENDENCY because exclusion is per-page: an App Router navigation does not
+    // remount this component, so without it a visitor who lands on /markets and then opens /account
+    // keeps the eligible verdict from the page they left.
+  }, [isLoaded, isSignedIn, userId, pathname]);
 
   return null;
 }
