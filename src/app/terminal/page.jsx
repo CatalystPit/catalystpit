@@ -1,12 +1,5 @@
-import TerminalClient from './TerminalClient';
-import { pageMeta } from '../../lib/seo';
-
-export const metadata = pageMeta({
-  title: { absolute: "Terminal · CatalystPit Pro" },
-  description: "Pro trading dashboard: live halt scanner, movers, and catalysts.",
-  path: "/terminal",
-});
-
+import { redirect } from 'next/navigation';
+// The stand-alone trading terminal is retired. Keep old bookmarks functional.
 export default function TerminalPage() {
-  return <TerminalClient />;
+  redirect('/markets');
 }
