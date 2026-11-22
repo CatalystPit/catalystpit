@@ -580,27 +580,11 @@ export default function CatalystPit() {
               {/* The same rule, for the other conversion CTA on this page: a Pro reader already
                   has the full feed, so inviting them to unlock it is an error, not a nudge. */}
               {!loading && news.length > 0 && (
-                <FreeOnly>
-                <div style={{marginTop:12, background:C.greenLight,
-                  border:`1px solid ${C.greenBorder}`, borderRadius:7,
-                  padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                  <div>
-                    <a href="/news" style={{fontSize:13, fontWeight:600, color:C.green, textDecoration:"none"}}>
-                      See all breaking news →
-                    </a>
-                    <span style={{fontSize:12, color:C.muted, fontWeight:300, marginLeft:8}}>
-                      Explore more market news for free
-                    </span>
-                  </div>
-                  <button onClick={() => startCheckout()} style={{background:C.green, border:"none", color:"#fff",
-                    padding:"8px 18px", borderRadius:6, fontSize:12, fontWeight:500,
-                    cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-                    onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-                    onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Go ad-free · $9.99/month
-                  </button>
+                <div style={{ marginTop: 12, padding: '10px 14px', background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 7 }}>
+                  <a href="/news" style={{ fontSize: 13, fontWeight: 600, color: C.green, textDecoration: 'none' }}>
+                    See all breaking market news for free →
+                  </a>
                 </div>
-                </FreeOnly>
               )}
             </div>
           </div>
