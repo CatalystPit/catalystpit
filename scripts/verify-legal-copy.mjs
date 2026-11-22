@@ -56,6 +56,9 @@ const stripComments = (s) => s.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/^\s
 const privacyCopy = flat(stripComments(privacy));
 const termsCopy = flat(stripComments(terms));
 const planTerms = read('../src/components/PlanTerms.jsx');
+// The shared billing constants, asserted directly so the renewal sentence is checked where it is
+// BUILT rather than where it is rendered.
+const adFree = read('../src/lib/billing/ad-free.mjs');
 // ⚠️ THE PRICES LIVE IN PlanChoice NOW, not in the homepage file. The homepage renders the choice
 // rather than hard-coding two buttons, so the amounts a buyer sees come from there.
 const planChoice = read('../src/components/PlanChoice.jsx');
@@ -179,9 +182,17 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
   // ⚠️ THE ONE PROMISE A SUBSCRIBER CAN HOLD US TO. "No ads for Pro" is the part of the future
   // advertising model that is a term of sale rather than a disclosure, so it is stated in both
   // documents and pinned in both.
-  ok('⚠️ Pro subscribers are promised no advertising, in the policy',
-    /Pro subscribers will not be shown advertising/.test(privacy));
-  ok('…and the same promise is in the Terms', /Pro subscribers will not be shown advertising/.test(terms));
+  // ⚠️ THE PROMISE SURVIVES THE RENAME. "Pro subscribers" became "Ad-Free members"; what must not
+  // change is that the no-advertising commitment appears in BOTH documents, because that is the one
+  // thing the membership actually buys and a policy that only promises it in one place is a policy
+  // that can quietly stop promising it.
+  ok('⚠️ Ad-Free members are promised no advertising, in the policy',
+    /Ad-Free members will not be shown\s+advertising/.test(privacy));
+  ok('…and the same promise is in the Terms',
+    /removes advertising from the\s+Service/.test(terms) || /Ad-Free (members|removes advertising)/.test(terms));
+  ok('⚠️ …and the Terms say plainly that it unlocks no research',
+    /It does not unlock research/.test(terms),
+    'the membership must never read as a research paywall');
   ok('⚠️ consent is promised before non-essential cookies, not after',
     /require(?:s)? your consent before advertising/.test(privacy)
     || /requires consent before non-essential cookies/.test(privacy)
@@ -313,37 +324,69 @@ L('⚠️ PRIVACY DESCRIBES THE PRODUCT THAT EXISTS');
 
 L('⚠️ TERMS COVER BOTH PLANS, AND RENEWAL IS STATED');
 {
-  ok('⚠️ the monthly plan and its price appear', /\$20 per month/.test(terms));
-  ok('⚠️ the annual plan and its price appear', /\$200 per year/.test(terms));
+  // ⚠️ ONE PLAN NOW. These asserted a two-plan catalogue at $20 and $200; both are retired for new
+  // purchases, so requiring them would require re-offering them. The replacement is stricter in the
+  // direction that matters: the retired prices must be ABSENT from the purchase path, not merely
+  // unmentioned.
+  ok('⚠️ the one sellable plan and its price appear', /\$9\.99 per month/.test(terms));
+  ok('⚠️ no retired price is offered for purchase anywhere',
+    !/\$20 per month/.test(terms) && !/\$200 per year/.test(terms)
+    && !/\$20\/month/.test(planTerms) && !/\$200\/year/.test(planTerms));
   // ⚠️ BOTH PRICES MUST MATCH WHAT THE BUTTONS SAY.
-  ok('…and both match the purchase copy',
-    /\$20\/month/.test(planTerms) && /\$200\/year/.test(planTerms)
-    && /MONTHLY_PRICE = 20/.test(planChoice) && /ANNUAL_PRICE = 200/.test(planChoice));
+  // ⚠️ AND THE PRICE IS NOT TYPED TWICE. The displayed figure and the charged figure were
+  // independent facts — a literal in each component against a Stripe price id in the environment —
+  // with nothing making them agree. Both now derive from lib/billing/ad-free.mjs, and
+  // scripts/verify-stripe-price.mjs reconciles that constant against the live Stripe price.
+  ok('⚠️ the purchase copy derives the price rather than typing it',
+    /AD_FREE_PRICE_USD/.test(planChoice) && !/MONTHLY_PRICE = 9\.99/.test(planChoice));
+  ok('…and the renewal sentence derives it too',
+    /AD_FREE_RENEWAL_SENTENCE/.test(planTerms) && !/\$9\.99\/month\. Renews/.test(planTerms));
   // ⚠️ EACH INTERVAL'S OWN SENTENCE, NOT JUST THE COMBINED ONE. PlanTerms renders three variants and
   // PlanChoice passes the SELECTED interval, so the annual-only line is what a buyer actually reads
   // once they pick Annual — and it was the one line no assertion covered. Reverting it to the old
   // price used to pass this suite clean.
-  ok('⚠️ the monthly-only renewal sentence names the monthly price',
-    /\$20\/month\. Renews monthly until cancelled\./.test(planTerms));
-  ok('⚠️ the annual-only renewal sentence names the annual price',
-    /\$200\/year\. Renews annually until cancelled\./.test(planTerms));
+  // ⚠️ ONE SENTENCE, BUILT FROM THE CONSTANT. There is no annual variant to disagree with any more.
+  // Asserted on the module that produces it rather than on a literal, because a literal here is the
+  // very thing that used to drift.
+  ok('⚠️ the renewal sentence is built from the shared constant',
+    /\${AD_FREE_PRICE_LABEL}\. Renews monthly until cancelled\./.test(adFree));
   ok('…and no renewal sentence still quotes a superseded price',
     !/\$199/.test(planTerms) && !/\$199/.test(planChoice) && !/\$199/.test(terms));
   // ⚠️ THE SAVING IS COMPUTED FROM THE TWO PRICES. A typed "Save $40" would outlive the next price
   // change and quietly mis-state it; 20*12-200 cannot.
-  ok('⚠️ the annual saving and months-free are derived, not typed',
-    /ANNUAL_SAVING = MONTHLY_PRICE \* 12 - ANNUAL_PRICE/.test(planChoice)
-    && /ANNUAL_MONTHS_FREE = ANNUAL_SAVING \/ MONTHLY_PRICE/.test(planChoice));
-  ok('⚠️ automatic renewal is stated for each interval',
-    /Renews automatically every month/.test(terms) && /Renews automatically every year/.test(terms)
+  // ⚠️ NO ANNUAL SAVING TO DERIVE, and none may be advertised: there is no annual plan to compare
+  // against, so any "save N months" copy would be an offer we do not sell.
+  ok('⚠️ no annual saving is advertised', !/ANNUAL_SAVING|months free|Save \$/i.test(planChoice));
+  ok('⚠️ automatic renewal is stated for the one interval we sell',
+    /Renews automatically every month/.test(terms)
     && /renews automatically at its applicable billing interval/.test(terms));
+  ok('⚠️ …and no annual renewal is promised', !/Renews automatically every year/.test(terms));
   ok('billing is stated as in advance', /billed <strong>in advance<\/strong>/.test(terms));
   // ⚠️ THE SENTENCE THAT STOPS "CANCEL ANYTIME" MEANING "REFUND ME".
-  ok('⚠️ cancellation keeps access to the end of the paid period, and says so per plan',
-    /You keep access through the end of the billing period you have already paid for/.test(terms)
-    && /to the end of the year on an annual plan/.test(terms));
-  ok('⚠️ an annual cancellation is explicitly not a pro-rated refund',
-    /does not entitle you to a refund or a pro-rated credit/.test(terms));
+  ok('⚠️ cancellation keeps access to the end of the paid period',
+    /You keep access through the end of the billing period you have already paid for/.test(terms));
+
+  // ── ⚠️ THE MIGRATION, AND THE TENSE IT IS WRITTEN IN ──────────────────────────────────────────
+  //
+  // Existing Pit Pro subscribers are moving to Ad-Free at $9.99, but NOTHING HAS HAPPENED YET: the
+  // price does not exist in Stripe. Copy that describes a completed migration would be a false
+  // statement about somebody's billing, which is the one class of legal text that must never run ahead
+  // of the system. These assert both halves — that the transition is disclosed, and that it is not
+  // claimed as done.
+  ok('⚠️ the Terms disclose the move to Ad-Free for existing subscribers',
+    /Existing subscribers and the move to Ad-Free/.test(terms));
+  ok('⚠️ …and state plainly that it has NOT yet happened',
+    /has not yet taken effect and no existing subscription has been altered/.test(terms),
+    'claiming a completed migration would misstate a live billing relationship');
+  ok('⚠️ monthly subscribers are told their date does not change and there is no proration',
+    /at your\s+next renewal/.test(terms) && /will not be charged a proration/.test(terms));
+  ok('⚠️ annual subscribers are told their prepaid term is untouched',
+    /through the end of your prepaid term/.test(terms)
+    && /Nothing is shortened, refunded or\s+re-charged/.test(terms));
+  ok('⚠️ …and that no second subscription is created',
+    /will not create a second subscription/.test(terms));
+  ok('the 30-day price-change notice covers the transition',
+    /30 days' notice before a price change applies/.test(terms));
   ok('non-refundable except where required by law', /non-refundable except where required by law/.test(terms));
   ok('price changes are covered', /30 days' notice before it applies to your renewal/.test(terms));
   // ⚠️ NO TRIAL IS ADVERTISED, SO NONE IS PROMISED — even though the webhook would honour one.
@@ -361,8 +404,8 @@ L('⚠️ THE BUYER SEES THE TERMS BEFORE STRIPE');
 {
   ok('⚠️ the renewal sentence is one shared component, not seven copies',
     /export default function PlanTerms/.test(planTerms));
-  ok('⚠️ it states renewal for whichever interval it is given',
-    /Renews annually until cancelled/.test(planTerms) && /Renews monthly until cancelled/.test(planTerms));
+  ok('⚠️ it states monthly renewal, the only interval sold',
+    /AD_FREE_RENEWAL_SENTENCE/.test(planTerms) && !/Renews annually/.test(planTerms));
   ok('⚠️ …and replaces a bare "cancel anytime" with the honest version',
     /Cancel anytime\. Access continues through your current paid billing period/.test(planTerms)
     && /non-refundable except where required by law/.test(planTerms));
@@ -439,8 +482,12 @@ L('⚠️ MARKET-DATA COPY MATCHES THE ENTITLEMENT');
 {
   // ⚠️ THE CONTRADICTION: the upsell sold end-of-day charts while chart-intraday served Tiingo
   // intraday and Pit Scan printed REAL-TIME.
-  ok('⚠️ the Pro feature list no longer says charts are end-of-day',
-    !/all timeframes, end-of-day/.test(home) && /all timeframes, intraday and daily/.test(home));
+  // ⚠️ THERE IS NO PRO FEATURE LIST LEFT TO CONTRADICT. The homepage no longer sells a research
+  // tier, so the assertion is now that it advertises no paid research capability at all — which is the
+  // claim the business model actually requires.
+  ok('⚠️ the homepage advertises no paid research capability',
+    !/all timeframes, end-of-day/.test(home) && !/with Pit Pro/i.test(home)
+    && !/Unlock Pro/i.test(home));
   ok('…and the intraday chart really is served under our own licence',
     /getIntradayBars/.test(intraday) && /source: 'tiingo'/.test(intraday));
   // ⚠️ AND THE ROW SEMANTICS ARE UNTOUCHED.

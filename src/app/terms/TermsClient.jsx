@@ -65,6 +65,33 @@ export default function TermsClient() {
             <li><strong>Ad-Free — $9.99 per month.</strong> Renews automatically every month. All research features remain available to free users, with advertising.</li>
           </ul>
           <p><strong>Automatic renewal.</strong> Each plan renews automatically at its applicable billing interval, at the then-current price, until you cancel. By subscribing, you authorize us to charge your payment method at the start of each billing period until you cancel.</p>
+          {/* ⚠️ WRITTEN IN THE FUTURE TENSE, AND THAT IS THE POINT. Catalyst Pit Ad-Free is the renamed
+              former Pit Pro product and the $9.99 price is not yet configured in Stripe, so no existing
+              subscription has moved. A clause saying migration "has occurred" would be a false statement
+              about someone's billing — the one kind of copy that must never run ahead of the system it
+              describes. When the Stripe prices are live, the tense changes and the effective date below
+              is set. */}
+          <p><strong>Existing subscribers and the move to Ad-Free.</strong> Catalyst Pit Pro is being
+            renamed Catalyst Pit Ad-Free, and its price is changing to $9.99 per month. <strong>This
+            change has not yet taken effect and no existing subscription has been altered.</strong> When
+            it does:</p>
+          <ul style={list}>
+            <li><strong>If you subscribe monthly:</strong> your price becomes $9.99 per month at your
+              next renewal. Your billing date does not change and you will not be charged a proration
+              or any additional amount when the change applies.</li>
+            <li><strong>If you subscribe annually:</strong> you keep the access you have already paid
+              for, through the end of your prepaid term. Nothing is shortened, refunded or
+              re-charged. At the end of that term your subscription continues monthly at $9.99 per
+              month unless you cancel first.</li>
+            <li><strong>Either way:</strong> we will not create a second subscription for you, and we
+              will give at least 30 days' notice before a price change applies to your renewal, as
+              stated above.</li>
+          </ul>
+          <p><strong>What the membership buys.</strong> Catalyst Pit Ad-Free removes advertising from the
+            Service. <strong>It does not unlock research.</strong> Every research feature described in
+            these Terms is available on a free account, and some features are available without an
+            account at all. Where a feature is limited, the limit is an authentication, data-licensing or
+            abuse-prevention requirement rather than a paid upgrade.</p>
           <ul style={list}>
             <li><strong>Cancellation:</strong> You may cancel at any time from your account settings, which opens the Stripe customer portal. Cancellation stops future renewals; it does not end your current billing period. <strong>You keep access through the end of the billing period you have already paid for</strong> for your existing billing plan.</li>
             <li><strong>Refunds:</strong> Payments are non-refundable except where required by law. We may issue refunds at our discretion.</li>
