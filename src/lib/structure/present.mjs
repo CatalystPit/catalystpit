@@ -109,7 +109,15 @@ function shapeTimeframe(tf, { deep }) {
  * not errors, and the UI says which.
  */
 export function shapeForTier(structure, tier) {
-  const pro = isPro(tier);
+  // ⚠️ EVERY TIMEFRAME IS PUBLIC NOW. Weekly, monthly, major levels, confluence and alignment
+  // were shaped away for non-Pro callers, which under the retired tier meant shaped away for
+  // everyone. This is first-party structure computed from licensed daily candles we already
+  // publish, so there is no licensing reason to withhold it and no pricing reason left.
+  //
+  // The `tier` argument and the lockedSummary() path are kept rather than deleted: the shaping
+  // contract and its tests still describe them, and a caller passing a tier is not wrong — it is
+  // simply no longer a reason to return less.
+  const pro = true;
   if (!structure || structure.available === false) {
     return {
       tier: pro ? 'pro' : 'free',

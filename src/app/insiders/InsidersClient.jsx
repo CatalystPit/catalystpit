@@ -1155,7 +1155,7 @@ export default function InsidersClient() {
                       <span style={{fontSize:20}}>🔒</span>
                       <div>
                         <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:14, fontWeight:700, color:C.ink}}>{lockedCount.toLocaleString()} more insider trades</div>
-                        <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Unlock the full history with Pro</div>
+                        <div style={{fontSize:12, color:C.muted, fontWeight:300}}>Explore the full insider trade history for free</div>
                       </div>
                       <LockedCta />
                       <PlanTerms interval="monthly" />

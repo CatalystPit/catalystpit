@@ -536,7 +536,7 @@ export async function GET(request) {
     // worth nothing over logged-out and contradicted the tier model. Free is the EOD research
     // product: full history, paginated. What Pro buys is FRESHNESS, and that is the eodCutoffIso
     // predicate above, not this page size.
-    if (loggedIn) {
+    { // All paginated historical research is publicly available.
       const rows = await base.orderBy(...orderBy).limit(pageSize).offset(page * pageSize);
       const [{ n: total }] = await countQ;
       const trades = await enrichRows(rows);

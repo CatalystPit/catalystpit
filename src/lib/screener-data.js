@@ -25,6 +25,7 @@ function textArrayLiteral(values) {
 import { computeConfluence } from './confluence';
 import { isSicDescription } from './sic-descriptions.mjs';
 import { resolveClassifications, secTickerIndex } from './market/sec-classification.mjs';
+import { pickSessionDates } from './market/session-quorum.mjs';
 import { sicToMarketSector } from './market-taxonomy.mjs';
 import { isRenderableTicker } from './security-identity.mjs';
 import { isExchangeTestSymbol } from './ticker-symbol.mjs';
@@ -835,13 +836,21 @@ async function kvSetQuote(t, q) {
 // disk must not re-enter the Screener through the back door while it waits to be replaced.
 const ymd = (d) => d.toISOString().slice(0, 10);
 
+// ⚠️ A SESSION IS A DATE A QUORUM OF THE MARKET TRADED ON, NOT MERELY A DATE THAT EXISTS.
+//
+// The rule, and the measured defect behind it, live in lib/market/session-quorum.mjs. It is shared
+// rather than inlined here because the nightly coverage alarm needs the identical answer, and the
+// first version of that alarm reproduced this exact bug by measuring the newest date its own way.
 async function licensedEod() {
-  // The two most recent sessions that exist in licensed candles — walking the calendar is
-  // unnecessary when the table knows which days it has.
+  // Counts per recent date, so a date can be judged against its neighbours rather than in isolation.
   const ds = await db.execute(sql`
-    select distinct date::text as date from ticker_daily_candles
-     where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)}) order by date desc limit 2`);
-  const dates = (ds.rows ?? ds).map((r) => r.date);
+    select date::text as date, count(*)::int as n from ticker_daily_candles
+     where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)})
+     group by date order by date desc limit 30`);
+  const counted = (ds.rows ?? ds).map((r) => ({ date: r.date, n: Number(r.n) }));
+  if (!counted.length) return null;
+
+  const dates = pickSessionDates(counted);
   if (!dates.length) return null;
 
   const rows = await db.execute(sql`

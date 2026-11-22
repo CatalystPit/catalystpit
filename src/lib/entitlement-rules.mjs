@@ -53,11 +53,11 @@ export function chartIntervalAllowed(tier, id) {
 
 // Watchlist size cap per tier (C2). Free = 15 names / 1 list — the free-tier hook that
 // powers insider alerts. Pro/Elite lift the cap (wired once Stripe lands in C5).
-export const WATCHLIST_LIMIT = { free: 15, pro: 250, elite: 1000 };
+export const WATCHLIST_LIMIT = { free: 250, pro: 250, elite: 1000 };
 
 // Number of named watchlists per tier. Multiple lists is a Pro perk — Free gets the single
 // default list; Pro/Elite can create additional named lists (rename/organize).
-export const WATCHLIST_LISTS_LIMIT = { free: 1, pro: 10, elite: 25 };
+export const WATCHLIST_LISTS_LIMIT = { free: 10, pro: 10, elite: 25 };
 
 // Market-data entitlement — single source of truth so every route/component applies the same rule:
 // Free = delayed, Pro/Elite = real-time (when the provider's plan supports it). The delay duration is

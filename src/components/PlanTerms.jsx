@@ -4,7 +4,7 @@
 //
 // ── ⚠️ ONE COMPONENT BECAUSE THERE ARE SEVEN BUY BUTTONS ───────────────────
 //
-// "Start Pro · $20/month" appears on the homepage rail, the Terminal gate, /account, /consensus,
+// The ad-free CTA appears on the homepage rail, /account, /consensus,
 // /insiders, /politicians and ticker pages. Writing the renewal sentence next to each one is seven
 // chances for them to disagree about what a customer is agreeing to — and the one that drifts is
 // the one nobody re-reads. The wording lives here and every CTA renders it.
@@ -14,12 +14,17 @@
 // "Cancel anytime" on its own reads as "cancel and stop paying for the rest of the year", which is
 // not what happens: cancelling stops the next renewal and access runs to the end of the period
 // already paid for. On a monthly plan that distinction costs a few weeks; on the $200 annual plan
-// it is most of a year, so the sentence has to survive being read quickly by someone about to buy.
+// it was most of a year on the retired annual plan, so the sentence has to survive being read
+// quickly by someone about to buy.
 //
 // Deliberately three short lines and a link row — a wall of terms beside a CTA is not disclosure,
 // it is something people learn to scroll past.
 
 import { C } from '../lib/cp-shared';
+// ⚠️ ad-free.mjs, NOT plan.mjs. This is a client component and plan.mjs imports node:crypto, which
+// webpack cannot bundle for the browser — the reason the shared facts live in a module with no
+// imports at all.
+import { AD_FREE_RENEWAL_SENTENCE } from '../lib/billing/ad-free.mjs';
 
 const linkRow = {
   fontSize: 10, color: C.muted, display: 'flex', gap: 8, justifyContent: 'center',
@@ -32,11 +37,9 @@ const link = { color: C.muted, textDecoration: 'underline' };
  * @param align    'center' on a narrow rail, 'left' inside a wider card.
  */
 export default function PlanTerms({ interval = 'both', align = 'center' }) {
-  const renewal = interval === 'annual'
-    ? '$200/year. Renews annually until cancelled.'
-    : interval === 'monthly'
-      ? '$20/month. Renews monthly until cancelled.'
-      : '$20/month renews monthly · $200/year renews annually — until cancelled.';
+  // ⚠️ NOT TYPED HERE. The number comes from plan.mjs, which is also what the Stripe price is
+  // reconciled against — so this component cannot drift away from what the customer is charged.
+  const renewal = AD_FREE_RENEWAL_SENTENCE;
 
   return (
     <div style={{ textAlign: align, marginTop: 6 }}>

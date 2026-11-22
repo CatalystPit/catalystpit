@@ -2,7 +2,7 @@
 import ErrorState from '../../components/ErrorState';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo, startCheckout } from '../../lib/cp-shared';
+import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
 import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
 
 // Stock Screener — composable filters over our screener_stocks universe (/api/screener). Proprietary
@@ -166,7 +166,10 @@ export default function ScreenerClient() {
   const [page, setPage] = useState(0);
   const [view, setView] = useState('Overview');
   // null = entitlement not yet resolved. Deliberately a third state: it is never rendered as either.
-  const [pro, setPro] = useState(null);
+  // ⚠️ THE ENTITLEMENT STATE IS GONE, AND ITS LAST EFFECT WAS A VISIBLE ONE. It survived the server
+  // opening because visibleCols(view, pro) still read it, so until the fetch resolved the table
+  // rendered the reduced column set and then widened — a flash of fewer columns on every load, for
+  // a gate that no longer exists. The filters fetch below still runs; only the tier part is dropped.
   const [activeCat, setActiveCat] = useState('Descriptive');
   const [showFilters, setShowFilters] = useState(true);
   // COLLAPSED BY DEFAULT ON PHONES. The panel is ~22 stacked dropdowns; open, it filled the entire
@@ -197,8 +200,8 @@ export default function ScreenerClient() {
     // request, no client-side tier inference, and `pro === null` means NOT YET KNOWN — a third state the
     // gated view has to respect rather than collapsing into "not Pro".
     fetch('/api/screener?meta=1').then((r) => r.json())
-      .then((j) => { setMeta(j.filters || {}); setPro(j.pro === true); })
-      .catch(() => { setMeta({}); setPro(false); });
+      .then((j) => { setMeta(j.filters || {}); })
+      .catch(() => { setMeta({}); });
     fetch('/api/screener/saved').then((r) => r.json()).then((j) => setSaved(j.saved || [])).catch(() => {});
     try {
       const f = search.get('f'); if (f) setFilters(JSON.parse(decodeURIComponent(f)) || {});
@@ -276,7 +279,8 @@ export default function ScreenerClient() {
   // ⚠️ THE COLUMNS A NON-PRO READER SEES, with the gated ones dropped rather than rendered empty. While
   // `pro` is null this yields the non-Pro set, which is the fail-closed direction: a gated column must
   // never appear before entitlement is known.
-  const cols = visibleCols(view, pro);
+  // Every column is public: passed as a literal so there is no state to resolve and nothing to flash.
+  const cols = visibleCols(view, true);
   const groupsToShow = activeCat === 'All' ? REAL_CATS : [activeCat];
 
   const chipLabel = (key, cond) => {
@@ -373,24 +377,24 @@ export default function ScreenerClient() {
       {/* VIEW TABS */}
       <div style={{ maxWidth: 1760, margin: '0 auto', padding: '7px 20px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {Object.keys(VIEWS).map((v) => {
-          const gated = viewIsProOnly(v);
-          // ⚠️ UNKNOWN IS HANDLED PER TAB, WHICH IS WHAT PREVENTS BOTH FLASHES. While `pro` is null the
-          // gated tab is not selectable and carries no "· Pro" label — so a Pro reader never sees an
-          // upgrade mark appear and then vanish on their own tab, and a Free reader never gets a brief
-          // window in which the gated view is selectable. Every ungated tab is untouched, so the basic
-          // Screener never waits on entitlement.
-          const resolved = pro !== null;
-          const locked = gated && pro !== true;
+          // ⚠️ THE LOCK IS GONE, NOT DISABLED — AND THAT MATTERS BECAUSE THE BRANCH LEFT IT HALF-DONE.
+          // Every view is public under the ad-supported model, so the server stopped gating them. But
+          // the tab kept `locked` driving C.dim and opacity 0.65, and kept an onClick whose two
+          // branches had become identical — so the ownership views WORKED while rendering greyed out
+          // and un-clickable-looking. A control that functions but reads as disabled is worse than one
+          // that is honestly absent: nobody clicks it, so the feature is free and invisible.
+          //
+          // No entitlement is consulted, so there is also nothing left to flash: the old per-tab
+          // null-handling existed only to avoid showing and then withdrawing a "· Pro" mark.
           return (
             <button key={v} type="button"
-              onClick={() => { if (!locked) setView(v); else if (resolved) startCheckout(); }}
-              title={locked && resolved ? 'Ownership signals are part of Pit Pro' : undefined}
+              onClick={() => setView(v)}
               style={{ fontSize: 10.5, fontWeight: 600, padding: '3px 10px', borderRadius: 5,
                 cursor: 'pointer', border: 'none',
                 background: view === v ? C.green : 'transparent',
-                color: view === v ? '#fff' : (locked ? C.dim : C.muted),
-                opacity: locked ? 0.65 : 1 }}>
-              {v}{locked && resolved ? ' · Pro' : ''}
+                color: view === v ? '#fff' : C.muted,
+                opacity: 1 }}>
+              {v}
             </button>
           );
         })}

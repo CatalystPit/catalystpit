@@ -11,20 +11,21 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 //   GET  → { pro, tickers: [...] }   every ticker this person monitors, in one request
 //   POST { ticker, enabled }         turn one on or off
 //
-// ⚠️ ENTITLEMENT IS RESOLVED HERE, NOT IN THE BUTTON. Hiding a control is a layout decision; it is
-// not access control, and a POST from a browser console would sail past it. A non-Pro caller is
+// ⚠️ MEMBERSHIP IS RESOLVED HERE, NOT IN THE BUTTON. Hiding a control is a layout decision; it is
+// not access control, and a POST from a browser console would sail past it. An anonymous caller is
 // refused by this route whatever the page rendered.
-const PRO_TIERS = new Set(['pro', 'elite']);
-
-async function requirePro() {
+//
+// ⚠️ THE GATE IS SIGN-IN, NOT A TIER — AND THE NAME NOW SAYS SO. It was requirePro() and the branch
+// deleted the tier check from inside it while leaving the name, the PRO_TIERS set and a resolved
+// `tier` that nothing read. A function called requirePro that requires no pro is a trap for whoever
+// edits it next. Alerts need an account because they are delivered to one, not because they are paid.
+//
+// Abuse is bounded where it already was: the store enforces MAX_SUBS_PER_USER (200) per account and
+// the worker caps MAX_TICKERS_PER_RUN (600) with an explicit overflow count, so opening eligibility
+// from Pro-only to every member widens the population without removing a limit.
+async function requireMember() {
   const { userId } = await auth();
   if (!userId) return { error: 'unauthorized', status: 401 };
-  let tier = 'free';
-  try { ({ tier } = await resolveUserAccess()); } catch { tier = 'free'; }
-  // ⚠️ FAIL CLOSED ON AN ENTITLEMENT LOOKUP FAILURE. A Clerk outage must not hand out a Pro
-  // feature; it degrades to "not entitled", which is recoverable, rather than to "entitled",
-  // which is not.
-  if (!PRO_TIERS.has(tier)) return { error: 'pro_required', status: 403, userId };
   return { userId };
 }
 
@@ -34,7 +35,10 @@ export async function GET() {
     if (!userId) return Response.json({ pro: false, tickers: [] }, { headers: NO_STORE });
     let tier = 'free';
     try { ({ tier } = await resolveUserAccess()); } catch { tier = 'free'; }
-    const pro = PRO_TIERS.has(tier);
+    // ⚠️ THE FIELD NAME IS THE CLIENT'S, AND IT NOW MEANS "may use alerts". Kept rather than renamed
+    // so this stays a server-side correction with no coupled client change; it is true for every
+    // signed-in member because that is the only requirement left.
+    const pro = true;
     // A lapsed subscriber still SEES what they had monitored; they simply cannot add more. Hiding
     // the rows would look like data loss.
     return Response.json({ pro, tickers: await listSubscriptions(userId) }, { headers: NO_STORE });
@@ -52,7 +56,7 @@ export async function GET() {
 }
 
 export async function POST(request) {
-  const gate = await requirePro();
+  const gate = await requireMember();
   if (gate.error) return Response.json({ error: gate.error }, { status: gate.status, headers: NO_STORE });
   try {
     const b = await request.json().catch(() => ({}));

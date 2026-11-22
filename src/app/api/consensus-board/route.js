@@ -1,11 +1,8 @@
 import { after } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 import { familyLean } from '../../../lib/consensus/synthesis.mjs';
 import { readPublishedBoard } from '../../../lib/consensus/refresh';
 import { MATERIALIZATION_VERSION } from '../../../lib/consensus/materialization.mjs';
 import { claimRefreshAttempt } from '../../../lib/market/refresh-policy.mjs';
-import { resolveUserTier } from '../../../lib/entitlements';
-import { isAdminUser } from '../../../lib/pit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -125,22 +122,8 @@ export async function GET() {
   // board is computed once for everyone, and tier only decides how much of it is returned. Nothing
   // market-data-entitled is involved — this is public disclosure evidence — so no realtime
   // entitlement can leak through it.
-  let isFull = false;
-  try {
-    const { userId } = await auth();
-    const tier = await resolveUserTier();
-    const admin = userId ? await isAdminUser(userId) : false;
-    isFull = tier === 'pro' || tier === 'elite' || admin;
-  } catch { /* signed-out reads as free */ }
-
-  // ⚠️ PIT CONSENSUS IS PRO-ONLY, SO NON-PRO GETS NO ROWS AT ALL — not a short preview.
-  //
-  // This served the first five rows to everyone, which is a preview of a Pro product rather than a
-  // gate on one: the five most interesting names on the board are most of its value, and they were
-  // reaching logged-out clients in the payload. The count is still returned so the page can render
-  // an honest locked state ("82 names on today's board") without shipping a single one of them.
-  const rows = isFull ? full : [];
-  const lockedCount = isFull ? 0 : full.length;
+  const rows = full; // First-party evidence intelligence is free for all visitors.
+  const lockedCount = 0;
 
   return Response.json({
     status: readStatus === 'ok' && !full.length ? 'empty' : readStatus,

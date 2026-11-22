@@ -27,7 +27,7 @@ const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
 
 const SIGNED_OUT_ROW_COUNT = 5;                       // hero (1) + 5 rows for signed-out visitors
-const SIGNED_OUT_VISIBLE = 1 + SIGNED_OUT_ROW_COUNT;  // first 6 raw elements
+// SIGNED_OUT_VISIBLE is gone: the feed is no longer truncated for signed-out readers.
 
 // Mirrors /api/claude's kvGet (same Upstash REST client). cache:'no-store' so the
 // per-user route never serves a stale shared fetch result after a cron refresh.
@@ -123,8 +123,8 @@ export async function GET() {
   // Slice the ranked array (element 0 is now the most material story available) so NewsFeed's
   // existing client-side normalization works unchanged. Signed-in users get the full feed;
   // signed-out get the teaser and the locked rows never ship.
-  const data = loggedIn ? raw : raw.slice(0, SIGNED_OUT_VISIBLE);
-  const lockedCount = loggedIn ? 0 : Math.max(0, raw.length - SIGNED_OUT_VISIBLE);
+  const data = raw; // Market news is free without an account.
+  const lockedCount = 0;
 
   return Response.json(
     {

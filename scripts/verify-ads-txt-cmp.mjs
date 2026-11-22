@@ -113,6 +113,9 @@ L('\n=== 2. THE CSP ADMITS THE CONSENT MESSAGE, AND NOTHING MORE ===');
     'adding it would be pre-authorising something never observed as needed');
   ok('⚠️ connect-src gained nothing else', (() => {
     const expected = new Set(["'self'", 'https://ep1.adtrafficquality.google', CMP_ORIGIN,
+      // Added 2026-11-22: AdSense fetches /pagead/ping from this host once the stack is running.
+      // Observed refused by connect-src on every production page view; already trusted in script-src.
+      'https://pagead2.googlesyndication.com',
       'https://cdn.syndication.twimg.com', 'https://api.anthropic.com', 'https://upstash.io',
       'https://powerful-grouper-86116.upstash.io', 'https://*.clerk.accounts.dev', 'https://*.clerk.com',
       'https://clerk.catalystpit.com', 'https://challenges.cloudflare.com', 'https://rest.ably.io',

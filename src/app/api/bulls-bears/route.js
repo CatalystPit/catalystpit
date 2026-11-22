@@ -4,7 +4,7 @@
 // /api/earnings, /api/insiders, /api/politicians, /api/short-interest. Every source item carries
 // its real date so the model never improvises one. 8-K is not wired anywhere yet → passed empty.
 
-import { resolveUserTier, FREE_BULLSBEARS_VISIBLE } from '../../../lib/entitlements';
+// The tier lookup and the free-visible cap are both gone: the full set is public now.
 import { recordUsage, recordModelState } from '../../../lib/anthropic-usage';
 import { classifyAnthropicFailure, usageOf } from '../../../lib/anthropic-errors.mjs';
 
@@ -319,23 +319,14 @@ async function generate(origin, ticker) {
 // hidden counts are returned so the UI can show a lock state. `extra` carries the
 // per-path flags (cached, and refreshed_recently on the throttle path).
 async function gateResponse(payload, extra) {
-  if (!payload || payload.error) return { ...payload, ...extra };   // errors pass through unchanged
-
-  const tier = await resolveUserTier();
-  if (tier !== 'free') return { ...payload, tier, ...extra };       // Pro/Elite → full object + tier
-
-  const bulls = payload.bulls || [];
-  const bears = payload.bears || [];
-  return {                                                          // Free → truncate; drop _dropped + generatedAt
-    ticker: payload.ticker,
-    summary_line: payload.summary_line ?? null,
-    bulls: bulls.slice(0, FREE_BULLSBEARS_VISIBLE),
-    bears: bears.slice(0, FREE_BULLSBEARS_VISIBLE),
-    lockedBullCount: Math.max(0, bulls.length - FREE_BULLSBEARS_VISIBLE),
-    lockedBearCount: Math.max(0, bears.length - FREE_BULLSBEARS_VISIBLE),
-    tier: 'free',
-    ...extra,
-  };
+  // All first-party research is free under the ad-supported model, so nothing is truncated.
+  if (!payload || payload.error) return { ...payload, ...extra };
+  // ⚠️ _dropped IS INTERNAL AND IS STILL WITHHELD. The previous free path dropped it as a side
+  // effect of rebuilding a smaller object; spreading the payload instead started shipping it to
+  // everyone. It is scoring diagnostics ("included for the curl verification pass; UI ignores it"),
+  // which is exactly the class of thing that must not become public because a price changed.
+  const { _dropped, ...publicPayload } = payload;
+  return { ...publicPayload, tier: 'free', lockedBullCount: 0, lockedBearCount: 0, ...extra };
 }
 
 export async function GET(request) {

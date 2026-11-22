@@ -150,7 +150,7 @@ export async function startCheckout(interval) {
     if (r.status === 401) { window.location.href = '/sign-in'; return; }
     const j = await r.json().catch(() => ({}));
     if (j.url) { window.location.href = j.url; return; }
-    alert(j.error === 'not_configured' ? 'Pro isn’t available just yet. Check back soon.' : 'Could not start checkout. Please try again.');
+    alert(j.error === 'not_configured' ? 'Ad-free checkout is not configured yet. Please check back soon.' : 'Could not start checkout. Please try again.');
   } catch {
     alert('Could not start checkout. Please try again.');
   }
@@ -865,7 +865,13 @@ export function NotificationBell() {
     : n.type === 'like' ? 'liked your post'
     : n.type === 'comment' ? 'commented on your post'
     : n.type === 'alert' ? 'triggered an alert' : 'sent you an update';
-  const href = (n) => (n.type === 'follow' && n.actorHandle) ? `/u/${n.actorHandle}` : n.type === 'alert' ? '/terminal' : '/feed';
+  // ⚠️ /terminal IS RETIRED, so an alert notification pointed at a redirect. It now goes to the
+  // ticker the alert is about when one is known, and to Pit Wire otherwise — which is where the
+  // evidence behind an alert actually lives. Sending it to /markets (where /terminal now redirects)
+  // would have been a working link to the wrong place.
+  const href = (n) => (n.type === 'follow' && n.actorHandle) ? `/u/${n.actorHandle}`
+    : n.type === 'alert' ? (n.ticker ? `/ticker/${n.ticker}` : '/news')
+    : '/feed';
 
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
@@ -1027,7 +1033,7 @@ export function TopNav({ active }) {
   //
   // Pit CONSENSUS stays, and the two are not interchangeable: Consensus is a standalone board with
   // its own page, its own URL people share, and its own answer. Scan is the instrument you use.
-  const links = ["Terminal", "Pit Consensus", "Insiders", "Politicians", "Institutions", "News", "Screener"];
+  const links = ["Pit Scan", "Pit Consensus", "Insiders", "Politicians", "Institutions", "News", "Screener"];
 
   /**
    * ⚠️ DESTINATIONS THAT LIVE ONLY IN "MORE", NEVER IN THE TOP ROW.
@@ -1099,6 +1105,7 @@ export function TopNav({ active }) {
   // Most links map to /<lowercased>; multi-word names get an explicit path.
   const hrefFor = (l) => (l === "Pit Consensus" ? "/consensus"
     : l === "Fear & Greed" ? "/fear-greed"
+      : l === "Pit Scan" ? "/scan"
       : `/${l.toLowerCase()}`);
   return (
     /* ── ⚠️ THE HEADER OWNS ITS OWN TYPOGRAPHY. IT USED TO BORROW THE PAGE'S. ──────────
@@ -1818,7 +1825,7 @@ export function CatalystBriefCard() {
  * The call to action on a locked research row-count.
  *
  * ⚠️ THE PUBLIC GATE SELLS AN ACCOUNT, NOT A SUBSCRIPTION. Every one of these cards said
- * "Unlock Pro · $20/month", including to logged-out visitors who are ten rows into their first
+ * "Go ad-free · $9.99/month", including to logged-out visitors who are ten rows into their first
  * visit — asking a stranger for $20 to see row eleven, when what actually unlocks it is a free
  * account. The first conversion is public → free; Pro is the second one, and only a signed-in Free
  * user should be shown it here.
@@ -1841,7 +1848,18 @@ export function LockedCta({ compact = false }) {
         <a href="/sign-up" style={base}>Create a free account to continue</a>
       </SignedOut>
       <SignedIn>
-        <button onClick={() => startCheckout()} style={base}>Unlock Pro · $20/month</button>
+        {/* ⚠️ A SIGNED-IN MEMBER IS NOT SOLD ANYTHING HERE, AND THE REASON IS THE PRICE LIST.
+            This button said "Unlock Pro · $20/month" and called checkout from a card about LOCKED
+            RESEARCH. Under the ad-supported model the membership removes ADVERTISING and unlocks no
+            research at all, so selling it from a research lock would be a false claim about what the
+            money buys — and at a price that no longer exists. The research is already theirs.
+
+            Kept as a rendered element rather than removed so the surrounding card keeps its layout;
+            every caller of LockedCta is itself unreachable now that lockedCount is always 0, and
+            removing those cards is a separate, larger edit. */}
+        <span style={{ ...base, background: C.surface, color: C.muted, cursor: 'default' }}>
+          Included with your free account
+        </span>
       </SignedIn>
     </>
   );

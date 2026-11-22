@@ -48,13 +48,13 @@ export default function AccountBilling() {
           <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.ink }}>Plan</span>
           <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', padding: '3px 10px', borderRadius: 999,
             background: isPro ? C.green : C.surface, color: isPro ? '#fff' : C.muted, border: isPro ? 'none' : `1px solid ${C.border}` }}>
-            {tier == null ? '…' : planUnknown ? 'UNKNOWN' : isPro ? (tier === 'elite' ? 'ELITE' : 'PRO') : 'FREE'}
+            {tier == null ? '…' : planUnknown ? 'UNKNOWN' : isPro ? 'AD-FREE' : 'FREE'}
           </span>
         </div>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, fontWeight: 300, marginTop: 6 }}>
           {planUnknown
             ? "We couldn't check your plan just now. Your subscription is unaffected — reload to try again."
-            : isPro ? 'Thanks for supporting CatalystPit. Manage or cancel anytime.' : 'Upgrade for insider-alert depth, full Bulls & Bears, and more.'}
+            : isPro ? 'Your ad-free membership is active. Manage or cancel anytime.' : 'Research is free. Go ad-free for $9.99/month.'}
         </div>
       </div>
       {tier != null && !planUnknown && (isPro ? (
@@ -69,7 +69,7 @@ export default function AccountBilling() {
           both-plan renewal terms — "$200/year renews annually" — under a button that could only
           buy the monthly plan. Someone reading that had no way to act on it. PlanChoice carries
           its own terms block, which now matches whichever plan is selected. */}
-      {tier != null && !planUnknown && !isPro && <PlanChoice align="left" cta="Upgrade to Pro" />}
+      {tier != null && !planUnknown && !isPro && <PlanChoice align="left" cta="Go ad-free" />}
     </div>
   );
 }

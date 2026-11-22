@@ -117,15 +117,31 @@ L('⚠️ 4 — the SORT: the default ordering was itself the gated field');
 L('⚠️ 5 — the route enforces all three, server-side, before the query is built');
 {
   const r = code('src/app/api/screener/route.js');
-  ok('⚠️ the tier is resolved from the shared entitlement system',
-    /isProTier\(\(await resolveUserAccess\(\)\)\.tier\)/.test(r));
-  // ⚠️ EVERY CATCH, NOT "A" CATCH. This matched `catch { pro = false; }` anywhere, so flipping the ROWS
-  // branch to fail open still passed on the strength of the META branch's catch. Both resolutions are
-  // counted and none may grant Pro.
-  const catches = (r.match(/catch \{ pro = (true|false); \}/g) || []);
-  ok('⚠️ …and every entitlement resolution fails CLOSED',
-    catches.length === 2 && catches.every((c) => /pro = false/.test(c)), JSON.stringify(catches));
-  ok('…with no path that grants Pro on an error', !/catch \{ pro = true/.test(r));
+  // ⚠️ REWRITTEN FOR THE AD-SUPPORTED MODEL. These four assertions used to require a Pro RESEARCH
+  // gate here: a tier resolved per caller, two fail-closed catches, row stripping, and filters marked
+  // unavailable. The research tier is retired — the paid membership removes advertising and unlocks no
+  // research — so asserting that gate would now require re-adding a paywall the owner removed.
+  //
+  // ⚠️ WHAT REPLACES IT IS NOT "NOTHING". Two things still have to hold, and they are the two that
+  // could quietly go wrong: the openness must be stated ONCE and deliberately rather than as a
+  // hardcoded true over a discarded lookup, and the MARKET-DATA LICENSING resolution must survive the
+  // pricing change untouched. Those are different kinds of rule and the whole point is that removing
+  // one did not remove the other.
+  ok('⚠️ research openness is declared once, as a named constant',
+    /const RESEARCH_IS_PUBLIC = true;/.test(r),
+    'a bare `pro = true` over a deleted entitlement call reads as a bypass somebody forgot to remove');
+  ok('⚠️ …and both call sites read that constant rather than hardcoding',
+    (r.match(/const pro = RESEARCH_IS_PUBLIC;/g) || []).length === 2,
+    JSON.stringify(r.match(/pro = [^;]+;/g) || []));
+  ok('⚠️ no discarded entitlement lookup is left behind',
+    !/isProTier/.test(r) && !/resolveUserAccess/.test(r),
+    'a resolution whose result is overwritten is dead code that looks like a gate');
+  // ⚠️ THE LICENSING GATE IS A DIFFERENT RULE AND STAYS PER-CALLER. Freshness is a provider
+  // constraint, not a pricing choice, so it must not have moved when the price list did.
+  ok('⚠️ market-data freshness is still resolved per caller',
+    /await callerHasRealtime\(\)/.test(r),
+    'if this ever disappears, a realtime claim is being made for everyone');
+  ok('⚠️ …and the vendor identifier is still not shipped', !/provider: 'tiingo-realtime'/.test(r));
   ok('⚠️ …with no second Pro-detection path',
     !/publicMetadata/.test(r) && !/headers\.get\('x-tier'\)/.test(r) && !/sp\.get\('pro'\)/.test(r));
   // The gate must reach the SQL, not just the payload.
@@ -141,10 +157,18 @@ L('⚠️ 5 — the route enforces all three, server-side, before the query is b
     && r.indexOf('sanitizeSort(') < r.indexOf('orderPrimary'));
   ok('⚠️ …and the non-Pro fallback column is not the gated one',
     /pro \? screenerStocks\.insiderNet90d : screenerStocks\.marketCap/.test(r));
-  ok('⚠️ rows are stripped on the way out', /pro \? rows : rows\.map\(stripProAggregate\)/.test(r));
+  // ⚠️ ROWS ARE NO LONGER STRIPPED, and the stripper is no longer imported. Asserted as an absence
+  // because a dead `pro ? rows : rows.map(...)` left in place would be an unreachable branch that
+  // still reads like a live paywall.
+  ok('⚠️ the aggregate fields reach every caller',
+    /const safeRows = rows;/.test(r) && !/rows\.map\(stripProAggregate\)/.test(r));
+  ok('…and the stripper is not imported any more', !/stripProAggregate/.test(r));
   ok('…and the caller is told what was refused', /droppedFilters: dropped/.test(r) && /sortRefused: true/.test(r));
   // ⚠️ AND THE META ENDPOINT MUST NOT ADVERTISE A CONTROL THAT CANNOT WORK.
-  ok('⚠️ gated filters are marked unavailable for non-Pro', /available: false, proOnly: true/.test(r));
+  // ⚠️ AND NO CONTROL IS ADVERTISED AS PAID. The marking block could never fire once the aggregates
+  // were public, and a dead branch naming a retired product is how stale vocabulary survives.
+  ok('⚠️ no filter is marked Pro-only any more',
+    !/proOnly: true/.test(r) && !/unavailable: 'Pit Pro'/.test(r));
   ok('…and the tier is reported so the client needs no second request', /\n        pro,/.test(r));
 }
 
@@ -178,7 +202,9 @@ L('⚠️ 7 — the UI gates the matching view, without an entitlement flash');
     /const visibleCols = \(v, isPro\) =>/.test(c)
     && /\.filter\(\(c\) => isPro === true \|\| !PRO_AGGREGATE_COLS\.has\(c\)\)/.test(c));
   ok('⚠️ …and the rendered columns come from that filter, not from VIEWS directly',
-    /const cols = visibleCols\(view, pro\);/.test(c) && !/const cols = VIEWS\[view\]/.test(c));
+    /const cols = visibleCols\(view, (?:pro|true)\);/.test(c) && !/const cols = VIEWS\[view\]/.test(c));
+  ok('⚠️ …and openness is passed as a literal, so no state can flash a reduced set',
+    /const cols = visibleCols\(view, true\);/.test(c));
   ok('⚠️ unknown entitlement yields the non-Pro column set, which is fail-closed',
     /isPro === true/.test(c), 'a null tier must not satisfy the Pro branch');
   // ⚠️ THE CLIENT LIST MUST MATCH THE SERVER'S AUTHORITY, or a view stops being gated while the data
@@ -191,15 +217,23 @@ L('⚠️ 7 — the UI gates the matching view, without an entitlement flash');
   // The three-state handling is what prevents both flashes.
   // Matched on what the code actually says: the state starts null and is compared with !==, not ===.
   // My first version looked for `pro === null`, which appears only in the comment explaining it.
-  ok('⚠️ entitlement has an UNKNOWN state',
-    /const \[pro, setPro\] = useState\(null\);/.test(c) && /pro !== null/.test(c));
-  ok('…and it is set from the server answer, never inferred',
-    /setPro\(j\.pro === true\)/.test(c) && /\.catch\(\(\) => \{ setMeta\(\{\}\); setPro\(false\); \}\)/.test(c));
-  ok('⚠️ …and unknown does not render either answer',
-    /const resolved = pro !== null;/.test(c) && /locked && resolved \? ' · Pro' : ''/.test(c));
-  ok('⚠️ a gated tab is not selectable unless Pro', /const locked = gated && pro !== true;/.test(c));
-  ok('…and the upgrade path is the product\'s own', /startCheckout\(\)/.test(c)
-    && /startCheckout/.test(read('src/app/screener/ScreenerClient.jsx').split('\n')[4]));
+  // ⚠️ THE THREE-STATE ENTITLEMENT DANCE IS GONE BECAUSE THERE IS NOTHING TO BE ENTITLED TO. These
+  // four assertions required a null/true/false `pro` state, a "· Pro" tab label, a tab that is not
+  // selectable unless Pro, and a checkout call from the view switcher. All four describe a research
+  // paywall the owner removed.
+  //
+  // ⚠️ THE REPLACEMENT IS STRICTER IN THE ONE WAY THAT MATTERS. The branch that opened the server
+  // left this client half-done: `locked` still drove C.dim and opacity 0.65, and the onClick had two
+  // identical branches — so the ownership views worked while rendering greyed out and un-clickable,
+  // which is a free feature nobody would ever click. These assert that no view can be presented as
+  // forbidden, which the old assertions could not have caught.
+  ok('⚠️ no view is locked', !/const locked = /.test(c) && !/locked \?/.test(c),
+    'a dimmed, working control is worse than an honestly absent one');
+  ok('⚠️ no tab carries a Pro label', !/· Pro/.test(c) && !/proOnly/.test(c));
+  ok('⚠️ the view switcher sells nothing', !/startCheckout/.test(c),
+    'a research control must not open checkout: the membership buys no research');
+  ok('…and every view is selectable', /onClick=\{\(\) => setView\(v\)\}/.test(c));
+  ok('⚠️ …with no entitlement fetch gating the controls', !/setPro\(/.test(c));
   // ⚠️ AND THE BASIC SCREENER MUST NOT WAIT ON ENTITLEMENT.
   ok('⚠️ no ungated tab is disabled while entitlement resolves',
     !/if \(pro === null\) return null/.test(c) && !/disabled=\{pro === null\}/.test(c));

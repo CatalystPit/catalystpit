@@ -160,18 +160,29 @@ L('⚠️ ENTITLEMENT IS SERVER-SIDE');
 {
   // ⚠️ REQUIREMENT 3. Hiding a button is layout, not access control.
   const route = code(read('../src/app/api/evidence-alerts/route.js'));
-  ok('⚠️ creating a subscription requires Pro, resolved on the server',
-    /async function requirePro\(\)/.test(route) && /export async function POST/.test(route)
-    && /const gate = await requirePro\(\);/.test(route));
+  // ⚠️ REWRITTEN: THE REQUIREMENT IS AN ACCOUNT, NOT A TIER. Evidence alerts are in the free
+  // feature list; they need a signed-in user because they are DELIVERED to one, not because they are
+  // paid. The gate is still server-side and still refuses before anything is written — that part was
+  // never the business model, it is ordinary access control, and it is asserted unchanged below.
+  ok('⚠️ creating a subscription requires a signed-in member, resolved on the server',
+    /async function requireMember\(\)/.test(route) && /export async function POST/.test(route)
+    && /const gate = await requireMember\(\);/.test(route));
+  ok('⚠️ …and the misleading name is gone with the tier check',
+    !/requirePro/.test(route) && !/PRO_TIERS/.test(route),
+    'a function called requirePro that requires no pro is a trap for whoever edits it next');
   ok('…using the project\'s existing entitlement resolver, not a new one',
     /resolveUserAccess/.test(route) && !/publicMetadata|stripe/i.test(route));
   // ⚠️ EVERY lookup, not one of them. The route resolves entitlement twice — once to gate POST and
   // once to tell GET whether to show the controls — and a count floor let one of the two be
   // flipped to grant Pro on a Clerk outage while the other still read 'free'.
-  ok('⚠️ an entitlement lookup FAILURE denies rather than grants, at every call site',
-    (route.match(/catch \{ tier = 'free'; \}/g) || []).length === (route.match(/resolveUserAccess\(\)/g) || []).length
-    && (route.match(/resolveUserAccess\(\)/g) || []).length === 2
-    && !/tier = '(pro|elite)'/.test(route));
+  // ⚠️ REWRITTEN: THERE IS NO ENTITLEMENT LOOKUP LEFT ON THE WRITE PATH to fail open or closed.
+  // The POST gate is sign-in only, so the failure mode it used to guard against — a Clerk tier lookup
+  // erroring into "entitled" — cannot occur. What replaces it is the assertion that no tier can grant
+  // or deny the write at all, which is a stronger statement than the fail-closed one it supersedes.
+  ok('⚠️ no tier decides whether a subscription may be created',
+    !/tier = '(pro|elite)'/.test(route) && !/isProTier/.test(route));
+  ok('⚠️ …and the only refusal on the write path is the absence of a session',
+    (route.match(/return \{ error: 'unauthorized', status: 401 \}/g) || []).length === 1);
   // ⚠️ AND READING THE SUBSCRIPTION LIST IS NOT GATED. A free user's page needs `pro:false` to
   // render the control as an upsell; refusing the read would break the signed-in free experience.
   ok('⚠️ the subscription list is readable without Pro, so a free page can render honestly',
@@ -180,8 +191,12 @@ L('⚠️ ENTITLEMENT IS SERVER-SIDE');
   // ⚠️ AND THE `pro` FLAG IT REPORTS IS DERIVED FROM THE TIER, FULL STOP. Widening it does not
   // breach the POST gate, but it would show a Pro control to a free user and let them discover the
   // feature by being refused — which is a worse first experience than not seeing it.
-  ok('⚠️ the pro flag is the tier and nothing else',
-    /const pro = PRO_TIERS\.has\(tier\);/.test(route) && !/pro = [^;]*\|\|/.test(route));
+  // ⚠️ REWRITTEN: THE FIELD IS THE CLIENT'S AND NOW MEANS "may use alerts". It is kept rather than
+  // renamed so the server correction needed no coupled client change, and it is true for every member
+  // because membership is the only requirement left. Asserted as a constant so it cannot quietly start
+  // depending on a tier again.
+  ok('⚠️ the alerts-available flag depends on no tier',
+    /const pro = true;/.test(route) && !/PRO_TIERS\.has/.test(route));
   ok('a signed-out caller is refused', /if \(!userId\) return \{ error: 'unauthorized', status: 401 \}/.test(route));
   ok('⚠️ …and reading your own existing alerts is not gated, so a lapse never looks like data loss',
     !/requirePro/.test(code(read('../src/app/api/evidence-alerts/inbox/route.js'))));

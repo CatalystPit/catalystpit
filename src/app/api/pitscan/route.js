@@ -34,11 +34,14 @@ export async function GET(request) {
     //
     // The refusal carries the shape the panel already understands, so it can render its locked state
     // without a single scan row reaching the client.
-    const tier = await resolveUserTier();
-    if (!isProTier(tier)) {
-      return Response.json({ error: 'pro_required', reason: 'pit_scan', rows: [], board: null },
-        { status: 403, headers: NO_STORE });
-    }
+    // ⚠️ THE PRO GATE IS GONE: PIT SCAN IS A FREE FEATURE AND THIS WAS REFUSING EVERYONE.
+    // With the research tier retired nobody resolves as Pro, so this branch refused every caller
+    // and the panel rendered a locked state to all of them — a headline feature returning
+    // { rows: [], board: null } to its entire audience.
+    //
+    // The data itself is unchanged and still the DELAYED snapshot this route always used, so
+    // opening it widens who may read a public figure rather than what is published. Market-data
+    // freshness stays where it was decided; this was a pricing gate, not a licensing one.
     const sp = new URL(request.url).searchParams;
     const preset = sp.get('preset') || null;
     const board = sp.get('board') || DEFAULT_BOARD;

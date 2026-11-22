@@ -98,42 +98,8 @@ function FreeOnly({ children }) {
   return children;
 }
 
-function HomeTeaserGate({ children, anonTitle, anonSub, proTitle, proSub, href, proCta }) {
-  const { resolved, pro, isSignedIn } = useProEntitlement();
-
-  if (!resolved) return null;     // session or plan still resolving
-  if (pro) return null;           // nothing is locked for them
-
-  const anon = !isSignedIn;
-  const title = anon ? anonTitle : proTitle;
-  const sub   = anon ? anonSub   : proSub;
-  const to    = anon ? '/sign-in' : href;
-  const cta   = anon ? 'Sign in'  : proCta;
-
-  return (
-    <div style={{position:"relative", overflow:"hidden"}}>
-      {children}
-      <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center",
-        justifyContent:"center", background:"rgba(248,250,247,0.7)"}}>
-        <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
-          borderRadius:8, padding:"12px 20px", display:"flex", alignItems:"center", gap:12,
-          boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
-          <span style={{fontSize:16}}>🔒</span>
-          <div>
-            <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>{title}</div>
-            <div style={{fontSize:12, color:C.muted, fontWeight:300}}>{sub}</div>
-          </div>
-          <a href={to} style={{background:C.green, border:"none", color:"#fff",
-            padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",
-            cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-            onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-            onMouseLeave={e => e.currentTarget.style.background = C.green}>
-            {cta}
-          </a>
-        </div>
-      </div>
-    </div>
-  );
+function HomeTeaserGate({ children }) {
+  return <>{children}</>; // Free and paid visitors see the same research.
 }
 
 // Insider trades come from Postgres via /api/insiders (not KV). Homepage shows
@@ -614,27 +580,11 @@ export default function CatalystPit() {
               {/* The same rule, for the other conversion CTA on this page: a Pro reader already
                   has the full feed, so inviting them to unlock it is an error, not a nudge. */}
               {!loading && news.length > 0 && (
-                <FreeOnly>
-                <div style={{marginTop:12, background:C.greenLight,
-                  border:`1px solid ${C.greenBorder}`, borderRadius:7,
-                  padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                  <div>
-                    <a href="/news" style={{fontSize:13, fontWeight:600, color:C.green, textDecoration:"none"}}>
-                      See all breaking news →
-                    </a>
-                    <span style={{fontSize:12, color:C.muted, fontWeight:300, marginLeft:8}}>
-                      Pro unlocks the full feed, updated every minute
-                    </span>
-                  </div>
-                  <button onClick={() => startCheckout()} style={{background:C.green, border:"none", color:"#fff",
-                    padding:"8px 18px", borderRadius:6, fontSize:12, fontWeight:500,
-                    cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-                    onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-                    onMouseLeave={e => e.currentTarget.style.background = C.green}>
-                    Unlock Pro · $20/month
-                  </button>
+                <div style={{ marginTop: 12, padding: '10px 14px', background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 7 }}>
+                  <a href="/news" style={{ fontSize: 13, fontWeight: 600, color: C.green, textDecoration: 'none' }}>
+                    See all breaking market news for free →
+                  </a>
                 </div>
-                </FreeOnly>
               )}
             </div>
           </div>
@@ -692,7 +642,7 @@ export default function CatalystPit() {
             <HomeTeaserGate
               anonTitle="Sign in to explore all insider trades"
               anonSub="Free account · SEC Form 4 filings"
-              proTitle="More insider trades with Pro"
+              proTitle="More insider research"
               proSub="Full Form 4 history, filters and pagination"
               href="/insiders" proCta="Open Insiders">
               {[1,2,3].map(i => (
@@ -776,7 +726,7 @@ export default function CatalystPit() {
             <HomeTeaserGate
               anonTitle="Sign in to explore all politician trades"
               anonSub="Free account · STOCK Act disclosures"
-              proTitle="More politician trades with Pro"
+              proTitle="More congressional disclosures"
               proSub="Full STOCK Act history, by member and by ticker"
               href="/politicians" proCta="Open Politicians">
               {[1,2,3].map(i => (
@@ -821,7 +771,7 @@ export default function CatalystPit() {
           <div style={{background:C.greenLight, border:`1px solid ${C.greenBorder}`,
             borderRadius:8, padding:"16px"}}>
             <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.green,
-              letterSpacing:"1.5px", marginBottom:8}}>UNLOCK PRO</div>
+              letterSpacing:"1.5px", marginBottom:8}}>GO AD-FREE</div>
             <ul style={{listStyle:"none", display:"flex", flexDirection:"column", gap:6, marginBottom:12}}>
               {/* ⚠️ THIS LIST IS A PROMISE. Each line is something a paying user receives today.
                   "Options flow & dark pool" was removed because it is a product we do not have and
@@ -840,10 +790,7 @@ export default function CatalystPit() {
                   every quote on every surface is real-time. Freshness is per-surface and each one
                   labels itself (LIVE / DELAYED / LAST CLOSE). Do not generalise this to "real-time
                   market data" across the product. */}
-              {["Full market news feed","Every insider filing, minutes after it lands",
-                "Full screener · 12 filters","Charts · all timeframes, intraday and daily",
-                "Evidence alerts on your watchlist",
-                "Daily 6 AM catalyst brief"].map(f => (
+              {["All market intelligence remains free", "Browse research with fewer distractions", "No ads while your membership is active"].map(f => (
                 <li key={f} style={{fontSize:12, color:C.green, display:"flex", gap:7,
                   alignItems:"center", fontWeight:400}}>
                   <span style={{fontWeight:700, fontSize:10, color:C.green}}>✓</span>{f}
@@ -854,7 +801,7 @@ export default function CatalystPit() {
                 only route to the annual price anywhere in the product, and it read as an afterthought
                 next to a full-width primary button. Both plans are published in the Terms, so both get
                 equal standing at the point of decision. */}
-            <PlanChoice align="center" cta="Start Pro" />
+            <PlanChoice align="center" cta="Go ad-free" />
           </div>
           </FreeOnly>
 

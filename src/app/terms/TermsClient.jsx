@@ -60,19 +60,44 @@ export default function TermsClient() {
         </Section>
 
         <Section title="5. Subscriptions and Payments">
-          <p>Paid subscriptions are billed <strong>in advance</strong> through our payment processor Stripe. Pit Pro is currently offered on two plans:</p>
+          <p>Paid subscriptions are billed <strong>in advance</strong> through our payment processor Stripe. The optional Catalyst Pit Ad-Free membership is offered monthly:</p>
           <ul style={list}>
-            <li><strong>Monthly — $20 per month.</strong> Renews automatically every month.</li>
-            <li><strong>Annual — $200 per year.</strong> Renews automatically every year.</li>
+            <li><strong>Ad-Free — $9.99 per month.</strong> Renews automatically every month. All research features remain available to free users, with advertising.</li>
           </ul>
           <p><strong>Automatic renewal.</strong> Each plan renews automatically at its applicable billing interval, at the then-current price, until you cancel. By subscribing, you authorize us to charge your payment method at the start of each billing period until you cancel.</p>
+          {/* ⚠️ WRITTEN IN THE FUTURE TENSE, AND THAT IS THE POINT. Catalyst Pit Ad-Free is the renamed
+              former Pit Pro product and the $9.99 price is not yet configured in Stripe, so no existing
+              subscription has moved. A clause saying migration "has occurred" would be a false statement
+              about someone's billing — the one kind of copy that must never run ahead of the system it
+              describes. When the Stripe prices are live, the tense changes and the effective date below
+              is set. */}
+          <p><strong>Existing subscribers and the move to Ad-Free.</strong> Catalyst Pit Pro is being
+            renamed Catalyst Pit Ad-Free, and its price is changing to $9.99 per month. <strong>This
+            change has not yet taken effect and no existing subscription has been altered.</strong> When
+            it does:</p>
           <ul style={list}>
-            <li><strong>Cancellation:</strong> You may cancel at any time from your account settings, which opens the Stripe customer portal. Cancellation stops future renewals; it does not end your current billing period. <strong>You keep access through the end of the billing period you have already paid for</strong> — to the end of the month on a monthly plan, or to the end of the year on an annual plan.</li>
-            <li><strong>Refunds:</strong> Payments are non-refundable except where required by law. In particular, cancelling an annual plan part-way through the year does not entitle you to a refund or a pro-rated credit for the unused portion. We may issue refunds at our discretion.</li>
+            <li><strong>If you subscribe monthly:</strong> your price becomes $9.99 per month at your
+              next renewal. Your billing date does not change and you will not be charged a proration
+              or any additional amount when the change applies.</li>
+            <li><strong>If you subscribe annually:</strong> you keep the access you have already paid
+              for, through the end of your prepaid term. Nothing is shortened, refunded or
+              re-charged. At the end of that term your subscription continues monthly at $9.99 per
+              month unless you cancel first.</li>
+            <li><strong>Either way:</strong> we will not create a second subscription for you, and we
+              will give at least 30 days' notice before a price change applies to your renewal, as
+              stated above.</li>
+          </ul>
+          <p><strong>What the membership buys.</strong> Catalyst Pit Ad-Free removes advertising from the
+            Service. <strong>It does not unlock research.</strong> Every research feature described in
+            these Terms is available on a free account, and some features are available without an
+            account at all. Where a feature is limited, the limit is an authentication, data-licensing or
+            abuse-prevention requirement rather than a paid upgrade.</p>
+          <ul style={list}>
+            <li><strong>Cancellation:</strong> You may cancel at any time from your account settings, which opens the Stripe customer portal. Cancellation stops future renewals; it does not end your current billing period. <strong>You keep access through the end of the billing period you have already paid for</strong> for your existing billing plan.</li>
+            <li><strong>Refunds:</strong> Payments are non-refundable except where required by law. We may issue refunds at our discretion.</li>
             <li><strong>Price changes:</strong> We may change pricing with at least 30 days' notice before it applies to your renewal. If you do not agree, you may cancel before the change takes effect.</li>
             <li><strong>Discounts and promotion codes:</strong> We may offer promotional pricing or accept promotion codes at checkout. Unless the offer says otherwise, a discount applies to the billing periods stated in the offer, and the subscription renews at the standard price afterwards.</li>
-            <li><strong>Changing plans:</strong> If you move between the monthly and annual plans, the change and any proration are handled by Stripe at the time you make it.</li>
-            <li><strong>Failed payments:</strong> If a payment fails, we may suspend your access until payment is resolved.</li>
+            <li><strong>Failed payments:</strong> If a payment fails, we may suspend ad-free benefits until payment is resolved; free research remains available.</li>
             <li><strong>Taxes:</strong> Prices are stated exclusive of any taxes that may apply in your jurisdiction; where we are required to collect tax, it is added at checkout.</li>
           </ul>
         </Section>
@@ -151,7 +176,7 @@ export default function TermsClient() {
           <p>Where advertising appears:</p>
           <ul style={list}>
             <li><strong>Who sees it:</strong> Advertising will be shown to logged-out visitors and to signed-in users on the Free tier.</li>
-            <li><strong>Catalyst Pit Pro:</strong> Pro subscribers will not be shown advertising for as long as their subscription is active. This is part of what a Pro subscription buys.</li>
+            <li><strong>Catalyst Pit Ad-Free:</strong> Active ad-free subscribers will not be shown advertising. Research features are available to free and paying visitors alike, subject to data licensing and ordinary account requirements.</li>
             <li><strong>Separation from content:</strong> Advertising is sold and served by third-party networks. Advertisers do not influence our data, rankings, scores, or editorial content, and an advertisement is not a recommendation by us.</li>
             <li><strong>Cookies and consent:</strong> Advertising vendors may set their own cookies. Where the law requires consent before non-essential cookies are set, we will obtain it first. See our <a href="/privacy" style={linkStyle}>Privacy Policy</a>.</li>
           </ul>
