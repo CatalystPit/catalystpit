@@ -179,8 +179,18 @@ L('\n=== 3. PRO AD-FREE IS STRUCTURALLY INTACT ===');
   // this integration. The src is already unique and already ours to match on.
   ok('⚠️ the loader is idempotent, so two tags cannot coexist',
     /if \(doc\.querySelector\(ADS_LOADER_SELECTOR\)\) return false;/.test(src));
+  // ⚠️ SCOPED TO injectAdsLoader's BODY, AND STRIPPED OF COMMENTS. `src` here is raw source, and
+  // this file documents what it replaced by quoting it — so an absence assertion against the whole
+  // file fails on its own changelog. That trap has now caught me three times in this repository; the
+  // fix is to ask the question of the CODE that runs, not of the prose explaining it.
+  const injectBody = src
+    .slice(src.indexOf('export function injectAdsLoader'))
+    .split('\n}')[0]
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
   ok('⚠️ …and it no longer puts an unsupported attribute on the AdSense tag',
-    !/data-cp-adsense/.test(src) && !/setAttribute\(ADS_MARK/.test(src));
+    !/data-cp-adsense/.test(injectBody) && !/setAttribute\(/.test(injectBody),
+    injectBody.trim().slice(0, 160));
   // ⚠️ THE CLAIM IS ABOUT THE URL, so it is tested on the URL rather than on the prose around it. An
   // earlier version searched a slice of the file for the word "tier" and tripped on the comment that
   // explains the tier allow-list.
