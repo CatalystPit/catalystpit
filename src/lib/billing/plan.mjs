@@ -13,6 +13,19 @@ import crypto from 'node:crypto';
 /** The only billing intervals that exist. Nothing else is sellable. */
 export const INTERVALS = Object.freeze(['monthly', 'annual']);
 
+// ── ⚠️ THE PRICE LIVES IN ad-free.mjs, AND IS RE-EXPORTED HERE ───────────────────────────────
+//
+// It cannot be declared in this file: this module imports node:crypto for webhook signature
+// verification, and a 'use client' component that needs the price label would then drag a Node builtin
+// into the browser bundle. That failed the build with UnhandledSchemeError the first time it was tried.
+//
+// So the facts live in a dependency-free module and are re-exported for server callers, which keeps
+// "one place the price is written down" true without splitting it across two numbers.
+export {
+  AD_FREE_PRICE_USD, AD_FREE_INTERVAL, AD_FREE_PRICE_LABEL, AD_FREE_PRODUCT_NAME,
+  AD_FREE_RENEWAL_SENTENCE, AD_FREE_BENEFIT, SELLABLE_INTERVALS,
+} from './ad-free.mjs';
+
 /**
  * Resolve one interval to one Stripe price id.
  *

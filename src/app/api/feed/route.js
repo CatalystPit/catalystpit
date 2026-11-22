@@ -36,10 +36,10 @@ export async function POST(request) {
     const { userId } = await auth();
     if (!userId) return Response.json({ error: 'sign_in_required' }, { status: 401, headers: NO_STORE });
 
-    const tier = await resolveUserTier();
-    const isPro = tier === 'pro' || tier === 'elite';
-    if (!isPro && !(await isAdminUser(userId)))
-      return Response.json({ error: 'pro_required' }, { status: 403, headers: NO_STORE });
+    // ⚠️ AN ACCOUNT, NOT A SUBSCRIPTION. The member feed is a personalised community feature rather than
+    // research, so it is not in the free-research list — but gating it on a retired paid tier meant
+    // nobody could use it at all. The signed-in check above is the requirement that actually fits:
+    // "personalised services may require a free account". Admins keep their bypass.
 
     if (await rateLimited(`pit:feedrl:${userId}`))
       return Response.json({ error: 'rate_limited' }, { status: 429, headers: NO_STORE });

@@ -132,7 +132,7 @@ export default function AccountMenu() {
                contextual button says "$20/month" and buys exactly that; this one said "Upgrade to
                Pit Pro" and silently chose monthly. It now opens the billing card, where both plans
                are offered. */
-            : <Item href="/account">Upgrade to Pit Pro</Item>)}
+            : <Item href="/account">Go ad-free</Item>)}
 
           <div style={{ borderTop: `1px solid ${C.surface}`, marginTop: 4, paddingTop: 4 }}>
             <Item onClick={() => { close(); signOut({ redirectUrl: '/' }); }}>Sign out</Item>

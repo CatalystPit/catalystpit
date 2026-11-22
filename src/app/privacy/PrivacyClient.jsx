@@ -113,7 +113,7 @@ export default function PrivacyClient() {
           <p><strong>How advertising works on the Service:</strong></p>
           <ul style={list}>
             <li><strong>Who sees ads:</strong> Advertising will be shown to logged-out visitors and to
-              signed-in users on the Free tier. <strong>Catalyst Pit Pro subscribers will not be shown
+              signed-in users on the free tier. <strong>Catalyst Pit Ad-Free members will not be shown
               advertising.</strong></li>
             <li><strong>Consent:</strong> Where the law requires your consent before advertising or
               similar non-essential cookies are set — including in the EU, the UK and other regions with

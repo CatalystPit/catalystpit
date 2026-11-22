@@ -45,11 +45,9 @@ export async function GET(request) {
   // ⚠️ THE SAME PRO GATE AS /api/pitscan, BECAUSE THIS SERVES THE SAME BOARDS. Gating one and not
   // the other would leave the scanner one URL away; this route had no entitlement check at all and
   // answered a logged-out request with the full board.
-  const tier = await resolveUserTier();
-  if (!isProTier(tier)) {
-    return Response.json({ error: 'pro_required', reason: 'pit_scan', rows: [], boards: null },
-      { status: 403, headers: { 'Cache-Control': 'private, no-store' } });
-  }
+  // ⚠️ SAME REMOVAL AS /api/pitscan, AND FOR THE SAME REASON — these serve the same boards, so
+  // gating one and not the other would leave the scanner one URL away. Both are free now. The
+  // delayed snapshot behind them is unchanged.
   const tGuard = Date.now();
 
   const sp = new URL(request.url).searchParams;

@@ -69,7 +69,7 @@ export async function toggleAlert(ticker) {
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const err = new Error(j?.error === 'pro_required' ? 'Evidence Alerts are a Pit Pro feature'
+    const err = new Error(j?.error === 'pro_required' ? 'Evidence Alerts need a free Catalyst Pit account'
       : j?.error === 'unauthorized' ? 'Sign in to set alerts'
         : (j?.error || 'Could not set alert'));
     err.code = j?.error;

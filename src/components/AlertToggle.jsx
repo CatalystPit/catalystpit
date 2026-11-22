@@ -84,7 +84,7 @@ export default function AlertToggle({ symbol, variant = 'text', onNotice = null 
   // affordance the rest of the product uses for a Pro capability, and deliberately not a modal, a
   // banner, or a second upgrade prompt on a row that may already sit next to one.
   if (!subs.pro) {
-    const proTitle = `Evidence Alerts are a Pit Pro feature.
+    const proTitle = `Evidence Alerts need a free Catalyst Pit account.
 ${caveat}`;
     // ⚠️ THE PRODUCT'S OWN UPGRADE PATH, NOT A URL I MADE UP. The first version of this linked to
     // /pro, which does not exist — there is no pricing page in this app. LockedCta is the existing
@@ -94,7 +94,7 @@ ${caveat}`;
     if (variant === 'icon') {
       // The dense watchlist row: the bell stays, dimmed, and offers the upgrade instead of posting.
       return (
-        <button type="button" onClick={go} title={proTitle} aria-label={`Evidence Alerts for ${sym} require Pit Pro`}
+        <button type="button" onClick={go} title={proTitle} aria-label={`Evidence Alerts for ${sym} need a free account`}
           style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', lineHeight: 0, flexShrink: 0, opacity: 0.45 }}>
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.dim}
             strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

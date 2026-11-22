@@ -426,12 +426,15 @@ function LockedRows({ what, remaining }) {
           <span style={{ fontSize: 16 }}>🔒</span>
           <div>
             <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 600, color: C.ink }}>{remaining} more {what}</div>
-            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, fontWeight: 300 }}>Unlock the full history with Pro</div>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: C.muted, fontWeight: 300 }}>Free with a Catalyst Pit account</div>
           </div>
-          <button onClick={() => startCheckout()} style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap',
+          {/* ⚠️ THIS SOLD A SUBSCRIPTION TO SEE RESEARCH THAT IS NOW FREE, at a price that no longer
+              exists. The full history is public; what the reader may still need is an account, so
+              that is what the button asks for. */}
+          <a href="/sign-up" style={{ background: C.green, color: '#fff', border: 'none', whiteSpace: 'nowrap', textDecoration: 'none', display: 'inline-block',
             padding: '8px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>
-            Unlock Pro · $20/month
-          </button>
+            Create a free account
+          </a>
         </div>
       </div>
     </div>
