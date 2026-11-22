@@ -139,8 +139,8 @@ export async function GET() {
   // gate on one: the five most interesting names on the board are most of its value, and they were
   // reaching logged-out clients in the payload. The count is still returned so the page can render
   // an honest locked state ("82 names on today's board") without shipping a single one of them.
-  const rows = isFull ? full : [];
-  const lockedCount = isFull ? 0 : full.length;
+  const rows = full; // First-party evidence intelligence is free for all visitors.
+  const lockedCount = 0;
 
   return Response.json({
     status: readStatus === 'ok' && !full.length ? 'empty' : readStatus,
