@@ -98,42 +98,8 @@ function FreeOnly({ children }) {
   return children;
 }
 
-function HomeTeaserGate({ children, anonTitle, anonSub, proTitle, proSub, href, proCta }) {
-  const { resolved, pro, isSignedIn } = useProEntitlement();
-
-  if (!resolved) return null;     // session or plan still resolving
-  if (pro) return null;           // nothing is locked for them
-
-  const anon = !isSignedIn;
-  const title = anon ? anonTitle : proTitle;
-  const sub   = anon ? anonSub   : proSub;
-  const to    = anon ? '/sign-in' : href;
-  const cta   = anon ? 'Sign in'  : proCta;
-
-  return (
-    <div style={{position:"relative", overflow:"hidden"}}>
-      {children}
-      <div style={{position:"absolute", inset:0, display:"flex", alignItems:"center",
-        justifyContent:"center", background:"rgba(248,250,247,0.7)"}}>
-        <div style={{background:C.white, border:`1px solid ${C.greenBorder}`,
-          borderRadius:8, padding:"12px 20px", display:"flex", alignItems:"center", gap:12,
-          boxShadow:"0 4px 16px rgba(0,0,0,0.08)"}}>
-          <span style={{fontSize:16}}>🔒</span>
-          <div>
-            <div style={{fontSize:13, fontWeight:600, color:C.ink, marginBottom:2}}>{title}</div>
-            <div style={{fontSize:12, color:C.muted, fontWeight:300}}>{sub}</div>
-          </div>
-          <a href={to} style={{background:C.green, border:"none", color:"#fff",
-            padding:"8px 16px", borderRadius:6, fontSize:12, fontWeight:500, textDecoration:"none",
-            cursor:"pointer", fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}
-            onMouseEnter={e => e.currentTarget.style.background = C.greenMid}
-            onMouseLeave={e => e.currentTarget.style.background = C.green}>
-            {cta}
-          </a>
-        </div>
-      </div>
-    </div>
-  );
+function HomeTeaserGate({ children }) {
+  return <>{children}</>; // Free and paid visitors see the same research.
 }
 
 // Insider trades come from Postgres via /api/insiders (not KV). Homepage shows
