@@ -34,6 +34,10 @@ const args = process.argv.slice(2);
 const LIMIT = Number((args.find((a) => a.startsWith('--limit=')) || '').split('=')[1]) || 0;
 const PACE_MS = Number((args.find((a) => a.startsWith('--pace=')) || '').split('=')[1]) || 220;
 const DRY = args.includes('--dry');
+// The probe can be skipped when a caller knows a session happened (a manual catch-up run).
+const NO_PROBE = args.includes('--no-probe');
+// SPY: the most liquid symbol we track, so if it has no bar neither does the market.
+const PROBE_TICKER = (args.find((a) => a.startsWith('--probe=')) || '').split('=')[1] || 'SPY';
 const SOURCE = LICENSED_CANDLE_SOURCES[0];
 
 const sql = postgres(process.env.DATABASE_URL, { max: 3 });
@@ -55,6 +59,34 @@ const todo = await sql`
    order by coalesce((select s.market_cap from screener_stocks s where s.ticker = c.ticker), -1) desc,
             c.ticker
    ${LIMIT ? sql`limit ${LIMIT}` : sql``}`;
+
+// ⚠️ ONE-REQUEST SESSION PROBE. The todo query asks "is this ticker's last bar older than TODAY",
+// which is true for the entire universe on a Sunday — so a nightly run would walk all 14,422 tickers
+// and append nothing. Rather than carry an exchange holiday calendar (which must be maintained, and is
+// wrong the first time the NYSE closes unexpectedly), ask the market: if the most liquid symbol we
+// track has nothing newer than its last stored bar, there was no session. One request answers it for
+// the whole universe and cannot go stale.
+if (!NO_PROBE && todo.length) {
+  const probeRow = await sql`
+    select max(date)::text as last_bar from ticker_daily_candles
+     where source = ${SOURCE} and ticker = ${PROBE_TICKER}`;
+  const probeLast = probeRow[0]?.last_bar;
+  if (probeLast) {
+    const probeFrom = new Date(Date.parse(`${probeLast}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    const probe = await getDailyBars(PROBE_TICKER, { from: probeFrom, to: TODAY });
+    if (probe?.ok && Array.isArray(probe.bars) && probe.bars.length === 0) {
+      console.log(`no new session: ${PROBE_TICKER} has nothing after ${probeLast}. Nothing to append.`);
+      await sql.end();
+      process.exit(0);
+    }
+    if (!probe?.ok) {
+      // A failed probe is NOT a "no session" answer. Falling through is the safe direction: the run
+      // proceeds and each ticker reports its own outcome, rather than a vendor blip silently
+      // cancelling a night's maintenance.
+      console.log(`probe inconclusive (${probe?.reason || 'unknown'}) — continuing with the full pass`);
+    }
+  }
+}
 
 console.log(`${todo.length} ticker(s) with licensed history not yet current as of ${TODAY}`);
 if (DRY) {

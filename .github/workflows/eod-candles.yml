@@ -1,0 +1,83 @@
+# NIGHTLY LICENSED EOD CANDLE MAINTENANCE
+#
+# ⚠️ WHY THIS IS A GITHUB ACTION AND NOT A VERCEL CRON. The appender walks ~14,400 tickers at one
+# vendor request each and takes 45-60 minutes. A Vercel function cannot run that long, and the project
+# is already at the Vercel Pro ceiling of 40 cron entries, so there is no slot to put it in even if it
+# fit. GitHub Actions is already available to this repository, costs nothing additional, has no
+# practical duration limit for this, keeps a per-run log, and notifies on failure.
+#
+# ⚠️ THE PROBLEM IT EXISTS TO PREVENT. screener-data.js prices every Screener row from the two most
+# recent dates PRESENT in ticker_daily_candles. Nothing ever appended them: candles were written only
+# as a side effect of a visitor opening a ticker page, so coverage tracked traffic and decayed from
+# 13,391 tickers to 112 over a few weeks. The Screener priced 2,577 of 18,019 rows and reported no
+# error, because a missing price is not an error anywhere.
+#
+# ⚠️ IT APPENDS REAL EOD BARS. Not the all-tickers intraday snapshot, which would return the whole
+# market in one request but carries a null volume on the consolidated feed and a last print rather than
+# a session close. Mixing those into the same table under the same source name is a fabricated price
+# wearing a real one's label.
+
+name: EOD candles
+
+on:
+  # 06:30 UTC = 01:30 US Eastern, hours after the close and after the vendor's EOD series settles.
+  # Tuesday-Saturday UTC covers Monday-Friday Eastern sessions. A holiday still fires, and costs one
+  # request: the appender probes SPY first and exits when there is no new session, so it needs no
+  # exchange calendar to maintain.
+  schedule:
+    - cron: '30 6 * * 2-6'
+  # Manual runs for a catch-up after an outage.
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Max tickers this run (blank = all)'
+        required: false
+      no_probe:
+        description: 'Skip the session probe (force a pass)'
+        type: boolean
+        default: false
+
+concurrency:
+  # ⚠️ NEVER TWO AT ONCE. Two passes would double every vendor request for no benefit, and a manual
+  # catch-up firing beside the nightly run is exactly when that happens. The in-flight run wins:
+  # cancelling it would throw away up to an hour of completed work, and the appender is resumable, so
+  # a skipped run simply picks up tomorrow from where this one stopped.
+  group: eod-candles
+  cancel-in-progress: false
+
+jobs:
+  append:
+    runs-on: ubuntu-latest
+    # Generous ceiling over the measured 45-60 minutes, so a slow vendor night is not a failure.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # ⚠️ npm ci, NOT npm install: the appender shares lib/market/tiingo.mjs and the candle contract
+      # with the app, so it must run against the same locked dependency tree the site builds from.
+      - run: npm ci
+
+      - name: Append the latest licensed session
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.limit }}" ]; then ARGS="$ARGS --limit=${{ inputs.limit }}"; fi
+          if [ "${{ inputs.no_probe }}" = "true" ]; then ARGS="$ARGS --no-probe"; fi
+          echo "running: node scripts/append-licensed-eod.mjs$ARGS"
+          node scripts/append-licensed-eod.mjs $ARGS
+
+      # ⚠️ THE ALARM RUNS EVEN IF THE APPENDER FAILED. A partial pass that then skips the coverage
+      # check is how the original decay went unnoticed: the job "succeeded" at doing less each night.
+      # always() means a vendor outage still reports where coverage actually stands.
+      - name: Report coverage, and fail if it has deteriorated
+        if: always()
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/report-eod-coverage.mjs --min-pct=85
