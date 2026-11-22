@@ -64,8 +64,14 @@ L('⚠️ 7 — the anonymous capabilities payload no longer names the vendor in
   //
   // The row path now resolves a tier. What must stay true is the narrower thing this was reaching for:
   // the EOD PRICE is not gated, so the Screener remains usable for Free and logged-out visitors.
-  ok('⚠️ the row path resolves a tier, because the row carries the Pro aggregate',
-    /isProTier\(\(await resolveUserAccess\(\)\)\.tier\)/.test(r));
+  // ⚠️ REWRITTEN: THE ROW PATH NO LONGER RESOLVES A TIER, because the aggregate it used to protect
+  // is public. Under the ad-supported model the membership removes advertising and unlocks no research,
+  // so requiring a tier resolution here would be requiring the paywall back. What must still hold is
+  // that the openness is DECLARED rather than faked with a hardcoded true over a discarded lookup.
+  ok('⚠️ the row path declares research public, once, as a named constant',
+    /const RESEARCH_IS_PUBLIC = true;/.test(r) && /const pro = RESEARCH_IS_PUBLIC;/.test(r));
+  ok('⚠️ …and no dead entitlement lookup is left behind to read like a gate',
+    !/isProTier/.test(r) && !/resolveUserAccess/.test(r));
   ok('⚠️ …and EOD prices are still NOT gated — the Screener stays usable for everyone',
     !/price.*proOnly|stripProAggregate.*price/.test(r)
     && !/PRO_AGGREGATE_FIELDS.*'price'/.test(read('src/lib/screener-entitlement.mjs')));
