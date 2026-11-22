@@ -1099,6 +1099,7 @@ export function TopNav({ active }) {
   // Most links map to /<lowercased>; multi-word names get an explicit path.
   const hrefFor = (l) => (l === "Pit Consensus" ? "/consensus"
     : l === "Fear & Greed" ? "/fear-greed"
+      : l === "Pit Scan" ? "/scan"
       : `/${l.toLowerCase()}`);
   return (
     /* ── ⚠️ THE HEADER OWNS ITS OWN TYPOGRAPHY. IT USED TO BORROW THE PAGE'S. ──────────
