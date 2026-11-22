@@ -835,13 +835,51 @@ async function kvSetQuote(t, q) {
 // disk must not re-enter the Screener through the back door while it waits to be replaced.
 const ymd = (d) => d.toISOString().slice(0, 10);
 
+// ⚠️ A SESSION IS A DATE A QUORUM OF THE MARKET TRADED ON, NOT MERELY A DATE THAT EXISTS.
+//
+// This function used to take the two most recent DISTINCT dates in the table. Measured defect: UNIU
+// trades at weekends, so the vendor legitimately returns Saturday and Sunday bars for it. One symbol
+// out of 13,674 therefore became "the latest session", and the Screener priced 1 row out of 18,019
+// and reported no error — because a missing price is not an error anywhere.
+//
+// The fix is the generalized selection rule, NOT a list of 24/7 symbols to ignore. A ticker exclusion
+// would need maintaining forever and would be wrong the first time another weekend-traded symbol is
+// added; worse, it would mean deleting or distrusting bars the vendor really did supply. The bars are
+// real and they stay. What was wrong is calling a 1-ticker day a market session.
+//
+// QUORUM = a fraction of the typical recent session, not an absolute count, because the universe grows
+// and shrinks. The median of recent sessions is the yardstick (robust to exactly this kind of outlier,
+// where a mean would be dragged by it). The threshold is deliberately low: a session still mid-backfill
+// at 30% coverage is STILL the correct session to price from — the aim is to exclude a handful of
+// weekend stragglers, not to demand completeness.
+const SESSION_QUORUM_FRACTION = 0.2;
+const SESSION_QUORUM_FLOOR = 50;
+
+// Exported as a PURE function so the rule can be asserted and mutation-tested directly. Reaching it
+// through rebuildScreener() means a 64-second full rebuild per case, which is the kind of friction
+// that leaves a selection rule untested — and this one shipped a market-wide pricing failure.
+export function pickSessionDates(counted) {
+  if (!counted?.length) return [];
+  const sorted = counted.map((c) => Number(c.n)).sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)] || 0;
+  const quorum = Math.max(SESSION_QUORUM_FLOOR, Math.floor(median * SESSION_QUORUM_FRACTION));
+  const qualifying = counted.filter((c) => Number(c.n) >= quorum);
+  // ⚠️ FALL BACK RATHER THAN RETURN NOTHING. If no date clears the bar — a table only just seeded, or
+  // a universe smaller than the floor — pricing from the most recent dates is better than pricing from
+  // none, and returning [] here would blank every price in the Screener.
+  return (qualifying.length ? qualifying : counted).slice(0, 2).map((c) => c.date);
+}
+
 async function licensedEod() {
-  // The two most recent sessions that exist in licensed candles — walking the calendar is
-  // unnecessary when the table knows which days it has.
+  // Counts per recent date, so a date can be judged against its neighbours rather than in isolation.
   const ds = await db.execute(sql`
-    select distinct date::text as date from ticker_daily_candles
-     where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)}) order by date desc limit 2`);
-  const dates = (ds.rows ?? ds).map((r) => r.date);
+    select date::text as date, count(*)::int as n from ticker_daily_candles
+     where source = any(${sql.raw(LICENSED_CANDLE_SOURCES_SQL)})
+     group by date order by date desc limit 30`);
+  const counted = (ds.rows ?? ds).map((r) => ({ date: r.date, n: Number(r.n) }));
+  if (!counted.length) return null;
+
+  const dates = pickSessionDates(counted);
   if (!dates.length) return null;
 
   const rows = await db.execute(sql`
