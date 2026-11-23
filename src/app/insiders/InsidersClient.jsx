@@ -11,6 +11,10 @@ import { treemap } from '../../lib/treemap';
 import SharedInfoTip from '../../components/InfoTip';
 import { INSIDER_TX_COLUMNS, INSIDER_TX_MIN_WIDTH } from '../../lib/insider-columns.mjs';
 import { useRouter } from 'next/navigation';
+// ⚠️ NO_ADS marks research containers that must never host an advertisement; AdSlot is the only
+// component that renders one, and only BETWEEN complete sections. See lib/adsense.mjs.
+import { NO_ADS } from '../../lib/adsense.mjs';
+import AdSlot from '../../components/ads/AdSlot';
 
 // Does this scroll box currently overflow horizontally? Recomputed by ResizeObserver, so opening or
 // collapsing a dock re-answers it on the frame the layout changes — no measuring code, no listeners
@@ -623,7 +627,14 @@ function NotableActivity({ data, window, onWindow, onPick }) {
     { l: 'LARGEST OWNERSHIP INCREASE', x: data.largestOwnershipIncrease, sub: (x) => `${x.executive} · ${x.ticker}`, val: (x) => (x.pct != null ? fmtOwnershipPct(x.pct) : fmtBig(x.value)) },
   ].filter((i) => i.x) : [];
   return (
-    <div style={{ marginBottom: 20 }}>
+    // ⚠️ data-cp-noads — THE SEVEN CARDS GOOGLE WAS INSERTING INTO.
+    //
+    // Auto ads was placing 280px blocks inside this grid, between and inside the Notable Insider
+    // Activity cards. Each card is one finding — a named executive, a ticker, a dollar value and a
+    // window — so an advertisement wedged into the grid reads as part of the finding. The marker
+    // covers the whole block, header toggle included, because the window control belongs to the
+    // research too. See NO_ADS in lib/adsense.mjs.
+    <div style={{ marginBottom: 20 }} {...NO_ADS}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontWeight: 700, color: C.dim, letterSpacing: '0.8px' }}>NOTABLE INSIDER ACTIVITY</div>
         <WindowToggle value={window} onChange={onWindow} />
@@ -870,6 +881,11 @@ export default function InsidersClient() {
         <MarketPulse data={pulse} window={intelWindow} onWindow={setIntelWindow} />
         <Heatmap data={heatmap} window={intelWindow} onWindow={setIntelWindow} mode={heatMode} onMode={setHeatMode} onPick={goTicker} />
         <NotableActivity data={notable} window={intelWindow} onWindow={setIntelWindow} onPick={goTicker} />
+        {/* ⚠️ THE DESIGNATED PLACEMENT ON THIS PAGE: after the Notable Activity block has finished
+            and before the tables begin. A complete section has ended and the next has not started,
+            so there is no finding to interrupt — which is the whole rule. It renders nothing until a
+            real ad unit id exists; no placeholder, no reserved gap. */}
+        <AdSlot placement="inContent" minHeight={100} />
       </div>
 
       {/* CONTROLS: search + category grid */}
@@ -1003,7 +1019,7 @@ export default function InsidersClient() {
               </div>
               <SentimentChart data={data.sentiment}/>
             </div>
-            <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+            <div {...NO_ADS} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
               <div style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,background:C.surface,fontSize:12,fontWeight:600,color:C.ink}}>Trending tickers · last 7 days</div>
               {(data.trending||[]).map((t,i)=>(
                 <div key={i} className="row-hov" onClick={()=>goTicker(t.ticker)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 16px",borderBottom:i<data.trending.length-1?`1px solid ${C.surface}`:"none"}}>
@@ -1022,7 +1038,7 @@ export default function InsidersClient() {
           </div>
         ) : isCluster ? (
           /* ── CLUSTER BUYS ── */
-          <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+          <div {...NO_ADS} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
             <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse"}}>
               <thead><tr style={{background:C.surface,borderBottom:`1px solid ${C.border}`}}>
@@ -1068,7 +1084,7 @@ export default function InsidersClient() {
 
                 All of this applies ONLY while the table actually overflows. With the docks closed it
                 fits (1330px of workspace), nothing is bounded, and the page is exactly as before. */}
-            <div style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+            <div {...NO_ADS} style={{background:C.white,border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
               <div ref={setTxBox} className={txOverflows ? "cp-tscroll" : undefined}
                 style={{overflow:txOverflows?"auto":"visible",overflowX:"auto",maxWidth:"100%",
                   maxHeight:txOverflows?"calc(100vh - 150px)":undefined,

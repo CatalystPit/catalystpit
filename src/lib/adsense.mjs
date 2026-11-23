@@ -85,6 +85,44 @@ export function adSlotId(placement) {
   return typeof v === 'string' ? v.trim() : '';
 }
 
+/**
+ * ⚠️ THE MARKER FOR RESEARCH CONTENT THAT MUST NEVER HOST AN ADVERTISEMENT.
+ *
+ * ── WHY AN ATTRIBUTE, AND WHY IT IS NOT ENOUGH ON ITS OWN ────────────────────────────────────────
+ *
+ * There is NO HTML attribute that stops AdSense Auto ads inserting into an element. I checked
+ * Google's own documentation rather than assuming: the only supported controls are dashboard-side —
+ * "excluded areas", defined by CSS SELECTORS, and page-level URL exclusions. So nothing in this
+ * repository can block an in-page Auto ad by itself.
+ *
+ * What the page CAN do is make the dashboard rule reliable. Google's help page warns that an
+ * excluded area stops working when its selectors change, and that warning lands hard here: measured
+ * on production, the inserted blocks sat inside `div > div > div > section` chains with NO class
+ * names at all, because these components are styled inline. There was nothing stable to exclude.
+ *
+ * This attribute exists for exactly one purpose and carries no styling, so restyling, refactoring or
+ * a design change cannot quietly remove it the way a layout class would. One selector —
+ * `[data-cp-noads]` — then covers every protected area on the site, and new research components
+ * inherit the protection by adding the marker rather than by someone remembering to update a rule in
+ * a dashboard they rarely open.
+ *
+ * ── ⚠️ IT IS NOT A CSS FIX ───────────────────────────────────────────────────────────────────────
+ *
+ * Nothing here hides an advertisement after Google has inserted it. Hiding a served ad is both an
+ * AdSense policy problem (an impression counted for something no one can see) and a lie about what
+ * happened. This marks the area so the ad is never placed there in the first place.
+ */
+export const NO_ADS_ATTR = 'data-cp-noads';
+
+/** Spread onto any research container: `<div {...NO_ADS}>`. */
+export const NO_ADS = Object.freeze({ [NO_ADS_ATTR]: '' });
+
+/**
+ * The selector to paste into AdSense → excluded areas. Exported so the value in the dashboard and
+ * the value in the markup cannot drift apart silently — the verification suite asserts they match.
+ */
+export const NO_ADS_SELECTOR = `[${NO_ADS_ATTR}]`;
+
 /** How long to wait for the plan endpoint before giving up on advertising for this page view. */
 export const ADS_PLAN_TIMEOUT_MS = 8000;
 

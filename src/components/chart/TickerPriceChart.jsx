@@ -1,6 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import { C, Dot } from '../../lib/cp-shared';
+import { NO_ADS } from '../../lib/adsense.mjs';
 import CPChart from './CPChart';
 import { useTickerEvidence } from '../../lib/chart/use-ticker-evidence';
 
@@ -30,7 +31,9 @@ export default function TickerPriceChart({ symbol }) {
   const evidence = useTickerEvidence(symbol);
 
   return (
-    <div style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+    // ⚠️ data-cp-noads — a chart and the evidence rail beside it are read together; an ad inserted
+    // between them is read as part of the price history. See lib/adsense.mjs.
+    <div {...NO_ADS} style={{ marginTop: 14, background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
       <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface,
         display: 'flex', alignItems: 'center', gap: 7 }}>
         <Dot /><span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>Price chart</span>

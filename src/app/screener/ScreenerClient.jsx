@@ -3,6 +3,7 @@ import ErrorState from '../../components/ErrorState';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
+import { NO_ADS } from '../../lib/adsense.mjs';
 import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
 
 // Stock Screener — composable filters over our screener_stocks universe (/api/screener). Proprietary
@@ -402,7 +403,9 @@ export default function ScreenerClient() {
 
       {/* RESULTS */}
       <div style={{ maxWidth: 1760, margin: '8px auto', padding: '0 20px 40px' }}>
-        <div style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+        {/* ⚠️ data-cp-noads — a sortable table of securities is a single continuous claim, and an
+            advertisement between two rows is a row that is not a security. See lib/adsense.mjs. */}
+        <div {...NO_ADS} style={{ background: C.white, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>

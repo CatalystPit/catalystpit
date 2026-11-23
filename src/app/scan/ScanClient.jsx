@@ -11,8 +11,10 @@
 // what these boards show is the last completed session. A page headed "what is moving right now"
 // that quietly showed yesterday's move would be the one failure this scanner was built to refuse.
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { C, BrandStyles, TopNav, Footer } from '../../lib/cp-shared';
+import { NO_ADS } from '../../lib/adsense.mjs';
+import AdSlot from '../../components/ads/AdSlot';
 import { ScanBoard, FeedBanner, BOARD_TABS, useScanBoards } from '../../components/scan/ScanBoardRows';
 
 // ⚠️ A THIN WRAPPER, NOT A SECOND SCAN. Pit Scan's home is the Terminal panel; this page exists so
@@ -43,20 +45,31 @@ export default function ScanClient() {
         <FeedBanner freshness={freshness} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
-          {BOARD_TABS.map((b) => (
-            <section key={b.key}>
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.6px', color: C.ink }}>
-                  {b.label.toUpperCase()}
+          {BOARD_TABS.map((b, bi) => (
+            <Fragment key={b.key}>
+              {/* ⚠️ ADVERTISING GOES BETWEEN COMPLETE BOARDS, NEVER INSIDE ONE. Each board is a
+                  self-contained piece of research — a ranked list with its own freshness and its own
+                  explanation of an empty result — so an ad dropped into the middle of it breaks a
+                  claim in half. Between boards there is no claim to interrupt.
+                  Rendered only from the second board on, so the page never opens with an ad. */}
+              {bi > 0 && bi % 2 === 0 && <AdSlot placement="inContent" minHeight={100} />}
+              {/* ⚠️ data-cp-noads: everything below here is research and must never host an ad.
+                  See NO_ADS in lib/adsense.mjs — the attribute is the stable selector the AdSense
+                  excluded-area rule targets, because these components carry no layout classes. */}
+              <section {...NO_ADS}>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.6px', color: C.ink }}>
+                    {b.label.toUpperCase()}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>{b.blurb}</div>
                 </div>
-                <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>{b.blurb}</div>
-              </div>
-              {/* An empty board renders as an empty board with its own explanation — never hidden,
-                  and never padded with rows that do not qualify. Divergence is deliberately tight. */}
-              <ScanBoard board={b.key} data={boards?.[b.key] || null} loading={loading}
-                errorText={error} locked={locked} onRetry={retry}
-                onState={(j) => { if (j?.freshness) setFreshness(j.freshness); }} />
-            </section>
+                {/* An empty board renders as an empty board with its own explanation — never hidden,
+                    and never padded with rows that do not qualify. Divergence is deliberately tight. */}
+                <ScanBoard board={b.key} data={boards?.[b.key] || null} loading={loading}
+                  errorText={error} locked={locked} onRetry={retry}
+                  onState={(j) => { if (j?.freshness) setFreshness(j.freshness); }} />
+              </section>
+            </Fragment>
           ))}
         </div>
 

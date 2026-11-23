@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import AlertToggle from '../AlertToggle';
 import { C, Badge, TickerLogo, LockedCta } from '../../lib/cp-shared';
+import { NO_ADS } from '../../lib/adsense.mjs';
 
 const BOARD_TABS = [
   // ⚠️ THE BLURB NO LONGER NAMES A CLOCK, AND THAT IS THE POINT. It used to read "on the last
@@ -402,7 +403,13 @@ export function ScanBoard({ board, data, loading = false, errorText = null, lock
   const rows = state?.rows || [];
 
   return (
-    <div style={{ fontFamily: "'DM Sans',sans-serif" }}>
+    // ⚠️ data-cp-noads — MARKED AT THE SHARED COMPONENT, NOT PAGE BY PAGE.
+    //
+    // ScanBoard renders the stock research cards Google was interrupting on /scan, and the same
+    // component is also a Terminal panel. Marking it here means every surface that draws a board
+    // inherits the protection, instead of each page needing someone to remember. A row here is one
+    // security with its evidence attached; an ad between the rows reads as another row.
+    <div {...NO_ADS} style={{ fontFamily: "'DM Sans',sans-serif" }}>
       {title && (
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
           <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.6px', color: C.ink }}>
