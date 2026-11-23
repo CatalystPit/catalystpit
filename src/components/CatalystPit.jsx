@@ -13,7 +13,7 @@ import PlanChoice from "./PlanChoice";
 import CompactChart from "./chart/CompactChart";
 import {
   C, CARD_COLORS,
-  chgC, chgBg, fmt2, safeN, minsSince,
+  chgC, chgBg, fmt2, safeN, maybeN, minsSince,
   fetchKey, toArr, startCheckout,
   BrandStyles, Skel, Dot, NewsPhotoCard, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
@@ -287,7 +287,18 @@ const fetchAll = async () => {
     const tickers = tapeArr.map(t => ({
       sym: t.symbol || t.sym || t.ticker || '?',
       price: safeN(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice),
-      chg: safeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
+      // ⚠️ safeN TURNED "UNKNOWN" INTO 0, AND THAT IS HOW A MISSING CHANGE BECAME 0.00% IN RED.
+      //
+      // safeN returns 0 for anything unparseable, so a null percentage — which is now what the API
+      // sends when a settled close has no intraday move to report — arrived here as a hard zero and
+      // rendered as a real, flat, red 0.00%. Fixing the API alone would have changed nothing on the
+      // page: this line would have flattened it again.
+      //
+      // Zero is a real market outcome and must keep rendering as 0.00%. Unknown is null and renders
+      // as a dash. maybeN preserves the difference that safeN destroys.
+      chg: maybeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
+      // Which session the percentage describes, so the tape can say so rather than implying "now".
+      chgBasis: t.changeBasis ?? null,
     }));
 
     const storiesArr = toArr(stories, 'stories', 'top_stories', 'articles', 'items', 'data');
@@ -340,7 +351,11 @@ const fetchAll = async () => {
       disclosed: p.disclosureDate || '',
     }));
 
-    const spy_chg = safeN(marketSnap?.SPY?.changePct ?? marketSnap?.SPY?.chg ?? marketSnap?.SPY?.change_pct ?? 1.2);
+    // ⚠️ THE 1.2 WAS A FABRICATED MARKET MOVE. When SPY's change was missing, this fell back to the
+    // literal 1.2 — a plausible-looking percentage presented as the market's actual return, which is
+    // the same class of defect as the 18.3 VIX fallback noted below and removed for the same reason.
+    // Unknown is null, and the surfaces that read it render a dash.
+    const spy_chg = maybeN(marketSnap?.SPY?.changePct ?? marketSnap?.SPY?.chg ?? marketSnap?.SPY?.change_pct);
     // The VIX value that used to be derived here is gone with the VIX card. It was computed, carried
     // through the return object, and consumed by nothing — and its fallback was the literal 18.3, a
     // fabricated index level that would have been displayed as real had anything ever rendered it.

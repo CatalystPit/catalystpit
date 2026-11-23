@@ -583,7 +583,20 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
       // really chosen rather than the one we were allowed to choose.
       const priceIsLive = gate.useLivePrice && live != null;
       if (price == null) continue;                       // no price is no quote; omit rather than zero
-      const changePct = (prevClose != null && prevClose !== 0 && price != null)
+      // ⚠️ A CLOSE COMPARED AGAINST ITSELF IS NOT A CHANGE, AND THIS RETURNED 0.00% FOR IT.
+      //
+      // `price` above is prevClose for anyone without a real-time entitlement — correct, and the
+      // whole point of the gate. This line then computed (prevClose - prevClose) / prevClose, which
+      // is exactly zero, and every ticker on the homepage snapshot and every watchlist row read
+      // 0.00% on days the market moved several percent. The price was never wrong; the comparison
+      // was.
+      //
+      // So the intraday change is reported ONLY when an intraday price was actually served. When it
+      // was not, this is null — not zero — because zero is a real market outcome (a stock that
+      // genuinely closed flat) and using it for "unknown" destroys the only value that should ever
+      // render as 0.00%. The last completed session's real return comes from lastSessionChange() in
+      // eod-change.mjs, off the licensed candles the caller already has.
+      const changePct = (priceIsLive && prevClose != null && prevClose !== 0)
         ? ((price - prevClose) / prevClose) * 100 : null;
       out[sym] = {
         price,

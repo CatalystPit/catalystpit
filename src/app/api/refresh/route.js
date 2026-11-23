@@ -56,20 +56,46 @@ async function kvGet(key) {
 async function fetchStockPrices(tickers) {
   try {
     const { getQuotes } = await import('../../../lib/market-data');
+    const { lastSessionChange } = await import('../../../lib/market/eod-change.mjs');
     // realtime:false — the tape is a single shared KV value served to everyone, including signed-out
     // readers, so it must never contain an entitled real-time print.
     const quotes = await getQuotes(tickers, { realtime: false });
+
+    // ⚠️ THE LAST COMPLETED SESSION'S REAL RETURN, because realtime:false means every price here is
+    // a settled close and a close has no intraday change to report. getQuotes now returns null
+    // rather than the 0.00% it used to compute by comparing that close against itself; this supplies
+    // the figure that is actually true of it, from the licensed candles already on disk.
+    const eod = await lastSessionChange(Object.keys(quotes || {}));
+
     const out = {};
     for (const [sym, q] of Object.entries(quotes || {})) {
       const price = Number(q?.price);
       if (!Number.isFinite(price) || price <= 0) continue;
       const pc = Number(q?.prevClose);
-      const changePct = Number.isFinite(Number(q?.changePct)) ? Number(q.changePct)
-        : (pc > 0 ? ((price - pc) / pc) * 100 : 0);
+      const live = Number(q?.changePct);
+      const session = eod.get(sym);
+
+      // ⚠️ NO `: 0` ANYWHERE ON THIS PATH, AND THERE WERE TWO.
+      //
+      // Both the change and the percentage fell back to literal zero when the inputs were missing,
+      // so a quote with nothing to say about movement arrived at the page indistinguishable from a
+      // stock that closed exactly flat — and rendered red, because chgC treats 0 as "not positive".
+      // Unknown is null and renders as a dash; zero is reserved for a genuine flat close.
+      const changePct = Number.isFinite(live) ? live
+        : (session ? session.changePct : null);
+      // The absolute move must describe the SAME two prices as the percentage, or the row shows a
+      // dollar change from one session and a percentage from another.
+      const change = Number.isFinite(live) && Number.isFinite(pc) ? price - pc
+        : (session ? session.close - session.prevClose : null);
+
       out[sym] = {
         price: +price.toFixed(2),
-        change: Number.isFinite(pc) ? +(price - pc).toFixed(2) : 0,
-        changePct: +changePct.toFixed(2),
+        change: change == null ? null : +change.toFixed(2),
+        changePct: changePct == null ? null : +changePct.toFixed(2),
+        // ⚠️ SAY WHICH SESSION THE PERCENTAGE DESCRIBES. Without it a reader cannot tell a settled
+        // return from an intraday one, and the two mean different things on the same page.
+        changeBasis: Number.isFinite(live) ? 'intraday' : (session ? 'last_session' : null),
+        changeSession: Number.isFinite(live) ? null : (session ? session.session : null),
       };
     }
     return out;

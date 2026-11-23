@@ -97,6 +97,11 @@ export const chgBg = (v) => (+v) > 0 ? C.greenLight : C.redLight;
 export const fmt2  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : x.toFixed(2); };
 export const fmtP  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : `${x>0?"+":""}${x.toFixed(2)}%`; };
 export const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
+// ⚠️ safeN's SIBLING FOR VALUES WHERE ZERO MEANS SOMETHING. Defined in lib/num.mjs — an import-free
+// module — so a test can execute it; this bug was a coercion helper turning "unknown" into a real
+// 0.00%, and a helper that can only be read is a helper nobody has run. Re-exported here so callers
+// keep importing their numeric helpers from one place.
+export { maybeN } from './num.mjs';
 export const timeAgo = m => typeof m === "number" ? (m < 60 ? `${m}m ago` : `${Math.floor(m/60)}h ago`) : m || "Just now";
 
 export const minsSince = (publishedStr) => {
@@ -1363,11 +1368,25 @@ export function TickerTape({tickers}) {
                 <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.ink, fontWeight:500}}>
                   {t.sym === "BTC" || (t.price > 1000) ? (+t.price).toLocaleString() : fmt2(+t.price)}
                 </span>
-                <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
-                  color:chgC(t.chg), background:chgBg(t.chg),
-                  padding:"1px 5px", borderRadius:3, fontWeight:600}}>
-                  {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
-                </span>
+                {/* ⚠️ A MISSING CHANGE RENDERS AS A NEUTRAL DASH, NOT A RED "-%".
+                    This drew fmt2(t.chg) unconditionally, so a null produced the string "-%" tinted
+                    red — chgC treats anything not greater than zero as a loss. A dash is not a loss
+                    and must not be coloured like one. Zero still renders as 0.00% and still counts
+                    as flat, because a stock that genuinely did not move is information. */}
+                {t.chg == null ? (
+                  <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
+                    color:C.dim, background:C.surface,
+                    padding:"1px 5px", borderRadius:3, fontWeight:600}} title="Change unavailable">
+                    —
+                  </span>
+                ) : (
+                  <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
+                    color:chgC(t.chg), background:chgBg(t.chg),
+                    padding:"1px 5px", borderRadius:3, fontWeight:600}}
+                    title={t.chgBasis === 'last_session' ? 'Last completed session' : undefined}>
+                    {t.chg > 0 ? "+" : ""}{fmt2(t.chg)}%
+                  </span>
+                )}
               </>
             );
             return valid ? (

@@ -15,7 +15,12 @@ const KV_TOKEN     = process.env.KV_REST_API_TOKEN;
 // Shared quote cache — SAME key + TTL + value shape as /api/ticker, so the ticker
 // page and the watchlist read/write one cache (warming either warms both).
 const QUOTE_TTL    = 300;                                   // seconds — matches /api/ticker quote TTL
-const quoteKey     = (sym) => `catalystpit:ticker:${sym}:quote`;
+// ⚠️ v2 BECAUSE THE v1 ENTRIES HOLD THE BUG'S OUTPUT. Every cached quote written before this change
+// carries dp: 0 — the close-against-itself figure — and 0 is a FINITE number, so the merge below
+// would keep preferring it over the real session return for the whole five-minute TTL. Bumping the
+// key makes those entries unreachable instead of waiting them out, which is the difference between
+// "fixed" and "fixed in a few minutes, for some readers".
+const quoteKey     = (sym) => `catalystpit:ticker:${sym}:quote:v2`;
 
 // Fetch-on-miss bounds. Each miss = ONE Finnhub /quote call, write-through to the
 // cache on success → a ticker only triggers a live fetch once per TTL window, so
@@ -128,7 +133,11 @@ async function fetchAndCacheQuote(sym) {
     const quote = {
       c,
       d:  pc != null ? +(c - pc).toFixed(4) : null,
-      dp: Number.isFinite(Number(g.changePct)) ? Number(g.changePct) : (pc > 0 ? +(((c - pc) / pc) * 100).toFixed(4) : null),
+      // ⚠️ NO RECOMPUTING (c - pc) / pc HERE. With realtime:false, `c` IS `pc` — the settled close —
+      // so that arithmetic is zero by construction, which is why every watchlist row read 0.00%.
+      // getQuotes now returns null for a non-live quote and the real last-session return is attached
+      // in withPrices() from the licensed candles. Null here means "not known yet", never "flat".
+      dp: Number.isFinite(Number(g.changePct)) ? Number(g.changePct) : null,
       h:  Number.isFinite(Number(g.high)) ? Number(g.high) : null,
       l:  Number.isFinite(Number(g.low)) ? Number(g.low) : null,
       o:  Number.isFinite(Number(g.open)) ? Number(g.open) : null,
@@ -182,11 +191,23 @@ async function withPrices(list) {
   }
   console.log(`[watchlist_api] prices: ${tickers.length} total · ${tickers.length - misses.length} cache-hit · ${fetched} fetched · ${needClose.length} close-fallback`);
 
+  // ⚠️ THE LAST COMPLETED SESSION'S REAL RETURN for every row whose quote is a settled close, which
+  // with realtime:false is all of them. One query for the whole list, off the same licensed candles
+  // the close fallback above already reads — no extra provider and no per-row lookup.
+  const { lastSessionChange } = await import('../../../lib/market/eod-change.mjs');
+  const eod = await lastSessionChange(tickers);
+
   return list.map(r => {
     const q = quoteBy.get(r.ticker);
-    if (q) return { ...r, price: q.c, changePct: q.dp ?? null };  // live/cached → price + change%
+    const session = eod.get(r.ticker);
+    // An intraday percentage is used when one genuinely exists; otherwise the settled session's own
+    // return. Absent from both means a dash, never 0.00%.
+    const changePct = (q && Number.isFinite(Number(q.dp))) ? Number(q.dp)
+      : (session ? +session.changePct.toFixed(4) : null);
+    const basis = (q && Number.isFinite(Number(q.dp))) ? 'intraday' : (session ? 'last_session' : null);
+    if (q) return { ...r, price: q.c, changePct, changeBasis: basis };
     const close = closeBy.get(r.ticker);
-    return { ...r, price: close ?? null, changePct: null };       // close-only → price, no change%
+    return { ...r, price: close ?? null, changePct, changeBasis: basis };
   });
 }
 
