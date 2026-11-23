@@ -105,12 +105,32 @@ L('⚠️ 3 — unknown is null everywhere, never zero');
     !/change(Pct)?:[^\n]*: 0[,\s]/.test(refresh));
   ok('⚠️ …and it actually calls lastSessionChange, not merely imports it',
     /await lastSessionChange\(/.test(refresh));
+  // ⚠️ THE Number(null) TRAP, ASSERTED DIRECTLY, BECAUSE I FELL INTO IT WRITING THIS FIX.
+  //
+  // Number(null) is 0 and Number.isFinite(0) is true, so `Number.isFinite(Number(q.changePct))`
+  // answers TRUE for a quote that correctly reported null — and the route then published 0 as an
+  // intraday figure. It was in KV, stamped basis "intraday", while the provider underneath was
+  // returning null exactly as designed. parseFloat(null) is NaN, which is why maybeN is the one to
+  // reach for. Nothing on this path may coerce the change fields with Number().
+  ok('⚠️ the change fields are parsed with maybeN, never Number()',
+    /const live = maybeN\(q\?\.changePct\)/.test(refresh)
+    && !/Number\(q\?\.changePct\)/.test(refresh),
+    'Number(null) === 0 and would publish a zero as an intraday change');
+  const watchEarly = code('src/app/api/watchlist/route.js');
+  ok('⚠️ …and the watchlist does the same',
+    /maybeN\(q\.dp\)/.test(watchEarly) && !/Number\.isFinite\(Number\(q\.dp\)\)/.test(watchEarly));
   ok('⚠️ …and says which session the percentage describes',
     /changeBasis/.test(refresh) && /last_session/.test(refresh));
 
   const tiingo = code('src/lib/market/tiingo.mjs');
+  // ⚠️ GATED ON REALTIME FRESHNESS, NOT ON priceIsLive. priceIsLive is true whenever the vendor is
+  // NOT live (useLivePrice is `!(vendorIsLive && !entitled)`), which is every closed market — so
+  // gating on it left the zero exactly where it was. Measured in KV after that deploy: changePct 0
+  // on every entry, stamped basis "intraday". REALTIME means the vendor is live AND we may serve it,
+  // which is the only state in which `price` is an intraday price at all.
   ok('⚠️ the provider reports an intraday change only when an intraday price was served',
-    /const changePct = \(priceIsLive && prevClose != null/.test(tiingo));
+    /const changePct = \(gate\.freshness === FRESHNESS\.REALTIME && prevClose != null/.test(tiingo),
+    'priceIsLive is true for a settled close and is not the right test');
 
   const watch = code('src/app/api/watchlist/route.js');
   ok('⚠️ the watchlist no longer recomputes a close against itself',
@@ -123,8 +143,8 @@ L('⚠️ 3 — unknown is null everywhere, never zero');
   ok('⚠️ …and it actually calls lastSessionChange for the whole list',
     /await lastSessionChange\(tickers\)/.test(watch));
   ok('⚠️ …and prefers an intraday figure only when one genuinely exists',
-    /Number\.isFinite\(Number\(q\.dp\)\)\) \? Number\(q\.dp\)/.test(watch)
-    && /: \(session \? \+session\.changePct\.toFixed\(4\) : null\)/.test(watch));
+    /const live = q \? maybeN\(q\.dp\) : null;/.test(watch)
+    && /live != null \? live : \(session \? \+session\.changePct\.toFixed\(4\) : null\)/.test(watch));
 }
 
 L('⚠️ 4 — licensing is unchanged');

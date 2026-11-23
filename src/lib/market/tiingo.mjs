@@ -596,7 +596,21 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
       // genuinely closed flat) and using it for "unknown" destroys the only value that should ever
       // render as 0.00%. The last completed session's real return comes from lastSessionChange() in
       // eod-change.mjs, off the licensed candles the caller already has.
-      const changePct = (priceIsLive && prevClose != null && prevClose !== 0)
+      // ⚠️ AN INTRADAY PERCENTAGE REQUIRES AN INTRADAY PRICE, AND `priceIsLive` IS NOT THAT TEST.
+      //
+      // First attempt gated this on priceIsLive and it changed nothing, because
+      // useLivePrice is `!(vendorIsLive && !entitled)` — when the market is CLOSED vendorIsLive is
+      // false, so useLivePrice is true and priceIsLive is true, for a price that is simply the
+      // settled close. Outside session hours Tiingo returns tngoLast === prevClose, both being the
+      // same close, so the subtraction was zero either way. Measured in KV after that deploy: every
+      // entry changePct 0, stamped basis "intraday".
+      //
+      // The honest test is whether an intraday price was actually SERVED, which is exactly what
+      // REALTIME freshness means: the vendor is live AND we are entitled to redistribute it. Any
+      // other combination means `price` is a settled close, and a close has no intraday change —
+      // null, never zero, because zero is a real flat session and must stay available to mean that.
+      // The settled session's own return comes from lastSessionChange() in eod-change.mjs.
+      const changePct = (gate.freshness === FRESHNESS.REALTIME && prevClose != null && prevClose !== 0)
         ? ((price - prevClose) / prevClose) * 100 : null;
       out[sym] = {
         price,

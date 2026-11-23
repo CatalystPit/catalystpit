@@ -57,6 +57,7 @@ async function fetchStockPrices(tickers) {
   try {
     const { getQuotes } = await import('../../../lib/market-data');
     const { lastSessionChange } = await import('../../../lib/market/eod-change.mjs');
+    const { maybeN } = await import('../../../lib/num.mjs');
     // realtime:false — the tape is a single shared KV value served to everyone, including signed-out
     // readers, so it must never contain an entitled real-time print.
     const quotes = await getQuotes(tickers, { realtime: false });
@@ -72,7 +73,16 @@ async function fetchStockPrices(tickers) {
       const price = Number(q?.price);
       if (!Number.isFinite(price) || price <= 0) continue;
       const pc = Number(q?.prevClose);
-      const live = Number(q?.changePct);
+      // ⚠️ maybeN, NOT Number(). THIS EXACT LINE SHIPPED THE BUG A SECOND TIME.
+      //
+      // Number(null) is 0 and Number.isFinite(0) is true, so "prefer the intraday figure when one
+      // exists" took the intraday branch with a zero — for a quote that had correctly reported null.
+      // Measured in KV after that deploy: every entry changePct 0, stamped basis "intraday", while
+      // the provider underneath was returning null exactly as intended.
+      //
+      // parseFloat(null) is NaN, so maybeN gives back null and the check below falls through to the
+      // real session return. The two functions differ on precisely the input that matters here.
+      const live = maybeN(q?.changePct);
       const session = eod.get(sym);
 
       // ⚠️ NO `: 0` ANYWHERE ON THIS PATH, AND THERE WERE TWO.

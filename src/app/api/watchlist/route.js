@@ -195,6 +195,7 @@ async function withPrices(list) {
   // with realtime:false is all of them. One query for the whole list, off the same licensed candles
   // the close fallback above already reads — no extra provider and no per-row lookup.
   const { lastSessionChange } = await import('../../../lib/market/eod-change.mjs');
+  const { maybeN } = await import('../../../lib/num.mjs');
   const eod = await lastSessionChange(tickers);
 
   return list.map(r => {
@@ -202,9 +203,12 @@ async function withPrices(list) {
     const session = eod.get(r.ticker);
     // An intraday percentage is used when one genuinely exists; otherwise the settled session's own
     // return. Absent from both means a dash, never 0.00%.
-    const changePct = (q && Number.isFinite(Number(q.dp))) ? Number(q.dp)
-      : (session ? +session.changePct.toFixed(4) : null);
-    const basis = (q && Number.isFinite(Number(q.dp))) ? 'intraday' : (session ? 'last_session' : null);
+    // ⚠️ maybeN, NOT Number(). Number(null) is 0 and Number.isFinite(0) is true, so this would take
+    // the intraday branch with a zero for a quote that correctly reported null — the same trap that
+    // put changePct 0 / basis "intraday" into KV on the first attempt at this fix.
+    const live = q ? maybeN(q.dp) : null;
+    const changePct = live != null ? live : (session ? +session.changePct.toFixed(4) : null);
+    const basis = live != null ? 'intraday' : (session ? 'last_session' : null);
     if (q) return { ...r, price: q.c, changePct, changeBasis: basis };
     const close = closeBy.get(r.ticker);
     return { ...r, price: close ?? null, changePct, changeBasis: basis };
