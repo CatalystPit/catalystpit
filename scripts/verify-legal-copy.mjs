@@ -668,5 +668,37 @@ L('⚠️ THE AFFILIATE PROGRAMME IS NOT DESCRIBED AS RUNNING');
   ok('⚠️ nothing in src/ issues or reads a referral code, which is what makes "not open" true',
     hits.length === 0, hits.join(', '));
 }
+L('⚠️ — the purchase button cannot go live at the wrong price');
+{
+  // ⚠️ A CONFIGURED PRICE ID IS NOT A VERIFIED PRICE. /api/billing/status used to report
+  // !!PRICE_BY_INTERVAL.monthly, so the button went live the moment the environment variable
+  // existed, whatever that price actually charged. Pasting the retired $20 id into the new variable
+  // would have advertised $9.99 and billed $20 — the single outcome this product must never
+  // produce, reachable by one typo.
+  const status = code(read('../src/app/api/billing/status/route.js'));
+  ok('⚠️ availability is verified against Stripe, not inferred from an env var',
+    /api\.stripe\.com\/v1\/prices\//.test(status) && !/return Response\.json\(\s*\{ adFreeAvailable: !!/.test(status));
+  ok('⚠️ …the amount is compared in integer cents',
+    /Math\.round\(AD_FREE_PRICE_USD \* 100\)/.test(status)
+    && /p\.unit_amount !== expectedCents/.test(status),
+    'a float comparison on money turns 9.99 into 9.989999999999999');
+  ok('⚠️ …and the interval, currency and active flag are all checked',
+    /currency\)\.toLowerCase\(\) !== 'usd'/.test(status)
+    && /recurring\?\.interval !== 'month'/.test(status)
+    && /p\.active !== true/.test(status));
+  // ⚠️ EVERY FAILURE DIRECTION IS "NOT BUYABLE". A Stripe outage must not publish an unverified
+  // offer, and an archived price must not keep selling.
+  ok('⚠️ an unreachable Stripe means NOT buyable, not buyable-by-default',
+    /catch \(e\) \{[\s\S]*?ok: false/.test(status));
+  ok('⚠️ …and a missing key or id is refused before any request',
+    /if \(!id\) return \{ ok: false/.test(status) && /if \(!key\) return \{ ok: false/.test(status));
+  // And it still leaks nothing: the response is one boolean.
+  ok('⚠️ the response is still a bare boolean — no id, no amount, no key',
+    /\{ adFreeAvailable: verified\.ok \}/.test(status)
+    && !/unit_amount:/.test(status.split('return Response.json')[1] || ''));
+  ok('…and it stays publicly cacheable, so it is not a per-user render',
+    /public, max-age=300/.test(status));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
