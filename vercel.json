@@ -146,7 +146,7 @@
     },
     {
       "path": "/api/cron/delayed-snapshot",
-      "schedule": "*/15 13-21 * * 1-5"
+      "schedule": "*/5 13-21 * * 1-5"
     },
     {
       "path": "/api/cron/heatmap-gate",

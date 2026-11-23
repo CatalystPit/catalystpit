@@ -249,6 +249,37 @@ ok('⚠️ the entitled quote path writes nothing to the shared cache',
   !/kvSet|quotesCacheSet/.test(entitledFn));
 ok('⚠️ and reads nothing from it either', !/readCachedQuote|kvGet/.test(entitledFn));
 
+sec('THE DELAYED CADENCE — THE CRON MUST FIRE FINER THAN THE GATE');
+
+// ⚠️ THIS IS THE ASSERTION THE 30-MINUTE DEFECT NEEDED. captureIfDue refuses a capture while the
+// current snapshot is younger than CAPTURE_INTERVAL_MS. With the cron ALSO at 15 minutes, a capture
+// a few seconds late pushed the next run under the gate, every other run was rejected, and the
+// delayed tier silently became 30-60 minutes instead of 15. Nothing failed; the numbers were simply
+// old. So the relationship between the schedule and the interval is pinned here.
+const { CAPTURE_INTERVAL_MS, DELAY_MS, STALE_LIMIT_MS, servableToFree } = await import('../src/lib/market/delayed-store.mjs');
+const vercel = JSON.parse(read('vercel.json'));
+const cron = (vercel.crons || []).find((c) => c.path === '/api/cron/delayed-snapshot');
+ok('the delayed snapshot has a cron at all', Boolean(cron));
+const step = cron ? Number((cron.schedule.split(' ')[0].match(/^\*\/(\d+)$/) || [])[1]) : NaN;
+ok('its minute field is a simple step', Number.isFinite(step) && step > 0);
+ok('⚠️ the cron fires strictly more often than the capture gate allows',
+  Number.isFinite(step) && step * 60_000 < CAPTURE_INTERVAL_MS);
+// Enough headroom that ordinary scheduling jitter cannot push a run under the gate and cost a whole
+// cycle — the exact failure being fixed.
+ok('⚠️ with room to spare, not by one minute', Number.isFinite(step) && step * 60_000 <= CAPTURE_INTERVAL_MS / 2);
+
+// The read gate is the licensing promise and is deliberately untouched by the cadence fix.
+ok('⚠️ a snapshot younger than the delay is never servable',
+  servableToFree({ capturedAt: new Date(Date.now() - (DELAY_MS - 30_000)).toISOString(), prices: { A: [1, 1] } }) === false);
+ok('a snapshot past the delay is servable',
+  servableToFree({ capturedAt: new Date(Date.now() - (DELAY_MS + 60_000)).toISOString(), prices: { A: [1, 1] } }) === true);
+ok('⚠️ a snapshot past the staleness limit is not servable',
+  servableToFree({ capturedAt: new Date(Date.now() - (STALE_LIMIT_MS + 60_000)).toISOString(), prices: { A: [1, 1] } }) === false);
+ok('an empty snapshot is not servable',
+  servableToFree({ capturedAt: new Date(Date.now() - (DELAY_MS + 60_000)).toISOString(), prices: {} }) === false);
+
+sec('THE WIRING');
+
 // The client module must use the shared rule rather than growing its own copy again.
 ok('cp-shared re-exports the shared label rule instead of restating it',
   /export \{ priceFreshnessLabel, quotesFreshness \} from '\.\/market\/price-freshness\.mjs'/.test(shared));

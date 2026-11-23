@@ -142,6 +142,25 @@ export async function captureIfDue({ now = Date.now(), force = false } = {}) {
   const { tiingoRealtimeEnabled } = await import('./tiingo.mjs');
   if (!tiingoRealtimeEnabled()) return { captured: false, reason: 'vendor-disabled', session };
 
+  // ── ⚠️ THE CRON MUST FIRE FINER THAN THIS GATE, AND FOR TWO MONTHS IT DID NOT ────────────────
+  //
+  // The gate is right: capture no more often than the interval. The SCHEDULE was wrong. The cron ran
+  // `*/15` against a 15-minute interval, so a capture at 20:00:34 made the 20:15 run arrive at
+  // 14m57s old — under the gate by three seconds — and it returned 'not-due'. Every other run was
+  // rejected, so the effective cadence was THIRTY minutes, and because `released` is only promoted
+  // at capture time it aged 30 to 60 minutes.
+  //
+  // Measured on production at 20:56 UTC: two captures, 20:00:34 and 20:30:34, exactly 30m00.6s
+  // apart, with the released snapshot 55.9 minutes old and the page honestly reporting
+  // "DELAYED · 55M" where the Free tier is supposed to mean fifteen.
+  //
+  // ⚠️ THE REPAIR IS THE SCHEDULE, NOT A TOLERANCE HERE. Loosening this comparison would let a
+  // capture promote a snapshot younger than DELAY_MS, and servableToFree would then refuse it for
+  // the remaining seconds — trading a stale price for a missing one, inside the one control that
+  // enforces a licensing promise. The cron now fires every 5 minutes, so the first run after the
+  // gate opens captures: the cadence is 15-20 minutes, `released` is 15-35 minutes old, and the
+  // provider still sees exactly one batch per capture. A not-due run costs one KV read and returns
+  // before the lock or any provider call.
   const latest = await readKey(latestKey());
   const age = snapshotAgeMs(latest, now);
   if (!force && latest && age != null && age < CAPTURE_INTERVAL_MS) {
