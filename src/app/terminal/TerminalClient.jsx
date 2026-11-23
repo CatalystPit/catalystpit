@@ -9,7 +9,7 @@ import PitScanPanel from '../../components/scan/PitScanPanel';
 import CustomScannerPanel from '../../components/scan/CustomScannerPanel';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, useRealtimeQuotes, isRealtimeQuote } from '../../lib/cp-shared';
+import { C, BrandStyles, TopNav, Footer, TickerLogo, startCheckout, fetchKey, toArr, fmt2, maybeN, useRealtimeQuotes, isRealtimeQuote } from '../../lib/cp-shared';
 import AlertToggle from '../../components/AlertToggle';
 import PlanTerms from '../../components/PlanTerms';
 import PitChat from '../../components/PitChat';
@@ -1077,10 +1077,14 @@ function BottomTape() {
       try {
         const tape = await fetchKey('ticker_tape');
         const arr = toArr(tape, 'tickers', 'ticker_tape', 'data');
+        // ⚠️ `|| 0` ON THE PERCENTAGE IS THE 0.00% BUG — the third copy of it. An unparseable or
+        // null change became a hard zero that renders as a real, flat move. The price keeps its
+        // guard because the `.filter(t => t.price > 0)` below is how this tape drops symbols it
+        // could not price at all; a null change is not grounds for dropping the row.
         const mapped = arr.map((t) => ({
           sym: t.symbol || t.sym || t.ticker || '?',
           price: parseFloat(t.price ?? t.last ?? t.close ?? t.regularMarketPrice) || 0,
-          chg: parseFloat(t.changePct ?? t.chg ?? t.change_pct ?? t.changePercent) || 0,
+          chg: maybeN(t.changePct ?? t.chg ?? t.change_pct ?? t.changePercent),
         })).filter((t) => t.price > 0);
         if (alive) setTk(mapped);
       } catch { /* ignore */ }
@@ -1097,7 +1101,13 @@ function BottomTape() {
             <TickerLogo symbol={t.sym} size={15} />
             <span className="cp-tkr" style={{ fontSize: 11, color: C.muted }}>{t.sym}</span>
             <span className="cp-num" style={{ fontSize: 11, color: C.ink, fontWeight: 600 }}>{t.price > 1000 ? (+t.price).toLocaleString() : fmt2(+t.price)}</span>
-            <span className="cp-num" style={{ fontSize: 10, color: t.chg >= 0 ? C.green : C.red, fontWeight: 600 }}>{t.chg > 0 ? '+' : ''}{fmt2(t.chg)}%</span>
+            {/* A missing change is a neutral dash, not a red one: `t.chg >= 0` is false for null,
+                so an unknown percentage was painted in loss red. Zero still reads 0.00% in green. */}
+            {t.chg == null ? (
+              <span className="cp-num" style={{ fontSize: 10, color: C.dim, fontWeight: 600 }} title="Change unavailable">—</span>
+            ) : (
+              <span className="cp-num" style={{ fontSize: 10, color: t.chg >= 0 ? C.green : C.red, fontWeight: 600 }}>{t.chg > 0 ? '+' : ''}{fmt2(t.chg)}%</span>
+            )}
           </span>
         ))}
       </div>

@@ -6,9 +6,10 @@ import TopCatalysts from "./TopCatalysts";
 import { impactOf, IMPACT_STYLE } from "../lib/impact";
 import {
   C, TAG, CARD_COLORS,
-  fetchKey, toArr, minsSince, timeAgo,
+  fetchKey, toArr, minsSince, timeAgo, maybeN,
   BrandStyles, Skel, Dot, TagBadge, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
+  useRealtimeQuotes, quotesFreshness,
 } from "../lib/cp-shared";
 import { useTickerHover, TickerHoverPreview } from "./TickerHoverChart";
 import { isRenderableTicker } from "../lib/security-identity.mjs";
@@ -29,11 +30,18 @@ const fetchNews = async () => {
   ]);
 
   const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
+  // ⚠️ `|| 0` IS THE 0.00% BUG, AND THIS IS WHERE IT SURVIVED. The homepage was repaired to use
+  // maybeN; this copy was not, so the News page's tape and Market Snapshot turned every missing
+  // percentage into a hard, flat, red 0.00% — indistinguishable from a stock that genuinely did not
+  // move. `parseFloat(null) || 0` is the same trap as `Number(null)`: NaN falls through `||` to a
+  // zero that then passes every finiteness check downstream.
+  //
+  // maybeN keeps unknown as null, which both the tape and the snapshot card now render as a dash.
   const tickers = tapeArr.length > 0
     ? tapeArr.map(t => ({
         sym: t.symbol || t.sym || t.ticker || '?',
-        price: parseFloat(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice) || 0,
-        chg: parseFloat(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange) || 0,
+        price: maybeN(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice),
+        chg: maybeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
       }))
     : null;
 
@@ -298,6 +306,27 @@ export default function NewsFeed() {
     ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"})
     : "--:--";
 
+  // ⚠️ THE SAME ENTITLED PRICES THE HOMEPAGE NOW SHOWS. This page's tape and Market Snapshot read
+  // only the public end-of-day `ticker_tape` cache, so a Pro subscriber on the News page saw the
+  // previous session's closes under a hardcoded "DELAYED" — the identical defect as the front door,
+  // in a second component. /api/quotes decides the entitlement server-side; this only displays it.
+  const tapeSyms = useMemo(
+    () => (data?.tickers || []).map((t) => t.sym).filter((s) => s && s !== '?'),
+    [data?.tickers],
+  );
+  const { quotes: servedQuotes } = useRealtimeQuotes(tapeSyms);
+  const { freshness: priceFreshness, delayMinutes: priceDelayMinutes } = quotesFreshness(servedQuotes);
+  const tickersPriced = useMemo(() => (data?.tickers || []).map((t) => {
+    const q = servedQuotes?.[t.sym];
+    const price = Number(q?.price);
+    if (!q || !Number.isFinite(price)) return t;
+    const chg = maybeN(q.changePct);
+    // A settled close reports no percentage by design — keep the stored one rather than blanking it.
+    // Same rule as the homepage; see the note there.
+    if (chg == null) return { ...t, price };
+    return { ...t, price, chg, chgBasis: null, freshness: q.freshness ?? null };
+  }), [data?.tickers, servedQuotes]);
+
   return (
     <div style={{fontFamily:"'DM Sans',sans-serif", background:C.bg, color:C.text, minHeight:"100vh"}}>
       <BrandStyles/>
@@ -307,7 +336,7 @@ export default function NewsFeed() {
           within one of them would be clipped by it. Fixed-positioned here, it floats above all
           three and the existing flip/clamp logic keeps the right-hand column on screen. */}
       <TickerHoverPreview hover={hover}/>
-      <TickerTape tickers={data?.tickers}/>
+      <TickerTape tickers={tickersPriced} freshness={priceFreshness} delayMinutes={priceDelayMinutes}/>
 
       {/* PAGE HEADER STRIP */}
       <div style={{background:C.white, borderBottom:`1px solid ${C.border}`, padding:"14px 24px"}}>
@@ -497,7 +526,8 @@ export default function NewsFeed() {
             bindTicker={bindTicker}
           />
           <EightKWire limit={30} bindTicker={bindTicker}/>
-          <MarketSnapshotCard tickers={data?.tickers} loading={loading}/>
+          <MarketSnapshotCard tickers={tickersPriced} loading={loading}
+            freshness={priceFreshness} delayMinutes={priceDelayMinutes}/>
           <CatalystBriefCard/>
         </div>
       </div>

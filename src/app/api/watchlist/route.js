@@ -3,7 +3,13 @@ import { db } from '../../../lib/db';
 import { watchlist, tickerDailyCandles, insiderTrades } from '../../../lib/schema';
 import { isIngestableSymbol } from '../../../lib/ticker-symbol.mjs';
 import { and, eq, desc, inArray, sql } from 'drizzle-orm';
-import { resolveUserTier, WATCHLIST_LIMIT } from '../../../lib/entitlements';
+import { resolveUserTier, callerRealtimeAccess, WATCHLIST_LIMIT } from '../../../lib/entitlements';
+// ⚠️ THE SAME DELAYED STORE /api/quotes SERVES FREE READERS, not a second copy of the idea. Its
+// snapshot has already passed servableToFree()'s 15-minute floor, so a non-entitled watchlist row
+// cannot receive a current price through this path even if the collector misbehaved.
+import { readDelayed, delayedQuotesFor } from '../../../lib/market/delayed-store.mjs';
+import { maybeN } from '../../../lib/num.mjs';
+import { rowPrice } from '../../../lib/market/row-price.mjs';
 import { ensureDefaultList } from '../../../lib/watchlists';
 
 export const runtime = 'nodejs';
@@ -154,15 +160,71 @@ async function fetchAndCacheQuote(sym) {
 // real price. Only "—" if a fetch attempt came back empty/invalid (then we still
 // try the durable daily-close fallback before giving up). No live polling —
 // quotes are cached for QUOTE_TTL, so this is a one-time warm per ticker, not a poll.
+// ── ⚠️ WHAT A WATCHLIST ROW IS ENTITLED TO, AND WHY THIS ROUTE ASKED FOR THE WRONG THING ─────────
+//
+// Every row on this surface was priced with `getQuotes(..., { realtime: false })`. That is correct
+// for a SHARED cache and wrong as the answer to "what may this reader see": a $9.99 Pro subscriber
+// and a signed-out visitor were served the identical settled close, because the route never asked
+// who was calling. /api/quotes had resolved this correctly for months — the watchlist simply did
+// not consult it.
+//
+// Three levels, resolved SERVER-SIDE from the Clerk session, failing closed:
+//
+//   entitled real-time  → the provider, directly. Fresh prints, per entitled user.
+//   signed-in, not      → the shared 15-minute delayed snapshot: TODAY's market, legitimately late.
+//   nothing available   → the last completed session's close and its own real return.
+//
+// ⚠️ THE REAL-TIME PATH TOUCHES NO SHARED CACHE, IN EITHER DIRECTION. A licensed real-time print is
+// entitled per user, and writing one into `catalystpit:ticker:<sym>:quote:v2` — a key an unentitled
+// reader's request looks in — would hand Pro data to Free readers for the whole TTL. That is the
+// exact shape of the leak this file already documents about the unlicensed Finnhub write-through,
+// so the entitled branch reads and writes nothing shared.
+async function entitledQuotes(tickers, realtime) {
+  const out = new Map();                       // ticker -> { price, changePct, freshness }
+  if (realtime) {
+    const { getQuotes } = await import('../../../lib/market-data');
+    // One batch. No cache read, no cache write — see above.
+    const got = await getQuotes(tickers, { realtime: true }).catch(() => ({}));
+    for (const t of tickers) {
+      const q = got?.[t];
+      const price = maybeN(q?.price);
+      if (price == null) continue;
+      // ⚠️ freshness IS THE PROVIDER'S VERDICT, NOT OURS. getQuotes stamps 'realtime' only when the
+      // vendor was carrying a live print AND we are licensed to redistribute it. Being entitled and
+      // receiving it are different facts; the row reports the second.
+      out.set(t, { price, changePct: maybeN(q?.changePct), freshness: q?.freshness ?? null });
+    }
+    return out;
+  }
+  const snap = await readDelayed().catch(() => null);
+  if (!snap) return out;
+  const delayed = delayedQuotesFor(tickers, snap);
+  for (const t of tickers) {
+    const q = delayed?.[t];
+    const price = maybeN(q?.price);
+    if (price == null) continue;
+    out.set(t, { price, changePct: maybeN(q?.changePct), freshness: q?.freshness ?? 'delayed', delayMinutes: maybeN(q?.delayMinutes) });
+  }
+  return out;
+}
+
 async function withPrices(list) {
   if (list.length === 0) return [];
   const tickers = list.map(r => r.ticker);
 
+  // 0) THE READER'S ENTITLEMENT, before any store is read. A Clerk failure resolves to not-entitled,
+  //    which is the safe direction for a licensing decision.
+  const { realtime } = await callerRealtimeAccess();
+  const entitled = await entitledQuotes(tickers, realtime);
+
   // 1) shared-cache read for all tickers (parallel, cheap).
-  const cached = await Promise.all(tickers.map(readCachedQuote));
+  //    Only for symbols the entitled source could not answer — a row already priced from the
+  //    reader's own entitlement must not be overwritten by, or cost a lookup in, a shared store.
+  const needQuote = tickers.filter((t) => !entitled.has(t));
+  const cached = await Promise.all(needQuote.map(readCachedQuote));
   const quoteBy = new Map();
   const misses = [];
-  tickers.forEach((t, i) => { cached[i] ? quoteBy.set(t, cached[i]) : misses.push(t); });
+  needQuote.forEach((t, i) => { cached[i] ? quoteBy.set(t, cached[i]) : misses.push(t); });
 
   // 2) fetch-on-miss: bounded count, FETCH_CONCURRENCY in flight, write-through.
   //    List order means the homepage's visible ~6 are fetched first.
@@ -176,7 +238,7 @@ async function withPrices(list) {
 
   // 3) daily-close fallback for anything still without a quote (fetch failed, or
   //    beyond MAX_FETCH this load) — durable last close, price only.
-  const needClose = tickers.filter(t => !quoteBy.has(t));
+  const needClose = tickers.filter(t => !quoteBy.has(t) && !entitled.has(t));
   const closeBy = new Map();
   if (needClose.length) {
     const rows = await db
@@ -189,30 +251,29 @@ async function withPrices(list) {
       .orderBy(tickerDailyCandles.ticker, desc(tickerDailyCandles.date));
     for (const r of rows) closeBy.set(r.ticker, r.close);
   }
-  console.log(`[watchlist_api] prices: ${tickers.length} total · ${tickers.length - misses.length} cache-hit · ${fetched} fetched · ${needClose.length} close-fallback`);
+  // ⚠️ THE COUNTS NOW DESCRIBE THE TIERED PATH. `tickers.length - misses.length` claimed a cache hit
+  // for every row the entitled source had already answered, which would have read as a healthy cache
+  // on a Pro request that never consulted one.
+  console.log(`[watchlist_api] prices: ${tickers.length} total · ${realtime ? 'realtime' : 'delayed'} ${entitled.size} entitled · ${needQuote.length - misses.length} cache-hit · ${fetched} fetched · ${needClose.length} close-fallback`);
 
   // ⚠️ THE LAST COMPLETED SESSION'S REAL RETURN for every row whose quote is a settled close, which
   // with realtime:false is all of them. One query for the whole list, off the same licensed candles
   // the close fallback above already reads — no extra provider and no per-row lookup.
   const { lastSessionChange } = await import('../../../lib/market/eod-change.mjs');
-  const { maybeN } = await import('../../../lib/num.mjs');
   const eod = await lastSessionChange(tickers);
 
-  return list.map(r => {
-    const q = quoteBy.get(r.ticker);
-    const session = eod.get(r.ticker);
-    // An intraday percentage is used when one genuinely exists; otherwise the settled session's own
-    // return. Absent from both means a dash, never 0.00%.
-    // ⚠️ maybeN, NOT Number(). Number(null) is 0 and Number.isFinite(0) is true, so this would take
-    // the intraday branch with a zero for a quote that correctly reported null — the same trap that
-    // put changePct 0 / basis "intraday" into KV on the first attempt at this fix.
-    const live = q ? maybeN(q.dp) : null;
-    const changePct = live != null ? live : (session ? +session.changePct.toFixed(4) : null);
-    const basis = live != null ? 'intraday' : (session ? 'last_session' : null);
-    if (q) return { ...r, price: q.c, changePct, changeBasis: basis };
-    const close = closeBy.get(r.ticker);
-    return { ...r, price: close ?? null, changePct, changeBasis: basis };
-  });
+  // ⚠️ THE RULE ITSELF LIVES IN row-price.mjs, AS A PURE FUNCTION. It was inline here, and inline the
+  // only available test was a regex over this file — which is how the same 0.00% defect shipped
+  // three times. See that module's header for the rule and for why zero is preserved.
+  return list.map(r => ({
+    ...r,
+    ...rowPrice({
+      entitled: entitled.get(r.ticker) || null,
+      cached: quoteBy.get(r.ticker) || null,
+      close: closeBy.get(r.ticker) ?? null,
+      session: eod.get(r.ticker) || null,
+    }),
+  }));
 }
 
 // Attach the latest open-market Form 4 (P/S code + filing date) per ticker — one

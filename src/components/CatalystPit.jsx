@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import ConsensusTeaser from "./ConsensusTeaser";
@@ -17,6 +17,7 @@ import {
   fetchKey, toArr, startCheckout,
   BrandStyles, Skel, Dot, NewsPhotoCard, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
+  useRealtimeQuotes, quotesFreshness,
 } from "../lib/cp-shared";
 
 /**
@@ -423,6 +424,10 @@ const fetchAll = async () => {
   }
 };
 
+// The MARKETS card's indices. Module scope so the memo below has a stable dependency — rebuilt each
+// render it would re-key the quote subscription on every paint.
+const IDX_SYMS = ['SPY', 'QQQ', 'DIA', 'UVXY'];
+
 export default function CatalystPit() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -441,14 +446,61 @@ export default function CatalystPit() {
     return () => clearInterval(id);
   }, [loadData]);
 
-  // Live index quotes for the MARKETS card (last session — so weekends show the prior trading day).
-  const [idxQuotes, setIdxQuotes] = useState({});
-  useEffect(() => {
-    let alive = true;
-    const load = () => fetch('/api/quotes?symbols=SPY,QQQ,DIA,UVXY', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j) setIdxQuotes(j); }).catch(() => {});
-    load(); const id = setInterval(load, 60000);
-    return () => { alive = false; clearInterval(id); };
-  }, []);
+  // ── ⚠️ THE FRONT DOOR ASKED FOR FOUR SYMBOLS AND DISPLAYED TWENTY ──────────
+  //
+  // This polled /api/quotes for SPY,QQQ,DIA,UVXY and handed them to the MARKETS card alone. The
+  // ticker tape and the Market Snapshot — the two price surfaces a visitor actually sees first —
+  // read `catalystpit:ticker_tape` instead: a PUBLIC, SHARED, END-OF-DAY cache written by the
+  // refresh cron. So the entitlement-aware route was already here, already correct, and already
+  // being consulted; it simply was not wired to the surfaces that were wrong.
+  //
+  // Measured on Monday 2026-11-23 at 15:35 ET, mid-session: the tape served Friday 2026-11-20
+  // closes, NVDA at 125.53 against a live print of 166.55 and a delayed snapshot of 166.06. A
+  // signed-in Pro subscriber and a signed-out visitor saw the identical three-day-old number under
+  // the identical hardcoded word, DELAYED.
+  //
+  // ⚠️ ONE SUBSCRIPTION FOR EVERY PRICE ON THE PAGE. useRealtimeQuotes is the existing hook the
+  // chart and the Terminal already use — it skips hidden tabs, keeps the last good quotes through a
+  // dropped poll, and refreshes on tab focus. Asking for the tape's symbols as well as the indices
+  // costs one request rather than two and means the tape, the snapshot and the MARKETS card cannot
+  // disagree about the same symbol, which they previously did by construction.
+  //
+  // ⚠️ AND THE ENTITLEMENT IS NOT DECIDED HERE. /api/quotes resolves it server-side from the Clerk
+  // session — real-time for an entitled subscriber, the shared 15-minute snapshot otherwise, and it
+  // fails closed. Nothing in this component may widen what a reader receives; it only displays what
+  // the server chose, and labels it from the freshness the server stamped.
+  const tapeSyms = useMemo(
+    () => (data?.tickers || []).map((t) => t.sym).filter((s) => s && s !== '?'),
+    [data?.tickers],
+  );
+  const quoteSyms = useMemo(() => [...new Set([...IDX_SYMS, ...tapeSyms])], [tapeSyms]);
+  const { quotes: idxQuotes } = useRealtimeQuotes(quoteSyms);
+  const { freshness: priceFreshness, delayMinutes: priceDelayMinutes } = quotesFreshness(idxQuotes);
+
+  // The tape and the snapshot, repriced from whatever the reader is entitled to receive. A symbol
+  // the route could not answer for keeps its stored close rather than blanking — the page degrades
+  // to the EOD cache it used to be instead of to nothing.
+  //
+  // ⚠️ maybeN, NOT safeN OR `|| 0`. A null percentage must stay null all the way to the badge, which
+  // renders it as a dash. Number(null) is 0 and Number.isFinite(0) is true, which is exactly how a
+  // missing change became a flat red 0.00% twice already in this codebase.
+  const tickersPriced = useMemo(() => (data?.tickers || []).map((t) => {
+    const q = idxQuotes?.[t.sym];
+    const price = Number(q?.price);
+    if (!q || !Number.isFinite(price)) return t;
+    const chg = maybeN(q.changePct);
+    // ⚠️ A SERVED QUOTE WITH NO PERCENTAGE MUST NOT ERASE THE ONE WE ALREADY HAVE. When the delayed
+    // snapshot is unavailable, /api/quotes falls through to settled closes — and a settled close
+    // reports changePct: null by design, because comparing it against itself is the original 0.00%
+    // bug. Overwriting the tape's real last-session return with that null would turn every
+    // percentage on the front page into a dash, which is a worse page than the one being fixed.
+    // The price is still worth taking: it is the same session the stored figure describes.
+    if (chg == null) return { ...t, price };
+    // ⚠️ AND chgBasis MUST BE CLEARED WITH IT. The tape renders a "Last completed session" tooltip
+    // from that field; left in place over an intraday or live percentage it would attribute today's
+    // move to Friday.
+    return { ...t, price, chg, chgBasis: null, freshness: q.freshness ?? null };
+  }), [data?.tickers, idxQuotes]);
 
   // ── WHAT THE FRONT DOOR LEADS WITH ────────────────────────────────────────
   //
@@ -501,7 +553,7 @@ export default function CatalystPit() {
   const timeStr = lastUp ? lastUp.toLocaleTimeString("en-US", {hour:"2-digit", minute:"2-digit", timeZone:"America/New_York"}) : "--:--";
   // Index quotes for the MARKETS card: prefer /api/quotes, fall back to the already-loaded ticker tape.
   const tapeMap = {};
-  (data?.tickers || []).forEach((t) => { if (t.sym) tapeMap[t.sym] = { price: t.price, changePct: t.chg }; });
+  tickersPriced.forEach((t) => { if (t.sym) tapeMap[t.sym] = { price: t.price, changePct: t.chg }; });
   const idxQ = (sym) => idxQuotes[sym] || tapeMap[sym] || null;
 
   const router = useRouter();
@@ -513,7 +565,7 @@ export default function CatalystPit() {
       <BrandStyles/>
 
       <TopNav/>
-      <TickerTape tickers={data?.tickers}/>
+      <TickerTape tickers={tickersPriced} freshness={priceFreshness} delayMinutes={priceDelayMinutes}/>
 
       {/* HERO STRIP */}
       <div style={{background:C.white, borderBottom:`1px solid ${C.border}`, padding:"14px 24px"}}>
@@ -880,7 +932,8 @@ export default function CatalystPit() {
 
           <CatalystBriefCard/>
 
-          <MarketSnapshotCard tickers={data?.tickers} loading={loading}/>
+          <MarketSnapshotCard tickers={tickersPriced} loading={loading}
+            freshness={priceFreshness} delayMinutes={priceDelayMinutes}/>
 
           <WatchlistHomeCard/>
 

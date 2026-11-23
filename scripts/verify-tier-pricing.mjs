@@ -1,0 +1,257 @@
+// TIER-SPECIFIC PRICING — what each reader is served, and what the badge over it is allowed to say.
+//
+//   node scripts/verify-tier-pricing.mjs
+//   CP_MUT=<name> node scripts/verify-tier-pricing.mjs      (mutation testing — see MUTATIONS)
+//
+// ── WHAT THIS SUITE IS FOR ───────────────────────────────────────────────────────────────────────
+//
+// Two defects, reported together, with one shape between them:
+//
+//   1. The homepage Market Snapshot and ticker tape printed a HARDCODED "DELAYED" — to a paying Pro
+//      subscriber, over the PREVIOUS SESSION'S closes. Measured mid-session on Monday 2026-11-23:
+//      the tape served Friday 2026-11-20 closes, NVDA at 125.53 against a live print of 166.55.
+//      One string literal standing in for three different products, wrong for all three.
+//
+//   2. Watchlist rows read 0.00%. That figure has three historical sources, all the same mistake:
+//      `(c - pc) / pc` where c IS pc; `Number(null)` resolving to a finite zero; and
+//      `parseFloat(x) || 0` in three separate components.
+//
+// So the assertions below are about two pure modules — the label and the row rule — because the
+// surfaces themselves need Clerk, a database and a provider, and a regex over their source is the
+// kind of test that passes while the page is wrong.
+//
+// ⚠️ WHAT IS DELIBERATELY NOT ASSERTED HERE: whether THIS deployment is licensed for real-time.
+// That is `TIINGO_REALTIME_ENABLED` plus the KV stop order, resolved at runtime and failing closed.
+// The point of reading freshness off the SERVED QUOTES is that no test, and no page, has to know:
+// an unlicensed deployment stamps 'eod' and the badge says LAST CLOSE.
+
+import { rowPrice } from '../src/lib/market/row-price.mjs';
+// ⚠️ THE SHIPPED IMPLEMENTATION, EXECUTED — NOT A COPY OF IT. The first version of this suite
+// restated the two-line label composition locally, because cp-shared.jsx cannot be imported by a
+// test, and pinned the real one with a regex. A test that runs its own copy of the logic and greps
+// the production copy is the exact shape that has produced false greens in this codebase, so the
+// rule was moved into a pure module and both the page and this file now call the same function.
+import { priceFreshnessLabel, quotesFreshness } from '../src/lib/market/price-freshness.mjs';
+import { resolveQuoteEntitlement } from '../src/lib/market/tiingo.mjs';
+import { maybeN } from '../src/lib/num.mjs';
+
+let pass = 0, fail = 0;
+const ok = (name, cond) => { if (cond) { pass++; } else { fail++; console.log(`  FAIL  ${name}`); } };
+const sec = (t) => console.log(`\n${t}`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+sec('THE BADGE — IT DESCRIBES THE PRICES, NEVER THE SUBSCRIPTION');
+
+ok('a real-time quote reads REAL-TIME', priceFreshnessLabel('realtime') === 'REAL-TIME');
+ok('a settled close reads LAST CLOSE', priceFreshnessLabel('eod') === 'LAST CLOSE');
+ok('a delayed quote reads DELAYED', priceFreshnessLabel('delayed') === 'DELAYED');
+
+// ⚠️ THE MEASURED DELAY, NOT AN ASSUMED 15. The released snapshot was 40 minutes old when this was
+// written — the capture cron fires every 15 minutes and the store holds a release back until it is
+// at least 15 minutes stale, so "15-MIN DELAYED" is a number the product cannot promise.
+ok('⚠️ a delayed quote quotes the delay it actually has', priceFreshnessLabel('delayed', 40) === 'DELAYED · 40M');
+ok('a delay of zero or less is not quoted', priceFreshnessLabel('delayed', 0) === 'DELAYED');
+ok('an unparseable delay is not quoted', priceFreshnessLabel('delayed', 'soon') === 'DELAYED');
+ok('the delay is only quoted where it means something', priceFreshnessLabel('realtime', 40) === 'REAL-TIME');
+
+// ⚠️ THE HARDCODED LITERAL IS THE BUG, SO ABSENCE MUST NOT RESOLVE TO A LIVE CLAIM.
+ok('⚠️ an absent freshness is not a live one', priceFreshnessLabel(null) === 'LAST CLOSE');
+ok('⚠️ an unknown freshness is not a live one', priceFreshnessLabel('bogus') === 'LAST CLOSE');
+ok('⚠️ no input at all is not a live one', priceFreshnessLabel(undefined) === 'LAST CLOSE');
+ok('a mixture does not claim REAL-TIME for every row', priceFreshnessLabel('mixed') === 'REAL-TIME · PARTIAL');
+
+sec('ONE FRESHNESS FOR A ROW OF PRICES');
+
+ok('an all-live set is live', quotesFreshness({ A: { freshness: 'realtime' }, B: { freshness: 'realtime' } }).freshness === 'realtime');
+ok('an all-settled set is settled', quotesFreshness({ A: { freshness: 'eod' }, B: { freshness: 'eod' } }).freshness === 'eod');
+// ⚠️ ONE UNPRICED SYMBOL MUST NOT COLLAPSE A LIVE TAPE. The scan board got this wrong twice in
+// opposite directions; this reuses its conclusion rather than reaching a third one.
+ok('⚠️ one settled symbol among live ones is a mixture, not a downgrade',
+  quotesFreshness({ A: { freshness: 'realtime' }, B: { freshness: 'eod' } }).freshness === 'mixed');
+ok('an empty set has no freshness and makes no claim',
+  quotesFreshness({}).freshness === null && quotesFreshness({}).delayMinutes === null);
+ok('a null payload makes no claim', quotesFreshness(null).freshness === null);
+ok('non-objects in the map are ignored', quotesFreshness({ A: null, B: 7, C: { freshness: 'realtime' } }).freshness === 'realtime');
+
+// ⚠️ THE WORST DELAY, NOT THE BEST. A badge over a row of prices may not quote the most flattering
+// number in it.
+ok('⚠️ the badge quotes the worst delay present',
+  quotesFreshness({ A: { freshness: 'delayed', delayMinutes: 16 }, B: { freshness: 'delayed', delayMinutes: 41 } }).delayMinutes === 41);
+ok('a set with no stated delay quotes none',
+  quotesFreshness({ A: { freshness: 'delayed' } }).delayMinutes === null);
+
+sec('THE ROW RULE — WHERE A PERCENTAGE MAY COME FROM');
+
+// An entitled real-time quote: its own figure, labelled for what it is.
+{
+  const r = rowPrice({ entitled: { price: 166.55, changePct: 32.68, freshness: 'realtime' } });
+  ok('a real-time quote supplies its own change', r.changePct === 32.68 && r.price === 166.55);
+  ok('a real-time row is labelled realtime', r.changeBasis === 'realtime' && r.freshness === 'realtime');
+}
+{
+  const r = rowPrice({ entitled: { price: 166.06, changePct: 32.28, freshness: 'delayed', delayMinutes: 40 } });
+  ok('a delayed quote supplies its own change', r.changePct === 32.28);
+  ok('a delayed row is labelled delayed, with its delay', r.changeBasis === 'delayed' && r.delayMinutes === 40);
+}
+
+// ── ⚠️ THE 0.00% RULE ───────────────────────────────────────────────────────
+//
+// A quote whose price IS the previous close reports NO percentage. The row must then fall to the
+// completed session's own return — never to a zero, and never to arithmetic on two equal numbers.
+{
+  const r = rowPrice({
+    entitled: { price: 125.53, changePct: null, freshness: 'eod' },
+    session: { changePct: -14.0088 },
+  });
+  ok('⚠️ a quote with no change falls to the completed session, not to zero', r.changePct === -14.0088);
+  ok('and says which session it is describing', r.changeBasis === 'last_session');
+}
+{
+  // The exact trap: Number(null) === 0 and Number.isFinite(0) === true.
+  const r = rowPrice({ entitled: { price: 10, changePct: null, freshness: 'realtime' }, session: { changePct: 2.5 } });
+  ok('⚠️ a null change is not a zero change', r.changePct === 2.5 && r.changeBasis === 'last_session');
+}
+{
+  const r = rowPrice({ cached: { c: 342.56, dp: null }, session: { changePct: -1.9043 } });
+  ok('⚠️ a cached quote with a null dp falls to the session', r.changePct === -1.9043);
+  ok('a settled cached quote is labelled eod, not delayed', r.freshness === 'eod');
+}
+{
+  const r = rowPrice({ close: 87.61, session: { changePct: -1.4178 } });
+  ok('a stored close still carries the session return', r.changePct === -1.4178 && r.price === 87.61);
+  ok('a stored close is labelled eod', r.freshness === 'eod');
+}
+
+// ⚠️ ZERO IS A REAL MARKET OUTCOME AND MUST SURVIVE. This is the assertion that stops the fix from
+// becoming "hide all zeros", which would delete the one honest flat reading.
+{
+  const r = rowPrice({ entitled: { price: 50, changePct: 0, freshness: 'realtime' } });
+  ok('⚠️ a genuine flat move is still reported as zero', r.changePct === 0 && r.changeBasis === 'realtime');
+}
+{
+  const r = rowPrice({ session: { changePct: 0 }, close: 50 });
+  ok('⚠️ a genuinely flat session is still zero, not a dash', r.changePct === 0 && r.changeBasis === 'last_session');
+}
+
+// Unknown from every source → null, which the UI renders as a dash.
+{
+  const r = rowPrice({});
+  ok('nothing known anywhere is null, never zero', r.changePct === null && r.price === null);
+  ok('and claims no basis', r.changeBasis === null);
+}
+{
+  const r = rowPrice({ close: 12.34 });
+  ok('a price with no known change is a price and a dash', r.price === 12.34 && r.changePct === null);
+}
+
+sec('PRECEDENCE — THE ENTITLED SOURCE IS NOT SECOND-GUESSED');
+
+{
+  const r = rowPrice({
+    entitled: { price: 166.55, changePct: 32.68, freshness: 'realtime' },
+    cached: { c: 125.53, dp: null },
+    close: 125.53,
+    session: { changePct: -14.0088 },
+  });
+  ok('⚠️ a real-time price outranks the cache, the close and the session', r.price === 166.55 && r.changePct === 32.68);
+}
+{
+  const r = rowPrice({ cached: { c: 342.56, dp: 1.5 }, close: 300, session: { changePct: -9 } });
+  ok('a cached quote outranks the stored close', r.price === 342.56 && r.changePct === 1.5);
+}
+
+sec('THE LICENCE GATE — BOTH HALVES REQUIRED');
+
+// Not new behaviour; asserted here because this suite is about what a reader is served, and this is
+// the function that decides whether a live print may be served at all.
+ok('entitled and live → real-time',
+  resolveQuoteEntitlement({ entitled: true, vendorIsLive: true }).freshness === 'realtime');
+ok('⚠️ a live vendor without entitlement is NOT real-time',
+  resolveQuoteEntitlement({ entitled: false, vendorIsLive: true }).freshness === 'eod');
+ok('⚠️ and an unentitled reader is served the close, not the live print',
+  resolveQuoteEntitlement({ entitled: false, vendorIsLive: true }).useLivePrice === false);
+ok('entitled but the vendor is quiet → not a live claim',
+  resolveQuoteEntitlement({ entitled: true, vendorIsLive: false }).freshness === 'eod');
+ok('no arguments at all → not a live claim',
+  resolveQuoteEntitlement().freshness === 'eod');
+
+sec('maybeN — THE READER THAT PRESERVES THE DIFFERENCE');
+
+ok('null is unknown', maybeN(null) === null);
+ok('undefined is unknown', maybeN(undefined) === null);
+ok('⚠️ zero is a number, not unknown', maybeN(0) === 0);
+ok('a numeric string parses', maybeN('1.25') === 1.25);
+ok('a non-numeric string is unknown', maybeN('n/a') === null);
+
+sec('THE SURFACES ACTUALLY PASS IT THROUGH');
+
+// ⚠️ A PURE RULE NOBODY CALLS IS A GREEN TEST OVER A BROKEN PAGE — this session has produced that
+// exact false green before. These read the real files to confirm the hardcoded literal is gone and
+// the wiring exists. Source assertions, used only for wiring, never for behaviour.
+const fs = await import('node:fs');
+const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+const shared = read('src/lib/cp-shared.jsx');
+
+// Comments are stripped before asserting an ABSENCE, because the explanatory note above each fix
+// quotes the very string being banned — a trap this codebase has fallen into three times.
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+// ⚠️ SCOPED TO THE FUNCTION, NOT TO A FIXED NUMBER OF CHARACTERS. The first version sliced 3000
+// chars, which does not reach the end of TickerTape — so the "no hardcoded word" assertion was
+// reading a window that contained neither the literal nor its replacement, and reported a failure
+// for a fix that was in place. A window that cannot see the thing it asserts about is not a test.
+const fn = (src, name) => {
+  const i = src.indexOf(`export function ${name}`);
+  if (i < 0) return '';
+  const next = src.indexOf('\nexport ', i + 1);
+  return stripComments(src.slice(i, next < 0 ? src.length : next));
+};
+
+ok('⚠️ TickerTape no longer hardcodes a freshness word',
+  !/>DELAYED</.test(fn(shared, 'TickerTape')) && /priceFreshnessLabel\(/.test(fn(shared, 'TickerTape')));
+ok('⚠️ MarketSnapshotCard no longer hardcodes a freshness word',
+  !/>DELAYED</.test(fn(shared, 'MarketSnapshotCard')) && /priceFreshnessLabel\(/.test(fn(shared, 'MarketSnapshotCard')));
+ok('MarketSnapshotCard renders a dash for an unknown change',
+  /t\.chg == null \?/.test(fn(shared, 'MarketSnapshotCard')));
+
+const home = read('src/components/CatalystPit.jsx');
+ok('the homepage prices the tape from the entitled route, not only the public cache',
+  /useRealtimeQuotes\(quoteSyms\)/.test(home) && /tickers=\{tickersPriced\}/.test(home));
+ok('the homepage asks for the tape symbols, not just the four indices',
+  /\[\.\.\.new Set\(\[\.\.\.IDX_SYMS, \.\.\.tapeSyms\]\)\]/.test(home));
+ok('the homepage passes freshness to both price surfaces',
+  (home.match(/freshness=\{priceFreshness\}/g) || []).length >= 2);
+
+const news = read('src/components/NewsFeed.jsx');
+ok('⚠️ the News page no longer coerces a missing change to zero',
+  !/chg: parseFloat\([^)]*\) \|\| 0/.test(stripComments(news)) && /chg: maybeN\(/.test(news));
+ok('the News page prices its tape from the entitled route too',
+  /useRealtimeQuotes\(tapeSyms\)/.test(news));
+
+const term = read('src/app/terminal/TerminalClient.jsx');
+ok('⚠️ the Terminal tape no longer coerces a missing change to zero',
+  !/chg: parseFloat\([^)]*\) \|\| 0/.test(stripComments(term)) && /chg: maybeN\(/.test(term));
+
+const wl = read('src/app/api/watchlist/route.js');
+ok('the watchlist resolves the caller\'s entitlement before pricing',
+  /callerRealtimeAccess\(\)/.test(wl));
+ok('⚠️ the watchlist no longer asks for realtime:false unconditionally',
+  /getQuotes\(tickers, \{ realtime: true \}\)/.test(wl));
+ok('the watchlist uses the shared row rule rather than inlining it',
+  /rowPrice\(\{/.test(wl));
+
+// ⚠️ REQUIREMENT: A PAID REAL-TIME PRINT NEVER ENTERS A SHARED CACHE. The entitled branch must not
+// touch kvSet at all — asserted on the function body, with comments stripped.
+const entitledFn = (() => {
+  const i = wl.indexOf('async function entitledQuotes');
+  return stripComments(wl.slice(i, wl.indexOf('async function withPrices')));
+})();
+ok('⚠️ the entitled quote path writes nothing to the shared cache',
+  !/kvSet|quotesCacheSet/.test(entitledFn));
+ok('⚠️ and reads nothing from it either', !/readCachedQuote|kvGet/.test(entitledFn));
+
+// The client module must use the shared rule rather than growing its own copy again.
+ok('cp-shared re-exports the shared label rule instead of restating it',
+  /export \{ priceFreshnessLabel, quotesFreshness \} from '\.\/market\/price-freshness\.mjs'/.test(shared));
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

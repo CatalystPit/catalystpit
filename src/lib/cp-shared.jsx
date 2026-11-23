@@ -349,6 +349,18 @@ export function useRealtimeQuotes(symbols, { intervalMs = QUOTE_POLL_MS } = {}) 
  */
 export const isRealtimeQuote = (q) => q?.freshness === 'realtime';
 
+// ── THE BADGE OVER A PRICE, READ FROM THE PRICES THEMSELVES ─────────────────
+//
+// ⚠️ THE LABEL WAS A STRING LITERAL IN THE MARKUP, AND THAT IS THE WHOLE DEFECT. MarketSnapshotCard
+// and TickerTape each printed "DELAYED" unconditionally — to a paying Pro subscriber, and to a
+// signed-out visitor, over FRIDAY'S CLOSES.
+//
+// The rule lives in market/price-freshness.mjs rather than here, because this module pulls in React,
+// Clerk and next/navigation and therefore cannot be imported by a test. Re-exported so the component
+// imports stay in one place.
+export { priceFreshnessLabel, quotesFreshness } from './market/price-freshness.mjs';
+import { priceFreshnessLabel } from './market/price-freshness.mjs';
+
 // ─── PRIMITIVES ─────────────────────────────────────────────────────────────
 
 // THE SMALL OUTLINED BADGE — LAST CLOSE, DELAYED, and their siblings.
@@ -1414,7 +1426,7 @@ export function TopNav({ active }) {
 }
 
 // ─── TICKER TAPE (sticky, animated) ─────────────────────────────────────────
-export function TickerTape({tickers}) {
+export function TickerTape({tickers, freshness = null, delayMinutes = null}) {
   const hasData = tickers && tickers.length > 0;
   const [pos, setPos] = useState(0);
   const w = hasData ? tickers.length * 158 : 0;
@@ -1481,14 +1493,16 @@ export function TickerTape({tickers}) {
       {/* The badge floats over the moving tape behind a fade. On a phone the fade was too narrow to
           clear the text under it, so "DELAYED" sat directly on top of a price — measured at 320 and
           390 over the NVDA quote. `.cp-tape-delayed` widens the fade and the left padding on small
-          screens so the label always lands on faded tape rather than on a number. */}
+          screens so the label always lands on faded tape rather than on a number.
+          ⚠️ THE WORD IS NO LONGER HARDCODED — see priceFreshnessLabel. It said DELAYED over last
+          Friday's closes and over a Pro subscriber's licensed real-time prices alike. */}
       <div className="cp-tape-delayed" style={{position:"absolute", right:0, top:0, bottom:0, display:"flex",
         alignItems:"center", padding:"0 12px 0 32px",
         // The fade must match the tape it sits on. Hardcoded #FFFFFF painted a white smear across
         // the dark tape; C.white is #FFFFFF in light, so light mode renders identically.
         background:`linear-gradient(to right, rgba(255,255,255,0) 0%, ${C.white} 35%)`,
         fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.muted,
-        letterSpacing:"0.8px", pointerEvents:"none"}}>DELAYED</div>
+        letterSpacing:"0.8px", pointerEvents:"none"}}>{priceFreshnessLabel(freshness, delayMinutes)}</div>
     </div>
   );
 }
@@ -1597,7 +1611,7 @@ export function TickerLogo({ symbol, size = 18 }) {
 }
 
 // ─── MARKET SNAPSHOT SIDEBAR CARD ───────────────────────────────────────────
-export function MarketSnapshotCard({tickers, loading=false}) {
+export function MarketSnapshotCard({tickers, loading=false, freshness=null, delayMinutes=null}) {
   const hasData = tickers && tickers.length > 0;
   const router = useRouter();
   return (
@@ -1606,8 +1620,10 @@ export function MarketSnapshotCard({tickers, loading=false}) {
         display:"flex", alignItems:"center", gap:6}}>
         <Dot/>
         <span style={{fontSize:12, fontWeight:600, color:C.ink}}>MARKET SNAPSHOT</span>
+        {/* ⚠️ NOT A LITERAL ANY MORE. This card said DELAYED to every reader on every data state —
+            see priceFreshnessLabel. */}
         <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif", fontSize:9,
-          color:C.muted, letterSpacing:"0.8px"}}>DELAYED</span>
+          color:C.muted, letterSpacing:"0.8px"}}>{priceFreshnessLabel(freshness, delayMinutes)}</span>
       </div>
       {loading || !hasData ? Array(6).fill(0).map((_, i) => (
         <div key={i} style={{padding:"9px 14px", borderBottom:`1px solid ${C.surface}`}}>
@@ -1629,10 +1645,20 @@ export function MarketSnapshotCard({tickers, loading=false}) {
                 ? safeN(t.price).toLocaleString("en-US", {maximumFractionDigits:0})
                 : fmt2(t.price)}
             </span>
-            <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
-              color:chgC(t.chg), background:chgBg(t.chg), padding:"1px 5px", borderRadius:3}}>
-              {safeN(t.chg) > 0 ? "+" : ""}{fmt2(t.chg)}%
-            </span>
+            {/* ⚠️ A MISSING CHANGE IS A DASH, NOT A RED "-%" — the same rule the tape already
+                follows. chgC treats anything not greater than zero as a loss, so an unknown
+                percentage rendered in loss red. Zero still prints 0.00% and still counts as flat:
+                a stock that genuinely did not move is information. */}
+            {t.chg == null ? (
+              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
+                color:C.dim, background:C.surface, padding:"1px 5px", borderRadius:3}}
+                title="Change unavailable">—</span>
+            ) : (
+              <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600,
+                color:chgC(t.chg), background:chgBg(t.chg), padding:"1px 5px", borderRadius:3}}>
+                {safeN(t.chg) > 0 ? "+" : ""}{fmt2(t.chg)}%
+              </span>
+            )}
           </div>
         </div>
       ))}
