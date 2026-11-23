@@ -321,10 +321,12 @@ export default function NewsFeed() {
     const price = Number(q?.price);
     if (!q || !Number.isFinite(price)) return t;
     const chg = maybeN(q.changePct);
-    // A settled close reports no percentage by design — keep the stored one rather than blanking it.
-    // Same rule as the homepage; see the note there.
+    // A quote whose live print was unavailable has no move to report — keep the stored figure
+    // rather than blanking it. The basis travels with the percentage, because a settled close now
+    // reports its OWN session return and the tooltip has to name the right session. Same rule as
+    // the homepage; see the note there.
     if (chg == null) return { ...t, price };
-    return { ...t, price, chg, chgBasis: null, freshness: q.freshness ?? null };
+    return { ...t, price, chg, chgBasis: q.changeBasis ?? null, freshness: q.freshness ?? null };
   }), [data?.tickers, servedQuotes]);
 
   return (

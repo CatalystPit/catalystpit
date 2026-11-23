@@ -26,6 +26,7 @@
 // an unlicensed deployment stamps 'eod' and the badge says LAST CLOSE.
 
 import { rowPrice } from '../src/lib/market/row-price.mjs';
+import { changeForPrice, settledChange, sessionOf, CHANGE_BASIS } from '../src/lib/market/settled-change.mjs';
 // ⚠️ THE SHIPPED IMPLEMENTATION, EXECUTED — NOT A COPY OF IT. The first version of this suite
 // restated the two-line label composition locally, because cp-shared.jsx cannot be imported by a
 // test, and pinned the real one with a regex. A test that runs its own copy of the logic and greps
@@ -98,26 +99,38 @@ sec('THE ROW RULE — WHERE A PERCENTAGE MAY COME FROM');
 //
 // A quote whose price IS the previous close reports NO percentage. The row must then fall to the
 // completed session's own return — never to a zero, and never to arithmetic on two equal numbers.
+//
+// ⚠️ AND ONLY WHEN THAT SESSION'S CLOSE IS THIS PRICE. NVDA's real 2026-11-20 session, whose close
+// 125.53 is the price being shown, so it genuinely describes it.
 {
   const r = rowPrice({
     entitled: { price: 125.53, changePct: null, freshness: 'eod' },
-    session: { changePct: -14.0088 },
+    session: { close: 125.53, prevClose: 145.98, changePct: -14.0088, session: '2026-11-20' },
   });
   ok('⚠️ a quote with no change falls to the completed session, not to zero', r.changePct === -14.0088);
   ok('and says which session it is describing', r.changeBasis === 'last_session');
 }
 {
   // The exact trap: Number(null) === 0 and Number.isFinite(0) === true.
-  const r = rowPrice({ entitled: { price: 10, changePct: null, freshness: 'realtime' }, session: { changePct: 2.5 } });
+  const r = rowPrice({
+    entitled: { price: 10.25, changePct: null, freshness: 'realtime' },
+    session: { close: 10.25, prevClose: 10, changePct: 2.5, session: '2026-11-20' },
+  });
   ok('⚠️ a null change is not a zero change', r.changePct === 2.5 && r.changeBasis === 'last_session');
 }
 {
-  const r = rowPrice({ cached: { c: 342.56, dp: null }, session: { changePct: -1.9043 } });
+  const r = rowPrice({
+    cached: { c: 342.56, dp: null },
+    session: { close: 342.56, prevClose: 349.21, changePct: -1.9043, session: '2026-11-20' },
+  });
   ok('⚠️ a cached quote with a null dp falls to the session', r.changePct === -1.9043);
   ok('a settled cached quote is labelled eod, not delayed', r.freshness === 'eod');
 }
 {
-  const r = rowPrice({ close: 87.61, session: { changePct: -1.4178 } });
+  const r = rowPrice({
+    close: 87.61,
+    session: { close: 87.61, prevClose: 88.87, changePct: -1.4178, session: '2026-11-20' },
+  });
   ok('a stored close still carries the session return', r.changePct === -1.4178 && r.price === 87.61);
   ok('a stored close is labelled eod', r.freshness === 'eod');
 }
@@ -129,7 +142,7 @@ sec('THE ROW RULE — WHERE A PERCENTAGE MAY COME FROM');
   ok('⚠️ a genuine flat move is still reported as zero', r.changePct === 0 && r.changeBasis === 'realtime');
 }
 {
-  const r = rowPrice({ session: { changePct: 0 }, close: 50 });
+  const r = rowPrice({ session: { close: 50, prevClose: 50, changePct: 0, session: '2026-11-20' }, close: 50 });
   ok('⚠️ a genuinely flat session is still zero, not a dash', r.changePct === 0 && r.changeBasis === 'last_session');
 }
 
@@ -283,6 +296,140 @@ sec('THE WIRING');
 // The client module must use the shared rule rather than growing its own copy again.
 ok('cp-shared re-exports the shared label rule instead of restating it',
   /export \{ priceFreshnessLabel, quotesFreshness \} from '\.\/market\/price-freshness\.mjs'/.test(shared));
+
+sec('THE SESSION MISMATCH — A PERCENTAGE MUST DESCRIBE THE PRICE BESIDE IT');
+
+// ⚠️ THE EXACT PRODUCTION DEFECT OF 2026-11-23, AS MEASURED.
+//
+// The quote feed carried Monday's settled close; the candle table's newest stored session was
+// Friday's. The old code published one beside the other and stamped it 'last_session' — true of the
+// percentage, false of the pairing. Monday was the best session since 2025 and Friday was a crash,
+// so every row on the front page was red with its sign inverted.
+//
+// Confirmed independently: NVDA closed 125.53 on 2026-11-20 (-14.01%) and 165.05 on 2026-11-23 (+31.48%).
+const FRIDAY_NVDA = { close: 125.53, prevClose: 145.98, changePct: -14.0088, session: '2026-11-20' };
+{
+  const r = changeForPrice({
+    price: 165.05, prevClose: 125.53, asOf: '2026-11-23T21:00:00+00:00', session: FRIDAY_NVDA,
+  });
+  ok('⚠️ the settled quote answers for itself rather than the stale candle row',
+    Math.round(r.changePct * 100) / 100 === 31.48);
+  ok('⚠️ and never reports the previous session as this move', r.changePct > 0);
+  ok('the absolute move describes the same two closes', r.change === 39.52);
+  ok('it is stamped as a settled session, not an intraday move', r.changeBasis === 'last_session');
+  ok('⚠️ and names the session the PRICE belongs to', r.changeSession === '2026-11-23');
+}
+{
+  // The guard, isolated: a candle session whose close is not this price is refused outright. With
+  // no prevClose to fall back on, the honest answer is a dash — a wrong number is worse than none.
+  const r = changeForPrice({ price: 165.05, asOf: '2026-11-23T21:00:00+00:00', session: FRIDAY_NVDA });
+  ok('⚠️ a session whose close is not this price is refused', r.changePct === null);
+  ok('and claims no basis or session for a figure it does not have',
+    r.changeBasis === null && r.changeSession === null);
+}
+{
+  // The same candle row IS accepted once the price it describes is the one on screen — the state
+  // during a session, before the feed has a newer close to report.
+  const r = changeForPrice({ price: 125.53, prevClose: 125.53, asOf: '2026-11-20T21:00:00+00:00', session: FRIDAY_NVDA });
+  ok('⚠️ the same session row is accepted when its close IS the price', r.changePct === -14.0088);
+  ok('and is dated by the candle row it came from', r.changeSession === '2026-11-20');
+}
+{
+  const r = changeForPrice({ price: 125.531, session: FRIDAY_NVDA });
+  ok('a sub-cent difference is the same price', r.changePct === -14.0088);
+  const r2 = changeForPrice({ price: 125.6, session: FRIDAY_NVDA });
+  ok('⚠️ but seven cents is a different price and is refused', r2.changePct === null);
+}
+{
+  const r = changeForPrice({ price: 166.55, prevClose: 125.53, intradayPct: 32.68, session: FRIDAY_NVDA });
+  ok('an intraday figure takes precedence over any settled source', r.changePct === 32.68);
+  ok('and is labelled intraday, with no session claimed',
+    r.changeBasis === CHANGE_BASIS.INTRADAY && r.changeSession === null);
+}
+
+// ⚠️ price === prevClose IS UNKNOWN, NOT ZERO — the original 0.00% bug. It stays unknown so the
+// candle row may answer, and is never published as a real flat close.
+{
+  const r = settledChange({ price: 125.53, prevClose: 125.53, asOf: '2026-11-20T21:00:00+00:00' });
+  ok('⚠️ a close compared against itself reports nothing, not zero', r.changePct === null);
+}
+{
+  const r = settledChange({ price: 165.05, prevClose: 0, asOf: '2026-11-23T21:00:00+00:00' });
+  ok('a zero previous close is not a baseline', r.changePct === null);
+}
+{
+  const r = changeForPrice({ price: 50, session: { close: 50, prevClose: 50, session: '2026-11-20' } });
+  ok('⚠️ a genuinely flat session is still zero, not a dash', r.changePct === 0);
+}
+
+{
+  // ⚠️ AN ENTITLED QUOTE CAN NOW CARRY A SETTLED FIGURE, AND MISLABELLING IT IS A FALSE CLAIM.
+  // getQuotes reports a real session return for a settled close, so "entitled quote with a
+  // percentage" no longer implies "the market is moving". Reading changeBasis is what keeps the
+  // badge honest; trusting presence alone would stamp Monday's settled close as a delayed print.
+  const r = rowPrice({
+    entitled: {
+      price: 165.05, prevClose: 125.53, asOf: '2026-11-23T21:00:00+00:00',
+      changePct: 31.4825, changeBasis: 'last_session', freshness: 'eod',
+    },
+  });
+  ok('⚠️ an entitled settled quote keeps its settled basis', r.changeBasis === 'last_session');
+  ok('and reports the session return it carries', Math.round(r.changePct * 100) / 100 === 31.48);
+  ok('and is not promoted to a live freshness', r.freshness === 'eod');
+}
+{
+  // The same shape with an intraday basis IS a live move, labelled by how live it is.
+  const r = rowPrice({
+    entitled: {
+      price: 166.55, prevClose: 125.53, changePct: 32.68, changeBasis: 'intraday',
+      freshness: 'delayed', delayMinutes: 15,
+    },
+  });
+  ok('an entitled intraday quote is labelled by its freshness', r.changeBasis === 'delayed');
+}
+
+ok('a session date is read from the price stamp', sessionOf('2026-11-23T21:00:00+00:00') === '2026-11-23');
+ok('and is null when there is no usable stamp', sessionOf(null) === null && sessionOf('nonsense') === null);
+
+sec('THE SOURCES ACTUALLY USE THE RULE');
+
+// ⚠️ READ THE SHIPPED FILES. A green rule that nothing calls is the false-green this suite exists to
+// prevent — the freshness label already shipped that way once in this codebase.
+{
+  const tiingoSrc = read('src/lib/market/tiingo.mjs');
+  ok('the quote source imports the rule',
+    tiingoSrc.includes("import { changeForPrice } from './settled-change.mjs'"));
+  ok('⚠️ and no longer gates its percentage on REALTIME freshness alone',
+    !stripComments(tiingoSrc).includes('const changePct = (gate.freshness === FRESHNESS.REALTIME'));
+  ok('⚠️ the quote hands the rule its own previous close, not just the price',
+    tiingoSrc.includes('price, prevClose, asOf,'));
+  ok('a quote publishes the basis of its own figure',
+    tiingoSrc.includes('changeBasis: chg.changeBasis') && tiingoSrc.includes('changeSession: chg.changeSession'));
+
+  const refreshBody = stripComments(read('src/app/api/refresh/route.js'));
+  ok('the tape writer uses the rule', refreshBody.includes('changeForPrice({'));
+  ok('⚠️ and asks the quote what its figure means instead of inferring it',
+    refreshBody.includes("changeBasis === 'intraday' ? q?.changePct : null"));
+  ok('⚠️ the tape hands the rule the quote previous close, so it can answer without the candles',
+    refreshBody.includes('prevClose: q?.prevClose,'));
+  ok('⚠️ the tape no longer takes a session percentage unconditionally',
+    !refreshBody.includes('session ? session.changePct : null'));
+
+  const rowSrc = read('src/lib/market/row-price.mjs');
+  ok('the row rule delegates to the shared module',
+    rowSrc.includes("import { changeForPrice } from './settled-change.mjs'"));
+  ok('⚠️ and no longer substitutes a session percentage with no comparison',
+    !stripComments(rowSrc).includes('changePct: live != null ? live : sessionPct'));
+
+  const wlSrc = read('src/app/api/watchlist/route.js');
+  ok('⚠️ the watchlist carries prevClose and the basis with the price',
+    wlSrc.includes('prevClose: maybeN(q?.prevClose)') && wlSrc.includes('changeBasis: q?.changeBasis ?? null'));
+
+  for (const f of ['src/components/CatalystPit.jsx', 'src/components/NewsFeed.jsx']) {
+    ok(f.split('/').pop() + ' carries the served basis through to the badge',
+      read(f).includes('chgBasis: q.changeBasis ?? null'));
+  }
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

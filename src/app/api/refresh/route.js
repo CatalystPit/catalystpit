@@ -57,55 +57,65 @@ async function fetchStockPrices(tickers) {
   try {
     const { getQuotes } = await import('../../../lib/market-data');
     const { lastSessionChange } = await import('../../../lib/market/eod-change.mjs');
-    const { maybeN } = await import('../../../lib/num.mjs');
+    const { changeForPrice } = await import('../../../lib/market/settled-change.mjs');
     // realtime:false — the tape is a single shared KV value served to everyone, including signed-out
     // readers, so it must never contain an entitled real-time print.
     const quotes = await getQuotes(tickers, { realtime: false });
 
-    // ⚠️ THE LAST COMPLETED SESSION'S REAL RETURN, because realtime:false means every price here is
-    // a settled close and a close has no intraday change to report. getQuotes now returns null
-    // rather than the 0.00% it used to compute by comparing that close against itself; this supplies
-    // the figure that is actually true of it, from the licensed candles already on disk.
+    // ⚠️ THE FALLBACK ONLY, NOW THAT THE FEED ANSWERS FOR ITSELF. realtime:false means every price
+    // here is a settled close, and getQuotes reports that close's own session return when it holds
+    // the two closes needed. These licensed candles cover the case it cannot: a quote whose live
+    // print was unavailable, so price degraded to prevClose and the payload spans one close only.
+    // changeForPrice() accepts a row from here ONLY when its close is the price being published.
     const eod = await lastSessionChange(Object.keys(quotes || {}));
 
     const out = {};
     for (const [sym, q] of Object.entries(quotes || {})) {
       const price = Number(q?.price);
       if (!Number.isFinite(price) || price <= 0) continue;
-      const pc = Number(q?.prevClose);
-      // ⚠️ maybeN, NOT Number(). THIS EXACT LINE SHIPPED THE BUG A SECOND TIME.
-      //
-      // Number(null) is 0 and Number.isFinite(0) is true, so "prefer the intraday figure when one
-      // exists" took the intraday branch with a zero — for a quote that had correctly reported null.
-      // Measured in KV after that deploy: every entry changePct 0, stamped basis "intraday", while
-      // the provider underneath was returning null exactly as intended.
-      //
-      // parseFloat(null) is NaN, so maybeN gives back null and the check below falls through to the
-      // real session return. The two functions differ on precisely the input that matters here.
-      const live = maybeN(q?.changePct);
-      const session = eod.get(sym);
 
-      // ⚠️ NO `: 0` ANYWHERE ON THIS PATH, AND THERE WERE TWO.
+      // ⚠️ THIS PAIRED A PRICE FROM ONE SESSION WITH A PERCENTAGE FROM ANOTHER, AND SAID NOTHING.
       //
-      // Both the change and the percentage fell back to literal zero when the inputs were missing,
-      // so a quote with nothing to say about movement arrived at the page indistinguishable from a
-      // stock that closed exactly flat — and rendered red, because chgC treats 0 as "not positive".
-      // Unknown is null and renders as a dash; zero is reserved for a genuine flat close.
-      const changePct = Number.isFinite(live) ? live
-        : (session ? session.changePct : null);
-      // The absolute move must describe the SAME two prices as the percentage, or the row shows a
-      // dollar change from one session and a percentage from another.
-      const change = Number.isFinite(live) && Number.isFinite(pc) ? price - pc
-        : (session ? session.close - session.prevClose : null);
+      // `price` comes from the quote feed and carries TODAY's settled close. `session` comes from
+      // the stored daily candles, which a cron writes after the bell, so between the close and that
+      // run the newest stored session is YESTERDAY's. The old code took the feed's price, took the
+      // candles' percentage, stamped it 'last_session' — truthfully, it IS a settled return — and
+      // never checked the two described the same day. Measured on production 2026-11-23:
+      //
+      //   NVDA  price 165.05 (2026-11-23 close)   changePct -14.01% (2026-11-20 session)
+      //   SPY   price 722.29 (2026-11-23 close)   changePct  -3.64% (2026-11-20 session)
+      //
+      // Friday crashed and Monday was the best session since 2025, so every row on the homepage
+      // was red with an inverted sign on the biggest up-day in market history.
+      //
+      // changeForPrice() will not publish a candle session whose close is not the price beside it,
+      // and prefers the feed's own two closes when it has them. One rule, one module, tested.
+      const chg = changeForPrice({
+        price,
+        prevClose: q?.prevClose,
+        asOf: q?.asOf,
+        // ⚠️ ASK THE QUOTE WHAT ITS FIGURE MEANS RATHER THAN GUESSING FROM WHETHER IT IS SET.
+        // This was `maybeN(q.changePct)` treated as "intraday if present", which was right only
+        // while a settled quote always reported null. It no longer does — a settled close now
+        // reports its real session return — so presence alone would stamp a settled figure
+        // 'intraday' and tell a reader a closed market was moving.
+        intradayPct: q?.changeBasis === 'intraday' ? q?.changePct : null,
+        session: eod.get(sym),
+      });
 
       out[sym] = {
         price: +price.toFixed(2),
-        change: change == null ? null : +change.toFixed(2),
-        changePct: changePct == null ? null : +changePct.toFixed(2),
-        // ⚠️ SAY WHICH SESSION THE PERCENTAGE DESCRIBES. Without it a reader cannot tell a settled
-        // return from an intraday one, and the two mean different things on the same page.
-        changeBasis: Number.isFinite(live) ? 'intraday' : (session ? 'last_session' : null),
-        changeSession: Number.isFinite(live) ? null : (session ? session.session : null),
+        // ⚠️ NO `: 0` ANYWHERE ON THIS PATH, AND THERE WERE TWO. Both the change and the
+        // percentage fell back to literal zero when the inputs were missing, so a quote with
+        // nothing to say about movement arrived indistinguishable from a stock that closed exactly
+        // flat — and rendered red, because chgC treats 0 as "not positive". Unknown is null and
+        // renders as a dash; zero is reserved for a genuine flat close.
+        change: chg.change == null ? null : +chg.change.toFixed(2),
+        changePct: chg.changePct == null ? null : +chg.changePct.toFixed(2),
+        // ⚠️ SAY WHICH SESSION THE PERCENTAGE DESCRIBES. Without it a reader cannot tell a
+        // settled return from an intraday one, and the two mean different things on the same page.
+        changeBasis: chg.changeBasis,
+        changeSession: chg.changeSession,
       };
     }
     return out;

@@ -490,16 +490,17 @@ export default function CatalystPit() {
     if (!q || !Number.isFinite(price)) return t;
     const chg = maybeN(q.changePct);
     // ⚠️ A SERVED QUOTE WITH NO PERCENTAGE MUST NOT ERASE THE ONE WE ALREADY HAVE. When the delayed
-    // snapshot is unavailable, /api/quotes falls through to settled closes — and a settled close
-    // reports changePct: null by design, because comparing it against itself is the original 0.00%
-    // bug. Overwriting the tape's real last-session return with that null would turn every
-    // percentage on the front page into a dash, which is a worse page than the one being fixed.
-    // The price is still worth taking: it is the same session the stored figure describes.
+    // live print was unavailable degrades to a single close and genuinely has no move to report.
+    // Overwriting the tape's real session return with that null would turn every percentage on the
+    // front page into a dash, which is a worse page than the one being fixed. The price is still
+    // worth taking: it is the same session the stored figure describes.
     if (chg == null) return { ...t, price };
-    // ⚠️ AND chgBasis MUST BE CLEARED WITH IT. The tape renders a "Last completed session" tooltip
-    // from that field; left in place over an intraday or live percentage it would attribute today's
-    // move to Friday.
-    return { ...t, price, chg, chgBasis: null, freshness: q.freshness ?? null };
+    // ⚠️ THE BASIS TRAVELS WITH THE PERCENTAGE, IT IS NOT CLEARED. Hardcoding null here was safe
+    // only while a served figure could only ever be intraday. A settled close now reports its own
+    // session return, so dropping the basis would hide the "Last completed session" tooltip on
+    // precisely the figure that needs it — and keeping a STALE basis would attribute today's move
+    // to Friday. The server stamps which session its figure describes; this carries that through.
+    return { ...t, price, chg, chgBasis: q.changeBasis ?? null, freshness: q.freshness ?? null };
   }), [data?.tickers, idxQuotes]);
 
   // ── WHAT THE FRONT DOOR LEADS WITH ────────────────────────────────────────

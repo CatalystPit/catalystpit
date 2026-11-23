@@ -52,6 +52,7 @@
 import { VOLUME_METHODOLOGY } from '../scan/provider-contract.mjs';
 import { describeProvider, FRESHNESS } from '../scan/market-capabilities.mjs';
 import { lastSessionCloseIso } from './market-session.mjs';
+import { changeForPrice } from './settled-change.mjs';
 
 const BASE = 'https://api.tiingo.com';
 
@@ -610,12 +611,38 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
       // other combination means `price` is a settled close, and a close has no intraday change —
       // null, never zero, because zero is a real flat session and must stay available to mean that.
       // The settled session's own return comes from lastSessionChange() in eod-change.mjs.
-      const changePct = (gate.freshness === FRESHNESS.REALTIME && prevClose != null && prevClose !== 0)
-        ? ((price - prevClose) / prevClose) * 100 : null;
+      // ⚠️ asOf DESCRIBES THE PRICE, so it is also what dates the session a settled change belongs
+      // to. Hoisted here so the change and the stamp cannot disagree; full reasoning on the field.
+      const asOf = priceIsLive ? (q.timestamp || null) : lastSessionCloseIso();
+      // ⚠️ A SETTLED CLOSE IS NOT CHANGELESS — IT IS A COMPLETED SESSION, AND THIS DISCARDED IT.
+      //
+      // This stopped at `null` for every non-REALTIME quote, on the stated premise that "outside
+      // session hours Tiingo returns tngoLast === prevClose, both being the same close", so the
+      // subtraction could only ever be the original 0.00% bug. Measured 2026-11-23 after the bell,
+      // that premise is false:
+      //
+      //   NVDA tngoLast 165.05  prevClose 125.53  asOf 2026-11-23T21:00:00Z  → +31.48%
+      //
+      // Two distinct closes from two consecutive sessions is a complete daily return. Throwing it
+      // away left the page with nothing but the stored candle table, which lags this feed by a
+      // session — and on 2026-11-23 that printed Friday's crash beside Monday's rally with every
+      // sign inverted. settled-change.mjs holds the rule, the measurement and the invariant.
+      const chg = changeForPrice({
+        price, prevClose, asOf,
+        intradayPct: (gate.freshness === FRESHNESS.REALTIME && prevClose != null && prevClose !== 0)
+          ? ((price - prevClose) / prevClose) * 100 : null,
+      });
       out[sym] = {
         price,
         prevClose,
-        changePct,
+        changePct: chg.changePct,
+        // ⚠️ THE MOVE AND THE PERCENTAGE ALWAYS DESCRIBE THE SAME TWO PRICES, AND THE BASIS SAYS
+        // WHICH TWO. Consumers used to infer "settled" from changePct being null and "intraday"
+        // from it being set; both inferences broke the moment a settled quote could report a real
+        // figure. changeBasis is now the only supported way to label what the percentage means.
+        change: chg.change,
+        changeBasis: chg.changeBasis,
+        changeSession: chg.changeSession,
         open: num(q.open), high: num(q.high), low: num(q.low),
         // ⚠️ THIS FIELD CHANGED MEANING WHEN THE COMMERCIAL ENTITLEMENT WENT LIVE, AND THE OLD
         // LABEL BECAME A FALSE CLAIM. It used to carry the previous DAILY composite figure,
@@ -645,7 +672,7 @@ export async function getQuotes(symbols, { realtime = false } = {}) {
         // print is what is being shown, and the session's own close instant when it is not. No
         // precision is invented — a close has none to report, and lastSessionCloseIso walks the real
         // exchange calendar rather than assuming 16:00 or a weekday.
-        asOf: priceIsLive ? (q.timestamp || null) : lastSessionCloseIso(),
+        asOf,
         // Whether this price is live is a fact about the feed AND about our entitlement. Both
         // have to be true; the vendor alone cannot promote a quote to REALTIME.
         freshness: gate.freshness,

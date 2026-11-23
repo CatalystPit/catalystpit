@@ -192,7 +192,13 @@ async function entitledQuotes(tickers, realtime) {
       // ⚠️ freshness IS THE PROVIDER'S VERDICT, NOT OURS. getQuotes stamps 'realtime' only when the
       // vendor was carrying a live print AND we are licensed to redistribute it. Being entitled and
       // receiving it are different facts; the row reports the second.
-      out.set(t, { price, changePct: maybeN(q?.changePct), freshness: q?.freshness ?? null });
+      // ⚠️ prevClose, asOf AND changeBasis TRAVEL WITH THE PRICE. Projecting them away left rowPrice
+      // unable to tell a settled return from an intraday one, or to check that a stored session
+      // actually describes this price — which is how a stale session's percentage reached a row.
+      out.set(t, {
+        price, changePct: maybeN(q?.changePct), freshness: q?.freshness ?? null,
+        prevClose: maybeN(q?.prevClose), asOf: q?.asOf ?? null, changeBasis: q?.changeBasis ?? null,
+      });
     }
     return out;
   }
@@ -203,7 +209,13 @@ async function entitledQuotes(tickers, realtime) {
     const q = delayed?.[t];
     const price = maybeN(q?.price);
     if (price == null) continue;
-    out.set(t, { price, changePct: maybeN(q?.changePct), freshness: q?.freshness ?? 'delayed', delayMinutes: maybeN(q?.delayMinutes) });
+    out.set(t, {
+      price, changePct: maybeN(q?.changePct), freshness: q?.freshness ?? 'delayed',
+      delayMinutes: maybeN(q?.delayMinutes),
+      // The delayed snapshot's percentage is price-against-previous-close on a 15-minute-old
+      // intraday print: a live move, not a settled session.
+      prevClose: maybeN(q?.prevClose), asOf: q?.asOf ?? null, changeBasis: 'intraday',
+    });
   }
   return out;
 }
