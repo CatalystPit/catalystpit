@@ -86,30 +86,119 @@ export async function canonicalSessionDate(tickers) {
  * the same reason they do on the Dividend Calendar — screener_stocks.company is filings-derived and
  * null for anything that files neither a Form 4 nor an 8-K.
  */
+/**
+ * ⚠️ ASSET TYPE EXCLUDES, IT DOES NOT ADMIT. This is the bug that emptied the heat map.
+ *
+ * The filter was `coalesce(m.asset_type, '') = any({Stock,ADRC})`, which turns an UNKNOWN type into
+ * `''` and then fails to match — so every security whose asset_type we do not happen to hold was
+ * silently dropped. Asset type has no licensed source here: a few hundred rows out of ~8,000 carry
+ * one, and the ones that do skew heavily to multi-class listings.
+ *
+ * Measured consequence on production: the top-500 universe returned 160 rows, AAPL, MSFT and NVDA
+ * were absent entirely, and every surviving member was a dotted share class — BRK.A, BRK.B, PBR.A,
+ * HEI.A, LEN.B, MKC.V, BF.A, BF.B, MOG.A, MOG.B. BRK.A and BRK.B took 87% of the drawn area not
+ * because their market caps were wrong (both are about right) but because they were the two largest
+ * members of a universe that had lost the actual market.
+ *
+ * So the rule is inverted to match what the data can actually support: a security is excluded when
+ * we KNOW it is not an operating company, and admitted when we do not know. `market_cap > 0` remains
+ * the second half of the test, exactly as the original comment intended — a fund share class carries
+ * no market cap, so it still cannot reach the board.
+ */
 export async function heatmapUniverse(limit = 500) {
   const lim = Math.max(10, Math.min(6000, Number(limit) || 500));
-  // ASSET TYPE IS THE ELIGIBILITY RULE, and it is existing reference data rather than a maintained
-  // exclusion list — see TRADEABLE_ASSET_TYPES for why funds, warrants and units are not operating
-  // companies. `market_cap > 0` does the rest: every mutual-fund share class carries none.
   const types = sql`${`{${TRADEABLE_ASSET_TYPES.join(',')}}`}::text[]`;
+  // Over-fetch, because collapsing share classes below removes rows and the caller asked for `lim`
+  // companies, not `lim` listings. 1.4x covers the observed duplicate rate with room to spare.
+  const fetchLim = Math.min(8000, Math.ceil(lim * 1.4) + 20);
+  // ⚠️ NO price x shares FALLBACK, AND THE REASON IS WORTH KEEPING.
+  //
+  // Only 4,491 of 18,019 rows carry a stored market cap while 4,892 more carry both a price and a
+  // share count, so deriving the rest looks like free coverage. I added it, and this file's own
+  // distribution suite immediately failed on a $25.48 TRILLION company.
+  //
+  // Every implausible value was an ADR: LATAM Airlines at $25.48T, TSMC $8.26T, Santander Chile
+  // $5.66T, Banco de Chile $3.68T, Toyota $2.70T, América Móvil, HSBC. `shares_out` holds the
+  // FOREIGN company's ordinary share count while `price` is the ADR price, and one ADR represents
+  // some ratio of ordinary shares that we do not store. Multiplying them is a unit error, not a
+  // market capitalisation — and on an area-weighted treemap a single such row is a tile the size of
+  // the rest of the market.
+  //
+  // The ratio is not in our data and cannot be guessed per ticker, so the derivation is gone rather
+  // than bounded by a plausibility threshold: a cap we cannot compute correctly is one we should not
+  // draw. Securities with no stored cap stay off the board, and the board says less rather than
+  // something false.
   const res = await db.execute(sql`
     select s.ticker,
-           coalesce(s.company, i.name) as company,
+           coalesce(s.company, i.name, m.name) as company,
            coalesce(s.sector, m.sector) as sector,
-           coalesce(s.market_cap, m.market_cap) as market_cap
+           coalesce(s.market_cap, m.market_cap) as market_cap,
+           s.avg_vol
       from screener_stocks s
       left join screener_meta     m on m.ticker = s.ticker
       left join security_identity i on i.ticker = s.ticker
      where coalesce(s.market_cap, m.market_cap) > 0
-       and coalesce(m.asset_type, '') = any(${types})
+       and (m.asset_type is null or m.asset_type = any(${types}))
      order by coalesce(s.market_cap, m.market_cap) desc
-     limit ${lim}`);
-  return (res.rows ?? res).map((r) => ({
+     limit ${fetchLim}`);
+
+  const rows = (res.rows ?? res).map((r) => ({
     ticker: String(r.ticker),
     company: r.company || null,
     sector: r.sector || null,
     marketCap: Number(r.market_cap) || null,
+    avgVol: Number(r.avg_vol) || 0,
   }));
+
+  return collapseShareClasses(rows).slice(0, lim);
+}
+
+/**
+ * Strip the corporate suffixes and class markers that make two listings of ONE company look like two
+ * companies. "BERKSHIRE HATHAWAY INC CL A" and "Berkshire Hathaway Inc. Class B" both reduce to
+ * "berkshire hathaway".
+ */
+function companyKey(row) {
+  const name = String(row.company || '').toLowerCase()
+    .replace(/[.,'"&]/g, ' ')
+    .replace(/\b(class|cl|series|ser)\s+[a-z]\b/g, ' ')
+    .replace(/\b(inc|incorporated|corp|corporation|co|company|ltd|limited|plc|holdings?|group|the|sa|nv|ag)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // ⚠️ FALL BACK TO THE ROOT SYMBOL, NEVER TO THE WHOLE TICKER. With no usable name, BRK.A and BRK.B
+  // still share the root "BRK"; keying on the full ticker would make every class its own company and
+  // quietly restore the double-counting this function exists to remove.
+  return name || `sym:${row.ticker.split('.')[0]}`;
+}
+
+/**
+ * ⚠️ ONE COMPANY, ONE TILE.
+ *
+ * Berkshire appeared twice, and the duplicate is not cosmetic: the provider reports the COMPANY's
+ * capitalisation on each listed class, so BRK.A and BRK.B both carry ~$1.08T. Drawing both does not
+ * split Berkshire across two tiles — it draws Berkshire twice at full size, and a market-cap treemap
+ * then hands one company double the area it has earned.
+ *
+ * Which class survives is decided by AVERAGE VOLUME, not by capitalisation. The caps are within a
+ * percent of each other because they describe the same company, so ranking on them is close to a
+ * coin toss; liquidity picks the listing a reader actually follows — BRK.B over BRK.A, GOOGL over
+ * GOOG — and keeps the odd $855,000 price off the board.
+ *
+ * Exported for direct testing: the rule matters more than the query around it.
+ */
+export function collapseShareClasses(rows) {
+  const best = new Map();
+  for (const row of rows) {
+    const key = companyKey(row);
+    const prev = best.get(key);
+    if (!prev) { best.set(key, row); continue; }
+    const better = row.avgVol > prev.avgVol
+      || (row.avgVol === prev.avgVol && (row.marketCap || 0) > (prev.marketCap || 0));
+    if (better) best.set(key, row);
+  }
+  // Ranked by capitalisation again, because the map is in first-seen order and the caller draws in
+  // the order it is given.
+  return [...best.values()].sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0));
 }
 
 /** A Postgres text[] literal for a ticker list — the driver will not interpolate a JS array here. */
