@@ -51,7 +51,11 @@ export default function PlanChoice({ align = 'left', cta = 'Go ad-free' }) {
           cursor: (busy || available !== true) ? 'default' : 'pointer',
           opacity: busy ? 0.6 : 1 }}>
         {busy ? 'Opening Stripe…'
-          : available === true ? `${cta} · ${AD_FREE_PRICE_USD.toFixed(2)}/month`
+          // ⚠️ THE CURRENCY SYMBOL BELONGS ON THE BUTTON TOO. The card above it and the renewal
+          // terms below it both read "$9.99/month"; the button alone said "9.99/month", which is
+          // the one element a buyer actually reads before committing. An amount with no currency on
+          // a purchase control is the sort of small inconsistency that reads as a different number.
+          : available === true ? `${cta} · $${AD_FREE_PRICE_USD.toFixed(2)}/month`
             : 'Ad-free membership — not yet available'}
       </button>
       {available === false && (
