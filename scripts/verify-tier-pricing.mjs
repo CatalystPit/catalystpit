@@ -431,5 +431,27 @@ sec('THE SOURCES ACTUALLY USE THE RULE');
   }
 }
 
+sec('THE EDGE CACHE — NEVER LONGER THAN THE WRITE CADENCE');
+
+// ⚠️ A CDN TTL LONGER THAN THE REFRESH INTERVAL SERVES DATA THAT IS KNOWN TO BE SUPERSEDED.
+// The tape was cached for 900s while /api/refresh rewrote it every 300s, so a visitor could be
+// handed a copy three writes old — which is how the session-mismatch fix looked unfixed for a
+// quarter of an hour after it was live.
+{
+  // ⚠️ STRIP THE COMMENTS FIRST. This read s-maxage=900 straight out of the comment ABOVE the
+  // header that had just been corrected to 60, and failed a fix that was already in place. A
+  // source assertion that can match prose is not an assertion about the code.
+  const marketSrc = stripComments(read('src/app/api/market/route.js'));
+  const ttl = Number((marketSrc.match(/s-maxage=(\d+)/) || [])[1]);
+  const refreshCron = (JSON.parse(read('vercel.json')).crons || []).find((c) => c.path === '/api/refresh');
+  const stepMin = refreshCron ? Number((refreshCron.schedule.split(' ')[0].match(/^\*\/(\d+)$/) || [])[1]) : NaN;
+  ok('the market reader declares a CDN lifetime', Number.isFinite(ttl) && ttl > 0);
+  ok('the writer still has a cron', Number.isFinite(stepMin) && stepMin > 0);
+  ok('⚠️ the edge never holds the tape longer than the job that rewrites it',
+    Number.isFinite(ttl) && Number.isFinite(stepMin) && ttl <= stepMin * 60);
+  ok('⚠️ and keeps burst protection rather than trading it for freshness',
+    /stale-while-revalidate=\d+/.test(marketSrc));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
