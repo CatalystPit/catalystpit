@@ -473,7 +473,10 @@ export default function CatalystPit() {
   // be filled in order, so the hero was a WSJ Fed feature and the supporting cards were
   // credit-card and crypto-advice columns. deskSelection FILTERS to HIGH and never pads — see
   // lib/impact.js. It may return fewer than four, and that is the correct page.
-  const { items: news, leadingWithFilings } = deskSelection(rawNews, filingCards);
+  // heroWorthy is false when nothing in the pool earned the big slot — no fresh high-impact story
+  // and no filing — and the section then shows fresh notable stories as a compact list instead of
+  // promoting one of them, or claiming the market is quiet when it plainly is not. See deskSelection.
+  const { items: news, leadingWithFilings, heroWorthy } = deskSelection(rawNews, filingCards);
   const insiders = data?.insiders || [];
   // The feed is ticker-facing too: each row renders its symbol and links to /ticker/<sym>. The same
   // Liberty Mutual filing that reached the card sits in this list, so without the gate the feed would
@@ -635,7 +638,12 @@ export default function CatalystPit() {
               </div>
               <div style={{display:"flex", alignItems:"center", gap:6,
                 fontFamily:"'DM Sans',sans-serif", fontSize:10, color:C.dim}}>
-                Updated {timeStr} ET
+                {/* ⚠️ "SECTION UPDATED", NOT "UPDATED". This clock is when the MODULE last refreshed,
+                    and beside a card it reads as the story's own time — which was actively
+                    misleading while a 74-hour-old article held the hero under a timestamp from
+                    minutes ago. Each card carries its own age; this one is labelled as the
+                    section's. */}
+                Section updated {timeStr} ET
                 <button onClick={loadData} style={{background:"transparent", border:"none",
                   color:C.muted, cursor:"pointer", fontSize:11, padding:"2px 6px",
                   borderRadius:4, fontFamily:"'DM Sans',sans-serif"}}
@@ -664,18 +672,28 @@ export default function CatalystPit() {
                 </div>
               ) : (
                 <>
-                  <div style={{marginBottom:12}}>
-                    {news.slice(0, 1).map((n, i) => (
-                      <NewsPhotoCard key={i} n={n} idx={0} hero/>
-                    ))}
-                  </div>
+                  {/* ⚠️ THE BIG SLOT IS EARNED, NOT FILLED. heroWorthy is false when nothing in the
+                      pool is both high-impact and recent, and in that case these stories are drawn
+                      as equals — a compact list, no 21px lead, nothing promoted. A 74-hour-old
+                      banking story held this slot for three days precisely because the slot always
+                      had to contain something. */}
+                  {heroWorthy && (
+                    <div style={{marginBottom:12}}>
+                      {/* showSummary: with no image competing for the card, the lead has room for
+                          the publisher's own summary — which is the difference between a headline
+                          and a story. Never generated, only shown when the source supplied one. */}
+                      {news.slice(0, 1).map((n, i) => (
+                        <NewsPhotoCard key={i} n={n} idx={0} hero showSummary/>
+                      ))}
+                    </div>
+                  )}
                   {/* ⚠️ NO PADDING. This was `news[1 + i] || news[i % …]`, which repeated the
                       hero to fill the grid — one story rendered as four photographs of itself.
                       Up to three supporting tiles, and fewer when there are fewer. */}
-                  {news.length > 1 && (
-                    <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))", gap:12}}>
-                      {news.slice(1, 4).map((n, i) => (
-                        <NewsPhotoCard key={i} n={n} idx={i + 1}/>
+                  {news.length > (heroWorthy ? 1 : 0) && (
+                    <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(190px, 1fr))", gap:12}}>
+                      {news.slice(heroWorthy ? 1 : 0, 4).map((n, i) => (
+                        <NewsPhotoCard key={i} n={n} idx={heroWorthy ? i + 1 : i} showSummary={!heroWorthy}/>
                       ))}
                     </div>
                   )}

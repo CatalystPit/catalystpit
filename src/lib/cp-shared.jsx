@@ -515,7 +515,77 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
   const chgNum = hasChg ? parseFloat(n.chg) : 0;
   const isUp = chgNum >= 0;
 
-  const cardInner = (
+  // ⚠️ NO IMAGE MEANS NO IMAGE AREA. THIS IS THE GIANT GREEN RECTANGLE.
+  //
+  // photoSrc is hard-coded null and the homepage sets imageUrl: null deliberately — we do not hold
+  // usage rights to publishers' article photography and will not invent any. But the layout still
+  // reserved photoH (340px in hero) and filled it with a CARD_COLORS gradient and a dark scrim, so
+  // the lead story rendered as an enormous empty green panel with a headline wedged along the
+  // bottom edge. The component was drawing a frame for a picture that is never coming.
+  //
+  // So when there is no authorised image, the card is TEXT-FIRST: a real financial-desk layout with
+  // the headline as the largest element, publisher and timestamp where a reader looks for them, the
+  // ticker beside them, and the summary given room instead of being overlaid on a gradient. Nothing
+  // is faked and no space is reserved for an absent asset.
+  const hasImage = !!primarySrc;
+
+  const textCardInner = (
+    <div className="card-hov" style={{background:C.white, border:`1px solid ${C.border}`,
+      borderRadius:8, overflow:"hidden", cursor:"pointer", transition:"all 0.2s",
+      height: hero ? "auto" : "100%", display:"flex", flexDirection:"column",
+      // A left rule in place of the photo: it gives the lead the visual weight a hero needs without
+      // pretending to be imagery.
+      borderLeft: hero ? `3px solid ${C.green}` : `1px solid ${C.border}`}}>
+      <div style={{padding: hero ? "16px 18px 17px" : stacked ? "9px 12px 10px" : "12px 14px 13px",
+        flex:1, display:"flex", flexDirection:"column", gap: hero ? 9 : 6}}>
+
+        {/* Tag, ticker and time — the row a reader scans before committing to the headline. */}
+        <div style={{display:"flex", gap:6, alignItems:"center", flexWrap:"wrap"}}>
+          <TagBadge tag={n.tag}/>
+          {hasValidTicker && (
+            <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
+              fontWeight:700, color:C.ink, background:C.surface, border:`1px solid ${C.border}`,
+              padding:"2px 7px", borderRadius:4}}>{n.sym}</span>
+          )}
+          {hasValidTicker && hasChg && (
+            <span className="cp-num" style={{fontFamily:"'DM Sans',sans-serif", fontSize:10,
+              fontWeight:700, color:chgC(chgNum), background:chgBg(chgNum),
+              padding:"2px 7px", borderRadius:4}}>{fmtP(chgNum)}</span>
+          )}
+          {n.mins != null && (
+            <span className="cp-num" style={{fontSize:10, color:C.dim, marginLeft:"auto",
+              fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{timeAgo(n.mins)}</span>
+          )}
+        </div>
+
+        {/* ⚠️ THE HEADLINE IS THE LARGEST THING IN THE CARD, which is what makes this a news card
+            rather than a caption. Clamped rather than truncated mid-word, and never rewritten. */}
+        <div style={{fontSize: hero ? 21 : stacked ? 12 : large ? 15 : 13.5, color:C.ink,
+          lineHeight:1.34, fontWeight:700, fontFamily:"'DM Sans',sans-serif",
+          letterSpacing: hero ? "-0.3px" : undefined,
+          display:"-webkit-box", WebkitLineClamp: hero ? 4 : stacked ? 2 : 3,
+          WebkitBoxOrient:"vertical", overflow:"hidden"}}>{n.headline}</div>
+
+        {/* The summary earns space here because nothing is competing with it for the card. */}
+        {showSummary && n.summary && (
+          <div style={{fontSize: hero ? 13.5 : 12, color:C.muted, lineHeight:1.52,
+            fontFamily:"'DM Sans',sans-serif", fontWeight:300,
+            display:"-webkit-box", WebkitLineClamp: hero ? 3 : 2,
+            WebkitBoxOrient:"vertical", overflow:"hidden"}}>{n.summary}</div>
+        )}
+
+        {/* Publisher last, where a wire reader expects attribution — and never omitted. */}
+        {n.source && (
+          <div style={{marginTop:"auto", paddingTop: hero ? 4 : 2, fontSize:10.5, color:C.dim,
+            fontFamily:"'DM Sans',sans-serif", fontWeight:600, letterSpacing:"0.2px"}}>
+            {n.source}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const cardInner = !hasImage ? textCardInner : (
     <div className="card-hov" style={{background:C.white, border:`1px solid ${C.border}`,
       borderRadius:8, overflow:"hidden", cursor:"pointer", transition:"all 0.2s",
       height: hero ? "auto" : "100%", display:"flex", flexDirection:"column"}}>

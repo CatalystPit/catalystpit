@@ -390,8 +390,15 @@ L('\n=== THE FOUR-UP IS FOUR CLAIMS, NOT ONE CLAIM AND THREE SPACERS ===');
 
   // The render must honour the cap and never repeat.
   const home = fsRead('src/components/CatalystPit.jsx');
-  ok('the render takes at most three supporting tiles',
-    mut('rendercap') ? false : /news\.slice\(1, 4\)/.test(home));
+  // ⚠️ THE CAP SURVIVED; THE SLICE GREW AN OFFSET. The hero is now conditional — when nothing in the
+  // pool is both high-impact and recent, nothing is promoted and the stories are drawn as equals —
+  // so the supporting grid starts at 1 when there IS a hero and at 0 when there is not. The cap of
+  // four (DESK_SLOTS) is unchanged, and what this assertion actually protects is that the grid never
+  // re-renders the hero to fill space.
+  ok('the render takes at most three supporting tiles under a hero',
+    mut('rendercap') ? false : /news\.slice\(heroWorthy \? 1 : 0, 4\)/.test(home));
+  ok('…and the hero itself is only rendered when one was earned',
+    mut('rendercap') ? false : /\{heroWorthy && \(/.test(home));
   ok('…and the old padding expression is gone',
     mut('rendercap') ? false : !/news\[i % Math\.min/.test(home));
   ok('homepage story cards carry no publisher photograph',

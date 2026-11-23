@@ -235,10 +235,43 @@ export const IMPACT_RANK = { high: 3, notable: 2, routine: 1 };
  * Stable: equal tiers keep the order they arrived in, so this is a re-ranking of what we already
  * had, not a re-shuffle. Nothing is dropped — routine items are still there, lower down.
  */
+/**
+ * When was this published, in epoch ms, or null when the item does not say.
+ *
+ * ⚠️ TOLERANT ON PURPOSE. The same ranking runs over curated articles, wire items and filing cards,
+ * and they carry their timestamp under different names and in different units — ISO strings, epoch
+ * seconds, epoch milliseconds, and on the homepage a precomputed `mins` age. Guessing wrong here
+ * silently reorders the front page, so every shape the pipeline actually produces is handled rather
+ * than assumed.
+ */
+export function publishedMs(item = {}) {
+  if (Number.isFinite(item.mins)) return Date.now() - item.mins * 60_000;
+  const v = item.publishedAt ?? item.published ?? item.datetime ?? item.date ?? item.time ?? null;
+  if (v == null) return null;
+  // Epoch seconds and epoch milliseconds are both common; 2e10 separates them until the year 2603.
+  if (typeof v === 'number') return Number.isFinite(v) ? (v < 2e10 ? v * 1000 : v) : null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * ⚠️ RECENCY IS THE TIE-BREAK, AND ITS ABSENCE PUT A THREE-DAY-OLD STORY ON THE FRONT PAGE.
+ *
+ * This sorted by impact and then by ORIGINAL ARRAY INDEX, so among equally-ranked HIGH stories the
+ * one that happened to be first in the pool led — permanently, because its position never changed.
+ * Measured on production: "Citi Undercounted $35 Billion in Assets at U.K. Subsidiary" held the hero
+ * at 73.9 hours old while Nvidia's CEO returning, 1.3 hours old and also HIGH, sat in position two.
+ *
+ * Impact still decides first and is untouched; recency now decides WITHIN an impact band, which is
+ * the only place a news desk would use it. Original index remains the final tie-break so the sort
+ * stays stable for items published in the same instant.
+ */
 export function rankByImpact(items, { read = (x) => x } = {}) {
   return (Array.isArray(items) ? items : [])
-    .map((x, i) => ({ x, i, r: IMPACT_RANK[impactOf(read(x))] ?? 1 }))
-    .sort((a, b) => (b.r - a.r) || (a.i - b.i))
+    .map((x, i) => ({ x, i, r: IMPACT_RANK[impactOf(read(x))] ?? 1, t: publishedMs(read(x)) }))
+    // An item with no timestamp sorts after dated ones in the same band rather than ahead of them:
+    // "we do not know when this happened" is not a reason to lead the page.
+    .sort((a, b) => (b.r - a.r) || ((b.t ?? 0) - (a.t ?? 0)) || (a.i - b.i))
     .map((e) => e.x);
 }
 
@@ -250,8 +283,34 @@ export function rankByImpact(items, { read = (x) => x } = {}) {
  * at all, which is why the caller falls back to filings rather than promoting the least-bad
  * magazine feature.
  */
-export function isHeroWorthy(item) {
-  return impactOf(item) === 'high';
+/**
+ * ⚠️ A HERO IS ALSO A CLAIM ABOUT *WHEN*. The largest element on the page reads as "this is what
+ * matters today", and a three-day-old banking story under that heading is wrong even when its impact
+ * is genuinely high. Twenty-four hours is the window: long enough that a Friday evening story still
+ * leads on Saturday morning, short enough that nothing from the week before can.
+ *
+ * Past the window the caller falls through to verified filings and then to a quiet-news state, which
+ * is the honest alternative to filling a hero with something stale.
+ */
+export const HERO_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export function isHeroWorthy(item, { now = Date.now(), maxAgeMs = HERO_MAX_AGE_MS } = {}) {
+  if (impactOf(item) !== 'high') return false;
+  const t = publishedMs(item);
+  // ⚠️ THE WINDOW EXCLUDES WHAT IS PROVABLY STALE, NOT WHAT IS MERELY UNDATED.
+  //
+  // My first version allowed an undated item only when it was an issuer filing, reasoning that an
+  // article's age is exactly the thing in question. The existing suite showed that reasoning costs
+  // more than it buys: a scheduled macro print — "Minutes of the Federal Open Market Committee",
+  // which belongs to no issuer and carries no article timestamp in this pipeline — stopped being
+  // hero-worthy, and the module fell through to the filings floor on a day the FOMC reported.
+  //
+  // Staleness is a claim about a known date. With no date there is nothing to measure, and demoting
+  // on an absence silently reclassified a whole category of genuinely front-page events. The defect
+  // this window exists to fix had a date — 73.9 hours of it — so excluding the provable case is
+  // sufficient, and it leaves the dateless ones where the impact rules already put them.
+  if (t == null) return true;
+  return now - t <= maxAgeMs;
 }
 
 /** Hero plus supporting tiles. Four slots, and none of them may be padded. */
@@ -274,15 +333,55 @@ export const DESK_SLOTS = 4;
  * `news[i % …]` to fill the grid, which is how one story became four photographs of itself. Three
  * real filings and a gap is a true page; four slots filled with advice columns is not.
  */
-export function deskSelection(stories, filings, { limit = DESK_SLOTS } = {}) {
-  const high = (Array.isArray(stories) ? stories : []).filter(isHeroWorthy);
-  if (high.length) return { items: rankByImpact(high).slice(0, limit), leadingWithFilings: false };
+export function deskSelection(stories, filings, { limit = DESK_SLOTS, now = Date.now() } = {}) {
+  const all = Array.isArray(stories) ? stories : [];
+  const fresh = (s) => isHeroWorthy(s, { now });
 
-  const fromFilings = (Array.isArray(filings) ? filings : []).filter(isHeroWorthy);
+  const high = all.filter(fresh);
+  if (high.length) return { items: rankByImpact(high).slice(0, limit), leadingWithFilings: false, heroWorthy: true };
+
+  const fromFilings = (Array.isArray(filings) ? filings : []).filter(fresh);
   if (fromFilings.length) {
-    return { items: rankByImpact(fromFilings).slice(0, limit), leadingWithFilings: true };
+    return { items: rankByImpact(fromFilings).slice(0, limit), leadingWithFilings: true, heroWorthy: true };
   }
-  return { items: [], leadingWithFilings: false };
+
+  // ── ⚠️ A THIRD TIER, BECAUSE "QUIET" WOULD HAVE BEEN A LIE ───────────────────────────────────
+  //
+  // Measured on production: the pool held ONE high-impact story — Citi's undercounted assets, high
+  // only because its category is SEC — and it was 74 hours old. Everything else about Nvidia's CEO
+  // returning and the stock soaring 30% classifies as `notable`, not high. So once the hero window
+  // excludes the stale item there is no high story and no filing, and the section would have
+  // announced "Markets are quiet right now" on a day the Nasdaq jumped on the biggest single-stock
+  // story of the week. That is a worse falsehood than the stale hero was.
+  //
+  // So fresh NOTABLE stories are shown — and `heroWorthy: false` tells the caller to render them as
+  // a compact list rather than promote one into the big slot. Nothing is promoted to a major
+  // headline it has not earned; the section simply stops pretending there is nothing to report.
+  // `routine` is deliberately excluded: advice columns and promotional wire copy stay out, which is
+  // the whole point of the impact classification and is unchanged by any of this.
+  const notable = all.filter((s) => {
+    if ((IMPACT_RANK[impactOf(s)] ?? 1) < IMPACT_RANK.notable) return false;
+    // ⚠️ NOTABLE ALONE IS NOT ENOUGH, AND verify-impact PROVED IT. `notable` can be earned by
+    // CATEGORY with no other qualification, so my first version of this tier admitted
+    // "Le Guide MICHELIN dévoile sa sélection 2026" — tag MARKETS, therefore notable — onto the
+    // front page. That is precisely the "fill the space with whatever is left" failure the impact
+    // rules exist to prevent.
+    //
+    // A resolved ticker is the existing test of substance, in this file's own words: the keyword
+    // says WHAT happened, the ticker says it happened to a company someone can act on. Measured
+    // against the live pool it keeps the three Nvidia stories and drops the restaurant guide.
+    if (!resolvedTicker(s)) return false;
+    const t = publishedMs(s);
+    // Same rule as the hero window, for the same reason: exclude what is provably stale, not what is
+    // merely undated. Consistency matters here — a different answer in the two tiers would mean an
+    // item could be too old to lead and simultaneously too undated to appear at all.
+    return t == null || now - t <= HERO_MAX_AGE_MS;
+  });
+  if (notable.length) {
+    return { items: rankByImpact(notable).slice(0, limit), leadingWithFilings: false, heroWorthy: false };
+  }
+
+  return { items: [], leadingWithFilings: false, heroWorthy: false };
 }
 
 // Editorial flag styling — subtle colored tag, no number, no emoji. null = don't render a flag.
