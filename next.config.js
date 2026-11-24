@@ -51,35 +51,38 @@ const nextConfig = {
   // 'unpdf' — serverless pdfjs build used by the congress House PTR parser; keep it external.
   serverExternalPackages: ['ably', 'unpdf'],
 
-  // ⚠️ THE BULK OF THE SITE WAS UNCACHEABLE, AND IT SAID SO IN A HEADER.
+  // ⚠️ THE BULK OF THE SITE IS UNCACHEABLE, AND A headers() ENTRY DOES NOT FIX IT. MEASURED.
   //
-  // Measured on production as Googlebot: /ticker/NVDA returned
+  // /ticker/[symbol] — ~19,760 of the 19,767 URLs in our own sitemap — is served, as Googlebot:
   //
   //   cache-control: private, no-cache, no-store, max-age=0, must-revalidate
-  //   x-vercel-cache: MISS      ← on every request, including immediate repeats
+  //   x-vercel-cache: MISS      ← every request, including an immediate repeat
   //
-  // That is Next's default for a DYNAMICALLY rendered route, and /ticker/[symbol] is dynamic
-  // because it reads searchParams to preserve ?tab= across the lowercase-to-uppercase redirect.
-  // /insiders and /news are prerendered and came back HIT with age=178 and age=38567; the ~19,760
-  // ticker URLs — which are the sitemap, almost all of it — reached the origin and the database on
-  // every single crawl, and told every intermediary never to store the result.
+  // while /insiders and /news come back HIT at age=178 and age=38567. Every crawl of a ticker page
+  // reaches the origin and the database, and the response tells every intermediary not to store it.
   //
-  // What the server renders there is a last COMPLETED close, Form 4 rows, a 13F snapshot and
-  // recent headlines. None of it changes on a sixty-second timescale, and the live quote is fetched
-  // client-side after mount, so an entitled reader's price does not come from this cache.
+  // THE ATTEMPTED FIX IS RECORDED HERE BECAUSE IT FAILED, and a reader should not spend the same
+  // hour on it. A `headers()` entry setting
+  // `Cache-Control: public, s-maxage=300, stale-while-revalidate=3600` on '/ticker/:symbol' was
+  // deployed and measured on production: the header did NOT take. For a route Next renders
+  // dynamically, the framework's own Cache-Control is applied after config headers and wins. Dead
+  // config that reads as if it works is worse than none, so it is not left in place.
   //
-  // ⚠️ AND THE TTL IS SHORTER THAN THE DATA'S OWN CADENCE, which is the rule this project learned
-  // expensively: /api/market was cached for 900s against a 300s write and served a tape three
-  // generations old. 300s here sits inside every ingest cadence the page depends on, and
-  // stale-while-revalidate keeps the first visitor after expiry from waiting on the database.
-  async headers() {
-    return [
-      {
-        source: '/ticker/:symbol',
-        headers: [{ key: 'Cache-Control', value: 'public, s-maxage=300, stale-while-revalidate=3600' }],
-      },
-    ];
-  },
+  // THE ACTUAL CAUSE is that the page reads searchParams — to preserve ?tab= across the
+  // lowercase-to-uppercase permanent redirect — which opts the whole route into dynamic rendering
+  // for every request, including the ~19,760 that never take the redirect branch.
+  //
+  // THE TWO FIXES THAT WOULD WORK, neither of them a one-line change and neither verifiable
+  // locally (production Clerk keys are domain-locked, so `next start` 500s at middleware here):
+  //
+  //   1. Move the casing redirect into middleware, which already runs on these paths, and drop
+  //      searchParams from the page. The route can then carry `export const revalidate` and be
+  //      served from the ISR cache. Risk: middleware ordering with Clerk, and verify-ticker-urls
+  //      has 187 assertions pinned to the current redirect behaviour.
+  //   2. generateStaticParams for the top N symbols by traffic, leaving the long tail dynamic.
+  //      Prerenders the pages that matter and leaves the measured problem for the rest.
+  //
+  // Not attempted blind. See the deployment report for the measurement.
 
   async redirects() {
     return [

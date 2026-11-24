@@ -464,14 +464,51 @@ export function hasDeskSubstance(item = {}) {
  * "Enriched stories outrank wires" — the guarantee the previous fix established — is preserved:
  * block 1 is still entirely above block 3.
  */
-export function composeRiver({ curated = [], wire = [], filings = [] } = {}) {
+export function composeRiver({ curated = [], wire = [], filings = [] } = {}, { now = Date.now() } = {}) {
   const pool = Array.isArray(filings) ? filings : [];
   const exceptional = pool.filter((f) => filingTier(f) === 'exceptional');
   const routine = pool.filter((f) => filingTier(f) !== 'exceptional');
   return [
-    ...rankByImpact([...(Array.isArray(curated) ? curated : []), ...exceptional]),
+    ...rankCurrentFirst([...(Array.isArray(curated) ? curated : []), ...exceptional], { now }),
     ...rankByImpact(routine),
     ...rankByImpact(Array.isArray(wire) ? wire : []),
+  ];
+}
+
+/**
+ * Rank by significance, but never above something that is provably stale.
+ *
+ * ⚠️ MEASURED ON PRODUCTION AFTER THE FIRST DEPLOY OF composeRiver, AND IT WAS STILL WRONG.
+ * The river came back:
+ *
+ *   0  SEC 8-K      2026-11-23T23:42  DRVN · Delisting risk
+ *   1  SEC 8-K      2026-11-23T22:20  SAFX · Delisting risk
+ *   2  WSJ          2026-11-20T16:59  Citi Undercounted $35 Billion in Assets at U.K. Subsidiary
+ *   3  MarketWatch  2026-11-24T12:50  The biggest biotech deal in nearly three years…
+ *
+ * Index 2 is FOUR DAYS OLD and it was sitting above everything published that morning, because
+ * rankByImpact sorts by tier and only then by recency — and that one story is the pool's lone
+ * `high` (its category is SEC), so every `notable` article from today ranked below it however
+ * fresh. This is the same story, and the same 73.9-hour staleness, that once held the homepage
+ * hero and is the reason HERO_MAX_AGE_MS exists; the window was applied to the front door and not
+ * to the river.
+ *
+ * So currency is the FIRST comparison and significance the second: anything inside the window
+ * outranks anything provably outside it, and within each group the existing desk order applies
+ * unchanged. Nothing is dropped and nothing is demoted out of its block — the Citi story stays in
+ * the journalism block, above every filing, just not at the top of the page four days on.
+ *
+ * ⚠️ UNDATED IS NOT STALE, which is the same distinction isHeroWorthy draws and for the same
+ * reason: staleness is a claim about a known date, and demoting on an absence silently reclassified
+ * a whole category of genuine front-page events — a scheduled macro print carries no article
+ * timestamp in this pipeline.
+ */
+export function rankCurrentFirst(items, { now = Date.now(), maxAgeMs = HERO_MAX_AGE_MS } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const current = (x) => { const t = publishedMs(x); return t == null || now - t <= maxAgeMs; };
+  return [
+    ...rankByImpact(list.filter(current)),
+    ...rankByImpact(list.filter((x) => !current(x))),
   ];
 }
 

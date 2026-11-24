@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import { impactOf, matchesKeyword, IMPACT_RANK, rankByImpact, isHeroWorthy, deskSelection, DESK_SLOTS,
   composeRiver, filingTier, isFilingStory, isNewsDesk, hasDeskSubstance,
-  EXCEPTIONAL_FILING_LABELS, ROUTINE_FILING_LABELS } from '../src/lib/impact.js';
+  EXCEPTIONAL_FILING_LABELS, ROUTINE_FILING_LABELS, rankCurrentFirst } from '../src/lib/impact.js';
 
 const fsRead = (p) => fs.readFileSync(new URL(p, new URL('..', import.meta.url)), 'utf8');
 
@@ -837,6 +837,56 @@ L('\n=== THE PRODUCERS AND THE ROUTE ARE ACTUALLY WIRED TO IT ===');
   const home = strip(fsRead('src/components/CatalystPit.jsx'));
   ok('…and so do the homepage’s filing cards',
     mut('dropssec') ? false : /secLabel:\s*f\.primaryLabel/.test(home));
+}
+
+
+L('\n=== CURRENCY OUTRANKS SIGNIFICANCE IN THE RIVER, AS IT DOES AT THE FRONT DOOR ===');
+{
+  // ⚠️ MEASURED ON PRODUCTION AFTER composeRiver's FIRST DEPLOY. The river still led:
+  //
+  //   0  SEC 8-K      2026-11-23T23:42  DRVN · Delisting risk
+  //   1  SEC 8-K      2026-11-23T22:20  SAFX · Delisting risk
+  //   2  WSJ          2026-11-20T16:59  Citi Undercounted $35 Billion in Assets at U.K. Subsidiary
+  //   3  MarketWatch  2026-11-24T12:50  The biggest biotech deal in nearly three years…
+  //
+  // Index 2 was four days old. rankByImpact sorts by tier first, and that story is the curated
+  // pool's lone 'high' — its category is SEC — so every notable article published that morning
+  // ranked below it no matter how fresh. It is literally the same story, and the same staleness,
+  // that HERO_MAX_AGE_MS was introduced for; the window guarded the homepage and not the river.
+  const iso = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const stale = { title: 'Citi Undercounted $35 Billion in Assets at U.K. Subsidiary', source: 'WSJ', category: 'SEC', ticker: 'C', published: iso(96) };
+  const today = { title: 'Analysts raise price target on chipmakers after earnings beat', source: 'Bloomberg', category: 'MARKETS', published: iso(2) };
+  const undated = { title: 'Minutes of the Federal Open Market Committee', source: 'Reuters', category: 'MACRO' };
+
+  ok('the stale high-impact story is genuinely the higher tier',
+    IMPACT_RANK[impactOf(stale)] > IMPACT_RANK[impactOf(today)],
+    `${impactOf(stale)} vs ${impactOf(today)}`);
+
+  const river = composeRiver({ curated: [stale, today], wire: [], filings: [] });
+  ok('…and today’s reporting still leads the river',
+    mut('ignoresage') ? false : river[0] === today, String(river[0].source));
+  ok('…while the stale story is kept, not dropped', river.length === 2 && river[1] === stale);
+
+  // It must stay in the journalism block: demoted within its block, never below the filings.
+  const fil = { title: 'ABCD · Earnings', source: 'SEC 8-K', category: 'SEC', ticker: 'ABCD', material: true, secLabel: 'Earnings', published: iso(0.2) };
+  const withFilings = composeRiver({ curated: [stale, today], wire: [], filings: [fil] });
+  ok('…and still above the filings block',
+    mut('ignoresage') ? false : withFilings.indexOf(stale) < withFilings.indexOf(fil),
+    withFilings.map((x) => x.source).join(' | '));
+
+  // ⚠️ UNDATED IS NOT STALE. A scheduled macro print carries no article timestamp in this
+  // pipeline, and demoting on an absence is what isHeroWorthy already refuses to do.
+  const withUndated = composeRiver({ curated: [stale, undated], wire: [], filings: [] });
+  ok('an undated item is not treated as stale',
+    mut('undatedisstale') ? false : withUndated[0] === undated, String(withUndated[0].title).slice(0, 40));
+
+  // The window is the same one the hero uses — one answer to "is this current", not two.
+  ok('the river and the hero share one freshness window', (() => {
+    const justInside = { title: 'Target cuts guidance after a weak quarter', source: 'WSJ', category: 'SEC', ticker: 'TGT', published: iso(23) };
+    const justOutside = { ...justInside, published: iso(25) };
+    return composeRiver({ curated: [justInside, today] })[0] === justInside
+      && composeRiver({ curated: [justOutside, today] })[0] === today;
+  })());
 }
 
 L(`\n${pass} passed, ${fail} failed`);
