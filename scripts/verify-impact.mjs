@@ -889,5 +889,50 @@ L('\n=== CURRENCY OUTRANKS SIGNIFICANCE IN THE RIVER, AS IT DOES AT THE FRONT DO
   })());
 }
 
+
+L('\n=== A NEWSPAPER ARTICLE ABOUT A FILING IS NOT A FILING ===');
+{
+  // ⚠️ FOUND BY MEASURING PRODUCTION, NOT BY READING THE CODE. The first version of isFilingStory
+  // accepted category 'SEC' as proof of a filing card, and 'SEC' is also a TOPIC the curated
+  // enrichment assigns. Live pool, 2026-11-24:
+  //
+  //   "Citi Undercounted $35 Billion in Assets at U.K. Subsidiary"   source WSJ   category SEC
+  //   "Opinion | How to Kill a Bull Market"                          source WSJ   category SEC
+  //
+  // Each was treated as a filing card, which in deskSelection means band 1 — the filings floor,
+  // used only when nothing was reported. The change meant to put reporting back on the front door
+  // would have excluded the Wall Street Journal from it.
+  const wsjAboutSec = { title: 'Citi Undercounted $35 Billion in Assets at U.K. Subsidiary', source: 'WSJ', category: 'SEC', ticker: 'C' };
+  const realCard = { title: 'ABCD · Earnings', source: 'SEC 8-K', category: 'SEC', ticker: 'ABCD', material: true, secLabel: 'Earnings' };
+
+  ok('a WSJ story tagged SEC is not a filing card', mut('categoryisfiling') ? false : !isFilingStory(wsjAboutSec));
+  ok('…and the real filing card still is', isFilingStory(realCard));
+  ok('…so it is not given a filing tier', mut('categoryisfiling') ? false : filingTier(wsjAboutSec) === null);
+
+  // It must be able to reach the front door on its own merit, which is the whole point.
+  const fresh = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const d = deskSelection(
+    [{ ...wsjAboutSec, headline: wsjAboutSec.title, sym: 'C', tag: 'SEC', published: fresh(3), imageUrl: null }],
+    Array.from({ length: 10 }, (_, i) => ({
+      headline: `SYM${i} · Earnings`, source: 'SEC 8-K', tag: 'SEC', sym: `AB${i}`,
+      material: true, secLabel: 'Earnings', published: fresh(0.5), imageUrl: null,
+    })),
+  );
+  ok('…and a fresh WSJ story about a filing leads the front door over ten routine 8-Ks',
+    mut('categoryisfiling') ? false : d.items[0].source === 'WSJ', String(d.items[0].source));
+  ok('…with the module not labelled as filings', d.leadingWithFilings === false);
+
+  // ⚠️ THE CATEGORY IS STILL ACCEPTED WHERE NOTHING CONTRADICTS IT. A card with no publisher at all
+  // is not a published article by anyone, and dropping the fallback outright would misclassify a
+  // filing card written before the source marker existed.
+  ok('a sourceless SEC-tagged row is still treated as a filing',
+    isFilingStory({ title: 'ABCD · Delisting risk', category: 'SEC', ticker: 'ABCD', material: true }));
+
+  // impactOf is explicitly NOT changed by any of this — the brief requires the legitimate impact
+  // classifications be preserved, and "a story about a filing is an issuer matter" is one of them.
+  ok('impactOf still treats an SEC-categorised story as an issuer matter',
+    impactOf(wsjAboutSec) === 'high', impactOf(wsjAboutSec));
+}
+
 L(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

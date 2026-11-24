@@ -371,11 +371,32 @@ export const ROUTINE_FILING_LABELS = new Set([
   'Exec / board change',            // 5.02
 ]);
 
-/** Is this row a filing card rather than a published article? Both item shapes are accepted. */
+/**
+ * Is this row a filing CARD rather than a published article? Both item shapes are accepted.
+ *
+ * ⚠️ THE CATEGORY IS NOT THE TEST, AND USING IT DEMOTED REAL JOURNALISM. My first version was
+ * `cat === 'SEC' || src === 'SEC8K'`, and 'SEC' is also a TOPIC the curated enrichment assigns.
+ * Measured on production: "Citi Undercounted $35 Billion in Assets at U.K. Subsidiary", source WSJ,
+ * carries category 'SEC' — it is a newspaper article ABOUT a filing. So did two WSJ opinion columns
+ * in the same pool. Under the category test every one of them was a "filing", which in
+ * deskSelection meant band 1: the filings floor, used only when nothing was reported. A WSJ story
+ * would have been excluded from the front door by the very change meant to put reporting back on it.
+ *
+ * The producers are the authority on what a filing card is, and both of them stamp it: `source:
+ * 'SEC 8-K'` in news-filings.mjs and in the homepage's filingCards. That marker is the test.
+ *
+ * The category is still accepted, but only when there is no publisher at all to contradict it —
+ * a card with no source is not a published article by anyone.
+ *
+ * impactOf's own `cat === 'SEC'` test is untouched: there it means "treat this as an issuer matter
+ * for the advice damper", which is correct for a story about a filing. The two questions are
+ * different, and conflating them is what caused this.
+ */
 export function isFilingStory(item = {}) {
-  const cat = `${item.category || item.tag || ''}`.toUpperCase();
-  const src = String(item.source || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return cat === 'SEC' || src === 'SEC8K';
+  const src = String(item.source ?? item.publisher ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (src === 'SEC8K') return true;
+  if (src) return false;
+  return `${item.category || item.tag || ''}`.toUpperCase() === 'SEC';
 }
 
 /**
