@@ -1,6 +1,6 @@
 import { pageMeta } from '../lib/seo';
 import { buildHomeModel } from '../lib/home-model.mjs';
-import { readPitSnapshot, readConsensusTop } from '../lib/home-server.mjs';
+import { readPitSnapshot, readConsensusTop, readHomeFilings } from '../lib/home-server.mjs';
 import HomeClient from './HomeClient';
 
 // Server wrapper: a 'use client' file cannot export metadata, so the page's own title,
@@ -40,9 +40,10 @@ export default async function Page() {
   // null on any problem and are settled independently, so a missing consensus board still ships a
   // page full of insider and congressional research, and a total cache outage degrades to exactly
   // the behaviour that shipped before this change: the shell, filled in by the client's own fetch.
-  const [snap, consensus] = await Promise.all([
+  const [snap, consensus, filings] = await Promise.all([
     readPitSnapshot().catch(() => null),
     readConsensusTop(3).catch(() => null),
+    readHomeFilings(12).catch(() => []),
   ]);
 
   // ⚠️ THE SAME buildHomeModel THE BROWSER RUNS, AGAINST THE SAME BLOB. Not a server-side
@@ -57,7 +58,9 @@ export default async function Page() {
       politicianData: { trades: snap.congress || [] },
       snapCatalysts: snap.catalysts ?? null,
       usingSnapshot: true,
-      filings: [],
+      // ⚠️ THE SAME FILINGS THE BROWSER FETCHES, so the crawler's copy of Top Stories and the
+      // reader's copy cannot disagree about the day's biggest catalyst. See readHomeFilings.
+      filings,
     }, { now: Date.now() })
     : null;
 

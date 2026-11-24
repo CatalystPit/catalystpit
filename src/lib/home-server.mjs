@@ -19,10 +19,10 @@
 //                   are market-data-licensed figures, resolved per viewer by /api/quotes, which
 //                   fails closed. They stay client-side. Baking a quote into cached public HTML is
 //                   a licensing decision, not a rendering one, and this change does not make it.
-//   8-K filings     `recentEightK` is a Postgres query. The brief for this work says not to add
-//                   database queries to page rendering, and the snapshot's stories are the real
-//                   journalism the front door is supposed to lead with anyway. Filings continue to
-//                   arrive client-side exactly as before.
+//   anything per-request   nothing here runs per visitor. The 8-K read below is a database
+//                   query, and it is here only because the page is REGENERATED: one indexed
+//                   SELECT … LIMIT 12 per revalidation window, not one per request. See
+//                   readHomeFilings for why withholding it was worse than reading it.
 //   anything about the viewer   no auth(), no Clerk, no entitlement. The root layout avoids
 //                   auth() on purpose (see its comment) so that 141 pages can stay static; this
 //                   module must not undo that.
@@ -117,5 +117,38 @@ export async function readConsensusTop(limit = 3) {
     return board.rows.slice(0, limit).map(displayFacts);
   } catch {
     return null;
+  }
+}
+
+/**
+ * The canonical 8-K filings the front door shows, or [] — the same read /api/eightk serves.
+ *
+ * ⚠️ THIS WAS LEFT OUT OF THE FIRST VERSION OF THIS CHANGE, AND MEASURING PRODUCTION SHOWED WHY IT
+ * COULD NOT BE. With no filings in the pool the server rendered Top Stories led by HPE/MarketWatch
+ * while the hydrated page, which fetches them, led with "PSQH · Exchange removal from listing" — a
+ * delisting notice, one of the labels deskSelection treats as exceptional. Both orderings were
+ * correct for their own pool, which is the problem: the page a crawler reads and the page a reader
+ * sees disagreed about what the day's biggest catalyst was, and the crawler's copy was missing a
+ * company being removed from its exchange. Same pool, same desk, one answer.
+ *
+ * ⚠️ AND THIS DOES NOT REOPEN THE FILINGS-DOMINATE BUG. deskSelection splits 8-Ks by SEC item code:
+ * on the run that prompted this, 10 of 12 were routine — Material agreement, Exec / board change,
+ * Earnings — and stayed a floor beneath the reporting, while the one delisting notice led and the
+ * module labelled itself "8-K FILINGS" for saying so. The hierarchy corrected at 1f9ff3fa decides
+ * this, not the presence or absence of the data.
+ *
+ * ⚠️ ONE QUERY PER REVALIDATION, NOT PER VISITOR, AND NO DDL. `ensure: false` skips
+ * ensureEightkTable's four CREATE … IF NOT EXISTS statements, which have no business running while
+ * a public page is being generated. Any failure — unreachable database, missing table, a build
+ * with no DATABASE_URL — returns [] and the page degrades to the journalism-only pool, which is
+ * what it rendered before this function existed.
+ */
+export async function readHomeFilings(limit = 12) {
+  try {
+    const { recentEightK } = await import('./eightk.js');
+    const list = await recentEightK({ materialOnly: true, limit, days: 7, ensure: false });
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
   }
 }

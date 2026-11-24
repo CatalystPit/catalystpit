@@ -233,8 +233,30 @@ L('\n=== THE SERVER ACTUALLY CALLS IT, AND STAYS PREREGENERATED ===');
     'prices are market-data-licensed and resolved per viewer');
   ok('…and the server reader does not touch the price keys either',
     !/ticker_tape/.test(srv) && !/market_snapshot/.test(srv));
-  ok('the server reader runs no database query', !/\bdb\b/.test(srv) && !/drizzle/.test(srv)
-    && !/recentEightK/.test(srv));
+  // ── ⚠️ THE ONE DATABASE READ, AND THE FOUR CONDITIONS ON IT ──────────────
+  //
+  // The first version of this change withheld the 8-K filings from the server to keep page
+  // rendering query-free. Measuring production showed what that cost: the crawler's copy of Top
+  // Stories led with HPE/MarketWatch while the hydrated page led with "PSQH · Exchange removal
+  // from listing", because only the browser had the filings. The two pages disagreed about the
+  // day's biggest catalyst and the crawler's copy was missing a delisting. So the read is here,
+  // and it is fenced instead of forbidden.
+  ok('the only database read is the 8-K filings, and it is bounded',
+    /recentEightK\(\{ materialOnly: true, limit, days: 7, ensure: false \}\)/.test(srv),
+    'one indexed SELECT … LIMIT, 7-day window');
+  ok('…it runs NO DDL on a page render', mut('ddl') ? false : /ensure: false/.test(srv)
+    && !/ensureEightkTable/.test(srv));
+  ok('…it fails soft to an empty list, so the page degrades to journalism-only',
+    /return \[\];/.test(srv) && /readHomeFilings\(12\)\.catch\(\(\) => \[\]\)/.test(page));
+  ok('…and it is per revalidation window, not per request',
+    /export const revalidate = 300;/.test(page), 'asserted again here because it is the whole fence');
+  ok('the server reader still runs no OTHER query and imports no schema',
+    !/drizzle/.test(srv) && !/from '\.\/schema/.test(srv) && !/insiderTrades|congressTrades/.test(srv));
+
+  // ⚠️ THE POOLS MUST MATCH, which is the point of the read above.
+  ok('the server and the browser now rank the SAME pool',
+    mut('poolsdiffer') ? false : /filings,$/m.test(page) && !/filings: \[\]/.test(page),
+    'same stories, same filings, one deskSelection');
   ok('every server read fails soft to null rather than throwing or inventing a result',
     /return null;/.test(srv) && /catch \{ return null; \}/.test(srv)
       && /\.catch\(\(\) => null\)/.test(page));
@@ -332,10 +354,32 @@ L('\n=== THE EDITORIAL HIERARCHY SURVIVES THE SERVER RENDER ===');
   ok('a genuinely exceptional filing can still lead on its own importance',
     exceptional.items.some((x) => x.secLabel === 'Bankruptcy'));
 
-  // The server renders with filings: [] on purpose — no DB query on a page render.
-  const serverSel = deskSelection(m.news, m.filingCards);
-  ok('the SERVER render leads with journalism, since it carries no filings at all',
-    m.filingCards.length === 0 && serverSel.items[0]?.source === 'MarketWatch');
+  // ⚠️ THE EXACT SHAPE MEASURED ON PRODUCTION, 2026-11-24: twelve filings, ten of them routine,
+  // one delisting notice, two MarketWatch stories. Asserted directly, because this is the case
+  // that made the server read the filings in the first place.
+  const asMeasured = [
+    { ticker: 'PSQH', primaryLabel: 'Exchange removal from listing', material: true, filedAt: iso(2), url: 'https://sec.gov/psqh' },
+    ...['TULP:Exec / board change', 'SGLY:Security-holder rights', 'PRXA:Material agreement',
+      'PAL:Material agreement', 'SURG:Earnings', 'KRFG:Exec / board change', 'PETS:Material agreement',
+      'SOLV:Exec / board change', 'PBT:Material agreement', 'CRMT:Material agreement'].map((s, i) => {
+      const [ticker, primaryLabel] = s.split(':');
+      return { ticker, primaryLabel, material: true, filedAt: iso(1 + i * 0.2), url: `https://sec.gov/${ticker}` };
+    }),
+  ];
+  const prod = buildHomeModel({ ...serverInputs(), filings: asMeasured }, { now: NOW });
+  const prodSel = deskSelection(prod.news, prod.filingCards);
+  ok('the delisting notice leads, because it is exceptional and the desk says so',
+    mut('routinelead') ? false : prodSel.items[0]?.sym === 'PSQH'
+      && prodSel.items[0]?.secLabel === 'Exchange removal from listing',
+    `${prodSel.items[0]?.sym} · ${prodSel.items[0]?.secLabel}`);
+  ok('…the reporting is right behind it',
+    prodSel.items[1]?.source === 'MarketWatch' && prodSel.items[2]?.source === 'MarketWatch');
+  ok('…and not one of the ten routine filings reaches the module',
+    mut('routinelead') ? false
+      : !prodSel.items.some((x) => ['Material agreement', 'Exec / board change', 'Earnings',
+        'Security-holder rights'].includes(x.secLabel)),
+    `${prodSel.items.length} items, none routine`);
+  ok('…and the module says out loud that a filing is leading it', prodSel.leadingWithFilings === true);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

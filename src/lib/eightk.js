@@ -315,8 +315,14 @@ export async function repairMissingItems({ limit = 200, days = 45 } = {}) {
  *   deliberately asked about one company wants its routine filings too, while the wire showing
  *   every issuer's routine 8-Ks would be noise. That choice is made in the route, not here.
  */
-export async function recentEightK({ materialOnly = true, limit = 40, days = 7, ticker = null } = {}) {
-  await ensureEightkTable();
+export async function recentEightK({ materialOnly = true, limit = 40, days = 7, ticker = null, ensure = true } = {}) {
+  // ⚠️ `ensure: false` IS FOR RENDER PATHS, AND IT CHANGES NOTHING ELSE. ensureEightkTable issues
+  // four CREATE … IF NOT EXISTS statements the first time a process asks, which is correct for the
+  // ingest and for an API route and wrong for a page being regenerated: DDL on a read path that
+  // serves public HTML. The caller that opts out accepts the consequence — if the table were
+  // genuinely absent the query throws and that caller degrades to no filings, which is exactly
+  // what it would have shown anyway.
+  if (ensure) await ensureEightkTable();
   const since = sql`now() - make_interval(days => ${days})`;
   const sym = ticker ? String(ticker).toUpperCase().trim() : null;
   const base = materialOnly
