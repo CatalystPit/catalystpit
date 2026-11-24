@@ -54,17 +54,33 @@ export const canonical = (path = '/') => {
 //   /institutions/[slug]    same
 //   /watchlist /account /settings /sign-in /sign-up /u/[handle]   private or personal
 //   /feed /leaderboard      community surfaces, not search landing pages
-//   /charts /crypto         "coming soon" placeholders with no product behind them yet
+//   /charts /crypto         "coming soon" placeholders with no product behind them yet — and now
+//                           explicitly noindex at the page, because being merely absent from this
+//                           list does not stop a thin page being indexed once anything links to it
 //   /api/*                  never
+// ⚠️ FOUR ROOMS WITH REAL CONTENT WERE NEVER ADVERTISED. Each has its own generateMetadata, its
+// own self-canonical, index:true, and a server-rendered page — and none of them was in this list,
+// so the sitemap never named them. Measured as Googlebot, server-rendered text per page:
+//
+//   /dividends    4,948 words   the largest body of server-rendered content on the site
+//   /heatmap        221 words
+//   /scan           175 words   (and until this commit, canonical'd to the homepage)
+//   /fear-greed      49 words
+//
+// /dividends is the single best-indexable page we have. It was reachable only by crawling links.
 export const INDEXABLE_ROUTES = [
   { path: '/', priority: 1.0, changeFrequency: 'hourly' },
   { path: '/news', priority: 0.9, changeFrequency: 'hourly' },
   { path: '/insiders', priority: 0.9, changeFrequency: 'hourly' },
+  { path: '/scan', priority: 0.8, changeFrequency: 'hourly' },
   { path: '/politicians', priority: 0.8, changeFrequency: 'daily' },
   { path: '/institutions', priority: 0.8, changeFrequency: 'daily' },
   { path: '/consensus', priority: 0.8, changeFrequency: 'daily' },
+  { path: '/dividends', priority: 0.8, changeFrequency: 'daily' },
   { path: '/screener', priority: 0.7, changeFrequency: 'daily' },
+  { path: '/heatmap', priority: 0.7, changeFrequency: 'daily' },
   { path: '/markets', priority: 0.7, changeFrequency: 'hourly' },
+  { path: '/fear-greed', priority: 0.6, changeFrequency: 'daily' },
   { path: '/contact', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/privacy', priority: 0.3, changeFrequency: 'yearly' },
   { path: '/terms', priority: 0.3, changeFrequency: 'yearly' },
@@ -97,7 +113,16 @@ export const OG_IMAGE = {
  * without one, and query strings never become separate canonical URLs — ?f=… on the screener and
  * ?ref=… on any link both resolve to the bare path.
  */
-export function pageMeta({ title, description, path, ogType = 'website' }) {
+/**
+ * ⚠️ robots IS PASSED THROUGH, AND IT WAS NOT. This function destructured four options and
+ * discarded the rest, so `pageMeta({ ..., robots: { index: false } })` read at the call site as a
+ * noindex and produced nothing: the built /charts and /crypto HTML still carried the root layout's
+ * `index, follow`. Verified in .next/server/app/charts.html before and after.
+ *
+ * Omitted entirely when the caller does not pass it, so the root layout's directive continues to
+ * apply to every other page exactly as before — this adds an option, it does not add a default.
+ */
+export function pageMeta({ title, description, path, ogType = 'website', robots }) {
   const url = canonical(path);
   return {
     title,
@@ -105,5 +130,6 @@ export function pageMeta({ title, description, path, ogType = 'website' }) {
     alternates: { canonical: url },
     openGraph: { title, description, url, siteName: SITE_NAME, type: ogType, images: [OG_IMAGE] },
     twitter: { card: 'summary_large_image', title, description, images: [OG_IMAGE.url] },
+    ...(robots ? { robots } : {}),
   };
 }

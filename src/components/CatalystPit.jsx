@@ -415,6 +415,9 @@ const fetchAll = async () => {
         imageUrl: null,
         url: f.url || `/ticker/${f.ticker}`,
         material: f.material,
+        // The SEC item label, so deskSelection can tell a delisting notice from an earnings
+        // release. Both are material: true, and that flag is all this card used to carry.
+        secLabel: f.primaryLabel || 'Filing',
       }));
 
     return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg, filingCards };

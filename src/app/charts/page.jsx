@@ -5,6 +5,13 @@ export const metadata = pageMeta({
   title: { absolute: "Charts · CatalystPit" },
   description: "Interactive live charts with real-time data, multiple timeframes, and technical indicators. Coming soon to CatalystPit.",
   path: "/charts",
+  // ⚠️ A "COMING SOON" PAGE IS A THIN PAGE, AND IT WAS index, follow. It carries a heading, a
+  // paragraph about what the feature WILL do, and no product — the textbook shape Google treats as
+  // thin or as a doorway, and it competes for our own brand terms against rooms that do have
+  // something behind them. noindex keeps it reachable for anyone who follows a link and keeps it
+  // out of the index until there is a product to index. follow is retained so the links on it
+  // still pass through. Remove this the day the feature ships.
+  robots: { index: false, follow: true },
 });
 
 export default function ChartsPage() {

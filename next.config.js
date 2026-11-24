@@ -51,6 +51,36 @@ const nextConfig = {
   // 'unpdf' — serverless pdfjs build used by the congress House PTR parser; keep it external.
   serverExternalPackages: ['ably', 'unpdf'],
 
+  // ⚠️ THE BULK OF THE SITE WAS UNCACHEABLE, AND IT SAID SO IN A HEADER.
+  //
+  // Measured on production as Googlebot: /ticker/NVDA returned
+  //
+  //   cache-control: private, no-cache, no-store, max-age=0, must-revalidate
+  //   x-vercel-cache: MISS      ← on every request, including immediate repeats
+  //
+  // That is Next's default for a DYNAMICALLY rendered route, and /ticker/[symbol] is dynamic
+  // because it reads searchParams to preserve ?tab= across the lowercase-to-uppercase redirect.
+  // /insiders and /news are prerendered and came back HIT with age=178 and age=38567; the ~19,760
+  // ticker URLs — which are the sitemap, almost all of it — reached the origin and the database on
+  // every single crawl, and told every intermediary never to store the result.
+  //
+  // What the server renders there is a last COMPLETED close, Form 4 rows, a 13F snapshot and
+  // recent headlines. None of it changes on a sixty-second timescale, and the live quote is fetched
+  // client-side after mount, so an entitled reader's price does not come from this cache.
+  //
+  // ⚠️ AND THE TTL IS SHORTER THAN THE DATA'S OWN CADENCE, which is the rule this project learned
+  // expensively: /api/market was cached for 900s against a 300s write and served a tape three
+  // generations old. 300s here sits inside every ingest cadence the page depends on, and
+  // stale-while-revalidate keeps the first visitor after expiry from waiting on the database.
+  async headers() {
+    return [
+      {
+        source: '/ticker/:symbol',
+        headers: [{ key: 'Cache-Control', value: 'public, s-maxage=300, stale-while-revalidate=3600' }],
+      },
+    ];
+  },
+
   async redirects() {
     return [
       // ⚠️ THE RETIRED TERMINAL, REDIRECTED AT THE EDGE RATHER THAN BY RENDERING A PAGE.

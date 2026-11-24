@@ -28,6 +28,10 @@ let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail++; L(`  FAIL ${n}${d ? ' — ' + d : ''}`); } };
 
 const ROOT = new URL('..', import.meta.url);
+// Source assertions must read CODE, not prose. The news route's own comments name the very
+// constants an assertion checks for the absence of, so an unstripped read fails on correct code.
+const stripLineComments = (t) => String(t).replace(/^[ \t]*\/\/.*$/gm, '');
+
 const read = (p) => fs.readFileSync(new URL(p, ROOT), 'utf8');
 
 // lib/job-heartbeat.js imports ./db, which drags in the Clerk/Next server runtime, so TRACKED_JOBS
@@ -252,31 +256,64 @@ L('\n=== THE NEWS FEED RANKS BEFORE IT SLICES ===');
   // were doing while the News page led with FOMC minutes and the front door led with a
   // credit-card column. These assert the route still ranks, and still ranks first.
   const news = read('src/app/api/news/route.js');
-  const rankAt = news.indexOf('rankByImpact');
-  const sliceAt = news.indexOf('raw.slice(0, SIGNED_OUT_VISIBLE)');
-  ok('the feed is ranked by impact', mut('noranking') ? false : rankAt > 0);
-  ok('…before the signed-out slice', mut('slicefirst') ? false : rankAt > 0 && rankAt < sliceAt);
-  ok('…using the same shared desk the High-impact filter uses',
-    /from '\.\.\/\.\.\/\.\.\/lib\/impact'/.test(news));
-  // Ranking each pool separately and concatenating is what preserves curated-before-wire.
+
+  // ⚠️ THE ROUTE NO LONGER SPELLS THE ORDERING OUT, AND THAT IS THE POINT OF THE CHANGE.
   //
-  // ⚠️ PINNED TO THE ORDER, NOT TO THE LITERAL LINE. This read the exact text
-  // `[...rankByImpact(raw), ...rankByImpact(wire)]`, so adding a THIRD, more material tier above
-  // them — issuer 8-K filings — failed an assertion whose actual subject (curated still beats
-  // wire) was never violated. An assertion that breaks when correct code is extended is
-  // measuring the spelling of the implementation rather than the guarantee.
-  // The concatenation is the assignment that actually ranks — `let raw = []` on line 48 matches a
-  // looser pattern first and captures nothing, which made both assertions below fail on correct
-  // code. Anchored on rankByImpact so it can only select the real one.
-  const concat = /raw\s*=\s*\[([^\]]*rankByImpact[^\]]*)\]/.exec(news)?.[1] || '';
-  const posOf = (pool) => concat.indexOf(`rankByImpact(${pool})`);
-  ok('curated stories still outrank the wire',
-    mut('wirefirst') ? false : posOf('raw') > -1 && posOf('wire') > -1 && posOf('raw') < posOf('wire'),
-    concat.trim());
-  // …and the material issuer filings lead both, which is what makes High Impact answerable:
-  // the publisher pools carry no ticker, so impactOf's rule (A) can never fire on them.
-  ok('material 8-K filings lead the column',
-    mut('nofilings') ? false : posOf('filings') > -1 && posOf('filings') < posOf('raw'));
+  // Three assertions here were pinned to the literal expression
+  // `raw = [...rankByImpact(filings), ...rankByImpact(raw), ...rankByImpact(wire)]` — and that
+  // expression WAS the reported defect. Measured on production, /api/news?limit=200 returned 102
+  // items whose indices 0-39 were every one an SEC 8-K, with the first published article at index
+  // 40, because stacking the tiers used an impact CLASSIFICATION as an ORDERING. The ordering now
+  // lives in composeRiver() in lib/impact.js, where it can be asserted on behaviour instead of on
+  // spelling: verify-impact feeds it real pools and reads back what the feed would show.
+  //
+  // So what is checked here is what this suite is actually for — that the ROUTE delegates to the
+  // shared desk rather than growing its own opinion. The guarantees themselves (reporting leads,
+  // the filings stay one contiguous block, curated still outranks the wire, nothing is dropped)
+  // are asserted in verify-impact under "THE RIVER: REPORTING LEADS, THE FILINGS ARE THEIR OWN
+  // BLOCK". The previous comment here already warned that an assertion which breaks when correct
+  // code is extended measures the implementation's spelling; this is that warning coming due.
+  ok('the feed is composed by the shared desk',
+    mut('noranking') ? false : /composeRiver\(\{/.test(news));
+  ok('…using the same module the High-impact filter uses',
+    /from '\.\.\/\.\.\/\.\.\/lib\/impact'/.test(news));
+  ok('…and the route has no ordering of its own',
+    mut('routeranks') ? false : !/raw\s*=\s*\[\s*\.\.\./.test(news), 'route must not re-stack the pools');
+
+  // ⚠️ THE SIGNED-OUT SLICE ASSERTION WAS RED AT HEAD, BEFORE ANY OF THIS. It looked for
+  // `raw.slice(0, SIGNED_OUT_VISIBLE)`, and the route says at line 30: "SIGNED_OUT_VISIBLE is
+  // gone: the feed is no longer truncated for signed-out readers." sliceAt was therefore -1 and
+  // `rankAt < sliceAt` could never hold. It has been failing since market news became free —
+  // a false red, which is worse than no assertion because it trains the reader to skip the output.
+  // What it protected is now a stronger statement: no truncation exists to rank after.
+  ok('nothing truncates the feed for a signed-out reader',
+    // Comments are stripped first: the route's own line 30 EXPLAINS that SIGNED_OUT_VISIBLE is
+    // gone, so an unstripped read finds the name in the prose and fails on correct code — the
+    // same false-green-in-reverse this suite has been bitten by before.
+    mut('slicefirst') ? false
+      : !/SIGNED_OUT_VISIBLE|raw\.slice\(/.test(stripLineComments(news))
+        && /lockedCount = 0/.test(news));
+  // ⚠️ "MATERIAL 8-K FILINGS LEAD THE COLUMN" USED TO BE ASSERTED HERE, AND IT IS NOW ASSERTED
+  // FALSE — by instruction, not by accident, and not by fitting a test to an output.
+  //
+  // It was written to make the High Impact tab answerable: the publisher pools carry no ticker, so
+  // impactOf's rule (A) can never fire on them, and giving the column events that genuinely qualify
+  // was the right fix. The filings DO still qualify and the classification is untouched — every
+  // material 8-K still scores 'high', and the tab still works. What was wrong was promoting that
+  // tier to the top of the page: sixteen scheduled earnings notices, ten officer changes and nine
+  // new agreements are not the day's news, and they buried every newsroom on the tape.
+  //
+  // The replacement rule, in product terms: reporting leads; a GENUINELY EXCEPTIONAL filing — a
+  // bankruptcy, a delisting, a restatement, by SEC item code — still competes for the lead on its
+  // own importance; the routine material filings keep a clearly identified section of their own.
+  //
+  // Both of the old assertions were also pinned to the literal concatenation, which no longer
+  // exists. The guarantee each protected is asserted behaviourally in verify-impact: "the river
+  // leads with reporting, not a filing", "…and the press-release wire is still below the
+  // reporting", "a genuinely exceptional filing CAN lead the river", "…nothing is dropped from any
+  // pool". Those run against real pools rather than against the route's source text.
+  ok('the route no longer stacks the filings above the reporting',
+    mut('nofilings') ? false : !/rankByImpact\(filings\)/.test(news));
   // ⚠️ RANKING, NOT FILTERING. Nothing may be dropped — the routine items stay, lower down.
   ok('nothing is filtered out of the feed',
     mut('drops') ? false : !/\.filter\(\s*\(?a\)?\s*=>\s*impactOf/.test(news));

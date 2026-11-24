@@ -12,7 +12,9 @@
 // Run: node scripts/verify-impact.mjs [--mutate=<mode>]
 
 import fs from 'node:fs';
-import { impactOf, matchesKeyword, IMPACT_RANK, rankByImpact, isHeroWorthy, deskSelection, DESK_SLOTS } from '../src/lib/impact.js';
+import { impactOf, matchesKeyword, IMPACT_RANK, rankByImpact, isHeroWorthy, deskSelection, DESK_SLOTS,
+  composeRiver, filingTier, isFilingStory, isNewsDesk, hasDeskSubstance,
+  EXCEPTIONAL_FILING_LABELS, ROUTINE_FILING_LABELS } from '../src/lib/impact.js';
 
 const fsRead = (p) => fs.readFileSync(new URL(p, new URL('..', import.meta.url)), 'utf8');
 
@@ -379,8 +381,31 @@ L('\n=== THE FOUR-UP IS FOUR CLAIMS, NOT ONE CLAIM AND THREE SPACERS ===');
   ok('a real macro print is used instead of the filings floor',
     withReal.items[0].headline === 'Minutes of the Federal Open Market Committee');
   ok('…and the module is NOT labelled as filings', withReal.leadingWithFilings === false);
+  // ⚠️ THIS ASSERTION USED TO READ `items.length === 1`, AND THAT PROXY IS NOW WRONG — NOT
+  // BECAUSE THE OUTPUT MOVED, BUT BECAUSE THE PRODUCT RULE DID.
+  //
+  // It stood for "nothing junk was added beside the macro print", and measured it by counting: the
+  // old waterfall could only ever return the HIGH story tier on its own, so one qualifying story
+  // meant one card. A material 8-K may no longer outrank financial reporting, but a GENUINELY
+  // EXCEPTIONAL one — a bankruptcy, a delisting, a restatement — still competes for the lead on its
+  // own importance, so INM's delisting notice now sits beside the FOMC minutes and the count is two.
+  //
+  // The intent is asserted directly instead of through the count, which makes it strictly stronger
+  // than what it replaces: name the junk and require its absence, name the routine filings and
+  // require their absence too, and state the two items that are allowed to be there.
+  const realHeads = withReal.items.map((n) => n.headline);
   ok('…while the junk still cannot fill the remaining tiles',
-    mut('padsjunk') ? false : withReal.items.length === 1, String(withReal.items.length));
+    mut('padsjunk') ? false
+      : !realHeads.some((h) => /credit-card|Lakers|crypto|MICHELIN|Corporate Bonds/i.test(h)),
+    realHeads.join(' | '));
+  ok('…nor can a routine material 8-K take a tile beside real reporting',
+    mut('padsjunk') ? false
+      : !realHeads.some((h) => /Material agreement|Exec \/ board change/i.test(h)),
+    realHeads.join(' | '));
+  ok('…and exactly the macro print and the exceptional filing are selected',
+    mut('padsjunk') ? false
+      : realHeads.length === 2 && /Delisting risk/.test(realHeads[1] || ''),
+    realHeads.join(' | '));
 
   // Nothing at all is a real state, and the module has its own empty copy for it.
   const nothing = deskSelection(JUNK, []);
@@ -549,6 +574,269 @@ L('\n=== EVERY CONSUMER IMPORTS WHAT IT CALLS ===');
   ok('consumers of lib/impact were found to check', checked >= 3, `${checked} files import it`);
   ok('…and every one imports every impact function it calls',
     mut('unimported') ? false : offenders.length === 0, offenders.join(' | '));
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// A MATERIAL 8-K IS NOT AUTOMATICALLY THE DAY'S LEAD
+//
+// THE REPORTED DEFECT, MEASURED ON PRODUCTION 2026-11-24 against /api/news?limit=200:
+//
+//   102 items: indices 0-39 were every one an SEC 8-K, and the first published article was
+//   index 40. The homepage four-up was four 8-K cards. Composition, not classification:
+//   41 of 41 filings scored 'high' while 0 of 61 articles did, and the route then ordered the
+//   river by stacking the tiers — [...filings, ...curated, ...wire].
+//
+//   Filing labels in that sample: 16x Earnings, 10x Exec / board change, 9x Material agreement,
+//   2x Delisting risk, 2x Security-holder rights, 1x Agreement terminated. Two of forty were
+//   genuinely exceptional events; thirty-eight were material and scheduled or administrative.
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+L('\n=== EXCEPTIONAL VERSUS MERELY MATERIAL ===');
+{
+  const card = (label, extra = {}) => ({
+    title: `ABCD · ${label}`, source: 'SEC 8-K', category: 'SEC', ticker: 'ABCD',
+    material: true, secLabel: label, ...extra,
+  });
+
+  ok('a scheduled earnings 8-K is material, not exceptional',
+    mut('everyfilingexceptional') ? false : filingTier(card('Earnings')) === 'material');
+  ok('an officer change is material, not exceptional',
+    mut('everyfilingexceptional') ? false : filingTier(card('Exec / board change')) === 'material');
+  ok('a new material agreement is material, not exceptional',
+    mut('everyfilingexceptional') ? false : filingTier(card('Material agreement')) === 'material');
+  ok('a delisting notice IS exceptional', filingTier(card('Delisting risk')) === 'exceptional');
+  ok('a bankruptcy IS exceptional', filingTier(card('Bankruptcy')) === 'exceptional');
+  ok('a financial restatement IS exceptional', filingTier(card('Financial restatement')) === 'exceptional');
+
+  // ⚠️ AN UNRECOGNISED LABEL MUST NOT PROMOTE ITSELF. A new SEC item code, or one this file has not
+  // been taught, reaching the front page on the day it first appears is the failure mode of every
+  // allowlist defaulted the wrong way round.
+  ok('an unrecognised item label defaults to material, never exceptional',
+    mut('unknownisexceptional') ? false : filingTier(card('Item 9.42')) === 'material');
+  ok('…and so does a card with no label at all',
+    filingTier({ title: 'ABCD', source: 'SEC 8-K', category: 'SEC', ticker: 'ABCD' }) === 'material');
+
+  ok('a published article is not a filing at all',
+    filingTier({ title: 'Nvidia rallies', source: 'WSJ' }) === null);
+  ok('…and isFilingStory agrees',
+    !isFilingStory({ title: 'Nvidia rallies', source: 'WSJ' }) && isFilingStory(card('Earnings')));
+
+  // The label is a FIELD. The title split is the fallback for a card written before it existed.
+  ok('the label is read from secLabel when present',
+    filingTier({ ...card('Earnings'), secLabel: 'Bankruptcy' }) === 'exceptional');
+  ok('…and falls back to the half of the headline after the separator',
+    filingTier({ headline: 'ABCD · Delisting risk', tag: 'SEC', sym: 'ABCD', material: true }) === 'exceptional');
+}
+
+L('\n=== THE PARTITION IS THE SEC ITEM MAP, NOT A SECOND OPINION ===');
+{
+  // ⚠️ READ lib/eightk.js AND REQUIRE AGREEMENT. impact.js cannot import it — eightk opens a
+  // database connection and impact.js ships in the client bundle — so the two tables are kept by
+  // hand, and a hand-kept pair is how one of them becomes wrong. This is the bind.
+  const ek = fsRead('src/lib/eightk.js');
+  const map = ek.slice(ek.indexOf('const ITEM_MAP'), ek.indexOf('export function classifyItems'));
+  const rows = [...map.matchAll(/'([^']+)':\s*\{\s*label:\s*'([^']+)',\s*material:\s*(true|false)\s*\}/g)]
+    .map((m) => ({ code: m[1], label: m[2], material: m[3] === 'true' }));
+  ok('the SEC item map was found and parsed', rows.length >= 30, `${rows.length} codes`);
+
+  const materialLabels = rows.filter((r) => r.material).map((r) => r.label);
+  const known = new Set([...EXCEPTIONAL_FILING_LABELS, ...ROUTINE_FILING_LABELS]);
+  const unclassified = materialLabels.filter((l) => !known.has(l));
+  ok('every material item label is classified exceptional or routine',
+    mut('dropslabel') ? false : unclassified.length === 0, unclassified.join(', '));
+
+  const both = [...EXCEPTIONAL_FILING_LABELS].filter((l) => ROUTINE_FILING_LABELS.has(l));
+  ok('…and no label is in both sets', both.length === 0, both.join(', '));
+
+  // An invented label is as bad as a missing one: a classification nothing can ever reach.
+  const allLabels = new Set(rows.map((r) => r.label));
+  const invented = [...known].filter((l) => !allLabels.has(l));
+  ok('…and neither set invents a label the item map does not define',
+    mut('inventslabel') ? false : invented.length === 0, invented.join(', '));
+
+  // The one classification that is a product claim rather than bookkeeping: the rare, structural
+  // events must be the MINORITY of material items, or "exceptional" means nothing.
+  ok('exceptional is the minority of material item types',
+    EXCEPTIONAL_FILING_LABELS.size < materialLabels.length,
+    `${EXCEPTIONAL_FILING_LABELS.size} of ${materialLabels.length}`);
+}
+
+L('\n=== A NEWSROOM IS SUBSTANCE; A PRESS-RELEASE DISTRIBUTOR IS NOT ===');
+{
+  // ⚠️ THE TICKER TEST ALONE KILLED THE JOURNALISM TIER. Of 61 articles in the live pool, 22
+  // reached 'notable' and ZERO of those 22 carried a resolvable ticker, so the tier could never
+  // fire and the homepage fell through to filings on every single load.
+  const ce = fsRead('src/lib/evidence/company-events.mjs');
+  const grab = (name) => {
+    const i = ce.indexOf(`export const ${name} = new Set([`);
+    return [...ce.slice(i, ce.indexOf(']);', i)).matchAll(/'([A-Z0-9]+)'/g)].map((m) => m[1]);
+  };
+  const desk = grab('NEWS_DESK');
+  const wires = grab('ISSUER_WIRE');
+  ok('the repository taxonomy was found', desk.length >= 10 && wires.length >= 6,
+    `${desk.length} desks / ${wires.length} wires`);
+
+  const missing = desk.filter((d) => !isNewsDesk({ source: d }));
+  ok('every NEWS_DESK source in the taxonomy is a news desk here',
+    mut('narrowsdesk') ? false : missing.length === 0, missing.join(', '));
+
+  const leaked = wires.filter((w) => isNewsDesk({ source: w }));
+  ok('…and no press-release distributor is',
+    mut('widensdesk') ? false : leaked.length === 0, leaked.join(', '));
+
+  // The display names the feed actually carries, not the normalised codes.
+  ok('the display names on the live tape resolve',
+    ['WSJ', 'MarketWatch', 'Bloomberg'].every((x) => isNewsDesk({ source: x })));
+  ok('…and the wire display names do not',
+    !['PR Newswire', 'Business Wire', 'GlobeNewswire'].some((x) => isNewsDesk({ source: x })));
+  ok('a long-form publisher name still resolves', isNewsDesk({ source: 'The Wall Street Journal' }));
+
+  // Substance is EITHER test, so the ticker rule that existed before is not narrowed by this.
+  ok('a resolved ticker is still substance on its own',
+    hasDeskSubstance({ title: 'x', source: 'PR Newswire', ticker: 'NVDA' }));
+  ok('…and a tickerless press release is not substance',
+    mut('widensdesk') ? false : !hasDeskSubstance({ title: 'x', source: 'PR Newswire' }));
+}
+
+L('\n=== THE RIVER: REPORTING LEADS, THE FILINGS ARE THEIR OWN BLOCK ===');
+{
+  const iso = (mins) => new Date(Date.now() - mins * 60000).toISOString();
+  const art = (n) => ({ title: `Report ${n}`, source: 'WSJ', category: 'MARKETS', published: iso(n) });
+  const fil = (n, label, mins = 1) => ({
+    title: `SYM${n} · ${label}`, source: 'SEC 8-K', category: 'SEC', ticker: `AB${n}`,
+    material: true, secLabel: label, published: iso(mins),
+  });
+
+  const curated = [art(1), art(2), art(3)];
+  const wire = [{ title: 'Company announces webcast', source: 'PR Newswire', category: 'MARKETS', published: iso(0) }];
+  const routineFilings = Array.from({ length: 12 }, (_, i) => fil(i, 'Earnings'));
+
+  const river = composeRiver({ curated, wire, filings: routineFilings });
+
+  // ⚠️ THE EXACT REPORTED SYMPTOM, ASSERTED: the first item must be reporting, not a filing.
+  ok('the river leads with reporting, not a filing',
+    mut('filingslead') ? false : !isFilingStory(river[0]), String(river[0] && river[0].title));
+  const firstFiling = river.findIndex(isFilingStory);
+  ok('…and no filing appears before the reporting is exhausted',
+    mut('filingslead') ? false : firstFiling >= curated.length, `first filing at ${firstFiling}`);
+  ok('…nothing is dropped from any pool',
+    river.length === curated.length + wire.length + routineFilings.length, String(river.length));
+  ok('…the filings stay contiguous as one block', (() => {
+    const idx = river.map((x, i) => (isFilingStory(x) ? i : -1)).filter((i) => i >= 0);
+    return idx.every((v, i) => i === 0 || v === idx[i - 1] + 1);
+  })());
+  ok('…and the press-release wire is still below the reporting',
+    river.findIndex((x) => x.source === 'PR Newswire') > firstFiling);
+
+  // Rule (A)'s carve-out, intact: a genuinely exceptional filing still leads on its own merit.
+  const withExceptional = composeRiver({ curated, wire, filings: [...routineFilings, fil(99, 'Bankruptcy')] });
+  ok('a genuinely exceptional filing CAN lead the river',
+    mut('neverpromotes') ? false : /Bankruptcy/.test(withExceptional[0].title), withExceptional[0].title);
+  ok('…while the routine ones stay below the reporting',
+    withExceptional.slice(1, 1 + curated.length).every((x) => !isFilingStory(x)));
+
+  // Degenerate pools must not throw — this route runs with any of the three empty.
+  ok('an empty pool set composes to an empty river', composeRiver({}).length === 0);
+  ok('filings alone still compose', composeRiver({ filings: routineFilings }).length === routineFilings.length);
+}
+
+L('\n=== THE FRONT DOOR PREFERS REPORTING TO A ROUTINE FILING ===');
+{
+  const iso = (mins) => new Date(Date.now() - mins * 60000).toISOString();
+  // ⚠️ THE HEADLINES HAVE TO BE REAL, AND MY FIRST FIXTURES WERE NOT. They read
+  // "WSJ reports a $41bn biotech deal" — which impactOf correctly scores `routine`, because no
+  // event keyword fires on it — so the whole block asserted the filings floor by accident and four
+  // assertions failed for a reason that had nothing to do with the code under test. These four are
+  // the shapes the curated pool actually carries: a guidance cut, an earnings reaction, an officer
+  // change and a buyback, each NOTABLE on the rules as they already stand.
+  const desk4 = [
+    ['WSJ', 'Target cuts guidance after a weak holiday quarter'],
+    ['Bloomberg', 'Analysts raise price target on chipmakers after earnings beat'],
+    ['MarketWatch', 'Boeing names new chief financial officer'],
+    ['Reuters', 'Shell announces $3.5 billion buyback as cash flow climbs'],
+  ].map(([src, headline], i) => ({
+    headline, source: src, tag: 'MARKETS', published: iso(10 + i), summary: 'x', imageUrl: null,
+  }));
+  ok('…the desk fixtures are genuinely notable, as the live pool\u2019s are',
+    desk4.every((a) => IMPACT_RANK[impactOf(a)] >= IMPACT_RANK.notable),
+    desk4.map((a) => impactOf(a)).join(','));
+  const filings40 = Array.from({ length: 40 }, (_, i) => ({
+    headline: `SYM${i} · Earnings`, source: 'SEC 8-K', tag: 'SEC', sym: `AB${i}`,
+    material: true, secLabel: 'Earnings', published: iso(1), imageUrl: null,
+  }));
+
+  // ⚠️ THE REPORTED SYMPTOM: forty material 8-Ks and four fresh desk stories produced four 8-K
+  // cards. Every one of those filings scores 'high' and every article scores 'notable', so no
+  // amount of re-ranking could have fixed it — the tier was being used as an ordering.
+  const d = deskSelection(desk4, filings40);
+  ok('forty material 8-Ks do not displace four fresh desk stories',
+    mut('filingslead') ? false : d.items.every((n) => !isFilingStory(n)),
+    d.items.map((n) => n.source).join(','));
+  ok('…the module is NOT labelled as filings', d.leadingWithFilings === false);
+  ok('…it is still capped at four', d.items.length === DESK_SLOTS, String(d.items.length));
+  ok('…and the big slot is not claimed by a merely-notable story', d.heroWorthy === false);
+
+  // The carve-out again, at the front door this time.
+  const exceptional = {
+    headline: 'INM · Delisting risk', source: 'SEC 8-K', tag: 'SEC', sym: 'INM',
+    material: true, secLabel: 'Delisting risk', published: iso(2), imageUrl: null,
+  };
+  const withExc = deskSelection(desk4, [...filings40, exceptional]);
+  ok('an exceptional filing leads the front door over notable reporting',
+    mut('neverpromotes') ? false : /Delisting risk/.test(withExc.items[0].headline),
+    withExc.items[0].headline);
+  ok('…it earns the hero', withExc.heroWorthy === true);
+  ok('…the reporting keeps the remaining tiles',
+    withExc.items.slice(1).every((n) => !isFilingStory(n)),
+    withExc.items.slice(1).map((n) => n.source).join(','));
+  ok('…and no routine filing is beside it',
+    !withExc.items.some((n) => /· Earnings/.test(n.headline)));
+
+  // With nothing reported, the module IS the filings floor and must show the filings it has.
+  const quiet = deskSelection([], filings40);
+  ok('with nothing reported the floor still shows filings',
+    quiet.items.length === DESK_SLOTS && quiet.items.every(isFilingStory));
+  ok('…and says so', quiet.leadingWithFilings === true);
+  const two = deskSelection([], [exceptional, filings40[0]]);
+  ok('…two filings still produce two cards, exceptional first',
+    two.items.length === 2 && /Delisting risk/.test(two.items[0].headline), String(two.items.length));
+
+  // ⚠️ NEVER PROMOTE AN OLD STORY TO FILL A SLOT, and never a promotional release.
+  const stale = desk4.map((a) => ({ ...a, published: new Date(Date.now() - 50 * 3600 * 1000).toISOString() }));
+  const staleRun = deskSelection(stale, filings40);
+  ok('a two-day-old desk story is not promoted over today’s filings',
+    mut('ignoresage') ? false : staleRun.items.every(isFilingStory),
+    staleRun.items.map((n) => n.source).join(','));
+  const pr = [{
+    headline: 'XYZ Corp announces quarterly dividend and conference call',
+    source: 'PR Newswire', tag: 'MARKETS', published: iso(5), imageUrl: null,
+  }];
+  const prRun = deskSelection(pr, filings40);
+  ok('a tickerless press release never takes a front-door slot',
+    mut('widensdesk') ? false : prRun.items.every(isFilingStory),
+    prRun.items.map((n) => n.source).join(','));
+}
+
+L('\n=== THE PRODUCERS AND THE ROUTE ARE ACTUALLY WIRED TO IT ===');
+{
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const route = strip(fsRead('src/app/api/news/route.js'));
+  ok('the news route composes the river', /composeRiver\(\{/.test(route));
+  // ⚠️ ASSERTED BY SHAPE, NOT BY COMMENT TEXT. The explanation above that line still quotes the old
+  // expression on purpose, and an unstripped read would match it and pass while the bug was live —
+  // the exact false green this suite has produced before.
+  ok('…and no longer stacks the filings on top',
+    mut('filingslead') ? false : !/rankByImpact\(filings\)/.test(route));
+  ok('…and reports curatedCount from the pool, not by subtraction',
+    /curatedCount:\s*curated\.length/.test(route));
+
+  const nf = strip(fsRead('src/lib/news-filings.mjs'));
+  ok('the river’s filing cards carry the SEC item label',
+    mut('dropssec') ? false : /secLabel:\s*f\.primaryLabel/.test(nf));
+  const home = strip(fsRead('src/components/CatalystPit.jsx'));
+  ok('…and so do the homepage’s filing cards',
+    mut('dropssec') ? false : /secLabel:\s*f\.primaryLabel/.test(home));
 }
 
 L(`\n${pass} passed, ${fail} failed`);

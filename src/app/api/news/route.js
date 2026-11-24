@@ -4,7 +4,7 @@ import { auth } from '@clerk/nextjs/server';
 // swapped the call and left the import, so the route threw ReferenceError: rankByImpact is not
 // defined on EVERY request, and had been 500ing in production ever since. The two old names were
 // dead by then; both are gone.
-import { rankByImpact } from '../../../lib/impact';
+import { composeRiver } from '../../../lib/impact';
 // The canonical 8-K reader and the canonical ticker grammar — the main column consumes the
 // existing catalyst infrastructure rather than growing a second interpretation of a filing.
 import { recentEightK } from '../../../lib/eightk';
@@ -115,10 +115,18 @@ export async function GET() {
   raw = raw.filter(notAlreadyFiled);
   wire = wire.filter(notAlreadyFiled);
 
-  // Filings lead, then curated stories, then wires — each pool ranked on its own so the existing
-  // curated-outranks-wire guarantee is untouched and only a new, more material tier is added
-  // above it. Nothing is dropped; the routine items are all still there, lower down.
-  raw = [...rankByImpact(filings), ...rankByImpact(raw), ...rankByImpact(wire)];
+  // ⚠️ "FILINGS LEAD" WAS THE DEFECT, AND IT WAS NOT A CLOSE CALL. Measured on this endpoint:
+  // indices 0-39 were all SEC 8-Ks and the first published article was index 40 — sixteen scheduled
+  // earnings notices, ten officer changes and nine new agreements ahead of every newsroom on the
+  // tape. The reasoning above was that a material filing is a more material tier; it is, and that
+  // is still true of the classification. It was never a reason to order the page by it.
+  //
+  // composeRiver keeps the three pools as three named blocks — journalism (with a genuinely
+  // exceptional filing allowed to compete for the lead), then the material filings as their own
+  // section, then the press-release wires. Nothing is dropped and no tier is reclassified; see
+  // lib/impact.js for the measurement and the partition.
+  const curated = raw;
+  raw = composeRiver({ curated, wire, filings });
 
   // Slice the ranked array (element 0 is now the most material story available) so NewsFeed's
   // existing client-side normalization works unchanged. Signed-in users get the full feed;
@@ -134,7 +142,11 @@ export async function GET() {
       // run since Friday", which was previously indistinguishable from outside.
       // `raw` now carries three tiers, so curated is what is left after the other two are taken
       // out — it must not silently start counting filings as curation.
-      curatedCount: raw.length - wire.length - filings.length,
+      // Counted from the pool itself rather than by subtracting the other two out of the river.
+      // The subtraction was only ever a proxy, and it would now be wrong: an exceptional filing is
+      // ranked inside the journalism block, so "what is left" no longer means "what was curated".
+      // curatedCount: 0 remains the signature of an expired top_stories key.
+      curatedCount: curated.length,
       wireCount: wire.length,
       filingCount: filings.length,
     },

@@ -313,6 +313,168 @@ export function isHeroWorthy(item, { now = Date.now(), maxAgeMs = HERO_MAX_AGE_M
   return now - t <= maxAgeMs;
 }
 
+// ── EXCEPTIONAL VERSUS MERELY MATERIAL: AN 8-K IS NOT AUTOMATICALLY THE DAY'S LEAD ──────────
+//
+// ⚠️ EVERY MATERIAL 8-K SCORES `high`, AND THAT CLASSIFICATION IS CORRECT. A material issuer
+// filing with a resolved ticker satisfies product rule (A) exactly as written, and nothing below
+// changes impactOf — the HIGH IMPACT tab, the flags and the evidence rails keep the tier they
+// have always had. What was wrong was never the classification. It was treating one tier as an
+// ORDERING.
+//
+// Measured on production, 2026-11-24, /api/news?limit=200:
+//
+//   102 items   20 curated articles · 42 press-release wires · 40 material 8-Ks
+//   tiers       articles: 0 high, 22 notable, 39 routine
+//               filings:  41 high, 0 notable, 0 routine      ← every single one
+//   labels      16x Earnings · 10x Exec / board change · 9x Material agreement
+//               2x Delisting risk · 2x Security-holder rights · 1x Agreement terminated
+//
+// So `[...rankByImpact(filings), ...rankByImpact(raw), ...]` put all 40 filings at indices 0-39
+// and the first piece of journalism at index 40, and deskSelection's filings floor filled the
+// homepage four-up with 8-K cards every time — not because a filing beat an article on merit, but
+// because sixteen scheduled earnings releases all carry the same tier as a bankruptcy.
+//
+// THE PARTITION IS THE SEC'S OWN ITEM CODES, not a new opinion. The labels come from ITEM_MAP in
+// lib/eightk.js, which is where an item code is turned into meaning, and each exceptional label
+// maps onto an event type HIGH_KW above already names in prose: bankruptcy, delisting, a
+// restatement, a change of control, a completed acquisition, a cyber incident. The routine set is
+// the material-but-scheduled remainder — an earnings release, a new agreement, an officer change.
+// Both sets together must cover every material label eightk.js defines; verify-impact reads that
+// file and asserts it, so a new item code cannot quietly arrive unclassified.
+//
+// ⚠️ eightk.js IS NOT IMPORTED HERE ON PURPOSE. It opens a database connection, and this module
+// ships in the client bundle — NewsFeed and CatalystPit both import it. The assertion is the bind.
+export const EXCEPTIONAL_FILING_LABELS = new Set([
+  'Bankruptcy',                     // 1.03
+  'Cybersecurity incident',         // 1.05
+  'M&A completed',                  // 2.01
+  'Debt trigger event',             // 2.04
+  'Material impairment',            // 2.06
+  'Delisting risk',                 // 3.01
+  'Auditor change',                 // 4.01
+  'Financial restatement',          // 4.02
+  'Change in control',              // 5.01
+  'Shell-status change',            // 5.06
+  'Exchange removal from listing',  // 25-NSE
+  'Withdrawal from listing',        // 25
+]);
+
+/** Material, and genuinely significant to the issuer — but frequent, scheduled or administrative. */
+export const ROUTINE_FILING_LABELS = new Set([
+  'Material agreement',             // 1.01
+  'Agreement terminated',           // 1.02
+  'Earnings',                       // 2.02
+  'New debt obligation',            // 2.03
+  'Restructuring costs',            // 2.05
+  'Equity dilution',                // 3.02
+  'Security-holder rights',         // 3.03
+  'Exec / board change',            // 5.02
+]);
+
+/** Is this row a filing card rather than a published article? Both item shapes are accepted. */
+export function isFilingStory(item = {}) {
+  const cat = `${item.category || item.tag || ''}`.toUpperCase();
+  const src = String(item.source || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return cat === 'SEC' || src === 'SEC8K';
+}
+
+/**
+ * The SEC item label behind a filing card.
+ *
+ * `secLabel` is carried explicitly by both producers (news-filings.mjs and the homepage's
+ * filingCards). The title fallback exists because the label is also the half of the headline after
+ * the separator — "MMED · Earnings" — so a card written before that field existed still classifies
+ * rather than silently becoming routine.
+ */
+export function filingLabelOf(item = {}) {
+  if (item.secLabel) return String(item.secLabel).trim();
+  const t = String(item.title || item.headline || '');
+  const i = t.indexOf('\u00b7');
+  return i >= 0 ? t.slice(i + 1).trim() : '';
+}
+
+/**
+ * 'exceptional' | 'material' for a filing card, null for anything else.
+ *
+ * ⚠️ AN UNRECOGNISED LABEL IS 'material', NEVER 'exceptional'. Defaulting the other way would mean
+ * a new SEC item code — or a label this file has not been taught — promoting itself onto the front
+ * page on the day it first appears.
+ */
+export function filingTier(item = {}) {
+  if (!isFilingStory(item)) return null;
+  return EXCEPTIONAL_FILING_LABELS.has(filingLabelOf(item)) ? 'exceptional' : 'material';
+}
+
+// ── WHAT COUNTS AS SUBSTANCE WHEN A STORY CARRIES NO TICKER ─────────────────────────────────
+//
+// ⚠️ THE TICKER TEST WAS KILLING THE JOURNALISM TIER OUTRIGHT, AND THE MEASUREMENT IS BLUNT:
+// of 61 articles in the live pool, 22 reached `notable` and EXACTLY ZERO of those 22 carried a
+// resolvable ticker. The tier could never fire. That is why the homepage fell through to filings
+// on a day with a $41bn biotech deal, a BP board exit and an Nvidia rally on the tape.
+//
+// A ticker remains the strongest evidence that a story is about a company someone can act on, and
+// it is kept. Provenance is added beside it: an item published by a professional newsroom is
+// financial journalism as a matter of fact, not of judgement. The set is the NEWS_DESK taxonomy
+// this repository already defines and already measured — "a professional newsroom asserting a fact
+// it will be corrected on" — in lib/evidence/company-events.mjs. verify-impact reads that file and
+// asserts the two agree exactly, because two hand-kept copies is how one becomes wrong.
+//
+// A press-release distributor is deliberately NOT a news desk. Business Wire and PR Newswire are
+// 42 of those 61 items; promoting them here is precisely "turning a promotional press release into
+// breaking market news", and they keep the place the impact rules already give them.
+const SOURCE_ALIAS = {
+  THEWALLSTREETJOURNAL: 'WSJ', WALLSTREETJOURNAL: 'WSJ', DOWJONESNEWSWIRES: 'WSJ',
+  FINANCIALTIMES: 'FT', THEFINANCIALTIMES: 'FT',
+};
+const NEWS_DESK_SOURCES = new Set([
+  'BLOOMBERG', 'WALTERBLOOMBERG', 'FINANCIALJUICE', 'BREAKINGMARKETNEWS', 'REUTERS',
+  'WSJ', 'CNBC', 'FT', 'MARKETWATCH', 'NASDAQ', 'SEC', 'DOJ', 'FDA', 'FTC', 'CFTC', 'BIOSPACE',
+]);
+const sourceCode = (s) => {
+  const c = String(s || '').toUpperCase().replace(/[^A-Z]/g, '');
+  return SOURCE_ALIAS[c] || c;
+};
+export function isNewsDesk(item = {}) {
+  return NEWS_DESK_SOURCES.has(sourceCode(item.source ?? item.publisher));
+}
+/** Is there evidence this story is about the market, beyond a keyword having fired? */
+export function hasDeskSubstance(item = {}) {
+  return !!resolvedTicker(item) || isNewsDesk(item);
+}
+
+/**
+ * THE NEWS RIVER, IN THREE NAMED BLOCKS.
+ *
+ * ⚠️ ONE MERGED SORT WAS TRIED FIRST AND IS WRONG. Filings are the freshest rows on the tape — an
+ * 8-K arrives minutes after it is filed — so sorting the whole pool by significance then recency
+ * floats sixteen earnings notices above every article written this morning, which is the reported
+ * defect wearing a different hat. The blocks are the fix the brief asks for: journalism leads, the
+ * filings stay a clearly identified section of their own, and nothing is dropped.
+ *
+ *   1. curated articles + EXCEPTIONAL filings, ranked together
+ *      An exceptional filing can still lead the page on its own importance — that is rule (A),
+ *      unchanged — but it earns the position by being a bankruptcy or a delisting, not by being
+ *      an 8-K.
+ *   2. the remaining material filings, newest first
+ *      Every one of them, still present, still linking to its own EDGAR document.
+ *   3. the press-release wires
+ *      Below the primary-source documents, which is where issuer PR belongs relative to an
+ *      issuer's own filed disclosure.
+ *
+ * "Enriched stories outrank wires" — the guarantee the previous fix established — is preserved:
+ * block 1 is still entirely above block 3.
+ */
+export function composeRiver({ curated = [], wire = [], filings = [] } = {}) {
+  const pool = Array.isArray(filings) ? filings : [];
+  const exceptional = pool.filter((f) => filingTier(f) === 'exceptional');
+  const routine = pool.filter((f) => filingTier(f) !== 'exceptional');
+  return [
+    ...rankByImpact([...(Array.isArray(curated) ? curated : []), ...exceptional]),
+    ...rankByImpact(routine),
+    ...rankByImpact(Array.isArray(wire) ? wire : []),
+  ];
+}
+
 /** Hero plus supporting tiles. Four slots, and none of them may be padded. */
 export const DESK_SLOTS = 4;
 
@@ -333,55 +495,98 @@ export const DESK_SLOTS = 4;
  * `news[i % …]` to fill the grid, which is how one story became four photographs of itself. Three
  * real filings and a gap is a true page; four slots filled with advice columns is not.
  */
+/**
+ * WHAT THE FRONT DOOR IS ALLOWED TO SHOW.
+ *
+ * ⚠️ SELECTION IS A FILTER, NOT A SORT, and that part was right. Sorting the pool put the best
+ * item first but left the rest of the module to be filled in order, so the homepage ran a WSJ Fed
+ * feature as its hero with credit-card and crypto-advice columns in the supporting tiles. A
+ * four-up is four claims, not one claim and three spacers. Only an item that earns a slot gets
+ * one; fewer than four cards is a true page and the module must never pad to look full.
+ *
+ * ⚠️ WHAT CHANGED: THE TIERS WERE A WATERFALL, AND THE WATERFALL WAS THE BUG.
+ *
+ * It read: fresh HIGH stories, else ANY fresh filing, else fresh notable stories with a ticker.
+ * Both story tiers were unreachable — 0 of 61 articles scored high, and 0 of the 22 notable ones
+ * carried a ticker — so every load landed on the middle rung and the front door showed four 8-K
+ * cards. Worse, the waterfall could never mix: one qualifying filing took all four slots while
+ * twenty-two notable articles sat unused.
+ *
+ * So there is one pool and one ordering, by what a desk would actually lead with:
+ *
+ *   band 3  a fresh HIGH story, or a fresh EXCEPTIONAL filing     → may hold the hero
+ *   band 2  a fresh notable story with substance (ticker or desk)  → earns a tile
+ *   band 1  a fresh material filing                               → fills a tile nothing above wants
+ *   band 0  everything else                                       → never selected, never padded
+ *
+ * Within a band, newest first. A material 8-K therefore no longer outranks financial reporting —
+ * it sits below it and appears only in the slots journalism has not filled — while a bankruptcy or
+ * a delisting notice still competes for the lead on its own merit.
+ *
+ * Nothing here relaxes what HIGH means, and nothing is promoted to fill a gap: band 0 is excluded
+ * entirely, and every band requires the same freshness window the hero has always used.
+ */
 export function deskSelection(stories, filings, { limit = DESK_SLOTS, now = Date.now() } = {}) {
   const all = Array.isArray(stories) ? stories : [];
-  const fresh = (s) => isHeroWorthy(s, { now });
+  const pool = Array.isArray(filings) ? filings : [];
 
-  const high = all.filter(fresh);
-  if (high.length) return { items: rankByImpact(high).slice(0, limit), leadingWithFilings: false, heroWorthy: true };
-
-  const fromFilings = (Array.isArray(filings) ? filings : []).filter(fresh);
-  if (fromFilings.length) {
-    return { items: rankByImpact(fromFilings).slice(0, limit), leadingWithFilings: true, heroWorthy: true };
-  }
-
-  // ── ⚠️ A THIRD TIER, BECAUSE "QUIET" WOULD HAVE BEEN A LIE ───────────────────────────────────
-  //
-  // Measured on production: the pool held ONE high-impact story — Citi's undercounted assets, high
-  // only because its category is SEC — and it was 74 hours old. Everything else about Nvidia's CEO
-  // returning and the stock soaring 30% classifies as `notable`, not high. So once the hero window
-  // excludes the stale item there is no high story and no filing, and the section would have
-  // announced "Markets are quiet right now" on a day the Nasdaq jumped on the biggest single-stock
-  // story of the week. That is a worse falsehood than the stale hero was.
-  //
-  // So fresh NOTABLE stories are shown — and `heroWorthy: false` tells the caller to render them as
-  // a compact list rather than promote one into the big slot. Nothing is promoted to a major
-  // headline it has not earned; the section simply stops pretending there is nothing to report.
-  // `routine` is deliberately excluded: advice columns and promotional wire copy stay out, which is
-  // the whole point of the impact classification and is unchanged by any of this.
-  const notable = all.filter((s) => {
-    if ((IMPACT_RANK[impactOf(s)] ?? 1) < IMPACT_RANK.notable) return false;
-    // ⚠️ NOTABLE ALONE IS NOT ENOUGH, AND verify-impact PROVED IT. `notable` can be earned by
-    // CATEGORY with no other qualification, so my first version of this tier admitted
-    // "Le Guide MICHELIN dévoile sa sélection 2026" — tag MARKETS, therefore notable — onto the
-    // front page. That is precisely the "fill the space with whatever is left" failure the impact
-    // rules exist to prevent.
-    //
-    // A resolved ticker is the existing test of substance, in this file's own words: the keyword
-    // says WHAT happened, the ticker says it happened to a company someone can act on. Measured
-    // against the live pool it keeps the three Nvidia stories and drops the restaurant guide.
-    if (!resolvedTicker(s)) return false;
+  // Same rule as isHeroWorthy's window, and for the same reason: exclude what is PROVABLY stale,
+  // not what is merely undated. An item with no timestamp is left where the impact rules put it.
+  const fresh = (s) => {
     const t = publishedMs(s);
-    // Same rule as the hero window, for the same reason: exclude what is provably stale, not what is
-    // merely undated. Consistency matters here — a different answer in the two tiers would mean an
-    // item could be too old to lead and simultaneously too undated to appear at all.
     return t == null || now - t <= HERO_MAX_AGE_MS;
-  });
-  if (notable.length) {
-    return { items: rankByImpact(notable).slice(0, limit), leadingWithFilings: false, heroWorthy: false };
-  }
+  };
 
-  return { items: [], leadingWithFilings: false, heroWorthy: false };
+  const band = (s) => {
+    if (isFilingStory(s)) return filingTier(s) === 'exceptional' ? 3 : 1;
+    const r = IMPACT_RANK[impactOf(s)] ?? 1;
+    if (r >= IMPACT_RANK.high) return 3;
+    if (r >= IMPACT_RANK.notable && hasDeskSubstance(s)) return 2;
+    return 0;
+  };
+
+  const scored = [...all, ...pool]
+    .map((s, i) => ({ s, i, b: fresh(s) ? band(s) : 0, t: publishedMs(s) }))
+    .filter((e) => e.b > 0)
+    // Band decides, then recency within the band, then arrival order so the sort stays stable.
+    .sort((x, y) => (y.b - x.b) || ((y.t ?? 0) - (x.t ?? 0)) || (x.i - y.i));
+
+  // ⚠️ A ROUTINE FILING IS A FLOOR, NOT A FILLER, AND THE SUITE IS WHAT SETTLED THAT.
+  //
+  // Mixing bands freely was the first version, and it put one qualifying article in the hero with
+  // three scheduled-earnings 8-K cards beside it. Those cards are real — a ticker, an item type, an
+  // EDGAR link — so it is not padding in the sense this module forbids. It is still wrong: the brief
+  // asks for the filings to stay a clearly identified section rather than seep into the module whose
+  // job is to say what was REPORTED today, and a reader cannot tell which of the two they are
+  // looking at when the section mixes them and the badge speaks only for the lead.
+  //
+  // So the module shows one thing or the other, and WHICH ONE turns on whether any REPORTING
+  // qualifies at all — not on whether the top band happens to be occupied.
+  //
+  //   reporting qualifies    the module is the day's reporting. Bands 3 and 2 fill it together, so
+  //                          an exceptional filing still competes for the lead beside it, and the
+  //                          routine material filings stay out.
+  //   nothing reported       the module is the filings floor, and shows the qualifying filings
+  //                          ranked exceptional-first. It is labelled 8-K FILINGS and says so.
+  //
+  // ⚠️ "ANY BAND >= 2" WAS THE FIRST VERSION AND THE SUITE REJECTED IT: one exceptional filing and
+  // one routine filing, with no reporting at all, returned a single card and left the other real
+  // filing out. The mixing this guards against is filings seeping into REPORTING. On a day with
+  // nothing reported there is nothing to seep into, and a filings module that hides filings is just
+  // a module with a hole in it.
+  const reported = scored.some((e) => e.b >= 2 && !isFilingStory(e.s));
+  const picked = (reported ? scored.filter((e) => e.b >= 2) : scored).slice(0, limit);
+
+  if (!picked.length) return { items: [], leadingWithFilings: false, heroWorthy: false };
+  return {
+    items: picked.map((e) => e.s),
+    // Said out loud rather than swapped silently: the badge means "you are looking at filings,
+    // not reporting", so it answers for the item actually holding the lead.
+    leadingWithFilings: isFilingStory(picked[0].s),
+    // The big slot is earned. Band 2 is real news worth a tile but not a front-page claim, so the
+    // section renders a compact list instead of promoting one of them.
+    heroWorthy: picked[0].b === 3,
+  };
 }
 
 // Editorial flag styling — subtle colored tag, no number, no emoji. null = don't render a flag.

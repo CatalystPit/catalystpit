@@ -2,8 +2,9 @@ import MarketsClient from './MarketsClient';
 import { pageMeta } from '../../lib/seo';
 
 export const metadata = pageMeta({
-  title: { absolute: "Markets · CatalystPit" },
-  description: "What\\'s moving by catalyst today: names with fresh SEC filings, Congress trades, and headlines. No last-sale prices.",
+  // The same literal-backslash defect as /news, from the same unnecessary escape.
+  title: { absolute: "Market Catalysts Today · Stocks With Fresh SEC Filings and Congress Trades · CatalystPit" },
+  description: "What is moving by catalyst today: companies with fresh SEC filings, Congressional trades and headlines, grouped by the evidence that put them on the list.",
   path: "/markets",
 });
 

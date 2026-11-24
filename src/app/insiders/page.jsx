@@ -4,7 +4,12 @@ import InsidersClient from './InsidersClient';
 // Server wrapper: a 'use client' file cannot export metadata, so the page's own title,
 // description and canonical live here and the interactive component sits alongside.
 export const metadata = pageMeta({
-  title: "Insider Trades · Form 4 Filings",
+  // ⚠️ THE TITLES NAMED THE ROOM, NOT THE SEARCH. "Politicians" and "Institutions" are our own
+  // navigation labels; nobody types them into a search box. The non-branded phrases these three
+  // rooms actually answer are "insider trading tracker", "congress stock trades" and "13F
+  // filings", and each of those is literally what the page already shows. No claim is added here
+  // and no page changed — only the words a reader uses to look for it.
+  title: "Insider Trading Tracker · SEC Form 4 Buys and Sells",
   description: "Open-market insider buys and sells from SEC Form 4 filings, with cluster buys, CEO and CFO activity, and dollar values by company and sector.",
   path: "/insiders",
 });

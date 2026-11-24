@@ -64,6 +64,11 @@ export function filingsToStories(rows = []) {
       published: f.filedAt,          // when it became public, not when we read it
       url: f.url || null,
       material: true,
+      // ⚠️ THE ITEM LABEL TRAVELS WITH THE ROW. The desk has to tell a bankruptcy from a scheduled
+      // earnings release, and both are "material: true" — the only thing that separates them is the
+      // SEC item code this label was classified from. It was reachable only by splitting the title
+      // on its separator, which is not a field.
+      secLabel: f.primaryLabel,
       accession: f.accession || null,
       imageUrl: null,                // a filing card borrows no publisher artwork
     }));
