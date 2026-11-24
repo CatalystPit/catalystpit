@@ -241,9 +241,19 @@ ok('...by replacing the history entry, not pushing one',
   !/if \(tab !== requested\) router\.push\(/.test(page));
 
 // Server side: the canonicalising 308 must not carry a disabled tab across the hop either.
-const route = read('src/app/ticker/[symbol]/page.jsx');
+//
+// ⚠️ THE FILE THIS READS IS PART OF THE ASSERTION, AND IT CHANGED. The canonicalising redirect
+// moved out of ticker/[symbol]/page.jsx into lib/ticker-url-redirect.mjs, because awaiting
+// searchParams in the page made all ~19,750 ticker URLs uncacheable — measured: every one of them
+// answered `private, no-cache, no-store` with `x-vercel-cache: MISS`. The guarantee is unchanged —
+// a disabled tab must not survive the 308 — so the assertion follows the code rather than being
+// relaxed, and the second half pins the page to NOT having gone back to reading searchParams,
+// since that is the change that would silently undo the caching fix while this check still passed.
+const route = read('src/lib/ticker-url-redirect.mjs');
 ok('the canonicalising redirect drops a disabled tab',
-  /tickerTabEnabled\(sp\.tab\) \? sp\.tab : undefined/.test(route));
+  /tickerTabEnabled\(tab\) \? tab : undefined/.test(route));
+ok('⚠️ and the page itself does not read searchParams again',
+  !/searchParams/.test(read('src/app/ticker/[symbol]/page.jsx').replace(/\/\/[^\n]*/g, '')));
 
 // ⚠️ AND THE URL GRAMMAR STAYS PURE. ticker-symbol.mjs is asserted elsewhere to have no imports at
 // all so it is safe in a client bundle; availability is a product question, not a grammar one, and
