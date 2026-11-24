@@ -5,7 +5,7 @@
 // HIGH/NOTABLE ones, ranked. This is the product's editorial spine: open CatalystPit, see what moves.
 import { useEffect, useState } from 'react';
 import { C, Dot, TickerLogo, timeAgo, minsSince } from '../lib/cp-shared';
-import { impactOf, IMPACT_RANK, IMPACT_STYLE } from '../lib/impact';
+import { impactOf, IMPACT_STYLE, compareCatalysts } from '../lib/impact';
 
 export default function TopCatalysts({ limit = 6, bindTicker = null }) {
   const [items, setItems] = useState(null);
@@ -40,6 +40,9 @@ export default function TopCatalysts({ limit = 6, bindTicker = null }) {
             url: f.url || null,
             published: f.filedAt || null,
             category: f.primaryLabel || '',
+            // The SEC item label as a FIELD, so the comparator can tell a delisting notice from a
+            // scheduled results release without parsing it back out of the title.
+            secLabel: f.primaryLabel || '',
             material: f.material,
           });
         }
@@ -89,16 +92,20 @@ export default function TopCatalysts({ limit = 6, bindTicker = null }) {
           if (better) byKey.set(key, { ...p, tier });
         }
 
-        // ⚠️ A FILING OUTRANKS A FEATURE AT THE SAME TIER. Both may be HIGH, but one is the
-        // company speaking on the record and the other is a publication writing about it.
+        // ⚠️ THIS SORT USED TO SAY "A FILING OUTRANKS A FEATURE AT THE SAME TIER", on the
+        // reasoning that one is the company speaking on the record and the other is a publication
+        // writing about it. That holds for a company disclosing it has lost its listing. It does
+        // not hold for the sixteenth scheduled results release of the morning — and since every
+        // material 8-K scores 'high' and almost no article does, it made this module structurally
+        // all filings. Measured on production: 6 of 6 cards were 8-Ks, four of them "Material
+        // agreement" or "Exec / board change", sitting above every newsroom on the tape.
+        //
+        // compareCatalysts keeps the primary-document argument exactly where it is true: an
+        // EXCEPTIONAL filing still outranks reporting, a routine material one does not. It lives
+        // in lib/impact.js so this module and the news river cannot disagree about which of two
+        // catalysts matters more. See catalystRank.
         const scored = [...byKey.values()];
-        scored.sort((a, b) => {
-          if (IMPACT_RANK[b.tier] !== IMPACT_RANK[a.tier]) return IMPACT_RANK[b.tier] - IMPACT_RANK[a.tier];
-          const aFiling = a.kind === '8-K' ? 1 : 0;
-          const bFiling = b.kind === '8-K' ? 1 : 0;
-          if (aFiling !== bFiling) return bFiling - aFiling;
-          return new Date(b.published || 0) - new Date(a.published || 0);
-        });
+        scored.sort(compareCatalysts);
         if (alive) setItems(scored.slice(0, limit));
       } catch { if (alive) setItems([]); }
     })();

@@ -464,6 +464,49 @@ export function hasDeskSubstance(item = {}) {
 }
 
 /**
+ * HOW A CATALYST RANKS AGAINST ANOTHER AT THE SAME IMPACT TIER.
+ *
+ * ⚠️ "A FILING OUTRANKS A FEATURE AT THE SAME TIER" WAS THE RULE, AND IT IS TRUE OF A BANKRUPTCY
+ * AND FALSE OF AN EARNINGS RELEASE. TopCatalysts — the module headed "WHAT MATTERS NOW" — sorted
+ * by tier and then put every 8-K above every article, on the reasoning that one is the company
+ * speaking on the record and the other is a publication writing about it. That reasoning holds for
+ * a company disclosing that it has lost its listing. It does not hold for the sixteenth scheduled
+ * results release of the morning, and because EVERY material 8-K scores 'high' while almost no
+ * article does, the module was structurally all filings: measured on production, 6 of 6 cards were
+ * 8-Ks, four of them "Material agreement" or "Exec / board change".
+ *
+ * So the same partition the river uses applies here. An EXCEPTIONAL filing still outranks a feature
+ * — that is the primary-document argument, and it is sound where the document says something
+ * exceptional. A routine material filing ranks BELOW reporting at the same tier.
+ *
+ *   2  an exceptional filing     the company disclosing a bankruptcy, a delisting, a restatement
+ *   1  reporting                 a newsroom or a wire writing about an event
+ *   0  a routine material filing a results release, a new agreement, an officer change
+ *
+ * The item shape here is TopCatalysts' own pool row, which marks filings with `kind: '8-K'` and
+ * carries the SEC item label — so the label is read through filingLabelOf rather than assumed.
+ */
+export function catalystRank(item = {}) {
+  const isFiling = item.kind === '8-K' || isFilingStory(item);
+  if (!isFiling) return 1;
+  return EXCEPTIONAL_FILING_LABELS.has(filingLabelOf(item)) ? 2 : 0;
+}
+
+/**
+ * Impact tier first, then what kind of thing it is, then recency. One comparator, so the module
+ * and this file cannot disagree about which of two catalysts matters more.
+ */
+export function compareCatalysts(a = {}, b = {}) {
+  const ta = IMPACT_RANK[a.tier ?? impactOf(a)] ?? 1;
+  const tb = IMPACT_RANK[b.tier ?? impactOf(b)] ?? 1;
+  if (ta !== tb) return tb - ta;
+  const ra = catalystRank(a);
+  const rb = catalystRank(b);
+  if (ra !== rb) return rb - ra;
+  return (publishedMs(b) ?? 0) - (publishedMs(a) ?? 0);
+}
+
+/**
  * THE NEWS RIVER, IN THREE NAMED BLOCKS.
  *
  * ⚠️ ONE MERGED SORT WAS TRIED FIRST AND IS WRONG. Filings are the freshest rows on the tape — an

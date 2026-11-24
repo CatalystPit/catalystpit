@@ -446,8 +446,22 @@ export default function NewsFeed() {
       <div className="cp-body-grid">
 
         {/* LEFT — FEED */}
+        {/* ⚠️ <TopCatalysts/> USED TO BE THE FIRST THING IN THIS COLUMN, ABOVE THE HERO, AND THAT
+            IS THE REPORTED DEFECT IN ITS LITERAL FORM: "the News page shows dozens of SEC 8-K
+            filings before visitors reach actual financial news articles."
+
+            Measured in a real browser against production, signed out, by absolute document Y —
+            because DOM order is not visual order and the API ordering alone proved nothing:
+
+              mobile  (390px)   8 filing cards above the first article (y=613..1089 vs y=1211)
+              desktop (1440px)  4 filing cards above the first newsroom row
+
+            Six of those were this module. It has moved to the right sidebar beside the 8-K Wire,
+            where the filings already have a clearly identified area of their own: on desktop it
+            sits at the same height and loses no prominence, and on a phone the sidebar stacks
+            BELOW the feed, so the column a reader meets first is the reporting. The module is
+            unchanged apart from its ranking — nothing was removed from the product. */}
         <div style={{display:"flex", flexDirection:"column", gap:14, minWidth:0}}>
-          <TopCatalysts bindTicker={bindTicker}/>
           {loading ? (
             <>
               <div style={{background:C.surface, borderRadius:8, overflow:"hidden"}}>
@@ -527,6 +541,7 @@ export default function NewsFeed() {
             trending={trendingTickers}
             bindTicker={bindTicker}
           />
+          <TopCatalysts bindTicker={bindTicker}/>
           <EightKWire limit={30} bindTicker={bindTicker}/>
           <MarketSnapshotCard tickers={tickersPriced} loading={loading}
             freshness={priceFreshness} delayMinutes={priceDelayMinutes}/>

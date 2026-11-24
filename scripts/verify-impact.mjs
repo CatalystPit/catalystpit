@@ -14,7 +14,8 @@
 import fs from 'node:fs';
 import { impactOf, matchesKeyword, IMPACT_RANK, rankByImpact, isHeroWorthy, deskSelection, DESK_SLOTS,
   composeRiver, filingTier, isFilingStory, isNewsDesk, hasDeskSubstance,
-  EXCEPTIONAL_FILING_LABELS, ROUTINE_FILING_LABELS, rankCurrentFirst } from '../src/lib/impact.js';
+  EXCEPTIONAL_FILING_LABELS, ROUTINE_FILING_LABELS, rankCurrentFirst,
+  catalystRank, compareCatalysts } from '../src/lib/impact.js';
 
 const fsRead = (p) => fs.readFileSync(new URL(p, new URL('..', import.meta.url)), 'utf8');
 
@@ -932,6 +933,87 @@ L('\n=== A NEWSPAPER ARTICLE ABOUT A FILING IS NOT A FILING ===');
   // classifications be preserved, and "a story about a filing is an issuer matter" is one of them.
   ok('impactOf still treats an SEC-categorised story as an issuer matter',
     impactOf(wsjAboutSec) === 'high', impactOf(wsjAboutSec));
+}
+
+
+L('\n=== "A FILING OUTRANKS A FEATURE" IS TRUE OF A BANKRUPTCY AND FALSE OF AN EARNINGS RELEASE ===');
+{
+  // ⚠️ TopCatalysts — the module headed "WHAT MATTERS NOW" — sorted by impact tier and then put
+  // EVERY 8-K above EVERY article, on the reasoning that one is the company speaking on the record
+  // and the other is a publication writing about it. Since every material 8-K scores 'high' and
+  // almost no article does, the module was structurally all filings. Measured on production:
+  // 6 of 6 cards were 8-Ks, four of them "Material agreement" or "Exec / board change".
+  const iso = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const routineFiling = { kind: '8-K', title: 'ABCD · Earnings', source: '8-K', ticker: 'ABCD', secLabel: 'Earnings', material: true, published: iso(0.2), tier: 'high' };
+  const bigFiling = { kind: '8-K', title: 'WXYZ · Bankruptcy', source: '8-K', ticker: 'WXYZ', secLabel: 'Bankruptcy', material: true, published: iso(3), tier: 'high' };
+  const report = { kind: 'news', title: 'Target cuts guidance after a weak holiday quarter', source: 'WSJ', category: 'MARKETS', published: iso(1), tier: 'high' };
+
+  ok('an exceptional filing is the top kind', catalystRank(bigFiling) === 2);
+  ok('reporting is above a routine filing', catalystRank(report) === 1 && catalystRank(routineFiling) === 0);
+
+  const sorted = [routineFiling, report, bigFiling].sort(compareCatalysts);
+  ok('the bankruptcy leads the catalysts module',
+    mut('filingsalwayswin') ? false : sorted[0] === bigFiling, String(sorted[0].title));
+  ok('…the reporting is second, above the scheduled results release',
+    mut('filingsalwayswin') ? false : sorted[1] === report && sorted[2] === routineFiling,
+    sorted.map((x) => x.source).join(' | '));
+
+  // ⚠️ SIX ROUTINE FILINGS AND ONE ARTICLE IS THE EXACT PRODUCTION SHAPE, so assert it directly.
+  const six = Array.from({ length: 6 }, (_, i) => ({
+    kind: '8-K', title: `SYM${i} · Material agreement`, source: '8-K', ticker: `AB${i}`,
+    secLabel: 'Material agreement', material: true, published: iso(0.3 + i * 0.1), tier: 'high',
+  }));
+  const mixed = [...six, report].sort(compareCatalysts);
+  ok('one article is not buried by six routine 8-Ks in the module',
+    mut('filingsalwayswin') ? false : mixed[0] === report, String(mixed[0].source));
+
+  // The impact tier still decides FIRST — this is a tie-break, not a replacement.
+  const notableBig = { ...bigFiling, tier: 'notable' };
+  ok('impact tier still outranks the kind',
+    [notableBig, report].sort(compareCatalysts)[0] === report, 'high reporting beats a notable filing');
+
+  // Recency still decides between two of the same kind at the same tier.
+  const older = { ...report, title: 'Older report', published: iso(9) };
+  ok('recency still breaks a tie within one kind',
+    [older, report].sort(compareCatalysts)[0] === report);
+}
+
+L('\n=== THE NEWS PAGE LEADS WITH REPORTING, NOT WITH THE CATALYSTS RAIL ===');
+{
+  // ⚠️ MEASURED IN A REAL BROWSER AGAINST PRODUCTION, SIGNED OUT, BY ABSOLUTE DOCUMENT Y —
+  // because DOM order is not visual order and the API ordering alone proved nothing:
+  //
+  //   mobile  (390px)   8 filing cards above the first article (y=613..1089 vs y=1211)
+  //   desktop (1440px)  4 filing cards above the first newsroom row
+  //
+  // Six of those were <TopCatalysts/>, which was the first element of the LEFT feed column. The
+  // source assertions below are deliberately about PLACEMENT, which is the thing that was wrong,
+  // and the real check is the browser run that produced those numbers.
+  // ⚠️ JSX COMMENTS ARE STRIPPED FIRST, AND THE FIRST VERSION OF THIS BLOCK DID NOT DO IT. The
+  // explanation written above the feed column quotes "<TopCatalysts/>" by name, so indexOf found
+  // the COMMENT and reported the rail still at the top of the column — a false red on correct
+  // code, which is the same class of error as the false green this suite exists to prevent.
+  //
+  // The anchors are therefore CODE: the hero render and the 8-K wire element. The column marker
+  // comments would themselves be stripped, so they cannot be used.
+  const feed = fsRead('src/components/NewsFeed.jsx')
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+  const heroAt = feed.indexOf('{hero &&');
+  const railAt = feed.indexOf('<TopCatalysts');
+  const wireAt = feed.indexOf('<EightKWire');
+  ok('the news page renders a hero, a catalysts rail and an 8-K wire',
+    heroAt > 0 && railAt > 0 && wireAt > 0, `hero ${heroAt}, rail ${railAt}, wire ${wireAt}`);
+  ok('the catalysts rail is NOT above the hero',
+    mut('railontop') ? false : railAt > heroAt, `rail at ${railAt}, hero at ${heroAt}`);
+  ok('…and it sits with the 8-K wire, where the filings have their own area',
+    Math.abs(railAt - wireAt) < 400, `${Math.abs(railAt - wireAt)} chars apart`);
+
+  const mod = fsRead('src/components/TopCatalysts.jsx');
+  ok('the module uses the shared comparator rather than its own sort',
+    mut('ownsort') ? false : /scored\.sort\(compareCatalysts\)/.test(mod));
+  ok('…and carries the SEC item label it needs to do that',
+    /secLabel: f\.primaryLabel/.test(mod));
 }
 
 L(`\n${pass} passed, ${fail} failed`);
