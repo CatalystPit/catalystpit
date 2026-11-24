@@ -248,18 +248,34 @@ L('7. what must not have moved');
 // ── 8. a running server, which is the only real proof ────────────────────────
 if (BASE) {
   L(`8. measured against ${BASE}`);
+  // ⚠️ TWO VOCABULARIES FOR ONE FACT. `next start` answers Next’s own headers:
+  //   s-maxage=3600, stale-while-revalidate=...   +  x-nextjs-cache: MISS|HIT
+  // Vercel rewrites them at the edge into:
+  //   public, max-age=0, must-revalidate          +  x-nextjs-prerender: 1  +  x-vercel-cache: MISS|HIT
+  // Both say the page is cached and shared. Reading only one set makes this section report a
+  // regression against production that is not there.
   const head = async (p) => {
     const r = await fetch(BASE + p, { redirect: 'manual', headers: { 'user-agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' } });
-    return { status: r.status, cc: r.headers.get('cache-control') || '', cache: r.headers.get('x-nextjs-cache') || '', loc: r.headers.get('location') || '' };
+    const cc = r.headers.get('cache-control') || '';
+    return {
+      status: r.status,
+      cc,
+      noStore: /no-store/.test(cc),
+      shared: /s-maxage=\d+/.test(cc) || !!r.headers.get('x-nextjs-prerender'),
+      cache: r.headers.get('x-nextjs-cache') || r.headers.get('x-vercel-cache') || '',
+      loc: r.headers.get('location') || '',
+    };
   };
   // First request populates, second must be served from the cache.
   const first = await head('/ticker/AAPL');
   const second = await head('/ticker/AAPL');
   ok('a canonical ticker page answers 200', first.status === 200 && second.status === 200);
-  ok('⚠️ it is no longer private/no-store', !/no-store/.test(second.cc));
-  ok('⚠️ it carries a shared-cache lifetime', /s-maxage=\d+/.test(second.cc));
-  ok('⚠️ the second identical request is served from the cache', /HIT|STALE/.test(second.cache));
-
+  ok('⚠️ it is no longer private/no-store', !second.noStore);
+  ok('⚠️ it is served as a shared, prerendered document', second.shared);
+  const hit = /HIT|STALE|PRERENDER/.test(second.cache) || /HIT|STALE|PRERENDER/.test((await head('/ticker/AAPL')).cache);
+  // ⚠️ BYPASS IS NOT A FAILURE. It is what the edge answers at a revalidation boundary, so one
+  // retry separates "the cache is off" from "the window just turned over".
+  ok('⚠️ a repeat of the identical request is served from the cache', hit);
   const low = await head('/ticker/aapl');
   ok('a lowercase URL still 308s', low.status === 308);
   ok('…to the uppercase URL', /\/ticker\/AAPL$/.test(low.loc));
@@ -278,9 +294,9 @@ if (BASE) {
 
   // Nothing else regressed.
   const home = await head('/');
-  ok('the homepage is still prerendered', home.status === 200 && /HIT|STALE/.test(home.cache));
+  ok('the homepage is still prerendered', home.status === 200 && home.shared && !home.noStore);
   const ins = await head('/insiders');
-  ok('/insiders is still prerendered', ins.status === 200 && /HIT|STALE/.test(ins.cache));
+  ok('/insiders is still prerendered', ins.status === 200 && ins.shared && !ins.noStore);
 }
 
 if (!QUIET) {
