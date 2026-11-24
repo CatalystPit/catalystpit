@@ -1,5 +1,5 @@
 import { after } from 'next/server';
-import { familyLean } from '../../../lib/consensus/synthesis.mjs';
+import { displayFacts } from '../../../lib/consensus/board-display.mjs';
 import { readPublishedBoard } from '../../../lib/consensus/refresh';
 import { MATERIALIZATION_VERSION } from '../../../lib/consensus/materialization.mjs';
 import { claimRefreshAttempt } from '../../../lib/market/refresh-policy.mjs';
@@ -41,38 +41,6 @@ const NO_STORE = { 'Cache-Control': 'private, no-store' };
 // ⚠️ A READ NEVER COMPUTES. Not on a miss, not on a version mismatch, not for the first visitor
 // after a deploy. Resolving evidence costs ~1.6s per ticker and ~90s for the board; putting that on
 // a request would mean a thousand visitors could ask for a thousand rebuilds.
-
-/**
- * Per-row display facts, derived from the family STATES rather than from the combined number.
- *
- * ⚠️ ALIGNMENT IS PRESENTED AS A COUNT, NOT A PERCENTAGE. |ΣE|/Σ|E| reads 100% when two of four
- * families are internally mixed and merely fail to oppose — measured on UBER, which showed
- * "align 100%" on insiders:bullish, institutions:mixed, congress:bullish, catalysts:mixed. The
- * percentage is arithmetically correct and rhetorically false, so the number stays in the payload
- * for Pit Scan and the page says "2 of 4 families point bullish".
- */
-function displayFacts(row) {
-  // ⚠️ SHAPE NOTE. A V3 row uses `families` for the per-family FACT SHEET (an object keyed by
-  // family). The V2.1 normalised ARRAY these fields are derived from now lives on
-  // `canonical.families`. Reading `row.families` here would silently produce empty leans on
-  // every row while looking like it worked.
-  const fams = row.canonical?.families || (Array.isArray(row.families) ? row.families : []);
-  const active = fams.filter((f) => f.active);
-  const up = active.filter((f) => familyLean(f) === 'up');
-  const down = active.filter((f) => familyLean(f) === 'down');
-  const mixed = active.filter((f) => familyLean(f) === 'mixed');
-  return {
-    ...row,
-    activeFamilies: active.map((f) => f.family),
-    inactiveFamilies: fams.filter((f) => !f.active).map((f) => ({ family: f.family, reason: f.inactiveReason })),
-    leanUp: up.map((f) => f.family),
-    leanDown: down.map((f) => f.family),
-    leanMixed: mixed.map((f) => f.family),
-    // ALIGNMENT IS ONLY MEANINGFUL ACROSS TWO OR MORE INDEPENDENT FAMILIES (§5). With one active
-    // family the page says SINGLE-SOURCE; it must never read 100%.
-    alignmentMeaningful: active.length >= 2,
-  };
-}
 
 /**
  * Ask the refresh cron to rebuild, without waiting for it and without letting traffic multiply it.

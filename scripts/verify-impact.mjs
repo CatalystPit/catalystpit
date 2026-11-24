@@ -506,11 +506,18 @@ L('\n=== EVERY SURFACE CALLS THE SAME DESK ===');
   ok('…and falls back to them when nothing earns a hero',
     mut('nofloor') ? false : /leadingWithFilings/.test(home) && /fetchFilings/.test(home));
   ok('…labelling the module when it does', /8-K FILINGS/.test(home));
+  // ⚠️ THESE THREE READ lib/home-model.mjs, NOT THE COMPONENT, AND THAT IS WHERE THE CARDS ARE
+  // BUILT NOW. The mapping was lifted out of CatalystPit's fetchAll so app/page.jsx can run the
+  // identical function on the server and put the research in the HTML. The guarantees are the same
+  // ones; only the file that has to honour them changed.
+  const model = read('src/lib/home-model.mjs');
+  ok('the homepage selection still reaches the card builder',
+    /buildHomeModel\(/.test(home) && /filingCards/.test(model));
   // No publisher artwork is fetched or stored for a filing card.
   ok('filing cards carry no borrowed image',
-    mut('borrowsimage') ? false : /imageUrl: null/.test(home));
+    mut('borrowsimage') ? false : /imageUrl: null/.test(model));
   ok('…and every filing card names a renderable ticker',
-    /filter\(\(f\) => isRenderableTicker\(f\?\.ticker\)\)/.test(home));
+    /filter\(\(f\) => isRenderableTicker\(f\?\.ticker\)\)/.test(model));
 }
 
 // ─── EVERY CONSUMER IMPORTS WHAT IT CALLS ───────────────────────────────────
@@ -835,9 +842,10 @@ L('\n=== THE PRODUCERS AND THE ROUTE ARE ACTUALLY WIRED TO IT ===');
   const nf = strip(fsRead('src/lib/news-filings.mjs'));
   ok('the river’s filing cards carry the SEC item label',
     mut('dropssec') ? false : /secLabel:\s*f\.primaryLabel/.test(nf));
-  const home = strip(fsRead('src/components/CatalystPit.jsx'));
+  // The homepage's cards are built in lib/home-model.mjs now — see the note at the filings floor.
+  const homeModel = strip(fsRead('src/lib/home-model.mjs'));
   ok('…and so do the homepage’s filing cards',
-    mut('dropssec') ? false : /secLabel:\s*f\.primaryLabel/.test(home));
+    mut('dropssec') ? false : /secLabel:\s*f\.primaryLabel/.test(homeModel));
 }
 
 

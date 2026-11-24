@@ -27,6 +27,18 @@ import CatalystPit from '../components/CatalystPit'
 // (fetchAll runs in an effect), so what the server now emits is the shell: the h1, the nav, the
 // section headings, the footer and the links. That is the difference between a page a crawler can
 // read and a page it has to execute.
-export default function HomeClient() {
-  return <CatalystPit />
+// ⚠️ AND THE SHELL WAS ONLY HALF THE FIX — 192 WORDS OF IT.
+//
+// Removing `ssr: false` got the heading, the nav, the footer and seventeen internal links into the
+// HTML. It did not get the RESEARCH in: every card, row, symbol, value and date still arrived in an
+// effect, so the most important page on the site server-rendered a frame around an empty room.
+// Measured on production at 1f9ff3fa, fetching / as Googlebot: 192 words of body text, and not one
+// ticker symbol among them.
+//
+// app/page.jsx now reads the cached pit_snapshot and the published consensus board on the server,
+// runs the SAME buildHomeModel the browser runs, and passes the result straight through here. These
+// props are the whole mechanism; this file stays a two-line boundary because a 'use client' file
+// cannot export metadata and a server component cannot use hooks.
+export default function HomeClient({ initialData = null, initialConsensus = null }) {
+  return <CatalystPit initialData={initialData} initialConsensus={initialConsensus} />
 }

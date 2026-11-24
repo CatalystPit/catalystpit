@@ -118,8 +118,19 @@ function whyNowAgo(r) {
   return typeof ago === 'string' && ago.trim() ? ago.trim() : null;
 }
 
-export default function ConsensusTeaser() {
-  const [rows, setRows] = useState(null);   // null = loading, [] = none
+/**
+ * ⚠️ initialRows IS THE SERVER'S COPY OF THIS BOARD, AND IT IS WHY THE MODULE IS NOW CRAWLABLE.
+ *
+ * This fetched in an effect and rendered three skeleton bars until it answered, so the flagship
+ * cross-source evidence module — the one thing on the site no competitor publishes — did not exist
+ * in the HTML at all. app/page.jsx reads the same published board on the server and passes the top
+ * rows in; the effect still refetches on mount, so a reader sees a current board either way.
+ *
+ * null means "nothing was passed, so show the loading state as before"; [] means the server read a
+ * board and it was genuinely empty, which is a different claim and renders the empty copy.
+ */
+export default function ConsensusTeaser({ initialRows = null }) {
+  const [rows, setRows] = useState(initialRows);   // null = loading, [] = none
 
   useEffect(() => {
     let alive = true;

@@ -12,6 +12,12 @@
  * second into the first destroys the only value that should ever render as zero.
  */
 
+/** Parse to a number, or 0 when there is nothing to parse. For widths, counts and sort keys. */
+export const safeN = (v) => {
+  const x = parseFloat(v);
+  return Number.isNaN(x) ? 0 : x;
+};
+
 /** Parse to a number, or null when there is nothing to parse. Zero survives as zero. */
 export const maybeN = (v) => {
   const x = parseFloat(v);

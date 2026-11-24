@@ -96,7 +96,13 @@ export const chgC  = (v) => (+v) > 0 ? C.green : C.red;
 export const chgBg = (v) => (+v) > 0 ? C.greenLight : C.redLight;
 export const fmt2  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : x.toFixed(2); };
 export const fmtP  = n => { const x = parseFloat(n); return isNaN(x) ? "-" : `${x>0?"+":""}${x.toFixed(2)}%`; };
-export const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
+// ⚠️ safeN, toArr AND minsSince NOW LIVE IN IMPORT-FREE MODULES AND ARE RE-EXPORTED HERE.
+// src/lib/home-model.mjs runs on the SERVER to render the homepage's research into the initial
+// HTML, and a server module may not import from a 'use client' file. Keeping the names exported
+// from here means no call site changed; moving the bodies means the server and the browser share
+// one implementation instead of two that can drift.
+export { safeN } from './num.mjs';
+import { safeN } from './num.mjs';
 // ⚠️ safeN's SIBLING FOR VALUES WHERE ZERO MEANS SOMETHING. Defined in lib/num.mjs — an import-free
 // module — so a test can execute it; this bug was a coercion helper turning "unknown" into a real
 // 0.00%, and a helper that can only be read is a helper nobody has run. Re-exported here so callers
@@ -104,14 +110,10 @@ export const safeN = v => { const x = parseFloat(v); return isNaN(x) ? 0 : x; };
 export { maybeN } from './num.mjs';
 export const timeAgo = m => typeof m === "number" ? (m < 60 ? `${m}m ago` : `${Math.floor(m/60)}h ago`) : m || "Just now";
 
-export const minsSince = (publishedStr) => {
-  if (!publishedStr) return null;
-  const d = new Date(publishedStr);
-  if (isNaN(d.getTime())) return null;
-  const ms = Date.now() - d.getTime();
-  if (ms < 0) return 0;
-  return Math.floor(ms / 60000);
-};
+// minsSince takes an optional clock now, so the server can compute an age at generation time and
+// the browser's first render can reuse that exact number instead of recomputing a different one.
+export { minsSince, isoOrNull } from './home-model.mjs';
+import { minsSince } from './home-model.mjs';
 
 export const storyPhoto = (sym, tag, slot) => {
   const tickerPool = TICKER_PHOTOS[sym?.toUpperCase()];
@@ -134,14 +136,7 @@ export const fetchKey = async (key) => {
   } catch { return null; }
 };
 
-export const toArr = (val, ...wrapperKeys) => {
-  if (Array.isArray(val)) return val;
-  if (val && typeof val === 'object') {
-    for (const k of wrapperKeys) if (Array.isArray(val[k])) return val[k];
-    for (const k of Object.keys(val)) if (Array.isArray(val[k])) return val[k];
-  }
-  return [];
-};
+export { toArr } from './home-model.mjs';
 
 // Kick off Stripe Pro checkout (C5): POST /api/stripe/checkout → redirect to Stripe.
 // Signed-out → /sign-in; not-configured / error → friendly alert (no dead button).
@@ -516,6 +511,24 @@ export function MiniLineChart({points=[], color=C.green}) {
 }
 
 // ─── NEWS PHOTO CARD (hero / large / stacked / default) ─────────────────────
+/**
+ * A STORY'S AGE, IN BOTH THE READER'S UNITS AND THE MACHINE'S.
+ *
+ * ⚠️ "2h ago" IS UNREADABLE WITHOUT A CLOCK, AND A CRAWLER DOES NOT HAVE ONE. The card has always
+ * printed a relative age, which is right for a human scanning a desk and useless to anything
+ * quoting the page later: an answer engine that reads "2h ago" out of our HTML cannot tell whether
+ * that was two hours before its crawl or two hours before last Tuesday. A <time dateTime> carries
+ * the exact instant alongside the words, and the words do not change.
+ *
+ * The attribute is only emitted when the publisher actually gave us a date — `published` is null
+ * rather than invented, and then this renders the plain span it always did.
+ */
+export function StoryAge({ n, className, style }) {
+  if (n?.mins == null) return null;
+  if (!n.published) return <span className={className} style={style}>{timeAgo(n.mins)}</span>;
+  return <time className={className} dateTime={n.published} style={style}>{timeAgo(n.mins)}</time>;
+}
+
 export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, showSummary=false}) {
   const [bg1, bg2] = CARD_COLORS[idx % CARD_COLORS.length];
   const [imgFailed, setImgFailed] = useState(false);
@@ -564,10 +577,8 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
               fontWeight:700, color:chgC(chgNum), background:chgBg(chgNum),
               padding:"2px 7px", borderRadius:4}}>{fmtP(chgNum)}</span>
           )}
-          {n.mins != null && (
-            <span className="cp-num" style={{fontSize:10, color:C.dim, marginLeft:"auto",
-              fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}>{timeAgo(n.mins)}</span>
-          )}
+          <StoryAge n={n} className="cp-num" style={{fontSize:10, color:C.dim, marginLeft:"auto",
+              fontFamily:"'DM Sans',sans-serif", whiteSpace:"nowrap"}}/>
         </div>
 
         {/* ⚠️ THE HEADLINE IS THE LARGEST THING IN THE CARD, which is what makes this a news card
@@ -642,10 +653,8 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
             padding:"16px 16px 14px", zIndex:2}}>
             <div style={{display:"flex", gap:5, marginBottom:7, alignItems:"center"}}>
               <TagBadge tag={n.tag}/>
-              {n.mins != null && (
-                <span className="cp-num" style={{fontSize:10, color:"rgba(255,255,255,0.65)", marginLeft:"auto",
-                  fontFamily:"'DM Sans',sans-serif"}}>{timeAgo(n.mins)}</span>
-              )}
+              <StoryAge n={n} className="cp-num" style={{fontSize:10, color:"rgba(255,255,255,0.65)", marginLeft:"auto",
+                  fontFamily:"'DM Sans',sans-serif"}}/>
             </div>
             <div style={{fontSize:19, color:"#fff", lineHeight:1.35, fontWeight:700,
               fontFamily:"'DM Sans',sans-serif", textShadow:"0 2px 10px rgba(0,0,0,0.55)",
@@ -665,10 +674,8 @@ export function NewsPhotoCard({n, idx, large=false, hero=false, stacked=false, s
         <div style={{padding:stacked?"9px 12px 10px":"11px 13px 13px", flex:1}}>
           <div style={{display:"flex", gap:5, marginBottom:5, alignItems:"center"}}>
             <TagBadge tag={n.tag}/>
-            {n.mins != null && (
-              <span className="cp-num" style={{fontSize:10, color:C.dim, marginLeft:"auto",
-                fontFamily:"'DM Sans',sans-serif"}}>{timeAgo(n.mins)}</span>
-            )}
+            <StoryAge n={n} className="cp-num" style={{fontSize:10, color:C.dim, marginLeft:"auto",
+                fontFamily:"'DM Sans',sans-serif"}}/>
           </div>
           <div style={{fontSize:stacked?12:large?15:13, color:C.ink, lineHeight:1.42,
             fontWeight:600, fontFamily:"'DM Sans',sans-serif",

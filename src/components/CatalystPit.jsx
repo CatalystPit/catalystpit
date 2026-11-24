@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import ConsensusTeaser from "./ConsensusTeaser";
-import { isRenderableTicker, firstRenderable } from "../lib/security-identity.mjs";
+import { isRenderableTicker } from "../lib/security-identity.mjs";
+import { buildHomeModel, isEmptyModel } from "../lib/home-model.mjs";
 import { deskSelection } from "../lib/impact";
 import HeatMap from "./HeatMap";
 import FearGreedCard from "./FearGreedCard";
@@ -13,8 +14,8 @@ import PlanChoice from "./PlanChoice";
 import CompactChart from "./chart/CompactChart";
 import {
   C, CARD_COLORS,
-  chgC, chgBg, fmt2, safeN, maybeN, minsSince,
-  fetchKey, toArr, startCheckout,
+  chgC, chgBg, fmt2, maybeN, isoOrNull,
+  fetchKey, startCheckout,
   BrandStyles, Skel, Dot, NewsPhotoCard, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, WatchlistHomeCard,
   useRealtimeQuotes, quotesFreshness,
@@ -236,14 +237,6 @@ const fetchClusters = async () => {
   } catch { return null; }
 };
 
-const fmtInsiderValue = (n) => {
-  const v = Number(n);
-  if (!v || isNaN(v)) return '—';
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `$${(v / 1e3).toFixed(0)}K`;
-  return `$${v.toLocaleString('en-US')}`;
-};
-
 const insStyle = (type) =>
   type === 'BUY'  ? { fg: C.green, bg: C.greenLight } :
   type === 'SELL' ? { fg: C.red,   bg: C.redLight }  :
@@ -284,143 +277,18 @@ const fetchAll = async () => {
       ]);
     }
 
-    const tapeArr = toArr(tape, 'tickers', 'ticker_tape', 'data');
-    const tickers = tapeArr.map(t => ({
-      sym: t.symbol || t.sym || t.ticker || '?',
-      price: safeN(t.price ?? t.last ?? t.close ?? t.current_price ?? t.regularMarketPrice),
-      // ⚠️ safeN TURNED "UNKNOWN" INTO 0, AND THAT IS HOW A MISSING CHANGE BECAME 0.00% IN RED.
-      //
-      // safeN returns 0 for anything unparseable, so a null percentage — which is now what the API
-      // sends when a settled close has no intraday move to report — arrived here as a hard zero and
-      // rendered as a real, flat, red 0.00%. Fixing the API alone would have changed nothing on the
-      // page: this line would have flattened it again.
-      //
-      // Zero is a real market outcome and must keep rendering as 0.00%. Unknown is null and renders
-      // as a dash. maybeN preserves the difference that safeN destroys.
-      chg: maybeN(t.changePct ?? t.change_pct ?? t.pct_change ?? t.chg ?? t.changePercent ?? t.percentChange),
-      // Which session the percentage describes, so the tape can say so rather than implying "now".
-      chgBasis: t.changeBasis ?? null,
-    }));
-
-    const storiesArr = toArr(stories, 'stories', 'top_stories', 'articles', 'items', 'data');
-    const news = storiesArr.map(s => ({
-      headline: s.title || s.headline || s.summary || s.description || '',
-      source:   s.source || s.outlet || s.publisher || 'Market News',
-      mins:     minsSince(s.published || s.published_at || s.date || s.pubDate),
-      tag:      (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
-      sym:      (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || s.sym || null),
-      summary:  s.summary || s.description || '',
-      // ⚠️ NO PUBLISHER PHOTOGRAPHS ON THE FRONT DOOR. A desk is not a magazine: these cards
-      // carry a ticker, a type and an age, and the gradient card already renders a null image.
-      // Dropping the field also means no WSJ/MW/Benzinga artwork is ever requested from, or
-      // cached on, our origin — which is a licensing question we do not need to have.
-      imageUrl: null,
-      url:      s.url || null,
-    }));
-
-    const insidersArr = toArr(insiderData, 'trades');
-    const insidersAll = insidersArr.map(i => ({
-      sym:   i.ticker || '?',
-      name:  i.executive || '',
-      role:  i.title || '',
-      type:  i.action === 'BUY' ? 'BUY' : i.action === 'SELL' ? 'SELL' : 'OTHER',
-      value: fmtInsiderValue(i.totalValue),
-      valueNum: safeN(i.totalValue),          // numeric, for the value floor
-      filed: i.filingDate || '',
-    }));
-    // A1 filter: P/S only (already via view=transactions) + value ≥ $100k.
-    // Relax to $25k when a hard floor would leave too few rows to fill the tape.
-    const MIN_HI = 100000, MIN_LO = 25000;
-    const hiRows = insidersAll.filter(i => i.valueNum >= MIN_HI);
-    const insiders = hiRows.length >= 5 ? hiRows : insidersAll.filter(i => i.valueNum >= MIN_LO);
-
-    const politiciansArr = toArr(politicianData, 'trades');
-    const politicians = politiciansArr.map(p => ({
-      sym:    p.ticker || '?',
-      name:   p.representative || '',
-      party:  p.party || '',
-      state:  p.state || '',
-      slug:   p.memberSlug || '',
-      type:   p.action === 'BUY' ? 'BUY' : p.action === 'SELL' ? 'SELL' : 'OTHER',
-      amount: p.amountRange || '—',
-      // ⚠️ BOTH DATES, EACH UNDER ITS OWN NAME. `traded` is when the member dealt; `disclosed` is
-      // when the filing made it public, and that is the date the homepage shows and sorts by — the
-      // transaction date is not actionable information until it has been disclosed. Collapsing the
-      // two into one field is what let a transaction date ten months in the future render as though
-      // it were news. /api/politicians?view=feed already refuses rows where the two contradict.
-      traded: p.transactionDate || '',
-      disclosed: p.disclosureDate || '',
-    }));
-
-    // ⚠️ THE 1.2 WAS A FABRICATED MARKET MOVE. When SPY's change was missing, this fell back to the
-    // literal 1.2 — a plausible-looking percentage presented as the market's actual return, which is
-    // the same class of defect as the 18.3 VIX fallback noted below and removed for the same reason.
-    // Unknown is null, and the surfaces that read it render a dash.
-    const spy_chg = maybeN(marketSnap?.SPY?.changePct ?? marketSnap?.SPY?.chg ?? marketSnap?.SPY?.change_pct);
-    // The VIX value that used to be derived here is gone with the VIX card. It was computed, carried
-    // through the return object, and consumed by nothing — and its fallback was the literal 18.3, a
-    // fabricated index level that would have been displayed as real had anything ever rendered it.
-
-    // NEVER WHITE (Rule 0): if the news feed is empty, synthesize up to 5 headlines
-    // from the real insider filings we already fetched — no invented content.
-    const newsFinal = news.length ? news : insiders
-      .filter(i => i.type === 'BUY' || i.type === 'SELL')
-      .slice(0, 5)
-      .map(i => ({
-        headline: `${i.sym}: ${i.name || 'Insider'} ${i.type === 'BUY' ? 'bought' : 'sold'} ${i.value}`,
-        source: 'SEC Form 4', mins: null, tag: 'SEC',
-        sym: i.sym, summary: '', imageUrl: null, url: `/ticker/${i.sym}`,
-      }));
-
-    // TODAY IN THE PIT — pre-built in the snapshot; otherwise build locally from fetched data.
-    // Same eligibility rule as the snapshot builder, applied to the local fallback path so the two
-    // cannot disagree about what counts as a ticker. A snapshot built before this shipped may still
-    // carry an ineligible card, so the cached array is filtered too — the fix must not wait for the
-    // next cron run to take effect.
-    let catalysts;
-    if (usingSnapshot) {
-      catalysts = (Array.isArray(snap.catalysts) ? snap.catalysts : []).filter((c) => isRenderableTicker(c?.sym));
-    } else {
-      const topBuys = insiders.filter(i => i.type === 'BUY' && isRenderableTicker(i.sym)).sort((a, b) => b.valueNum - a.valueNum);
-      const clusters = toArr(clusterData);
-      catalysts = [];
-      if (topBuys[0]) catalysts.push({ kind:'BUY', label:'LARGEST OPEN-MARKET BUY',
-        sym: topBuys[0].sym, line: `${topBuys[0].name || 'Insider'} bought`, value: topBuys[0].value, date: topBuys[0].filed });
-      const cluster = firstRenderable(clusters);
-      if (cluster) catalysts.push({ kind:'BUY', label:'CLUSTER BUY · 30D',
-        sym: cluster.ticker, line: `${cluster.buyers} insiders bought`,
-        value: fmtInsiderValue(cluster.totalValue), date: cluster.lastBuy });
-      // Dated by disclosure, and only if we have one — a hero card with no date beats a hero card
-      // with the wrong date. Matches buildCatalysts() in api/cron/pit-snapshot.
-      const pol = firstRenderable(politicians, (p) => p?.sym && p?.disclosed);
-      if (pol) catalysts.push({ kind: pol.type, label:'LATEST CONGRESS TRADE',
-        sym: pol.sym, line: `${pol.name} ${pol.type === 'BUY' ? 'bought' : 'sold'}`,
-        value: pol.amount, date: pol.disclosed });
-      if (topBuys[1]) catalysts.push({ kind:'BUY', label:'OPEN-MARKET BUY',
-        sym: topBuys[1].sym, line: `${topBuys[1].name || 'Insider'} bought`, value: topBuys[1].value, date: topBuys[1].filed });
-    }
-
-    // Canonical filings in the story-card shape. No image, deliberately: the gradient card
-    // already handles a null photo, and there is no publisher artwork for an SEC filing to
-    // borrow — a ticker, a type and an age is the whole card.
-    const filingCards = (filings || [])
-      .filter((f) => isRenderableTicker(f?.ticker))
-      .map((f) => ({
-        headline: `${f.ticker} · ${f.primaryLabel || 'Filing'}`,
-        source: 'SEC 8-K',
-        mins: minsSince(f.filedAt),
-        tag: 'SEC',
-        sym: f.ticker,
-        summary: '',
-        imageUrl: null,
-        url: f.url || `/ticker/${f.ticker}`,
-        material: f.material,
-        // The SEC item label, so deskSelection can tell a delisting notice from an earnings
-        // release. Both are material: true, and that flag is all this card used to carry.
-        secLabel: f.primaryLabel || 'Filing',
-      }));
-
-    return { tickers, news: newsFinal, insiders, politicians, catalysts, spy_chg, filingCards };
+    // ⚠️ THE SHAPING MOVED TO lib/home-model.mjs SO THE SERVER CAN RUN IT TOO.
+    //
+    // Everything from the raw blobs to the rendered view model used to live here, inside an async
+    // function that only ever executed in an effect — which is why the server rendered headings and
+    // nav and nothing else. app/page.jsx now calls the SAME buildHomeModel against the SAME cached
+    // pit_snapshot and hands the result in as initialData, so the research is in the HTML before
+    // any script runs. This call site is unchanged in behaviour: same inputs, same output, and the
+    // default clock is Date.now() exactly as the inline version used.
+    return buildHomeModel({
+      tape, marketSnap, stories, insiderData, politicianData, clusterData,
+      snapCatalysts: usingSnapshot ? snap?.catalysts : null, usingSnapshot, filings,
+    });
   } catch (e) {
     console.error('[CatalystPit] fetchAll error:', e);
     return null;
@@ -431,15 +299,53 @@ const fetchAll = async () => {
 // render it would re-key the quote subscription on every paint.
 const IDX_SYMS = ['SPY', 'QQQ', 'DIA', 'UVXY'];
 
-export default function CatalystPit() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+/**
+ * THE FRONT DOOR, NOW RENDERED TWICE FROM ONE MODEL.
+ *
+ * ⚠️ initialData IS THE SERVER'S RENDER OF THIS PAGE, NOT A HINT. app/page.jsx reads the cached
+ * pit_snapshot, runs buildHomeModel against it and passes the result in, so the HTML a crawler
+ * receives already contains the stories, the insider filings, the congressional disclosures and the
+ * catalyst cards — symbols, values, dates and links — before any script executes. The effect below
+ * still refetches on mount exactly as before, so a reader gets current data; the difference is that
+ * the page is no longer BLANK until it lands.
+ *
+ * ⚠️ WHY THE FIRST CLIENT RENDER MUST USE THE PROP VERBATIM. React compares the server's HTML with
+ * the browser's first render and throws the server copy away on any mismatch — which would silently
+ * undo the whole point of this change. buildHomeModel is pure and every age in initialData was
+ * computed against the server's clock, so reusing the prop as the initial state makes the two
+ * renders identical by construction. Recomputing anything from Date.now() here would not.
+ *
+ * ⚠️ AND NO PRICES ARRIVE THIS WAY. page.jsx passes no tape and no market snapshot: quotes are
+ * market-data-licensed and resolved per viewer by /api/quotes, so they stay exactly where they
+ * were — in the effect, behind the entitlement. initialData carries public disclosure evidence only.
+ */
+export default function CatalystPit({ initialData = null, initialConsensus = null }) {
+  const [data, setData] = useState(initialData);
+  // ⚠️ SKELETONS ONLY WHEN THERE IS GENUINELY NOTHING TO SHOW. Starting this true with server data
+  // already in hand would replace a rendered page with placeholder bars for one frame — a visible
+  // flash of nothing, caused by the very change meant to fill the page.
+  const [loading, setLoading] = useState(!initialData);
   const [lastUp, setLastUp] = useState(null);
+  // Whether anything REAL is on screen yet, read inside loadData without making it a dependency.
+  const hasData = useRef(!isEmptyModel(initialData));
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async ({ showSkeleton = false } = {}) => {
+    // The ↻ button asks for the skeleton deliberately — it is the only feedback a manual refresh
+    // has. The automatic refresh does not, because swapping present content for bars is worse than
+    // letting it change in place.
+    if (showSkeleton || !hasData.current) setLoading(true);
     const d = await fetchAll();
-    if (d) { setData(d); setLastUp(new Date()); }
+    // ⚠️ A FAILED REFRESH MUST NOT ERASE A RENDERED PAGE. fetchAll returns a well-formed EMPTY
+    // model when its requests fail, so this used to be `if (d)` and that was safe only while the
+    // first render had nothing in it to lose. With the server rendering the research, an empty
+    // answer would wipe four catalyst cards, ten Form 4 rows and six disclosures off a page that
+    // was already correct — and present it as a quiet market. Keeping what is on screen is the
+    // honest outcome: we failed to refresh, the market did not go silent.
+    if (d && !(hasData.current && isEmptyModel(d))) {
+      setData(d);
+      hasData.current = !isEmptyModel(d);
+      setLastUp(new Date());
+    }
     setLoading(false);
   }, []);
 
@@ -657,9 +563,15 @@ export default function CatalystPit() {
                       card here is a claim that a listed security did something, and the cost of that
                       claim being false is a homepage reading "NONE". */}
                   {catalysts.filter((c) => isRenderableTicker(c?.sym)).map((c, i) => (
-                    <div key={i} className="hov" onClick={() => goTicker(c.sym)}
+                    /* ⚠️ AN ANCHOR, NOT A DIV WITH AN onClick. This card was reachable only by
+                       running JavaScript and dispatching a click, so no crawler could follow it to
+                       the ticker page it describes — the homepage advertised four catalysts and
+                       linked to none of them. The destination and the behaviour are unchanged; it
+                       is now expressed as a link, which is what it always was. */
+                    <a key={i} className="hov" href={`/ticker/${encodeURIComponent(c.sym)}`}
                       style={{background:C.surface, borderRadius:7, padding:14, border:`1px solid ${C.border}`,
-                        borderLeft:`3px solid ${insStyle(c.kind).fg}`, cursor:"pointer", transition:"background 0.15s"}}>
+                        borderLeft:`3px solid ${insStyle(c.kind).fg}`, cursor:"pointer", transition:"background 0.15s",
+                        display:"block", textDecoration:"none", color:"inherit"}}>
                       <div style={{fontFamily:"'DM Sans',sans-serif", fontSize:9, color:C.dim,
                         letterSpacing:"0.8px", marginBottom:7}}>{c.label}</div>
                       <div style={{display:"flex", alignItems:"center", gap:7, marginBottom:5}}>
@@ -669,7 +581,7 @@ export default function CatalystPit() {
                           fontWeight:600, background:insStyle(c.kind).bg, color:insStyle(c.kind).fg}}>{c.value}</span>
                       </div>
                       <div style={{fontSize:12, color:C.muted, fontWeight:300}}>{c.line}{c.date ? ` · ${c.date}` : ''}</div>
-                    </div>
+                    </a>
                   ))}
                 </div>
               )}
@@ -700,7 +612,7 @@ export default function CatalystPit() {
                     minutes ago. Each card carries its own age; this one is labelled as the
                     section's. */}
                 Section updated {timeStr} ET
-                <button onClick={loadData} style={{background:"transparent", border:"none",
+                <button onClick={() => loadData({ showSkeleton: true })} style={{background:"transparent", border:"none",
                   color:C.muted, cursor:"pointer", fontSize:11, padding:"2px 6px",
                   borderRadius:4, fontFamily:"'DM Sans',sans-serif"}}
                   onMouseEnter={e => { e.currentTarget.style.color = C.green; }}
@@ -768,7 +680,7 @@ export default function CatalystPit() {
           </div>
 
           {/* PIT CONSENSUS — flagship cross-signal teaser (under Top Stories) */}
-          <ConsensusTeaser />
+          <ConsensusTeaser initialRows={initialConsensus} />
 
           {/* INSIDER TRADES */}
           <div style={{background:C.white, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden"}}>
@@ -799,8 +711,11 @@ export default function CatalystPit() {
                   <tr key={i} className="hov" onClick={() => goTicker(ins.sym)} style={{borderBottom:i < insidersShown.length - 1 ? `1px solid ${C.surface}` : "none",
                     transition:"background 0.15s", cursor:"pointer",
                     borderLeft:`3px solid ${insStyle(ins.type).fg}`}}>
+                    {/* The row's onClick stays for the whole-row hit area; the symbol is also a
+                        genuine <a> so the filing is DISCOVERABLE. stopPropagation keeps one
+                        navigation rather than a link and a router.push racing each other. */}
                     <td style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif",
-                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr"><span style={{display:"flex", alignItems:"center", gap:8}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</span></td>
+                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr"><a href={`/ticker/${encodeURIComponent(ins.sym)}`} onClick={(e) => e.stopPropagation()} style={{display:"flex", alignItems:"center", gap:8, color:"inherit", textDecoration:"none"}}><TickerLogo symbol={ins.sym} size={18}/>{ins.sym}</a></td>
                     <td style={{padding:"11px 16px", fontSize:13, color:C.text, fontWeight:400}}>{ins.name}</td>
                     <td style={{padding:"11px 16px", fontSize:12, color:C.muted, fontWeight:300}}>{ins.role}</td>
                     <td style={{padding:"11px 16px"}}>
@@ -811,7 +726,7 @@ export default function CatalystPit() {
                     </td>
                     <td className="cp-num" style={{padding:"11px 16px", textAlign:"right", fontFamily:"'DM Sans',sans-serif",
                       fontSize:14, fontWeight:700, color:insStyle(ins.type).fg}}>{ins.value}</td>
-                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim}}>{ins.filed}</td>
+                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim}}>{ins.filed ? <time dateTime={isoOrNull(ins.filed) || undefined}>{ins.filed}</time> : ins.filed}</td>
                   </tr>
                 ))}
               </tbody>
@@ -877,7 +792,7 @@ export default function CatalystPit() {
                     transition:"background 0.15s", cursor:p.slug ? "pointer" : "default",
                     borderLeft:`3px solid ${insStyle(p.type).fg}`}}>
                     <td style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif",
-                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr"><span style={{display:"flex", alignItems:"center", gap:8}}><TickerLogo symbol={p.sym} size={18}/>{p.sym}</span></td>
+                      fontSize:13, fontWeight:600, color:C.green}} className="sym-lnk cp-tkr"><a href={`/ticker/${encodeURIComponent(p.sym)}`} onClick={(e) => e.stopPropagation()} style={{display:"flex", alignItems:"center", gap:8, color:"inherit", textDecoration:"none"}}><TickerLogo symbol={p.sym} size={18}/>{p.sym}</a></td>
                     <td style={{padding:"11px 16px", fontSize:13, color:C.text, fontWeight:400}}>{p.name}</td>
                     <td style={{padding:"11px 16px"}}>
                       <span style={{fontSize:10, padding:"3px 9px", borderRadius:3,
@@ -892,7 +807,7 @@ export default function CatalystPit() {
                     </td>
                     <td className="cp-num" style={{padding:"11px 16px", textAlign:"right", fontFamily:"'DM Sans',sans-serif",
                       fontSize:14, fontWeight:700, color:insStyle(p.type).fg, whiteSpace:"nowrap"}}>{p.amount}</td>
-                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim, whiteSpace:"nowrap"}}>{p.disclosed}</td>
+                    <td className="cp-num" style={{padding:"11px 16px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:C.dim, whiteSpace:"nowrap"}}>{p.disclosed ? <time dateTime={isoOrNull(p.disclosed) || undefined}>{p.disclosed}</time> : p.disclosed}</td>
                   </tr>
                 ))}
               </tbody>
