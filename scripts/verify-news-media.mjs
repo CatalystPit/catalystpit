@@ -129,6 +129,28 @@ L('\n=== 5. THE EXTRACTOR, AGAINST REAL FEED SHAPES ===');
   ok('⚠️ a press-kit logo is flagged', isLikelyLogoAsset('https://mms.businesswire.com/x/PP_LOGO_2.5_INCH_For_Docs.jpg'));
   ok('…and an ordinary photograph is not', !isLikelyLogoAsset('https://mmx.prnewswire.com/media/261105_Method_04_025-1.jpg'));
   ok('a bare domain is not an image', !isUsableImageUrl('https://example.com/'));
+
+  // ── ⚠️ THE THREE HOLES THAT SHIPPED, EACH MEASURED IN A REAL BROWSER AFTER DEPLOY ──────────
+  //
+  // The first version trusted a publisher's `type="image/…"` outright. That is NECESSARY for WSJ
+  // and MarketWatch, whose URLs are extensionless and identifiable no other way — and it is what
+  // let an .mp4 and a YouTube watch page onto cards. 14 of 42 images were broken.
+  ok('⚠️ an extensionless URL with a declared image type is still accepted (WSJ, MarketWatch)',
+    mut('notrust') ? false
+      : isUsableImageUrl('https://images.wsj.net/im-88976063', { declaredType: 'image/jpeg' }));
+  ok('⚠️ …but a .mp4 is refused even when the feed labels it an image',
+    mut('mp4') ? false
+      : !isUsableImageUrl('https://mmx.prnewswire.com/media/X/a.mp4?id=1', { declaredType: 'image/jpeg' }));
+  ok('⚠️ …and a YouTube watch page is refused however it is typed',
+    mut('youtube') ? false
+      : !isUsableImageUrl('https://www.youtube.com/watch?v=tr3GKYH2YGE', { declaredType: 'image/jpeg' }));
+  ok('⚠️ …and Business Wire media is refused, because it 403s to everyone',
+    mut('bwhost') ? false
+      : !isUsableImageUrl('https://mms.businesswire.com/media/2026/en/1/21/Ingles_Market_2020.jpg',
+        { declaredType: 'image/jpeg' }));
+  ok('…while PR Newswire photographs still pass',
+    isUsableImageUrl('https://mmx.prnewswire.com/media/MS2043004/261105_Method_04_025-1.jpg?id=OA3100874',
+      { declaredType: 'image/jpeg' }));
 }
 
 L(`\n${pass} passed, ${fails.length} failed`);

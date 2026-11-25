@@ -56,6 +56,34 @@ export function isPlaceholderImage(url) {
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
 
+// ⚠️ A PUBLISHER'S OWN `type="image/…"` IS NOT PROOF, AND TRUSTING IT SHIPPED BROKEN TILES.
+//
+// The first version of this file accepted any candidate whose declared type began with `image/`,
+// because WSJ and MarketWatch serve extensionless URLs (images.wsj.net/im-88976063) that are only
+// identifiable that way — and that part is still necessary. What it also let through, measured in
+// a real browser against the live feed after deploy:
+//
+//   mmx.prnewswire.com/…/Carla-Vida-and-Behrooz-Vida.mp4   3 cards, served video/mp4
+//   www.youtube.com/watch?v=…                              1 card, served text/html
+//
+// So the declared type is trusted only when the URL does not plainly contradict it.
+const NON_IMAGE_EXT = /\.(mp4|m4v|mov|webm|avi|mkv|mp3|wav|ogg|pdf|docx?|html?|aspx)(?:[?#]|$)/i;
+
+// ⚠️ HOSTS WHOSE MEDIA CANNOT BE DISPLAYED AT ALL, EACH ONE MEASURED RATHER THAN ASSUMED.
+//
+//   mms.businesswire.com  hotlink-protected. Every one of its enclosures answered 403 text/html —
+//                         to a plain request, to a request carrying our Referer, and to a real
+//                         Chrome. 0 of 10 loaded. Business Wire therefore contributes no
+//                         photographs, and its stories fall through to the logo or artwork tier.
+//   youtube / vimeo       page URLs, not images. A feed that puts one in a media field is
+//                         pointing at a video, whatever the type attribute claims.
+const UNUSABLE_IMAGE_HOSTS = Object.freeze([
+  'mms.businesswire.com',
+  'youtube.com', 'youtu.be', 'vimeo.com',
+]);
+
+const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
+
 /**
  * Is this a URL we are willing to put in an <img> on a card?
  *
@@ -67,6 +95,11 @@ export function isUsableImageUrl(url, { declaredType = '' } = {}) {
   const u = url.trim();
   if (!/^https:\/\//i.test(u)) return false;
   if (isPlaceholderImage(u)) return false;
+  // ⚠️ THE URL CAN VETO THE LABEL, BUT NEVER THE REVERSE. A .mp4 is a video however it is typed,
+  // and a host that refuses to serve us its media is useless however it is typed.
+  if (NON_IMAGE_EXT.test(u)) return false;
+  const h = hostOf(u);
+  if (UNUSABLE_IMAGE_HOSTS.some((bad) => h === bad || h.endsWith(`.${bad}`))) return false;
   // Either the publisher declared an image MIME type, or the URL looks like an image file.
   if (/^image\//i.test(declaredType)) return true;
   return IMAGE_EXT.test(u);
