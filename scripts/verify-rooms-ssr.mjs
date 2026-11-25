@@ -344,6 +344,58 @@ L('\n=== 9. /dividends IS CACHED NOW, AND ITS DAY BOUNDARY STILL SELF-HEALS ==='
   ok('…and it is still one route, not a URL per day', !fs.existsSync(path.join(ROOT, 'src/app/dividends/[date]')));
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+L('\n=== 10. /institutions PUBLISHES THE LOGGED-OUT VIEW, CAPPED EXACTLY AS THE API CAPS IT ===');
+{
+  const page = code('src/app/institutions/page.jsx');
+  const client = code('src/app/institutions/InstitutionsClient.jsx');
+  const lib = code('src/lib/institutions-queries.mjs');
+  const route = code('src/app/api/institutions/route.js');
+
+  ok('/institutions reads its filings on the server',
+    /readInstitutionsRoom\s*\(/.test(page) && /rooms-server\.mjs/.test(page));
+  ok('…and hands them to the client', /initialLatest=\{/.test(page));
+  ok('…whose first state IS that payload',
+    mut('instnull') ? false : /useState\(initialLatest\)/.test(client));
+  const lit = page.match(/export const revalidate = (\d+);/);
+  ok('…at the shared window, as a literal',
+    Number(lit?.[1]) === Number(srv.match(/ROOM_CACHE_SECONDS\s*=\s*(\d+)/)?.[1]), lit?.[1]);
+
+  // ⚠️ THIS ROOM IS THE ONE THAT IS ROW-GATED, so the cap is the assertion that matters most.
+  // Shared HTML is the logged-out view by definition; publishing the signed-in product into an
+  // anonymous cache is the failure this guards.
+  ok('⚠️ the server render applies the logged-out row cap explicitly',
+    mut('nocap') ? false : /publicCap\(\{ view: 'latest-filings', filings \}, \{ loggedIn: false \}\)/.test(srv));
+  ok('…and the cap has one definition, shared with the route',
+    /export function publicCap/.test(lib)
+      && /publicCapShared/.test(route)
+      && !/const publicCap = \(payload\) => \{/.test(route));
+
+  // ⚠️ AND ffRel IS THE LICENSING PREDICATE FOR fund_filings — same rule as ctCut and
+  // NOT_SUPERSEDED. One definition, both callers.
+  ok('⚠️ ffRel — the 13F freshness boundary — has one definition',
+    mut('twoffrel') ? false
+      : /export const ffRel/.test(lib) && !/^const ffRel/m.test(route) && /institutions-queries\.mjs/.test(route));
+  ok('…and the server render passes the free cutoff through it',
+    /latestFilings\(25, freeCutoff\(/.test(srv));
+
+  // The reader fails soft like every other.
+  ok('readInstitutionsRoom returns null on failure',
+    /export async function readInstitutionsRoom[\s\S]*?catch \{ return null; \}/.test(srv));
+
+  // ⚠️ THE ONE THING SERVER-RENDERING THIS ROOM BROKE, AND IT WAS A PRE-EXISTING BUG.
+  // LatestActivity shared ONE loading flag across two deliberately independent fetches, so the tab
+  // whose data had not arrived fell through to its empty state: "No position changes disclosed in
+  // the recent filing window." A claim about the market, made while we had simply not finished
+  // asking. Always reachable whenever filings answered first; made certain — and baked into cached
+  // HTML — by rendering filings on the server. Each tab must wait for its OWN data.
+  ok('⚠️ each tab waits for its own data, so neither states a finding it has not got',
+    mut('sharedloading') ? false
+      : /const loading = tab === 'activity' \? activity == null : filings == null;/.test(client));
+  ok('…and the shared flag that caused it is gone',
+    !/const loading = activity == null && filings == null;/.test(client));
+}
+
 L(`\n${pass} passed, ${fails.length} failed`);
 if (fails.length) { L('FAILED:'); fails.forEach((f) => L('  - ' + f)); process.exit(1); }
 L('EVERY ROOM SSR CHECK PASSED');

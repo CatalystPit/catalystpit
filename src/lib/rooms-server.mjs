@@ -232,6 +232,42 @@ export async function readPoliticiansRoom({ now = Date.now() } = {}) {
   } catch { return null; }
 }
 
+// ── /institutions ──────────────────────────────────────────────────────────
+//
+// ⚠️ THIS ROOM IS ROW-GATED AND THE OTHERS ARE NOT, WHICH CHANGES WHAT CAN HONESTLY BE DONE HERE.
+// /api/institutions wraps every payload in publicCap: a logged-OUT caller sees at most ten rows of
+// any array, with the remainder reported as a locked count. Measured against production as an
+// anonymous caller: directory 10 rows / 38 locked, largest 10 / 14, featured 10 / 33,
+// latest-filings 10 / 15 — out of a registry of 10,013 institutions.
+//
+// That cap is a LOGIN FUNNEL, not a licensing limit — the route says so: "Logged-out sees at most
+// PUBLIC_ROWS records; signed-in Free sees the full history at the EOD cutoff." A crawler is
+// always logged out, so this room can never show a crawler more than ten rows however it is
+// rendered. Whether the directory of 10,013 managers should be crawlable at all is a decision
+// about the funnel and belongs to the owner, not to this change.
+//
+// ⚠️ SO WHAT IS RENDERED IS THE TEN MOST CITABLE ROWS IN THE ROOM, NOT A TOKEN SAMPLE. Each 13F
+// filing carries the organization, the reporting period, the disclosure date, the holdings count,
+// a link to our own research on that manager and a link to the primary document on SEC EDGAR —
+// a complete, attributed, dated fact with no number of our own invention in it. The directory and
+// the activity feed depend on six route-local helpers between them and are deliberately left for
+// a later pass; a thin extraction of a licensed query is worse than none.
+/**
+ * The latest 13F filings, capped exactly as an anonymous caller is capped, or null.
+ * @returns {Promise<{filings: object[], filingsLockedCount?: number, publicPreview: boolean}|null>}
+ */
+export async function readInstitutionsRoom({ now = Date.now() } = {}) {
+  try {
+    const { latestFilings, publicCap } = await import('./institutions-queries.mjs');
+    const filings = await latestFilings(25, freeCutoff(now));
+    if (!Array.isArray(filings) || !filings.length) return null;
+    // ⚠️ loggedIn: false IS NOT A DEFAULT BEING RELIED ON, IT IS THE STATEMENT. Shared HTML is the
+    // logged-out view by definition, so it gets the logged-out cap — the same ten rows, with the
+    // same locked count, that /api/institutions hands an anonymous browser.
+    return publicCap({ view: 'latest-filings', filings }, { loggedIn: false });
+  } catch { return null; }
+}
+
 // ── /consensus ─────────────────────────────────────────────────────────────
 //
 // ⚠️ ALSO UNGATED, AND ALSO IN THE ROUTE'S OWN WORDS: "First-party evidence intelligence is free

@@ -5,11 +5,18 @@ import { resolveUserTier, eodCutoffIso } from '../../../lib/entitlements';
 import { INSTITUTIONS, INSTITUTION_BY_SLUG } from '../../../lib/institutions.mjs';
 import { and, eq, ne, inArray, desc, sql, isNotNull, ilike, or } from 'drizzle-orm';
 import { apiRateLimit } from '../../../lib/api-guard.mjs';
+// ⚠️ THE 13F READ, THE FREE END-OF-DAY BOUNDARY AND THE LOGGED-OUT ROW CAP NOW LIVE IN
+// lib/institutions-queries.mjs, BECAUSE app/institutions/page.jsx READS THEM TOO.
+//
+// ffRel is the licensing predicate and publicCap is the login funnel. Both now have two
+// callers, and a rule with two callers needs one definition — the same reason ctCut moved to
+// lib/congress-overview and NOT_SUPERSEDED to lib/insider-queries.
+import { ffRel, ffCut, PUBLIC_ROWS, publicCap as publicCapShared, latestFilings }
+  from '../../../lib/institutions-queries.mjs';
 
 export const runtime = 'nodejs';
 
 // 13F data is public → CDN-cacheable. Per-quarter data changes at most daily during filing season.
-const PUBLIC_ROWS = 10;
 const CACHE = { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' };
 const KV_URL = process.env.KV_REST_API_URL;
 const KV_TOKEN = process.env.KV_REST_API_TOKEN;
@@ -23,12 +30,6 @@ const DIFF_CAP = 1000;      // per-quarter rows loaded for QoQ diff (bounds gian
 // makes the visibility rule impossible to apply to some queries and not others.
 //
 // cutoff === null (Pro) returns the bare table, so Pro pays nothing for the Free rule.
-const ffRel = (cutoff) => (cutoff
-  ? sql`(select * from fund_filings where inserted_at <= ${cutoff}::timestamptz)`
-  : sql`fund_filings`);
-
-/** The same rule for the drizzle builders, which cannot take a relation fragment. */
-const ffCut = (cutoff) => (cutoff ? sql`${fundFilings.insertedAt} <= ${cutoff}::timestamptz` : undefined);
 
 async function kvGet(key) {
   if (!KV_URL || !KV_TOKEN) return null;
@@ -313,34 +314,6 @@ async function latestActivity({ windowDays = 45, maxPairs = 30, perManager = 3, 
   }));
 }
 
-async function latestFilings(limit = 25, cutoff = null) {
-  const { rows } = await db.execute(sql`
-    select f.cik, f.accession, f.filed_date::text as filed_date, f.quarter::text as quarter,
-           f.holdings_count, i.name, i.slug
-      from ${ffRel(cutoff)} f
-      join institutions i on i.cik = f.cik
-     where f.filed_date is not null
-       and i.name is not null and trim(i.name) <> ''
-       and i.slug is not null
-     order by f.filed_date desc, f.inserted_at desc
-     limit ${limit}`);
-  return (rows ?? []).map((r) => ({
-    cik: r.cik,
-    accession: r.accession,
-    manager: r.name,
-    slug: r.slug,
-    // ⚠️ A DATE, NOT A TIMESTAMP. SEC's 13F index publishes a filing DATE; we store a date and
-    // there is no time to show. Rendering one would mean inventing 00:00.
-    disclosed: r.filed_date,
-    quarterEnd: r.quarter,
-    holdings: Number.isFinite(Number(r.holdings_count)) ? Number(r.holdings_count) : null,
-    managerUrl: `/institutions/${r.slug}`,
-    // The primary document, built from the accession the row already stores.
-    filingUrl: r.accession
-      ? `https://www.sec.gov/Archives/edgar/data/${r.cik}/${String(r.accession).replace(/-/g, '')}/${r.accession}-index.htm`
-      : null,
-  }));
-}
 
 // Corporate Buying Activity: market-wide NEW + INCREASED stock positions across corporate filers,
 // newest filings first — "NVIDIA disclosed a new stake in XYZ." Feeds the Pit Consensus board.
@@ -667,17 +640,11 @@ export async function GET(request) {
     //
     // ⚠️ SEO IS PRESERVED: ten real records per surface is still crawlable company content, and the
     // identity, metadata and internal links are untouched. What is withheld is the depth.
-    const publicCap = (payload) => {
-      if (loggedIn || !payload || typeof payload !== 'object') return payload;
-      const out = { ...payload, publicPreview: true, publicRowLimit: PUBLIC_ROWS };
-      for (const [k, v] of Object.entries(out)) {
-        if (!Array.isArray(v) || v.length <= PUBLIC_ROWS) continue;
-        out[k] = v.slice(0, PUBLIC_ROWS);
-        out[`${k}LockedCount`] = v.length - PUBLIC_ROWS;
-      }
-      return out;
-    };
-
+    // ⚠️ THE LOGIN CAP NOW LIVES IN lib/institutions-queries.mjs, because
+    // app/institutions/page.jsx renders the filings list on the server and MUST apply the same
+    // cap — shared HTML is the logged-out view by definition. A second copy of a row cap is how
+    // one surface starts publishing the signed-in product to an anonymous cache.
+    const publicCap = (payload) => publicCapShared(payload, { loggedIn });
     const sp = new URL(request.url).searchParams;
     const ac = sp.get('ac');
     if (ac != null) {

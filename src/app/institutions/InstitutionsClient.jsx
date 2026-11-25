@@ -156,7 +156,21 @@ function LatestActivity({ activity, filings }) {
   const [filter, setFilter] = useState('ALL');
   const [expanded, setExpanded] = useState(false);
 
-  const loading = activity == null && filings == null;
+  // ── ⚠️ ONE LOADING FLAG FOR TWO INDEPENDENT FETCHES WAS ALREADY WRONG ──────────────────────
+  //
+  // `activity == null && filings == null` is false as soon as EITHER arrives, so the tab whose own
+  // data has not landed yet stops showing a skeleton and falls through to its empty state — which
+  // for the activity tab reads "No position changes disclosed in the recent filing window." That
+  // is a claim about the market, published while we simply had not finished asking.
+  //
+  // It was always reachable: the two requests are deliberately separate ("so a slow activity query
+  // can never hold up the filings tab"), so any run where filings answered first showed it. Making
+  // the server render the filings list made it reachable EVERY time, with the false sentence baked
+  // into cached public HTML — which is how it was found.
+  //
+  // Each tab now waits for its own data. null still means "not asked yet" and [] still means "we
+  // asked and there is nothing", which is the distinction that matters and the one this collapsed.
+  const loading = tab === 'activity' ? activity == null : filings == null;
   const rows = (activity || []).filter((r) => filter === 'ALL' || r.action === filter);
   const groups = groupFilingsByManager(filings || []);
 
@@ -271,8 +285,16 @@ function LatestActivity({ activity, filings }) {
   );
 }
 
-export default function InstitutionsClient() {
-  const [latest, setLatest] = useState(null);
+export default function InstitutionsClient({ initialLatest = null }) {
+  // ⚠️ initialLatest IS THE SERVER'S RENDER OF THE FILINGS LIST, NOT A HINT.
+  // app/institutions/page.jsx reads the same latestFilings this component fetches — now in
+  // lib/institutions-queries.mjs beside the ffRel freshness boundary and the publicCap login cap it
+  // must be paired with — so the 13F rows are in the HTML before any JavaScript runs. Measured on
+  // production beforehand: 167 words and no link to any of the 10,013 managers in the registry.
+  //
+  // ⚠️ IT IS THE LOGGED-OUT VIEW, CAPPED, because shared HTML is the logged-out view by definition.
+  // A signed-in reader's own fetch replaces it with the full history immediately after hydration.
+  const [latest, setLatest] = useState(initialLatest);
   const [activity, setActivity] = useState(null);
   const [featured, setFeatured] = useState(null);
   const [largest, setLargest] = useState([]);
