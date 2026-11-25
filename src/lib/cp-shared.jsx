@@ -7,6 +7,7 @@ import AccountMenu from '../components/AccountMenu';
 import { selectTerminalSymbol, onTerminalRoute } from './terminalSymbolBus';
 import { fitCount } from './nav-overflow.mjs';
 import { featureEnabled } from './feature-availability.mjs';
+import { tickerLogoUrl, logoConfigured, LOGO_ATTRIBUTION_REQUIRED } from './logo-source.mjs';
 
 export { C } from './cp-tokens.mjs';
 import { C } from './cp-tokens.mjs';
@@ -1584,7 +1585,12 @@ export function useLogoBg(symbol) {
 export function TickerLogo({ symbol, size = 18 }) {
   const [failed, setFailed] = useState(false);
   const sym = (symbol || '').toUpperCase();
-  const { bgMode, ref, onLoad } = useLogoBg(sym);
+  // ⚠️ useLogoBg IS DELIBERATELY NOT CALLED. It runs an effect and a localStorage read per tile,
+  // and its one output — whether a logo needs a dark backdrop — is read by nothing here any more:
+  // the pixel probe behind it cannot run on a cross-origin CDN image, because reading pixels taints
+  // the canvas. Calling it anyway would mean hundreds of effects and hundreds of storage reads per
+  // page to compute a value that is discarded. The hook stays exported and FundProfile still uses
+  // it; it comes back here the day a same-origin, self-hosted image makes the probe possible.
   const initials = sym.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?';
   let h = 0; for (let i = 0; i < sym.length; i++) h = (h * 31 + sym.charCodeAt(i)) >>> 0;
   const bg = LOGO_PALETTE[h % LOGO_PALETTE.length];
@@ -1602,28 +1608,44 @@ export function TickerLogo({ symbol, size = 18 }) {
   // deleted: the <img> below, its sizing, its lazy loading, its dark-background probe and its
   // error fallback are untouched and come back by flipping `companyLogos` the day a source is
   // licensed. Until then the badge is rendered directly — no request, no flash, no console noise.
-  if (!featureEnabled('companyLogos')) return <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
+  //
+  // ⚠️ TWO CONDITIONS, NOT ONE, AND BOTH FAIL CLOSED. The flag says we are permitted to show
+  // logos; the token says we actually have a source to show them from. Either missing renders the
+  // monogram. That is why flipping the flag alone cannot half-enable this and ship a page full of
+  // broken images — the state this work was called in to fix in the first place.
+  const cdn = featureEnabled('companyLogos') ? tickerLogoUrl(sym, { size }) : null;
+  if (!cdn || failed) return <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
 
-  if (sym && sym !== '?' && !failed) {
+  // ⚠️ STRAIGHT AT THE CDN, NOT THROUGH /api/logo, AND THAT IS THE PROVIDER'S RULE RATHER THAN A
+  // PREFERENCE. Logo.dev's fair-use page lists "A server that fetches img.logo.dev images and
+  // passes them on to your users" as NOT fair use. This is still the one shared component every
+  // surface renders — the single logo system — it simply does not launder the image through us.
+  // See lib/logo-source.mjs.
+  //
+  // ⚠️ AND THE DARK-BACKGROUND PROBE IS DELIBERATELY NOT USED HERE. analyzeLogo reads pixels off a
+  // canvas, and a cross-origin image taints the canvas, so the probe cannot run on a CDN image —
+  // it would fail silently and leave every logo on the default background. A transparent PNG on
+  // the white chip reads correctly on both the light and the dark theme, which is what the chip is
+  // for. `useLogoBg` stays wired for a future self-hosted, same-origin source.
+  if (sym && sym !== '?') {
     return (
-      // ⚠️ LAZY, BECAUSE SOME PAGES PAINT HUNDREDS OF THESE. A fund profile renders roughly 430
-      // logos in one go (map tiles + four activity lists + options + holdings). Requesting all of
-      // them on load is what pushed /api/logo past its rate limit and turned the overflow into
-      // initials badges — and most of those rows are far below the fold and may never be seen.
-      //
-      // Native loading="lazy" rather than an IntersectionObserver: the browser already does this
-      // well, it costs no JS, and it cannot get the arithmetic wrong on a virtualised or scrolled
-      // container. width/height are already set, so deferring changes no geometry and there is no
-      // layout shift when one arrives. decoding="async" keeps a burst of decodes off the main
-      // thread during scroll.
-      <img ref={ref} src={`/api/logo?ticker=${encodeURIComponent(sym)}&v=3`} alt="" width={size} height={size}
-        loading="lazy" decoding="async"
-        onLoad={onLoad} onError={() => setFailed(true)}
+      <img src={cdn} alt="" width={size} height={size}
+        loading="lazy" decoding="async" referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
         style={{ width: size, height: size, borderRadius: 4, objectFit: 'contain',
-          background: bgMode === 'dark' ? LOGO_DARK_BG : '#fff', border: `1px solid ${C.border}`,
+          background: '#fff', border: `1px solid ${C.border}`,
           flexShrink: 0, display: 'block' }} />
     );
   }
+
+  // ⚠️ THE /api/logo <img> THAT USED TO BE HERE IS GONE, AND THAT IS NOT THE SAME AS LOSING IT.
+  // It pointed at our own route, which has no upstream and answers a cached 404 — the request this
+  // component was making 103 times on /news to learn something it could have known. A self-hosted
+  // source would not look like that line either: Logo.dev permits self-hosting on every plan, but
+  // only by downloading through its API with the SECRET key and serving the file from our own
+  // storage, which is a server-side ingest job and a same-origin URL, not a proxy of the CDN.
+  // lib/logo-source.mjs records that as the alternative; /api/logo keeps its 404 contract, and
+  // useLogoBg stays wired for the day a same-origin image makes the pixel probe possible again.
   return <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
 }
 
@@ -2040,6 +2062,17 @@ export function Footer() {
     {label:"Affiliate Terms", href:"/affiliates"},
     {label:"Contact",  href:"/contact"},
   ];
+  // ⚠️ A LICENCE CONDITION, RENDERED ONLY WHEN IT ACTUALLY APPLIES. Logo.dev's Community (free)
+  // plan requires a commercial site to carry a visible link to logo.dev on a public production
+  // page — the footer is one of the placements they name. Any paid plan removes the requirement.
+  //
+  // Both conditions are checked, so this cannot appear while no logos are being served: showing
+  // "Logos provided by Logo.dev" on a site that displays no Logo.dev logos would be a false
+  // statement about where our content comes from, which is the same class of error as a wrong
+  // logo. See lib/logo-source.mjs.
+  if (featureEnabled('companyLogos') && logoConfigured() && LOGO_ATTRIBUTION_REQUIRED) {
+    links.push({ label: "Logos provided by Logo.dev", href: "https://logo.dev", external: true });
+  }
   return (
     <div style={{background:C.navBg, marginTop:20, padding:"24px",
       display:"flex", justifyContent:"space-between", alignItems:"center",
@@ -2047,7 +2080,10 @@ export function Footer() {
       <Logo dark size={0.9}/>
       <div style={{display:"flex", gap:24, flexWrap:"wrap"}}>
         {links.map(l => l.href ? (
-          <a key={l.label} href={l.href} style={{fontSize:12, color:"rgba(255,255,255,0.6)",
+          // An outbound link gets target/rel; the internal ones are unchanged and get neither.
+          <a key={l.label} href={l.href}
+            {...(l.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+            style={{fontSize:12, color:"rgba(255,255,255,0.6)",
             cursor:"pointer", fontWeight:300, textDecoration:"none"}}
             onMouseEnter={e => e.currentTarget.style.color = "#FFFFFF"}
             onMouseLeave={e => e.currentTarget.style.color = "rgba(255,255,255,0.6)"}>

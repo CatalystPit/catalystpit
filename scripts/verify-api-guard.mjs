@@ -150,12 +150,23 @@ section('6. the logo proxy is budgeted as an image, not as a provider call');
   // The knowledge now lives in lib/feature-availability.mjs, so the component skips a request it
   // knows will fail. NOTHING IS DELETED: the <img>, its sizing, its lazy loading and its error
   // fallback all stay, and flipping `companyLogos` is the entire restore.
+  // ⚠️ THESE TWO PINNED THE PREVIOUS SHAPE AND BOTH MOVED FOR GOOD REASONS. The gate became TWO
+  // conditions rather than one — permission AND a configured source, so a flag flipped on its own
+  // cannot fill a page with broken images. And the retained <img> is no longer the /api/logo one:
+  // Logo.dev's fair-use page lists "A server that fetches img.logo.dev images and passes them on
+  // to your users" as NOT fair use, so the browser loads the CDN directly and our route keeps its
+  // own 404 contract. The RULE — never request an image we cannot be served — is unchanged and is
+  // what is checked.
   const feat = decomment(await readFile(new URL('../src/lib/feature-availability.mjs', import.meta.url), 'utf8'));
+  const logoSrc = decomment(await readFile(new URL('../src/lib/logo-source.mjs', import.meta.url), 'utf8'));
   ok('⚠️ no logo image is requested while no logo source is licensed',
     /companyLogos:\s*false/.test(feat)
-    && /if \(!featureEnabled\('companyLogos'\)\) return <TickerMonogram/.test(tickerLogoBody));
-  ok('…and the image path is RETAINED for the day one is',
-    /src=\{`\/api\/logo\?ticker=/.test(tickerLogoBody) && /loading="lazy"/.test(tickerLogoBody));
+    && /if \(!cdn \|\| failed\) return <TickerMonogram/.test(tickerLogoBody)
+    && /if \(!logoConfigured\(\)\) return null;/.test(logoSrc));
+  ok('…and it takes BOTH permission and a source, so the flag alone cannot half-enable it',
+    /featureEnabled\('companyLogos'\) \? tickerLogoUrl\(/.test(tickerLogoBody));
+  ok('…and the CDN is never proxied through our own route, which the provider forbids',
+    !/src=\{`\/api\/logo/.test(tickerLogoBody) && !/img\.logo\.dev/.test(route));
   ok('…and the route still answers a cached 404 rather than 500ing',
     /return miss\(\);/.test(route) && /max-age=3600/.test(route));
 
