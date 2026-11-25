@@ -1,4 +1,5 @@
 import { db } from '../../../lib/db';
+import { extractItemImage } from '../../../lib/news-media.mjs';
 import { insiderTrades as insiderTradesTable } from '../../../lib/schema';
 import { inArray, sql } from 'drizzle-orm';
 import { recordJobRun } from '../../../lib/job-heartbeat';
@@ -514,35 +515,8 @@ async function fetchForm4Trades() {
 }
 
 // ── Detect generic placeholder images (Yahoo's purple "fi" thing, etc.) ──
-function isPlaceholderImage(url) {
-  if (!url || typeof url !== 'string') return true;
-  const u = url.toLowerCase();
-  // Yahoo Finance generic placeholders (exact + pattern)
-  if (u.includes('yahoo_finance_en-us_h_p_finance')) return true;
-  if (u.includes('s.yimg.com/rz/stage/')) return true;
-  if (u.includes('s.yimg.com/cv/apiv2/default')) return true;
-  if (u.includes('s.yimg.com/os/creatr-uploaded-images/finance')) return true;
-  if (u.match(/s\.yimg\.com.*\/api\/res\/.*\/finance/)) return true;
-  // Generic share-images known to be placeholders
-  if (u.includes('default-share-image')) return true;
-  if (u.includes('logo-placeholder')) return true;
-  if (u.includes('default_thumbnail')) return true;
-  if (u.includes('default-image')) return true;
-  if (u.includes('og-default')) return true;
-  // Tiny images (often placeholders / icons)
-  if (u.match(/\b(1x1|pixel|spacer|blank)\.(gif|png|jpg)\b/)) return true;
-  // Stock photo agencies — common in API-republished wire stories
-  if (u.includes('gettyimages')) return true;
-  if (u.includes('istockphoto')) return true;
-  if (u.includes('shutterstock')) return true;
-  if (u.includes('dreamstime')) return true;
-  if (u.includes('123rf')) return true;
-  if (u.includes('alamy')) return true;
-  if (u.includes('depositphotos')) return true;
-  // SeekingAlpha CDN — images uniformly low quality
-  if (u.includes('seekingalpha')) return true;
-  return false;
-}
+// ⚠️ isPlaceholderImage MOVED TO lib/news-media.mjs so the wire path and the RSS path cannot
+// disagree about what counts as junk media. Same list, same order, imported above.
 
 // ─── RSS helpers (no XML parser dep; mirrors fetchSECInsiders' regex approach) ─
 function extractTag(itemXml, tagName) {
@@ -582,11 +556,12 @@ async function fetchRSS(url, sourceName, rank, opts = {}) {
       const link  = extractTag(item, 'link');
       if (!title || !link) return null;
 
-      const image_url =
-        extractAttr(item, 'media:content',   'url') ||
-        extractAttr(item, 'media:thumbnail', 'url') ||
-        extractAttr(item, 'enclosure',       'url') ||
-        null;
+      // ⚠️ THE SAME EXTRACTOR THE WIRE PATH USES, so the two cannot disagree about what counts as
+      // an image. This chain used to take the first `url` attribute it found on three tags, which
+      // missed images embedded in content:encoded, and would happily have taken a media:content
+      // pointing at a VIDEO — medium and type are checked now. See lib/news-media.mjs.
+      const media = extractItemImage(item);
+      const image_url = media && !media.logoish ? media.url : null;
 
       let published = null;
       const pubDate = extractTag(item, 'pubDate');
@@ -599,7 +574,7 @@ async function fetchRSS(url, sourceName, rank, opts = {}) {
         title,
         source: sourceName,
         url: link,
-        image_url, // RSS sources skip isPlaceholderImage — publisher CDNs are trusted
+        image_url, // junk media is filtered by isUsableImageUrl inside the extractor
         published,
         ticker: null,
         _provider: `rss-${sourceName.toLowerCase().replace(/\s+/g, '-')}`,
@@ -644,8 +619,22 @@ async function fetchWire(url, sourceName) {
       let published = null;
       const pubDate = extractTag(item, 'pubDate');
       if (pubDate) { const d = new Date(pubDate); if (!isNaN(d.getTime())) published = d.toISOString(); }
+      // ── ⚠️ THIS WAS `image_url: null`, HARDCODED, FOR EVERY PRESS RELEASE EVER INGESTED ──
+      //
+      // Not a filter and not a fallback — a literal, so the media the publisher attached to their
+      // own release was parsed past and thrown away. Measured on the live feeds: PR Newswire
+      // carries media:content on 15 of 20 items and Business Wire an enclosure on 18 of 21. On the
+      // 100 most recent stories that was 42% of cards rendering a bare gradient.
+      //
+      // ⚠️ AND A LOGO-ISH ASSET IS DELIBERATELY NOT TAKEN AS A PHOTOGRAPH. Business Wire's
+      // enclosures are frequently the company's own logo at print resolution — the first item
+      // measured was `PP_LOGO_2.5_INCH_For_Docs.jpg`. Stretched into a news slot that is a worse
+      // version of the mark Logo.dev already serves cleanly, so it is left out here and the card
+      // falls through to the logo tier, which is the right picture for exactly that thing.
+      const media = extractItemImage(item);
+      const image_url = media && !media.logoish ? media.url : null;
       return {
-        title, source: sourceName, url: link, image_url: null,
+        title, source: sourceName, url: link, image_url,
         published, ticker: extractWireTicker(title), category: wireCategory(title), _wire: true,
       };
     }).filter(Boolean).slice(0, 40);

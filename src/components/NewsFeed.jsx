@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import EightKWire from "./EightKWire";
 import TickerLink from "./TickerLink";
+import NewsArt from "./NewsArt";
 import TopCatalysts from "./TopCatalysts";
 import { impactOf, IMPACT_STYLE } from "../lib/impact";
 import {
@@ -109,8 +110,11 @@ function NewsRowCard({n, idx, bindTicker}) {
           // ⚠️ AND NO OUTER WHITE CHIP. TickerLogo already renders a real logo on its own white,
           // rounded, bordered tile — that is the correct presentation for a transparent PNG. The
           // chip that used to be here wrapped the FALLBACK as well, which is precisely what made
-          // two letters read as a brand mark. The fallback now sits on the card's own gradient,
-          // full width, exactly as it does today when no logo source is configured.
+          // two letters read as a brand mark.
+          //
+          // Tier 3 behind it is the ticker set in our own type with the category beneath — still
+          // the right answer when we KNOW the company, because naming it says more than a drawing
+          // of its sector would.
           <TickerLogo symbol={n.sym} size={44} fallback={
             <div style={{display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
               gap:2, padding:"0 6px", width:"100%"}}>
@@ -125,7 +129,13 @@ function NewsRowCard({n, idx, bindTicker}) {
               </span>
             </div>
           } />
-        ) : null}
+        ) : (
+          // ⚠️ NO PHOTOGRAPH AND NO COMPANY — THE 42% THAT USED TO BE AN EMPTY RECTANGLE.
+          // Editorial artwork for the story's category: drawn, flat, obviously our illustration of
+          // a TOPIC rather than a photograph of the event. Nothing is fetched and nothing was
+          // bought; it is inline SVG. See NewsArt.
+          <NewsArt category={n.tag} />
+        )}
       </div>
       <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:5}}>
         <div style={{display:"flex", alignItems:"center", gap:7, flexWrap:"wrap"}}>
