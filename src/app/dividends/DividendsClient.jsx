@@ -86,6 +86,28 @@ export default function DividendsClient({ enabled, display = 'prelaunch', initia
     }
   }, [enabled, range.from, range.to, mode, filters]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ⚠️ ONE CASE WHERE THE SERVER'S WEEK MUST BE RE-ASKED: A CACHED DAY BOUNDARY.
+  //
+  // This page is now incrementally regenerated rather than rendered per request, so `today` is the
+  // instant of the last regeneration. For up to one window after UTC midnight, a cached copy opens
+  // on YESTERDAY — and because the effect below deliberately skips the first run, nothing would
+  // ever have corrected it. Every row still carries its own true date, so nothing was ever wrong;
+  // the calendar simply started a day early.
+  //
+  // This compares the anchor the server rendered against the browser's own clock and re-asks only
+  // when they disagree, which is a few minutes out of every day. The normal case is untouched: no
+  // mount fetch, no waterfall, no flash — which is the whole reason the skip exists.
+  // ⚠️ IT DOES NOT CLEAR `first` ITSELF, AND THAT IS WHAT MAKES IT ONE FETCH RATHER THAN TWO.
+  // Both effects run in this same commit: clearing the flag here would let the one below fire
+  // immediately with the OLD range, and the anchor change would then fetch again. Leaving the flag
+  // alone lets the effect below skip its first run as designed, after which the new anchor
+  // re-triggers it exactly once, with the right week.
+  useEffect(() => {
+    if (!first.current || !initial?.from) return;
+    const today = iso(new Date());
+    if (today !== initial.from) setAnchor(today);
+  }, [initial?.from]);
+
   // The server already rendered the opening week; the first effect must not refetch it.
   useEffect(() => {
     if (first.current) { first.current = false; return; }

@@ -309,6 +309,41 @@ L('\n=== 8. THE BUILD AGREES (if a build is present) ===');
   }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+L('\n=== 9. /dividends IS CACHED NOW, AND ITS DAY BOUNDARY STILL SELF-HEALS ===');
+{
+  const page = code('src/app/dividends/page.jsx');
+  const client = code('src/app/dividends/DividendsClient.jsx');
+
+  // ⚠️ THIS ROOM WAS NEVER THE RENDERING PROBLEM — IT WAS THE COST. It already served 4,958 words
+  // and 298 ticker links to a crawler, more than any other room, and paid four queries and a
+  // 300-row render for EVERY request, with x-vercel-cache MISS on an immediate repeat.
+  ok('/dividends is no longer force-dynamic',
+    mut('forcedynamic') ? false
+      : !/export const dynamic\s*=\s*['"]force-dynamic['"]/.test(page));
+  const lit = page.match(/export const revalidate = (\d+);/);
+  ok('…and declares a revalidation window as a literal', !!lit, lit?.[1]);
+  ok('…equal to the other rooms', Number(lit?.[1]) === Number(srv.match(/ROOM_CACHE_SECONDS\s*=\s*(\d+)/)?.[1]));
+
+  // ⚠️ THE ONE THING CACHING BROKE, AND IT HAD TO BE FIXED IN THE CLIENT. `today` is computed at
+  // generation time, and DividendsClient deliberately does NOT refetch on mount — "the server
+  // already rendered the opening week" — so for up to one window after UTC midnight a cached copy
+  // would open on yesterday with nothing to correct it.
+  ok('⚠️ the client re-asks when the cached day is no longer today',
+    mut('noselfheal') ? false
+      : /if \(!first\.current \|\| !initial\?\.from\) return;/.test(client)
+        && /if \(today !== initial\.from\) setAnchor\(today\)/.test(client));
+
+  // ⚠️ AND IT MUST NOT CLEAR `first` ITSELF, or the normal path pays a mount fetch it was written
+  // to avoid — which is a performance regression introduced by a correctness fix.
+  const heal = client.slice(client.indexOf('if (!first.current || !initial?.from) return;'));
+  ok('…without clearing the flag that prevents a mount fetch in the normal case',
+    !/first\.current = false/.test(heal.slice(0, heal.indexOf('}, [initial?.from]);'))));
+
+  // The calendar stays one URL. A page per day or per ticker is index bloat, and was rejected.
+  ok('…and it is still one route, not a URL per day', !fs.existsSync(path.join(ROOT, 'src/app/dividends/[date]')));
+}
+
 L(`\n${pass} passed, ${fails.length} failed`);
 if (fails.length) { L('FAILED:'); fails.forEach((f) => L('  - ' + f)); process.exit(1); }
 L('EVERY ROOM SSR CHECK PASSED');
