@@ -6,6 +6,7 @@ import { SignedIn, SignedOut, useAuth } from '@clerk/nextjs';
 import AccountMenu from '../components/AccountMenu';
 import { selectTerminalSymbol, onTerminalRoute } from './terminalSymbolBus';
 import { fitCount } from './nav-overflow.mjs';
+import { featureEnabled } from './feature-availability.mjs';
 
 export { C } from './cp-tokens.mjs';
 import { C } from './cp-tokens.mjs';
@@ -1588,6 +1589,21 @@ export function TickerLogo({ symbol, size = 18 }) {
   let h = 0; for (let i = 0; i < sym.length; i++) h = (h * 31 + sym.charCodeAt(i)) >>> 0;
   const bg = LOGO_PALETTE[h % LOGO_PALETTE.length];
 
+  // ── ⚠️ DO NOT ASK FOR AN IMAGE THAT CANNOT EXIST ────────────────────────────
+  //
+  // /api/logo has no upstream — every path in it is `return miss()`, a cached 404 — because the
+  // three logo providers were removed over redistribution rights. The component still knew that
+  // only by TRYING: it rendered an <img>, the request 404'd, onError fired, and the initials badge
+  // replaced it. Measured on production, /news carried 103 <img> elements pointing at that route,
+  // each one a guaranteed failure, each one painting an empty white bordered box until its error
+  // landed. That flash in the card's image slot is what reads as a broken logo.
+  //
+  // The flag is the knowledge, held in one place (lib/feature-availability.mjs). Nothing is
+  // deleted: the <img> below, its sizing, its lazy loading, its dark-background probe and its
+  // error fallback are untouched and come back by flipping `companyLogos` the day a source is
+  // licensed. Until then the badge is rendered directly — no request, no flash, no console noise.
+  if (!featureEnabled('companyLogos')) return <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
+
   if (sym && sym !== '?' && !failed) {
     return (
       // ⚠️ LAZY, BECAUSE SOME PAGES PAINT HUNDREDS OF THESE. A fund profile renders roughly 430
@@ -1608,10 +1624,28 @@ export function TickerLogo({ symbol, size = 18 }) {
           flexShrink: 0, display: 'block' }} />
     );
   }
+  return <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
+}
+
+/**
+ * The initials badge — our own mark for a company, never a claim to be the company's.
+ *
+ * ⚠️ IT IS A TICKER CHIP, NOT A LOGO SUBSTITUTE, AND THE DIFFERENCE IS WHERE IT IS ALLOWED TO
+ * APPEAR. At 16-22px beside a symbol in a wire row or a tape it reads as what it is: an initials
+ * avatar, the same convention every contacts list uses. What made it read as a cheap counterfeit
+ * logo was the news card mounting it at 44px inside a white rounded chip, in the slot a reader
+ * expects a brand mark to occupy — see NewsRowCard, which no longer does that.
+ *
+ * `title` is deliberate too: hovering says "HCTI" rather than leaving a reader to wonder whether
+ * the two letters are the company's own mark. aria-hidden because the symbol is always printed as
+ * text beside it, so a screen reader announcing "HC" again is noise.
+ */
+function TickerMonogram({ sym, initials, bg, size }) {
   return (
-    <span style={{ width: size, height: size, borderRadius: 4, background: bg, color: '#fff', flexShrink: 0,
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: Math.round(size * 0.42), fontWeight: 700, fontFamily: "'DM Sans',sans-serif", letterSpacing: '-0.02em' }}>
+    <span title={sym || undefined} aria-hidden="true"
+      style={{ width: size, height: size, borderRadius: 4, background: bg, color: '#fff', flexShrink: 0,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: Math.round(size * 0.42), fontWeight: 700, fontFamily: "'DM Sans',sans-serif", letterSpacing: '-0.02em' }}>
       {initials}
     </span>
   );

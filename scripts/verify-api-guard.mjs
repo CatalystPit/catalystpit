@@ -137,6 +137,39 @@ section('6. the logo proxy is budgeted as an image, not as a provider call');
     shared.indexOf('function MarketSnapshotCard'));
   ok('the canonical logo renders lazily', /loading="lazy"/.test(tickerLogoBody));
   ok('…as does the holding-map tile', /loading="lazy"/.test(fund));
+
+  // ── ⚠️ AND THE CHEAPEST REQUEST IS THE ONE NEVER MADE ──────────────────────
+  //
+  // Lazy loading bounded the burst; it did not stop the requests being pointless. /api/logo has no
+  // upstream — every path is `return miss()` — because the three logo providers were removed over
+  // redistribution rights. The component still learned that the hard way, once per tile: render an
+  // <img>, take a 404, fire onError, swap in the initials badge. Measured on production, /news
+  // alone carried 103 <img> elements pointing at that route, and the empty bordered box each one
+  // painted until its error landed is what readers saw as a broken company logo.
+  //
+  // The knowledge now lives in lib/feature-availability.mjs, so the component skips a request it
+  // knows will fail. NOTHING IS DELETED: the <img>, its sizing, its lazy loading and its error
+  // fallback all stay, and flipping `companyLogos` is the entire restore.
+  const feat = decomment(await readFile(new URL('../src/lib/feature-availability.mjs', import.meta.url), 'utf8'));
+  ok('⚠️ no logo image is requested while no logo source is licensed',
+    /companyLogos:\s*false/.test(feat)
+    && /if \(!featureEnabled\('companyLogos'\)\) return <TickerMonogram/.test(tickerLogoBody));
+  ok('…and the image path is RETAINED for the day one is',
+    /src=\{`\/api\/logo\?ticker=/.test(tickerLogoBody) && /loading="lazy"/.test(tickerLogoBody));
+  ok('…and the route still answers a cached 404 rather than 500ing',
+    /return miss\(\);/.test(route) && /max-age=3600/.test(route));
+
+  // ⚠️ THE NEWS CARD MUST NOT DRESS THE BADGE AS A BRAND MARK. It mounted the initials at 44px
+  // inside a white rounded chip, in the slot a reader expects a company's logo — two letters on a
+  // hashed colour, framed like a logo, in a logo's place. That does not read as "no logo
+  // available", it reads as the wrong one.
+  const news = decomment(await readFile(new URL('../src/components/NewsFeed.jsx', import.meta.url), 'utf8'));
+  ok('⚠️ the news card no longer frames the initials badge as a logo',
+    !/background:"#fff", borderRadius:8, padding:6[\s\S]{0,80}TickerLogo/.test(news)
+    && !/<TickerLogo/.test(news));
+  ok('…and its publisher photographs are lazy and sized',
+    /<img src=\{n\.imageUrl\}[\s\S]{0,120}loading="lazy"/.test(news)
+    && /width=\{120\} height=\{80\}/.test(news));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

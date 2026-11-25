@@ -8,7 +8,7 @@ import { impactOf, IMPACT_STYLE } from "../lib/impact";
 import {
   C, TAG, CARD_COLORS,
   fetchKey, toArr, maybeN, StoryAge,
-  BrandStyles, Skel, Dot, TagBadge, TickerLogo,
+  BrandStyles, Skel, Dot, TagBadge,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
   useRealtimeQuotes, quotesFreshness,
 } from "../lib/cp-shared";
@@ -70,15 +70,42 @@ function NewsRowCard({n, idx, bindTicker}) {
         position:"relative", background:`linear-gradient(135deg,${bg1},${bg2})`,
         display:"flex", alignItems:"center", justifyContent:"center"}}>
         {showImg ? (
-          <img src={n.imageUrl} alt=""
+          // ⚠️ LAZY AND SIZED. This feed paints ~100 publisher photographs and every one of them
+          // was requested eagerly, with no intrinsic dimensions for the browser to reserve space
+          // from. The panel is a fixed 120x80 box so there is no layout shift either way, but
+          // eager-loading a hundred images below the fold is bandwidth nobody asked for.
+          <img src={n.imageUrl} alt="" width={120} height={80}
+            loading="lazy" decoding="async"
             onError={() => setImgFailed(true)}
             style={{position:"absolute", inset:0, width:"100%", height:"100%",
               objectFit:"cover", objectPosition:"center top", display:"block"}}/>
         ) : hasValidTicker ? (
-          // No article image (e.g. press-release wires) but we have the company → show its logo.
-          <span style={{background:"#fff", borderRadius:8, padding:6, display:"inline-flex"}}>
-            <TickerLogo symbol={n.sym} size={44}/>
-          </span>
+          // ── ⚠️ THIS WAS A COUNTERFEIT LOGO AND IT IS THE REASON THIS CARD LOOKED BROKEN ────
+          //
+          // With no publisher photograph — which is every SEC/8-K item, so HCTI, GSHD and AREC
+          // every time — the card used to mount the initials badge at 44px inside a WHITE ROUNDED
+          // CHIP, in the exact slot a reader expects a company's brand mark. Two letters on a
+          // hashed colour, framed like a logo, in a logo's place: it does not read as "we have no
+          // logo", it reads as a wrong one. There is no licensed logo source (see
+          // feature-availability.mjs), so the honest move is to stop dressing the placeholder up
+          // as the thing we do not have.
+          //
+          // What replaces it is our own typography: the ticker, set large on the card's own
+          // gradient, with the filing's issuer plainly beneath it. It cannot be mistaken for a
+          // brand mark because it is obviously a label, and it tells the reader more than a
+          // two-letter chip did — the full symbol rather than the first two characters of it.
+          <div style={{display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+            gap:2, padding:"0 6px", width:"100%"}}>
+            <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:n.sym.length > 4 ? 17 : 21,
+              fontWeight:700, color:"#fff", letterSpacing:"0.02em", lineHeight:1,
+              maxWidth:"100%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {n.sym.toUpperCase()}
+            </span>
+            <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:8, fontWeight:600,
+              color:"rgba(255,255,255,0.62)", letterSpacing:"0.09em", lineHeight:1}}>
+              {n.tag === 'SEC' ? 'SEC FILING' : 'COMPANY'}
+            </span>
+          </div>
         ) : null}
       </div>
       <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:5}}>

@@ -38,6 +38,22 @@ export const FEATURES = {
   // RESTORE WHEN: we want the non-inclusion disclosure public again.
   fearGreedExclusions: false,
 
+  // Company logo images on ticker tiles. /api/logo once proxied logo.dev and financialmodelingprep
+  // and /api/ticker hotlinked static2.finnhub.io; all three were removed because a logo is not
+  // market data, which is exactly why nobody scrutinised it — none of the three had established
+  // redistribution rights, and one of them was being contacted directly by the reader's browser.
+  //
+  // The route was KEPT rather than deleted (it answers a cached 404 and <TickerLogo> draws its
+  // initials badge), but every tile on the page was still REQUESTING it: measured on production,
+  // /news alone had 103 <img> elements pointing at a route that cannot ever answer with an image.
+  // This flag is what lets the component skip a request it knows will fail, instead of discovering
+  // that once per tile per page view.
+  //
+  // RESTORE WHEN: a logo source is licensed WITH redistribution rights and /api/logo serves it
+  // again. Flipping this back on is the whole change — the <img>, its sizing, its lazy loading and
+  // its error fallback all stay exactly where they are.
+  companyLogos: false,
+
   // The "Tools & offers" affiliate strip on the ticker Overview. The component is env-driven and
   // already renders nothing when no partner IDs are set, so this flag is about not showing the
   // section at all rather than about configuration. RESTORE WHEN: affiliate partnerships are live
