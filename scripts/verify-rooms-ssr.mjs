@@ -396,6 +396,40 @@ L('\n=== 10. /institutions PUBLISHES THE LOGGED-OUT VIEW, CAPPED EXACTLY AS THE 
     !/const loading = activity == null && filings == null;/.test(client));
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+L('\n=== 11. DATED EVIDENCE, FROM ONE IMPLEMENTATION ===');
+{
+  // ⚠️ AN AGE OR A BARE DATE IS UNREADABLE TO ANYTHING THAT DID NOT FETCH THE PAGE AT THAT MOMENT.
+  // The rooms were measured with ZERO <time> elements against the homepage's twenty, on pages whose
+  // whole subject is dated SEC disclosures.
+  const news = code('src/components/NewsFeed.jsx');
+  const ins = code('src/app/insiders/InsidersClient.jsx');
+
+  ok('the news room dates its rows through the shared StoryAge',
+    mut('twotime') ? false : /<StoryAge n=\{n\}/.test(news) && !/<time /.test(news));
+  ok('…and the insider table dates its filings',
+    mut('nodates') ? false : /<time dateTime=\{iso\}>/.test(ins));
+
+  // ⚠️ THE ATTRIBUTE IS EMITTED ONLY WHEN THERE IS A DATE. An invented timestamp is worse than no
+  // timestamp, so both implementations fall back to plain text rather than an empty attribute.
+  ok('⚠️ neither invents a timestamp when the date is missing',
+    /const iso = isoOrNull\(d\);/.test(ins) && /iso \? <time/.test(ins));
+
+  // Build-output check: the HTML must actually carry them.
+  const built = path.join(ROOT, '.next/server/app/insiders.html');
+  if (!fs.existsSync(built)) L('  --    no build output; run `next build` to include this check');
+  else {
+    const tags = fs.readFileSync(built, 'utf8').match(/<time[^>]*>/gi) || [];
+    const dated = tags.filter((t) => /datetime=/i.test(t)).length;
+    // ⚠️ HTML ATTRIBUTE NAMES ARE CASE-INSENSITIVE, so React's `dateTime` serialises as an
+    // attribute every parser reads as `datetime` — confirmed in a real browser, where
+    // document.querySelectorAll('time[datetime]') finds them. A case-sensitive assertion here
+    // would report zero and be wrong.
+    ok('the built /insiders HTML carries dated evidence', tags.length > 0 && dated === tags.length,
+      `${tags.length} <time>, ${dated} dated`);
+  }
+}
+
 L(`\n${pass} passed, ${fails.length} failed`);
 if (fails.length) { L('FAILED:'); fails.forEach((f) => L('  - ' + f)); process.exit(1); }
 L('EVERY ROOM SSR CHECK PASSED');

@@ -7,7 +7,7 @@ import TopCatalysts from "./TopCatalysts";
 import { impactOf, IMPACT_STYLE } from "../lib/impact";
 import {
   C, TAG, CARD_COLORS,
-  fetchKey, toArr, timeAgo, maybeN,
+  fetchKey, toArr, maybeN, StoryAge,
   BrandStyles, Skel, Dot, TagBadge, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
   useRealtimeQuotes, quotesFreshness,
@@ -99,13 +99,14 @@ function NewsRowCard({n, idx, bindTicker}) {
             fontSize:10, color:C.muted, whiteSpace:"nowrap"}}>
             {n.source}
             {/* ⚠️ AN AGE IS UNREADABLE TO ANYTHING THAT DID NOT FETCH THE PAGE AT THAT MOMENT.
-                "4m ago" is the right thing for a reader and tells a crawler, an AI fetcher or a
-                cached copy nothing at all — the rooms were measured with ZERO <time> elements
-                against the homepage's 20. The visible text is unchanged; the machine-readable
-                instant it was derived from now travels with it. */}
-            {n.mins != null && (
-              <time className="cp-num" dateTime={n.published || undefined}> · {timeAgo(n.mins)}</time>
-            )}
+                "4m ago" is right for a reader and tells a crawler, an AI fetcher or a cached copy
+                nothing at all — this room was measured with ZERO <time> elements against the
+                homepage's twenty. StoryAge is the existing answer to exactly this, and it already
+                handles the case that matters: it emits the attribute ONLY when the publisher gave
+                us a date, because an invented timestamp is worse than no timestamp. This first
+                carried a hand-written <time> that duplicated it, which is the one thing this
+                change has been refusing to do everywhere else. */}
+            {n.mins != null && <> · <StoryAge n={n} className="cp-num" /></>}
           </span>
         </div>
         <div style={{fontSize:14, fontWeight:600, color:C.ink, lineHeight:1.35,

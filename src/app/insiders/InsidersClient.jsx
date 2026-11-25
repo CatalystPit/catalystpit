@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch, LockedCta } from '../../lib/cp-shared';
+import { C, BrandStyles, Footer, TopNav, TickerLogo, startCheckout, EntitySearch, LockedCta, isoOrNull } from '../../lib/cp-shared';
 import PlanTerms from '../../components/PlanTerms';
 import TickerLink from '../../components/TickerLink';
 import { meaningFor } from '../../lib/insider-meaning';
@@ -673,6 +673,23 @@ function NotableActivity({ data, window, onWindow, onPick }) {
 // never row-gated — "All paginated historical research is publicly available" — and what Pro buys
 // is freshness, so cached public HTML is built with eodCutoffIso('free'). A Pro reader's own fetch
 // replaces it with their fresher rows immediately after hydration, exactly as before.
+// ⚠️ A DATE A MACHINE CAN READ, BESIDE THE ONE A PERSON READS.
+//
+// This room was measured with ZERO <time> elements against the homepage's twenty, on the one page
+// in the product whose entire subject is dated SEC disclosures. The visible text is unchanged —
+// still the filing date exactly as the table has always printed it — and the machine-readable
+// instant now travels with it, which is what lets a crawler, an AI fetcher or a cached copy know
+// WHEN the filing was made rather than inferring it from when the page was retrieved.
+//
+// ⚠️ THE ATTRIBUTE IS EMITTED ONLY WHEN WE ACTUALLY HAVE A DATE. isoOrNull returns null for an
+// empty or unparseable value, and `undefined` makes React omit the attribute entirely rather than
+// writing an empty one — the same rule StoryAge follows in cp-shared, for the same reason: an
+// invented timestamp is worse than no timestamp.
+function Filed({ d }) {
+  const iso = isoOrNull(d);
+  return iso ? <time dateTime={iso}>{d}</time> : <>{d}</>;
+}
+
 export default function InsidersClient({ initialData = null }) {
   const [data, setData] = useState(initialData);   // raw API payload (view-shaped)
   // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED — a full table in hand, replaced by a
@@ -1130,10 +1147,10 @@ export default function InsidersClient({ initialData = null }) {
                     <tr key={i} className="row-hov" onClick={()=>goTicker(ins.sym)} style={{borderBottom:i<rows.length-1?`1px solid ${C.surface}`:"none",borderLeft:`3px solid ${actionStyles(ins.type).fg}`}}>
                       <td className="cp-num" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>
                         {ins.filingUrl
-                          ? <a href={ins.filingUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} title="View SEC filing" style={{color:C.dim,textDecoration:"none"}}>{ins.filed} <span style={{color:C.green}}>↗</span></a>
-                          : ins.filed}
+                          ? <a href={ins.filingUrl} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} title="View SEC filing" style={{color:C.dim,textDecoration:"none"}}><Filed d={ins.filed}/> <span style={{color:C.green}}>↗</span></a>
+                          : <Filed d={ins.filed}/>}
                       </td>
-                      <td className="cp-num" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded || '—'}</td>
+                      <td className="cp-num" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>{ins.traded ? <Filed d={ins.traded}/> : '—'}</td>
                       {/* Logo and gap trimmed with the column: 16 + 6 + five characters fits the
                           64px of content a 78px cell leaves, so a 5-letter symbol never clips. */}
                       <td className="cp-tkr" style={{padding:"13px 7px",fontFamily:"'DM Sans',sans-serif",fontSize:13,fontWeight:700,color:C.green}}><TickerLink symbol={ins.sym} style={{display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}><TickerLogo symbol={ins.sym} size={16}/>{ins.sym}</TickerLink></td>
