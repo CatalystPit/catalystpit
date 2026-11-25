@@ -159,10 +159,14 @@ section('6. the logo proxy is budgeted as an image, not as a provider call');
   // what is checked.
   const feat = decomment(await readFile(new URL('../src/lib/feature-availability.mjs', import.meta.url), 'utf8'));
   const logoSrc = decomment(await readFile(new URL('../src/lib/logo-source.mjs', import.meta.url), 'utf8'));
-  ok('⚠️ no logo image is requested while no logo source is licensed',
-    /companyLogos:\s*false/.test(feat)
-    && /if \(!cdn \|\| failed\) return <TickerMonogram/.test(tickerLogoBody)
-    && /if \(!logoConfigured\(\)\) return null;/.test(logoSrc));
+  // ⚠️ THIS ONCE ASSERTED `companyLogos: false`, AND THAT PREMISE HAS CHANGED RATHER THAN BROKEN:
+  // the owner authorised Logo.dev, so the flag is legitimately true now. The rule it exists for is
+  // unchanged and is the one that still matters — never request an image we cannot be served. What
+  // decides that today is the TOKEN, not the flag: no token, no URL, no request, clean fallback.
+  ok('⚠️ no logo image is requested while no logo source is configured',
+    /if \(!logoConfigured\(\)\) return null;/.test(logoSrc)
+    && /return TOKEN\.length > 0;/.test(logoSrc)
+    && /if \(!cdn \|\| failed\) return noLogo;/.test(tickerLogoBody));
   ok('…and it takes BOTH permission and a source, so the flag alone cannot half-enable it',
     /featureEnabled\('companyLogos'\) \? tickerLogoUrl\(/.test(tickerLogoBody));
   ok('…and the CDN is never proxied through our own route, which the provider forbids',
@@ -175,9 +179,14 @@ section('6. the logo proxy is budgeted as an image, not as a provider call');
   // hashed colour, framed like a logo, in a logo's place. That does not read as "no logo
   // available", it reads as the wrong one.
   const news = decomment(await readFile(new URL('../src/components/NewsFeed.jsx', import.meta.url), 'utf8'));
-  ok('⚠️ the news card no longer frames the initials badge as a logo',
-    !/background:"#fff", borderRadius:8, padding:6[\s\S]{0,80}TickerLogo/.test(news)
-    && !/<TickerLogo/.test(news));
+  // ⚠️ THE NEWS CARD USES TickerLogo AGAIN, AND THAT IS THE FIX RATHER THAN A REGRESSION. A
+  // GENUINE mark belongs in that slot; what did not was the initials badge dressed in a white
+  // logo chip, two letters on a hashed colour framed exactly where a reader expects a brand mark.
+  // So the rule is no longer "this file must not mention TickerLogo" — it is that the card hands
+  // the component its OWN fallback and never wraps it in that chip.
+  ok('⚠️ the news card gives the logo slot a real fallback, not a dressed-up badge',
+    /<TickerLogo symbol=\{n\.sym\} size=\{44\} fallback=\{/.test(news)
+    && !/background:"#fff", borderRadius:8, padding:6[\s\S]{0,120}TickerLogo/.test(news));
   ok('…and its publisher photographs are lazy and sized',
     /<img src=\{n\.imageUrl\}[\s\S]{0,120}loading="lazy"/.test(news)
     && /width=\{120\} height=\{80\}/.test(news));

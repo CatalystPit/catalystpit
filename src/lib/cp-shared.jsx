@@ -1582,7 +1582,16 @@ export function useLogoBg(symbol) {
   return { bgMode, ref, onLoad: () => { if (sym) decide(); } };
 }
 
-export function TickerLogo({ symbol, size = 18 }) {
+/**
+ * @param {object} p
+ * @param {string} p.symbol
+ * @param {number} [p.size]
+ * @param {React.ReactNode} [p.fallback] what to render when there is no genuine logo. Defaults to
+ *   the initials monogram, which is right for a 16-22px chip beside a symbol. A surface that gives
+ *   a logo a large, prominent slot should pass its own — see NewsFeed, where a 44px monogram in
+ *   the card's image panel read as a counterfeit brand mark rather than as an absence.
+ */
+export function TickerLogo({ symbol, size = 18, fallback = undefined }) {
   const [failed, setFailed] = useState(false);
   const sym = (symbol || '').toUpperCase();
   // ⚠️ useLogoBg IS DELIBERATELY NOT CALLED. It runs an effect and a localStorage read per tile,
@@ -1614,7 +1623,11 @@ export function TickerLogo({ symbol, size = 18 }) {
   // monogram. That is why flipping the flag alone cannot half-enable this and ship a page full of
   // broken images — the state this work was called in to fix in the first place.
   const cdn = featureEnabled('companyLogos') ? tickerLogoUrl(sym, { size }) : null;
-  if (!cdn || failed) return <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
+  // ⚠️ ONE PLACE DECIDES "NO GENUINE LOGO", so a caller's own fallback and the default monogram
+  // can never disagree about when it applies. The prop is checked with !== undefined rather than
+  // for truthiness, so a surface can pass null to mean "render nothing at all".
+  const noLogo = fallback !== undefined ? fallback : <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
+  if (!cdn || failed) return noLogo;
 
   // ⚠️ STRAIGHT AT THE CDN, NOT THROUGH /api/logo, AND THAT IS THE PROVIDER'S RULE RATHER THAN A
   // PREFERENCE. Logo.dev's fair-use page lists "A server that fetches img.logo.dev images and
@@ -1646,7 +1659,7 @@ export function TickerLogo({ symbol, size = 18 }) {
   // storage, which is a server-side ingest job and a same-origin URL, not a proxy of the CDN.
   // lib/logo-source.mjs records that as the alternative; /api/logo keeps its 404 contract, and
   // useLogoBg stays wired for the day a same-origin image makes the pixel probe possible again.
-  return <TickerMonogram sym={sym} initials={initials} bg={bg} size={size} />;
+  return noLogo;
 }
 
 /**

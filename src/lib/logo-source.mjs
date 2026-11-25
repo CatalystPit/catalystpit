@@ -63,12 +63,21 @@ export const LOGO_PROVIDER = 'logo.dev';
 /** The CDN host the browser talks to. Referenced by the licensing sweep and by verification. */
 export const LOGO_CDN_HOST = 'img.logo.dev';
 
-// ⚠️ A PUBLISHABLE TOKEN, AND THAT IS THE ONLY KIND THAT MAY BE HERE. Logo.dev issues two keys: a
-// publishable token for image URLs, which is designed to be visible in a browser, and a SECRET key
-// (sk_…) for the REST API, which is server-side only. This module must never touch the second one.
-// NEXT_PUBLIC_ is Next's own marker for a value that gets inlined into client bundles, so the name
-// states the exposure rather than hiding it.
-const TOKEN = (process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN || '').trim();
+// ── ⚠️ WHY THIS IS NOT THE `LOGODEV_TOKEN` THAT ALREADY EXISTS IN VERCEL ────
+//
+// The original integration (3215b59c, "resolve ticker logos via logo.dev") read `LOGODEV_TOKEN`
+// server-side, because /api/logo PROXIED the image: our server fetched img.logo.dev and streamed
+// the bytes back. Logo.dev's current fair-use page lists that exact shape under NOT fair use —
+// "A server that fetches img.logo.dev images and passes them on to your users" — so the browser
+// now loads the CDN directly, and a value the browser needs cannot live in a server-only variable.
+//
+// NEXT_PUBLIC_ is Next's own marker for "this is inlined into client bundles", so the name states
+// the exposure instead of hiding it. That is correct for this value and wrong for almost any
+// other: Logo.dev issues a PUBLISHABLE token for image URLs, designed to be visible in a browser,
+// and a separate SECRET key (sk_…) for the REST API. The publishable one is the same value the old
+// LOGODEV_TOKEN held — it was simply stored under a server-side name because the old architecture
+// never needed it client-side. This module must never read the secret key.
+const TOKEN = (process.env.NEXT_PUBLIC_LOGODEV_TOKEN || '').trim();
 
 /**
  * ⚠️ ATTRIBUTION IS A LICENCE CONDITION ON THE FREE PLAN, NOT A COURTESY.
@@ -141,18 +150,21 @@ export function tickerLogoUrl(symbol, { size = 64, retina = true } = {}) {
   return `https://${LOGO_CDN_HOST}/ticker/${encodeURIComponent(sym)}?${p.toString()}`;
 }
 
-// ── ⚠️ TO TURN THIS ON ───────────────────────────────────────────────────────
+// ── ⚠️ STATE OF ACTIVATION ───────────────────────────────────────────────────
 //
-// It is deliberately NOT one step, because two of them are decisions rather than configuration:
+//   1. VENDOR DECIDED — Logo.dev, authorised by the owner, who confirmed an existing account with
+//      27,385 CDN requests already served. Recorded in lib/licensing/providers.mjs as an approved
+//      BROWSER-asset host, which still refuses a server-side fetch. DONE.
+//   2. FLAG FLIPPED — `companyLogos` in lib/feature-availability.mjs. DONE.
+//   3. TOKEN — THE ONE REMAINING STEP, and it cannot be done from a development machine. Set
+//      NEXT_PUBLIC_LOGODEV_TOKEN in Vercel to the PUBLISHABLE token (never the sk_ secret): the
+//      same value the existing server-side LOGODEV_TOKEN already holds, under a name the browser
+//      can read. See the note on TOKEN above for why a server-only name cannot work now.
+//      Optionally NEXT_PUBLIC_LOGO_DEV_PLAN=paid, only if a paid plan is genuinely active.
+//   4. THEN VERIFY THE MARKS ARE THE RIGHT COMPANIES — scripts/verify-logo-accuracy.mjs. Its live
+//      half cannot run without the token and is the step that must not be skipped: a logo API
+//      returning *a* logo is not the same as returning the RIGHT one, and a wrong trademark beside
+//      a company's own SEC filings is worse than no logo at all.
 //
-//   1. DECIDE THE VENDOR. Adding img.logo.dev means accepting a third party's terms and displaying
-//      other companies' trademarks. lib/licensing/providers.mjs exists because that decision was
-//      once made implicitly, four times over. Record it there the way the other hosts are recorded.
-//   2. PICK THE PLAN. Community is $0 and REQUIRES the attribution link below; Startup is $50/month
-//      or $400/year and removes it. Costs and limits are in the report.
-//   3. SET NEXT_PUBLIC_LOGO_DEV_TOKEN to the PUBLISHABLE token (never the sk_ secret), and
-//      NEXT_PUBLIC_LOGO_DEV_PLAN=paid only if a paid plan is genuinely active.
-//   4. FLIP `companyLogos` in lib/feature-availability.mjs.
-//   5. VERIFY THE MARKS ARE THE RIGHT COMPANIES — see scripts/verify-logo-accuracy.mjs, which
-//      cannot run without a token and is the step that must not be skipped. A logo API returning
-//      *a* logo is not the same as returning the RIGHT one.
+// Until step 3, every surface renders the clean fallback and makes no request — exactly the
+// behaviour shipped at 29580ecf.

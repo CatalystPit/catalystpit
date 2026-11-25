@@ -49,10 +49,18 @@ export const FEATURES = {
   // This flag is what lets the component skip a request it knows will fail, instead of discovering
   // that once per tile per page view.
   //
-  // RESTORE WHEN: a logo source is licensed WITH redistribution rights and /api/logo serves it
-  // again. Flipping this back on is the whole change — the <img>, its sizing, its lazy loading and
-  // its error fallback all stay exactly where they are.
-  companyLogos: false,
+  // ⚠️ RESTORED. The owner confirmed an existing Logo.dev account (27,385 CDN requests already
+  // served under it) and authorised that vendor specifically. img.logo.dev moved out of the
+  // deny-list in lib/licensing/providers.mjs into APPROVED_BROWSER_ASSET_HOSTS — a category that
+  // permits the BROWSER to load the image and still refuses a server-side fetch, because
+  // Logo.dev's fair-use page forbids proxying. The old /api/logo proxy (3215b59c) was deliberately
+  // NOT restored for that reason, and neither was its FMP secondary.
+  //
+  // ⚠️ THIS FLAG ALONE DOES NOT TURN LOGOS ON. lib/logo-source.mjs also requires
+  // NEXT_PUBLIC_LOGODEV_TOKEN; with permission but no token, TickerLogo renders the clean
+  // fallback and makes no request. Two conditions, both fail closed — which is what stops a flag
+  // flip from refilling the product with broken images.
+  companyLogos: true,
 
   // The "Tools & offers" affiliate strip on the ticker Overview. The component is env-driven and
   // already renders nothing when no partner IDs are set, so this flag is about not showing the

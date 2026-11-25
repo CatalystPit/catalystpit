@@ -13,7 +13,7 @@
 //            fallback, and cannot ship an attribution claim while serving no logos.
 //   LIVE     every ticker resolves to a real image, distinct companies get distinct marks, and a
 //            symbol with no logo returns 404 so OUR placeholder renders rather than the vendor's
-//            generated monogram. Needs NEXT_PUBLIC_LOGO_DEV_TOKEN; skipped, loudly, without one.
+//            generated monogram. Needs NEXT_PUBLIC_LOGODEV_TOKEN; skipped, loudly, without one.
 //
 // Run: node scripts/verify-logo-accuracy.mjs
 import fs from 'node:fs';
@@ -41,10 +41,17 @@ L('\n=== 1. THE INTEGRATION CANNOT BE HALF-ON ===');
   // ⚠️ TWO CONDITIONS, BOTH FAIL CLOSED. The flag is permission; the token is a source. A flag
   // flipped without a token is exactly how a page fills with broken images — the state this whole
   // line of work was called in to fix.
+  // ⚠️ THE SECOND HALF OF THIS PINNED `return <TickerMonogram …>` AND WENT RED WHEN THE FALLBACK
+  // BECAME A PROP — the monogram is now `noLogo`, one named value so that a caller's own fallback
+  // and the default can never disagree about when "no genuine logo" applies. Correct code,
+  // extended. What matters is that a missing flag, a missing token or a failed load all land on
+  // the same single fallback, so that is what is checked.
   ok('the component requires BOTH the flag and a configured source',
     mut('halfon') ? false
       : /featureEnabled\('companyLogos'\) \? tickerLogoUrl\(/.test(shared)
-        && /if \(!cdn \|\| failed\) return <TickerMonogram/.test(shared));
+        && /if \(!cdn \|\| failed\) return noLogo;/.test(shared));
+  ok('…and every one of those paths lands on the same single fallback',
+    /const noLogo = fallback !== undefined \? fallback : <TickerMonogram/.test(shared));
   ok('…and the source reports itself unconfigured without a token',
     /export function logoConfigured\(\) \{\s*return TOKEN\.length > 0;/.test(src));
   ok('…and builds no URL at all when unconfigured',
@@ -55,7 +62,7 @@ L('\n=== 1. THE INTEGRATION CANNOT BE HALF-ON ===');
   // the name has to state the exposure rather than hide it.
   ok('⚠️ only a publishable token is read, never a secret key',
     mut('secretkey') ? false
-      : /NEXT_PUBLIC_LOGO_DEV_TOKEN/.test(src) && !/LOGO_DEV_SECRET|sk_live|SECRET_KEY/.test(src));
+      : /NEXT_PUBLIC_LOGODEV_TOKEN/.test(src) && !/LOGO_DEV_SECRET|sk_live|SECRET_KEY/.test(src));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -78,6 +85,22 @@ L('\n=== 2. THE PROVIDER\'S OWN RULES ARE HONOURED ===');
   ok('⚠️ a miss returns 404 so our own fallback renders, not the vendor\'s monogram',
     mut('nofallback') ? false : /fallback: '404'/.test(src));
   ok('…and the format carries transparency', /format: 'png'/.test(src));
+
+  // ⚠️ THE LICENSING MODULE ENFORCES THE VENDOR'S OWN RULE, WHICH IS THE POINT OF PUTTING IT
+  // THERE. img.logo.dev is approved for the BROWSER and deliberately absent from
+  // APPROVED_DATA_HOSTS, so licensedFetch — the function every server-side data read goes
+  // through — still refuses it. That is "the browser may load these images, we may not fetch or
+  // re-serve them", expressed as code rather than as a promise in a comment.
+  const prov = await import('../src/lib/licensing/providers.mjs');
+  const u = 'https://img.logo.dev/ticker/AAPL';
+  ok('⚠️ the browser may load the logo CDN',
+    mut('notapproved') ? false : prov.isApprovedBrowserAssetHost(u));
+  ok('⚠️ …and our server still may not, because proxying is not fair use',
+    mut('serverfetch') ? false : !prov.isApprovedDataHost(u));
+  ok('…so licensedFetch refuses it outright', await prov.licensedFetch(u)
+    .then(() => false).catch((e) => e.name === 'UnlicensedProviderError'));
+  ok('…and it is no longer sitting on the deny-list it was approved out of',
+    !prov.isUnapprovedCommercialHost(u));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -112,9 +135,9 @@ L('\n=== 4. ATTRIBUTION IS A LICENCE CONDITION, NOT A COURTESY ===');
 // ───────────────────────────────────────────────────────────────────────────
 L('\n=== 5. LIVE: DO THESE MARKS BELONG TO THESE COMPANIES? ===');
 {
-  const token = (process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN || '').trim();
+  const token = (process.env.NEXT_PUBLIC_LOGODEV_TOKEN || '').trim();
   if (!token) {
-    L('  --    SKIPPED: no NEXT_PUBLIC_LOGO_DEV_TOKEN.');
+    L('  --    SKIPPED: no NEXT_PUBLIC_LOGODEV_TOKEN.');
     L('        ⚠️ This is the half that proves the logos are CORRECT, and it has not run.');
     L('        Nothing is enabled without a token, so production is unaffected — but do not');
     L('        report logos as verified on the strength of section 1-4 alone.');

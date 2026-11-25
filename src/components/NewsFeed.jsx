@@ -8,7 +8,7 @@ import { impactOf, IMPACT_STYLE } from "../lib/impact";
 import {
   C, TAG, CARD_COLORS,
   fetchKey, toArr, maybeN, StoryAge,
-  BrandStyles, Skel, Dot, TagBadge,
+  BrandStyles, Skel, Dot, TagBadge, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
   useRealtimeQuotes, quotesFreshness,
 } from "../lib/cp-shared";
@@ -94,18 +94,37 @@ function NewsRowCard({n, idx, bindTicker}) {
           // gradient, with the filing's issuer plainly beneath it. It cannot be mistaken for a
           // brand mark because it is obviously a label, and it tells the reader more than a
           // two-letter chip did — the full symbol rather than the first two characters of it.
-          <div style={{display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-            gap:2, padding:"0 6px", width:"100%"}}>
-            <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:n.sym.length > 4 ? 17 : 21,
-              fontWeight:700, color:"#fff", letterSpacing:"0.02em", lineHeight:1,
-              maxWidth:"100%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
-              {n.sym.toUpperCase()}
-            </span>
-            <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:8, fontWeight:600,
-              color:"rgba(255,255,255,0.62)", letterSpacing:"0.09em", lineHeight:1}}>
-              {n.tag === 'SEC' ? 'SEC FILING' : 'COMPANY'}
-            </span>
-          </div>
+          // ⚠️ THREE TIERS, BEST FIRST, AND THE LAST IS NOT A LOGO PRETENDING TO BE ONE.
+          //
+          //   1. the publisher's own photograph, when the story has one (above);
+          //   2. the company's GENUINE mark, when Logo.dev has one for this ticker;
+          //   3. our own typography — the full symbol on the card's gradient.
+          //
+          // Tier 3 is what this slot used to get wrong: the initials badge mounted at 44px inside
+          // a white chip, two letters on a hashed colour, framed exactly where a reader expects a
+          // brand mark. That read as the WRONG logo rather than as the absence of one. Passing it
+          // as TickerLogo's `fallback` means the component owns the "is there a real logo"
+          // decision — including the 404 the CDN returns on a miss — and this card only says what
+          // to draw when the answer is no.
+          // ⚠️ AND NO OUTER WHITE CHIP. TickerLogo already renders a real logo on its own white,
+          // rounded, bordered tile — that is the correct presentation for a transparent PNG. The
+          // chip that used to be here wrapped the FALLBACK as well, which is precisely what made
+          // two letters read as a brand mark. The fallback now sits on the card's own gradient,
+          // full width, exactly as it does today when no logo source is configured.
+          <TickerLogo symbol={n.sym} size={44} fallback={
+            <div style={{display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+              gap:2, padding:"0 6px", width:"100%"}}>
+              <span className="cp-tkr" style={{fontFamily:"'DM Sans',sans-serif", fontSize:n.sym.length > 4 ? 17 : 21,
+                fontWeight:700, color:"#fff", letterSpacing:"0.02em", lineHeight:1,
+                maxWidth:"100%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                {n.sym.toUpperCase()}
+              </span>
+              <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:8, fontWeight:600,
+                color:"rgba(255,255,255,0.62)", letterSpacing:"0.09em", lineHeight:1}}>
+                {n.tag === 'SEC' ? 'SEC FILING' : 'COMPANY'}
+              </span>
+            </div>
+          } />
         ) : null}
       </div>
       <div style={{flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:5}}>

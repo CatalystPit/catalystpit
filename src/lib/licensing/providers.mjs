@@ -83,9 +83,42 @@ export const UNAPPROVED_COMMERCIAL_HOSTS = Object.freeze([
   'hist.databento.com', 'databento.com',
   'financialdata.net',
   'api.marketaux.com', 'api.stockdata.org',
-  'img.logo.dev', 'logo.dev',
   'stooq.com', 'stooq.pl',
 ]);
+
+/**
+ * Hosts the BROWSER may load a brand asset from, and our servers may not.
+ *
+ * ⚠️ THIS IS A THIRD CATEGORY ON PURPOSE, AND THE SPLIT IS THE LICENCE RATHER THAN A TIDINESS
+ * PREFERENCE. img.logo.dev was on the deny-list above, correctly, for as long as nobody had made a
+ * decision about it — the audit that created this file found "a hotlinked logo from Finnhub's own
+ * CDN" among the four violations, so a logo CDN is exactly the kind of thing that gets wired in
+ * because it works. The decision has now been made explicitly, by the owner, for Logo.dev only.
+ *
+ * ⚠️ AND IT IS DELIBERATELY NOT IN APPROVED_DATA_HOSTS. That list is what `licensedFetch` consults,
+ * so putting Logo.dev there would permit a SERVER-SIDE fetch — and Logo.dev's fair-use page lists
+ * "A server that fetches img.logo.dev images and passes them on to your users" and "An API that
+ * proxies Logo.dev requests" as NOT fair use. Leaving it out means licensedFetch still refuses it,
+ * which makes this module enforce the vendor's own rule: the browser may load these images, we may
+ * not fetch or re-serve them. The original /api/logo proxy (3215b59c) did exactly what is now
+ * forbidden, which is why it was not restored.
+ *
+ * ⚠️ WHAT WE HOLD, STATED PLAINLY: nothing. Logo.dev says "Logo.dev doesn't own the logos and gives
+ * you no rights to any logo" and "Logos remain the property of their trademark owners." Their
+ * position that identifying use is nominative fair use is, in their words, not legal advice. These
+ * marks may be used to identify a company beside its own filings and ticker, and never to suggest
+ * that a company endorses Catalyst Pit.
+ */
+export const APPROVED_BROWSER_ASSET_HOSTS = Object.freeze([
+  'img.logo.dev',
+]);
+
+/** Is this a host the browser may load a brand asset from? Never a licence to fetch it server-side. */
+export function isApprovedBrowserAssetHost(urlOrHost) {
+  const h = (String(urlOrHost).includes('://') ? host(urlOrHost) : String(urlOrHost)).toLowerCase();
+  if (!h) return false;
+  return APPROVED_BROWSER_ASSET_HOSTS.some((ok) => h === ok || h.endsWith(`.${ok}`));
+}
 
 const host = (u) => {
   try { return new URL(String(u)).hostname.toLowerCase(); } catch { return ''; }
