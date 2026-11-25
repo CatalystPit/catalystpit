@@ -285,7 +285,7 @@ function LatestActivity({ activity, filings }) {
   );
 }
 
-export default function InstitutionsClient({ initialLatest = null }) {
+export default function InstitutionsClient({ initialLatest = null, initialActivity = null }) {
   // ⚠️ initialLatest IS THE SERVER'S RENDER OF THE FILINGS LIST, NOT A HINT.
   // app/institutions/page.jsx reads the same latestFilings this component fetches — now in
   // lib/institutions-queries.mjs beside the ffRel freshness boundary and the publicCap login cap it
@@ -295,7 +295,7 @@ export default function InstitutionsClient({ initialLatest = null }) {
   // ⚠️ IT IS THE LOGGED-OUT VIEW, CAPPED, because shared HTML is the logged-out view by definition.
   // A signed-in reader's own fetch replaces it with the full history immediately after hydration.
   const [latest, setLatest] = useState(initialLatest);
-  const [activity, setActivity] = useState(null);
+  const [activity, setActivity] = useState(initialActivity);
   const [featured, setFeatured] = useState(null);
   const [largest, setLargest] = useState([]);
   const [corporate, setCorporate] = useState([]);

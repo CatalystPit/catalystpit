@@ -1,7 +1,7 @@
 'use client';
 import ErrorState from '../../components/ErrorState';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, TickerLogo } from '../../lib/cp-shared';
 import { NO_ADS } from '../../lib/adsense.mjs';
 import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
@@ -153,9 +153,8 @@ function FilterControl({ def, val, onChange }) {
   );
 }
 
-export default function ScreenerClient() {
+export default function ScreenerClient({ initialData = null }) {
   const router = useRouter();
-  const search = useSearchParams();
   const [meta, setMeta] = useState(null);
   const [filters, setFilters] = useState({});
   // Default sort is a MEASURED QUANTITY, not a composite. The old default ranked the whole screener
@@ -184,8 +183,20 @@ export default function ScreenerClient() {
       setShowFilters(false);
     }
   }, []);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // ⚠️ initialData IS THE SERVER'S RENDER OF THE OPENING SCREEN. app/screener/page.jsx runs the same
+  // unfiltered default this component opens with — no filters, sort insiderNet90d, descending,
+  // page 0, through lib/screener-page.mjs, which imports the route's own SORT_MAP and nulls-last
+  // ordering — so the table is in the HTML before any JavaScript runs. Measured on production
+  // beforehand: FOUR words.
+  //
+  // ⚠️ AND THE CELLS IT CARRIES ARE PREVIOUS-SESSION CLOSES, from screener_stocks, which is written
+  // from the daily candles. The delayed and real-time overlay below is untouched: /api/quotes still
+  // paints over these values per viewer after hydration, so an entitled reader sees exactly what
+  // they are entitled to and a shared cache holds only the closing basis.
+  const [data, setData] = useState(initialData);
+  // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED — fifty rows replaced by skeletons for
+  // the length of one fetch is a visible regression paid for an invisible gain.
+  const [loading, setLoading] = useState(!initialData);
   // A 200 with zero rows means the filters matched nothing — a real answer, and the existing empty
   // state says so. This flag is only for a request that never produced an answer at all.
   const [loadError, setLoadError] = useState(false);
@@ -204,7 +215,19 @@ export default function ScreenerClient() {
       .then((j) => { setMeta(j.filters || {}); })
       .catch(() => { setMeta({}); });
     fetch('/api/screener/saved').then((r) => r.json()).then((j) => setSaved(j.saved || [])).catch(() => {});
+    // ── ⚠️ THIS READ USED TO COST THE ENTIRE PAGE ITS SERVER RENDER ───────────────────────────
+    //
+    // It was `useSearchParams()`, and that hook makes Next bail the nearest Suspense boundary out
+    // of static rendering — with `fallback={null}` around this component, the boundary emitted
+    // NOTHING. That is the whole explanation for the four words /screener served a crawler: not a
+    // missing data fetch, a dropped subtree. Server-rendering the table changed the measurement
+    // from 4 words to 0 until this line changed too, which is how it was found.
+    //
+    // The hook was never needed here. It is read ONCE, inside a mount effect, which only ever runs
+    // in a browser — so the browser's own URL is the same information with none of the cost.
+    // Behaviour is identical: same keys, same decode, same silent catch.
     try {
+      const search = new URLSearchParams(window.location.search);
       const f = search.get('f'); if (f) setFilters(JSON.parse(decodeURIComponent(f)) || {});
       if (search.get('sort')) setSort(search.get('sort'));
       if (search.get('dir')) setDir(search.get('dir'));
@@ -220,8 +243,13 @@ export default function ScreenerClient() {
     return p.toString();
   }, [filters, sort, dir, page, ticker]);
 
+  // ⚠️ THE FIRST RUN MUST NOT RE-ENTER THE LOADING STATE, or the server's table flashes away. This
+  // runs on mount (debounced) and on every filter, sort and page change; only the first run is
+  // special-cased, so every screen the reader actually asks for still shows that it is working.
+  const serverRendered = useRef(!!initialData);
   const load = useCallback(() => {
-    setLoading(true);
+    if (serverRendered.current) serverRendered.current = false;
+    else setLoading(true);
     fetch(`/api/screener?${qs}`, { cache: 'no-store' })
       .then((r) => { if (!r.ok) throw new Error('bad status'); return r.json(); })
       // ⚠️ A FAILURE ARRIVES AS HTTP 200. The route catches its own errors and answers
@@ -300,7 +328,11 @@ export default function ScreenerClient() {
       {/* HEADER CONTROLS */}
       <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: '7px 20px' }}>
         <div style={{ maxWidth: 1760, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 19, fontWeight: 600, color: C.ink, marginRight: 4 }}>Screener</span>
+          {/* ⚠️ THIS WAS A <span> AND THE PAGE HAD NO h1 AT ALL. Measured on the build output: h1 = 0
+              on an indexable page in our own sitemap, which had also been serving four words. Same
+              text, same type treatment, same place in the layout — it is now the heading it already
+              looked like. Nothing is added and nothing moves. */}
+          <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 19, fontWeight: 600, color: C.ink, marginRight: 4, margin: '0 4px 0 0', display: 'inline' }}>Stock Screener</h1>
           {/* ⚠️ Rel Vol HERE IS A DAILY RATIO, NOT AN INTRADAY ONE. It is last session's composite
               volume over the average — computed from end-of-day bars by the nightly screener job.
               The column was unlabelled, which let "Rel Vol" read as the live intraday measure the

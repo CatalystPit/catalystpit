@@ -53,6 +53,7 @@
 // insider filings", which is a claim about the market rather than about us. That distinction is
 // the one /api/eightk and the consensus board both learned the hard way, and it is why a cache
 // outage here costs a crawler the research but never costs a reader the page.
+import { unstable_cache } from 'next/cache';
 import { eodCutoffIso } from './entitlement-rules.mjs';
 
 const KV_URL = process.env.KV_REST_API_URL;
@@ -232,6 +233,211 @@ export async function readPoliticiansRoom({ now = Date.now() } = {}) {
   } catch { return null; }
 }
 
+// ── /markets ───────────────────────────────────────────────────────────────
+//
+// ⚠️ THE ONE ROOM WITH NO PRICE QUESTION TO ANSWER AT ALL, AND ITS OWN SOURCE SAYS SO:
+// "C4 — Markets = 'names with catalysts today' from the pit_snapshot. NO last-sale/prices
+// (compliance): this is a catalyst board (filings + Congress + headlines), not a gainers tape."
+//
+// So this reads the same `catalystpit:pit_snapshot` blob the homepage already reads — session-less,
+// rebuilt by cron every ~15 minutes, identical for every visitor — and there is no EOD-versus-
+// delayed decision to make here, because the room contains no market data in the first place.
+//
+// ⚠️ AND THE FOUR KEYS ARE NAMED RATHER THAN THE BLOB PASSED THROUGH. If a future snapshot gains a
+// `tape` or a `marketSnap` — both of which the homepage reader explicitly refuses — passing the
+// whole object would quietly publish prices into cached HTML on the next cron deploy. Naming the
+// keys makes rule 2 structural instead of a promise. MarketsClient reads exactly these four.
+/**
+ * The catalyst board in MarketsClient's own shape, or null.
+ * @returns {Promise<{catalysts: object[], insiders: object[], congress: object[], stories: object[]}|null>}
+ */
+export async function readMarketsRoom() {
+  try {
+    const snap = await kvGet('catalystpit:pit_snapshot');
+    if (!snap || typeof snap !== 'object') return null;
+    const pick = (v) => (Array.isArray(v) ? v : []);
+    const out = {
+      catalysts: pick(snap.catalysts),
+      insiders: pick(snap.insiders),
+      congress: pick(snap.congress),
+      stories: pick(snap.stories),
+      generatedAt: snap.generatedAt ?? null,
+    };
+    // The same usability test the homepage reader applies, so the two agree about when there is a
+    // snapshot at all. Nothing readable means null, never four empty arrays presented as a quiet
+    // market.
+    return (out.catalysts.length || out.insiders.length || out.congress.length || out.stories.length)
+      ? out : null;
+  } catch { return null; }
+}
+
+// ── /fear-greed ────────────────────────────────────────────────────────────
+//
+// ⚠️ FIRST-PARTY RESEARCH WITH NO PRICE IN IT. The index is a 0-100 score computed daily from
+// components that are each scored against their own distribution; what reaches a reader is the
+// score, the zone, the component scores and the methodology. No quote, no last sale, no tape — so
+// there is no EOD-versus-delayed question here either.
+//
+// ⚠️ AND THE STRIPPING IS NOT RE-IMPLEMENTED. What /api/fear-greed publishes is a DISCLOSURE
+// boundary — the normalisation window, the refusal threshold, the methodology version and each
+// component's sample count are deliberately withheld, and one of those leaks was once caught
+// against the live response rather than the source. fearGreedPublicPayload is that one function;
+// a copy of it here would put the recipe into cached public HTML.
+/**
+ * The index as a reader may see it, or null. Note that an UNAVAILABLE index is a real answer and
+ * is passed through — "we have not computed it" is a fact about us, and the component renders it.
+ * null is reserved for "the read itself failed".
+ * @returns {Promise<object|null>}
+ */
+// ⚠️ WRAPPED, BECAUSE THE STORE READS KV WITH no-store AND THAT MADE THE PAGE DYNAMIC. Measured:
+// adding this reader flipped /fear-greed from `○ 300s` to `ƒ`. readPayload reaches kvGetJson in
+// lib/consensus/materialization.mjs — the same `cache: 'no-store'` read that forced /consensus to
+// be fetched by key instead of through readPublishedBoard. Here the key is versioned and the
+// reshape-from-history fallback is a database query, so bypassing the module would mean
+// re-implementing both; unstable_cache is the house answer to exactly this (see
+// lib/ticker-seo.server.mjs) and it keeps the page prerendered.
+const cachedFearGreed = unstable_cache(
+  async () => {
+    const { fearGreedPublicPayload } = await import('./fear-greed/public-payload.mjs');
+    return fearGreedPublicPayload();
+  },
+  ['fear-greed-public-payload'],
+  { revalidate: ROOM_CACHE_SECONDS, tags: ['fear-greed-public-payload'] },
+);
+
+export async function readFearGreedRoom() {
+  try {
+    const payload = await cachedFearGreed();
+    return payload && typeof payload === 'object' ? payload : null;
+  } catch { return null; }
+}
+
+// ── /heatmap's leadership lists ─────────────────────────────────────────────
+//
+// ⚠️ THE BOARD WAS ALREADY SERVER-RENDERED AND THE PAGE STILL MEASURED 231 WORDS WITH NO LINKS,
+// FOR A REASON WORTH RECORDING: the treemap is drawn on a <canvas>, so the board itself can never
+// be crawlable text however well it is rendered. The leadership lists beside it are ordinary DOM
+// with ticker links in them — and they were the half still arriving in an effect.
+//
+// ⚠️ AND THE EMPTY STATE WAS PUBLISHING A FINDING IT DID NOT HAVE. With `movers` null the lists
+// rendered "Nothing to rank for this window." into cached HTML — the same class of defect as
+// /institutions' "No position changes disclosed": a claim about the market made while we had
+// simply not asked. Rendering them on the server fixes the content; the component change beside
+// it fixes the claim.
+//
+// ⚠️ realtime: false IS THE WHOLE POINT, AND marketMovers HONOURS IT STRUCTURALLY. That path calls
+// completedSessionMovers and makes NO vendor request at all — "Free, signed out, or vendor realtime
+// disabled → the completed-session list. No Tiingo call." So this is licensed previous-session
+// closing data by construction, not by a flag someone has to remember, and no provider call is
+// added to any crawler request.
+/**
+ * The completed-session top gainers and losers, or null.
+ * @returns {Promise<{gainers: object[], losers: object[], asOf: string|null, baselineDate: string|null, freshness: string}|null>}
+ */
+// ⚠️ WRAPPED FOR THE SAME REASON AND IT WAS MEASURED THE SAME WAY: adding this reader flipped
+// /heatmap from `○ 300s` to `ƒ`, which would have handed every anonymous reader the 2,431ms cold
+// render that page's own cache was created to remove — a performance regression introduced by an
+// SEO change, the one trade this work is not allowed to make. completedSessionMovers reads its
+// session-keyed KV entry through a POST with `cache: 'no-store'`, so the uncached fetch is inside
+// a function worth keeping whole: it is session-keyed rather than TTL'd, which is the property
+// that makes a new candle load switch the board over immediately.
+//
+// ⚠️ THE WINDOW IS DELIBERATELY NOT THE SESSION KEY. unstable_cache re-reads every
+// ROOM_CACHE_SECONDS, so the page picks up a new completed session within one window of the
+// nightly load rather than holding yesterday's board until a deploy.
+const cachedMovers = unstable_cache(
+  async () => {
+    const { marketMovers } = await import('./movers/movers-store');
+    // realtime: false takes the completedSessionMovers path and makes NO vendor request —
+    // "Free, signed out, or vendor realtime disabled → the completed-session list. No Tiingo call."
+    return marketMovers({ realtime: false, limit: 10 });
+  },
+  ['heatmap-eod-movers'],
+  { revalidate: ROOM_CACHE_SECONDS, tags: ['heatmap-eod-movers'] },
+);
+
+export async function readMoversRoom() {
+  try {
+    const m = await cachedMovers();
+    if (!m || (!m.gainers?.length && !m.losers?.length)) return null;
+    // ⚠️ A SHARED COPY MUST NOT CARRY A REALTIME LABEL EVEN IF ONE SOMEHOW ARRIVED. The realtime
+    // path is unreachable from here by construction, so this is a belt on top of braces rather
+    // than a fix — but a cached page that claimed 'realtime' would be a licensing problem, not a
+    // cosmetic one, and refusing it costs nothing.
+    if (m.freshness && m.freshness !== 'eod') return null;
+    return m;
+  } catch { return null; }
+}
+
+// ── /scan ──────────────────────────────────────────────────────────────────
+//
+// ⚠️ THE BOARDS ALREADY SHOWED THE LAST COMPLETED SESSION TO EVERYONE, AND ALREADY SAID SO.
+// ScanClient's own header: "Realtime is not entitled, so what these boards show is the last
+// completed session. A page headed 'what is moving right now' that quietly showed yesterday's move
+// would be the one failure this scanner was built to refuse." The feed state is printed once at the
+// top and again on every row. So the basis was never the problem — the boards were simply arriving
+// after JavaScript, leaving 189 words and no ticker links for a crawler.
+//
+// ⚠️ realtime: false IS STATED, NOT RESOLVED, AND THAT IS WHAT KEEPS THE PAGE STATIC. loadScanContext
+// used to call callerHasRealtime() unconditionally; a shared cached page has no caller to resolve,
+// and the auth() behind that call would have made the route per-request. The override can only
+// narrow — `stated === false` is the entire gate — so no caller can grant itself realtime by
+// asserting it, and the realtime snapshot path is not reached at all from here.
+//
+// ⚠️ WRAPPED, BECAUSE THE EOD PATH STILL ASKS getQuotes FOR THE CLOSES. One call per revalidation
+// window rather than one per crawl, which is the difference between a cached page and the
+// "expensive provider call on every crawler request" this work is not allowed to add.
+const cachedScanBoards = unstable_cache(
+  async () => {
+    const { buildAllScanBoards } = await import('./scan/board-payload');
+    return buildAllScanBoards({ realtime: false });
+  },
+  ['scan-boards-eod'],
+  { revalidate: ROOM_CACHE_SECONDS, tags: ['scan-boards-eod'] },
+);
+
+/**
+ * All three completed-session Scan boards, or null.
+ * @returns {Promise<{boards: object, degraded: boolean}|null>}
+ */
+export async function readScanRoom() {
+  try {
+    const out = await cachedScanBoards();
+    // ⚠️ degraded MEANS THE EVIDENCE BOARD COULD NOT BE READ, which is not an empty market. The
+    // client's own fetch handles that state, including its 503 path, so a degraded build is null
+    // here rather than a page that renders three empty boards as a finding.
+    if (!out || out.degraded) return null;
+    const any = Object.values(out.boards || {}).some((b) => (b?.rows || []).length);
+    return any ? out : null;
+  } catch { return null; }
+}
+
+// ── /screener ──────────────────────────────────────────────────────────────
+//
+// ⚠️ FOUR WORDS. That was the measurement, as Googlebot, on a page in our own sitemap at priority
+// 0.7 aimed at one of the highest-volume non-branded phrases in the category.
+//
+// ⚠️ AND IT IS EOD BY SOURCE, NOT BY A FLAG. screener_stocks.price/.changePct/.volume are written
+// from ticker_daily_candles — previous-session closing values, the basis a guest or a crawler may
+// be shown. The delayed and real-time overlay is a separate, per-viewer concern that
+// ScreenerClient applies from /api/quotes after hydration, so nothing of either is rendered or
+// cached here. See lib/screener-page.mjs.
+//
+// ⚠️ THE FILTER METADATA IS DELIBERATELY NOT INCLUDED. /api/screener?meta=1 carries
+// `quoteFreshness`, which is resolved from the CALLER's entitlement — a per-viewer freshness claim
+// that must not be baked into a shared copy. The chips keep arriving from that fetch, exactly as
+// before; only the rows move to the server.
+/**
+ * The screener's unfiltered opening page, or null.
+ * @returns {Promise<{rows: object[], total: number, page: number, pageSize: number}|null>}
+ */
+export async function readScreenerRoom() {
+  try {
+    const { screenerDefaultPage } = await import('./screener-page.mjs');
+    return await screenerDefaultPage();
+  } catch { return null; }
+}
+
 // ── /institutions ──────────────────────────────────────────────────────────
 //
 // ⚠️ THIS ROOM IS ROW-GATED AND THE OTHERS ARE NOT, WHICH CHANGES WHAT CAN HONESTLY BE DONE HERE.
@@ -258,13 +464,29 @@ export async function readPoliticiansRoom({ now = Date.now() } = {}) {
  */
 export async function readInstitutionsRoom({ now = Date.now() } = {}) {
   try {
-    const { latestFilings, publicCap } = await import('./institutions-queries.mjs');
-    const filings = await latestFilings(25, freeCutoff(now));
-    if (!Array.isArray(filings) || !filings.length) return null;
+    const { latestFilings, latestActivity, publicCap } = await import('./institutions-queries.mjs');
+    const cutoff = freeCutoff(now);
+    // ⚠️ THE ACTIVITY FEED IS THE DEFAULT TAB, AND LEAVING IT OUT PUT THE RESEARCH BEHIND A TAB NO
+    // CRAWLER SELECTS. The first version of this reader server-rendered only the filings list;
+    // measured on the build output, that left /institutions at 251 words with no manager links in
+    // the crawlable path, because LatestActivity opens on 'activity'. Both halves now arrive.
+    //
+    // ⚠️ SETTLED INDEPENDENTLY. The activity query is a multi-CTE comparison across filing pairs
+    // and the filings list is one indexed select; a failure in the heavier one must not cost the
+    // lighter one, and either half alone is still a real improvement on an empty room.
+    const [filings, activity] = await Promise.all([
+      latestFilings(25, cutoff).catch(() => []),
+      latestActivity({ cutoff }).catch(() => []),
+    ]);
+    if (!filings.length && !activity.length) return null;
     // ⚠️ loggedIn: false IS NOT A DEFAULT BEING RELIED ON, IT IS THE STATEMENT. Shared HTML is the
     // logged-out view by definition, so it gets the logged-out cap — the same ten rows, with the
-    // same locked count, that /api/institutions hands an anonymous browser.
-    return publicCap({ view: 'latest-filings', filings }, { loggedIn: false });
+    // same locked counts, that /api/institutions hands an anonymous browser.
+    //
+    // ⚠️ AND NOTHING HERE IS A PRICE. A 13F position change is a disclosed holding count and value
+    // as of a quarter end, published by the filer; it carries no quote and no last sale, which is
+    // what makes it publishable in a shared copy regardless of the EOD-versus-delayed line.
+    return publicCap({ view: 'institutions-room', filings, activity }, { loggedIn: false });
   } catch { return null; }
 }
 

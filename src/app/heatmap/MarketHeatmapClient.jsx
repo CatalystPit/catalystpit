@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { C, BrandStyles, TopNav, Footer, TickerLogo } from '../../lib/cp-shared';
+import { C, BrandStyles, TopNav, Footer, TickerLogo, Skel } from '../../lib/cp-shared';
 import HeatmapCanvas from '../../components/heatmap/HeatmapCanvas';
 import InfoTip from '../../components/InfoTip';
 import { useTickerHover, TickerHoverPreview } from '../../components/TickerHoverChart';
@@ -115,7 +115,17 @@ const FRESHNESS_COPY = {
   closed: { label: 'Market closed', tone: 'muted', text: 'Final session data.' },
 };
 
-export default function MarketHeatmapClient({ initial }) {
+// ⚠️ initialMovers IS THE COMPLETED-SESSION GAINERS AND LOSERS, RENDERED ON THE SERVER.
+//
+// The board above them is a <canvas>, so it is unreadable to a crawler however well it renders —
+// this page measured 231 words and zero /ticker/ links with the board already server-rendered.
+// These two lists are the only crawlable research on the page, and they were arriving in an effect.
+//
+// They are end-of-day by construction, not by a flag: app/heatmap/page.jsx reads them through
+// marketMovers with realtime: false, which takes the completedSessionMovers path and makes no
+// vendor call. An entitled reader's client still replaces them the moment /api/me/plan resolves,
+// exactly as it already does for the board.
+export default function MarketHeatmapClient({ initial, initialMovers = null }) {
   const router = useRouter();
   const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
   // ⚠️ GATED UNIVERSES CANNOT BE REACHED THROUGH STATE EITHER. The dropdown no longer offers them, but
@@ -193,7 +203,7 @@ export default function MarketHeatmapClient({ initial }) {
   // ⚠️ THE MARKET-WIDE MOVERS, ON THEIR OWN ENDPOINT AND THEIR OWN SCHEDULE. Same entitlement
   // split as the board (`rt=1` is a cache key, never an authorisation) and the same rule that the
   // poll costs a KV read rather than a provider call — one shared snapshot serves every viewer.
-  const [movers, setMovers] = useState(null);
+  const [movers, setMovers] = useState(initialMovers);
   const loadMovers = useCallback(async (rt) => {
     try {
       const r = await fetch(`/api/market-movers${rt ? '?rt=1' : ''}`, rt ? { cache: 'no-store' } : undefined);
@@ -233,8 +243,13 @@ export default function MarketHeatmapClient({ initial }) {
   // from their own endpoint; the board is the Top 500 by market cap and is a different question.
   // MOST ACTIVE still comes from the board, deliberately and unchanged: it is completed-session
   // consolidated volume, which this entitlement does have, and nothing here makes it intraday.
-  const gainers = movers?.gainers ?? [];
-  const losers = movers?.losers ?? [];
+  // ⚠️ null AND [] MEAN DIFFERENT THINGS AND THE CARD RENDERS THEM DIFFERENTLY. `?? []` collapsed
+  // the two, so with no movers loaded the lists printed "Nothing to rank for this window." — a
+  // claim about the market published while we had simply not asked yet. That reached cached public
+  // HTML, which is how it was found; it is the same defect as /institutions' "No position changes
+  // disclosed". null is "not asked", [] is "asked, and nothing qualified".
+  const gainers = movers ? (movers.gainers ?? []) : null;
+  const losers = movers ? (movers.losers ?? []) : null;
   const active = useMemo(() => mostActive(rows, { limit: 10 }), [rows]);
 
   // ⚠️ A CARD SUBTITLE IS NOT THE PLACE FOR THE METHODOLOGY. The earlier version read
@@ -337,7 +352,12 @@ export default function MarketHeatmapClient({ initial }) {
         {title}{help && <InfoTip title={help.title} body={help.body} label={help.title} />}
       </div>
       {note && <div style={{ fontSize: 10, color: C.dim, marginBottom: 6 }}>{note}</div>}
-      {items.length === 0
+      {/* ⚠️ THREE OUTCOMES, KEPT APART. "We have not asked yet" is not "nothing qualified", and
+          printing the second while the first is true states a finding about the market that we do
+          not have. The caller passes null for the first and [] for the second. */}
+      {items == null
+        ? <div style={{ padding: '6px 0' }}>{[0, 1, 2].map((i) => <Skel key={i} h={13} mb={i < 2 ? 6 : 0} />)}</div>
+        : items.length === 0
         ? <div style={{ fontSize: 11.5, color: C.dim, padding: '6px 0' }}>Nothing to rank for this window.</div>
         : items.map((r) => (
           <div key={r.ticker} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '3px 0' }}>

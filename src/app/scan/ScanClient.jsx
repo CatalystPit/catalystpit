@@ -21,13 +21,13 @@ import { ScanBoard, FeedBanner, BOARD_TABS, useScanBoards } from '../../componen
 // the boards are linkable and readable full-width. It imports the same boards, the same banner and
 // the same compact row — there is no second Scan UI to keep in step.
 
-export default function ScanClient() {
+export default function ScanClient({ initialBoards = null }) {
   // Whichever board answers first sets the banner; they all read the same feed.
   const [freshness, setFreshness] = useState(null);
   // ⚠️ ONE REQUEST FOR ALL THREE. This page stacks the boards, so it used to make three requests
   // that each resolved the entitlement, read the published board and fetched the same hundred
   // quotes. They are three views of one dataset and they now arrive as one.
-  const { boards, error, loading, locked, retry } = useScanBoards();
+  const { boards, error, loading, locked, retry } = useScanBoards({ initial: initialBoards?.boards ?? null });
 
   return (
     <div style={{ fontFamily: "'DM Sans',sans-serif", background: C.bg, color: C.text, minHeight: '100vh' }}>

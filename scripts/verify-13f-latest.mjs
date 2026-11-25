@@ -26,7 +26,19 @@ const ok = (n, c, d = '') => { if (c) { pass++; L(`  ok   ${n}`); } else { fail+
 const read = (p) => fs.readFileSync(new URL(p, new URL('..', import.meta.url)), 'utf8');
 const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-const route = read('src/app/api/institutions/route.js');
+// ⚠️ THE READ PATH IS TWO FILES NOW. latestFilings moved to lib/institutions-queries.mjs when
+// app/institutions/page.jsx began server-rendering this very view — these ten rows are the most
+// citable thing in the room (organization, reporting period, disclosure date, holdings count, a
+// link to our research and a link to the primary SEC document).
+//
+// Every assertion below is about the QUERY — ordered by filed_date not quarter, a deterministic
+// tiebreak, inserted_at never used as the disclosure date — none of which is a claim about which
+// file holds it. WHERE it lives is pinned separately by verify-rooms-ssr, which asserts the route
+// keeps no second copy.
+const route = [
+  read('src/app/api/institutions/route.js'),
+  read('src/lib/institutions-queries.mjs'),
+].join('\n');
 const client = read('src/app/institutions/InstitutionsClient.jsx');
 const routeCode = code(route);
 const clientCode = code(client);

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { C, Dot, Skel, TopNav, Footer, BrandStyles, fetchKey, toArr, TickerLogo } from '../../lib/cp-shared';
 import ErrorState from '../../components/ErrorState';
+import TickerLink from '../../components/TickerLink';
 
 // C4 — Markets = "names with catalysts today" from the pit_snapshot. NO last-sale/prices
 // (compliance): this is a catalyst board (filings + Congress + headlines), not a gainers tape.
@@ -27,10 +28,20 @@ function Card({ title, badge, children }) {
   );
 }
 
-export default function MarketsClient() {
+// ⚠️ initialSnap IS THE SERVER'S RENDER OF THIS PAGE, NOT A HINT. app/markets/page.jsx reads the
+// same pit_snapshot this component fetches, so the catalyst cards, the insider buys, the Congress
+// trades and the headlines are in the HTML before any JavaScript runs. Measured on production
+// beforehand: 113 words and not one link to any company it names.
+//
+// ⚠️ AND THERE IS NO PRICE QUESTION HERE. This room carries no last-sale by design (see the
+// compliance note at the top of this file), so unlike the other rooms there was no EOD-versus-
+// delayed decision to make — only four arrays of public disclosure evidence.
+export default function MarketsClient({ initialSnap = null }) {
   const router = useRouter();
-  const [snap, setSnap] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [snap, setSnap] = useState(initialSnap);
+  // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED — four populated cards replaced by
+  // skeletons for the length of one fetch is a visible regression paid for an invisible gain.
+  const [loading, setLoading] = useState(!initialSnap);
   // fetchKey returns null on EVERY failure path — network, non-2xx, malformed body. The snapshot is
   // always an object when the API is healthy, so a null here is a load failure and not an empty day.
   // A snapshot that loads but happens to carry no catalysts still renders the existing empty state.
@@ -46,7 +57,14 @@ export default function MarketsClient() {
     setLoading(false);
   }, []);
 
+  // ⚠️ THE MOUNT FETCH IS SKIPPED ENTIRELY WHEN THE SERVER ALREADY ANSWERED, because there is
+  // nothing for it to add. Unlike the other rooms, this payload does not vary by entitlement and
+  // carries no prices to refresh — the server read the identical cron blob the browser would have
+  // asked for. Re-requesting it on mount would cost every reader a round trip to replace the data
+  // with itself, and `setFailed` on a transient network blip would then blank a page that was
+  // already correct. The interval refresh and the manual reload are untouched.
   useEffect(() => {
+    if (initialSnap) return;
     let alive = true;
     (async () => {
       const s = await fetchKey('pit_snapshot');
@@ -54,7 +72,7 @@ export default function MarketsClient() {
       if (alive) { setSnap(ok ? s : null); setFailed(!ok); setLoading(false); }
     })();
     return () => { alive = false; };
-  }, []);
+  }, [initialSnap]);
 
   const catalysts = toArr(snap?.catalysts);
   const insiders = toArr(snap?.insiders).filter(i => i.action === 'BUY');
@@ -104,7 +122,12 @@ export default function MarketsClient() {
                     <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 9, color: C.dim, letterSpacing: '0.8px', marginBottom: 7 }}>{c.label}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
                       <TickerLogo symbol={c.sym} size={20} />
-                      <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.green }}>{c.sym}</span>
+                      {/* ⚠️ A ROUTER PUSH IS NOT A LINK. The row's onClick navigates for a reader
+                          and is invisible to a crawler, which is why this room had 113 words and
+                          zero outbound links to the companies it names. TickerLink resolves the
+                          symbol rather than concatenating it and claims its own click, so the row
+                          handler does not fire twice for one destination. */}
+                      <TickerLink symbol={c.sym} className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, fontWeight: 700, color: C.green }} />
                       <span style={{ fontSize: 9, padding: '2px 7px', borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, background: insStyle(c.kind).bg, color: insStyle(c.kind).fg }}>{c.value}</span>
                     </div>
                     <div style={{ fontSize: 12, color: C.muted, fontWeight: 300 }}>{c.line}{c.date ? ` · ${c.date}` : ''}</div>
@@ -123,7 +146,7 @@ export default function MarketsClient() {
               : insiders.map((i2, i) => (
                 <div key={i} className="hov" onClick={() => go(i2.ticker)} style={{ padding: '11px 16px', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                   <div style={{ minWidth: 0 }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><TickerLogo symbol={i2.ticker} size={16} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{i2.ticker}</span></span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><TickerLogo symbol={i2.ticker} size={16} /><TickerLink symbol={i2.ticker} className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }} /></span>
                     <span style={{ fontSize: 12, color: C.muted, fontWeight: 300, marginLeft: 8 }}>{i2.executive || 'Insider'}</span>
                   </div>
                   <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green, whiteSpace: 'nowrap' }}>{fmtVal(i2.totalValue)}</span>
@@ -138,7 +161,9 @@ export default function MarketsClient() {
               : congress.map((p, i) => (
                 <div key={i} className="hov" onClick={() => go(p.ticker)} style={{ padding: '11px 16px', borderBottom: `1px solid ${C.surface}`, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                   <div style={{ minWidth: 0 }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><TickerLogo symbol={p.ticker} size={16} /><span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>{p.ticker || '—'}</span></span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><TickerLogo symbol={p.ticker} size={16} />{p.ticker
+                      ? <TickerLink symbol={p.ticker} className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }} />
+                      : <span className="cp-tkr" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontWeight: 700, color: C.green }}>—</span>}</span>
                     <span style={{ fontSize: 12, color: C.muted, fontWeight: 300, marginLeft: 8 }}>{p.representative}</span>
                   </div>
                   <span style={{ fontSize: 10, padding: '3px 9px', borderRadius: 3, fontFamily: "'DM Sans',sans-serif", fontWeight: 600, background: insStyle(p.action).bg, color: insStyle(p.action).fg, whiteSpace: 'nowrap' }}>{p.action}</span>

@@ -1363,16 +1363,33 @@ sec('⚠️ THE PUBLIC SURFACE DOES NOT CARRY THE RECIPE');
   // the payload had `minComponents`, and the version travelled as a FIELD ON METHODOLOGY as well
   // as on the payload, so stripping it from one served it from the other. Only a check against the
   // real response found them. These pin the SHAPE the route builds, which is where they lived.
+  // ⚠️ THESE FIVE READ THE ROUTE AND THE STRIPPING MOVED TO lib/fear-greed/public-payload.mjs,
+  // BECAUSE app/fear-greed/page.jsx NOW RENDERS THE INDEX ON THE SERVER AND MUST WITHHOLD THE SAME
+  // FIELDS. That is the point of the move: a second copy of this stripping — written so a server
+  // component could draw the gauge — would be the fourth time one of these leaked, and this time
+  // into cached public HTML. The rules are unchanged and are asserted where they now live; what
+  // is also asserted is that the route no longer does any of it itself, so the two cannot diverge.
+  const pub = readFileSync(new URL('../src/lib/fear-greed/public-payload.mjs', import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   check('…and strips the version and the floor from the payload it serves',
-    /const \{ version, normalizationWindow, minComponents, \.\.\.publicPayload \}/.test(route));
+    /const \{ version, normalizationWindow, minComponents, \.\.\.rest \} = payload;/.test(pub));
   check('⚠️ …and the version inside METHODOLOGY itself, not just the payload',
-    /version: methodologyVersion, \.\.\.publicMethodology \} = METHODOLOGY/.test(route));
+    /const \{ version, \.\.\.rest \} = METHODOLOGY;/.test(pub));
   check('⚠️ …on the unavailable branch too, which is a response readers do see',
-    /methodology: \(\(\{ version, \.\.\.rest \}\) => rest\)\(METHODOLOGY\)/.test(route));
+    /available: false, reason: 'not-yet-computed', methodology, zones: ZONES/.test(pub)
+    && /const methodology = publicMethodology\(\);/.test(pub));
   check('⚠️ …and per-component sample counts, which are the window under another name',
-    /\.map\(\(\{ samples, \.\.\.c \}\)/.test(route));
+    /\.map\(\(\{ samples, \.\.\.c \}\)/.test(pub));
   check('…and refuses to serve a component the registry no longer has',
-    /filter\(\(c\) => meta\.has\(c\.key\)\)/.test(route));
+    /filter\(\(c\) => meta\.has\(c\.key\)\)/.test(pub));
+  check('⚠️ and the route delegates rather than keeping a second copy of any of it',
+    /fearGreedPublicPayload/.test(route)
+    && !/METHODOLOGY/.test(route) && !/samples/.test(route) && !/meta\.has/.test(route));
+  check('⚠️ and the server-rendered page publishes through that same one function',
+    /readFearGreedRoom/.test(
+      readFileSync(new URL('../src/app/fear-greed/page.jsx', import.meta.url), 'utf8'))
+    && /fear-greed\/public-payload\.mjs/.test(
+      readFileSync(new URL('../src/lib/rooms-server.mjs', import.meta.url), 'utf8')));
 }
 
 

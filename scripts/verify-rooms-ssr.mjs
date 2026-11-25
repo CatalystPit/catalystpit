@@ -43,7 +43,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+// ⚠️ LINE ENDINGS ARE NORMALISED HERE, AND THIS SUITE FAILED WITHOUT IT.
+//
+// This repo is checked out with core.autocrlf=true, so working-tree files carry CRLF — and several
+// assertions below slice a function body with indexOf('\n}\n') to scope a check to one reader.
+// Against CRLF that finds nothing, the slice comes back wrong, and the assertion reports a
+// regression that is not there. It surfaced after a `git stash` round-trip rewrote these files with
+// CRLF: two checks went red while the code they guard was untouched.
+//
+// It is NOT cosmetic. A check that passes only on an LF checkout is a check that fails for the next
+// person on this repo's own default — the same class of defect as the suite that cried wolf against
+// production. One normalisation, every assertion covered.
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
 // Comments quote the code they explain, so an assertion that greps source must strip them first —
 // three times in this repo a check has matched its own explanation and reported a false result.
 const code = (rel) => read(rel)
@@ -364,8 +375,14 @@ L('\n=== 10. /institutions PUBLISHES THE LOGGED-OUT VIEW, CAPPED EXACTLY AS THE 
   // ⚠️ THIS ROOM IS THE ONE THAT IS ROW-GATED, so the cap is the assertion that matters most.
   // Shared HTML is the logged-out view by definition; publishing the signed-in product into an
   // anonymous cache is the failure this guards.
+  // ⚠️ THIS ASSERTION PINNED THE PAYLOAD'S SPELLING AND WENT RED WHEN THE ACTIVITY FEED JOINED IT
+  // — `{ view: 'latest-filings', filings }` became `{ view: 'institutions-room', filings,
+  // activity }`. Correct code, extended; the rule never moved. What matters is that the cap is
+  // applied to whatever this reader returns and applied as the LOGGED-OUT view, so that is what is
+  // checked now. It is the third time in this work a check has measured an implementation's
+  // spelling instead of its rule.
   ok('⚠️ the server render applies the logged-out row cap explicitly',
-    mut('nocap') ? false : /publicCap\(\{ view: 'latest-filings', filings \}, \{ loggedIn: false \}\)/.test(srv));
+    mut('nocap') ? false : /publicCap\([\s\S]{0,120}?\{ loggedIn: false \}\)/.test(srv));
   ok('…and the cap has one definition, shared with the route',
     /export function publicCap/.test(lib)
       && /publicCapShared/.test(route)
@@ -376,8 +393,18 @@ L('\n=== 10. /institutions PUBLISHES THE LOGGED-OUT VIEW, CAPPED EXACTLY AS THE 
   ok('⚠️ ffRel — the 13F freshness boundary — has one definition',
     mut('twoffrel') ? false
       : /export const ffRel/.test(lib) && !/^const ffRel/m.test(route) && /institutions-queries\.mjs/.test(route));
-  ok('…and the server render passes the free cutoff through it',
-    /latestFilings\(25, freeCutoff\(/.test(srv));
+  // ⚠️ AND THE CUTOFF MUST REACH BOTH 13F QUERIES, NOT JUST THE ONE THIS ONCE NAMED. The reader
+  // now resolves it into a local and passes it to latestFilings AND latestActivity; an assertion
+  // on the first call site alone would have passed while the second served the Pro dataset.
+  {
+    const body = srv.slice(srv.indexOf('export async function readInstitutionsRoom'));
+    const fn = body.slice(0, body.indexOf('\n}\n') + 1);
+    ok('…and the server render passes the free cutoff through it',
+      mut('instcutoff') ? false
+        : /const cutoff = freeCutoff\(/.test(fn)
+          && /latestFilings\(25, cutoff\)/.test(fn)
+          && /latestActivity\(\{ cutoff \}\)/.test(fn));
+  }
 
   // The reader fails soft like every other.
   ok('readInstitutionsRoom returns null on failure',
@@ -427,6 +454,141 @@ L('\n=== 11. DATED EVIDENCE, FROM ONE IMPLEMENTATION ===');
     // would report zero and be wrong.
     ok('the built /insiders HTML carries dated evidence', tags.length > 0 && dated === tags.length,
       `${tags.length} <time>, ${dated} dated`);
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+L('\n=== 12. THE SECOND WAVE: SIX MORE ROOMS, ON THE CLOSING BASIS ONLY ===');
+//
+// ⚠️ THE MARKET-DATA DECISION THIS WAVE IMPLEMENTS, IN THE OWNER'S WORDS: "Guests and search
+// crawlers receive licensed previous-session closing prices and publicly distributable historical
+// research. Registered Free users receive licensed delayed market data. Pro subscribers receive
+// the fastest licensed real-time data. Never put delayed or real-time subscriber-specific data
+// into public server-rendered HTML."
+//
+// So these rooms divide into three kinds and the assertions differ by kind:
+//   NO PRICES AT ALL  /markets (catalyst board), /fear-greed (a computed index)
+//   CLOSING BASIS     /heatmap movers, /scan boards, /screener rows
+//   DISCLOSURE ONLY   the institutional activity feed (13F position changes)
+const WAVE2 = [
+  { route: '/markets', page: 'src/app/markets/page.jsx', reader: 'readMarketsRoom',
+    prop: 'initialSnap', client: 'src/app/markets/MarketsClient.jsx' },
+  { route: '/fear-greed', page: 'src/app/fear-greed/page.jsx', reader: 'readFearGreedRoom',
+    prop: 'initialData', client: 'src/app/fear-greed/FearGreedClient.jsx' },
+  { route: '/heatmap', page: 'src/app/heatmap/page.jsx', reader: 'readMoversRoom',
+    prop: 'initialMovers', client: 'src/app/heatmap/MarketHeatmapClient.jsx' },
+  { route: '/scan', page: 'src/app/scan/page.jsx', reader: 'readScanRoom',
+    prop: 'initialBoards', client: 'src/app/scan/ScanClient.jsx' },
+  { route: '/screener', page: 'src/app/screener/page.jsx', reader: 'readScreenerRoom',
+    prop: 'initialData', client: 'src/app/screener/ScreenerClient.jsx' },
+];
+{
+  const win = Number(srv.match(/ROOM_CACHE_SECONDS\s*=\s*(\d+)/)?.[1]);
+  for (const r of WAVE2) {
+    const page = code(r.page);
+    const client = code(r.client);
+    ok(`${r.route} reads its room on the server`,
+      mut('unwire2') ? false : new RegExp(`${r.reader}\\s*\\(`).test(page) && /rooms-server\.mjs/.test(page));
+    ok(`…and hands it to the client as ${r.prop}`, new RegExp(`${r.prop}=\\{`).test(page));
+    ok(`…whose first state IS that payload`,
+      mut('usestatenull2') ? false
+        : new RegExp(`useState\\(\\s*${r.prop}`).test(client)
+          || new RegExp(`initial: ${r.prop}`).test(client));
+    const lit = page.match(/export const revalidate = (\d+);/);
+    ok(`…at the shared window, as a literal`, Number(lit?.[1]) === win, lit?.[1]);
+    ok(`…and reads no session and no searchParams in the page`,
+      !/auth\(|currentUser|cookies\(|headers\(|searchParams/.test(page));
+  }
+
+  // ⚠️ THE ENTITLEMENT OVERRIDE CAN ONLY NARROW, AND THAT IS THE WHOLE SAFETY ARGUMENT FOR /scan.
+  // loadScanContext used to resolve callerHasRealtime() unconditionally; a cached page has no
+  // caller, so it STATES the unentitled view instead. `=== false` is the entire gate: any other
+  // value falls through to the real resolution, so no caller can grant itself realtime.
+  const sp = code('src/lib/scan/board-payload.js');
+  ok('⚠️ the scan entitlement override narrows and can never widen',
+    mut('widenscan') ? false
+      : /const realtime = stated === false \? false : await callerHasRealtime\(\);/.test(sp));
+  ok('…and the server render states it rather than resolving one',
+    /buildAllScanBoards\(\{ realtime: false \}\)/.test(srv));
+
+  // ⚠️ THE MARKETS READER MUST NAME ITS KEYS RATHER THAN SPREAD THE BLOB, AND THIS ASSERTION
+  // EXISTS BECAUSE A REAL MUTATION SLIPPED PAST THE SUITE. The reader's own comment claims that
+  // naming the four arrays makes "no market data" STRUCTURAL rather than a promise — but spreading
+  // `...snap` alongside them passed every check, and a future pit_snapshot that gains a `tape` or a
+  // `marketSnap` would then publish prices into cached HTML on the next cron deploy. A claim in a
+  // comment that nothing enforces is just a hope.
+  const marketsFn = (() => {
+    const b = srv.slice(srv.indexOf('export async function readMarketsRoom'));
+    return b.slice(0, b.indexOf('\n}\n') + 1);
+  })();
+  ok('⚠️ the markets reader names its keys and never spreads the snapshot',
+    mut('spreadsnap') ? false
+      : /catalysts: pick\(snap\.catalysts\)/.test(marketsFn) && !/\.\.\.snap/.test(marketsFn));
+
+  // ⚠️ AND THE MOVERS PATH IS EOD BY CONSTRUCTION, NOT BY A LABEL. marketMovers with realtime
+  // false takes completedSessionMovers and makes no vendor call at all.
+  ok('⚠️ the heatmap movers are read on the completed-session path',
+    mut('rtmovers') ? false : /marketMovers\(\{ realtime: false, limit: 10 \}\)/.test(srv));
+  ok('…and a non-eod freshness is refused outright rather than rendered',
+    /if \(m\.freshness && m\.freshness !== 'eod'\) return null;/.test(srv));
+
+  // ⚠️ THE SCREENER'S DEFAULT SORT MUST EQUAL THE CLIENT'S OWN useState DEFAULT, or the server
+  // renders one ranking and the browser's first render produces another — a hydration mismatch,
+  // which means React discards the server's HTML and the crawler's copy is the unchecked one.
+  const sortLib = code('src/lib/screener-page.mjs').match(/SCREENER_DEFAULT_SORT = '([^']+)'/)?.[1];
+  const sortClient = code('src/app/screener/ScreenerClient.jsx').match(/useState\('([a-zA-Z0-9]+)'\);\s*$/m);
+  ok('⚠️ the screener server render opens on the same sort the client does',
+    mut('sortdrift') ? false
+      : sortLib === 'insiderNet90d' && /useState\('insiderNet90d'\)/.test(code('src/app/screener/ScreenerClient.jsx')),
+    `lib=${sortLib}`);
+  void sortClient;
+
+  // ⚠️ AND THE BAILOUT THAT COST THAT PAGE ITS ENTIRE RENDER MUST NOT COME BACK. useSearchParams
+  // makes Next bail the nearest Suspense boundary out of static rendering; with fallback={null}
+  // around this component the boundary emitted NOTHING, which is the whole explanation for the four
+  // words /screener served. It was read once, in a mount effect, where the browser's own URL does.
+  ok('⚠️ /screener does not re-acquire the static-render bailout',
+    mut('bailout') ? false : !/useSearchParams/.test(code('src/app/screener/ScreenerClient.jsx')));
+
+  // Every indexable room needs exactly one h1. Two had NONE.
+  for (const f of ['src/app/screener/ScreenerClient.jsx', 'src/app/fear-greed/FearGreedClient.jsx']) {
+    ok(`${f.split('/').slice(-1)[0]} has a heading element at all`,
+      mut('noh1') ? false : /<h1/.test(code(f)));
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+L('\n=== 13. ⚠️ NO DELAYED OR REAL-TIME DATA IN ANY CACHED PAGE ===');
+{
+  const dir = path.join(ROOT, '.next/server/app');
+  if (!fs.existsSync(dir)) {
+    L('  --    no build output; run `next build` to include these checks');
+  } else {
+    // ⚠️ THIS IS THE ASSERTION THE WHOLE WAVE TURNS ON, AND IT IS MADE AGAINST THE RENDERED BYTES
+    // RATHER THAN THE SOURCE. Reading the readers tells you what was intended; reading the HTML
+    // tells you what shipped. A prerendered page is served to everyone, so a single `delayed` or
+    // `realtime` freshness marker in one is a licensing fault, not a cosmetic one.
+    const ROOMS_HTML = ['index', 'markets', 'heatmap', 'fear-greed', 'scan', 'screener',
+      'institutions', 'insiders', 'politicians', 'news', 'consensus', 'dividends'];
+    let bad = [];
+    let eodSeen = 0;
+    for (const r of ROOMS_HTML) {
+      const f = path.join(dir, r + '.html');
+      if (!fs.existsSync(f)) continue;
+      const h = fs.readFileSync(f, 'utf8');
+      // The freshness markers as they appear in a serialized payload, in either quoting style.
+      const rt = (h.match(/freshness[\\"':]{1,8}realtime/gi) || []).length;
+      const dl = (h.match(/freshness[\\"':]{1,8}delayed/gi) || []).length;
+      eodSeen += (h.match(/freshness[\\"':]{1,8}eod/gi) || []).length;
+      if (rt || dl) bad.push(`${r}(realtime:${rt} delayed:${dl})`);
+    }
+    ok('⚠️ no prerendered room carries a realtime or delayed freshness marker',
+      mut('leak') ? false : bad.length === 0, bad.join(' ') || 'none');
+    // ⚠️ AND THE ABSENCE MUST NOT BE BECAUSE NOTHING IS LABELLED AT ALL. A page with no freshness
+    // anywhere would pass the check above while telling a reader nothing about what they are
+    // looking at — so at least one room must positively carry the completed-session label.
+    ok('…and the closing basis IS positively labelled, not merely unlabelled',
+      mut('nolabel') ? false : eodSeen > 0, `${eodSeen} eod markers`);
   }
 }
 

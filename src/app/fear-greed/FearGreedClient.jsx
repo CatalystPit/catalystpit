@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { C, Dot, TopNav, Footer, BrandStyles } from '../../lib/cp-shared';
 import ErrorState from '../../components/ErrorState';
 import FearGreedMeter from '../../components/FearGreedMeter';
@@ -134,14 +134,27 @@ const P = ({ label, text }) => (
   </div>
 );
 
-export default function FearGreedClient() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+// ⚠️ initialData IS THE SERVER'S RENDER OF THIS PAGE, NOT A HINT. app/fear-greed/page.jsx calls the
+// same fearGreedPublicPayload the API route calls — the one function that decides what this index
+// publishes and what it withholds — so the score, the zone, every component and the methodology are
+// in the HTML before any JavaScript runs. Measured on production beforehand: 53 words on a page
+// whose entire subject is a number and the reasoning behind it.
+export default function FearGreedClient({ initialData = null }) {
+  const [data, setData] = useState(initialData);
+  // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED — the gauge and every component bar
+  // replaced by a skeleton for the length of one fetch is a visible regression for an invisible
+  // gain.
+  const [loading, setLoading] = useState(!initialData);
   const [failed, setFailed] = useState(false);
   const [showMethod, setShowMethod] = useState(false);
 
+  // ⚠️ THE FIRST RUN MUST NOT RE-ENTER THE LOADING STATE, or the server render flashes away. The
+  // mount effect refreshes the index and announced that by setting loading unconditionally; only
+  // the first run is special-cased, so a manual reload still shows that it is working.
+  const serverRendered = useRef(!!initialData);
   const load = useCallback(async () => {
-    setLoading(true);
+    if (serverRendered.current) serverRendered.current = false;
+    else setLoading(true);
     try {
       const r = await fetch('/api/fear-greed', { cache: 'no-store' });
       const j = await r.json();
@@ -158,6 +171,15 @@ export default function FearGreedClient() {
       <BrandStyles />
       <TopNav active="Fear & Greed" />
       <main style={{ maxWidth: 780, margin: '0 auto', padding: '20px 16px 60px' }}>
+        {/* ⚠️ THIS PAGE HAD NO HEADING ELEMENT AT ALL. Measured on the build output: h1 = 0, on an
+            indexable page in our own sitemap — the gauge rendered the number and nothing named what
+            the number was. The words are the page's actual subject and claim nothing the index does
+            not already publish; it sits outside the card so it is present whether the index is
+            available, unavailable or still loading. */}
+        <h1 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 28, fontWeight: 600,
+          color: C.ink, margin: '0 0 10px', letterSpacing: '-0.4px' }}>
+          Fear &amp; Greed Index
+        </h1>
         {failed && <ErrorState onRetry={load} />}
 
         {!failed && (

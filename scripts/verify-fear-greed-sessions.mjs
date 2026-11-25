@@ -332,8 +332,16 @@ const client = read('src/app/fear-greed/FearGreedClient.jsx');
 const route = read('src/app/api/fear-greed/route.js');
 ok('the page gates the block on the feature flag',
   /featureEnabled\('fearGreedExclusions'\)/.test(stripComments(client)));
+// ⚠️ THE FLAG CHECK MOVED TO lib/fear-greed/public-payload.mjs WITH THE REST OF THE STRIPPING,
+// because app/fear-greed/page.jsx renders this index on the server and must withhold the withdrawn
+// disclosure too — otherwise four paragraphs of retracted text would ship inside cached public
+// HTML, which is a worse version of the leak this check was written for. One function, both
+// callers, and the route is asserted to no longer carry a copy.
 ok('the API stops serving the text while it is off',
-  /delete publicMethodology\.excluded/.test(stripComments(route)));
+  /delete rest\.excluded/.test(stripComments(read('src/lib/fear-greed/public-payload.mjs')))
+  && /featureEnabled\('fearGreedExclusions'\)/.test(stripComments(read('src/lib/fear-greed/public-payload.mjs'))));
+ok('⚠️ …and the route keeps no second copy of that gate',
+  !/excluded/.test(stripComments(route)));
 // ⚠️ NOT DELETED. The text stays in the registry, which code comments elsewhere point to.
 ok('⚠️ the text is preserved in the methodology registry',
   /excluded: \[/.test(read('src/lib/fear-greed/model.mjs')));

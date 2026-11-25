@@ -286,8 +286,16 @@ const POLL_MS = 120_000;
  *    loading screen. Data is only ever replaced by NEWER DATA; a failed refresh leaves what is on
  *    screen alone and says so quietly.
  */
-export function useScanBoards() {
-  const [boards, setBoards] = useState(null);
+// ⚠️ `initial` IS THE SERVER'S RENDER OF THE BOARDS, NOT A HINT. app/scan/page.jsx builds all three
+// from the completed session — the same basis these boards have always shown, labelled the same way
+// by the same FeedBanner and the same per-row freshness — so they are in the HTML before any
+// JavaScript runs. Measured on production beforehand: 189 words and no ticker links.
+//
+// An entitled reader's refresh below still replaces them with a live board the moment it lands, so
+// nothing about the realtime path changes; what changes is that the unentitled view, which is what
+// a crawler and a guest get anyway, now arrives with the document.
+export function useScanBoards({ initial = null } = {}) {
+  const [boards, setBoards] = useState(initial);
   const [error, setError] = useState(null);
   const [stale, setStale] = useState(false);
   // ⚠️ A FOURTH TERMINAL STATE: not entitled. Distinct from an error, because "you have not signed up"

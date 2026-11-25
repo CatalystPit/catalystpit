@@ -1,4 +1,5 @@
 import ScanClient from './ScanClient';
+import { readScanRoom } from '../../lib/rooms-server.mjs';
 import { pageMeta } from '../../lib/seo';
 
 // ⚠️ THIS ROUTE WAS TELLING GOOGLE IT IS A DUPLICATE OF THE HOMEPAGE.
@@ -20,6 +21,23 @@ export const metadata = pageMeta({
   path: '/scan',
 });
 
-export default function ScanPage() {
-  return <ScanClient />;
+// ── ⚠️ WHY THIS PAGE IS REGENERATED AND NOT RENDERED PER REQUEST ───────
+//
+// Measured on production as Googlebot: 189 words and no links to any of the companies the boards
+// rank. The basis was never the problem — these boards have always shown the last completed
+// session to everyone, stated once at the top and again on every row — they were simply arriving
+// after JavaScript.
+//
+// readScanRoom states `realtime: false` rather than resolving an entitlement, so no auth() runs
+// here and the realtime snapshot path is never reached; the override can only narrow. An entitled
+// reader's own refresh still replaces these boards with a live one the moment it lands.
+//
+// ⚠️ A LITERAL, NOT THE IMPORTED CONSTANT — Next statically analyses this export at build time
+// and an imported identifier is accepted and then silently ignored. ROOM_CACHE_SECONDS in
+// lib/rooms-server.mjs remains the single source of truth; verify-rooms-ssr asserts they agree.
+export const revalidate = 300;
+
+export default async function ScanPage() {
+  const initialBoards = await readScanRoom().catch(() => null);
+  return <ScanClient initialBoards={initialBoards} />;
 }

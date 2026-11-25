@@ -99,7 +99,19 @@ L('\n=== LATEST FILINGS: GROUPED FOR READING, NEVER MERGED ===');
 L('\n=== THE ROUTE KEEPS THE TWO CLOCKS APART, AND NEVER CLAIMS A TRADE ===');
 {
   const fs = await import('node:fs/promises');
-  const route = await fs.readFile(new URL('../src/app/api/institutions/route.js', import.meta.url), 'utf8');
+  // ⚠️ THE READ PATH IS TWO FILES NOW. latestActivity moved to lib/institutions-queries.mjs when
+  // app/institutions/page.jsx began server-rendering the activity feed — it is the DEFAULT tab of
+  // that room, so leaving it client-only had put the research behind a tab a crawler never selects.
+  //
+  // Every assertion below is about the QUERY — the VALUES list instead of a bound array, the
+  // disclosure date and quarter carried separately, the ordering by the public clock — none of
+  // which is a claim about which file holds it. So the source is the whole institutions read path.
+  // WHERE it lives is pinned separately, by verify-rooms-ssr, which asserts the route keeps no
+  // second copy of any of it.
+  const route = [
+    await fs.readFile(new URL('../src/app/api/institutions/route.js', import.meta.url), 'utf8'),
+    await fs.readFile(new URL('../src/lib/institutions-queries.mjs', import.meta.url), 'utf8'),
+  ].join('\n');
   const client = await fs.readFile(new URL('../src/app/institutions/InstitutionsClient.jsx', import.meta.url), 'utf8');
   const code = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/^\s*--.*$/gm, '');
 

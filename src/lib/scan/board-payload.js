@@ -62,7 +62,7 @@ export const MOVER_POOL = 200;
  * @returns {{payload: object|null, status: string, realtime: boolean, consensusRows: object[],
  *            symbols: string[], quotes: object, snapshot: object|null}}
  */
-export async function loadScanContext() {
+export async function loadScanContext({ realtime: stated = null } = {}) {
   // 1. ENTITLEMENT FIRST. `realtime` narrows what may be served and can never widen it.
   //
   //    ⚠️ THIS NOW DECIDES SOMETHING REAL. It used to be near-decorative: the account had no
@@ -74,7 +74,20 @@ export async function loadScanContext() {
   // `isRealtime(tier) && !beta` — correct about tier, silent about licence. It matters more here than
   // anywhere else: this flag decides whether the realtime SNAPSHOT path is read at all, so under a stop
   // order this route would have gone on reading a live snapshot and labelling it live.
-  const realtime = await callerHasRealtime();
+  // ⚠️ A CALLER MAY STATE THE ENTITLEMENT INSTEAD OF HAVING IT LOOKED UP, AND ONLY DOWNWARDS.
+  //
+  // app/scan/page.jsx renders these boards into a SHARED, CACHED page, so there is no caller to
+  // resolve: a cached copy is read by everyone, which makes it the unentitled view by definition.
+  // It passes `realtime: false` explicitly. Two things follow, and both are the point:
+  //
+  //   · no auth() runs, so the page stays prerendered rather than becoming per-request;
+  //   · the realtime snapshot path below is not even reached, so nothing live can be cached.
+  //
+  // ⚠️ IT CAN ONLY EVER NARROW. `=== false` is the whole gate: any other value — true, a string, a
+  // truthy object someone passes by mistake — falls through to the real resolution. A caller cannot
+  // grant itself realtime by asserting it, which is the invariant this flag has always carried
+  // ("`realtime` narrows what may be served and can never widen it").
+  const realtime = stated === false ? false : await callerHasRealtime();
 
   // 2. THE PUBLISHED CONSENSUS BOARD — read, never rebuilt.
   const { payload, status } = await readPublishedBoard();
@@ -292,8 +305,8 @@ export async function buildScanBoardPayload({ board = DEFAULT_BOARD, limit = DEF
  * cannot disagree with each other about a price or a freshness the way three independent requests
  * seconds apart could. They are built in parallel because only one of them does any further IO.
  */
-export async function buildAllScanBoards({ limit = DEFAULT_LIMIT } = {}) {
-  const ctx = await loadScanContext();
+export async function buildAllScanBoards({ limit = DEFAULT_LIMIT, realtime = null } = {}) {
+  const ctx = await loadScanContext({ realtime });
   const built = await Promise.all(BOARDS.map((b) => buildOneBoard(ctx, b, limit)));
   const boards = {};
   BOARDS.forEach((b, i) => { boards[b] = built[i]; });

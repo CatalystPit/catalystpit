@@ -29,5 +29,5 @@ export default async function InstitutionsPage() {
   // The free end-of-day cutoff and the logged-out row cap are both applied inside the reader, and
   // neither is optional there. Nothing on this page depends on who is asking.
   const initial = await readInstitutionsRoom({ now: Date.now() }).catch(() => null);
-  return <InstitutionsClient initialLatest={initial?.filings ?? null} />;
+  return <InstitutionsClient initialLatest={initial?.filings ?? null} initialActivity={initial?.activity ?? null} />;
 }

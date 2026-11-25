@@ -1,6 +1,7 @@
 import MarketHeatmapClient from './MarketHeatmapClient';
 import { pageMeta } from '../../lib/seo';
 import { heatmapBoard, compactRows } from '../../lib/heatmap/heatmap-store';
+import { readMoversRoom } from '../../lib/rooms-server.mjs';
 import { DEFAULT_TIMEFRAME, TIMEFRAMES } from '../../lib/heatmap/heatmap-window.mjs';
 import { DEFAULT_UNIVERSE, universeLimit, UNIVERSES } from '../../lib/heatmap/heatmap-universe.mjs';
 
@@ -43,9 +44,28 @@ export const revalidate = 300;
  * bad query should not cost the whole route.
  */
 export default async function HeatmapPage() {
+  // ── ⚠️ THE LEADERSHIP LISTS, WHICH ARE THE ONLY CRAWLABLE HALF OF THIS PAGE ────────────────
+  //
+  // The board above them is drawn on a <canvas>, so no amount of server rendering makes it
+  // readable text — measured on production, this page served 231 words and ZERO links to /ticker/
+  // even with the board already rendered. The gainers and losers lists are ordinary DOM with
+  // ticker links, and they were the half still arriving in an effect.
+  //
+  // ⚠️ COMPLETED-SESSION ONLY, AND BY CONSTRUCTION RATHER THAN BY A FLAG. readMoversRoom calls
+  // marketMovers with realtime: false, which takes the completedSessionMovers path and makes no
+  // vendor request at all. An entitled reader's client still replaces these the moment
+  // /api/me/plan resolves, exactly as it already does for the board.
+  //
+  // Settled independently of the board: a movers failure must not cost the heatmap, and vice versa.
+  const [board0, initialMovers] = await Promise.all([
+    heatmapBoard({ timeframe: DEFAULT_TIMEFRAME, limit: universeLimit(DEFAULT_UNIVERSE) }).catch(() => null),
+    readMoversRoom().catch(() => null),
+  ]);
+
   let initial = null;
   try {
-    const board = await heatmapBoard({ timeframe: DEFAULT_TIMEFRAME, limit: universeLimit(DEFAULT_UNIVERSE) });
+    const board = board0;
+    if (!board) throw new Error('no board');
     const measured = board.rows.filter((r) => r.pct != null).length;
     initial = {
       timeframe: DEFAULT_TIMEFRAME, universe: DEFAULT_UNIVERSE,
@@ -74,5 +94,5 @@ export default async function HeatmapPage() {
   } catch {
     initial = null;
   }
-  return <MarketHeatmapClient initial={initial} />;
+  return <MarketHeatmapClient initial={initial} initialMovers={initialMovers} />;
 }
