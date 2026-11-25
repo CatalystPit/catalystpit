@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { C, Skel, Dot, TopNav, Footer, BrandStyles, startCheckout, EntitySearch, LockedCta } from '../../lib/cp-shared';
 import { fmtMoney, fmtDate, partyStyle, chamberLabel, Avatar, Chip, Stat, fmtReturn, returnColor } from './ui';
 import CongressOverview from './CongressOverview';
@@ -168,11 +168,19 @@ function LockedMemberCard() {
   );
 }
 
-export default function PoliticiansList() {
-  const [members, setMembers] = useState(null);
-  const [meta, setMeta] = useState(null);
-  const [lockedCount, setLockedCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+// ⚠️ initialList IS THE SERVER'S RENDER OF THIS PAGE, NOT A HINT. app/politicians/page.jsx calls
+// the SAME listView this component's first fetch calls — now in lib/congress-overview, beside the
+// ctCut freshness predicate it must be paired with — so the member cards are IN the HTML before
+// any JavaScript runs. Measured on production beforehand: 264 words, zero ticker links, and a
+// <table> element with no rows inside it.
+export default function PoliticiansList({ initialList = null }) {
+  const [members, setMembers] = useState(initialList?.members ?? null);
+  const [meta, setMeta] = useState(initialList?.meta ?? null);
+  const [lockedCount, setLockedCount] = useState(initialList?.lockedCount ?? 0);
+  // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED — a full member list in hand,
+  // replaced by a skeleton for the length of one fetch, is a visible regression paid for an
+  // invisible gain.
+  const [loading, setLoading] = useState(!initialList);
   const [error, setError] = useState(null);
   const [view, setView] = useState('most_active');
   const [chamber, setChamber] = useState('');
@@ -206,8 +214,15 @@ export default function PoliticiansList() {
   // changes — but the table below stops contradicting the button just pressed.
   const navigate = useCallback((setter) => (value) => { setTickerPinned(false); setter(value); }, []);
 
+  // ⚠️ THE FIRST RUN MUST NOT RE-ENTER THE LOADING STATE, OR THE SERVER RENDER FLASHES AWAY.
+  // This runs on mount and on every view, chamber, party and window change, and it announced
+  // itself by setting loading unconditionally — which with a server-rendered list on screen swaps
+  // it for a skeleton while an identical fetch completes. Only the first run is special-cased.
+  const serverRendered = useRef(!!initialList);
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
+    if (serverRendered.current) serverRendered.current = false;
+    else setLoading(true);
+    setError(null);
     try {
       const qs = new URLSearchParams({ view });
       if (chamber) qs.set('chamber', chamber);

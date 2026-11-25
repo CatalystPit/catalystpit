@@ -6,6 +6,8 @@
 // preserves the order it is given, and `splitHeroAndRows` chooses a CARD COMPONENT, never an
 // order.
 
+import { minsSince, isoOrNull } from './home-model.mjs';
+
 /**
  * The one ticker-filter implementation.
  *
@@ -73,4 +75,45 @@ export function splitHeroAndRows(filtered) {
   const list = filtered || [];
   const canHero = Boolean(list[0] && list[0].imageUrl);
   return canHero ? { hero: list[0], rows: list.slice(1) } : { hero: null, rows: list };
+}
+
+// ── ⚠️ THE ARTICLE SHAPE, MOVED HERE BECAUSE THE SERVER NOW BUILDS IT TOO ───────────────────
+//
+// This mapping lived inside NewsFeed's own `fetchNews`, which was fine while the browser was the
+// only thing that ever built it. app/news/page.jsx now renders the river at generation time, so
+// the shape has to exist outside a client component — and it has to be the SAME shape, because
+// React hydrates the server's HTML against the browser's first render of these exact objects.
+//
+// ⚠️ `now` IS A PARAMETER, AND THAT IS THE WHOLE REASON THIS IS PURE. `mins` is an AGE, so
+// computing it twice against two different clocks is a guaranteed hydration mismatch — the server
+// says 4m, the browser says 5m, React throws the server's HTML away and the crawler's copy of the
+// page is the one nobody checked. The server captures one instant, passes the normalized objects
+// through as props, and the browser's first render reuses those numbers verbatim. The 15-minute
+// refresh effect then recomputes against the browser's own clock, which is correct: by then it is
+// a re-render, not a hydration.
+//
+// ⚠️ `published` IS NEW AND IS NOT A DISPLAY FIELD. It is the absolute instant the age was derived
+// from, kept so a dated <time datetime="…"> can be emitted beside the human "4m ago". An age alone
+// is unreadable to anything that did not fetch the page at that moment.
+
+/**
+ * Normalize a river of stories into the display shape NewsFeed renders.
+ *
+ * @param {object[]} stories  the composed river (see lib/news-river.mjs)
+ * @param {object}   [opts]
+ * @param {number}   [opts.now] the clock every age is measured from
+ * @returns {object[]} display-shaped articles, headline-less rows dropped
+ */
+export function normalizeArticles(stories, { now = Date.now() } = {}) {
+  return (Array.isArray(stories) ? stories : []).map((s) => ({
+    headline: s.title || s.headline || s.summary || s.description || '',
+    source: s.source || s.outlet || s.publisher || 'Market News',
+    mins: minsSince(s.published || s.published_at || s.date || s.pubDate, now),
+    published: isoOrNull(s.published || s.published_at || s.date || s.pubDate),
+    tag: (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
+    sym: (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || s.sym || null),
+    summary: s.summary || s.description || '',
+    imageUrl: s.image_url || s.imageUrl || s.image || s.thumbnail || s.photo_url || null,
+    url: s.url || null,
+  })).filter((a) => a.headline);
 }

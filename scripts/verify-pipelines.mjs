@@ -273,10 +273,17 @@ L('\n=== THE NEWS FEED RANKS BEFORE IT SLICES ===');
   // are asserted in verify-impact under "THE RIVER: REPORTING LEADS, THE FILINGS ARE THEIR OWN
   // BLOCK". The previous comment here already warned that an assertion which breaks when correct
   // code is extended measures the implementation's spelling; this is that warning coming due.
+  // ⚠️ AND THE WARNING CAME DUE A SECOND TIME, EXACTLY AS WRITTEN ABOVE. These two read
+  // /composeRiver\(\{/ and the lib/impact import path against the ROUTE. The dedupe-and-compose
+  // pair then moved into lib/news-river.mjs so that app/news/page.jsx could render the identical
+  // river on the server — correct code, extended — and both assertions went red for spelling.
+  // What they are for is that the route DELEGATES rather than growing its own opinion, so that is
+  // now checked through the delegation chain instead of at one call site.
+  const river = read('src/lib/news-river.mjs');
   ok('the feed is composed by the shared desk',
-    mut('noranking') ? false : /composeRiver\(\{/.test(news));
+    mut('noranking') ? false : /buildNewsRiver\(\{/.test(news) && /composeRiver\(\{/.test(river));
   ok('…using the same module the High-impact filter uses',
-    /from '\.\.\/\.\.\/\.\.\/lib\/impact'/.test(news));
+    /from '\.\/impact'/.test(river) && /news-river\.mjs'/.test(news));
   ok('…and the route has no ordering of its own',
     mut('routeranks') ? false : !/raw\s*=\s*\[\s*\.\.\./.test(news), 'route must not re-stack the pools');
 
@@ -367,11 +374,22 @@ L('\n=== A PLACEHOLDER TICKER CANNOT REACH insider_trades ===');
   // "NONE · $9.8M · 5C Lending Partners Corp · LIBERTY MUTUAL HOLDING Co INC.". Rows already in
   // the table outlive an ingest gate, so the READ needs its own guard.
   const ins = read('src/app/api/insiders/route.js');
+  // ⚠️ THE GUARD MOVED TO lib/insider-queries.mjs AND THAT IS NOT A WEAKENING. app/insiders/page.jsx
+  // now renders this room's first screen on the server, so the predicate has two callers — and a
+  // predicate with two callers and one definition is strictly stronger than one defined inside the
+  // route. The HOLE this block exists to guard is unchanged: the read must gate, not just ingest.
+  // So the definition is asserted where it lives, and the APPLICATION where it is applied.
+  const insq = read('src/lib/insider-queries.mjs');
   ok('the insiders route defines a symbol guard',
-    mut('ungatedinsiders') ? false : /const TICKER_IS_A_SYMBOL = sql`/.test(ins));
+    mut('ungatedinsiders') ? false
+      : /export const TICKER_IS_A_SYMBOL = sql`/.test(insq) && /insider-queries\.mjs/.test(ins));
   ok('…it rejects the placeholder strings in SQL',
-    /not in\s*\n?\s*\('NONE','NULL','N\/A'/.test(ins));
-  ok('…and requires the symbol shape', /\^\[A-Z\]\[A-Z0-9\]\*\(\[\.-\]\[A-Z0-9\]\+\)\*\$/.test(ins));
+    /not in\s*\n?\s*\('NONE','NULL','N\/A'/.test(insq));
+  ok('…and requires the symbol shape', /\^\[A-Z\]\[A-Z0-9\]\*\(\[\.-\]\[A-Z0-9\]\+\)\*\$/.test(insq));
+  // ⚠️ AND THE SERVER-RENDERED ROOM GATES TOO, which is the new surface this move created. A
+  // first screen that skipped the guard would put "NONE · $9.8M" straight into cached public HTML.
+  ok('…and the server-rendered first screen gates on it as a base condition',
+    /const conds = \[TICKER_IS_A_SYMBOL, NOT_SUPERSEDED\]/.test(insq));
   // Applied to every view that returns rows, not just the main one.
   const guards = (ins.match(/TICKER_IS_A_SYMBOL/g) || []).length;
   ok('…and is applied to every insider query, not only the list',

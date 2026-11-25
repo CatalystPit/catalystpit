@@ -830,7 +830,21 @@ L('\n=== THE PRODUCERS AND THE ROUTE ARE ACTUALLY WIRED TO IT ===');
 {
   const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const route = strip(fsRead('src/app/api/news/route.js'));
-  ok('the news route composes the river', /composeRiver\(\{/.test(route));
+  // ⚠️ THIS ASSERTION USED TO READ /composeRiver\(\{/ AGAINST THE ROUTE, AND IT WENT RED FOR THE
+  // RIGHT REASON: the dedupe-then-compose pair moved into lib/news-river.mjs when
+  // app/news/page.jsx began rendering the same river on the server. Pinning the route to the name
+  // of a function it no longer calls directly tested a call site, not a rule. The rule is that
+  // BOTH callers compose through the one module — so that is what is checked, in both directions.
+  const river = strip(fsRead('src/lib/news-river.mjs'));
+  ok('the news route composes the river through the shared module',
+    /buildNewsRiver\(\{/.test(route) && /news-river\.mjs/.test(route));
+  ok('…and the server-rendered /news page composes it through the same module',
+    /readNewsRoom/.test(strip(fsRead('src/app/news/page.jsx')))
+      && /buildNewsRiver/.test(strip(fsRead('src/lib/rooms-server.mjs'))));
+  ok('…and that module is the only place dedupe-then-compose is written',
+    /composeRiver\(\{/.test(river) && !/composeRiver\(\{/.test(route));
+  ok('⚠️ and the filing-document dedupe went WITH the compose, not left behind in the route',
+    /filingUrls/.test(river) && !/filingUrls/.test(route));
   // ⚠️ ASSERTED BY SHAPE, NOT BY COMMENT TEXT. The explanation above that line still quotes the old
   // expression on purpose, and an unstripped read would match it and pass while the bug was live —
   // the exact false green this suite has produced before.

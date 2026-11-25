@@ -387,3 +387,62 @@ export const shapeTrade = (t) => {
     estShares,
   };
 };
+
+// ── THE MEMBER LIST AND THE FREE-TIER PREDICATE, MOVED HERE FROM /api/politicians ─────────
+//
+// ⚠️ BECAUSE THE SERVER RENDERS THE ROOM NOW. app/politicians/page.jsx reads the same member
+// list the browser used to fetch, so "one card per member, grouped by slug, ordered by activity"
+// is asked from two places. This file is already where that problem gets solved — leaderboardView,
+// computeReturn and shapeTrade are all here for the same reason.
+//
+// ⚠️ ctCut IS A LICENSING PREDICATE, NOT A CONVENIENCE. It is the Free end-of-day boundary, and
+// a caller that forgets it serves the Pro dataset. Pass eodCutoffIso(tier) — or, for a shared
+// public page, eodCutoffIso('free'), which is what lib/rooms-server.mjs does.
+// ⚠️ FREE IS END-OF-DAY. One predicate, ANDed into every query that reads a disclosure, so a filing
+// processed during today's session cannot reach a Free client through any view. Gated on inserted_at
+// (when WE processed it), never on disclosure_date — congressional filings arrive weeks after the
+// trade, so gating on the source date would hide legitimate historical research while still leaking
+// a disclosure ingested this morning. Source dates are untouched; this is an access rule.
+// undefined for Pro/Elite, which drizzle's and() drops.
+export const ctCut = (cutoff) => (cutoff ? sql`${congressTrades.insertedAt} <= ${cutoff}::timestamptz` : undefined);
+
+// bioguide slug -> headshot; name-slug (unmatched member) -> null (initials avatar)
+
+// returnPct is null (NOT 0) unless BOTH prices exist — so a missing price renders
+// "—" on the page and never collapses into a false "0.0%". A genuinely unchanged
+// price yields a real 0. (null vs number keeps the two cases distinct.)
+// computeReturn + shapeTrade now live in lib/congress-overview so the detail page, the ticker
+// view and the new transactions API all derive option and share fields identically.
+
+export const LIST_ORDER = {
+  most_active: sql`count(*) desc`,
+  top_volume:  sql`coalesce(sum(${congressTrades.amountMid}), 0) desc`,
+  recent:      sql`max(${congressTrades.transactionDate}) desc nulls last`,
+};
+
+// LIST: one card per member (grouped by slug). Optional chamber/party filters.
+export async function listView({ view, chamber, party, cutoff = null }) {
+  const conds = [];
+  if (chamber === 'senate' || chamber === 'house') conds.push(eq(congressTrades.chamber, chamber));
+  if (party) conds.push(eq(congressTrades.party, party));
+
+  const members = await db.select({
+    slug:        congressTrades.memberSlug,
+    name:        sql`max(${congressTrades.representative})`,
+    party:       sql`max(${congressTrades.party})`,
+    state:       sql`max(${congressTrades.state})`,
+    chamber:     sql`max(${congressTrades.chamber})`,
+    tradeCount:  sql`count(*)`.mapWith(Number),
+    totalVolume: sql`coalesce(sum(${congressTrades.amountMid}), 0)`.mapWith(Number),
+    lastTraded:  sql`max(${congressTrades.transactionDate})`,
+    buys:        sql`count(*) filter (where ${congressTrades.action} = 'BUY')`.mapWith(Number),
+    sells:       sql`count(*) filter (where ${congressTrades.action} = 'SELL')`.mapWith(Number),
+  })
+    .from(congressTrades)
+    .where(and(...conds, ctCut(cutoff)))
+    .groupBy(congressTrades.memberSlug)
+    .orderBy(LIST_ORDER[view] || LIST_ORDER.most_active)
+    .limit(600);
+
+  return members.map(m => ({ ...m, photoUrl: photoUrl(m.slug) }));
+}

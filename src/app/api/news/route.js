@@ -4,7 +4,7 @@ import { auth } from '@clerk/nextjs/server';
 // swapped the call and left the import, so the route threw ReferenceError: rankByImpact is not
 // defined on EVERY request, and had been 500ing in production ever since. The two old names were
 // dead by then; both are gone.
-import { composeRiver } from '../../../lib/impact';
+import { buildNewsRiver } from '../../../lib/news-river.mjs';
 // The canonical 8-K reader and the canonical ticker grammar — the main column consumes the
 // existing catalyst infrastructure rather than growing a second interpretation of a filing.
 import { recentEightK } from '../../../lib/eightk';
@@ -109,11 +109,12 @@ export async function GET() {
     filings = filingsToStories(await recentEightK({ materialOnly: true, limit: 40, days: 7 }));
   } catch { /* the filings table is optional to the feed — never break the river */ }
 
-  // A story already linking to the same filing document is the same event twice.
-  const filingUrls = new Set(filings.map((f) => f.url).filter(Boolean));
-  const notAlreadyFiled = (s) => !(s?.url && filingUrls.has(s.url));
-  raw = raw.filter(notAlreadyFiled);
-  wire = wire.filter(notAlreadyFiled);
+  // ⚠️ THE DEDUPE AND THE COMPOSE MOVED TO lib/news-river.mjs, AND NOTHING ABOUT THEM CHANGED.
+  // app/news/page.jsx now renders this same river on the server so the room is readable without
+  // JavaScript, which means "dedupe the journalism pools against the filing documents, then
+  // compose" exists in two places or in one. Two is how the homepage came to tell a crawler that
+  // HPE led the day while telling a reader it was a delisting — both correct for their own pool.
+  // One named function, imported by both callers.
 
   // ⚠️ "FILINGS LEAD" WAS THE DEFECT, AND IT WAS NOT A CLOSE CALL. Measured on this endpoint:
   // indices 0-39 were all SEC 8-Ks and the first published article was index 40 — sixteen scheduled
@@ -126,7 +127,7 @@ export async function GET() {
   // section, then the press-release wires. Nothing is dropped and no tier is reclassified; see
   // lib/impact.js for the measurement and the partition.
   const curated = raw;
-  raw = composeRiver({ curated, wire, filings });
+  raw = buildNewsRiver({ curated, wire, filings });
 
   // Slice the ranked array (element 0 is now the most material story available) so NewsFeed's
   // existing client-side normalization works unchanged. Signed-in users get the full feed;

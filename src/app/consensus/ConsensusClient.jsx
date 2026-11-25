@@ -21,7 +21,7 @@
 // ⚠️ NOT A PREDICTION. No expected return, no price target, no recommendation, no probability. The
 // ordering is research priority, not a claim that the top row will perform better than the bottom.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ErrorState from '../../components/ErrorState';
 import { C, BrandStyles, TopNav, Footer, startCheckout } from '../../lib/cp-shared';
 import PlanTerms from '../../components/PlanTerms';
@@ -63,9 +63,19 @@ function SkeletonRow() {
   );
 }
 
-export default function ConsensusClient() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+// ⚠️ initialBoard IS THE SERVER'S RENDER OF THIS PAGE, NOT A HINT. app/consensus/page.jsx reads
+// the published evidence board from the cache at generation time and passes the same payload shape
+// /api/consensus-board returns, so the board is IN the HTML before any JavaScript runs. A crawler
+// measured 163 words here and not one ticker symbol; the board itself was always in the cache.
+//
+// Nothing about the gate changed: the route's own words are "First-party evidence intelligence is
+// free for all visitors" (rows = full, lockedCount = 0, no auth() call anywhere in it), which is
+// what makes one shared copy correct rather than a leak. See lib/rooms-server.mjs.
+export default function ConsensusClient({ initialBoard = null }) {
+  const [data, setData] = useState(initialBoard);
+  // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED. Starting in the loading state with a
+  // full board in hand renders the skeleton over research that is already on screen.
+  const [loading, setLoading] = useState(!initialBoard);
   // THREE OUTCOMES, KEPT APART. A load failure is not an empty board, and a degraded evidence
   // system is not "nothing happened".
   const [loadError, setLoadError] = useState(false);
@@ -78,9 +88,17 @@ export default function ConsensusClient() {
   const [filter, setFilter] = useState('all');
   const [sort, setSort] = useState('default');
 
+  // ⚠️ THE FIRST RUN MUST NOT RE-ENTER THE LOADING STATE, OR THE SERVER RENDER FLASHES AWAY.
+  // This effect refreshes the board on mount and on every manual reload, and it used to announce
+  // that by setting loading unconditionally. With server-rendered rows on screen that turns a
+  // populated board into a skeleton for the length of one fetch — the reader watches the research
+  // disappear and come back. Only the first run is special-cased: a reload the user asked for
+  // still shows that it is working.
+  const serverRendered = useRef(!!initialBoard);
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    if (serverRendered.current) serverRendered.current = false;
+    else setLoading(true);
     (async () => {
       try {
         const r = await fetch('/api/consensus-board', { cache: 'no-store' });

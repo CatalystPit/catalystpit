@@ -1,19 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import EightKWire from "./EightKWire";
+import TickerLink from "./TickerLink";
 import TopCatalysts from "./TopCatalysts";
 import { impactOf, IMPACT_STYLE } from "../lib/impact";
 import {
   C, TAG, CARD_COLORS,
-  fetchKey, toArr, minsSince, timeAgo, maybeN,
+  fetchKey, toArr, timeAgo, maybeN,
   BrandStyles, Skel, Dot, TagBadge, TickerLogo,
   TopNav, TickerTape, Footer, MarketSnapshotCard, CatalystBriefCard, NewsPhotoCard,
   useRealtimeQuotes, quotesFreshness,
 } from "../lib/cp-shared";
 import { useTickerHover, TickerHoverPreview } from "./TickerHoverChart";
 import { isRenderableTicker } from "../lib/security-identity.mjs";
-import { filterArticles, splitHeroAndRows, lockedCtaText } from "../lib/news-feed-view.mjs";
+import { filterArticles, splitHeroAndRows, lockedCtaText, normalizeArticles } from "../lib/news-feed-view.mjs";
 
 // How many faint placeholder rows to tease. The CTA beside them quotes the feed-wide count only
 // when the feed-wide view is on screen — see lockedCtaText.
@@ -46,16 +47,11 @@ const fetchNews = async () => {
     : null;
 
   const storiesArr = toArr(newsRes?.data, 'stories', 'top_stories', 'articles', 'items', 'data');
-  const articles = storiesArr.map(s => ({
-    headline: s.title || s.headline || s.summary || s.description || '',
-    source:   s.source || s.outlet || s.publisher || 'Market News',
-    mins:     minsSince(s.published || s.published_at || s.date || s.pubDate),
-    tag:      (s.category || s.tag || s.sector || 'MARKETS').toUpperCase(),
-    sym:      (s.ticker && s.ticker !== 'N/A' && s.ticker !== 'null') ? s.ticker : (s.symbol || s.sym || null),
-    summary:  s.summary || s.description || '',
-    imageUrl: s.image_url || s.imageUrl || s.image || s.thumbnail || s.photo_url || null,
-    url:      s.url || null,
-  })).filter(a => a.headline);
+  // ⚠️ THE SHAPE MOVED TO lib/news-feed-view.mjs BECAUSE THE SERVER NOW BUILDS IT TOO.
+  // app/news/page.jsx renders this river at generation time, and React hydrates the server's HTML
+  // against the browser's first render of these exact objects — so a second copy of the mapping
+  // here is a hydration mismatch waiting to be written. One function, two callers.
+  const articles = normalizeArticles(storiesArr);
 
   return { articles, tickers, lockedCount: newsRes?.lockedCount || 0 };
 };
@@ -102,7 +98,14 @@ function NewsRowCard({n, idx, bindTicker}) {
           <span style={{marginLeft:"auto", fontFamily:"'DM Sans',sans-serif",
             fontSize:10, color:C.muted, whiteSpace:"nowrap"}}>
             {n.source}
-            {n.mins != null && <span className="cp-num"> · {timeAgo(n.mins)}</span>}
+            {/* ⚠️ AN AGE IS UNREADABLE TO ANYTHING THAT DID NOT FETCH THE PAGE AT THAT MOMENT.
+                "4m ago" is the right thing for a reader and tells a crawler, an AI fetcher or a
+                cached copy nothing at all — the rooms were measured with ZERO <time> elements
+                against the homepage's 20. The visible text is unchanged; the machine-readable
+                instant it was derived from now travels with it. */}
+            {n.mins != null && (
+              <time className="cp-num" dateTime={n.published || undefined}> · {timeAgo(n.mins)}</time>
+            )}
           </span>
         </div>
         <div style={{fontSize:14, fontWeight:600, color:C.ink, lineHeight:1.35,
@@ -121,15 +124,40 @@ function NewsRowCard({n, idx, bindTicker}) {
     </div>
   );
 
+  // ⚠️ THE SYMBOL BADGE CANNOT BE THE LINK, AND THAT IS WHY THIS ROW EXISTS.
+  //
+  // The whole card is wrapped in an anchor to the publisher's article, so turning the badge inside
+  // it into a second anchor is nested <a> — invalid HTML, and browsers resolve it by discarding one
+  // of them. So the research link is a SIBLING of the card rather than a child of it.
+  //
+  // ⚠️ AND IT IS WORTH THE ROW. Measured on production, /news served a crawler 129 words and ZERO
+  // links to /ticker/ — a room full of company news with no path to the research we hold on those
+  // companies, for a reader or for a crawler. Every story with a RESOLVED issuer now offers one.
+  // ⚠️ TickerLink, NOT A HAND-BUILT href. It is the product's existing crawlable ticker reference,
+  // written for exactly these rooms, and it RESOLVES the symbol instead of concatenating it: a
+  // headline carrying "NYSE: VTEX" or "GEF, GEF-B" would otherwise emit a link the route answers
+  // 404, and a page full of links to 404s is worse for crawling than a page with no links at all.
+  // An unresolvable symbol renders no anchor, which is why this is gated on it returning one.
+  const research = isRenderableTicker(n.sym) ? (
+    <TickerLink symbol={n.sym} stopPropagation={false}
+      style={{fontFamily:"'DM Sans',sans-serif", fontSize:10, fontWeight:600, color:C.green,
+        display:"inline-block", marginTop:4}}>
+      {String(n.sym).toUpperCase()} research ·{' '}insider trades, filings and holdings →
+    </TickerLink>
+  ) : null;
+
   if (n.url) {
     return (
-      <a href={n.url} target="_blank" rel="noopener noreferrer"
-        style={{textDecoration:"none", color:"inherit", display:"block"}}>
-        {inner}
-      </a>
+      <div>
+        <a href={n.url} target="_blank" rel="noopener noreferrer"
+          style={{textDecoration:"none", color:"inherit", display:"block"}}>
+          {inner}
+        </a>
+        {research}
+      </div>
     );
   }
-  return inner;
+  return research ? <div>{inner}{research}</div> : inner;
 }
 
 // Locked placeholder row — the server sent NO data for locked stories (free tier),
@@ -206,7 +234,19 @@ function TickerSearchCard({query, onQueryChange, trending, bindTicker}) {
   );
 }
 
-export default function NewsFeed() {
+// ⚠️ initialData IS THE SERVER'S RENDER OF THIS PAGE, NOT A HINT. app/news/page.jsx composes the
+// SAME river /api/news composes — same three pools, same lib/news-river.mjs, same
+// normalizeArticles — at generation time, so the headlines, sources, tickers and dates are in the
+// HTML before any JavaScript runs. A crawler measured 129 words and zero ticker links here.
+//
+// ⚠️ NOTHING IS GATED AND THAT IS WHY ONE SHARED COPY IS CORRECT. /api/news says it in its own
+// words — "Market news is free without an account", data = raw, lockedCount = 0. The auth() call
+// still in that route sets a reporting flag and gates nothing.
+//
+// ⚠️ AND NO PRICES. initialData carries `tickers: null` deliberately: the tape and the Market
+// Snapshot card are licensed market data, resolved per viewer after hydration exactly as before.
+// See lib/rooms-server.mjs for the three rules this render is held to.
+export default function NewsFeed({ initialData = null }) {
   // ⚠️ ONE HOVER OWNER FOR EVERY TICKER ON THE PAGE — the feed rows, Top Catalysts, the 8-K Wire
   // and the Trending chips. Each surface gets the SAME binder, so there is one open timer, one
   // popup and one implementation, exactly as the Screener and Dividend Calendar use.
@@ -223,8 +263,10 @@ export default function NewsFeed() {
     [bind],
   );
 
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(initialData);
+  // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED. Starting in the loading state with a
+  // full river in hand renders skeletons over headlines that are already on screen.
+  const [loading, setLoading] = useState(!initialData);
   const [lastUp, setLastUp] = useState(null);
   const [activeCategory, setActiveCategory] = useState('ALL');
   const [tickerQuery, setTickerQuery] = useState('');
@@ -242,8 +284,16 @@ export default function NewsFeed() {
     return next;
   });
 
+  // ⚠️ THE FIRST RUN MUST NOT RE-ENTER THE LOADING STATE, OR THE SERVER RENDER FLASHES AWAY.
+  // This runs on mount and then every 15 minutes, and it announced itself by setting loading
+  // unconditionally. With server-rendered headlines on screen that replaces a full feed with
+  // skeletons for the length of one fetch — the reader watches the news disappear and come back,
+  // and the measurable gain becomes a visible regression. Only the first run is special-cased;
+  // every later refresh still shows that it is working.
+  const serverRendered = useRef(!!initialData);
   const loadData = useCallback(async () => {
-    setLoading(true);
+    if (serverRendered.current) serverRendered.current = false;
+    else setLoading(true);
     try {
       const d = await fetchNews();
       setData(d);

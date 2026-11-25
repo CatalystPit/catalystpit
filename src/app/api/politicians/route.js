@@ -4,7 +4,8 @@ import { congressTrades, congressTickerPrices } from '../../../lib/schema';
 import { and, eq, desc, sql, or, ilike } from 'drizzle-orm';
 import { resolveUserTier, eodCutoffIso } from '../../../lib/entitlements';
 
-import { leaderboardView, photoUrl, LB_WINDOWS, shapeTrade, computeReturn, tradeCols, priceQualityJoin } from '../../../lib/congress-overview';
+import { leaderboardView, photoUrl, LB_WINDOWS, shapeTrade, computeReturn, tradeCols, priceQualityJoin,
+  ctCut, LIST_ORDER, listView } from '../../../lib/congress-overview';
 
 export const runtime = 'nodejs';
 
@@ -14,55 +15,13 @@ export const runtime = 'nodejs';
 // FREE_PREVIEW_ROWS is gone: congressional disclosure is public research, served in full.
 const NO_STORE = { 'Cache-Control': 'private, no-store' };
 
-// ⚠️ FREE IS END-OF-DAY. One predicate, ANDed into every query that reads a disclosure, so a filing
-// processed during today's session cannot reach a Free client through any view. Gated on inserted_at
-// (when WE processed it), never on disclosure_date — congressional filings arrive weeks after the
-// trade, so gating on the source date would hide legitimate historical research while still leaking
-// a disclosure ingested this morning. Source dates are untouched; this is an access rule.
-// undefined for Pro/Elite, which drizzle's and() drops.
-const ctCut = (cutoff) => (cutoff ? sql`${congressTrades.insertedAt} <= ${cutoff}::timestamptz` : undefined);
-
-// bioguide slug -> headshot; name-slug (unmatched member) -> null (initials avatar)
-
-// returnPct is null (NOT 0) unless BOTH prices exist — so a missing price renders
-// "—" on the page and never collapses into a false "0.0%". A genuinely unchanged
-// price yields a real 0. (null vs number keeps the two cases distinct.)
-// computeReturn + shapeTrade now live in lib/congress-overview so the detail page, the ticker
-// view and the new transactions API all derive option and share fields identically.
-
-const LIST_ORDER = {
-  most_active: sql`count(*) desc`,
-  top_volume:  sql`coalesce(sum(${congressTrades.amountMid}), 0) desc`,
-  recent:      sql`max(${congressTrades.transactionDate}) desc nulls last`,
-};
-
-// LIST: one card per member (grouped by slug). Optional chamber/party filters.
-async function listView({ view, chamber, party, cutoff = null }) {
-  const conds = [];
-  if (chamber === 'senate' || chamber === 'house') conds.push(eq(congressTrades.chamber, chamber));
-  if (party) conds.push(eq(congressTrades.party, party));
-
-  const members = await db.select({
-    slug:        congressTrades.memberSlug,
-    name:        sql`max(${congressTrades.representative})`,
-    party:       sql`max(${congressTrades.party})`,
-    state:       sql`max(${congressTrades.state})`,
-    chamber:     sql`max(${congressTrades.chamber})`,
-    tradeCount:  sql`count(*)`.mapWith(Number),
-    totalVolume: sql`coalesce(sum(${congressTrades.amountMid}), 0)`.mapWith(Number),
-    lastTraded:  sql`max(${congressTrades.transactionDate})`,
-    buys:        sql`count(*) filter (where ${congressTrades.action} = 'BUY')`.mapWith(Number),
-    sells:       sql`count(*) filter (where ${congressTrades.action} = 'SELL')`.mapWith(Number),
-  })
-    .from(congressTrades)
-    .where(and(...conds, ctCut(cutoff)))
-    .groupBy(congressTrades.memberSlug)
-    .orderBy(LIST_ORDER[view] || LIST_ORDER.most_active)
-    .limit(600);
-
-  return members.map(m => ({ ...m, photoUrl: photoUrl(m.slug) }));
-}
-
+// ⚠️ ctCut, LIST_ORDER AND listView NOW LIVE IN lib/congress-overview, BECAUSE
+// app/politicians/page.jsx RENDERS THE MEMBER LIST ON THE SERVER.
+//
+// They moved for the reason that file already records about leaderboardView, computeReturn and
+// shapeTrade: "Two copies of a ranking method is how the Form 4 parser ended up with two
+// divergent implementations." ctCut in particular is the FREE END-OF-DAY predicate, and a second
+// copy of a freshness gate is a licensing leak waiting to be written.
 // LEADERBOARD: "Best Traders in Congress" — each member's SIZE-WEIGHTED return across their
 // PURCHASES that we can price (priceAtTrade + current_price), i.e. "if you'd copied their buys
 // and held to today." Weighted by amount so a $1M buy counts more than a $1k one. A sample-size

@@ -662,9 +662,22 @@ function NotableActivity({ data, window, onWindow, onPick }) {
   );
 }
 
-export default function InsidersClient() {
-  const [data, setData] = useState(null);          // raw API payload (view-shaped)
-  const [loading, setLoading] = useState(true);
+// ⚠️ initialData IS THE SERVER'S RENDER OF THIS PAGE, NOT A HINT. app/insiders/page.jsx runs the
+// SAME query this component's first fetch would have run — view 'latest', page 0, pageSize 50,
+// through lib/insider-queries.mjs, which is where the route's own row rules now live — so the Form
+// 4 table is IN the HTML before any JavaScript runs. Measured on production beforehand: 376 words
+// and ZERO links to /ticker/ on the one page in the product whose entire subject is insider
+// filings.
+//
+// ⚠️ IT CARRIES THE FREE-TIER CUTOFF, WHICH IS WHAT MAKES ONE SHARED COPY SAFE. The row list was
+// never row-gated — "All paginated historical research is publicly available" — and what Pro buys
+// is freshness, so cached public HTML is built with eodCutoffIso('free'). A Pro reader's own fetch
+// replaces it with their fresher rows immediately after hydration, exactly as before.
+export default function InsidersClient({ initialData = null }) {
+  const [data, setData] = useState(initialData);   // raw API payload (view-shaped)
+  // ⚠️ NOT `useState(true)` WHEN THE SERVER ALREADY ANSWERED — a full table in hand, replaced by a
+  // skeleton for the length of one fetch, is a visible regression paid for an invisible gain.
+  const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState(null);
   const [activeView, setActiveView] = useState('latest');
   const [search, setSearch] = useState('');
@@ -718,8 +731,15 @@ export default function InsidersClient() {
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // ⚠️ THE FIRST RUN MUST NOT RE-ENTER THE LOADING STATE, OR THE SERVER RENDER FLASHES AWAY.
+  // The mount effect calls this immediately, and it announced itself by setting loading
+  // unconditionally — which with server-rendered rows on screen swaps a populated table for a
+  // skeleton while an identical fetch completes. Only the first run is special-cased; every view
+  // change, search and page turn still shows that it is working.
+  const serverRendered = useRef(!!initialData);
   const loadData = useCallback(async ({ view, ticker, name }) => {
-    setLoading(true);
+    if (serverRendered.current) serverRendered.current = false;
+    else setLoading(true);
     setError(null);
     try {
       const q = new URLSearchParams({ limit: '200' });
